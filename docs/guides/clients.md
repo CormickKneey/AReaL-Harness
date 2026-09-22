@@ -22,6 +22,18 @@ make tui ARGS='--endpoint ws://127.0.0.1:4500 --auth-file /absolute/core-data/se
 
 TUI 的 `--input-file /absolute/input.json` 与 `--prompt` 互斥，接受最多 2 MiB 的 Core Input 数组，如 `[{"type":"text","text":"Inspect the image"},{"type":"localImage","path":"/absolute/image.png"}]`。本地模式和显式 endpoint 均支持，可信 launcher 可用 `--tui --input-file` 透传；媒体路径与字段仍按 [Core API](../api/core.md) 验证。
 
+## Web 操作与外观
+
+Web 采用中性灰工作台布局：240px 可收起侧栏、任务标题与视图标签、居中会话内容，以及圆角输入框。浅色和深色外观对齐 AReaLGameAgent 的工作台；默认跟随系统，也可在侧栏底部「设置 → 外观」切换，偏好保存在当前浏览器。窄屏使用可关闭的任务导航抽屉。
+
+- 通过侧栏新建、切换、刷新或分页加载任务；新任务显示居中的输入区域，产生记录后输入框固定在底部。
+- 在「设置 → 本地连接」输入访问令牌；认证失败时在设置内显示错误。连接断开后可重新认证连接并恢复当前任务快照。
+- Enter 发送，Shift + Enter 换行；输入法确认候选字不发送。运行中可以追加说明或停止执行。
+- 输入框上方的「持续目标」可展开查看预算与进度、创建或编辑目标、暂停、恢复和清除；有活动 Goal 时停止按钮暂停目标，自动续轮保留来源标记。
+- 「任务记录」展示消息和可展开的工具结果；UNKNOWN 工具结果仍需记录检查说明。「协同任务与验收」保留计划提交、进度查询、取消和调整入口。
+
+外观与导航由 Web 客户端维护，任务、权限和执行状态以 Core 返回的数据为准。
+
 ## TUI 操作
 
 | 操作 | 行为 |

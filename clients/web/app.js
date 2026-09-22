@@ -15,6 +15,88 @@ const labels = {
   interrupted: "已停止",
   failed: "执行失败",
 };
+
+const systemTheme = matchMedia("(prefers-color-scheme: dark)");
+const mobileLayout = matchMedia("(max-width: 700px)");
+let theme = "system",
+  sidebarCollapsed = false,
+  submitting = false;
+try {
+  theme = localStorage.getItem("areal-web-theme") ?? "system";
+} catch {
+  // 禁用浏览器存储时仍允许本次页面切换外观。
+}
+if (!["system", "light", "dark"].includes(theme)) theme = "system";
+function applyTheme() {
+  document.documentElement.dataset.theme =
+    theme === "system" ? (systemTheme.matches ? "dark" : "light") : theme;
+  $("theme").value = theme;
+}
+applyTheme();
+systemTheme.addEventListener("change", applyTheme);
+$("theme").onchange = () => {
+  theme = $("theme").value;
+  applyTheme();
+  try {
+    localStorage.setItem("areal-web-theme", theme);
+  } catch {
+    // 外观偏好保存失败不影响当前页面。
+  }
+};
+function mobileSidebar(open, restoreFocus = false) {
+  document.body.classList.toggle("sidebar-mobile-open", open);
+  $("sidebar-backdrop").hidden = !open;
+  $("main").inert = open;
+  $("sidebar-open").setAttribute("aria-expanded", String(open));
+  if (open) $("sidebar-toggle").focus();
+  else if (restoreFocus) $("sidebar-open").focus();
+}
+function updateSidebar() {
+  document.body.classList.toggle("sidebar-collapsed", sidebarCollapsed && !mobileLayout.matches);
+  const expanded = mobileLayout.matches || !sidebarCollapsed;
+  $("sidebar-toggle").setAttribute("aria-expanded", String(expanded));
+  $("sidebar-toggle").setAttribute("aria-label", expanded ? "收起侧栏" : "展开侧栏");
+  $("sidebar-toggle").title = expanded ? "收起侧栏" : "展开侧栏";
+}
+$("sidebar-toggle").onclick = () => {
+  if (mobileLayout.matches) mobileSidebar(false, true);
+  else {
+    sidebarCollapsed = !sidebarCollapsed;
+    updateSidebar();
+  }
+};
+$("sidebar-open").onclick = () => mobileSidebar(true);
+$("sidebar-backdrop").onclick = () => mobileSidebar(false, true);
+mobileLayout.addEventListener("change", () => {
+  mobileSidebar(false);
+  updateSidebar();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && document.body.classList.contains("sidebar-mobile-open"))
+    mobileSidebar(false, true);
+});
+$("settings-open").onclick = () => $("settings-dialog").showModal();
+$("settings-close").onclick = () => $("settings-dialog").close();
+function showView(groups) {
+  $("conversation").hidden = groups;
+  $("workgroups").hidden = !groups;
+  for (const id of ["history-tab", "groups-tab"]) {
+    const selected = (id === "groups-tab") === groups;
+    $(id).setAttribute("aria-selected", String(selected));
+    $(id).tabIndex = selected ? 0 : -1;
+  }
+}
+$("history-tab").onclick = () => showView(false);
+$("groups-tab").onclick = () => showView(true);
+for (const id of ["history-tab", "groups-tab"])
+  $(id).onkeydown = (event) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const groups = event.key === "End" || (event.key !== "Home" && id === "history-tab");
+    showView(groups);
+    $(groups ? "groups-tab" : "history-tab").focus();
+  };
+
 function notice(error) {
   $("notice").textContent = error?.message ?? String(error ?? "");
 }
@@ -45,15 +127,70 @@ function node(tag, text, className) {
   if (className) element.className = className;
   return element;
 }
+function icon(name, className) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+  svg.setAttribute("aria-hidden", "true");
+  if (className) svg.setAttribute("class", className);
+  use.setAttribute("href", `#icon-${name}`);
+  svg.append(use);
+  return svg;
+}
 function active() {
   return thread?.turns?.at(-1)?.status === "inProgress";
 }
+function renderComposer() {
+  const hasText = Boolean($("prompt").value.trim());
+  $("send").disabled = !connected || !thread || !hasText || submitting;
+  const running = active() || thread?.goals?.goal?.status === "active";
+  $("send").hidden = running && !hasText;
+  const label = active() ? "补充说明" : "发送";
+  $("send").setAttribute("aria-label", label);
+  $("send").title = label;
+  $("interrupt").disabled = !connected || !running;
+  $("interrupt").hidden = !running;
+}
+$("prompt").oninput = renderComposer;
+$("prompt").onkeydown = (event) => {
+  // 输入法确认候选字不提交任务，Shift + Enter 保留多行输入。
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {
+    event.preventDefault();
+    if (!$("send").disabled) $("composer").requestSubmit();
+  }
+};
 function render() {
-  $("workspace").textContent = thread?.cwd ?? "选择或新建任务";
+  const cwd = thread?.cwd;
+  $("workspace").textContent = cwd?.split(/[\\/]/).filter(Boolean).at(-1) ?? "工作区";
+  $("workspace").title = cwd ?? "工作区";
+  const firstMessage = thread?.turns
+    ?.flatMap((turn) => turn.items)
+    .find((item) => item.type === "userMessage");
+  const title =
+    thread?.preview || firstMessage?.content.map((part) => part.text ?? "").join(" ") || "新建任务";
+  $("task-title").textContent = title;
+  $("task-title").title = title;
+  const selectedThread = [...$("threads").children].find(
+    (button) => button.dataset.id === thread?.id,
+  );
+  if (selectedThread && firstMessage) {
+    selectedThread.querySelector(".thread-title").textContent = title;
+    selectedThread.title = title;
+  }
   $("status").textContent = labels[thread?.turns?.at(-1)?.status] ?? "就绪";
-  $("send").disabled = !connected || !thread;
-  $("send").textContent = active() ? "补充说明" : "发送";
-  $("interrupt").disabled = !active() && thread?.goals?.goal?.status !== "active";
+  $("status").dataset.status = thread?.turns?.at(-1)?.status ?? "idle";
+  const empty = !thread?.turns?.length;
+  $("main").classList.toggle("is-empty", empty);
+  $("welcome").hidden = !empty;
+  $("welcome-description").textContent = thread
+    ? "描述任务，让想法变成结果。"
+    : "新建任务，开始你的工作。";
+  $("composer-context").querySelector("span").textContent = cwd ?? "从侧栏新建任务以使用当前工作区";
+  $("composer-context").title = cwd ?? "";
+  $("new").disabled = !connected;
+  $("refresh").disabled = !connected;
+  $("groups-refresh").disabled = !connected;
+  $("group-start").querySelector("button").disabled = !connected;
+  renderComposer();
   renderGoal();
   const history = $("history"),
     atBottom = history.scrollHeight - history.scrollTop - history.clientHeight < 100;
@@ -70,12 +207,16 @@ function render() {
           card = node("details", undefined, `item tool${unknown ? " unknown" : ""}`);
         card.dataset.id = item.id;
         card.open = opened.has(item.id) || unknown;
-        card.append(
+        const summary = node("summary");
+        summary.append(
+          icon("terminal"),
           node(
-            "summary",
+            "span",
             `${item.tool} · ${unknown ? "结果未知" : (labels[item.status] ?? item.status)}`,
           ),
+          icon("chevron", "disclosure-chevron"),
         );
+        card.append(summary);
         card.append(node("pre", JSON.stringify(item.arguments, null, 2)));
         for (const content of item.contentItems ?? [])
           if (content.type === "inputText") card.append(node("pre", content.text));
@@ -113,6 +254,8 @@ function render() {
       } else if (item.type !== "modelContext") {
         const user = item.type === "userMessage",
           card = node("article", undefined, `item${user ? " user" : ""}`);
+        if (user && turn.goal?.origin === "continuation" && item === turn.items[0])
+          card.classList.add("continuation");
         card.append(
           node(
             "h3",
@@ -131,19 +274,21 @@ function render() {
               : item.type === "agentMedia"
                 ? `[${item.modality}] ${item.media.uri}`
                 : (item.text ?? ""),
+            "message-text",
           ),
         );
         history.append(card);
       }
     }
-    if (turn.status !== "inProgress")
-      history.append(
-        node(
-          "p",
-          `${labels[turn.status]}${turn.error ? ` · ${turn.error.message}` : ""}`,
-          "turn-end",
-        ),
+    if (turn.status !== "inProgress") {
+      const end = node(
+        "p",
+        `${labels[turn.status]}${turn.error ? ` · ${turn.error.message}` : ""}`,
+        "turn-end",
       );
+      end.dataset.status = turn.status;
+      history.append(end);
+    }
   }
   if (atBottom) history.scrollTop = history.scrollHeight;
 }
@@ -160,17 +305,18 @@ async function list(more = false) {
     const existing = new Set([...$("threads").children].map((button) => button.dataset.id));
     for (const item of result.data) {
       if (existing.has(item.id)) continue;
-      const button = node(
-        "button",
-        item.preview || "未命名任务",
-        item.id === thread?.id ? "selected" : "",
-      );
+      const button = node("button", undefined, item.id === thread?.id ? "selected" : "");
+      button.append(node("span", item.preview || "未命名任务", "thread-title"));
+      button.title = item.preview || "未命名任务";
+      if (item.id === thread?.id) button.setAttribute("aria-current", "true");
       button.dataset.id = item.id;
       button.onclick = () => select(item.id).catch(notice);
       $("threads").append(button);
     }
     listCursor = result.nextCursor;
     $("more").hidden = !listCursor;
+    $("threads-empty").hidden = $("threads").children.length > 0;
+    $("threads-empty").textContent = "还没有任务，点击上方新建。";
   } finally {
     listing = false;
     $("more").disabled = false;
@@ -182,8 +328,13 @@ async function select(id) {
   $("permission").textContent =
     result.sandbox.type === "workspaceWrite" ? "工作区可写 · 网络关闭" : "只读工作区";
   render();
-  for (const button of $("threads").children)
+  showView(false);
+  if (mobileLayout.matches) mobileSidebar(false, true);
+  for (const button of $("threads").children) {
     button.classList.toggle("selected", button.dataset.id === id);
+    if (button.dataset.id === id) button.setAttribute("aria-current", "true");
+    else button.removeAttribute("aria-current");
+  }
 }
 async function reload() {
   if (refreshing || !thread) return;
@@ -245,6 +396,8 @@ $("new").onclick = async () => {
       result.sandbox.type === "workspaceWrite" ? "工作区可写 · 网络关闭" : "只读工作区";
     notice("");
     render();
+    showView(false);
+    if (mobileLayout.matches) mobileSidebar(false);
     await list();
     $("prompt").focus();
   } catch (error) {
@@ -262,9 +415,11 @@ $("refresh").onclick = async () => {
 $("more").onclick = () => list(true).catch(notice);
 $("composer").onsubmit = async (e) => {
   e.preventDefault();
-  if (!thread) return;
+  if (!thread || submitting || !connected) return;
   const text = $("prompt").value.trim();
   if (!text) return;
+  submitting = true;
+  renderComposer();
   try {
     const input = [{ type: "text", text }];
     if (active())
@@ -278,6 +433,9 @@ $("composer").onsubmit = async (e) => {
     notice("");
   } catch (error) {
     notice(error);
+  } finally {
+    submitting = false;
+    renderComposer();
   }
 };
 $("interrupt").onclick = () => {
@@ -315,10 +473,10 @@ function renderGoal() {
     $("goal-budget").value = goal?.tokenBudget ?? "";
   }
   $("goal-save").textContent = goal ? "保存修改" : "开始目标";
-  $("goal-save").disabled = busy || goal?.status === "completed";
-  $("goal-pause").disabled = goal?.status !== "active";
-  $("goal-resume").disabled = !goal || busy || goal.status === "completed";
-  $("goal-clear").disabled = !goal || busy;
+  $("goal-save").disabled = !connected || busy || goal?.status === "completed";
+  $("goal-pause").disabled = !connected || goal?.status !== "active";
+  $("goal-resume").disabled = !connected || !goal || busy || goal.status === "completed";
+  $("goal-clear").disabled = !connected || !goal || busy;
 }
 async function goalControl(action, patch = {}) {
   if (!thread) return;
@@ -351,13 +509,29 @@ $("goal-form").onsubmit = async (e) => {
 for (const action of ["pause", "resume", "clear"])
   $("goal-" + action).onclick = () => goalControl(action).catch(notice);
 async function connect() {
+  connected = false;
+  for (const request of pending.values()) request.reject(Error("正在重新连接，请重试。"));
+  pending.clear();
+  if (socket) {
+    socket.onclose = null;
+    socket.close();
+  }
+  $("connection").textContent = "正在连接…";
+  $("connection").dataset.state = "connecting";
+  render();
   const url = new URL("/", location.href);
-  url.protocol = "ws:";
+  url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
   socket = new WebSocket(url);
-  await new Promise((resolve, reject) => {
-    socket.onopen = resolve;
-    socket.onerror = () => reject(Error("无法连接 Core。"));
-  });
+  try {
+    await new Promise((resolve, reject) => {
+      socket.onopen = resolve;
+      socket.onerror = () => reject(Error("无法连接 Core，请检查服务或在设置中输入访问令牌。"));
+    });
+  } catch (error) {
+    $("connection").textContent = "未连接";
+    $("connection").dataset.state = "disconnected";
+    throw error;
+  }
   connected = true;
   socket.onmessage = (message) => {
     const data = JSON.parse(message.data);
@@ -382,6 +556,7 @@ async function connect() {
       request.reject(Error("连接已断开。任务可能仍在执行，请重新加载页面。"));
     pending.clear();
     $("connection").textContent = "连接已断开";
+    $("connection").dataset.state = "disconnected";
     render();
   };
   await call("initialize", {
@@ -390,11 +565,16 @@ async function connect() {
   socket.send(JSON.stringify({ method: "initialized", params: {} }));
   goalsSupported = (await call("areal/capabilities", {})).features?.goals === true;
   $("connection").textContent = "已连接本地 Core";
+  $("connection").dataset.state = "connected";
   await list();
+  await reload();
   render();
 }
 $("login").onsubmit = async (event) => {
   event.preventDefault();
+  if ($("connect-button").disabled) return;
+  $("connect-button").disabled = true;
+  $("login-error").textContent = "";
   try {
     const response = await fetch("/areal/auth/session", {
       method: "POST",
@@ -403,11 +583,20 @@ $("login").onsubmit = async (event) => {
     $("access-token").value = "";
     if (!response.ok) throw Error("认证失败，请使用可信启动器提供的访问令牌。");
     await connect();
+    notice("");
+    $("settings-dialog").close();
+    if (mobileLayout.matches) mobileSidebar(false, true);
   } catch (error) {
-    notice(error);
+    $("login-error").textContent = error.message;
+  } finally {
+    $("access-token").value = "";
+    $("connect-button").disabled = false;
   }
 };
-connect().catch(notice);
+connect().catch((error) => {
+  notice(error);
+  $("settings-dialog").showModal();
+});
 
 // Core owns execution across disconnects. Cursor waits avoid busy polling;
 // a stopped observer never cancels the actual workgroup.
@@ -481,6 +670,8 @@ async function listGroups() {
   ++groupObservation;
   const { data } = await call("areal/workgroup/list", {});
   $("groups").replaceChildren();
+  if (!data.length)
+    $("groups").append(node("p", "暂无协同任务。提交执行计划后可在这里查看进度。", "muted"));
   for (const group of data) {
     const button = node("button", `${group.objective} · ${group.status}`, "secondary");
     button.onclick = () => showGroup(group.id, ++groupObservation).catch(notice);
