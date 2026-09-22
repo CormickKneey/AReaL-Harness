@@ -27,7 +27,7 @@ impl Profile {
 // Data volume. Shared temporary directories must not become writable either.
 // Neither is an appropriate read/write boundary for an ExecutionScope.
 // Core 在可信宿主侧解析系统 Python，避免在任务沙箱中启动 xcode-select/xcrun。
-// 这里只允许默认 Xcode / Command Line Tools 的 Python 运行库，不开放整个工具链。
+// 这里只允许默认及带数字版本号的 Xcode / Command Line Tools Python，不开放整个工具链。
 const BASE: &str = r#"
 (version 1)
 (deny default)
@@ -39,17 +39,15 @@ const BASE: &str = r#"
   (regex #"^/(System/(Library|iOSSupport/System/Library)|bin|sbin|usr/(bin|sbin|lib|libexec|share))(/|$)"))
 (allow file-read* file-test-existence (literal "/"))
 (allow file-read-metadata
-  (literal "/Applications") (literal "/Applications/Xcode.app")
-  (literal "/Applications/Xcode.app/Contents")
-  (literal "/Applications/Xcode.app/Contents/Developer")
-  (literal "/Applications/Xcode.app/Contents/Developer/Library")
-  (literal "/Applications/Xcode.app/Contents/Developer/Library/Frameworks")
+  (literal "/Applications")
+  (regex #"^/Applications/Xcode(_[0-9]+([.][0-9]+)*)?[.]app(/Contents(/Developer(/Library(/Frameworks)?)?)?)?$"))
+(allow file-read-metadata
   (literal "/Library") (literal "/Library/Developer")
   (literal "/Library/Developer/CommandLineTools")
   (literal "/Library/Developer/CommandLineTools/Library")
   (literal "/Library/Developer/CommandLineTools/Library/Frameworks"))
 (allow process-exec file-read* file-map-executable
-  (regex #"^/(Applications/Xcode[.]app/Contents/Developer|Library/Developer/CommandLineTools)/Library/Frameworks/Python3[.]framework(/|$)"))
+  (regex #"^/(Applications/Xcode(_[0-9]+([.][0-9]+)*)?[.]app/Contents/Developer|Library/Developer/CommandLineTools)/Library/Frameworks/Python3[.]framework(/|$)"))
 (allow file-read*
   (regex #"^/private/(etc/(passwd|group|localtime)|var/select/sh)$")
   (regex #"^/private/var/db/timezone(/|$)")
@@ -58,6 +56,36 @@ const BASE: &str = r#"
 (allow file-write-data (literal "/dev/null") (literal "/dev/zero"))
 (allow file-read-data file-write-data (regex #"^/dev/fd/[012]$"))
 "#;
+
+// 与 BASE 的 Python framework 边界一致；拒绝前缀相似的应用及 framework 兄弟目录。
+#[cfg(target_os = "macos")]
+pub(crate) fn is_system_python(python: &Path) -> bool {
+    if python
+        .starts_with("/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework")
+    {
+        return true;
+    }
+    let Ok(relative) = python.strip_prefix("/Applications") else {
+        return false;
+    };
+    let mut components = relative.components();
+    let Some(app) = components.next().and_then(|part| part.as_os_str().to_str()) else {
+        return false;
+    };
+    let valid_name = app == "Xcode.app"
+        || app
+            .strip_prefix("Xcode_")
+            .and_then(|name| name.strip_suffix(".app"))
+            .is_some_and(|version| {
+                version
+                    .split('.')
+                    .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+            });
+    valid_name
+        && components
+            .as_path()
+            .starts_with("Contents/Developer/Library/Frameworks/Python3.framework")
+}
 
 pub fn supported(profile: Profile) -> Result<()> {
     match profile {

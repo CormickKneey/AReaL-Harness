@@ -27,11 +27,7 @@ use tokio_util::sync::CancellationToken;
 fn prepare_system_python(execution: &mut Execution) {
     #[cfg(target_os = "macos")]
     if let Ok(python) = std::fs::canonicalize("/var/select/developer_dir/usr/bin/python3") {
-        let allowed = [
-            "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework",
-            "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework",
-        ];
-        if !allowed.iter().any(|root| python.starts_with(root)) {
+        if !sandbox::is_system_python(&python) {
             return;
         }
         if execution
