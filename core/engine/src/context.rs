@@ -334,15 +334,21 @@ impl Engine {
             usage.add_assign(&attempt_usage);
             self.store.save_audit(json!({"kind":"contextSummary","threadId":snapshot.id,"attempt":attempt+1,"networkRetries":network_retries,"beforeBytes":before_bytes,"estimatedInputTokens":estimated_tokens,"tokenWindow":self.limits.context_window_tokens,"outputReserveTokens":self.limits.context_output_reserve_tokens,"response":summary,"rejectedTools":rejected_tools,"usage":attempt_usage,"error":response.as_ref().err().map(|e|e.to_string()),"cancelled":cancel.is_cancelled()})).await?;
             anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
-            if response.is_ok() {
-                accepted = Some(summary);
-                break;
-            }
+            let error = match response {
+                Ok(()) => {
+                    accepted = Some(summary);
+                    break;
+                }
+                Err(error) => error,
+            };
             // Goal 计量失效时保留旧 checkpoint，不能重试或提交降级摘要。
-            model.check_work()?;
-            if let Some(delay) = response.as_ref().err().and_then(|error| {
-                watchdog::retry_delay(self.limits.watchdog_disable, error, network_retries)
-            }) {
+            if let Err(blocker) = model.check_work() {
+                let diagnostic = format!("{blocker}: {error}");
+                return Err(error.context(diagnostic));
+            }
+            if let Some(delay) =
+                watchdog::retry_delay(self.limits.watchdog_disable, &error, network_retries)
+            {
                 network_retries = network_retries.saturating_add(1);
                 cell.emit("areal/model/watchdogRetry", json!({"threadId":snapshot.id,"turnId":snapshot.turns.last().map(|t| &t.id),"purpose":"summary","retry":network_retries,"delayMs":delay.as_millis() as u64}));
                 tracing::warn!(

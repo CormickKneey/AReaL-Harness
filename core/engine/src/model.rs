@@ -808,24 +808,27 @@ impl Model for HttpModel {
                 continue;
             }
             break result.map_err(|error| {
-                if error.is_builder() {
-                    return anyhow::anyhow!("invalid model HTTP request");
-                }
-                tracing::warn!(connect = error.is_connect(), timeout = error.is_timeout(), error = %error.without_url(), "model request transport failure");
-                anyhow::Error::new(ModelFailure::Transport)
+                let error = if error.is_builder() {
+                    anyhow::anyhow!("invalid model HTTP request")
+                } else {
+                    tracing::warn!(connect = error.is_connect(), timeout = error.is_timeout(), error = %error.without_url(), "model request transport failure");
+                    anyhow::Error::new(ModelFailure::Transport)
+                };
+                audit.value["outcome"] = json!("failed");
+                audit.value["error"] = json!(error.to_string());
+                error
             })?;
         };
-        if response.status() == reqwest::StatusCode::REQUEST_TIMEOUT {
-            return Err(ModelFailure::Transport.into());
-        }
-        if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            return Err(ModelFailure::RateLimited.into());
-        }
-        if response.status().is_server_error() {
-            return Err(ModelFailure::Unavailable.into());
-        }
         if !response.status().is_success() {
-            bail!("model HTTP status {}", response.status());
+            let error = match response.status() {
+                reqwest::StatusCode::REQUEST_TIMEOUT => ModelFailure::Transport.into(),
+                reqwest::StatusCode::TOO_MANY_REQUESTS => ModelFailure::RateLimited.into(),
+                status if status.is_server_error() => ModelFailure::Unavailable.into(),
+                status => anyhow::anyhow!("model HTTP status {status}"),
+            };
+            audit.value["outcome"] = json!("failed");
+            audit.value["error"] = json!(error.to_string());
+            return Err(error);
         }
         if !response
             .headers()
@@ -833,7 +836,13 @@ impl Model for HttpModel {
             .and_then(|v| v.to_str().ok())
             .is_some_and(|s| s.starts_with("text/event-stream"))
         {
-            bail!("model response must use text/event-stream");
+            // 错误页和 header 可能含敏感内容，只记录固定诊断与完整接口地址提示。
+            let error = anyhow::anyhow!(
+                "model response must use text/event-stream; check the full API endpoint (e.g. /v1/chat/completions or /v1/responses)"
+            );
+            audit.value["outcome"] = json!("failed");
+            audit.value["error"] = json!(error.to_string());
+            return Err(error);
         }
         let decoder = match self.protocol {
             ModelProtocol::ChatCompletions => Decoder::Chat(ChatDecoder::new(limits)),

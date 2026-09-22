@@ -316,7 +316,20 @@ fn definitions_with_policy(policy: &ToolPolicy) -> Vec<Value> {
     for definition in &mut definitions {
         let f = &mut definition["function"];
         if f["name"] == "run_command" {
-            f["parameters"]["oneOf"] = json!([{"required":["command"]},{"required":["argv"]}]);
+            // 供应商可能要求组合分支是完整对象；分别排除另一种入口，保持二选一约束。
+            let branches: Vec<_> = [("command", "argv"), ("argv", "command")]
+                .into_iter()
+                .map(|(required, excluded)| {
+                    let mut branch = f["parameters"].clone();
+                    branch["properties"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove(excluded);
+                    branch["required"] = json!([required]);
+                    branch
+                })
+                .collect();
+            f["parameters"]["oneOf"] = json!(branches);
         }
     }
     definitions

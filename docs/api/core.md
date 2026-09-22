@@ -73,7 +73,7 @@ Responses 摘要通过可选 `reasoning_summary` / `reasoningSummary` 显式开�
 
 watchdog 保留同一请求的 messages、tools、采样参数与模型轮次，不消耗 `max_completion_retries`；重试不会再次预留 Agent 逻辑请求额度，Workgroup 仍计入每次实际请求及部署预算。250 ms 指数退避封顶 30 秒，释放失败流持有的共享模型许可后等待；取消与总期限仍能结束等待，求解请求还响应 steer。Core 审计并丢弃失败响应的文本、上下文与未执行工具调用，恢复该响应占用的输出字节额度，保留此前已执行工具和已观测 usage。发布 `areal/model/completionDiscarded`（新增 `retryKind=network|completion`）及 `areal/model/watchdogRetry {threadId,turnId,purpose:solve|summary,retry,delayMs}`。这里的丢弃不回滚已执行工具，也不重启整个 Turn。
 
-Goal 请求先检查共享预算与用量是否已知，再决定是否重试。请求失败或超时留下未知消费时，保留预留并将 Goal 置为 blocked（usageUnknown）；不进入 watchdog 退避或有限响应重试。摘要请求同样受此约束，保留旧 checkpoint，不写入降级摘要。已计量的 HTTP 请求禁用传输层内部重试，避免同一预留隐含多次消费。
+Goal 请求先检查共享预算与用量是否已知，再决定是否重试。请求失败或超时留下未知消费时，保留预留并将 Goal 置为 blocked（usageUnknown）；不进入 watchdog 退避或有限响应重试。Turn 错误同时保留 `GOAL_USAGE_UNKNOWN` 与原始请求失败原因，避免用量检查覆盖接口、鉴权或超时诊断。摘要请求同样受此约束，保留旧 checkpoint，不写入降级摘要。已计量的 HTTP 请求禁用传输层内部重试，避免同一预留隐含多次消费。
 
 `max_completion_retries` 默认 0，可为已分类的长度截断、非法工具 index、空回复等提供有限恢复（仅 reasoning 不算最终回复）；关闭 watchdog 后，已分类网络错误也沿用此有限额度。工具仍只在完整成功流后执行；UNKNOWN、持久化错误、取消与总期限错误不重放。
 
@@ -84,6 +84,8 @@ Rust `Model::chat_with_limits(messages, tools, purpose, ToolCallLimits, cap)` �
 上下文压缩保留原目标与近期内容，不拆 completion/工具结果或不透明 reasoning 边界。摘要最多 16 KiB，记录 throughItemId 与 checkpoint；网络故障重试相同摘要输入，不占用摘要格式校验次数；空摘要或伪工具摘要重试一次，仍失败时只有确实缩短输入才使用明确标记的 DEGRADED CONTEXT，否则 Turn 失败。取消不覆盖旧 checkpoint，压缩不删除历史、journal 或 Turn 工具状态。
 
 模型审计写入 `data_dir/model-requests/*.json` 与 `requests.jsonl`，记录 solve/summary、参数、请求体摘要/大小、attempt、usage、stopReason、耗时与有限响应形状，不记录 header、endpoint 或 prompt。`usageObserved=true` 表示收到可解析的完整用量事件（包括 0）；缺失/false 不能视为已知零。length 终态仍收集同帧/尾帧 usage，等待受期限和取消限制，随后判定截断并禁止执行工具。
+
+开始消费响应流前的传输失败、HTTP 错误状态和非 SSE 响应也记为 `outcome=failed`，`error` 保存脱敏诊断；非 SSE 响应提示检查完整 API endpoint，不记录错误页正文或原始响应 header。取消或未完成的请求仍记为 `interrupted_or_unfinished`。
 
 工具错误审计新增 `errorCode` 与 `toolCallError`：`invalid_tool_call_index` 附固定原因、协议、字段路径、从 1 开始的 SSE 数据事件序号、index JSON 类型及已缓冲调用数量；`tool_call_budget_exceeded` 附预算类别、上限和观测值。字段只含固定标签和有界数值，诊断不复制 SSE、参数、reasoning 或非法字段值，使用同一记录的本地 `requestId` 关联。`responseShape.toolArgumentBytes` 沿用旧名称，实际累计通过校验的 id/name/arguments 字节。
 

@@ -4,6 +4,8 @@
 
 Core's registry binds names and JSON Schemas to built-in, command, client, MCP or plugin backends. Core validates inputs and outputs; Runtime handles local execution. Full model-tool schemas are in [tools.rs](../../core/engine/src/tools.rs).
 
+The `run_command` `oneOf` uses two complete object branches, each defining either `command` or `argv` and the common options, for compatibility with model endpoints that require complete branches. Both branches include the Runtime deadline ceiling. Call parameters are unchanged; Core still rejects supplying both entry points or neither.
+
 | Tool | Key parameters and boundaries |
 |---|---|
 | `read_file` | `path,offset?=1,limit?=120`; UTF-8 lines, line numbers, nextLine/eof, whole-file digest and fileVersion; at most 1000 lines/about 14 KiB |

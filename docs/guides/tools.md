@@ -4,6 +4,8 @@
 
 Core 注册表将名称、JSON Schema 与内置/命令/客户端/MCP/插件后端绑定。输入与输出由 Core 校验；本地执行交给 Runtime。完整模型工具 schema 位于 [tools.rs](../../core/engine/src/tools.rs)。
 
+`run_command` 的 `oneOf` 使用两个完整对象分支，分别声明 `command` 或 `argv` 入口及公共选项，以兼容要求完整分支的模型端点；两个分支同步包含 Runtime 的期限上限。调用参数不变，Core 仍拒绝同时提供或同时省略两个入口。
+
 | 工具 | 关键参数与边界 |
 |---|---|
 | `read_file` | `path,offset?=1,limit?=120`；UTF-8 行、行号、nextLine/eof、完整摘要与 fileVersion；最多 1000 行、约 14 KiB |
