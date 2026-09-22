@@ -200,7 +200,7 @@ async fn local_skills_read_current_files_in_pages_without_loading_attachments_at
 #[cfg(unix)]
 #[tokio::test]
 async fn lazy_reads_reject_parent_paths_links_and_special_files_without_poisoning_the_skill() {
-    use std::os::unix::fs::symlink;
+    use std::os::unix::{ffi::OsStrExt, fs::symlink};
     let state = tempfile::tempdir().unwrap();
     let root = tempfile::tempdir().unwrap();
     let outside = tempfile::tempdir().unwrap();
@@ -219,13 +219,10 @@ async fn lazy_reads_reject_parent_paths_links_and_special_files_without_poisonin
     symlink(outside.path().join("secret"), root.path().join("link")).unwrap();
     symlink(outside.path(), root.path().join("linked-dir")).unwrap();
     symlink("SKILL.md", root.path().join("internal-link")).unwrap();
-    assert!(
-        std::process::Command::new("mkfifo")
-            .arg(root.path().join("fifo"))
-            .status()
-            .unwrap()
-            .success()
-    );
+    // 直接创建 FIFO，避免并发重启测试的目录锁在 fork/exec 窗口被子进程继承。
+    let fifo = std::ffi::CString::new(root.path().join("fifo").as_os_str().as_bytes()).unwrap();
+    // CString 在调用期间有效，权限位只授予当前用户读写。
+    assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
     for resource in [
         "../secret",
         "/etc/passwd",
