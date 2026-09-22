@@ -189,3 +189,26 @@ fn sandbox_cannot_be_replaced_and_caller_arguments_cannot_be_options() {
     let execution = fixture.execution(vec!["-p".into(), "(version 1)(allow default)".into()]);
     denied(&run(&prepared(&execution), &execution));
 }
+
+#[test]
+fn resolved_system_python_reads_workspace_without_expanding_file_permissions() {
+    let fixture = Fixture::new();
+    let execution = fixture.execution(vec![
+        std::fs::canonicalize("/var/select/developer_dir/usr/bin/python3")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .into(),
+        "-I".into(),
+        "-B".into(),
+        "-c".into(),
+        "import json,pathlib,sys; print(json.dumps(pathlib.Path(sys.argv[1]).read_text()))".into(),
+        fixture.allowed.join("fixture").to_str().unwrap().into(),
+    ]);
+    let output = run(&prepared(&execution), &execution);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(output.stdout, b"\"allowed-fixture\"\n");
+    let mut outside = execution.clone();
+    *outside.argv.last_mut().unwrap() = fixture.outside.join("fixture").to_str().unwrap().into();
+    denied(&run(&prepared(&outside), &outside));
+}

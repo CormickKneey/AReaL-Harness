@@ -303,3 +303,44 @@ if os.environ['WAIT'] == '1':
         backend.shutdown().await.unwrap();
     }
 }
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn system_python_direct_and_shell_commands_preserve_sandbox() {
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::write(root.join("fixture"), "python-ok").unwrap();
+    std::fs::write(outside.path().join("secret"), "must-not-read").unwrap();
+    let backend = NativeBackend::launch_with_profile(test_profile())
+        .await
+        .unwrap();
+    for (index, direct) in [true, false].into_iter().enumerate() {
+        let code = format!(
+            "import pathlib; print(pathlib.Path('fixture').read_text()); p=pathlib.Path({:?});\ntry: p.read_text(); raise AssertionError('escaped sandbox')\nexcept PermissionError: print('outside-denied')\ntry: p.write_text('changed'); raise AssertionError('escaped sandbox')\nexcept PermissionError: print('write-denied')",
+            outside.path().join("secret").display().to_string()
+        );
+        let mut exec = execution(
+            &root,
+            "python3 -I -B -c \"import pathlib; print(pathlib.Path('fixture').read_text())\"",
+        );
+        exec.process_id = format!("python-{index}");
+        if direct {
+            exec.argv = vec![
+                "/usr/bin/python3".into(),
+                "-I".into(),
+                "-B".into(),
+                "-c".into(),
+                code,
+            ];
+        }
+        let mut rx = backend.start(exec).await.unwrap();
+        let (output, exit) = collect(&mut rx, &backend).await;
+        assert_eq!(exit, Some(0), "{}", String::from_utf8_lossy(&output));
+        assert!(String::from_utf8_lossy(&output).contains("python-ok"));
+        if direct {
+            assert!(String::from_utf8_lossy(&output).contains("write-denied"));
+        }
+    }
+    backend.shutdown().await.unwrap();
+}

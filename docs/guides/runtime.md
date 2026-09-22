@@ -30,6 +30,10 @@ Core、Node Host、stdio MCP 不在 Runtime 沙箱内。进程组终止与输出
 
 Linux profile 在派生 Bubblewrap 时建立会话，namespace init 保留在受管进程组内，取消同时覆盖 init 与其 PID namespace；这不将全平台 processTreeCleanupVerified 改为 true。当前没有每 Scope 的 cgroup pids/memory 限额，内部 fork 与内存需由部署层约束。内部命令被信号终止时 launcher 可能正常返回 `128 + signal`；Runtime 保留实际 launcher 的 exitCode/signal，不推断内部信号或 OOM。清理仍需回执确认。
 
+macOS 的默认 Xcode / Command Line Tools Python 在可信宿主侧解析后进入原有沙箱；直接 `/usr/bin/python3` 和默认 PATH 中的 `python3` 使用实际解释器，避免 xcode-select shim。仅开放系统 Python framework 的读取和执行，工作区外文件和共享 `/tmp` 写入仍被拒绝。自定义 Xcode 位置、Homebrew Node/Python 不会自动获得权限，需要显式准备工具链。
+
+未配置 command scratch 时，Core 不向模型提供 `verify_command`；需要验证回执的部署通过 launcher `--scratch` 配置独立目录。不要用共享 `/tmp` 替代任务 scratch。
+
 ## 生命周期
 
 EOF、SIGINT/SIGTERM 或显式 close 关闭准入并等待资源。丢弃 RPC 等待者不取消操作；用 revoke/terminate 后继续 wait。后端事实丢失或清理失败保留 UNKNOWN 与预算占用，封闭新操作，返回 CLEANUP_FAILED。

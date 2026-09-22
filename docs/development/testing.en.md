@@ -21,6 +21,14 @@ Native smoke tests require macOS Seatbelt; never substitute unsandboxed executio
 
 Linux host checks use `make verify CARGO_TEST_ARGS='--exclude areal-runtime-exec-native'`. Native backend tests require a container boundary; a separate CI job builds the Dockerfile's `runtime-tests` target and runs every backend test inside the controlled Bubblewrap container. Excluding the backend alone does not complete validation.
 
+## Python and scratch
+
+Independent macOS Python/scratch regression (local model, no provider credentials):
+
+```sh
+python3 scripts/native-python-smoke.py --bin-dir target/debug
+```
+
 ## Recovery and research agents
 
 ```sh

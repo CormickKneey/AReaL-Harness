@@ -22,6 +22,43 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+// macOS 的系统 python3 是开发工具 shim；在进入沙箱前解析到已有解释器。
+// 仅使用策略已允许的系统 Python，不继承宿主 PATH 或开放 Homebrew。
+fn prepare_system_python(execution: &mut Execution) {
+    #[cfg(target_os = "macos")]
+    if let Ok(python) = std::fs::canonicalize("/var/select/developer_dir/usr/bin/python3") {
+        let allowed = [
+            "/Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework",
+            "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework",
+        ];
+        if !allowed.iter().any(|root| python.starts_with(root)) {
+            return;
+        }
+        if execution
+            .argv
+            .first()
+            .is_some_and(|arg| arg == "/usr/bin/python3")
+        {
+            execution.argv[0] = python.to_string_lossy().into_owned();
+        }
+        if let (Some(parent), Some(path)) = (python.parent(), execution.env.get_mut("PATH")) {
+            *path = path
+                .split(':')
+                .map(|entry| {
+                    if entry == "/usr/bin" {
+                        format!("{}:/usr/bin", parent.display())
+                    } else {
+                        entry.to_owned()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(":");
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = execution;
+}
+
 const IO_TIMEOUT: Duration = Duration::from_secs(1);
 type Input = Box<dyn AsyncWrite + Unpin + Send>;
 struct Process {
@@ -75,7 +112,8 @@ impl Backend for NativeBackend {
     fn supports_input(&self) -> bool {
         true
     }
-    async fn start(&self, execution: Execution) -> Result<mpsc::Receiver<Event>> {
+    async fn start(&self, mut execution: Execution) -> Result<mpsc::Receiver<Event>> {
+        prepare_system_python(&mut execution);
         let argv = sandbox::command(&execution, self.profile)?;
         // Locally linked Mach-O helpers can be killed by AMFI when their
         // spawning parent is a Rust development binary. A signed system parent
