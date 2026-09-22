@@ -98,7 +98,7 @@ pub(super) struct ChatDecoder {
     pub(super) tool_bytes: usize,
     budget: ToolCallBudget,
     event_number: u64,
-    pub(super) reasoning: String,
+    pub(super) reasoning_bytes: usize,
 }
 
 impl ChatDecoder {
@@ -119,11 +119,6 @@ impl ChatDecoder {
             return Err(ModelFailure::Incomplete.into());
         }
         let mut output = Vec::new();
-        if !self.reasoning.is_empty() {
-            output.push(ModelEvent::ProviderContext(json!({
-                "type": "chat_reasoning", "reasoning_content": std::mem::take(&mut self.reasoning)
-            })));
-        }
         output.extend(
             std::mem::take(&mut self.calls)
                 .into_values()
@@ -191,10 +186,13 @@ impl ChatDecoder {
             if let Some(reasoning) = delta["reasoning_content"].as_str() {
                 anyhow::ensure!(!self.finished, "reasoning after completion");
                 anyhow::ensure!(
-                    self.reasoning.len() + reasoning.len() <= 1024 * 1024,
+                    self.reasoning_bytes + reasoning.len() <= 1024 * 1024,
                     "reasoning exceeds 1 MiB"
                 );
-                self.reasoning.push_str(reasoning);
+                self.reasoning_bytes += reasoning.len();
+                if !reasoning.is_empty() {
+                    output.push(ModelEvent::reasoning(reasoning));
+                }
             }
             if let Some(calls) = delta.get("tool_calls").filter(|v| !v.is_null()) {
                 anyhow::ensure!(!self.finished, "tool data after completion");
@@ -319,6 +317,8 @@ pub(super) struct ResponsesDecoder {
     calls: Vec<ToolCall>,
     item_ids: std::collections::HashSet<String>,
     budget: ToolCallBudget,
+    reasoning: std::collections::BTreeMap<(String, ReasoningKind, usize), String>,
+    reasoning_bytes: usize,
     pending_error: Option<anyhow::Error>,
 }
 
@@ -330,10 +330,26 @@ impl ResponsesDecoder {
         }
     }
 
-    fn record_item(&mut self, item: &Value) -> Result<()> {
+    fn record_item(&mut self, item: &Value, output: &mut Vec<ModelEvent>) -> Result<()> {
         match item["type"].as_str() {
             Some("reasoning") => {
                 let id = item["id"].as_str().context("reasoning item missing ID")?;
+                for (field, kind, part_type) in [
+                    ("summary", ReasoningKind::Summary, "summary_text"),
+                    ("content", ReasoningKind::Text, "reasoning_text"),
+                ] {
+                    if let Some(parts) = item[field].as_array() {
+                        anyhow::ensure!(parts.len() <= 64, "too many reasoning parts");
+                        for (index, part) in parts.iter().enumerate() {
+                            if part["type"] == part_type {
+                                let text = part["text"]
+                                    .as_str()
+                                    .context("reasoning text must be a string")?;
+                                self.reasoning_part(id, kind, index, text, true, output)?;
+                            }
+                        }
+                    }
+                }
                 if self.item_ids.insert(id.to_owned()) {
                     anyhow::ensure!(self.contexts.len() < 64, "too many reasoning items");
                     anyhow::ensure!(
@@ -376,6 +392,50 @@ impl ResponsesDecoder {
         Ok(())
     }
 
+    fn reasoning_part(
+        &mut self,
+        item_id: &str,
+        kind: ReasoningKind,
+        index: usize,
+        text: &str,
+        snapshot: bool,
+        output: &mut Vec<ModelEvent>,
+    ) -> Result<()> {
+        anyhow::ensure!(
+            !item_id.is_empty() && item_id.len() <= 256,
+            "invalid reasoning item ID"
+        );
+        anyhow::ensure!(index < 64, "reasoning part index exceeds limit");
+        let key = (item_id.to_owned(), kind, index);
+        anyhow::ensure!(
+            self.reasoning.contains_key(&key) || self.reasoning.len() < 128,
+            "too many reasoning parts"
+        );
+        let current = self.reasoning.entry(key).or_default();
+        // done/part.done/最终 output 都是同一前缀的快照，只补尚未透传的后缀。
+        let delta = if snapshot {
+            text.strip_prefix(current.as_str())
+                .context("conflicting reasoning snapshot")?
+        } else {
+            text
+        };
+        anyhow::ensure!(
+            self.reasoning_bytes + delta.len() <= 1024 * 1024,
+            "reasoning exceeds 1 MiB"
+        );
+        if !delta.is_empty() {
+            self.reasoning_bytes += delta.len();
+            current.push_str(delta);
+            output.push(ModelEvent::ReasoningDelta {
+                item_id: item_id.into(),
+                kind,
+                index,
+                delta: delta.into(),
+            });
+        }
+        Ok(())
+    }
+
     fn feed(&mut self, bytes: &[u8]) -> Result<Vec<ModelEvent>> {
         if let Some(error) = self.pending_error.take() {
             return Err(error);
@@ -407,6 +467,43 @@ impl ResponsesDecoder {
         }
         let event: Value = serde_json::from_str(data).context("invalid Responses SSE JSON")?;
         match event["type"].as_str().unwrap_or_default() {
+            kind @ ("response.reasoning_summary_text.delta"
+            | "response.reasoning_summary_text.done"
+            | "response.reasoning_text.delta"
+            | "response.reasoning_text.done"
+            | "response.reasoning_summary_part.added"
+            | "response.reasoning_summary_part.done") => {
+                let summary = kind.starts_with("response.reasoning_summary_");
+                let snapshot = !kind.ends_with(".delta");
+                let text = if kind.contains("_part.") {
+                    &event["part"]["text"]
+                } else if snapshot {
+                    &event["text"]
+                } else {
+                    &event["delta"]
+                };
+                self.reasoning_part(
+                    event["item_id"]
+                        .as_str()
+                        .context("missing reasoning item ID")?,
+                    if summary {
+                        ReasoningKind::Summary
+                    } else {
+                        ReasoningKind::Text
+                    },
+                    event[if summary {
+                        "summary_index"
+                    } else {
+                        "content_index"
+                    }]
+                    .as_u64()
+                    .filter(|i| *i < 64)
+                    .context("invalid reasoning part index")? as usize,
+                    text.as_str().context("reasoning text must be a string")?,
+                    snapshot,
+                    output,
+                )?;
+            }
             "response.output_text.delta" | "response.refusal.delta" => {
                 if let Some(delta) = event["delta"].as_str().filter(|v| !v.is_empty()) {
                     output.push(ModelEvent::text(delta));
@@ -433,7 +530,7 @@ impl ResponsesDecoder {
             }
             "response.output_item.done" => {
                 let item = &event["item"];
-                self.record_item(item)?;
+                self.record_item(item, output)?;
                 if item["type"] == "image_generation_call"
                     && let Some(result) = item["result"].as_str()
                 {
@@ -455,7 +552,7 @@ impl ResponsesDecoder {
                 }
                 if let Some(items) = event["response"]["output"].as_array() {
                     for item in items {
-                        self.record_item(item)?;
+                        self.record_item(item, output)?;
                     }
                 }
                 output.extend(
@@ -723,7 +820,162 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, ModelEvent::TextDelta(text) if text == "done"))
         );
-        assert!(events.iter().any(|e| matches!(e, ModelEvent::ProviderContext(value) if value["reasoning_content"] == "inspect then test")));
+        assert_eq!(
+            events
+                .iter()
+                .filter_map(|e| match e {
+                    ModelEvent::ReasoningDelta { delta, .. } => Some(delta.as_str()),
+                    _ => None,
+                })
+                .collect::<String>(),
+            "inspect then test"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, ModelEvent::ProviderContext(_)))
+        );
+    }
+
+    #[test]
+    fn reasoning_is_emitted_before_completion_across_utf8_frame_boundaries() {
+        let frame = "data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"思考🙂\",\"content\":null}}]}\n\n";
+        for split in 0..=frame.len() {
+            let mut decoder = Decoder::Chat(ChatDecoder::default());
+            let mut events = decoder.feed(&frame.as_bytes()[..split]).unwrap();
+            events.extend(decoder.feed(&frame.as_bytes()[split..]).unwrap());
+            assert_eq!(events, vec![ModelEvent::reasoning("思考🙂")]);
+            assert!(!decoder.done());
+        }
+        let mut decoder = Decoder::Chat(ChatDecoder::default());
+        let empty =
+            b"data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"\"}}]}\n\n";
+        assert!(decoder.feed(empty).unwrap().is_empty());
+    }
+
+    fn response_frame(value: Value) -> String {
+        format!("data: {value}\n\n")
+    }
+
+    #[test]
+    fn responses_reasoning_keeps_items_parts_and_kinds_without_repeating_snapshots() {
+        let mut decoder = Decoder::Responses(ResponsesDecoder::default());
+        let item = json!({"type":"reasoning","id":"rs1","summary":[{"type":"summary_text","text":"检查依赖"},{"type":"summary_text","text":"再验证"}],"content":[{"type":"reasoning_text","text":"raw text"}],"encrypted_content":"private-opaque"});
+        let frames = [
+            json!({"type":"response.reasoning_summary_part.added","item_id":"rs1","summary_index":0,"part":{"type":"summary_text","text":""}}),
+            json!({"type":"response.reasoning_summary_text.delta","item_id":"rs1","summary_index":0,"delta":"检查"}),
+            json!({"type":"response.reasoning_summary_text.done","item_id":"rs1","summary_index":0,"text":"检查依赖"}),
+            json!({"type":"response.reasoning_summary_part.done","item_id":"rs1","summary_index":0,"part":{"type":"summary_text","text":"检查依赖"}}),
+            json!({"type":"response.reasoning_text.delta","item_id":"rs1","content_index":0,"delta":"raw "}),
+            json!({"type":"response.reasoning_text.done","item_id":"rs1","content_index":0,"text":"raw text"}),
+            json!({"type":"response.output_item.done","item":item}),
+            json!({"type":"response.completed","response":{"status":"completed","output":[item, {"type":"reasoning","id":"rs2","summary":[{"type":"summary_text","text":"第二项"}]}]}}),
+        ];
+        let mut parts = std::collections::BTreeMap::<_, String>::new();
+        let mut contexts = Vec::new();
+        for (n, frame) in frames.into_iter().enumerate() {
+            let bytes = response_frame(frame);
+            let mut events = Vec::new();
+            // 每字节分包覆盖非 ASCII 字符；分帧完成前不产生语义增量。
+            for byte in bytes.bytes() {
+                events.extend(decoder.feed(&[byte]).unwrap());
+            }
+            if n == 1 {
+                assert!(
+                    matches!(events.as_slice(), [ModelEvent::ReasoningDelta { delta, .. }] if delta == "检查")
+                );
+            }
+            for event in events {
+                match event {
+                    ModelEvent::ReasoningDelta {
+                        item_id,
+                        kind,
+                        index,
+                        delta,
+                    } => parts
+                        .entry((item_id, kind, index))
+                        .or_default()
+                        .push_str(&delta),
+                    ModelEvent::ProviderContext(context) => contexts.push(context),
+                    _ => panic!("unexpected reasoning event"),
+                }
+            }
+        }
+        assert_eq!(parts.len(), 4);
+        assert_eq!(
+            parts[&("rs1".into(), ReasoningKind::Summary, 0)],
+            "检查依赖"
+        );
+        assert_eq!(parts[&("rs1".into(), ReasoningKind::Summary, 1)], "再验证");
+        assert_eq!(parts[&("rs1".into(), ReasoningKind::Text, 0)], "raw text");
+        assert_eq!(parts[&("rs2".into(), ReasoningKind::Summary, 0)], "第二项");
+        assert_eq!(contexts.len(), 2);
+        assert_eq!(contexts[0], item);
+        assert!(decoder.done());
+    }
+
+    #[test]
+    fn responses_opaque_reasoning_is_context_only_and_failure_keeps_emitted_prefix() {
+        let opaque =
+            json!({"type":"reasoning","id":"opaque","summary":[],"encrypted_content":"private"});
+        let mut decoder = Decoder::Responses(ResponsesDecoder::default());
+        assert!(
+            decoder
+                .feed(
+                    response_frame(json!({"type":"response.output_item.done","item":opaque}))
+                        .as_bytes()
+                )
+                .unwrap()
+                .is_empty()
+        );
+        let events = decoder.feed(response_frame(json!({"type":"response.completed","response":{"status":"completed","output":[opaque]}})).as_bytes()).unwrap();
+        assert!(matches!(events.as_slice(), [ModelEvent::ProviderContext(v)] if v == &opaque));
+
+        let mut decoder = Decoder::Responses(ResponsesDecoder::default());
+        let frames = response_frame(
+            json!({"type":"response.reasoning_summary_text.delta","item_id":"r","summary_index":0,"delta":"partial"}),
+        ) + &response_frame(
+            json!({"type":"response.failed","response":{"error":{"code":"server_error"}}}),
+        );
+        let events = decoder.feed(frames.as_bytes()).unwrap();
+        assert!(
+            matches!(events.as_slice(), [ModelEvent::ReasoningDelta {delta,..}] if delta == "partial")
+        );
+        assert!(decoder.finish().is_err());
+    }
+
+    #[test]
+    fn responses_reasoning_rejects_conflicts_and_unbounded_indices() {
+        let mut decoder = Decoder::Responses(ResponsesDecoder::default());
+        decoder.feed(response_frame(json!({"type":"response.reasoning_summary_text.delta","item_id":"r","summary_index":0,"delta":"prefix"})).as_bytes()).unwrap();
+        assert!(decoder.feed(response_frame(json!({"type":"response.reasoning_summary_text.done","item_id":"r","summary_index":0,"text":"different"})).as_bytes()).is_err());
+        for index in [json!(-1), json!(64), json!(u64::MAX), json!(null)] {
+            let mut decoder = Decoder::Responses(ResponsesDecoder::default());
+            assert!(decoder.feed(response_frame(json!({"type":"response.reasoning_text.delta","item_id":"r","content_index":index,"delta":"x"})).as_bytes()).is_err());
+        }
+    }
+
+    #[test]
+    fn responses_final_reasoning_and_usage_survive_a_tool_budget_error() {
+        let mut decoder = Decoder::Responses(ResponsesDecoder::new(ToolCallLimits {
+            max_calls: 0,
+            ..ToolCallLimits::default()
+        }));
+        let events = decoder.feed(response_frame(json!({
+            "type":"response.completed",
+            "response":{"status":"completed","usage":{"input_tokens":7,"output_tokens":3},"output":[
+                {"type":"reasoning","id":"r","summary":[{"type":"summary_text","text":"checked"}]},
+                {"type":"function_call","call_id":"c","name":"test","arguments":"{}"}
+            ]}
+        })).as_bytes()).unwrap();
+        assert!(
+            matches!(events.as_slice(), [ModelEvent::Usage(usage), ModelEvent::ReasoningDelta {delta, ..}] if usage.input_tokens == 7 && usage.output_tokens == 3 && delta == "checked")
+        );
+        assert_eq!(
+            tool_error_detail(&decoder.take_pending_error().unwrap()).unwrap()["budget"],
+            "calls"
+        );
+        assert!(!decoder.done());
     }
 
     #[test]

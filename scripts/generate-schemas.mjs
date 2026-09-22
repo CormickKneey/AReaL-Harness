@@ -32,6 +32,8 @@ const names = [
     "ItemStartedNotification",
     "ItemCompletedNotification",
     "AgentMessageDeltaNotification",
+    "ReasoningTextDeltaNotification",
+    "ReasoningSummaryTextDeltaNotification",
   ].map((n) => `v2/${n}`),
 ];
 const target = resolve("schemas/app-server");

@@ -296,6 +296,14 @@ pub fn projections() -> (Value, Value) {
         "item/agentMessage/delta".into(),
         object(json!({"threadId":string,"turnId":string,"itemId":string,"delta":string})),
     );
+    notifications.insert(
+        "item/reasoning/textDelta".into(),
+        object(json!({"threadId":string,"turnId":string,"itemId":string,"contentIndex":{"type":"integer","minimum":0},"delta":string})),
+    );
+    notifications.insert(
+        "item/reasoning/summaryTextDelta".into(),
+        object(json!({"threadId":string,"turnId":string,"itemId":string,"summaryIndex":{"type":"integer","minimum":0},"delta":string})),
+    );
     notifications.insert("areal/context/compacted".into(),object(json!({"threadId":string,"beforeBytes":number,"afterBytes":number,"durationMs":number,"usage":nullable(schema::<ModelUsage>())})));
     notifications.insert(
         "areal/tool/cancelled".into(),

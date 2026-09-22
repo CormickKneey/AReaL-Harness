@@ -1,6 +1,6 @@
 use areal_engine::{
     Engine, Limits,
-    model::{Message, Model, ModelCapabilities, ModelStream},
+    model::{Message, Model, ModelCapabilities, ModelEvent, ModelStream, ReasoningKind},
 };
 use areal_protocol::Modality;
 use async_trait::async_trait;
@@ -24,6 +24,13 @@ impl Model for TextModel {
     }
     async fn stream(&self, _: Vec<Message>) -> anyhow::Result<ModelStream> {
         Ok(Box::pin(futures_util::stream::iter([
+            Ok(ModelEvent::reasoning("inspect first")),
+            Ok(ModelEvent::ReasoningDelta {
+                item_id: "response".into(),
+                kind: ReasoningKind::Summary,
+                index: 1,
+                delta: "summary".into(),
+            }),
             Ok("hello".into()),
             Ok(" world".into()),
         ])))
@@ -179,6 +186,8 @@ async fn websocket_lifecycle_matches_pinned_upstream_schemas() {
             "item/started" => "ItemStartedNotification",
             "item/completed" => "ItemCompletedNotification",
             "item/agentMessage/delta" => "AgentMessageDeltaNotification",
+            "item/reasoning/textDelta" => "ReasoningTextDeltaNotification",
+            "item/reasoning/summaryTextDelta" => "ReasoningSummaryTextDeltaNotification",
             other => panic!("unexpected {other}"),
         };
         validate(name, &event["params"]);
@@ -301,7 +310,7 @@ async fn browser_origin_is_limited_to_the_served_loopback_ui() {
     server.await.unwrap().unwrap();
 }
 
-struct StreamingModel(tokio::sync::Mutex<Option<tokio::sync::mpsc::Receiver<String>>>);
+struct StreamingModel(tokio::sync::Mutex<Option<tokio::sync::mpsc::Receiver<ModelEvent>>>);
 #[async_trait]
 impl Model for StreamingModel {
     fn name(&self) -> &str {
@@ -311,12 +320,7 @@ impl Model for StreamingModel {
         let receiver = self.0.lock().await.take().unwrap();
         Ok(Box::pin(futures_util::stream::unfold(
             receiver,
-            |mut receiver| async {
-                receiver
-                    .recv()
-                    .await
-                    .map(|text| (Ok(text.into()), receiver))
-            },
+            |mut receiver| async { receiver.recv().await.map(|event| (Ok(event), receiver)) },
         )))
     }
 }
@@ -358,10 +362,25 @@ async fn resume_during_stream_replaces_baseline_without_duplicate_deltas() {
         .unwrap();
     let mut expected = String::new();
     let mut projection = String::new();
+    let mut reasoning = String::new();
+    let mut summary = String::new();
     for index in 0..32 {
         let text = format!("{index}|");
         expected.push_str(&text);
-        sender.send(text).await.unwrap();
+        sender
+            .send(ModelEvent::reasoning(text.clone()))
+            .await
+            .unwrap();
+        sender
+            .send(ModelEvent::ReasoningDelta {
+                item_id: "response".into(),
+                kind: ReasoningKind::Summary,
+                index: 1,
+                delta: text.clone(),
+            })
+            .await
+            .unwrap();
+        sender.send(ModelEvent::TextDelta(text)).await.unwrap();
         let (response, _) = call(
             &mut socket,
             index + 2,
@@ -370,6 +389,22 @@ async fn resume_during_stream_replaces_baseline_without_duplicate_deltas() {
         )
         .await;
         assert!(response.get("error").is_none(), "{response}");
+        reasoning = response["result"]["thread"]["turns"][0]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["type"] == "reasoning")
+            .flat_map(|item| item["content"].as_array().unwrap())
+            .map(|text| text.as_str().unwrap())
+            .collect();
+        summary = response["result"]["thread"]["turns"][0]["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["type"] == "reasoning")
+            .flat_map(|item| item["summary"].as_array().unwrap())
+            .map(|text| text.as_str().unwrap())
+            .collect();
         projection = response["result"]["thread"]["turns"][0]["items"]
             .as_array()
             .unwrap()
@@ -380,6 +415,12 @@ async fn resume_during_stream_replaces_baseline_without_duplicate_deltas() {
     drop(sender);
     loop {
         let event = receive(&mut socket).await;
+        if event["method"] == "item/reasoning/summaryTextDelta" {
+            summary.push_str(event["params"]["delta"].as_str().unwrap());
+        }
+        if event["method"] == "item/reasoning/textDelta" {
+            reasoning.push_str(event["params"]["delta"].as_str().unwrap());
+        }
         if event["method"] == "item/agentMessage/delta" {
             projection.push_str(event["params"]["delta"].as_str().unwrap());
         }
@@ -388,6 +429,8 @@ async fn resume_during_stream_replaces_baseline_without_duplicate_deltas() {
         }
     }
     assert_eq!(projection, expected);
+    assert_eq!(reasoning, expected);
+    assert_eq!(summary, expected);
     socket.close(None).await.unwrap();
     drop(socket);
     engine.shutdown().await;

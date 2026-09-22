@@ -52,6 +52,14 @@ The Web client owns appearance and navigation; task, permission, and execution s
 
 `--prompt` emits only the current Turn's text, writes Thread ID to stderr and exits nonzero on failure. It skips TUI preferences. See [appearance configuration](configuration.en.md#tui).
 
+## Reasoning and waiting state
+
+Web displays Chat Completions / Responses reasoning in an expandable section, labeled as a reasoning summary when only summary text is available, separately from the answer. While waiting for body text it shows whether reasoning has arrived and how many seconds this page has observed the wait. After 30 seconds it offers a reminder to keep waiting, refresh, or stop. This is a UI reminder, not a model timeout or stop signal. Refresh preserves the observation timer for the same request; reopening the page starts timing from the new observation.
+
+Refresh shows its pending state and replaces history with the latest Core snapshot. Stop shows a pending state after submitting cancellation and waits for Core to settle the task and tools. Controls are disabled while disconnected; the server task may continue. Refresh after reconnecting to confirm state without automatically resending the task.
+
+TUI displays a separate Reasoning / Reasoning summary history block, expandable with Space. Noninteractive text output still contains only the answer. See [Core API](../api/core.en.md#reasoning-progress) for events, recovery, and retry behavior.
+
 ## History, recovery and observability
 
 Core retains original history and tool intents/results; context compaction only changes future model input. Workspace-root `AGENTS.md` is read through Runtime (regular UTF-8 file, up to 32 KiB); nested instructions are not recursively loaded. Default delegation shares the workspace; use [Workgroups](workgroups.en.md) for isolated writes.

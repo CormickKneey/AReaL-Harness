@@ -271,6 +271,32 @@ fn make_block(item: &Item, key: ItemKey, expanded: bool, width: usize) -> Block 
                 .join("\n"),
             false,
         ),
+        Item::Reasoning {
+            summary, content, ..
+        } => (
+            format!(
+                "{} {}{}",
+                if expanded { "[-]" } else { "[+]" },
+                if summary.iter().any(|s| !s.is_empty()) && content.iter().all(String::is_empty) {
+                    "Reasoning summary"
+                } else {
+                    "Reasoning"
+                },
+                if expanded { "" } else { " · Space: expand" }
+            ),
+            Role::Agent,
+            if expanded {
+                summary
+                    .iter()
+                    .chain(content)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            } else {
+                String::new()
+            },
+            true,
+        ),
         Item::AgentMessage { text, .. } => ("Agent".into(), Role::Agent, text.clone(), false),
         Item::AgentMedia {
             modality, media, ..

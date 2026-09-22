@@ -250,7 +250,8 @@ impl Engine {
         // Cut only before a model round or a new user message. A round's opaque
         // reasoning, function calls and results always remain in the same group.
         for index in (previous..items.len()).rev() {
-            if matches!(items[index], Item::ModelContext { value, .. } if value["type"] == "chat_reasoning")
+            if matches!(items[index], Item::Reasoning { .. })
+                || matches!(items[index], Item::ModelContext { value, .. } if value["type"] == "chat_reasoning")
             {
                 continue;
             }
@@ -323,7 +324,7 @@ impl Engine {
                             rejected_tools.push(json!({"name":call.name,"arguments":tools::prefix(&call.arguments,4096)}));
                             anyhow::bail!("context summary must be text without tools");
                         }
-                        ModelEvent::Activity | ModelEvent::ProviderContext(_) => {}
+                        ModelEvent::Activity | ModelEvent::ProviderContext(_) | ModelEvent::ReasoningDelta { .. } => {}
                         ModelEvent::Binary { .. } => anyhow::bail!("context summary must be text"),
                     }
                 }

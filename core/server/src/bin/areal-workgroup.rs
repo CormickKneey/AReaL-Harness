@@ -179,6 +179,7 @@ async fn main() -> Result<()> {
             .with_audit_directory(config.data_dir.join("model-requests"))
             .with_options(ModelOptions {
                 reasoning_effort: config.model.reasoning_effort.clone(),
+                reasoning_summary: config.model.reasoning_summary.clone(),
                 max_output_tokens: config.model.max_output_tokens,
                 temperature: config.model.temperature,
                 top_p: config.model.top_p,

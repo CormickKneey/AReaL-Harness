@@ -7,13 +7,15 @@
 | 入口 | 范围 |
 |---|---|
 | `make verify` | Cordis pin、格式、静态检查、Rust workspace、两套 SDK、Python、文档和 TUI smoke |
-| `make script-test` | 启动器、perf 统计/证据与文档链接/语言配对 |
+| `make script-test` | 启动器、Web 思考/等待/取消投影、perf 统计/证据与文档链接/语言配对 |
 | `make test-core` / `make test-protocol` | Engine / app-server |
 | `make test-concurrency` | 并发原语 |
 | `make verify-runtime` | Runtime 单元测试与真实文件、进程、权限和关闭 smoke |
 | `make verify-harness` | verify 后顺序运行 Runtime、完整 Harness、桌面 API 和 Workgroup smoke |
 | `make examples-desktop-api` | [直接 API、CLI、Skill 与搬迁打包产物](../examples/desktop-api.md) |
 | `make workgroup-smoke` | 独立 Runtime 写入、组合验收、命令期限与失败后结算 |
+
+快照格式变更须运行 `make verify-harness`：Harness 与插件 smoke 核对写入版本，桌面搬迁测试同时核对发行 manifest、`areal/server/status.stateVersion` 与实际快照版本一致。
 
 原生 smoke 需要 macOS Seatbelt，不能用无沙箱执行代替失败。Linux CI 使用受控容器。默认 `cargo test` 不运行显式忽略的原生 Workgroup 和容量用例。
 

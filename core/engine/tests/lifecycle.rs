@@ -615,69 +615,71 @@ async fn rejected_child_input_does_not_consume_a_thread_slot_or_leave_history() 
 }
 
 #[tokio::test]
-async fn version_one_text_sessions_load_and_upgrade_on_next_write() {
-    let dir = tempfile::tempdir().unwrap();
-    let thread_id = uuid::Uuid::new_v4().to_string();
-    let thread = Thread {
-        goals: Default::default(),
-        goal_owner: None,
-        desktop: None,
-        id: thread_id.clone(),
-        session_id: thread_id.clone(),
-        parent_thread_id: None,
-        preview: "old".into(),
-        model_provider: "configured".into(),
-        created_at: 1,
-        updated_at: 1,
-        status: ThreadStatus::Idle,
-        cwd: "/old".into(),
-        cli_version: "0.1.0".into(),
-        source: "appServer".into(),
-        ephemeral: false,
-        context_checkpoint: None,
-        dynamic_tools: Vec::new(),
-        turns: vec![Turn {
-            goal: None,
-            instruction_snapshot: None,
-            configuration: None,
-            id: uuid::Uuid::new_v4().to_string(),
-            items: vec![
-                Item::UserMessage {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    content: vec![Input::text("old")],
-                },
-                Item::AgentMessage {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    text: "reply:old".into(),
-                },
-            ],
-            status: TurnStatus::Completed,
-            error: None,
-            usage: None,
-        }],
-    };
-    std::fs::write(
-        dir.path().join(format!("{thread_id}.json")),
-        serde_json::to_vec(&serde_json::json!({"version":1,"thread":thread})).unwrap(),
-    )
-    .unwrap();
-    let (tx, _rx) = mpsc::unbounded_channel();
-    let model = Arc::new(Controlled {
-        entered: tx,
-        calls: AtomicUsize::new(0),
-    });
-    let engine = Engine::open(dir.path(), model, Limits::default()).unwrap();
-    assert_eq!(engine.read(&thread_id, true).await.unwrap().turns.len(), 1);
-    engine
-        .start(&thread_id, vec![Input::text("new")])
-        .await
+async fn legacy_text_sessions_load_and_upgrade_on_next_write() {
+    for version in [1, 7] {
+        let dir = tempfile::tempdir().unwrap();
+        let thread_id = uuid::Uuid::new_v4().to_string();
+        let thread = Thread {
+            goals: Default::default(),
+            goal_owner: None,
+            desktop: None,
+            id: thread_id.clone(),
+            session_id: thread_id.clone(),
+            parent_thread_id: None,
+            preview: "old".into(),
+            model_provider: "configured".into(),
+            created_at: 1,
+            updated_at: 1,
+            status: ThreadStatus::Idle,
+            cwd: "/old".into(),
+            cli_version: "0.1.0".into(),
+            source: "appServer".into(),
+            ephemeral: false,
+            context_checkpoint: None,
+            dynamic_tools: Vec::new(),
+            turns: vec![Turn {
+                goal: None,
+                instruction_snapshot: None,
+                configuration: None,
+                id: uuid::Uuid::new_v4().to_string(),
+                items: vec![
+                    Item::UserMessage {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        content: vec![Input::text("old")],
+                    },
+                    Item::AgentMessage {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        text: "reply:old".into(),
+                    },
+                ],
+                status: TurnStatus::Completed,
+                error: None,
+                usage: None,
+            }],
+        };
+        std::fs::write(
+            dir.path().join(format!("{thread_id}.json")),
+            serde_json::to_vec(&serde_json::json!({"version":version,"thread":thread})).unwrap(),
+        )
         .unwrap();
-    settled(&engine, &thread_id).await;
-    engine.shutdown().await;
-    drop(engine);
-    let record: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(dir.path().join(format!("{thread_id}.json"))).unwrap(),
-    )
-    .unwrap();
-    assert_eq!(record["version"], 7);
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let model = Arc::new(Controlled {
+            entered: tx,
+            calls: AtomicUsize::new(0),
+        });
+        let engine = Engine::open(dir.path(), model, Limits::default()).unwrap();
+        assert_eq!(engine.read(&thread_id, true).await.unwrap().turns.len(), 1);
+        engine
+            .start(&thread_id, vec![Input::text("new")])
+            .await
+            .unwrap();
+        settled(&engine, &thread_id).await;
+        engine.shutdown().await;
+        drop(engine);
+        let record: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(dir.path().join(format!("{thread_id}.json"))).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(record["version"], 8);
+    }
 }

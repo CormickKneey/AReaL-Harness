@@ -69,7 +69,7 @@ impl Engine {
             g.iter()
                 .any(|g| g["status"] == "running" || g["cleanupConfirmed"] != true)
         });
-        json!({"compactions":compacting,"workgroups":groups,"apiVersion":API_VERSION,"stateVersion":7,"productVersion":env!("CARGO_PKG_VERSION"),"draining":self.desktop.lifecycle.draining.load(Ordering::Acquire),"closed":self.is_closed(),"acceptingWork":self.accepting_work(),"activeTurns":active,"resources":resources,"unresolvedTools":unknown,"runtime":runtime,"capacity":{"threads":cells.len(),"maxThreads":self.limits.max_threads,"activeTurns":self.limits.max_active_turns-self.active_turns.available_permits(),"maxActiveTurns":self.limits.max_active_turns,"historyBytesPerThread":self.limits.max_history_bytes,"blobBytes":512*1024*1024u64},"restartSafe":active.is_empty()&&resources.is_empty()&&unknown.is_empty()&&compacting.is_empty()&&!unsettled})
+        json!({"compactions":compacting,"workgroups":groups,"apiVersion":API_VERSION,"stateVersion":crate::store::STATE_VERSION,"productVersion":env!("CARGO_PKG_VERSION"),"draining":self.desktop.lifecycle.draining.load(Ordering::Acquire),"closed":self.is_closed(),"acceptingWork":self.accepting_work(),"activeTurns":active,"resources":resources,"unresolvedTools":unknown,"runtime":runtime,"capacity":{"threads":cells.len(),"maxThreads":self.limits.max_threads,"activeTurns":self.limits.max_active_turns-self.active_turns.available_permits(),"maxActiveTurns":self.limits.max_active_turns,"historyBytesPerThread":self.limits.max_history_bytes,"blobBytes":512*1024*1024u64},"restartSafe":active.is_empty()&&resources.is_empty()&&unknown.is_empty()&&compacting.is_empty()&&!unsettled})
     }
     pub async fn drain(self: &Arc<Self>, strategy: String, timeout_ms: u64) -> Result<Value> {
         if !matches!(strategy.as_str(), "wait" | "cancel") || timeout_ms > 60000 {
@@ -160,7 +160,7 @@ impl Engine {
                     "responses" => model::ModelProtocol::Responses.capabilities(),
                     _ => model::ModelProtocol::ChatCompletions.capabilities(),
                 };
-                data.push(json!({"providerId":p.id,"providerRevision":p.revision,"modelId":name,"transport":p.protocol,"input":capabilities.input,"output":capabilities.output,"available":result.is_ok(),"credentialState":self.provider_view(p)["credentialState"],"contextWindowTokens":null,"parameterCapabilities":["temperature","maxOutputTokens","reasoningEffort"],"connectionState":"unchecked"}));
+                data.push(json!({"providerId":p.id,"providerRevision":p.revision,"modelId":name,"transport":p.protocol,"input":capabilities.input,"output":capabilities.output,"available":result.is_ok(),"credentialState":self.provider_view(p)["credentialState"],"contextWindowTokens":null,"parameterCapabilities":if p.protocol == "responses" {vec!["temperature","maxOutputTokens","reasoningEffort","reasoningSummary"]} else {vec!["temperature","maxOutputTokens","reasoningEffort"]},"connectionState":"unchecked"}));
             }
         }
         json!({"data":data})

@@ -48,7 +48,7 @@ impl Model for Fixture {
                     .and_then(|s| serde_json::from_str(s).ok())
             })
             .next();
-        let mut out = vec![];
+        let mut out = vec![Ok(ModelEvent::reasoning("inspect goal progress"))];
         if self.child && call == 0 {
             assert!(has("agent_spawn"));
             out.push(Ok(ModelEvent::ToolCall(ToolCall {
@@ -130,6 +130,7 @@ async fn two_turn_goal_completes_once_and_retries_return_original_receipt() {
     assert_eq!(done["goal"]["usage"]["cachedInputTokens"], 12);
     let history = e.read(&t.id, true).await.unwrap();
     assert_eq!(history.turns.len(), 2);
+    assert!(history.turns.iter().all(|turn| turn.items.iter().any(|item| matches!(item, areal_protocol::Item::Reasoning {content, ..} if content == &["inspect goal progress"]))));
     assert_eq!(
         history.turns[1].goal.as_ref().unwrap().origin,
         "continuation"

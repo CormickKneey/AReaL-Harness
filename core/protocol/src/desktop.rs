@@ -65,6 +65,8 @@ pub struct ModelParameters {
     pub temperature: Option<f64>,
     pub max_output_tokens: Option<u64>,
     pub reasoning_effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_summary: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, schemars::JsonSchema)]

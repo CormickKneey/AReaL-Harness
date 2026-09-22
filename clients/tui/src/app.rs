@@ -1561,6 +1561,42 @@ impl App {
                     }
                 }
             }
+            "areal/model/completionDiscarded" => {
+                if let Some(ids) = p["itemIds"].as_array() {
+                    for turn in &mut thread.turns {
+                        turn.items
+                            .retain(|item| !ids.iter().any(|id| id.as_str() == Some(item.id())));
+                    }
+                    self.histories.entry(id.into()).or_default().invalidate();
+                }
+            }
+            "item/reasoning/textDelta" | "item/reasoning/summaryTextDelta" => {
+                let is_summary = method == "item/reasoning/summaryTextDelta";
+                if let (Some(turn_id), Some(item_id), Some(delta), Some(index)) = (
+                    p["turnId"].as_str(),
+                    p["itemId"].as_str(),
+                    p["delta"].as_str(),
+                    p[if is_summary {
+                        "summaryIndex"
+                    } else {
+                        "contentIndex"
+                    }]
+                    .as_u64()
+                    .filter(|i| *i < 64),
+                ) && let Some(turn) = thread.turns.iter_mut().find(|t| t.id == turn_id)
+                    && let Some(Item::Reasoning {
+                        content, summary, ..
+                    }) = turn.items.iter_mut().find(|i| i.id() == item_id)
+                {
+                    let parts = if is_summary { summary } else { content };
+                    parts.resize_with(parts.len().max(index as usize + 1), String::new);
+                    parts[index as usize].push_str(delta);
+                    self.histories
+                        .entry(id.into())
+                        .or_default()
+                        .changed(turn_id, item_id);
+                }
+            }
             "item/agentMessage/delta" => {
                 if let Some(turn) = thread
                     .turns
@@ -1650,6 +1686,25 @@ pub(crate) mod tests {
     pub fn thread(id: &str, parent: Option<&str>) -> Thread {
         serde_json::from_value(json!({"id":id,"sessionId":"session","parentThreadId":parent,"preview":format!("Task {id}"),"modelProvider":"fixture","createdAt":0,"updatedAt":0,"status":{"type":"idle"},"cwd":"/workspace","cliVersion":"test","source":"test","ephemeral":false,"turns":[{"id":"turn","items":[],"status":"completed","error":null}]})).unwrap()
     }
+    #[test]
+    fn reasoning_deltas_and_discard_update_the_authoritative_projection() {
+        let mut app = App::new(Preferences::default());
+        app.snapshot(thread("root", None));
+        app.receive(json!({"method":"item/started","params":{"threadId":"root","turnId":"turn","item":{"type":"reasoning","id":"r","summary":[],"content":[""]}}})).unwrap();
+        for delta in ["检查", "完成"] {
+            app.receive(json!({"method":"item/reasoning/textDelta","params":{"threadId":"root","turnId":"turn","itemId":"r","contentIndex":0,"delta":delta}})).unwrap();
+        }
+        assert!(
+            matches!(&app.threads["root"].turns[0].items[0], Item::Reasoning {content,..} if content == &["检查完成"])
+        );
+        app.receive(json!({"method":"item/reasoning/summaryTextDelta","params":{"threadId":"root","turnId":"turn","itemId":"r","summaryIndex":1,"delta":"摘要"}})).unwrap();
+        assert!(
+            matches!(&app.threads["root"].turns[0].items[0], Item::Reasoning {summary,..} if summary == &["", "摘要"])
+        );
+        app.receive(json!({"method":"areal/model/completionDiscarded","params":{"threadId":"root","itemIds":["r"]}})).unwrap();
+        assert!(app.threads["root"].turns[0].items.is_empty());
+    }
+
     #[test]
     fn completion_and_picker_keys_preserve_drafts_and_do_not_send_prompts() {
         let mut app = App::new(Preferences::default());

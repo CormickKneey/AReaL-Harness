@@ -6,7 +6,7 @@
 
 | 能力 | 实现与入口 |
 |---|---|
-| 会话与模型 | 持久 Thread/Turn、流式事件、追加输入、取消、恢复；Chat Completions / Responses，模态取决于 adapter 和模型。[客户端](guides/clients.md) |
+| 会话与模型 | 持久 Thread/Turn、流式正文、Chat Completions 思考与 Responses 思考摘要/文本事件、追加输入、取消、恢复；Chat Completions / Responses，模态取决于 adapter 和模型。[客户端](guides/clients.md) |
 | 文件与进程 | 条件文件写入、命令、stdin、PTY、有界输出、Scope 权限收窄及清理。[Runtime](api/runtime.md) |
 | 工具扩展 | 命令工具、hooks、客户端动态工具、MCP stdio/Streamable HTTP、可信 Node 插件 Host。[工具](guides/tools.md) |
 | 多 Agent | 默认模型委派、独立历史、共享工作区、阶段报告和结果汇总。[Agent 设计](design/multi-agent.md) |
