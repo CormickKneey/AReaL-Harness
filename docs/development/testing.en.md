@@ -29,6 +29,8 @@ Independent macOS Python/scratch regression (local model, no provider credential
 python3 scripts/native-python-smoke.py --bin-dir target/debug
 ```
 
+`make harness-smoke` (called by `make verify-harness` in macOS CI) includes this regression. Shared resolver tests cover installed CLT without a `developer_dir` link and reject interpreters outside supported frameworks.
+
 ## Recovery and research agents
 
 ```sh

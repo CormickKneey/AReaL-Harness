@@ -24,6 +24,7 @@ AReaL-Harness 采用 **Clients → Core → Runtime** 分层。Core 是会话、
 | `core/sdk-typescript` | 选定 DSH 工具/文件服务适配和独立 Node Host |
 | `runtime/protocol`, `runtime/client` | 独立执行契约与 Rust 私有管道客户端 |
 | `runtime/supervisor` | Scope、权限收窄、祖先预算、去重与清理 |
+| `runtime/host-tools` | Core 与原生后端共用的可信宿主工具发现；不执行任务、不授予权限 |
 | `runtime/exec-native`, `runtime/fs-helper` | OS 沙箱、进程/PTY 与描述符文件操作 |
 | `runtime/daemon` | 二进制、Cordis 装配与私有 RPC |
 | `runtime/sdk-typescript` | 可信宿主独占连接的底层 Node.js SDK |

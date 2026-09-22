@@ -26,10 +26,7 @@ use tokio_util::sync::CancellationToken;
 // 仅使用策略已允许的系统 Python，不继承宿主 PATH 或开放 Homebrew。
 fn prepare_system_python(execution: &mut Execution) {
     #[cfg(target_os = "macos")]
-    if let Ok(python) = std::fs::canonicalize("/var/select/developer_dir/usr/bin/python3") {
-        if !sandbox::is_system_python(&python) {
-            return;
-        }
+    if let Ok(python) = areal_runtime_host_tools::system_python() {
         if execution
             .argv
             .first()

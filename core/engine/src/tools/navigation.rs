@@ -92,22 +92,12 @@ pub(super) async fn invoke(
 }
 
 pub(super) fn python_executable() -> rt::Result<String> {
-    // macOS 的 /usr/bin/python3 是 xcrun shim，会尝试读开发配置和写共享缓存。
-    // 宿主只解析系统选定的解释器；用户脚本及文件操作仍由 Runtime 沙箱执行。
-    #[cfg(target_os = "macos")]
-    {
-        std::fs::canonicalize("/var/select/developer_dir/usr/bin/python3")
-            .ok()
-            .and_then(|path| path.into_os_string().into_string().ok())
-            .ok_or_else(|| {
-                rt::Error::new(
-                    rt::ErrorCode::Unavailable,
-                    "system Python is unavailable; select an installed Xcode or Command Line Tools",
-                )
-            })
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        Ok("/usr/bin/python3".into())
-    }
+    areal_runtime_host_tools::system_python()
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|error| {
+            rt::Error::new(
+                rt::ErrorCode::Unavailable,
+                format!("system Python is unavailable: {error}"),
+            )
+        })
 }

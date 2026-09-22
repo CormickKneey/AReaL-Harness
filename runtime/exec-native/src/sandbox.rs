@@ -57,36 +57,6 @@ const BASE: &str = r#"
 (allow file-read-data file-write-data (regex #"^/dev/fd/[012]$"))
 "#;
 
-// 与 BASE 的 Python framework 边界一致；拒绝前缀相似的应用及 framework 兄弟目录。
-#[cfg(target_os = "macos")]
-pub(crate) fn is_system_python(python: &Path) -> bool {
-    if python
-        .starts_with("/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework")
-    {
-        return true;
-    }
-    let Ok(relative) = python.strip_prefix("/Applications") else {
-        return false;
-    };
-    let mut components = relative.components();
-    let Some(app) = components.next().and_then(|part| part.as_os_str().to_str()) else {
-        return false;
-    };
-    let valid_name = app == "Xcode.app"
-        || app
-            .strip_prefix("Xcode_")
-            .and_then(|name| name.strip_suffix(".app"))
-            .is_some_and(|version| {
-                version
-                    .split('.')
-                    .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
-            });
-    valid_name
-        && components
-            .as_path()
-            .starts_with("Contents/Developer/Library/Frameworks/Python3.framework")
-}
-
 pub fn supported(profile: Profile) -> Result<()> {
     match profile {
         Profile::Native if cfg!(target_os = "macos") => Ok(()),

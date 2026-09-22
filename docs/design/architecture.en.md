@@ -24,6 +24,7 @@ AReaL-Harness follows **Clients → Core → Runtime**. Core exclusively owns se
 | `core/sdk-typescript` | Selected DSH tools/filesystem adaptation and independent Node Host |
 | `runtime/protocol`, `runtime/client` | Independent execution contract and Rust private-pipe client |
 | `runtime/supervisor` | Scopes, narrowing permissions, ancestor budgets, deduplication and cleanup |
+| `runtime/host-tools` | Trusted host tool discovery shared by Core and the native backend; no task execution or permission grants |
 | `runtime/exec-native`, `runtime/fs-helper` | OS sandbox, processes/PTYs and descriptor-based file operations |
 | `runtime/daemon` | Binary, Cordis assembly and private RPC |
 | `runtime/sdk-typescript` | Low-level Node.js SDK for a trusted host with an exclusive connection |

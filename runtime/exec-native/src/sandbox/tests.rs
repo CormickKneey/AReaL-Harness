@@ -194,7 +194,7 @@ fn sandbox_cannot_be_replaced_and_caller_arguments_cannot_be_options() {
 fn resolved_system_python_reads_workspace_without_expanding_file_permissions() {
     let fixture = Fixture::new();
     let execution = fixture.execution(vec![
-        std::fs::canonicalize("/var/select/developer_dir/usr/bin/python3")
+        areal_runtime_host_tools::system_python()
             .unwrap()
             .to_str()
             .unwrap()
@@ -225,7 +225,10 @@ fn versioned_xcode_python_policy_preserves_framework_boundary() {
     ] {
         let framework = format!("{app}/Contents/Developer/Library/Frameworks/Python3.framework");
         let python = format!("/Applications/{framework}/Versions/3.9/bin/python3.9");
-        assert_eq!(is_system_python(Path::new(&python)), allowed);
+        assert_eq!(
+            areal_runtime_host_tools::is_macos_system_python(Path::new(&python)),
+            allowed
+        );
         let local = fixture.root.join(&framework);
         fs::create_dir_all(&local).unwrap();
         let program = local.join("python-fixture");
@@ -258,8 +261,8 @@ fn versioned_xcode_python_policy_preserves_framework_boundary() {
             }
             assert!(!local.join("new-file").exists());
         }
-        assert!(!is_system_python(Path::new(&format!(
-            "/Applications/{framework}-sibling/bin/python3"
-        ))));
+        assert!(!areal_runtime_host_tools::is_macos_system_python(
+            Path::new(&format!("/Applications/{framework}-sibling/bin/python3"))
+        ));
     }
 }
