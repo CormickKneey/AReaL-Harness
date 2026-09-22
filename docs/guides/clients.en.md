@@ -47,6 +47,8 @@ The Web client owns appearance and navigation; task, permission, and execution s
 | Control | Behavior |
 |---|---|
 | Enter | Start a Turn when idle; steer while running |
+| ←/→, Ctrl-A / Ctrl-E | In the editor, move by grapheme or jump to the current line start / end |
+| Ctrl-D / Delete, Backspace | Delete the grapheme at / before the cursor; empty input or the corresponding boundary is a no-op, without exiting |
 | `/`, Tab, Esc | Slash candidates, completion and dismissal |
 | Ctrl-C / Ctrl-Q | Pause the current Goal and cancel its Turn (interrupt the Turn without a Goal) / exit |
 | Ctrl-R | Reconnect and restore a snapshot without replay |

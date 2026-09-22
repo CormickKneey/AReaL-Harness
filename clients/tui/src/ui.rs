@@ -738,21 +738,7 @@ fn input_view(frame: &mut Frame, area: Rect, app: &App, p: Palette) {
         p,
     );
     let inner = block.inner(area);
-    let text = safe_text(&app.input)
-        .replace('\n', "↵")
-        .replace('\t', "    ");
-    let capacity = usize::from(inner.width.saturating_sub(1));
-    let mut width = 0;
-    let mut tail = Vec::new();
-    for g in text.graphemes(true).rev() {
-        if width + g.width() > capacity {
-            break;
-        }
-        width += g.width();
-        tail.push(g);
-    }
-    tail.reverse();
-    let text = tail.concat();
+    let (text, cursor_column) = input_window(&app.input, app.input_cursor, inner.width);
     frame.render_widget(Paragraph::new(text).block(block), area);
     if app.focus == Focus::Input
         && app.theme_original.is_none()
@@ -760,8 +746,37 @@ fn input_view(frame: &mut Frame, area: Rect, app: &App, p: Palette) {
         && inner.width > 0
         && inner.height > 0
     {
-        frame.set_cursor_position((inner.x + width as u16, inner.y));
+        frame.set_cursor_position((inner.x + cursor_column, inner.y));
     }
+}
+
+fn input_window(input: &str, cursor: usize, width: u16) -> (String, u16) {
+    let display = |text: &str| safe_text(text).replace('\n', "↵").replace('\t', "    ");
+    let before = display(&input[..cursor]);
+    let after = display(&input[cursor..]);
+    let width = usize::from(width);
+    // 为光标处的完整字素留出空间，窄窗口也不把双宽字符切成两半。
+    let reserved = after.graphemes(true).next().map_or(1, |g| g.width().max(1));
+    let capacity = width.saturating_sub(reserved);
+    let mut cursor_column = 0;
+    let mut visible = Vec::new();
+    for g in before.graphemes(true).rev() {
+        if cursor_column + g.width() > capacity {
+            break;
+        }
+        cursor_column += g.width();
+        visible.push(g);
+    }
+    visible.reverse();
+    let mut used = cursor_column;
+    for g in after.graphemes(true) {
+        if used + g.width() > width {
+            break;
+        }
+        used += g.width();
+        visible.push(g);
+    }
+    (visible.concat(), cursor_column as u16)
 }
 
 fn completion_popup(frame: &mut Frame, input: Rect, body: Rect, app: &App, p: Palette) {
@@ -940,7 +955,7 @@ fn theme_picker(frame: &mut Frame, area: Rect, app: &App, p: Palette) {
     );
 }
 fn help_page(frame: &mut Frame, area: Rect, p: Palette) {
-    let text = "F1 /help: help · F2 /theme: theme picker\nF3 /topology: agents · F4 /groups: workgroups\nF5 /sessions: switch session · F6 /model: switch model\n/goal OBJECTIVE · /goal-pause · /goal-resume · /goal-clear\n/goal-edit OBJECTIVE · /goal-budget TOKENS|none\n/new · /tasks · /sessions · /open ID · /spawn PROMPT · /agents\n/group ID · /group-start JSON_FILE · /group-revise JSON_FILE\n/group-cancel ID · /welcome · /quit\n\n/: command suggestions · ↑↓ select · Tab complete\nTab / Shift-Tab: input, right panel, history focus\nNavigation: arrows select/expand, Enter open, r refresh\nHistory: ↑↓ select, Enter/Space expand, ←→ collapse/expand\nPgUp/PgDn scroll, Home/End, click a summary to expand\nCtrl-O /details: compact or detailed records\n/restore-input: restore failed submission; --mouse=false: native selection\nCtrl-C: interrupt the input target's active Turn\nCtrl-R: reconnect · Ctrl-Q: quit\n\nRead % describes loaded history; session plan counts are separate.\nTask trees include historical child sessions. Snapshot nodes can lag.\nPending questions/approvals are shown here; respond in the Web client.\nEsc: return to input";
+    let text = "F1 /help: help · F2 /theme: theme picker\nF3 /topology: agents · F4 /groups: workgroups\nF5 /sessions: switch session · F6 /model: switch model\n/goal OBJECTIVE · /goal-pause · /goal-resume · /goal-clear\n/goal-edit OBJECTIVE · /goal-budget TOKENS|none\n/new · /tasks · /sessions · /open ID · /spawn PROMPT · /agents\n/group ID · /group-start JSON_FILE · /group-revise JSON_FILE\n/group-cancel ID · /welcome · /quit\n\n/: command suggestions · ↑↓ select · Tab complete\nTab / Shift-Tab: input, right panel, history focus\nInput: ←→ move · Ctrl-A/E line start/end\nCtrl-D/Delete: delete next · Backspace: delete previous\nNavigation: arrows select/expand, Enter open, r refresh\nHistory: ↑↓ select, Enter/Space expand, ←→ collapse/expand\nPgUp/PgDn scroll, Home/End, click a summary to expand\nCtrl-O /details: compact or detailed records\n/restore-input: restore failed submission; --mouse=false: native selection\nCtrl-C: interrupt the input target's active Turn\nCtrl-R: reconnect · Ctrl-Q: quit\n\nRead % describes loaded history; session plan counts are separate.\nTask trees include historical child sessions. Snapshot nodes can lag.\nPending questions/approvals are shown here; respond in the Web client.\nEsc: return to input";
     frame.render_widget(
         Paragraph::new(text)
             .wrap(Wrap { trim: false })
@@ -964,6 +979,54 @@ mod tests {
     use super::*;
     use crate::{app::tests::thread, theme::Preferences};
     use ratatui::{Terminal, backend::TestBackend};
+    #[test]
+    fn input_window_tracks_cursor_and_keeps_wide_graphemes_visible() {
+        for (text, cursor, width, visible, column) in [
+            ("abcdef", 0, 4, "abcd", 0),
+            ("abcdef", 3, 4, "abcd", 3),
+            ("abcdef", 4, 4, "bcde", 3),
+            ("abcdef", 6, 4, "def", 3),
+            ("ab中文z", 2, 4, "ab中", 2),
+            ("ab中文z", 5, 4, "中文", 2),
+            ("e\u{301}👩‍💻x", 3, 4, "e\u{301}👩‍💻x", 1),
+            ("a\t中\nz", 5, 10, "a    中↵z", 7),
+            ("中", 0, 1, "", 0),
+            ("中", 3, 0, "", 0),
+        ] {
+            assert_eq!(input_window(text, cursor, width), (visible.into(), column));
+        }
+    }
+    #[test]
+    fn input_renders_cursor_at_display_column_after_moving_and_resizing() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        use ratatui::backend::Backend;
+        let mut app = App::new(Preferences::default());
+        app.paste("ab中文z");
+        app.key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))
+            .unwrap();
+        app.key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))
+            .unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(12, 3)).unwrap();
+        let palette = app.prefs.palette();
+        terminal
+            .draw(|f| input_view(f, f.area(), &app, palette))
+            .unwrap();
+        assert_eq!(terminal.backend_mut().get_cursor_position().unwrap().x, 5);
+        terminal.backend_mut().resize(6, 3);
+        terminal
+            .draw(|f| input_view(f, f.area(), &app, palette))
+            .unwrap();
+        assert_eq!(terminal.backend_mut().get_cursor_position().unwrap().x, 3);
+        assert_eq!(terminal.backend().buffer()[(1, 1)].symbol(), "中");
+        assert_eq!(terminal.backend().buffer()[(3, 1)].symbol(), "文");
+        app.key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL))
+            .unwrap();
+        terminal
+            .draw(|f| input_view(f, f.area(), &app, palette))
+            .unwrap();
+        assert_eq!(terminal.backend_mut().get_cursor_position().unwrap().x, 1);
+        assert!(screen(&terminal).contains("ab中"));
+    }
     fn screen(terminal: &Terminal<TestBackend>) -> String {
         terminal
             .backend()

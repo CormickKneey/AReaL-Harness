@@ -217,6 +217,16 @@ try:
     else:
         os.write(master, b"\x1b")
         expect(rb"Models.*Enter apply", absent=True)
+    # 验证终端按键解码与中间编辑后实际提交的文本，包括括号粘贴。
+    os.write(master, b"Xpty-curor!\x01\x04\x05\x1b[D\x1b[3~")
+    os.write(master, b"\x1b[D\x1b[D\x1b[D\x1b[C\x1b[200~s\x1b[201~\r")
+    expect(rb"reply:pty-cursor")
+    expect(rb"Completed")
+    os.write(master, "中👩‍💻文".encode() + b"\x1b[D\x7f\x01\x04\x05")
+    os.write(master, b"\x1b[200~-unicode\x1b[201~\r")
+    # 模拟器以终端单元格存储文本，中文后保留一个占位空格。
+    expect("reply:文 -unicode".encode())
+    expect(rb"Completed")
     offset = len(output)
     os.write(master, b"pty-hello\r")
     expect(rb"reply:pty-hello", offset)
@@ -318,7 +328,7 @@ try:
             "PASS compact traces: hidden payloads, second-record mouse hit, third-record keyboard expansion, failure survives reconnect"
         )
     print(
-        "PASS full-screen PTY: welcome, slash completion, session/model pickers, theme persistence, long history, reconnect, topology, child navigation, resize, cancellation and terminal cleanup"
+        "PASS full-screen PTY: welcome, input cursor editing and Unicode deletion, slash completion, session/model pickers, theme persistence, long history, reconnect, topology, child navigation, resize, cancellation and terminal cleanup"
     )
 finally:
     if child.poll() is None:
