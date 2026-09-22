@@ -41,19 +41,19 @@ The secret-reading command works in Bash and Zsh; type the key and press Enter. 
 
 ## Writable workspace and Web
 
-Keep the workspace outside trusted binaries and the Core data directory:
+Local launch defaults to YOLO, including writes outside the workspace and tool networking. Keep Core data outside the workspace:
 
 ```sh
 mkdir -p ../areal-example-workspace
 printf 'hello\n' > ../areal-example-workspace/hello.txt
-make tui ARGS='--workspace ../areal-example-workspace --allow-write'
+make tui ARGS='--workspace ../areal-example-workspace'
 ```
 
-Tool networking is denied by default; deployment may explicitly enable `--allow-network`. Core's model connection is separate from this tool permission.
+To request approvals, set `ASK_PERMISSIONS=1` before launch or configure `[permissions] mode = "ASK_PERMISSIONS"`; see [permissions](configuration.en.md#permissions). TUI `/permissions` shows the effective policy. Existing shared services require explicit restart after permission changes.
 
 ```sh
 python3 -I -S scripts/launch.py \
-  --workspace ../areal-example-workspace --allow-write \
+  --workspace ../areal-example-workspace \
   --data-dir ../areal-example-state --listen 127.0.0.1:4500
 ```
 

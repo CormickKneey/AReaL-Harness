@@ -202,20 +202,20 @@ impl Engine {
 
 impl Engine {
     pub(crate) fn command_scratch(&self, cell: &Cell) -> Option<PathBuf> {
-        self.runtime.as_ref()?.command_scratch.as_ref().map(|root| {
-            if cell.research {
-                root.join(format!("agent-{}", cell.id))
-            } else {
-                root.clone()
-            }
-        })
+        self.runtime
+            .as_ref()?
+            .command_scratch
+            .as_ref()
+            .map(|root| root.join(format!("agent-{}", cell.id)))
     }
     pub(crate) fn scratch_uri(&self, cell: &Cell) -> String {
-        if cell.research {
-            format!("workspace://scratch/agent-{}", cell.id)
-        } else {
-            "workspace://scratch".into()
-        }
+        self.command_scratch(cell)
+            .and_then(|path| {
+                self.runtime
+                    .as_ref()
+                    .and_then(|runtime| resource_uri(&path.to_string_lossy(), runtime).ok())
+            })
+            .unwrap_or_else(|| format!("workspace://scratch/agent-{}", cell.id))
     }
     pub(crate) fn scope_permissions(&self, cell: &Cell) -> rt::PermissionRequest {
         if cell.research {

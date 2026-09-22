@@ -29,7 +29,9 @@ macOS Python/scratch 的独立回归（本地模型，不需要供应商密钥�
 python3 scripts/native-python-smoke.py --bin-dir target/debug
 ```
 
-`make harness-smoke`（由 macOS CI 的 `make verify-harness` 调用）包含此回归。共享解析器测试覆盖已安装 CLT 但无 `developer_dir` 链接的发现路径，并验证 framework 外的解释器被拒绝。
+`make harness-smoke`（由 macOS CI 的 `make verify-harness` 调用）包含此回归。它在默认 YOLO 和显式 native 沙箱下分别验证自动 scratch 与自定义 `--scratch`：两者均暴露 `verify_command`，并在 Thread 私有子目录保存退出码为 0 和 7 的验证回执。共享解析器测试覆盖已安装 CLT 但无 `developer_dir` 链接的发现路径，并验证 framework 外的解释器被拒绝。
+
+`make workgroup-smoke` 同时验证 Worker 命令的 `TMPDIR` 位于私有工作区下的 `.scratch/agent-<threadId>`，该目录可写且 Python 字节码写入被禁用。
 
 ## 恢复与研究 Agent
 
@@ -96,5 +98,7 @@ PR、`main` 推送和手动触发运行完整检查，避免同一功能分支�
 `make local-service-smoke` 使用临时目录、真实 Core/Runtime、两个 PTY 和 HTTP 模型 fixture，验证并发 ensure、工作区/符号链接身份、配置冲突、认证、Web 发现、窗口退出、忙碌拒绝停止/显式取消、历史保留、launcher/host 强杀清理与重新连接。已纳入 `make harness-smoke`。`make desktop-schemas` 同时导出 `schemas/local-service-v1.json`。
 
 PTY helper 在等待 CLI、服务停止和窗口退出时持续消费终端输出，避免缓冲区背压阻塞 TUI。`make script-test` 包含退出前输出超过 PTY 容量的确定性回归。
+
+TUI 与共享服务 PTY 检查共用终端画面解析器，处理增量重绘中保留的字符及分片 UTF-8/控制序列。模型热更新检查等待标题中的新模型名称，再确认服务 generation 未改变；不依赖原始输出字节或短暂状态通知。
 
 `cargo test --locked -p areal-engine --test model_reload` 验证活动子任务和队列保持旧模型、新提交使用新默认值，以及忙碌 `ifIdle` 拒绝不关闭准入。本地服务 smoke 同时覆盖非法编辑、队列跨重启恢复、工作区定位和限额变化后的空闲重启。

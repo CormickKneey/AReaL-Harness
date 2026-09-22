@@ -266,3 +266,32 @@ fn versioned_xcode_python_policy_preserves_framework_boundary() {
         ));
     }
 }
+
+#[test]
+fn full_access_executes_host_commands_but_narrowed_scopes_stay_sandboxed() {
+    let fixture = Fixture::new();
+    let mut execution = fixture.shell(
+        "printf host > \"$1/new\" && cat \"$1/new\"",
+        &[&fixture.outside],
+    );
+    execution.read_roots = vec![PathBuf::from("/")];
+    execution.write_roots = vec![PathBuf::from("/")];
+    execution.network = areal_runtime_protocol::NetworkRequest::Inherit;
+    let argv = command(&execution, Profile::FullAccess).unwrap();
+    assert_eq!(argv, execution.argv);
+    let output = run(&argv, &execution);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(output.stdout, b"host");
+    fs::remove_file(fixture.outside.join("new")).unwrap();
+    execution.write_roots = vec![fixture.allowed.clone()];
+    let argv = command(&execution, Profile::FullAccess).unwrap();
+    assert_eq!(argv[0], "/usr/bin/sandbox-exec");
+    assert!(!run(&argv, &execution).status.success());
+    assert!(!fixture.outside.join("new").exists());
+    execution.write_roots = vec![PathBuf::from("/")];
+    execution.network = areal_runtime_protocol::NetworkRequest::Deny;
+    assert_eq!(
+        command(&execution, Profile::FullAccess).unwrap()[0],
+        "/usr/bin/sandbox-exec"
+    );
+}

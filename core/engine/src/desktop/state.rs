@@ -299,7 +299,11 @@ impl Engine {
     pub(crate) async fn active_permissions(
         &self,
         cell: &Cell,
-    ) -> areal_runtime_protocol::PermissionRequest {
+    ) -> anyhow::Result<areal_runtime_protocol::PermissionRequest> {
+        if let Some(scratch) = self.command_scratch(cell) {
+            // 目录由可信 Core 创建，Runtime 再绑定和校验目录身份。
+            std::fs::create_dir_all(scratch).context("cannot create task scratch")?;
+        }
         let state = cell.state.lock().await;
         let readonly = state
             .thread
@@ -307,9 +311,35 @@ impl Engine {
             .last()
             .and_then(|t| t.configuration.as_ref())
             .is_some_and(|c| c.read_only);
-        areal_runtime_protocol::PermissionRequest {
+        Ok(areal_runtime_protocol::PermissionRequest {
+            read_roots: if readonly || cell.research {
+                Some(
+                    vec!["workspace://repo".into(), self.scratch_uri(cell)]
+                        .into_iter()
+                        .filter(|p| {
+                            p == "workspace://repo"
+                                || self
+                                    .runtime
+                                    .as_ref()
+                                    .is_some_and(|r| r.command_scratch.is_some())
+                        })
+                        .collect(),
+                )
+            } else {
+                None
+            },
             write_roots: if readonly {
-                Some(Vec::new())
+                Some(
+                    if self
+                        .runtime
+                        .as_ref()
+                        .is_some_and(|r| r.command_scratch.is_some())
+                    {
+                        vec![self.scratch_uri(cell)]
+                    } else {
+                        Vec::new()
+                    },
+                )
             } else {
                 self.scope_permissions(cell).write_roots
             },
@@ -318,7 +348,6 @@ impl Engine {
             } else {
                 areal_runtime_protocol::NetworkRequest::Inherit
             },
-            ..Default::default()
-        }
+        })
     }
 }

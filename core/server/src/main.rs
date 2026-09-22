@@ -11,6 +11,8 @@ mod tool_extensions;
 #[derive(clap::Args, Default)]
 struct ConfigArgs {
     #[arg(long, global = true)]
+    permissions: Option<String>,
+    #[arg(long, global = true)]
     config: Option<PathBuf>,
     /// 无模型时仍启动经过认证的管理入口。
     #[arg(long, global = true)]
@@ -125,6 +127,7 @@ async fn main() -> Result<()> {
         env: std::env::vars_os().collect(),
         config_file: cli.config,
         overrides: ConfigOverrides {
+            permissions: cli.permissions,
             listen: cli.listen,
             data_dir: cli.data_dir,
             model: cli.model,
@@ -381,6 +384,7 @@ async fn run(
             plugins.iter().flat_map(|host| host.tools()).collect(),
         );
         let engine = opened?;
+        engine.set_permissions(config.permissions.clone(), config.sources.get("permissions.mode").cloned())?;
         let reload = if args.service_info.is_some() { Some(reload::Reload::open(inputs, &config, &engine)?) } else { None };
         if let Some(path) = &args.desktop_config { engine.install_deployment(path)?; }
         let workspace = PathBuf::from(engine.default_cwd());

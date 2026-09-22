@@ -4848,6 +4848,28 @@
                       },
                       "type": "object"
                     },
+                    "permissionGrants": {
+                      "default": [],
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "arguments": true,
+                          "key": {
+                            "type": "string"
+                          },
+                          "tool": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "tool",
+                          "arguments"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
                     "plan": {
                       "additionalProperties": false,
                       "properties": {
@@ -10978,6 +11000,33 @@
       "properties": {},
       "type": "object"
     },
+    "areal/permissions/forget": {
+      "additionalProperties": false,
+      "properties": {
+        "project": {
+          "type": "boolean"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "areal/permissions/read": {
+      "additionalProperties": false,
+      "properties": {
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "type": "object"
+    },
     "areal/plan/read": {
       "additionalProperties": false,
       "properties": {
@@ -14925,6 +14974,28 @@
                         },
                         "type": "object"
                       },
+                      "permissionGrants": {
+                        "default": [],
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "arguments": true,
+                            "key": {
+                              "type": "string"
+                            },
+                            "tool": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "key",
+                            "tool",
+                            "arguments"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
                       "plan": {
                         "additionalProperties": false,
                         "properties": {
@@ -17782,6 +17853,28 @@
                             "type": "string"
                           },
                           "type": "object"
+                        },
+                        "permissionGrants": {
+                          "default": [],
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "arguments": true,
+                              "key": {
+                                "type": "string"
+                              },
+                              "tool": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "tool",
+                              "arguments"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
                         },
                         "plan": {
                           "additionalProperties": false,
@@ -23147,6 +23240,8 @@
             "decision": {
               "enum": [
                 "allowOnce",
+                "allowSession",
+                "allowProject",
                 "deny"
               ]
             }
@@ -24174,6 +24269,139 @@
       },
       "required": [
         "data"
+      ],
+      "type": "object"
+    },
+    "areal/permissions/forget": {
+      "additionalProperties": true,
+      "properties": {
+        "cleared": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "cleared"
+      ],
+      "type": "object"
+    },
+    "areal/permissions/read": {
+      "additionalProperties": true,
+      "properties": {
+        "configuration": {
+          "additionalProperties": true,
+          "properties": {
+            "allow": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "ask": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "deny": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "mode": {
+              "enum": [
+                "YOLO",
+                "ASK_PERMISSIONS"
+              ]
+            }
+          },
+          "required": [
+            "allow",
+            "ask",
+            "deny",
+            "mode"
+          ],
+          "type": "object"
+        },
+        "project": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": true,
+              "key": {
+                "type": "string"
+              },
+              "tool": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "tool",
+              "arguments"
+            ],
+            "title": "PermissionGrant",
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "projectFile": {
+          "type": "string"
+        },
+        "sandbox": {
+          "type": "object"
+        },
+        "session": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": true,
+                  "key": {
+                    "type": "string"
+                  },
+                  "tool": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "key",
+                  "tool",
+                  "arguments"
+                ],
+                "title": "PermissionGrant",
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "workspace": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "configuration",
+        "project",
+        "projectFile",
+        "sandbox",
+        "session",
+        "source",
+        "workspace"
       ],
       "type": "object"
     },
@@ -31517,6 +31745,28 @@
                         "type": "string"
                       },
                       "type": "object"
+                    },
+                    "permissionGrants": {
+                      "default": [],
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "arguments": true,
+                          "key": {
+                            "type": "string"
+                          },
+                          "tool": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "tool",
+                          "arguments"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
                     },
                     "plan": {
                       "additionalProperties": false,
@@ -39403,6 +39653,28 @@
                         },
                         "type": "object"
                       },
+                      "permissionGrants": {
+                        "default": [],
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "arguments": true,
+                            "key": {
+                              "type": "string"
+                            },
+                            "tool": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "key",
+                            "tool",
+                            "arguments"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
                       "plan": {
                         "additionalProperties": false,
                         "properties": {
@@ -42249,6 +42521,28 @@
                       },
                       "type": "object"
                     },
+                    "permissionGrants": {
+                      "default": [],
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "arguments": true,
+                          "key": {
+                            "type": "string"
+                          },
+                          "tool": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "tool",
+                          "arguments"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
                     "plan": {
                       "additionalProperties": false,
                       "properties": {
@@ -44524,6 +44818,12 @@
         "modelProvider": {
           "type": "string"
         },
+        "permissionMode": {
+          "enum": [
+            "YOLO",
+            "ASK_PERMISSIONS"
+          ]
+        },
         "reasoningEffort": {
           "anyOf": [
             {
@@ -45109,6 +45409,28 @@
                         "type": "string"
                       },
                       "type": "object"
+                    },
+                    "permissionGrants": {
+                      "default": [],
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "arguments": true,
+                          "key": {
+                            "type": "string"
+                          },
+                          "tool": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "tool",
+                          "arguments"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
                     },
                     "plan": {
                       "additionalProperties": false,
@@ -47368,6 +47690,7 @@
         "cwd",
         "model",
         "modelProvider",
+        "permissionMode",
         "reasoningEffort",
         "sandbox",
         "thread"
@@ -47392,6 +47715,12 @@
         "modelProvider": {
           "type": "string"
         },
+        "permissionMode": {
+          "enum": [
+            "YOLO",
+            "ASK_PERMISSIONS"
+          ]
+        },
         "reasoningEffort": {
           "anyOf": [
             {
@@ -47977,6 +48306,28 @@
                         "type": "string"
                       },
                       "type": "object"
+                    },
+                    "permissionGrants": {
+                      "default": [],
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "arguments": true,
+                          "key": {
+                            "type": "string"
+                          },
+                          "tool": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "tool",
+                          "arguments"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
                     },
                     "plan": {
                       "additionalProperties": false,
@@ -50236,6 +50587,7 @@
         "cwd",
         "model",
         "modelProvider",
+        "permissionMode",
         "reasoningEffort",
         "sandbox",
         "thread"
@@ -51993,6 +52345,28 @@
                   "type": "string"
                 },
                 "type": "object"
+              },
+              "permissionGrants": {
+                "default": [],
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "arguments": true,
+                    "key": {
+                      "type": "string"
+                    },
+                    "tool": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "tool",
+                    "arguments"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
               },
               "plan": {
                 "additionalProperties": false,

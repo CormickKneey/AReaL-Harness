@@ -122,6 +122,7 @@ harness-smoke: build sdk-build ## 原生 SDK 与完整读改测试/强杀恢复
 	node scripts/workgroup-smoke.mjs
 	node scripts/plugin-smoke.mjs
 	node scripts/permissions-smoke.mjs
+	node scripts/permission-modes-smoke.mjs
 	python3 scripts/tui-local-smoke.py
 	node scripts/local-service-smoke.mjs
 

@@ -308,6 +308,27 @@ try {
         (e) => e.code === -32003,
       );
       await assert.rejects(observer.call("areal/provider/list"), (e) => e.code === -32003);
+      for (const restricted of [observer, scoped]) {
+        await assert.rejects(
+          restricted.call("areal/permissions/read", { threadId: target.threadId }),
+          (e) => e.code === -32003,
+        );
+        await assert.rejects(
+          restricted.call("areal/permissions/forget", { threadId: target.threadId, project: true }),
+          (e) => e.code === -32003,
+        );
+        await assert.rejects(
+          restricted.call("areal/interaction/respond", {
+            threadId: target.threadId,
+            turnId: target.turnId,
+            requestId: "unknown",
+            argumentsDigest: "digest",
+            decision: "allowProject",
+          }),
+          (e) => e.code === -32003,
+        );
+      }
+
       await assert.rejects(
         scoped.call("thread/read", { threadId: target.threadId }),
         (e) => e.code === -32003,

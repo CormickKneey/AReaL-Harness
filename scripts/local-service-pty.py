@@ -5,6 +5,7 @@ import fcntl
 import json
 import os
 import re
+import runpy
 import struct
 import subprocess
 import sys
@@ -12,6 +13,10 @@ import termios
 import threading
 import time
 from pathlib import Path
+
+TerminalScreen = runpy.run_path(str(Path(__file__).with_name("terminal_screen.py")))[
+    "TerminalScreen"
+]
 
 windows = []
 
@@ -30,7 +35,8 @@ def window():
     os.close(slave)
     output = bytearray()
     ready = threading.Condition()
-    item = (master, child, output, ready)
+    screen = TerminalScreen()
+    item = (master, child, output, ready, screen)
     windows.append(item)
 
     def read_output():
@@ -40,6 +46,7 @@ def window():
                 with ready:
                     output.extend(chunk)
                     del output[:-262144]
+                    screen.feed(chunk)
                     ready.notify_all()
         except OSError as error:
             if error.errno != errno.EIO:
@@ -50,16 +57,12 @@ def window():
 
 
 def expect(item, text):
-    _, child, output, ready = item
-
-    # 终端可用光标定位绘制空格，不能假设提示文本在原始字节流中连续。
-    def visible(value):
-        return b"".join(re.sub(rb"\x1b\[[0-9;?]*[A-Za-z]", b"", value).split())
+    _, child, _, ready, screen = item
 
     with ready:
-        if ready.wait_for(lambda: visible(text) in visible(output), timeout=20):
+        if ready.wait_for(lambda: text in screen.text(), timeout=20):
             return
-        raise AssertionError(f"missing {text!r}, exit={child.poll()}, output={output!r}")
+        raise AssertionError(f"missing {text!r}, exit={child.poll()}, screen={screen.text()!r}")
 
 
 try:
@@ -88,7 +91,8 @@ try:
         pending = config.with_suffix(".pending")
         pending.write_text(changed)
         pending.replace(config)
-        expect(second, b"Model configuration updated")
+        # 状态通知可在绘制前被后续响应覆盖；标题中的模型名称会持续反映热更新结果。
+        expect(second, b"fixture-pty")
         after = json.loads(
             subprocess.check_output([binary, "service", "ensure", *sys.argv[2:]], text=True)
         )
@@ -100,6 +104,7 @@ try:
         assert count == 1
         with second[3]:
             second[2].clear()
+            second[4].clear()
         pending.write_text(changed)
         pending.replace(config)
         # 重连提示可能在绘制前被会话快照覆盖；检查只读状态及恢复后的实际请求。
@@ -144,7 +149,7 @@ try:
     os.write(second[0], b"\x11")
     assert second[1].wait(timeout=5) == 0
 finally:
-    for master, child, _, _ in windows:
+    for master, child, _, _, _ in windows:
         if child.poll() is None:
             child.kill()
             child.wait(timeout=5)

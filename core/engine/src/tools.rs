@@ -213,7 +213,7 @@ fn definitions_with_policy(policy: &ToolPolicy) -> Vec<Value> {
     fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> Value {
         json!({"type":"function","function":{"name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}}})
     }
-    let path = json!({"type":"string","description":"Workspace path, e.g. src/main.py, ., or workspace://repo/src/main.py. Absolute paths must be inside this workspace. No parent traversal or symlinks."});
+    let path = json!({"type":"string","description":"Workspace path, e.g. src/main.py, ., or workspace://repo/src/main.py. Absolute paths outside the workspace require host access from the deployment and may require approval. No parent traversal."});
     let process_id = json!({"type":"string","description":"Copy the complete opaque processId returned by run_command. Do not shorten, reconstruct or substitute a cursor."});
     let mut definitions = vec![
         tool(
@@ -351,6 +351,8 @@ struct WriteFile {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Command {
+    #[serde(skip)]
+    environment: BTreeMap<String, String>,
     argv: Vec<String>,
     cwd: String,
     timeout_ms: u64,
@@ -661,7 +663,7 @@ impl Engine {
                             task_id: format!("{thread_id}/{turn_id}"),
                             plugin_instance_id: None,
                         },
-                        permissions: self.active_permissions(cell).await,
+                        permissions: self.active_permissions(cell).await?,
                         limits: rt::LimitRequest::default(),
                     })
                     .await?
@@ -938,7 +940,7 @@ async fn execute(
                     scope_id: scope.into(),
                     argv: command.argv,
                     cwd: command.cwd,
-                    env: BTreeMap::new(),
+                    env: command.environment,
                     tty: command.tty,
                     pipe_stdin: !command.tty,
                     limits: rt::LimitRequest {
@@ -1047,6 +1049,13 @@ pub(crate) async fn verify_command(
 
 pub(crate) fn workspace_uri(path: &str, workspace: &std::path::Path) -> anyhow::Result<String> {
     use std::path::{Component, Path};
+    if path == "workspace://host" || path.starts_with("workspace://host/") {
+        return workspace_uri(
+            &path.replacen("workspace://host", "workspace://repo", 1),
+            Path::new("/"),
+        )
+        .map(|p| p.replacen("workspace://repo", "workspace://host", 1));
+    }
     if path == "workspace://scratch" || path.starts_with("workspace://scratch/") {
         return workspace_uri(
             &path.replacen("workspace://scratch", "workspace://repo", 1),
@@ -1089,13 +1098,37 @@ pub(crate) fn workspace_uri(path: &str, workspace: &std::path::Path) -> anyhow::
     })
 }
 
-fn resource_uri(path: &str, runtime: &RuntimeConfig) -> anyhow::Result<String> {
+pub(crate) fn resource_uri(path: &str, runtime: &RuntimeConfig) -> anyhow::Result<String> {
     if let Some(root) = &runtime.command_scratch
+        && !root.starts_with(&runtime.workspace)
         && Path::new(path).is_absolute()
         && let Ok(relative) = Path::new(path).strip_prefix(root)
     {
         return workspace_uri(
             &format!("workspace://scratch/{}", relative.display()),
+            &runtime.workspace,
+        );
+    }
+    if runtime.client.info().capabilities["fullAccess"] == true
+        && Path::new(path).is_absolute()
+        && !Path::new(path).starts_with(&runtime.workspace)
+    {
+        // 宿主模式解析已存在的父目录，使 /tmp 等系统别名绑定到实际目标。
+        let mut parent = Path::new(path);
+        let mut tail = Vec::new();
+        let root = loop {
+            if let Ok(root) = parent.canonicalize() {
+                break root;
+            }
+            tail.push(parent.file_name().context("invalid host path")?);
+            parent = parent.parent().context("invalid host path")?;
+        };
+        let canonical = tail
+            .into_iter()
+            .rev()
+            .fold(root, |root, part| root.join(part));
+        return workspace_uri(
+            &format!("workspace://host{}", canonical.display()),
             &runtime.workspace,
         );
     }

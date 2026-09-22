@@ -138,7 +138,10 @@ try {
   assert.equal((await cli(["web", "--json", ...local])).generation, current.generation);
   await symlink(workspace, join(root, "alias"));
   assert.equal((await ensure(["--workspace", join(root, "alias")])).generation, current.generation);
-  await rejected(() => ensure(["--allow-network"]), /configuration conflict.*permissions/s);
+  await rejected(
+    () => ensure(["--permissions", "ASK_PERMISSIONS"]),
+    /configuration conflict.*permissions/s,
+  );
   assert.equal((await fetch(current.webUrl)).status, 200);
   const url = new URL("/areal/service", current.webUrl);
   assert.equal((await fetch(url)).status, 401);

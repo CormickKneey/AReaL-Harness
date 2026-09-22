@@ -11,6 +11,7 @@ This page describes implemented behavior. Compilation, mechanism tests and real-
 | Tool extensions | Command tools, hooks, client callbacks, MCP stdio/Streamable HTTP and trusted Node plugin Hosts. [Tools](guides/tools.en.md) |
 | Multiple agents | Model delegation, independent histories, shared workspace, checkpoints and result aggregation. [Agent design](design/multi-agent.en.md) |
 | Workgroups | DAGs, isolated writable workspaces, artifact verification and integration; fixed/auto/adaptive admission through CLI and service. [Guide](guides/workgroups.en.md) |
+| Permissions | Default local YOLO; configurable ASK_PERMISSIONS; TUI/Web approvals, exact session/project grants, automatic Thread scratch. [Configuration](guides/configuration.en.md#permissions) |
 | Desktop interface | Authentication, Profiles/Skills/Plans, approvals/questions, submission receipts and queues, shared terminals, configuration CAS, model switching, media Blobs, archiving and GC. [Desktop API](api/desktop.en.md) |
 | Clients | CLI, TUI and local Web; TUI has Unicode cursor editing and common input shortcuts, persistent errors, grouped traces collapsed by default, mouse/keyboard expansion and commentary/final phases; selected Claude Code noninteractive arguments and messages. [CLI contract](api/claude-cli.en.md) |
 | Skills | Discovery and explicit Profiles share metadata registration and on-demand body/attachment reads; invalid individual global Skills are isolated with warnings, without content snapshots. [Skill guide](guides/skills.en.md) |

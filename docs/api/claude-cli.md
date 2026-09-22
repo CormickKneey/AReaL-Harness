@@ -20,7 +20,7 @@ target/debug/areal -p 'Continue' --resume SESSION_ID --output-format json
 | --resume, --model, --effort, --max-turns | 会话、目录模型、推理参数、单 Turn 模型轮次 |
 | --tools / --disallowedTools | 精确工具可见/拒绝集合，未知 ID 拒绝 |
 | --allowedTools | 仅免除客户端增加的审批，不覆盖 Profile |
-| --permission-mode | default/acceptEdits/dontAsk/plan/bypassPermissions，不能替代 Runtime 授权 |
+| --permission-mode | inherit（默认）/default/acceptEdits/dontAsk/plan/bypassPermissions，不能替代 Runtime 授权 |
 | --system-prompt[-file] / --append-system-prompt[-file] | 通用指令替换/追加，文件最多 32 KiB |
 | --mcp-config / --strict-mcp-config | 运行级 MCP；strict 禁用部署 MCP，外部 Core 不允许覆盖 |
 | --config / --workspace / --desktop-config | 本地启动配置，不与外部 endpoint 混用 |
@@ -28,6 +28,8 @@ target/debug/areal -p 'Continue' --resume SESSION_ID --output-format json
 | --endpoint / --auth-file | 连接外部服务，退出不关闭它 |
 
 工具别名 AskUserQuestion/Bash/Read/Write/Edit/TodoWrite/Task 对应 ask_user_question/run_command/fs_read/fs_create/fs_apply_patch/plan_update/agent_spawn。shell 模式规则、任意 Claude settings/hooks、插件市场和交互 Claude TUI 不支持，未知选项拒绝。
+
+`--permissions YOLO|ASK_PERMISSIONS` 与 `--scratch` 配置本地部署；`--permission-mode` 默认 inherit，继承全局策略。显式 default/acceptEdits/dontAsk/plan/bypassPermissions 保留客户端限制，不能削弱全局 ask/deny 或 Profile。默认本地启动 full-access，无需 --allow-write/--allow-network；已有远端 endpoint 使用自己的策略。
 
 ## 消息与终态
 

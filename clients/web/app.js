@@ -7,6 +7,7 @@ let socket,
   listCursor = null,
   listing = false;
 const pending = new Map();
+let interactionDisplayed = null;
 let goalsSupported = false,
   displayedGoal = null;
 let waiting = null,
@@ -213,6 +214,7 @@ function render() {
   renderComposer();
   renderProgress();
   renderGoal();
+  renderInteractions();
   const history = $("history"),
     atBottom = history.scrollHeight - history.scrollTop - history.clientHeight < 100;
   const opened = new Set(
@@ -401,8 +403,7 @@ async function list(more = false) {
 async function select(id) {
   const result = await call("thread/resume", { threadId: id });
   thread = result.thread;
-  $("permission").textContent =
-    result.sandbox.type === "workspaceWrite" ? "工作区可写 · 网络关闭" : "只读工作区";
+  renderPermissions(result);
   render();
   showView(false);
   if (mobileLayout.matches) mobileSidebar(false, true);
@@ -419,7 +420,10 @@ async function reload() {
   render();
   try {
     const result = await call("thread/resume", { threadId: id });
-    if (thread?.id === id) thread = result.thread;
+    if (thread?.id === id) {
+      thread = result.thread;
+      renderPermissions(result);
+    }
   } finally {
     refreshing = false;
     render();
@@ -436,7 +440,22 @@ function scheduleRender() {
 }
 function event(message) {
   const p = message.params ?? {};
-  if (!thread || p.threadId !== thread.id) return;
+  if (!thread || (p.threadId ?? p.interaction?.threadId) !== thread.id) return;
+  if (
+    message.method === "areal/interaction/requested" ||
+    message.method === "areal/interaction/resolved"
+  ) {
+    thread.desktop ??= {};
+    if ((thread.desktop.interactionRevision ?? 0) <= p.revision) {
+      thread.desktop.interactionRevision = p.revision;
+      thread.desktop.interactions = (thread.desktop.interactions ?? []).filter(
+        (i) => i.requestId !== p.interaction.requestId,
+      );
+      thread.desktop.interactions.push(p.interaction);
+      renderInteractions();
+    }
+    return;
+  }
   if (message.method.includes("resync") || message.method.includes("lagged")) {
     reload().catch(notice);
     return;
@@ -498,8 +517,8 @@ $("new").onclick = async () => {
   try {
     const result = await call("thread/start", {});
     thread = result.thread;
-    $("permission").textContent =
-      result.sandbox.type === "workspaceWrite" ? "工作区可写 · 网络关闭" : "只读工作区";
+    renderPermissions(result);
+    renderPermissions(result);
     notice("");
     render();
     showView(false);
@@ -812,3 +831,88 @@ $("group-start").onsubmit = async (event) => {
     notice(error);
   }
 };
+
+function renderPermissions(result) {
+  const sandbox = result.sandbox ?? {};
+  const scope =
+    sandbox.type === "dangerFullAccess"
+      ? "完整访问"
+      : sandbox.type === "workspaceWrite"
+        ? "工作区可写"
+        : "工作区只读";
+  $("permission").textContent =
+    `${result.permissionMode ?? "部署权限"} · ${scope} · 网络${sandbox.networkAccess ? "开放" : "关闭"}`;
+}
+
+function renderInteractions() {
+  const request = thread?.desktop?.interactions?.find((i) => i.status === "pending");
+  let panel = $("permission-request");
+  if (!panel) {
+    panel = document.createElement("section");
+    panel.id = "permission-request";
+    panel.setAttribute("aria-live", "polite");
+    $("history").before(panel);
+  }
+  if (interactionDisplayed === request?.requestId && panel.childElementCount) return;
+  interactionDisplayed = request?.requestId ?? null;
+  panel.replaceChildren();
+  panel.hidden = !request;
+  if (!request) return;
+  const title = document.createElement("h3");
+  title.textContent = request.kind === "approval" ? `允许执行 ${request.tool}？` : "需要你的回答";
+  panel.append(title);
+  const details = document.createElement("pre");
+  details.textContent = JSON.stringify(request.effectiveArguments ?? request.questions, null, 2);
+  panel.append(details);
+  const submit = async (response) => {
+    for (const button of panel.querySelectorAll("button")) button.disabled = true;
+    try {
+      await call("areal/interaction/respond", {
+        threadId: request.threadId,
+        turnId: request.turnId,
+        requestId: request.requestId,
+        ...response,
+      });
+      await reload();
+    } catch (error) {
+      notice(error);
+      for (const button of panel.querySelectorAll("button")) button.disabled = false;
+    }
+  };
+  if (request.kind === "approval") {
+    const choices = [["允许一次", "allowOnce"]];
+    if (request.effectivePermissions?.rememberAllowed)
+      choices.push(
+        ["本会话记住相同请求", "allowSession"],
+        ["当前项目记住相同请求", "allowProject"],
+      );
+    choices.push(["拒绝", "deny"]);
+    for (const [label, decision] of choices) {
+      const button = document.createElement("button");
+      button.textContent = label;
+      button.onclick = () => submit({ decision, argumentsDigest: request.argumentsDigest });
+      panel.append(button);
+    }
+  } else {
+    const inputs = new Map();
+    for (const question of request.questions) {
+      const label = document.createElement("label");
+      label.textContent = question.title;
+      const input = document.createElement(question.allowFreeText ? "input" : "select");
+      if (!question.allowFreeText)
+        for (const value of question.options) {
+          const option = document.createElement("option");
+          option.textContent = value;
+          input.append(option);
+        }
+      label.append(input);
+      panel.append(label);
+      inputs.set(question.id, input);
+    }
+    const button = document.createElement("button");
+    button.textContent = "提交回答";
+    button.onclick = () =>
+      submit({ answers: Object.fromEntries([...inputs].map(([id, input]) => [id, input.value])) });
+    panel.append(button);
+  }
+}

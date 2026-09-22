@@ -110,6 +110,29 @@ impl Invocation<'_> {
                     .await?;
             }
         }
+        let hook_arguments = arguments.clone();
+        if matches!(self.entry.backend, Backend::Builtin)
+            && let Some(runtime) = &self.engine.runtime
+        {
+            let model_arguments = arguments.clone();
+            self.cell
+                .state
+                .lock()
+                .await
+                .active
+                .as_ref()
+                .unwrap()
+                .handles
+                .resolve(&self.call.name, &mut arguments, runtime)
+                .map_err(invalid)?;
+            if arguments != model_arguments {
+                self.edit(|execution, _| {
+                    execution.model_arguments = Some(model_arguments.clone());
+                    execution.effective_arguments = Some(arguments.clone());
+                })
+                .await?;
+            }
+        }
         self.engine
             .approval(
                 self.cell,
@@ -156,7 +179,11 @@ impl Invocation<'_> {
             .await?;
         }
         for hook in hooks {
-            if self.hook(hook, &arguments, Some(&value)).await.is_err() {
+            if self
+                .hook(hook, &hook_arguments, Some(&value))
+                .await
+                .is_err()
+            {
                 *post_hook_failed = true;
                 break;
             }
@@ -257,15 +284,8 @@ impl Invocation<'_> {
                     .runtime
                     .as_ref()
                     .expect("registered Runtime tool");
-                let mut effective = args.clone();
+                let effective = args.clone();
                 let state = self.cell.state.lock().await;
-                state
-                    .active
-                    .as_ref()
-                    .unwrap()
-                    .handles
-                    .resolve(&self.call.name, &mut effective, runtime)
-                    .map_err(invalid)?;
                 let call = ToolCall {
                     id: self.call.id.clone(),
                     name: self.call.name.clone(),
@@ -295,16 +315,9 @@ impl Invocation<'_> {
                 )
                 .map_err(invalid)?;
                 drop(state);
-                if effective != *args {
-                    self.edit(|execution, _| {
-                        execution.model_arguments = Some(args.clone());
-                        execution.effective_arguments = Some(effective.clone());
-                    })
-                    .await?;
-                }
                 let mut verification_receipt = None;
                 if let Request::Command(command) = &mut request {
-                    // 在 scratch 的 env 包装及验证子进程之前解析系统 shim。
+                    // 在验证子进程之前解析系统 shim，避免进入沙箱后查询开发工具路径。
                     if command
                         .argv
                         .first()
@@ -352,13 +365,13 @@ impl Invocation<'_> {
                 if let Request::Command(command) = &mut request
                     && let Some(scratch) = self.engine.command_scratch(self.cell)
                 {
-                    let mut argv = vec![
-                        "/usr/bin/env".into(),
-                        format!("TMPDIR={}", scratch.display()),
-                        "PYTHONDONTWRITEBYTECODE=1".into(),
-                    ];
-                    argv.append(&mut command.argv);
-                    command.argv = argv;
+                    // 通过协议环境传递 scratch，保留 argv[0] 的可信程序身份。
+                    command
+                        .environment
+                        .insert("TMPDIR".into(), scratch.display().to_string());
+                    command
+                        .environment
+                        .insert("PYTHONDONTWRITEBYTECODE".into(), "1".into());
                 }
                 let (success, mut result) = execute(
                     &runtime.client,

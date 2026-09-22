@@ -25,7 +25,7 @@ See [client controls](../guides/clients.en.md) and [testing](../development/test
 | Failed or UNKNOWN tools | Issue count and at most three bounded diagnostics in the group | Available full diagnostics; cancellation is counted separately |
 | Failed, interrupted or completed Turns without an answer | Persistent result after the Turn | Error details and Turn ID |
 | Stopped current Goal, unconfirmed usage | Reason and usage independent of the sidebar | Goal ID and reason code |
-| Pending approval or question | Always-visible action notice | Existing Web response entry point |
+| Pending approval or question | Approval dialog; pending notice for questions | Approve/deny in TUI; answer questions in Web |
 
 Groups do not cross user input, visible answers, media or Turn boundaries. Summaries use Item types, tool names and result states without another model call. Unknown tools retain their names and counts; call counts are not described as file counts. Successful output previews, commands, JSON arguments, diffs, reasoning and commentary are hidden by default.
 

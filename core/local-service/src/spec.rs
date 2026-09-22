@@ -11,6 +11,10 @@ use std::{collections::BTreeMap, ffi::OsString, path::PathBuf};
 #[serde(deny_unknown_fields)]
 pub struct LocalArgs {
     #[arg(long)]
+    pub permissions: Option<String>,
+    #[arg(long)]
+    pub scratch: Option<PathBuf>,
+    #[arg(long)]
     pub config: Option<PathBuf>,
     #[arg(long)]
     pub workspace: Option<PathBuf>,
@@ -18,7 +22,7 @@ pub struct LocalArgs {
     pub data_dir: Option<PathBuf>,
     #[arg(long)]
     pub allow_write: bool,
-    #[arg(long, requires = "allow_write")]
+    #[arg(long)]
     pub workgroup_policy: Option<PathBuf>,
     #[arg(long, requires = "workgroup_policy")]
     pub workgroup_toolchain: Option<PathBuf>,
@@ -48,6 +52,7 @@ impl LocalArgs {
     pub fn launcher_args(&self) -> Vec<OsString> {
         let mut out = Vec::new();
         for (name, value) in [
+            ("scratch", &self.scratch),
             ("config", &self.config),
             ("workspace", &self.workspace),
             ("data-dir", &self.data_dir),
@@ -60,6 +65,7 @@ impl LocalArgs {
             }
         }
         for (name, value) in [
+            ("permissions", &self.permissions),
             ("model-endpoint", &self.model_endpoint),
             ("model-protocol", &self.model_protocol),
             ("model", &self.model),
@@ -128,6 +134,7 @@ impl LaunchSpec {
             env: std::env::vars_os().collect(),
             config_file: args.config.clone(),
             overrides: ConfigOverrides {
+                permissions: args.permissions.clone(),
                 listen: Some("127.0.0.1:0".into()),
                 data_dir: args.data_dir.clone(),
                 model: args.model.clone(),
@@ -187,10 +194,6 @@ impl LaunchSpec {
                 .join(name)
                 .canonicalize()
                 .with_context(|| format!("missing {name}; run make build"))?;
-            ensure!(
-                !args.allow_write || !path.starts_with(&workspace),
-                "trusted binaries must be outside the writable workspace"
-            );
             // 比较文件内容，避免原路径被重新构建后静默复用旧服务。
             binaries.insert(name, storage::file_digest(&path)?);
         }
@@ -199,6 +202,7 @@ impl LaunchSpec {
         resolved.data_dir = Some(data.clone());
         resolved.config = config.config_file.clone();
         for path in [
+            &mut resolved.scratch,
             &mut resolved.workgroup_policy,
             &mut resolved.workgroup_toolchain,
             &mut resolved.desktop_config,
@@ -251,11 +255,8 @@ impl LaunchSpec {
             ("configuration", effective),
             (
                 "permissions",
-                json!([
-                    args.allow_write,
-                    args.allow_network,
-                    args.allow_concurrent_writes
-                ]),
+                json!({"policy":config.permissions,"scratch":resolved.scratch,
+                    "sandbox":"full-access","allowConcurrentWrites":args.allow_concurrent_writes}),
             ),
             (
                 "runtime",

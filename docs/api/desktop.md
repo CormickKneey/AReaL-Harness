@@ -22,7 +22,8 @@ initialize → initialized → areal/capabilities（可带 apiVersion）。请�
 | profile/list/read, skill/list/read | observe | 版本化定义与按需资源读取 |
 | thread/start/configure | interact；动态工具另需 tools | 持久受理、空闲时 CAS 配置 |
 | plan/read/update | observe / interact | 最多 64 步，expectedRevision 条件更新 |
-| interaction/list/respond | observe / interact | 追问/审批，绑定 Thread/Turn/requestId |
+| permissions/read/forget | manage（不允许 threadIds 限定身份） | 模式、来源、授权记忆查询与撤销 |
+| interaction/list/respond | observe / interact（allowProject 另需不限定 Thread 的 manage） | 追问/审批，绑定 Thread/Turn/requestId |
 | provider/list/read/upsert/remove/probe | manage | 凭据引用、CAS 写入与显式连通性探测 |
 | model/list | observe | providerId/modelId、能力和可用状态 |
 | turn/start/enqueue, queue/list/update/remove/reorder/pause/resume | observe / interact | 持久提交、冻结配置与队列管理 |
@@ -66,7 +67,9 @@ options.readOnly 收窄 Scope 写根和网络；toolAllowlist 收窄 Profile；p
 
 ## 交互与媒体
 
-审批绑定 Thread/Turn/callId、Host generation、有效参数摘要与权限，仅 allowOnce/deny；不能扩权。问题最多 8 题/题 8 选项、答案 4096 字节、交互历史 256 项；等待不持有模型许可，Stop 优先，迟到或跨 Turn 回答拒绝。
+审批绑定 Thread/Turn/callId、Host generation、有效参数摘要与权限，支持 allowOnce/deny；effectivePermissions.rememberAllowed=true 时另支持 allowSession/allowProject，仍不能扩大 Runtime Scope。问题最多 8 题/题 8 选项、答案 4096 字节、交互历史 256 项；等待不持有模型许可，Stop 优先，迟到或跨 Turn 回答拒绝。
+
+`permissions/read {threadId}` 返回 configuration（mode/allow/ask/deny）、source、sandbox、workspace、session/project 授权条目和 projectFile。`permissions/forget {threadId,project}` 清除会话或项目记忆；目标 Thread 必须空闲。项目批准需要不限定 Thread 的 manage 身份。记忆与规则优先级见[权限配置](../guides/configuration.md#permissions)。旧快照缺少 permissionGrants 时按空数组读取；thread/start/resume 增加 permissionMode 字段，底层 full-access 投影为 dangerFullAccess。
 
 POST `/areal/blobs?threadId=...` 上传原始字节，Content-Type 与签名一致；工具上传另带 callId/hostGeneration 并需 tools 权限。单文件 16 MiB，Thread 128 项/64 MiB，全局 16384 Blob/512 MiB。支持 PNG/JPEG/GIF/WebP、WAV/MP3、PDF、UTF-8 文本。GET 需要认证、threadId 和引用归属；摘要不是令牌。
 

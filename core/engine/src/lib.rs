@@ -7,6 +7,7 @@ mod generation;
 pub mod goals;
 mod history;
 pub mod model;
+mod permissions;
 mod sessions;
 mod store;
 pub mod tools;
@@ -178,6 +179,7 @@ impl Cell {
 }
 
 pub struct Engine {
+    permissions: permissions::Permissions,
     default_models: std::sync::RwLock<default_model::DefaultModels>,
     configuration_status: std::sync::RwLock<Value>,
     goals: goals::Goals,
@@ -437,7 +439,23 @@ impl Engine {
         )?;
         let desktop = desktop::Desktop::open(root)?;
         let goals = goals::Goals::open(root, &threads)?;
+        let permission_file = root.join("desktop/permissions.json");
+        let project_permissions = if permission_file.exists() {
+            let metadata = std::fs::symlink_metadata(&permission_file)?;
+            anyhow::ensure!(
+                metadata.is_file() && metadata.len() <= 256 * 1024,
+                "permission memory must be a regular file of at most 256 KiB"
+            );
+            let bytes = std::fs::read(&permission_file)?;
+            serde_json::from_slice(&bytes)?
+        } else {
+            permissions::ProjectGrants::default()
+        };
         Ok(Arc::new(Self {
+            permissions: permissions::Permissions {
+                config: Default::default(),
+                project: Mutex::new(project_permissions),
+            },
             default_models: Default::default(),
             configuration_status: Default::default(),
             goals,
@@ -492,6 +510,9 @@ impl Engine {
             .as_ref()
             .is_some_and(|runtime| runtime.client.info().capabilities["rootNetwork"] == "inherit");
         match &self.runtime {
+            Some(runtime) if runtime.client.info().capabilities["fullAccess"] == true => {
+                json!({"type":"dangerFullAccess","networkAccess":network_access})
+            }
             Some(runtime) if runtime.writable => {
                 json!({"type":"workspaceWrite","writableRoots":[runtime.workspace],"networkAccess":network_access,"excludeTmpdirEnvVar":true,"excludeSlashTmp":true})
             }

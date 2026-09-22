@@ -11,6 +11,7 @@ pub const OUTER_CONTAINER_PERF_PROFILE: &str = "outerContainerPerfV1";
 pub enum Profile {
     #[default]
     Native,
+    FullAccess,
     OuterContainerPerf,
 }
 
@@ -18,6 +19,7 @@ impl Profile {
     pub fn name(self) -> &'static str {
         match self {
             Self::Native => SEATBELT_PROFILE,
+            Self::FullAccess => "fullAccess",
             Self::OuterContainerPerf => OUTER_CONTAINER_PERF_PROFILE,
         }
     }
@@ -59,6 +61,7 @@ const BASE: &str = r#"
 
 pub fn supported(profile: Profile) -> Result<()> {
     match profile {
+        Profile::FullAccess => Ok(()),
         Profile::Native if cfg!(target_os = "macos") => Ok(()),
         Profile::Native => Err(Error::new(
             ErrorCode::Unsupported,
@@ -87,6 +90,16 @@ pub fn command(execution: &Execution, profile: Profile) -> Result<Vec<String>> {
     }
     if profile == Profile::OuterContainerPerf {
         return linux_command(execution);
+    }
+    if profile == Profile::FullAccess {
+        if execution.read_roots.iter().any(|p| p == Path::new("/"))
+            && execution.write_roots.iter().any(|p| p == Path::new("/"))
+            && execution.network == areal_runtime_protocol::NetworkRequest::Inherit
+        {
+            return Ok(execution.argv.clone());
+        }
+        // 只读、研究 Agent 和插件的收窄授权不能借部署模式跳过隔离。
+        supported(Profile::Native)?;
     }
     let mut command = vec!["/usr/bin/sandbox-exec".into()];
     let mut policy = BASE.to_owned();

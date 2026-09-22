@@ -9,7 +9,7 @@ pub(super) async fn invoke(
 ) -> rt::Result<(bool, Value)> {
     let mut request = args.clone();
     request["operation"] = json!(name);
-    request["roots"] = json!({"repo":runtime.workspace,"scratch":runtime.command_scratch});
+    request["roots"] = json!({"repo":runtime.workspace,"scratch":runtime.command_scratch,"host":if runtime.client.info().capabilities["fullAccess"] == true { Some("/") } else { None }});
     let started = runtime
         .client
         .start(rt::StartProcess {

@@ -9,7 +9,7 @@ Complete the [quickstart](quickstart.en.md) first. Clients share Core history; R
 ```sh
 make tui
 make tui ARGS='--resume THREAD_ID'
-make tui ARGS='--workspace /absolute/task --allow-write --prompt "Describe the task"'
+make tui ARGS='--workspace /absolute/task --prompt "Describe the task"'
 # Connect using the authentication file in the existing Core data directory
 make tui ARGS='--endpoint ws://127.0.0.1:4500 --auth-file /absolute/core-data/security/auth.json'
 ```
@@ -41,6 +41,8 @@ Web uses a neutral workbench layout: a collapsible 240px sidebar, a task heading
 - “Task history” displays messages and expandable tool results; UNKNOWN tool results still require an inspection record. “Collaborative tasks and acceptance” retains plan submission, progress queries, cancellation, and revision controls.
 
 The Web client owns appearance and navigation; task, permission, and execution state come from Core.
+
+TUI headers and Web show YOLO/ASK_PERMISSIONS and Core remains authoritative. TUI approvals show effective arguments; ↑/↓ selects deny/allow once/remember session/project, Enter submits, Esc denies and PgUp/PgDn scrolls arguments. Deny is selected initially. Web provides equivalent buttons. Forced approvals only offer single-use answers. `/permissions` displays mode, source and memory; `/permissions clear-session` or `clear-project` revokes remembered grants. See [configuration](configuration.en.md#permissions). `--prompt`/`--input-file` cannot answer interactive requests: they interrupt and return an error asking for interactive TUI/Web.
 
 ## TUI controls
 

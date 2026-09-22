@@ -12,27 +12,24 @@ import tempfile
 import threading
 
 
-def check(binary, with_scratch):
+def check(binary, explicit_scratch, sandbox_profile):
     root = Path(__file__).resolve().parents[1]
     with tempfile.TemporaryDirectory(prefix="areal-python-smoke-") as temp:
         base = Path(temp)
-        repo, scratch, data = (base / name for name in ("repo", "scratch", "data"))
+        repo, data = (base / name for name in ("repo", "data"))
+        scratch = base / ("custom-scratch" if explicit_scratch else "scratch")
         repo.mkdir()
-        scratch.mkdir()
+        if explicit_scratch:
+            scratch.mkdir()
         (repo / "example.py").write_text('print("PYTHON_OK")\n')
         (repo / "json.py").write_text('raise RuntimeError("untrusted import")\n')
         steps = [
             ("read_file", {"path": "example.py"}, None),
             ("run_command", {"command": "python3 -B example.py"}, 0),
             ("run_command", {"argv": ["/usr/bin/python3", "-c", "raise SystemExit(7)"]}, 7),
+            ("verify_command", {"argv": ["python3", "-B", "example.py"]}, 0),
+            ("verify_command", {"argv": ["python3", "-c", "raise SystemExit(7)"]}, 7),
         ]
-        if with_scratch:
-            steps.extend(
-                [
-                    ("verify_command", {"argv": ["python3", "-B", "example.py"]}, 0),
-                    ("verify_command", {"argv": ["python3", "-c", "raise SystemExit(7)"]}, 7),
-                ]
-            )
         errors, results = [], []
         state = {"step": 0, "calls": 0, "done": False}
 
@@ -44,7 +41,7 @@ def check(binary, with_scratch):
                 try:
                     request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                     names = {tool["function"]["name"] for tool in request["tools"]}
-                    assert ("verify_command" in names) == with_scratch, names
+                    assert "verify_command" in names, names
                     responses = [m for m in request["messages"] if m["role"] == "tool"]
                     name, arguments = None, None
                     if responses:
@@ -139,7 +136,8 @@ max_tool_calls = 20
                     "--config",
                     str(config),
                     "--allow-write",
-                    *(["--scratch", str(scratch)] if with_scratch else []),
+                    *(["--sandbox-profile", sandbox_profile] if sandbox_profile else []),
+                    *(["--scratch", str(scratch)] if explicit_scratch else []),
                     "--prompt",
                     "Verify Python execution.",
                 ],
@@ -152,15 +150,20 @@ max_tool_calls = 20
             assert done.returncode == 0, done.stdout[-3000:] + done.stderr[-3000:]
             assert state["done"] and len(results) == len(steps), (state, done.stdout)
             assert "PYTHON_OK" in results[1]["stdout"], results[1]
-            receipts = list((scratch / "verification").glob("*.json"))
-            assert len(receipts) == (2 if with_scratch else 0), receipts
-            if with_scratch:
-                assert sorted(json.loads(p.read_text())["exitCode"] for p in receipts) == [0, 7]
+            # 自动与显式目录都应使用每个 Thread 的私有子目录，并保留真实验证回执。
+            task_scratch = list(scratch.glob("agent-*"))
+            assert len(task_scratch) == 1, task_scratch
+            receipts = list((task_scratch[0] / "verification").glob("*.json"))
+            assert len(receipts) == 2, receipts
+            assert sorted(json.loads(p.read_text())["exitCode"] for p in receipts) == [0, 7]
+            if explicit_scratch:
+                assert not (base / "scratch").exists()
             print(
                 json.dumps(
                     {
                         "native_python": "passed",
-                        "scratch": with_scratch,
+                        "scratch": "explicit" if explicit_scratch else "automatic",
+                        "sandbox_profile": sandbox_profile or "default",
                         "tools": len(steps),
                         "receipts": len(receipts),
                     }
@@ -176,5 +179,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bin-dir", type=Path, required=True)
     args = parser.parse_args()
-    for configured in (False, True):
-        check(args.bin_dir.resolve(), configured)
+    for profile in (None, "native"):
+        for configured in (False, True):
+            check(args.bin_dir.resolve(), configured, profile)
