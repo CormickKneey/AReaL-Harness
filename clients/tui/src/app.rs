@@ -97,6 +97,8 @@ pub struct App {
     pub threads: BTreeMap<String, Thread>,
     pub selected: Option<String>,
     pub input: String,
+    // 使用字素边界的字节偏移，避免拆开中文、组合字符和 emoji。
+    pub input_cursor: usize,
     pub status: String,
     pub view: View,
     pub focus: Focus,
@@ -151,6 +153,7 @@ impl App {
             threads: BTreeMap::new(),
             selected: None,
             input: String::new(),
+            input_cursor: 0,
             status: "Connected · /help for commands".into(),
             view: if prefs.no_logo {
                 View::Conversation
@@ -699,6 +702,7 @@ impl App {
                     .get(id)
                     .context("No failed submission to restore")?;
                 self.input = failure.input.clone();
+                self.input_cursor = self.input.len();
                 self.completion_dismissed = true;
                 return Ok(false);
             }
@@ -802,6 +806,7 @@ impl App {
             }
         }
         self.input.clear();
+        self.input_cursor = 0;
         self.completion_index = 0;
         self.completion_dismissed = false;
         self.dirty = true;
@@ -977,15 +982,57 @@ impl App {
                 picker.query.push_str(&text.replace(['\n', '\t'], " "));
                 picker.selected = 0;
             }
-        } else if self.focus == Focus::Input && self.input.len() + text.len() <= 64 * 1024 {
-            self.input.push_str(&text);
-            if self.view == View::Welcome {
-                self.view = View::Conversation;
-            }
-            self.completion_index = 0;
-            self.completion_dismissed = false;
+        } else if self.focus == Focus::Input {
+            self.insert_input(&text);
         }
         self.dirty = true;
+    }
+    fn previous_input_boundary(&self) -> usize {
+        self.input[..self.input_cursor]
+            .grapheme_indices(true)
+            .next_back()
+            .map_or(0, |(i, _)| i)
+    }
+    fn next_input_boundary(&self) -> usize {
+        self.input[self.input_cursor..]
+            .graphemes(true)
+            .next()
+            .map_or(self.input.len(), |g| self.input_cursor + g.len())
+    }
+    fn input_changed(&mut self) {
+        // 插入或删除可能合并相邻字素，光标必须重新对齐到完整字素之后。
+        self.input_cursor = self
+            .input
+            .grapheme_indices(true)
+            .map(|(i, _)| i)
+            .find(|i| *i >= self.input_cursor)
+            .unwrap_or(self.input.len());
+        self.completion_index = 0;
+        self.completion_dismissed = false;
+    }
+    fn insert_input(&mut self, text: &str) {
+        if self.input.len() + text.len() > 64 * 1024 {
+            return;
+        }
+        self.input.insert_str(self.input_cursor, text);
+        self.input_cursor += text.len();
+        self.input_changed();
+        if self.view == View::Welcome {
+            self.view = View::Conversation;
+        }
+    }
+    fn delete_input(&mut self, backward: bool) {
+        let (start, end) = if backward {
+            (self.previous_input_boundary(), self.input_cursor)
+        } else {
+            (self.input_cursor, self.next_input_boundary())
+        };
+        if start == end {
+            return;
+        }
+        self.input.replace_range(start..end, "");
+        self.input_cursor = start;
+        self.input_changed();
     }
     fn update_configuration(&mut self, id: &str, value: &Value) -> Result<()> {
         let config: areal_protocol::desktop::EffectiveConfig =
@@ -1092,6 +1139,26 @@ impl App {
                 KeyCode::Char('o') if self.picker.is_none() && self.theme_original.is_none() => {
                     self.toggle_details()
                 }
+                KeyCode::Char(c)
+                    if self.focus == Focus::Input
+                        && self.picker.is_none()
+                        && self.theme_original.is_none() =>
+                {
+                    match c {
+                        'a' => {
+                            self.input_cursor = self.input[..self.input_cursor]
+                                .rfind('\n')
+                                .map_or(0, |i| i + 1);
+                        }
+                        'e' => {
+                            self.input_cursor = self.input[self.input_cursor..]
+                                .find('\n')
+                                .map_or(self.input.len(), |i| self.input_cursor + i);
+                        }
+                        'd' => self.delete_input(false),
+                        _ => {}
+                    }
+                }
                 _ => {}
             }
             return Ok(false);
@@ -1150,6 +1217,7 @@ impl App {
                         command.name,
                         if command.argument.is_empty() { "" } else { " " }
                     );
+                    self.input_cursor = self.input.len();
                     self.completion_index = 0;
                     self.completion_dismissed = true;
                     return Ok(false);
@@ -1230,25 +1298,18 @@ impl App {
                 }
             }
             KeyCode::Enter if self.focus == Focus::Input => return self.submit(),
-            KeyCode::Backspace if self.focus == Focus::Input => {
-                let end = self
-                    .input
-                    .grapheme_indices(true)
-                    .next_back()
-                    .map_or(0, |(i, _)| i);
-                self.input.truncate(end);
-                self.completion_index = 0;
-                self.completion_dismissed = false;
+            KeyCode::Left if self.focus == Focus::Input => {
+                self.input_cursor = self.previous_input_boundary();
             }
-            KeyCode::Char(c)
-                if self.focus == Focus::Input && self.input.len() + c.len_utf8() <= 64 * 1024 =>
-            {
-                self.input.push(c);
-                self.completion_index = 0;
-                self.completion_dismissed = false;
-                if self.view == View::Welcome {
-                    self.view = View::Conversation;
-                }
+            KeyCode::Right if self.focus == Focus::Input => {
+                self.input_cursor = self.next_input_boundary();
+            }
+            KeyCode::Backspace if self.focus == Focus::Input => {
+                self.delete_input(true);
+            }
+            KeyCode::Delete if self.focus == Focus::Input => self.delete_input(false),
+            KeyCode::Char(c) if self.focus == Focus::Input => {
+                self.insert_input(c.encode_utf8(&mut [0; 4]));
             }
             _ => {}
         }
@@ -1485,6 +1546,7 @@ impl App {
                     );
                     if self.selected.as_deref() == Some(thread_id) && self.input.is_empty() {
                         self.input = input.clone();
+                        self.input_cursor = self.input.len();
                     }
                 }
                 if let Purpose::Resume(id) = &request.purpose {
@@ -2034,6 +2096,135 @@ pub(crate) mod tests {
         assert!(app.retries.is_empty());
     }
     #[test]
+    fn input_keys_edit_at_cursor_and_submit_the_result() {
+        let mut app = App::new(Preferences::default());
+        app.selected = Some("root".into());
+        app.subscriptions.insert("root".into());
+        app.paste("helo!");
+        for _ in 0..3 {
+            app.key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))
+                .unwrap();
+        }
+        app.key(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE))
+            .unwrap();
+        app.key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL))
+            .unwrap();
+        app.paste("say ");
+        app.key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL))
+            .unwrap();
+        app.key(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE))
+            .unwrap();
+        app.key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL))
+            .unwrap();
+        assert_eq!(app.input, "say hello!");
+        assert_eq!(app.input_cursor, app.input.len());
+        app.key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE))
+            .unwrap();
+        assert!(
+            !app.key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL))
+                .unwrap()
+        );
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.outbox[0].params["input"][0]["text"], "say hello!");
+        assert!(app.input.is_empty());
+        assert_eq!(app.input_cursor, 0);
+        for key in [
+            KeyEvent::new(KeyCode::Left, KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL),
+        ] {
+            assert!(!app.key(key).unwrap());
+            assert!(app.input.is_empty());
+            assert_eq!(app.input_cursor, 0);
+        }
+    }
+    #[test]
+    fn input_movement_and_deletion_preserve_complete_graphemes() {
+        for grapheme in ["中", "e\u{301}", "👩‍💻", "🇨🇳"] {
+            let mut app = App::new(Preferences::default());
+            app.paste(&format!("a{grapheme}z"));
+            for _ in 0..2 {
+                app.key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))
+                    .unwrap();
+            }
+            assert_eq!(app.input_cursor, 1);
+            app.key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE))
+                .unwrap();
+            assert_eq!(app.input_cursor, 1 + grapheme.len());
+            app.key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE))
+                .unwrap();
+            assert_eq!(app.input, "az");
+            assert_eq!(app.input_cursor, 1);
+            app.paste(grapheme);
+            app.key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))
+                .unwrap();
+            app.key(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE))
+                .unwrap();
+            assert_eq!(app.input, "az");
+            assert_eq!(app.input_cursor, 1);
+        }
+        let mut app = App::new(Preferences::default());
+        app.paste("👩💻");
+        app.key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))
+            .unwrap();
+        app.key(KeyEvent::new(KeyCode::Char('\u{200d}'), KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.input, "👩‍💻");
+        assert_eq!(app.input_cursor, app.input.len());
+        app.key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE))
+            .unwrap();
+        assert!(app.input.is_empty());
+    }
+    #[test]
+    fn input_line_shortcuts_and_newline_deletion_handle_pasted_text() {
+        let mut app = App::new(Preferences::default());
+        app.paste("first\nsecond\nthird");
+        app.key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL))
+            .unwrap();
+        assert_eq!(app.input_cursor, "first\nsecond\n".len());
+        app.key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))
+            .unwrap();
+        app.key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL))
+            .unwrap();
+        assert_eq!(app.input_cursor, "first\n".len());
+        app.key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::CONTROL))
+            .unwrap();
+        assert_eq!(app.input_cursor, "first\nsecond".len());
+        app.key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL))
+            .unwrap();
+        assert_eq!(app.input, "first\nsecondthird");
+
+        let mut app = App::new(Preferences::default());
+        app.paste("e\n\u{301}x");
+        app.key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL))
+            .unwrap();
+        app.key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.input, "e\u{301}x");
+        assert_eq!(app.input_cursor, "e\u{301}".len());
+    }
+    #[test]
+    fn input_shortcuts_do_not_edit_background_drafts() {
+        for mode in 0..4 {
+            let mut app = App::new(Preferences::default());
+            app.paste("draft");
+            match mode {
+                0 => app.focus = Focus::Navigation,
+                1 => app.focus = Focus::Content,
+                2 => app.picker = Some(Picker::new(PickerKind::Sessions)),
+                _ => app.theme_original = Some(app.prefs.theme),
+            }
+            for c in ['a', 'd', 'e'] {
+                app.key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL))
+                    .unwrap();
+                assert_eq!(app.input, "draft");
+                assert_eq!(app.input_cursor, 5);
+            }
+        }
+    }
+    #[test]
     fn submission_failures_restore_empty_input_without_overwriting_new_drafts() {
         let mut app = App::new(Preferences::default());
         app.selected = Some("root".into());
@@ -2046,6 +2237,7 @@ pub(crate) mod tests {
         app.receive(json!({"id":1,"error":{"message":"fixture rejected"}}))
             .unwrap();
         assert_eq!(app.input, "original request");
+        assert_eq!(app.input_cursor, app.input.len());
         assert_eq!(app.submission_failures["root"].message, "fixture rejected");
         app.submit().unwrap();
         let request = app.outbox.pop_front().unwrap();
@@ -2057,6 +2249,7 @@ pub(crate) mod tests {
         app.input = "/restore-input".into();
         app.submit().unwrap();
         assert_eq!(app.input, "original request");
+        assert_eq!(app.input_cursor, app.input.len());
         assert!(app.outbox.is_empty());
     }
     #[test]
@@ -2146,6 +2339,7 @@ pub(crate) mod tests {
         app.key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
             .unwrap();
         assert_eq!(app.input, "/sessions");
+        assert_eq!(app.input_cursor, app.input.len());
         assert!(app.outbox.is_empty());
         app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
             .unwrap();
@@ -2170,6 +2364,7 @@ pub(crate) mod tests {
         app.key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE))
             .unwrap();
         assert_eq!(app.input, "/spawn ");
+        assert_eq!(app.input_cursor, app.input.len());
         assert!(app.completions().is_empty());
     }
     #[test]

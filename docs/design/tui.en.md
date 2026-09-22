@@ -41,6 +41,8 @@ Connection, current Turn and Goal are separate dimensions. Disconnected or unsub
 
 `usageUnknown` explains unconfirmed request usage. The display distinguishes confirmed tokens and unknown requests; incomplete accounting with zero unknown requests shows `accounting incomplete`. Missing Turn usage is unknown, not zero consumption. `/goal-resume` remains subject to Core budget and UNKNOWN checks, without client tool replay. See [Core recovery](../api/core.en.md#recovery).
 
+The editor tracks its cursor at grapheme boundaries, applying typing, paste and deletion at that position. Its single-line viewport follows the cursor using terminal display widths, with visible representations of newlines and tabs. Ctrl-A / Ctrl-E move to the current logical line start / end in pasted text. Slash completion and failed-input restoration place the cursor at the end; submission resets it. Popups and other focus targets preserve the background draft. See [client controls](../guides/clients.en.md#tui-controls).
+
 Failed submission RPCs retain a bounded input-area notice. Original input returns automatically to an empty editor, preserving newer drafts; `/restore-input` restores it explicitly. Disconnect during submission marks the outcome unconfirmed without resending. This is client feedback, not fabricated business history.
 
 ## Expansion and reading
