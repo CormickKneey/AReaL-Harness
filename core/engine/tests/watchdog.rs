@@ -480,7 +480,15 @@ async fn goal_unknown_usage_stops_before_network_backoff_and_keeps_reservations(
             )
             .await
             .unwrap();
-        settled(&engine, &thread.id).await;
+        let result = settled(&engine, &thread.id).await;
+        let error = &result.turns[0].error.as_ref().unwrap().message;
+        let cause = match fault {
+            Fault::Error(failure) => failure.to_string(),
+            Fault::RequestIdle => "model request idle timeout".into(),
+            Fault::StreamIdle => "model stream idle timeout".into(),
+        };
+        assert!(error.contains("GOAL_USAGE_UNKNOWN"), "{error}");
+        assert!(error.contains(&cause), "{error}");
         let goal = engine.goal_get(&thread.id).await.unwrap();
         assert_eq!(goal["goal"]["status"], "blocked");
         assert_eq!(goal["goal"]["reason"], "usageUnknown");
@@ -543,6 +551,9 @@ async fn goal_summary_network_failure_blocks_without_replacing_the_checkpoint() 
         .await
         .unwrap();
     let result = settled(&engine, &thread.id).await;
+    let error = &result.turns.last().unwrap().error.as_ref().unwrap().message;
+    assert!(error.contains("GOAL_USAGE_UNKNOWN"), "{error}");
+    assert!(error.contains("model stream transport failed"), "{error}");
     let goal = engine.goal_get(&thread.id).await.unwrap();
     assert_eq!(goal["goal"]["status"], "blocked");
     assert_eq!(goal["goal"]["reason"], "usageUnknown");
@@ -557,6 +568,129 @@ async fn goal_summary_network_failure_blocks_without_replacing_the_checkpoint() 
         assert_ne!(event["method"], "areal/model/watchdogRetry");
     }
     engine.shutdown().await;
+}
+
+#[tokio::test]
+async fn goal_http_rejections_preserve_the_cause_and_safe_audit() {
+    use areal_engine::model::{HttpModel, ModelOptions, ModelProtocol};
+    use axum::{Router, http::StatusCode, routing::post};
+
+    for protocol in [ModelProtocol::ChatCompletions, ModelProtocol::Responses] {
+        for (status, content_type, cause) in [
+            (
+                200,
+                "text/html; private=private-header",
+                "model response must use text/event-stream",
+            ),
+            (
+                401,
+                "application/json",
+                "model HTTP status 401 Unauthorized",
+            ),
+        ] {
+            let requests = Arc::new(AtomicUsize::new(0));
+            let captured = requests.clone();
+            let app = Router::new().route(
+                "/v1",
+                post(move || {
+                    captured.fetch_add(1, Ordering::SeqCst);
+                    async move {
+                        (
+                            StatusCode::from_u16(status).unwrap(),
+                            [("content-type", content_type)],
+                            "private-error-body",
+                        )
+                    }
+                }),
+            );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = format!(
+                "http://{}/v1?token=private-url",
+                listener.local_addr().unwrap()
+            );
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            let data = tempfile::tempdir().unwrap();
+            let audit_dir = data.path().join("requests");
+            let model = HttpModel::with_protocol(
+                endpoint,
+                "fixture".into(),
+                Some("private-key".into()),
+                protocol,
+            )
+            .unwrap()
+            .with_options(ModelOptions {
+                max_retries: 2,
+                ..Default::default()
+            })
+            .unwrap()
+            .with_audit_directory(audit_dir.clone());
+            let engine = Engine::open(
+                data.path(),
+                Arc::new(model),
+                Limits {
+                    max_completion_retries: 2,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let thread = engine.create("/workspace".into()).await.unwrap();
+            let mut events = engine.subscribe(&thread.id).await.unwrap();
+            engine
+                .goal_create(
+                    "test".into(),
+                    serde_json::from_value(json!({
+                        "requestId":"goal-http", "threadId":thread.id,
+                        "expectedRevision":0, "objective":"private-prompt"
+                    }))
+                    .unwrap(),
+                )
+                .await
+                .unwrap();
+            let result = settled(&engine, &thread.id).await;
+            assert_eq!(result.turns[0].status, TurnStatus::Failed);
+            let error = &result.turns[0].error.as_ref().unwrap().message;
+            assert!(error.contains("GOAL_USAGE_UNKNOWN"), "{error}");
+            assert!(error.contains(cause), "{error}");
+            if status == 200 {
+                assert!(error.contains("/v1/chat/completions"), "{error}");
+            }
+            let goal = engine.goal_get(&thread.id).await.unwrap();
+            assert_eq!(goal["goal"]["status"], "blocked");
+            assert_eq!(goal["goal"]["reason"], "usageUnknown");
+            assert_eq!(goal["goal"]["usage"]["unknownRequests"], 1);
+            assert!(goal["goal"]["usage"]["reservedTokens"].as_u64().unwrap() > 0);
+            assert_eq!(requests.load(Ordering::SeqCst), 1);
+            while let Ok(event) = events.try_recv() {
+                assert_ne!(event["method"], "areal/model/watchdogRetry");
+            }
+            let audit_text = std::fs::read_to_string(audit_dir.join("requests.jsonl")).unwrap();
+            let records = audit_text
+                .lines()
+                .map(|line| serde_json::from_str::<Value>(line).unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(records.len(), 1);
+            let audit = &records[0];
+            assert_eq!(audit["httpStatus"], status);
+            assert_eq!(audit["httpAttempts"], 1);
+            assert_eq!(audit["outcome"], "failed");
+            assert_eq!(audit["usageObserved"], false);
+            assert!(audit["error"].as_str().unwrap().contains(cause));
+            for private in [
+                "private-header",
+                "private-error-body",
+                "private-url",
+                "private-key",
+                "private-prompt",
+                "127.0.0.1",
+            ] {
+                assert!(!audit_text.contains(private), "{private}");
+                assert!(!error.contains(private), "{private}");
+            }
+            engine.shutdown().await;
+            server.abort();
+            let _ = server.await;
+        }
+    }
 }
 
 #[tokio::test]

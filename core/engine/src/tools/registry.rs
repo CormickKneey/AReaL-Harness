@@ -173,6 +173,9 @@ impl Registry {
             let mut definition = entry.definition.clone();
             definition.input_schema["properties"]["timeoutMs"]["maximum"] =
                 json!(limits.wall_time_ms);
+            for branch in definition.input_schema["oneOf"].as_array_mut().unwrap() {
+                branch["properties"]["timeoutMs"]["maximum"] = json!(limits.wall_time_ms);
+            }
             definition.description.push_str(&format!(
                 " This Runtime permits timeoutMs from 1 through {} (including write-queue time). yieldMs/read_process.waitMs only control waiting, not the execution deadline.", limits.wall_time_ms));
             let input = compile(&definition.input_schema)?;
@@ -392,6 +395,35 @@ mod tests {
                 command.definition.input_schema["properties"]["timeoutMs"]["maximum"],
                 maximum
             );
+            let branches = command.definition.input_schema["oneOf"].as_array().unwrap();
+            assert_eq!(branches.len(), 2);
+            for (branch, args) in branches.iter().zip([
+                json!({"command":"true","cwd":".","timeoutMs":maximum}),
+                json!({"argv":["true"],"cwd":".","timeoutMs":maximum}),
+            ]) {
+                assert_eq!(branch["type"], "object");
+                let validator = compile(branch).unwrap();
+                assert!(validator.is_valid(&args));
+                command.validate_input(&args).unwrap();
+                let mut over_limit = args;
+                over_limit["timeoutMs"] = json!(maximum + 1);
+                assert!(!validator.is_valid(&over_limit));
+                assert!(command.validate_input(&over_limit).is_err());
+            }
+            for args in [
+                json!({}),
+                json!({"command":"true","argv":["true"]}),
+                json!({"command":""}),
+                json!({"argv":[]}),
+                json!({"command":"true","unexpected":true}),
+            ] {
+                assert!(command.validate_input(&args).is_err(), "{args}");
+                assert!(
+                    branches
+                        .iter()
+                        .all(|b| !compile(b).unwrap().is_valid(&args))
+                );
+            }
             assert!(
                 command
                     .validate_input(&json!({"argv":["true"],"cwd":".","timeoutMs":maximum}))

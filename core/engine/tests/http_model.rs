@@ -535,12 +535,21 @@ async fn retryable_http_failures_are_typed_without_reclassifying_auth_or_bad_req
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let model = ChatModel::new(format!("http://{address}/"), "fixture".into(), None).unwrap();
+        let audit_dir = tempfile::tempdir().unwrap();
+        let model = ChatModel::new(format!("http://{address}/"), "fixture".into(), None)
+            .unwrap()
+            .with_audit_directory(audit_dir.path().into());
         let error = match model.chat(vec![], vec![]).await {
             Err(error) => error,
             Ok(_) => panic!("HTTP error accepted"),
         };
         assert_eq!(error.downcast_ref::<ModelFailure>().copied(), expected);
+        let audit_text = std::fs::read_to_string(audit_dir.path().join("requests.jsonl")).unwrap();
+        let audit: Value = serde_json::from_str(audit_text.trim()).unwrap();
+        assert_eq!(audit["outcome"], "failed");
+        assert_eq!(audit["httpStatus"], status);
+        assert_eq!(audit["error"], error.to_string());
+        assert_eq!(audit["usageObserved"], false);
         server.abort();
         let _ = server.await;
     }

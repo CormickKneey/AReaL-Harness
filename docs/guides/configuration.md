@@ -50,6 +50,8 @@ filter = "info"
 
 endpoint 是完整 HTTP(S) 请求 URL；Core 只支持 `chat-completions` / `responses`，不自动补路径。配置只写密钥变量名；显式引用必须非空且可用于 HTTP header，未选中 provider 不要求密钥。省略引用为匿名，不从其他应用读取凭据。
 
+例如 Chat Completions 通常填写 `https://model.example.com/v1/chat/completions`，Responses 填写 `https://model.example.com/v1/responses`，以供应商实际接口为准。仅填 `/v1` 可能得到 HTTP 200 的 HTML 网页，触发 `model response must use text/event-stream`；Goal 模式还会因未知用量显示 `GOAL_USAGE_UNKNOWN`，并保留原始错误。修改启动配置后须[停止并重新启动共享服务](../api/local-service.md#公共入口)，只重开客户端不会重新加载配置。
+
 `reasoning_effort` 可为 none/minimal/low/medium/high/xhigh，供应商需支持；可选 `max_output_tokens` 映射到协议对应字段。`max_retries` 为 0–8，控制接受流之前的有限 HTTP 重试，涵盖传输错误、HTTP 408/429 和全部 5xx。该额度耗尽后，默认启用的 Core watchdog 仍会继续网络恢复。
 
 可选 `model.reasoning_summary = "auto"`（也可为 `concise` / `detailed`）仅适用于 `responses`，映射到请求的 `reasoning.summary`；环境变量为 `AREAL_HARNESS_REASONING_SUMMARY`。默认省略，不向 Chat Completions 或未选择此功能的模型附加摘要参数。端点/模型必须支持所选摘要模式；是否返回摘要取决于供应商，不保证始终有思考文本。

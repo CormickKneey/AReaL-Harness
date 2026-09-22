@@ -412,8 +412,11 @@ impl Engine {
                         Err(error) => {
                             // 先释放失败流及共享模型许可，再等待退避；绝不重放已执行的工具。
                             drop(stream);
-                            // Goal 的未知消费必须先停止推进，不能进入 watchdog 或有限重试。
-                            model.check_work()?;
+                            // Goal 的未知消费阻止重试，但不能覆盖导致请求失败的原始诊断。
+                            if let Err(blocker) = model.check_work() {
+                                let diagnostic = format!("{blocker}: {error}");
+                                return Err(error.context(diagnostic));
+                            }
                             // HTTP 解码器会先拒绝收尾轮的零调用额度；保留轮次错误分类和原始预算原因。
                             if final_round
                                 && error
