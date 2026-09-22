@@ -138,6 +138,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "areal-config",
+ "areal-local-service",
  "clap",
  "fs2",
  "futures-util",
@@ -197,6 +198,26 @@ dependencies = [
  "tokio-util",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "areal-local-service"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "areal-config",
+ "areal-protocol",
+ "clap",
+ "fs2",
+ "futures-util",
+ "libc",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite",
 ]
 
 [[package]]
@@ -340,10 +361,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "areal-service-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "areal-local-service",
+ "areal-protocol",
+ "fs2",
+ "libc",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "uuid",
+]
+
+[[package]]
 name = "areal-tui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "areal-local-service",
  "areal-protocol",
  "clap",
  "crossterm",

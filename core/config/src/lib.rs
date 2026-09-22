@@ -186,9 +186,15 @@ impl ResolvedCoreConfig {
 
     /// Redacted, stable JSON shared by local diagnostics and the launcher.
     pub fn diagnostic(&self, sources: bool) -> serde_json::Value {
-        let mut endpoint = url::Url::parse(&self.model.endpoint).expect("validated endpoint");
-        endpoint.set_query(None);
-        endpoint.set_fragment(None);
+        // 管理模式允许尚未配置模型，此时没有可解析的 endpoint。
+        let endpoint = if self.model.endpoint.is_empty() {
+            String::new()
+        } else {
+            let mut endpoint = url::Url::parse(&self.model.endpoint).expect("validated endpoint");
+            endpoint.set_query(None);
+            endpoint.set_fragment(None);
+            endpoint.to_string()
+        };
         let mut result = serde_json::json!({
             "goals": self.goals,
             "home": self.home, "config_file": self.config_file,

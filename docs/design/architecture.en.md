@@ -17,6 +17,8 @@ AReaL-Harness follows **Clients → Core → Runtime**. Core exclusively owns se
 | `core/protocol` | Client protocol projections and shared types |
 | `core/engine` | Models, tools, history, persistence, child tasks and Workgroups |
 | `core/app-server` | WebSocket, authentication, subscriptions and callback correlation; no separate history |
+| `core/local-service` | Shared discovery, configuration compatibility and control client; depends on config/protocol |
+| `core/service-host` | Independent local Core/Runtime lifecycle owner; invokes the trusted launcher |
 | `core/server` | Configuration, models, MCP, Hosts, Runtime and shutdown assembly |
 | `core/mcp` | Official rmcp client and result adaptation; no Turn ownership |
 | `core/sdk-typescript` | Selected DSH tools/filesystem adaptation and independent Node Host |
@@ -31,6 +33,8 @@ AReaL-Harness follows **Clients → Core → Runtime**. Core exclusively owns se
 Skill discovery in `core/config` uses trusted launch parameters and returns metadata with individual warnings. Engine also reuses its stateless header parser for explicit deployment registration, without locating user configuration itself. `core/engine/src/desktop/skills.rs` retains registered directory descriptors and asynchronously reads bounded pages of current resources without Skill content snapshots. See the [Skill guide](../guides/skills.en.md) for configuration and read contracts.
 
 `core/engine/src/goals` owns persistent Goals, request ledgers and continuation across Turns. User queues and automatic continuation share one admission entry point. Clients maintain projections and Runtime retains its execution boundary. See the [Core API](../api/core.en.md#goals).
+
+Interactive TUI and Web launchers attach to one service per deployment. The host survives windows while Store retains its exclusive writer lock. Desktop Main can reuse the same discovery/control entry point; see [local services](../api/local-service.en.md).
 
 ## State and execution
 

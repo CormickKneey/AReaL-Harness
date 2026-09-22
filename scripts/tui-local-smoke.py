@@ -192,7 +192,16 @@ endpoint = "http://127.0.0.1:{model.server_port}"
         assert len(snapshot["thread"]["turns"]) == 2
         assert snapshot["thread"]["turns"][-1]["status"] == "completed"
         assert any(m["role"] == "tool" for m in requests[-1]["messages"])
-        pty = run([sys.executable, "-I", "-S", str(ROOT / "scripts/tui-pty-smoke.py"), *args])
+        pty = run(
+            [
+                sys.executable,
+                "-I",
+                "-S",
+                str(ROOT / "scripts/tui-pty-smoke.py"),
+                *args,
+                "--local-mode=owned",
+            ]
+        )
         print(pty.stdout.strip())
         # Every local launch must use its actual bound endpoint and close it on exit.
         for log in data.glob("launch-*.log"):
@@ -205,7 +214,7 @@ endpoint = "http://127.0.0.1:{model.server_port}"
                 )
         assert not errors, errors
         print(
-            "PASS default local TUI: TOML-only model/data, real Runtime fs_read, persistent resume, ephemeral listener, PTY and owned Core cleanup"
+            "PASS owned local TUI: TOML-only model/data, real Runtime fs_read, persistent resume, ephemeral listener, PTY and owned Core cleanup"
         )
 finally:
     model.shutdown()

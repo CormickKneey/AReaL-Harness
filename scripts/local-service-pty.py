@@ -1,0 +1,92 @@
+"""通过两个真实终端验证共享服务不随窗口退出。"""
+
+import errno
+import fcntl
+import json
+import os
+import select
+import struct
+import subprocess
+import sys
+import termios
+import time
+from pathlib import Path
+
+windows = []
+
+
+def window():
+    master, slave = os.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 150, 0, 0))
+    child = subprocess.Popen(
+        sys.argv[1:],
+        stdin=slave,
+        stdout=slave,
+        stderr=slave,
+        env={**os.environ, "TERM": "xterm-256color"},
+        start_new_session=True,
+    )
+    os.close(slave)
+    item = (master, child)
+    windows.append(item)
+    return item
+
+
+def expect(item, text):
+    master, child = item
+    data = bytearray()
+    end = time.monotonic() + 20
+    while time.monotonic() < end:
+        if select.select([master], [], [], 0.1)[0]:
+            try:
+                data.extend(os.read(master, 65536))
+            except OSError as error:
+                if error.errno != errno.EIO:
+                    raise
+                break
+            if text in data:
+                return
+        if child.poll() is not None:
+            break
+    raise AssertionError(f"missing {text!r}, exit={child.poll()}, output={data!r}")
+
+
+try:
+    first, second = window(), window()
+    # Welcome 先于 thread/start 完成；等待实际订阅后再发送输入。
+    expect(first, b"live")
+    expect(second, b"live")
+    # 强杀一个窗口，另一个窗口仍能提交模型请求。
+    first[1].kill()
+    first[1].wait(timeout=5)
+    os.write(second[0], b"window-survives\r")
+    expect(second, b"reply:window-survives")
+    if os.environ.get("TEST_EXPLICIT_STOP"):
+        binary = str(Path(sys.argv[1]).with_name("areal"))
+        descriptor = json.loads(
+            subprocess.check_output([binary, "service", "ensure", *sys.argv[2:]], text=True)
+        )
+        command = [binary, "service", "stop", "--instance", descriptor["serviceId"]]
+        end = time.monotonic() + 10
+        while True:
+            result = subprocess.run(command, capture_output=True, text=True)
+            if result.returncode == 0:
+                break
+            assert "service is busy" in result.stderr and time.monotonic() < end, result.stderr
+            time.sleep(0.05)
+        # 留出多个自动重连周期，确认打开的窗口不会撤销显式停止。
+        time.sleep(3)
+        state = json.loads(
+            subprocess.check_output(
+                [binary, "service", "status", "--instance", descriptor["serviceId"]], text=True
+            )
+        )
+        assert state["state"] == "stopped", state
+    os.write(second[0], b"\x11")
+    assert second[1].wait(timeout=5) == 0
+finally:
+    for master, child in windows:
+        if child.poll() is None:
+            child.kill()
+            child.wait(timeout=5)
+        os.close(master)

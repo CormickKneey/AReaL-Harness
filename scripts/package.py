@@ -21,7 +21,14 @@ def main():
         parser.error("output must not exist")
     if (platform.system(), platform.machine()) != ("Darwin", "arm64"):
         parser.error("the verified package target is macOS arm64")
-    names = ("areal", "areal-server", "areal-runtime", "areal-runtime-fs", "areal-tui")
+    names = (
+        "areal",
+        "areal-server",
+        "areal-runtime",
+        "areal-runtime-fs",
+        "areal-tui",
+        "areal-service-host",
+    )
     source = root / "target" / args.profile
     for name in names:
         if not (source / name).is_file():

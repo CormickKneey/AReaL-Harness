@@ -15,7 +15,7 @@ endif
 	test-protocol test-concurrency verify smoke server tui schemas docs clean \
 	capacity capacity-primitives capacity-core perf runtime test-runtime runtime-smoke verify-runtime \
 	cordis-pin update-cordis sdk-test harness harness-smoke verify-harness \
-	setup sdk-build script-test workgroup-smoke capacity-workgroup
+	setup sdk-build script-test workgroup-smoke capacity-workgroup local-service-smoke
 
 help: ## 显示常用操作（默认目标）
 	@printf '%s\n' '用法：make <target> [ARGS="..."]' ''
@@ -122,6 +122,10 @@ harness-smoke: build sdk-build ## 原生 SDK 与完整读改测试/强杀恢复
 	node scripts/plugin-smoke.mjs
 	node scripts/permissions-smoke.mjs
 	python3 scripts/tui-local-smoke.py
+	node scripts/local-service-smoke.mjs
+
+local-service-smoke: build ## 验证共享服务、多个窗口与宿主故障恢复
+	node scripts/local-service-smoke.mjs
 
 workgroup-smoke: build ## 真实 Runtime 的 Workgroup 写入、组合、期限与故障结算回归
 	$(WORKGROUP_ENV) cargo test --locked -p areal-engine --test workgroup real_core_workers_use_private_runtimes_and_final_combination_is_verified -- --ignored --exact
@@ -142,7 +146,7 @@ server: ## 构建并启动 Core；读取用户 TOML、环境变量和显式 ARGS
 	cargo run --locked -p areal-server -- $(ARGS)
 
 tui: ## 启动本地 Core + Runtime + TUI；--endpoint/--remote 连接已有服务
-	cargo build --locked -p areal-server -p areal-runtime -p areal-runtime-fs
+	cargo build --locked -p areal-server -p areal-runtime -p areal-runtime-fs -p areal-service-host -p areal-cli
 	cargo run --locked -p areal-tui -- $(ARGS)
 
 schemas: ## 使用 codex-cli 0.145.0 重新生成协议 schema
@@ -183,6 +187,7 @@ examples-desktop-api: build ## 真实 Core/Runtime 的桌面 API 与 CLI 确定�
 desktop-schemas: ## 从 Rust 类型导出 AReaL 桌面契约
 	cargo run --locked -q -p areal-engine --example desktop-schema > schemas/areal-core-v1.json
 	cargo run --locked -q -p areal-engine --example desktop-schema -- --native-host > schemas/native-host-v2.json
+	cargo run --locked -q -p areal-protocol --example service-schema > schemas/local-service-v1.json
 
 package: release ## 生成 macOS arm64 发行产物及完整性清单；ARGS 指定 --output
 	python3 scripts/package.py $(ARGS)

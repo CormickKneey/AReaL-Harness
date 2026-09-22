@@ -10,7 +10,7 @@ COPY core ./core
 COPY clients ./clients
 COPY runtime ./runtime
 COPY scripts/launch.py ./scripts/launch.py
-RUN cargo build --locked --release -p areal-runtime -p areal-runtime-fs -p areal-server -p areal-tui
+RUN cargo build --locked --release -p areal-runtime -p areal-runtime-fs -p areal-server -p areal-tui -p areal-service-host -p areal-cli
 
 FROM runtime-builder AS runtime-tests
 
@@ -65,6 +65,8 @@ COPY --from=runtime-builder /src/target/release/areal-runtime /usr/local/bin/are
 COPY --from=runtime-builder /src/target/release/areal-runtime-fs /usr/local/bin/areal-runtime-fs
 COPY --from=runtime-builder /src/target/release/areal-server /usr/local/bin/areal-server
 COPY --from=runtime-builder /src/target/release/areal-tui /usr/local/bin/areal-tui
+COPY --from=runtime-builder /src/target/release/areal-service-host /usr/local/bin/areal-service-host
+COPY --from=runtime-builder /src/target/release/areal /usr/local/bin/areal
 COPY tests/perf/runner /opt/areal-perf
 COPY tests/perf/trace_metrics.py /opt/areal-perf/trace_metrics.py
 COPY scripts/launch.py /opt/areal-launch/launch.py

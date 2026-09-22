@@ -628,3 +628,12 @@ fn reasoning_summary_is_opt_in_responses_only_and_env_can_override_it() {
     set(&mut i, "AREAL_HARNESS_REASONING_SUMMARY", "unsupported");
     assert_eq!(failure(&i).kind, ConfigErrorKind::InvalidValue);
 }
+
+#[test]
+fn management_diagnostic_without_model_is_valid_json() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut input = inputs(temp.path());
+    input.overrides = ConfigOverrides::default();
+    let config = load_management_config(&input).unwrap();
+    assert_eq!(config.diagnostic(false)["model"]["endpoint"], "");
+}

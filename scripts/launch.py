@@ -89,6 +89,7 @@ def main():
     parser.add_argument("--ready-metadata-file", type=Path)
     parser.add_argument("--auth-file", type=Path)
     parser.add_argument("--desktop-config", type=Path)
+    parser.add_argument("--service-info", type=Path)
     parser.add_argument("--startup-timeout", type=float, default=30)
     parser.add_argument("--resume")
     headless = parser.add_mutually_exclusive_group()
@@ -193,7 +194,15 @@ def main():
     signal.signal(signal.SIGINT, stop)
     request_read, request_write = os.pipe()
     response_read, response_write = os.pipe()
-    descriptors = {request_read, request_write, response_read, response_write}
+    lifetime_read, lifetime_write = os.pipe()
+    descriptors = {
+        request_read,
+        request_write,
+        response_read,
+        response_write,
+        lifetime_read,
+        lifetime_write,
+    }
 
     def close(*fds):
         for fd in fds:
@@ -306,10 +315,13 @@ def main():
                 [
                     str(paths[0]),
                     "--runtime-stdio",
+                    "--supervisor-fd",
+                    str(lifetime_read),
                     "--workspace",
                     str(workspace),
                     *(["--command-scratch", str(scratch)] if scratch else []),
                     *overrides,
+                    *(["--service-info", str(args.service_info)] if args.service_info else []),
                     *(
                         ["--workgroup-policy", str(args.workgroup_policy.resolve())]
                         if args.workgroup_policy
@@ -336,10 +348,11 @@ def main():
                 stdout=request_write,
                 stderr=diagnostics,
                 env=core_env,
+                pass_fds=(lifetime_read,),
             )
             children.append(core)
             print(f"AReaL launcher Core PID: {core.pid}", file=sys.stderr, flush=True)
-            close(response_read, request_write)
+            close(response_read, request_write, lifetime_read)
             # Neither parent retains an extra writer: Core death reaches Runtime as EOF.
             tui = None
             client_code = 0

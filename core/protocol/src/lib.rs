@@ -1,4 +1,5 @@
 pub mod goals;
+pub mod service;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
