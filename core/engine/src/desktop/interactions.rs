@@ -212,15 +212,7 @@ impl Engine {
                 .turns
                 .last()
                 .and_then(|t| t.configuration.as_ref());
-            let parent_tool = arguments.get("tool").and_then(Value::as_str);
-            let matches = |name: &str| name == "*" || name == tool || parent_tool == Some(name);
-            config.is_some_and(|c| {
-                c.profile
-                    .as_ref()
-                    .is_some_and(|p| p.approval_tools.iter().any(|n| matches(n)))
-                    || (c.options.approval_tools.iter().any(|n| matches(n))
-                        && !c.options.preapproved_tools.iter().any(|n| matches(n)))
-            })
+            config.is_some_and(|c| requires_approval(c, tool, arguments))
         };
         if needed {
             let result = self
@@ -257,5 +249,70 @@ impl Engine {
             ));
         }
         Ok(())
+    }
+}
+
+// Hook 可按父工具要求审批，但预批准只匹配当前操作，不能沿父工具传播。
+fn requires_approval(config: &EffectiveConfig, tool: &str, arguments: &Value) -> bool {
+    let parent_tool = arguments.get("tool").and_then(Value::as_str);
+    let matches = |name: &str| name == "*" || name == tool || parent_tool == Some(name);
+    config
+        .profile
+        .as_ref()
+        .is_some_and(|p| p.approval_tools.iter().any(|n| matches(n)))
+        || (config.options.approval_tools.iter().any(|n| matches(n))
+            && !config
+                .options
+                .preapproved_tools
+                .iter()
+                .any(|n| n == "*" || n == tool))
+}
+
+#[cfg(test)]
+mod permission_tests {
+    use super::*;
+    #[test]
+    fn readonly_preapproval_does_not_approve_hooks_or_external_tool_arguments() {
+        let mut config = EffectiveConfig::default();
+        config.options.approval_tools = vec!["*".into()];
+        config.options.preapproved_tools = vec!["fs_read".into()];
+        assert!(!requires_approval(
+            &config,
+            "fs_read",
+            &json!({"path":"file"})
+        ));
+        assert!(requires_approval(
+            &config,
+            "fs_create",
+            &json!({"path":"file"})
+        ));
+        assert!(requires_approval(
+            &config,
+            "hook:audit",
+            &json!({"tool":"fs_read"})
+        ));
+        assert!(requires_approval(
+            &config,
+            "external_tool",
+            &json!({"tool":"fs_read"})
+        ));
+        config.options.preapproved_tools.push("hook:audit".into());
+        assert!(!requires_approval(
+            &config,
+            "hook:audit",
+            &json!({"tool":"fs_read"})
+        ));
+    }
+    #[test]
+    fn profile_approval_remains_mandatory() {
+        let mut config = EffectiveConfig::default();
+        config.options.preapproved_tools = vec!["*".into()];
+        config.profile = Some(serde_json::from_value(json!({"id":"test","revision":"1","displayName":"test","instructions":"","approvalTools":["fs_read"]})).unwrap());
+        assert!(requires_approval(&config, "fs_read", &json!({})));
+        assert!(requires_approval(
+            &config,
+            "hook:audit",
+            &json!({"tool":"fs_read"})
+        ));
     }
 }
