@@ -4,6 +4,7 @@ import errno
 import fcntl
 import json
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -50,8 +51,13 @@ def window():
 
 def expect(item, text):
     _, child, output, ready = item
+
+    # 终端可用光标定位绘制空格，不能假设提示文本在原始字节流中连续。
+    def visible(value):
+        return b"".join(re.sub(rb"\x1b\[[0-9;?]*[A-Za-z]", b"", value).split())
+
     with ready:
-        if ready.wait_for(lambda: text in output, timeout=20):
+        if ready.wait_for(lambda: visible(text) in visible(output), timeout=20):
             return
         raise AssertionError(f"missing {text!r}, exit={child.poll()}, output={output!r}")
 
@@ -66,6 +72,54 @@ try:
     first[1].wait(timeout=5)
     os.write(second[0], b"window-survives\r")
     expect(second, b"reply:window-survives")
+    if config_path := os.environ.get("TEST_RELOAD_CONFIG"):
+        binary = str(Path(sys.argv[1]).with_name("areal"))
+        before = json.loads(
+            subprocess.check_output([binary, "service", "ensure", *sys.argv[2:]], text=True)
+        )
+        config = Path(config_path)
+        changed = re.sub(
+            r'^name = "[^"\n]*"$',
+            'name = "fixture-pty"',
+            config.read_text(),
+            count=1,
+            flags=re.MULTILINE,
+        )
+        pending = config.with_suffix(".pending")
+        pending.write_text(changed)
+        pending.replace(config)
+        expect(second, b"Model configuration updated")
+        after = json.loads(
+            subprocess.check_output([binary, "service", "ensure", *sys.argv[2:]], text=True)
+        )
+        assert after["generation"] == before["generation"]
+        # 文件限额变化由仍打开的 TUI 等待空闲后重启，并重建已有会话快照。
+        changed, count = re.subn(
+            r"^max_threads = \d+$", "max_threads = 1235", changed, count=1, flags=re.MULTILINE
+        )
+        assert count == 1
+        with second[3]:
+            second[2].clear()
+        pending.write_text(changed)
+        pending.replace(config)
+        # 重连提示可能在绘制前被会话快照覆盖；检查只读状态及恢复后的实际请求。
+        end = time.monotonic() + 30
+        while True:
+            result = subprocess.run(
+                [binary, "service", "status", "--instance", before["serviceId"]],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                after = json.loads(result.stdout)
+                if after["state"] == "ready" and after["generation"] != before["generation"]:
+                    break
+            assert time.monotonic() < end, result.stderr
+            time.sleep(0.1)
+        expect(second, b"live")
+        os.write(second[0], b"after-config-restart\r")
+        expect(second, b"reply:after-config-restart")
     if os.environ.get("TEST_EXPLICIT_STOP"):
         binary = str(Path(sys.argv[1]).with_name("areal"))
         descriptor = json.loads(

@@ -16,28 +16,81 @@ use tokio::{
 };
 
 pub async fn ensure(spec: &LaunchSpec) -> Result<Service> {
+    ensure_inner(spec, None, false).await
+}
+
+pub async fn restart(spec: &LaunchSpec, cancel: bool) -> Result<Service> {
+    ensure_inner(spec, Some(cancel), false).await
+}
+
+async fn ensure_inner(
+    spec: &LaunchSpec,
+    restart: Option<bool>,
+    reconnect: bool,
+) -> Result<Service> {
     let directory = spec.directory()?;
     storage::private_dir(&spec.home.join("services"))?;
     storage::private_dir(&directory)?;
-    let startup = storage::open_private(&directory.join("start.lock"), true)?;
-    let deadline = Instant::now() + Duration::from_secs(65);
-    loop {
-        match startup.try_lock_exclusive() {
-            Ok(()) => break,
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline => {
-                tokio::time::sleep(Duration::from_millis(50)).await
-            }
-            Err(e) => return Err(e).context("waiting for the concurrent service launch"),
-        }
+    let _startup = startup_lock(&directory).await?;
+    if reconnect {
+        let record: Service = storage::read(&directory.join("service.json"))?;
+        ensure!(
+            record.state == State::Ready,
+            "service was explicitly stopped; open a new client or run areal service ensure to restart it"
+        );
     }
+    let deadline = Instant::now() + Duration::from_secs(65);
     let data = spec.args.data_dir.as_ref().unwrap();
     std::fs::create_dir_all(data)?;
     let host_lock = data.join("service.lock");
     if !storage::available(&host_lock)? {
         let service = status(&spec.home, &spec.service_id).await
             .context("service has an active owner but cannot be reached; inspect its log, do not start a second Core")?;
-        check_compatible(spec, &service, &directory)?;
-        return Ok(service);
+        ensure!(
+            Some(&service.identity.workspace) == spec.args.workspace.as_ref(),
+            "data directory is bound to a different workspace"
+        );
+        if restart.is_none() && check_compatible(spec, &service, &directory).is_ok() {
+            // 等待文件监听完成一次更新；CLI/环境覆盖变化仍需要重启继承新上下文。
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                let state = rpc(&service, "areal/server/status", json!({})).await?;
+                if state["configuration"]["modelRevision"].as_str()
+                    == spec.components.get("model").map(String::as_str)
+                {
+                    return Ok(service);
+                }
+                if Instant::now() >= deadline {
+                    bail!(
+                        "model configuration has not been applied; the running service is unchanged. Inspect its configuration error or run `areal service restart` to inherit updated credentials"
+                    );
+                }
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        }
+        if restart.is_none() {
+            let previous: std::collections::BTreeMap<String, String> =
+                storage::read(&directory.join("components.json"))?;
+            for key in [
+                "workspace",
+                "permissions",
+                "runtime",
+                "deployment",
+                "model-inputs",
+            ] {
+                if previous
+                    .get(key)
+                    .is_some_and(|value| spec.components.get(key) != Some(value))
+                {
+                    check_compatible(spec, &service, &directory)?;
+                }
+            }
+        }
+        stop_unlocked(&spec.home, &spec.service_id, restart.unwrap_or(false)).await
+            .context("configuration requires a restart; wait for background work to finish, or run `areal service restart --cancel` to explicitly cancel it")?;
+        if !reconnect {
+            eprintln!("Restarting local service with the updated configuration");
+        }
     }
     ensure!(
         storage::store_available(data)?,
@@ -112,13 +165,23 @@ pub async fn ensure(spec: &LaunchSpec) -> Result<Service> {
     }
 }
 
+async fn startup_lock(directory: &Path) -> Result<std::fs::File> {
+    let startup = storage::open_private(&directory.join("start.lock"), true)?;
+    let deadline = Instant::now() + Duration::from_secs(65);
+    loop {
+        match startup.try_lock_exclusive() {
+            Ok(()) => break,
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(50)).await
+            }
+            Err(e) => return Err(e).context("waiting for the concurrent service launch"),
+        }
+    }
+    Ok(startup)
+}
+
 pub async fn reconnect(spec: &LaunchSpec) -> Result<Service> {
-    let record: Service = storage::read(&spec.directory()?.join("service.json"))?;
-    ensure!(
-        record.state == State::Ready,
-        "service was explicitly stopped; open a new client or run areal service ensure to restart it"
-    );
-    ensure(spec).await
+    ensure_inner(spec, None, true).await
 }
 
 fn check_compatible(spec: &LaunchSpec, service: &Service, directory: &Path) -> Result<()> {
@@ -143,12 +206,46 @@ fn check_compatible(spec: &LaunchSpec, service: &Service, directory: &Path) -> R
             .map(|(k, _)| k.as_str())
             .collect();
         bail!(
-            "service configuration conflict ({}) for instance {}; stop it explicitly before changing its deployment, or use another --data-dir",
+            "service configuration conflict ({}) for instance {}; run `areal service restart` in its workspace, or use another --data-dir",
             changed.join(", "),
             spec.service_id
         );
     }
     Ok(())
+}
+
+/// 日常控制按工作区选择；多数据目录时要求显式消歧，不猜测要停止的服务。
+pub async fn select(
+    root: &Path,
+    instance: Option<&str>,
+    workspace: Option<&Path>,
+    data: Option<&Path>,
+) -> Result<String> {
+    if let Some(instance) = instance {
+        return Ok(instance.into());
+    }
+    let workspace = workspace
+        .map(Path::to_path_buf)
+        .unwrap_or(std::env::current_dir()?)
+        .canonicalize()?;
+    let data = data.map(storage::canonical_pending).transpose()?;
+    let matches: Vec<_> = list(root)
+        .await?
+        .into_iter()
+        .filter(|s| {
+            s.identity.workspace == workspace
+                && data.as_ref().is_none_or(|p| p == &s.identity.data_dir)
+        })
+        .collect();
+    ensure!(
+        !matches.is_empty(),
+        "no service for this workspace; run `areal service ensure` first"
+    );
+    ensure!(
+        matches.len() == 1,
+        "multiple services for this workspace; specify --data-dir or --instance"
+    );
+    Ok(matches[0].identity.service_id.clone())
 }
 
 pub async fn request(root: &Path, id: &str, request: Request) -> Result<Service> {
@@ -229,6 +326,12 @@ pub async fn list(root: &Path) -> Result<Vec<Service>> {
 }
 
 pub async fn stop(root: &Path, id: &str, cancel: bool) -> Result<Service> {
+    let directory = storage::registry(root, id)?;
+    let _startup = startup_lock(&directory).await?;
+    stop_unlocked(root, id, cancel).await
+}
+
+async fn stop_unlocked(root: &Path, id: &str, cancel: bool) -> Result<Service> {
     let mut service = status(root, id).await?;
     if service.state == State::Stopped {
         return Ok(service);

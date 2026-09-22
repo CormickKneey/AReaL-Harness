@@ -4,6 +4,28 @@ use areal_local_service::{LaunchSpec, LocalArgs};
 use clap::Subcommand;
 use std::path::PathBuf;
 
+#[derive(clap::Args)]
+pub struct ServiceTarget {
+    #[arg(long, conflicts_with_all = ["workspace", "data_dir"])]
+    instance: Option<String>,
+    #[arg(long)]
+    workspace: Option<PathBuf>,
+    #[arg(long)]
+    data_dir: Option<PathBuf>,
+}
+
+impl ServiceTarget {
+    async fn resolve(&self, root: &std::path::Path) -> Result<String> {
+        areal_local_service::select(
+            root,
+            self.instance.as_deref(),
+            self.workspace.as_deref(),
+            self.data_dir.as_deref(),
+        )
+        .await
+    }
+}
+
 #[derive(Subcommand)]
 pub enum ServiceCommand {
     /// 复用兼容的本地服务；不存在时启动。
@@ -18,15 +40,24 @@ pub enum ServiceCommand {
         json: bool,
     },
     Status {
-        #[arg(long)]
-        instance: String,
+        #[command(flatten)]
+        target: ServiceTarget,
         #[arg(long)]
         json: bool,
     },
     /// 默认拒绝停止仍在工作的实例；--cancel 显式取消并结算。
     Stop {
+        #[command(flatten)]
+        target: ServiceTarget,
         #[arg(long)]
-        instance: String,
+        cancel: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// 按当前工作区重启；忙碌时拒绝，--cancel 显式取消并结算。
+    Restart {
+        #[command(flatten)]
+        local: Box<LocalArgs>,
         #[arg(long)]
         cancel: bool,
         #[arg(long)]
@@ -52,12 +83,15 @@ pub async fn execute(command: ServiceCommand) -> Result<()> {
         ServiceCommand::List { .. } => {
             serde_json::to_value(areal_local_service::list(&root).await?)?
         }
-        ServiceCommand::Status { instance, .. } => {
-            serde_json::to_value(areal_local_service::status(&root, &instance).await?)?
-        }
-        ServiceCommand::Stop {
-            instance, cancel, ..
-        } => serde_json::to_value(areal_local_service::stop(&root, &instance, cancel).await?)?,
+        ServiceCommand::Status { target, .. } => serde_json::to_value(
+            areal_local_service::status(&root, &target.resolve(&root).await?).await?,
+        )?,
+        ServiceCommand::Stop { target, cancel, .. } => serde_json::to_value(
+            areal_local_service::stop(&root, &target.resolve(&root).await?, cancel).await?,
+        )?,
+        ServiceCommand::Restart { local, cancel, .. } => serde_json::to_value(
+            areal_local_service::restart(&LaunchSpec::resolve(&local)?, cancel).await?,
+        )?,
         ServiceCommand::Bind {
             workspace,
             data_dir,

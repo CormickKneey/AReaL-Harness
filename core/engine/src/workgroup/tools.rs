@@ -90,6 +90,47 @@ struct Revise {
 }
 
 impl Engine {
+    async fn freeze_workgroup_models(
+        &self,
+        owner: &str,
+        plan: &mut super::Plan,
+    ) -> anyhow::Result<()> {
+        let Some((thread, turn)) = owner.split_once('/') else {
+            return Ok(());
+        };
+        let cell = self.cell(thread).await?;
+        let state = cell.state.lock().await;
+        let configuration = state
+            .thread
+            .turns
+            .iter()
+            .find(|t| t.id == turn)
+            .and_then(|t| t.configuration.as_ref());
+        if let Some(revision) = configuration.and_then(|c| c.default_model_revision.as_ref()) {
+            for task in &mut plan.tasks {
+                task.configuration
+                    .get_or_insert_with(Default::default)
+                    .default_model_revision = Some(revision.clone());
+            }
+        }
+        Ok(())
+    }
+    pub async fn start_workgroup(
+        self: &Arc<Self>,
+        owner: String,
+        request: Start,
+        cancel: CancellationToken,
+    ) -> anyhow::Result<Value> {
+        let engine = self.clone();
+        // 客户端断线不能提前释放准入锁，让已受理的 Workgroup 越过空闲重启检查。
+        tokio::spawn(async move {
+            let _admission = engine.desktop.lifecycle.gate.lock().await;
+            anyhow::ensure!(engine.accepting_work(), "Core is shutting down");
+            engine.workgroups()?.start(owner, request, cancel).await
+        })
+        .await?
+    }
+
     pub fn workgroups(&self) -> anyhow::Result<&Arc<Service>> {
         self.workgroups
             .get()
@@ -110,10 +151,13 @@ impl Engine {
         let service = self.workgroups()?;
         let value = match name {
             "workgroup_start" => {
+                let mut request = serde_json::from_value::<Start>(args.clone())?;
+                self.freeze_workgroup_models(owner, &mut request.plan)
+                    .await?;
                 service
                     .start_with_goal(
                         owner.into(),
-                        serde_json::from_value::<Start>(args.clone())?,
+                        request,
                         cancel.clone(),
                         self.goal_for_owner(owner).await,
                     )
@@ -145,7 +189,8 @@ impl Engine {
                 value=service.wait(&p.id,Some(owner),p.after_revision,Duration::from_millis(p.timeout_ms))=>value? }
             }
             "workgroup_revise" => {
-                let p: Revise = serde_json::from_value(args.clone())?;
+                let mut p: Revise = serde_json::from_value(args.clone())?;
+                self.freeze_workgroup_models(owner, &mut p.plan).await?;
                 service
                     .revise(
                         &p.id,

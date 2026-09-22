@@ -259,7 +259,7 @@ try {
   }
   assert.equal(items[1].execution.plugin.operations.at(-1).kind, "write");
   const stored = JSON.parse(await readFile(join(data, `${edit.threadId}.json`), "utf8"));
-  assert.equal(stored.version, 8);
+  assert.equal(stored.version, 9);
   assert(
     stored.thread.turns[0].items.some((i) =>
       i.execution?.plugin?.operations.some((o) => o.kind === "write" && o.outcome === "succeeded"),

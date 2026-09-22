@@ -1,6 +1,7 @@
 mod agents;
 pub mod concurrency;
 mod context;
+mod default_model;
 pub mod desktop;
 mod generation;
 pub mod goals;
@@ -177,6 +178,8 @@ impl Cell {
 }
 
 pub struct Engine {
+    default_models: std::sync::RwLock<default_model::DefaultModels>,
+    configuration_status: std::sync::RwLock<Value>,
     goals: goals::Goals,
     threads: RwLock<BTreeMap<String, Arc<Cell>>>,
     store: store::Store,
@@ -435,6 +438,8 @@ impl Engine {
         let desktop = desktop::Desktop::open(root)?;
         let goals = goals::Goals::open(root, &threads)?;
         Ok(Arc::new(Self {
+            default_models: Default::default(),
+            configuration_status: Default::default(),
             goals,
             desktop,
             threads: RwLock::new(threads),
@@ -454,14 +459,14 @@ impl Engine {
             workgroups: std::sync::OnceLock::new(),
         }))
     }
-    pub fn model_name(&self) -> &str {
-        self.model.name()
+    pub fn model_name(&self) -> String {
+        self.default_model().name().into()
     }
-    pub fn model_provider(&self) -> &str {
-        self.model.provider()
+    pub fn model_provider(&self) -> String {
+        self.default_model().provider().into()
     }
     pub fn model_capabilities(&self) -> ModelCapabilities {
-        self.model.capabilities()
+        self.default_model().capabilities()
     }
     pub fn data_dir(&self) -> &Path {
         self.store.root()

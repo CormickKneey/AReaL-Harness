@@ -3,6 +3,13 @@
   "effectiveConfig": {
     "additionalProperties": false,
     "properties": {
+      "defaultModelRevision": {
+        "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
       "instructions": {
         "default": "",
         "type": "string"
@@ -2013,6 +2020,13 @@
                   "configuration": {
                     "additionalProperties": false,
                     "properties": {
+                      "defaultModelRevision": {
+                        "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
                       "instructions": {
                         "default": "",
                         "type": "string"
@@ -2611,13 +2625,54 @@
       ],
       "type": "object"
     },
+    "areal/server/configurationChanged": {
+      "additionalProperties": true,
+      "properties": {
+        "configuration": {
+          "additionalProperties": true,
+          "properties": {
+            "error": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "modelRevision": {
+              "type": "string"
+            },
+            "restartRequired": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "error",
+            "modelRevision",
+            "restartRequired"
+          ],
+          "type": "object"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "configuration",
+        "threadId"
+      ],
+      "type": "object"
+    },
     "areal/server/draining": {
       "additionalProperties": true,
       "properties": {
         "strategy": {
           "enum": [
             "wait",
-            "cancel"
+            "cancel",
+            "ifIdle"
           ]
         },
         "threadId": {
@@ -2648,6 +2703,13 @@
         "configuration": {
           "additionalProperties": false,
           "properties": {
+            "defaultModelRevision": {
+              "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "instructions": {
               "default": "",
               "type": "string"
@@ -4297,6 +4359,13 @@
                     "configuration": {
                       "additionalProperties": false,
                       "properties": {
+                        "defaultModelRevision": {
+                          "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
                         "instructions": {
                           "default": "",
                           "type": "string"
@@ -4963,6 +5032,13 @@
                               "configuration": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "defaultModelRevision": {
+                                    "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
                                   "instructions": {
                                     "default": "",
                                     "type": "string"
@@ -5975,6 +6051,13 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "defaultModelRevision": {
+                            "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "instructions": {
                             "default": "",
                             "type": "string"
@@ -7035,6 +7118,13 @@
                 {
                   "additionalProperties": false,
                   "properties": {
+                    "defaultModelRevision": {
+                      "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "instructions": {
                       "default": "",
                       "type": "string"
@@ -8073,6 +8163,13 @@
                 {
                   "additionalProperties": false,
                   "properties": {
+                    "defaultModelRevision": {
+                      "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "instructions": {
                       "default": "",
                       "type": "string"
@@ -9447,6 +9544,13 @@
             "configuration": {
               "additionalProperties": false,
               "properties": {
+                "defaultModelRevision": {
+                  "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "instructions": {
                   "default": "",
                   "type": "string"
@@ -12372,7 +12476,8 @@
         "strategy": {
           "enum": [
             "wait",
-            "cancel"
+            "cancel",
+            "ifIdle"
           ]
         },
         "timeoutMs": {
@@ -13378,6 +13483,12 @@
                               }
                             ]
                           },
+                          "defaultModelRevision": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "model": {
                             "anyOf": [
                               {
@@ -13559,6 +13670,12 @@
                               {
                                 "type": "null"
                               }
+                            ]
+                          },
+                          "defaultModelRevision": {
+                            "type": [
+                              "string",
+                              "null"
                             ]
                           },
                           "model": {
@@ -14319,6 +14436,13 @@
                       "configuration": {
                         "additionalProperties": false,
                         "properties": {
+                          "defaultModelRevision": {
+                            "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "instructions": {
                             "default": "",
                             "type": "string"
@@ -14985,6 +15109,13 @@
                                 "configuration": {
                                   "additionalProperties": false,
                                   "properties": {
+                                    "defaultModelRevision": {
+                                      "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    },
                                     "instructions": {
                                       "default": "",
                                       "type": "string"
@@ -15997,6 +16128,13 @@
                         {
                           "additionalProperties": false,
                           "properties": {
+                            "defaultModelRevision": {
+                              "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
                             "instructions": {
                               "default": "",
                               "type": "string"
@@ -17156,6 +17294,13 @@
                         "configuration": {
                           "additionalProperties": false,
                           "properties": {
+                            "defaultModelRevision": {
+                              "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
                             "instructions": {
                               "default": "",
                               "type": "string"
@@ -17822,6 +17967,13 @@
                                   "configuration": {
                                     "additionalProperties": false,
                                     "properties": {
+                                      "defaultModelRevision": {
+                                        "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                                        "type": [
+                                          "string",
+                                          "null"
+                                        ]
+                                      },
                                       "instructions": {
                                         "default": "",
                                         "type": "string"
@@ -18834,6 +18986,13 @@
                           {
                             "additionalProperties": false,
                             "properties": {
+                              "defaultModelRevision": {
+                                "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
                               "instructions": {
                                 "default": "",
                                 "type": "string"
@@ -19885,6 +20044,13 @@
                     {
                       "additionalProperties": false,
                       "properties": {
+                        "defaultModelRevision": {
+                          "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
                         "instructions": {
                           "default": "",
                           "type": "string"
@@ -25343,6 +25509,13 @@
               "configuration": {
                 "additionalProperties": false,
                 "properties": {
+                  "defaultModelRevision": {
+                    "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "instructions": {
                     "default": "",
                     "type": "string"
@@ -25941,6 +26114,13 @@
               "configuration": {
                 "additionalProperties": false,
                 "properties": {
+                  "defaultModelRevision": {
+                    "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "instructions": {
                     "default": "",
                     "type": "string"
@@ -26539,6 +26719,13 @@
               "configuration": {
                 "additionalProperties": false,
                 "properties": {
+                  "defaultModelRevision": {
+                    "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "instructions": {
                     "default": "",
                     "type": "string"
@@ -27137,6 +27324,13 @@
               "configuration": {
                 "additionalProperties": false,
                 "properties": {
+                  "defaultModelRevision": {
+                    "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "instructions": {
                     "default": "",
                     "type": "string"
@@ -27735,6 +27929,13 @@
               "configuration": {
                 "additionalProperties": false,
                 "properties": {
+                  "defaultModelRevision": {
+                    "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "instructions": {
                     "default": "",
                     "type": "string"
@@ -28333,6 +28534,13 @@
               "configuration": {
                 "additionalProperties": false,
                 "properties": {
+                  "defaultModelRevision": {
+                    "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "instructions": {
                     "default": "",
                     "type": "string"
@@ -29091,6 +29299,40 @@
           },
           "type": "array"
         },
+        "configuration": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "properties": {
+                "error": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "modelRevision": {
+                  "type": "string"
+                },
+                "restartRequired": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "error",
+                "modelRevision",
+                "restartRequired"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "draining": {
           "type": "boolean"
         },
@@ -29236,6 +29478,7 @@
         "capacity",
         "closed",
         "compactions",
+        "configuration",
         "draining",
         "pendingQueueItems",
         "productVersion",
@@ -29352,6 +29595,40 @@
           },
           "type": "array"
         },
+        "configuration": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "properties": {
+                "error": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "modelRevision": {
+                  "type": "string"
+                },
+                "restartRequired": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "error",
+                "modelRevision",
+                "restartRequired"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "draining": {
           "type": "boolean"
         },
@@ -29497,6 +29774,7 @@
         "capacity",
         "closed",
         "compactions",
+        "configuration",
         "draining",
         "pendingQueueItems",
         "productVersion",
@@ -29679,6 +29957,13 @@
     "areal/thread/configure": {
       "additionalProperties": false,
       "properties": {
+        "defaultModelRevision": {
+          "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "instructions": {
           "default": "",
           "type": "string"
@@ -30072,6 +30357,13 @@
         "configuration": {
           "additionalProperties": false,
           "properties": {
+            "defaultModelRevision": {
+              "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "instructions": {
               "default": "",
               "type": "string"
@@ -30737,6 +31029,13 @@
                     "configuration": {
                       "additionalProperties": false,
                       "properties": {
+                        "defaultModelRevision": {
+                          "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
                         "instructions": {
                           "default": "",
                           "type": "string"
@@ -31403,6 +31702,13 @@
                               "configuration": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "defaultModelRevision": {
+                                    "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
                                   "instructions": {
                                     "default": "",
                                     "type": "string"
@@ -32415,6 +32721,13 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "defaultModelRevision": {
+                            "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "instructions": {
                             "default": "",
                             "type": "string"
@@ -33500,6 +33813,13 @@
                 {
                   "additionalProperties": false,
                   "properties": {
+                    "defaultModelRevision": {
+                      "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "instructions": {
                       "default": "",
                       "type": "string"
@@ -34585,6 +34905,12 @@
                                     }
                                   ]
                                 },
+                                "defaultModelRevision": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
                                 "model": {
                                   "anyOf": [
                                     {
@@ -34771,6 +35097,12 @@
                               {
                                 "type": "null"
                               }
+                            ]
+                          },
+                          "defaultModelRevision": {
+                            "type": [
+                              "string",
+                              "null"
                             ]
                           },
                           "model": {
@@ -35255,6 +35587,12 @@
                                   {
                                     "type": "null"
                                   }
+                                ]
+                              },
+                              "defaultModelRevision": {
+                                "type": [
+                                  "string",
+                                  "null"
                                 ]
                               },
                               "model": {
@@ -35905,6 +36243,12 @@
                                   {
                                     "type": "null"
                                   }
+                                ]
+                              },
+                              "defaultModelRevision": {
+                                "type": [
+                                  "string",
+                                  "null"
                                 ]
                               },
                               "model": {
@@ -36579,6 +36923,12 @@
                                   }
                                 ]
                               },
+                              "defaultModelRevision": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
                               "model": {
                                 "anyOf": [
                                   {
@@ -37108,6 +37458,12 @@
                                   {
                                     "type": "null"
                                   }
+                                ]
+                              },
+                              "defaultModelRevision": {
+                                "type": [
+                                  "string",
+                                  "null"
                                 ]
                               },
                               "model": {
@@ -37641,6 +37997,12 @@
                                   }
                                 ]
                               },
+                              "defaultModelRevision": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
                               "model": {
                                 "anyOf": [
                                   {
@@ -38172,6 +38534,12 @@
                                   }
                                 ]
                               },
+                              "defaultModelRevision": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
                               "model": {
                                 "anyOf": [
                                   {
@@ -38546,6 +38914,13 @@
                       "configuration": {
                         "additionalProperties": false,
                         "properties": {
+                          "defaultModelRevision": {
+                            "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "instructions": {
                             "default": "",
                             "type": "string"
@@ -39212,6 +39587,13 @@
                                 "configuration": {
                                   "additionalProperties": false,
                                   "properties": {
+                                    "defaultModelRevision": {
+                                      "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    },
                                     "instructions": {
                                       "default": "",
                                       "type": "string"
@@ -40224,6 +40606,13 @@
                         {
                           "additionalProperties": false,
                           "properties": {
+                            "defaultModelRevision": {
+                              "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
                             "instructions": {
                               "default": "",
                               "type": "string"
@@ -41371,6 +41760,13 @@
                     "configuration": {
                       "additionalProperties": false,
                       "properties": {
+                        "defaultModelRevision": {
+                          "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
                         "instructions": {
                           "default": "",
                           "type": "string"
@@ -42037,6 +42433,13 @@
                               "configuration": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "defaultModelRevision": {
+                                    "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
                                   "instructions": {
                                     "default": "",
                                     "type": "string"
@@ -43049,6 +43452,13 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "defaultModelRevision": {
+                            "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "instructions": {
                             "default": "",
                             "type": "string"
@@ -44211,6 +44621,13 @@
                     "configuration": {
                       "additionalProperties": false,
                       "properties": {
+                        "defaultModelRevision": {
+                          "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
                         "instructions": {
                           "default": "",
                           "type": "string"
@@ -44877,6 +45294,13 @@
                               "configuration": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "defaultModelRevision": {
+                                    "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
                                   "instructions": {
                                     "default": "",
                                     "type": "string"
@@ -45889,6 +46313,13 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "defaultModelRevision": {
+                            "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "instructions": {
                             "default": "",
                             "type": "string"
@@ -47058,6 +47489,13 @@
                     "configuration": {
                       "additionalProperties": false,
                       "properties": {
+                        "defaultModelRevision": {
+                          "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
                         "instructions": {
                           "default": "",
                           "type": "string"
@@ -47724,6 +48162,13 @@
                               "configuration": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "defaultModelRevision": {
+                                    "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
                                   "instructions": {
                                     "default": "",
                                     "type": "string"
@@ -48736,6 +49181,13 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "defaultModelRevision": {
+                            "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "instructions": {
                             "default": "",
                             "type": "string"
@@ -49806,6 +50258,13 @@
                 {
                   "additionalProperties": false,
                   "properties": {
+                    "defaultModelRevision": {
+                      "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "instructions": {
                       "default": "",
                       "type": "string"
@@ -51046,6 +51505,13 @@
               "configuration": {
                 "additionalProperties": false,
                 "properties": {
+                  "defaultModelRevision": {
+                    "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "instructions": {
                     "default": "",
                     "type": "string"
@@ -51712,6 +52178,13 @@
                         "configuration": {
                           "additionalProperties": false,
                           "properties": {
+                            "defaultModelRevision": {
+                              "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
                             "instructions": {
                               "default": "",
                               "type": "string"
@@ -52724,6 +53197,13 @@
                 {
                   "additionalProperties": false,
                   "properties": {
+                    "defaultModelRevision": {
+                      "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "instructions": {
                       "default": "",
                       "type": "string"
@@ -53772,6 +54252,13 @@
           {
             "additionalProperties": false,
             "properties": {
+              "defaultModelRevision": {
+                "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "instructions": {
                 "default": "",
                 "type": "string"
@@ -54845,6 +55332,12 @@
                             {
                               "type": "null"
                             }
+                          ]
+                        },
+                        "defaultModelRevision": {
+                          "type": [
+                            "string",
+                            "null"
                           ]
                         },
                         "model": {

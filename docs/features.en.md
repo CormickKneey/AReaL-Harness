@@ -15,7 +15,7 @@ This page describes implemented behavior. Compilation, mechanism tests and real-
 | Clients | CLI, TUI and local Web; TUI has persistent errors, grouped traces collapsed by default, mouse/keyboard expansion and commentary/final phases; selected Claude Code noninteractive arguments and messages. [CLI contract](api/claude-cli.en.md) |
 | Skills | Discovery and explicit Profiles share metadata registration and on-demand body/attachment reads; invalid individual global Skills are isolated with warnings, without content snapshots. [Skill guide](guides/skills.en.md) |
 | Persistent Goals | Explicit creation through `/goal` or other clients, with no configuration toggle; automatic continuation across Turns, pause/resume/edit/clear and user-input priority; root/child Agents, Workgroups and summaries share accounting. [Client guide](guides/clients.en.md#goals) · [API](api/core.en.md#goals) |
-| Shared local services | Multiple TUI windows and Web reuse one Core/Runtime; public JSON discovery/control for Desktop Main, workspace isolation, explicit stop and crash cleanup. [Contract](api/local-service.en.md) |
+| Shared local services | Multiple TUI windows and Web reuse one Core/Runtime; public JSON discovery/control for Desktop Main, workspace isolation, model configuration reload, safe idle restart, explicit stop and crash cleanup. [Contract](api/local-service.en.md) |
 | SDKs | Private in-repository `@areal/runtime` and `@areal/plugins` packages; Node.js 22.19.0+. [SDK contracts](api/typescript-sdk.en.md) |
 | Observability and validation | tracing and optional OTLP; deterministic regression tests, native smoke tests and Docker lite/pro benchmarks. [Testing](development/testing.en.md) |
 

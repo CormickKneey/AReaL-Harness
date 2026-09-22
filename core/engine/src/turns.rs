@@ -79,11 +79,13 @@ impl Engine {
         input: Vec<Input>,
     ) -> Result<(Thread, Turn)> {
         self.validate_uploads(thread, &input)?;
-        let configuration = thread
-            .desktop
-            .as_ref()
-            .map(|d| d.configuration.clone())
-            .unwrap_or_default();
+        let configuration = self.freeze_configuration(
+            thread
+                .desktop
+                .as_ref()
+                .map(|d| d.configuration.clone())
+                .unwrap_or_default(),
+        );
         validate_input(
             &input,
             &self.configured_model(&configuration)?.capabilities(),
@@ -105,7 +107,9 @@ impl Engine {
         let mut turn = Turn {
             goal: None,
             instruction_snapshot: None,
-            configuration: thread.desktop.as_ref().map(|d| d.configuration.clone()),
+            configuration: (thread.desktop.is_some()
+                || configuration.default_model_revision.is_some())
+            .then_some(configuration),
             id: id(),
             status: TurnStatus::InProgress,
             error: None,

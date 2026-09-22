@@ -27,8 +27,8 @@ pub(super) async fn dispatch(
             }
             "areal/workgroup/start" => {
                 let request: Start = serde_json::from_value(params)?;
-                service
-                    .start(
+                engine
+                    .start_workgroup(
                         format!("client:{identity}"),
                         request,
                         CancellationToken::new(),

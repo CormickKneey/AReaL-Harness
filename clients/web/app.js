@@ -441,6 +441,17 @@ function event(message) {
     reload().catch(notice);
     return;
   }
+  if (message.method === "areal/server/configurationChanged") {
+    const config = p.configuration;
+    notice(
+      config.error
+        ? `配置未生效：${config.error}`
+        : config.restartRequired
+          ? "配置需要重启；后台任务保留运行，可在工作区运行 areal service restart。"
+          : "模型配置已更新，将用于后续新提交；运行中和已排队任务保持原配置。",
+    );
+    return;
+  }
   if (message.method === "areal/goal/updated" || message.method === "areal/goal/cleared") {
     applyGoal(p);
   } else if (message.method === "areal/model/completionDiscarded") {

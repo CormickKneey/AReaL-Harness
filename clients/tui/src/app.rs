@@ -55,6 +55,7 @@ pub struct Page {
 }
 #[derive(Clone, Debug)]
 enum Purpose {
+    Configuration,
     Ordinary,
     Create(u64),
     Resume(String),
@@ -89,6 +90,10 @@ pub struct RetryState {
 }
 
 pub struct App {
+    pub monitor_configuration: bool,
+    pub restart_ready: bool,
+    pub configuration_notice: Option<String>,
+    configuration: Value,
     pub threads: BTreeMap<String, Thread>,
     pub selected: Option<String>,
     pub input: String,
@@ -139,6 +144,10 @@ pub struct App {
 impl App {
     pub fn new(prefs: Preferences) -> Self {
         Self {
+            monitor_configuration: false,
+            restart_ready: false,
+            configuration_notice: None,
+            configuration: Value::Null,
             threads: BTreeMap::new(),
             selected: None,
             input: String::new(),
@@ -311,6 +320,7 @@ impl App {
     }
     pub fn disconnect(&mut self, reason: &str) {
         self.connected = false;
+        self.restart_ready = false;
         self.status =
             format!("Disconnected · {reason} · reconnecting; submitted actions are not replayed");
         for request in self.pending.values().chain(self.outbox.iter()) {
@@ -505,9 +515,40 @@ impl App {
         }
         Ok(())
     }
+    fn configuration_changed(&mut self, configuration: &Value) -> Result<()> {
+        if configuration.is_null() || self.configuration == *configuration {
+            return Ok(());
+        }
+        let changed_model = !self.configuration.is_null()
+            && self.configuration["modelRevision"] != configuration["modelRevision"];
+        self.configuration = configuration.clone();
+        self.configuration_notice = if let Some(error) = configuration["error"].as_str() {
+            Some(format!("Configuration unchanged: {}", safe_text(error)))
+        } else if configuration["restartRequired"] == true {
+            Some("Configuration update pending · restarting when background work settles".into())
+        } else {
+            None
+        };
+        if changed_model {
+            self.status = "Model configuration updated · applies to new submissions".into();
+            self.queue("areal/model/list", json!({}), Purpose::Models)?;
+        }
+        self.dirty = true;
+        Ok(())
+    }
+
     pub fn refresh(&mut self) -> Result<()> {
         if !self.connected {
             return Ok(());
+        }
+        if self.monitor_configuration
+            && !self
+                .pending
+                .values()
+                .chain(self.outbox.iter())
+                .any(|r| matches!(r.purpose, Purpose::Configuration))
+        {
+            self.queue("areal/server/status", json!({}), Purpose::Configuration)?;
         }
         if self.agent_panel() {
             let parents: Vec<_> = self
@@ -1492,6 +1533,13 @@ impl App {
                         .map(|i| self.models[*i].model.clone())
                 });
             match request.purpose {
+                Purpose::Configuration => {
+                    self.restart_ready = result["configuration"]["restartRequired"] == true
+                        && result["restartSafe"] == true
+                        && result["activeGoals"] == json!([])
+                        && result["pendingQueueItems"] == 0;
+                    self.configuration_changed(&result["configuration"])?;
+                }
                 Purpose::Models => {
                     let data = result["data"].as_array().context("Invalid model catalog")?;
                     let default = data.iter().find(|m| m["providerId"].is_null());
@@ -1665,6 +1713,10 @@ impl App {
         }
         let method = value["method"].as_str().unwrap_or("");
         let p = &value["params"];
+        if method == "areal/server/configurationChanged" {
+            self.configuration_changed(&p["configuration"])?;
+            return Ok(());
+        }
         if method == "areal/agent/spawned" {
             if let Some(id) = p["threadId"].as_str()
                 && !self.in_flight("thread/read", "threadId", id)

@@ -133,6 +133,8 @@ async fn cursor_wait_does_not_block_cancel_or_other_requests_on_the_same_connect
     let id = started["result"]["id"].as_str().unwrap();
     send(&mut socket, 3, "areal/workgroup/start", request).await;
     assert_eq!(receive(&mut socket).await["result"]["id"], id);
+    assert!(engine.drain("ifIdle".into(), 0).await.is_err());
+    assert_eq!(engine.server_status().await["acceptingWork"], true);
     // Saturate long waits. Future cursors stay pending through ordinary revisions;
     // cancellation/read capacity must remain available on this same connection.
     for request_id in 4..17 {
@@ -163,6 +165,18 @@ async fn cursor_wait_does_not_block_cancel_or_other_requests_on_the_same_connect
         19,
         "areal/workgroup/wait",
         json!({"id":id,"afterRevision":0,"timeoutMs":60001}),
+    )
+    .await;
+    assert!(receive(&mut socket).await.get("error").is_some());
+    assert_eq!(
+        engine.drain("ifIdle".into(), 0).await.unwrap()["acceptingWork"],
+        false
+    );
+    send(
+        &mut socket,
+        20,
+        "areal/workgroup/start",
+        json!({"requestId":"after-drain","plan":{"objective":"work","tasks":[{"id":"a","instruction":"work","writes":["a"]}]}}),
     )
     .await;
     assert!(receive(&mut socket).await.get("error").is_some());

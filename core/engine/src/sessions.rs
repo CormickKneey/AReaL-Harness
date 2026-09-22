@@ -138,7 +138,7 @@ impl Engine {
             session_id: parent.map_or(thread_id.clone(), |p| p.session_id.clone()),
             parent_thread_id: parent.map(|p| p.id.clone()),
             preview: String::new(),
-            model_provider: self.model.provider().into(),
+            model_provider: self.model_provider(),
             created_at: now(),
             updated_at: now(),
             status: ThreadStatus::Idle,

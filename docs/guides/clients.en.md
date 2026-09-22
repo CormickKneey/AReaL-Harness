@@ -16,12 +16,14 @@ make tui ARGS='--endpoint ws://127.0.0.1:4500 --auth-file /absolute/core-data/se
 
 Without an endpoint, interactive TUI attaches to a shared Core/Runtime on a random loopback port. Multiple windows in the same workspace reuse it; closing a window leaves service and tasks running. `--prompt`, `--goal` and `--input-file` default to owned mode and clean up on exit. `--local-mode shared|owned` overrides this choice. Explicit endpoint (alias `--remote`) only connects and cannot be combined with local deployment arguments.
 
-Shared mode defaults to a workspace-specific data directory under `~/.areal-harness/instances/`; explicit data configuration keeps its precedence. To open old `~/.areal-harness/state` history, specify `--data-dir` or bind it after stopping the old Core. Conflicting deployment permissions/configurations are rejected. Discovery, migration, logs and Desktop integration are specified in [local services](../api/local-service.en.md).
+Shared mode defaults to a workspace-specific data directory under `~/.areal-harness/instances/`; explicit data configuration keeps its precedence. To open old `~/.areal-harness/state` history, specify `--data-dir` or bind it after stopping the old Core. Model TOML changes reload automatically; other TOML changes restart after background work settles, while permission/deployment argument changes require explicit restart. Discovery, migration, logs and Desktop integration are specified in [local services](../api/local-service.en.md).
 
 ```sh
 target/debug/areal web --workspace /absolute/task
 target/debug/areal service list --json
-target/debug/areal service stop --instance INSTANCE_ID --json
+target/debug/areal service status --json
+target/debug/areal service restart --json
+target/debug/areal service stop --json
 ```
 
 `areal -p 'prompt' --output-format stream-json --verbose` provides noninteractive CLI operation; `areal serve` starts a persistent service. See the [CLI contract](../api/claude-cli.en.md) for arguments, authentication, resume and exit codes. Web is served at `/ui`; log in with the local token from `security/auth.json` in the service data directory.

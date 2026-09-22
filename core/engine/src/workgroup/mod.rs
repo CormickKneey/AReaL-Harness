@@ -34,6 +34,8 @@ use tree::{Tree, compose, digest, materialize};
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TaskConfiguration {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_model_revision: Option<String>,
     pub agent_profile: Option<areal_protocol::desktop::VersionRef>,
     pub model: Option<areal_protocol::desktop::ModelRef>,
     pub skills: Option<Vec<areal_protocol::desktop::VersionRef>>,

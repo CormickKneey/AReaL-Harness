@@ -19,10 +19,11 @@ impl Engine {
             if state.poisoned || state.thread.parent_thread_id.is_some() { return Err(Error::Conflict); }
             if request.expected_config_revision.is_some_and(|revision| revision != data.configuration.revision) { return Err(Error::Conflict); }
             engine.validate_uploads(&state.thread,&request.input)?;
-            validate_input(&request.input,&engine.configured_model(&data.configuration)?.capabilities())?;
+            let configuration = engine.freeze_configuration(data.configuration.clone());
+            validate_input(&request.input,&engine.configured_model(&configuration)?.capabilities())?;
             if enqueue {
                 if data.queue.items.len()>=128 { return Err(Error::Exhausted("queue history capacity reached".into())); }
-                let item = QueueItem {id:id(),input:request.input,configuration:data.configuration.clone(),submitted_by:identity.clone(),status:"pending".into(),turn_id:None};
+                let item = QueueItem {id:id(),input:request.input,configuration,submitted_by:identity.clone(),status:"pending".into(),turn_id:None};
                 data.queue.revision+=1;
                 let result = json!({"queueItemId":item.id,"queueRevision":data.queue.revision,"configRevision":item.configuration.revision});
                 data.queue.items.push(item);

@@ -91,9 +91,17 @@ target/debug/areal-server config validate --config /absolute/config.toml
 target/debug/areal-server config show --sources --config /absolute/config.toml
 ```
 
-Diagnostics do not listen, create data, start Runtime/MCP/plugins or probe models. They report redacted values and sources. Files are not hot-reloaded; startup credentials are not forwarded to Runtime. Server telemetry handles `OTEL_*` separately.
+Diagnostics do not listen, create data, start Runtime/MCP/plugins or probe models. They report redacted values and sources. Shared local services reload model configuration as described below; startup credentials are not forwarded to Runtime. Server telemetry handles `OTEL_*` separately.
 
-The desktop runtime provider catalog uses `areal/provider/*` and `AREAL_CREDENTIAL_<ref>`, supporting chatCompletions/responses only. `--desktop-config` installs versioned Profiles/Skills/Workflows. Session settings can change through CAS at idle boundaries and are frozen into new Turns/queue items; see the [desktop contract](../api/desktop.en.md). This is separate from startup TOML loading.
+The desktop runtime provider catalog uses `areal/provider/*` and `AREAL_CREDENTIAL_<ref>`, supporting chatCompletions/responses only. `--desktop-config` installs versioned Profiles/Skills/Workflows. Session settings can change through CAS at idle boundaries and are frozen into new Turns/queue items; see the [desktop contract](../api/desktop.en.md). Explicit session Providers are managed separately from the TOML default model.
+
+## Model configuration reload
+
+Shared TUI/Web services poll their selected TOML once per second and apply a valid configuration after two identical reads. Changes to the selected default model, endpoint, protocol, credential reference and sampling/reasoning parameters apply to subsequent submissions. Explicit CLI/environment overrides retain precedence. Invalid edits leave the previous configuration active; TUI/Web display the error. Owned launchers and standalone Core retain startup-only configuration.
+
+Active Turns, their children, summaries and queued requests retain their model version. Explicit session model selections are preserved. Goal continuation uses the default applicable at its next submission boundary. Default model revisions are retained in the private `dataDir/desktop/default-models.json` archive for queue recovery across restarts, with at most 128 revisions and 1 MiB; values of environment credentials are never stored. A missing retired credential prevents dispatch of the affected queue item instead of substituting another model. The archive must be kept with the history.
+
+Other configuration changes require restart. TUI waits for Turns, Goals, queues and resources to settle before restarting; `areal service ensure` also restarts idle services for changed TOML settings or binaries. Permission/deployment changes and model CLI/environment override changes require `areal service restart` with the desired options. New terminal environment variables cannot update an existing process: explicitly restart to inherit changed credentials. Default restart refuses busy services; `--cancel` explicitly cancels and settles work.
 
 <a id="tui"></a>
 ## TUI preferences

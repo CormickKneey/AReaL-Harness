@@ -16,12 +16,14 @@ make tui ARGS='--endpoint ws://127.0.0.1:4500 --auth-file /absolute/core-data/se
 
 省略 endpoint 时，交互式 TUI 连接共享 Core/Runtime，监听随机 loopback 端口。同一工作区多个窗口复用服务，关闭窗口保留后台服务和任务。`--prompt`、`--goal`、`--input-file` 默认使用 owned 模式，退出后清理所拥有的服务；`--local-mode shared|owned` 可覆盖默认选择。显式 endpoint（别名 `--remote`）只连接已有服务，不能与本地部署参数混用。
 
-共享模式默认在 `~/.areal-harness/instances/` 下按工作区保存数据；显式数据目录配置保持优先级。旧 `~/.areal-harness/state` 历史须使用 `--data-dir`，或停止旧 Core 后绑定。部署权限/配置不一致会明确报冲突。发现、迁移、日志和 Desktop 接入见[本地服务契约](../api/local-service.md)。
+共享模式默认在 `~/.areal-harness/instances/` 下按工作区保存数据；显式数据目录配置保持优先级。旧 `~/.areal-harness/state` 历史须使用 `--data-dir`，或停止旧 Core 后绑定。模型 TOML 配置自动热更新；其他 TOML 变化等待后台工作结算后重启，权限/部署参数变化需显式 restart。发现、迁移、日志和 Desktop 接入见[本地服务契约](../api/local-service.md)。
 
 ```sh
 target/debug/areal web --workspace /absolute/task
 target/debug/areal service list --json
-target/debug/areal service stop --instance INSTANCE_ID --json
+target/debug/areal service status --json
+target/debug/areal service restart --json
+target/debug/areal service stop --json
 ```
 
 `areal -p 'prompt' --output-format stream-json --verbose` 提供非交互 CLI，`areal serve` 启动持续服务；参数、认证、恢复与退出码见 [CLI 契约](../api/claude-cli.md)。Web 位于服务的 `/ui`，使用服务数据目录 `security/auth.json` 中的本地 token 登录。
