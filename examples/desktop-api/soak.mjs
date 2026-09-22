@@ -151,6 +151,7 @@ try {
     }
     c = await connect(metadata.endpoint, metadata.authFile);
     const initial = await c.call("areal/server/status");
+    assert.equal(initial.stateVersion, manifest.stateVersion);
     epochs.add(initial.runtime.runtimeEpoch);
     if (previous) {
       await assert.rejects(c.call("areal/process/get", previous.process), /STALE_HANDLE/);
@@ -165,6 +166,8 @@ try {
       requestId: crypto.randomUUID(),
       agentProfile: { id: "terminal", revision: "v1" },
     });
+    const stored = JSON.parse(await readFile(join(data, `${thread.id}.json`), "utf8"));
+    assert.equal(stored.version, manifest.stateVersion);
     let threadId = thread.id;
     let threadTurns = 0;
     const configuredRounds = Number(process.env.AREAL_SOAK_ROUNDS ?? 12);

@@ -956,6 +956,29 @@ mod tests {
     }
 
     #[test]
+    fn responses_final_reasoning_and_usage_survive_a_tool_budget_error() {
+        let mut decoder = Decoder::Responses(ResponsesDecoder::new(ToolCallLimits {
+            max_calls: 0,
+            ..ToolCallLimits::default()
+        }));
+        let events = decoder.feed(response_frame(json!({
+            "type":"response.completed",
+            "response":{"status":"completed","usage":{"input_tokens":7,"output_tokens":3},"output":[
+                {"type":"reasoning","id":"r","summary":[{"type":"summary_text","text":"checked"}]},
+                {"type":"function_call","call_id":"c","name":"test","arguments":"{}"}
+            ]}
+        })).as_bytes()).unwrap();
+        assert!(
+            matches!(events.as_slice(), [ModelEvent::Usage(usage), ModelEvent::ReasoningDelta {delta, ..}] if usage.input_tokens == 7 && usage.output_tokens == 3 && delta == "checked")
+        );
+        assert_eq!(
+            tool_error_detail(&decoder.take_pending_error().unwrap()).unwrap()["budget"],
+            "calls"
+        );
+        assert!(!decoder.done());
+    }
+
+    #[test]
     fn typed_truncation_survives_prior_events_without_releasing_partial_tools() {
         let bytes = concat!(
             "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"working\"}}]}\n\n",

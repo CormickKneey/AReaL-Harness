@@ -11,6 +11,9 @@ use std::{
 };
 use tokio::sync::Semaphore;
 
+// 持久化版本与服务状态必须一致，避免客户端误判可恢复的数据格式。
+pub(crate) const STATE_VERSION: u32 = 8;
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Record {
     pub version: u32,
@@ -70,7 +73,7 @@ impl Store {
             }
             let mut record: Record = serde_json::from_slice(&std::fs::read(&path)?)
                 .with_context(|| format!("invalid session: {}", path.display()))?;
-            if !matches!(record.version, 1..=8)
+            if !matches!(record.version, 1..=STATE_VERSION)
                 || path.file_stem().and_then(|s| s.to_str()) != Some(&record.thread.id)
                 || uuid::Uuid::parse_str(&record.thread.id).is_err()
             {
@@ -301,7 +304,7 @@ fn atomic_write(root: &Path, thread: &Thread) -> Result<()> {
     serde_json::to_writer(
         &mut file,
         &Record {
-            version: 8,
+            version: STATE_VERSION,
             thread: thread.clone(),
         },
     )?;
