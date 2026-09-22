@@ -619,6 +619,8 @@ async fn version_one_text_sessions_load_and_upgrade_on_next_write() {
     let dir = tempfile::tempdir().unwrap();
     let thread_id = uuid::Uuid::new_v4().to_string();
     let thread = Thread {
+        goals: Default::default(),
+        goal_owner: None,
         desktop: None,
         id: thread_id.clone(),
         session_id: thread_id.clone(),
@@ -635,6 +637,7 @@ async fn version_one_text_sessions_load_and_upgrade_on_next_write() {
         context_checkpoint: None,
         dynamic_tools: Vec::new(),
         turns: vec![Turn {
+            goal: None,
             instruction_snapshot: None,
             configuration: None,
             id: uuid::Uuid::new_v4().to_string(),
@@ -676,5 +679,5 @@ async fn version_one_text_sessions_load_and_upgrade_on_next_write() {
         &std::fs::read(dir.path().join(format!("{thread_id}.json"))).unwrap(),
     )
     .unwrap();
-    assert_eq!(record["version"], 6);
+    assert_eq!(record["version"], 7);
 }

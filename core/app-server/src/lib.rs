@@ -627,7 +627,7 @@ impl Connection {
                 Ok(json!({"apiVersion": API_VERSION, "methods": methods,
                     "notifications": NOTIFICATIONS, "serverRequests":["item/tool/call"],
                     "features":{"subscriptionRemoval":true,"atomicResume":true,
-                        "dynamicTools":true,"mediaOutput":true,"durableSubmissionDeduplication":true,"profiles":true,"skills":true,"plans":true,"interactions":true,"queue":true,"providerConfiguration":true,"modelReset":true,"toolMedia":true,"blobUpload":true},
+                        "goals":true,"dynamicTools":true,"mediaOutput":true,"durableSubmissionDeduplication":true,"profiles":true,"skills":true,"plans":true,"interactions":true,"queue":true,"providerConfiguration":true,"modelReset":true,"toolMedia":true,"blobUpload":true},
                     "limits":{"frameBytes":MAX_FRAME_BYTES,"subscriptions":128,"sendQueue":256,"threadEventWindow":128},
                     "runtime":engine.runtime_capabilities()}))
             }

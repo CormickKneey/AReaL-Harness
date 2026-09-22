@@ -92,15 +92,23 @@ impl Engine {
                 self.visible_tools(cell, &configuration, desktop_enabled)
                     .await
             };
+            let goal_instructions = self.goal_instructions(cell).await?;
             let overhead = context::text_tokens(&serde_json::to_string(&tool_definitions)?)
+                + goal_instructions
+                    .as_ref()
+                    .map_or(0, |s| context::text_tokens(s))
                 + instructions.as_ref().map_or(0, |s| context::text_tokens(s))
                 + 512;
             self.compact_context(cell, cancel, overhead, previous_usage, false)
                 .await?;
 
+            let goal_instructions = self.goal_instructions(cell).await?;
             let (messages, thread_id, session_id, turn_id) = {
                 let state = cell.state.lock().await;
                 let mut messages = history(&state.thread, &self.store)?;
+                if let Some(goal) = &goal_instructions {
+                    messages.insert(0, Message::text("system", goal));
+                }
                 if !final_round
                     && self.extensions.agents.is_none()
                     && !cell.research
@@ -359,6 +367,8 @@ impl Engine {
                         Err(error) => {
                             // 先释放失败流及共享模型许可，再等待退避；绝不重放已执行的工具。
                             drop(stream);
+                            // Goal 的未知消费必须先停止推进，不能进入 watchdog 或有限重试。
+                            model.check_work()?;
                             if let Some(delay) = watchdog::retry_delay(
                                 self.limits.watchdog_disable,
                                 &error,

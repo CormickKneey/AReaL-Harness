@@ -1,3 +1,4 @@
+pub mod goals;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -288,6 +289,8 @@ pub struct HookExecution {
 #[serde(rename_all = "camelCase")]
 pub struct Turn {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<goals::GoalTurn>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instruction_snapshot: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub configuration: Option<desktop::EffectiveConfig>,
@@ -325,6 +328,10 @@ pub struct ContextCheckpoint {
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Thread {
+    #[serde(default, skip_serializing_if = "goals::GoalState::is_empty")]
+    pub goals: goals::GoalState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal_owner: Option<goals::GoalOwner>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub desktop: Option<desktop::DesktopState>,
     pub id: String,

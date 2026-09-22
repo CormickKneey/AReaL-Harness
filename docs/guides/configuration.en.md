@@ -55,6 +55,8 @@ Optional sampling fields are omitted when unset and preserve explicit zero. `tem
 
 The network watchdog is enabled by default with no retry count limit. Set `AREAL_HARNESS_WATCHDOG_DISABLE=1` to disable it; remove the variable or set it to `0` to restore the default. It also accepts `true`/`false`, mapping to TOML `limits.watchdog_disable`; the environment overrides TOML. It covers connection/transport failures, request and stream idle timeouts, premature EOF, HTTP 408/429/5xx and explicit SSE rate-limit/service-availability errors. Solve, child Agent and context-summary requests use the same policy, with exponential backoff from 250 ms capped at 30 seconds. Cancellation, Turn deadlines and explicit Workgroup physical-request budgets remain effective. Authentication, invalid requests, insufficient quota, output length limits and empty answers do not receive unlimited retries.
 
+Goal shared-budget and unknown-usage constraints take precedence over retry settings. Goal requests disable internal HTTP retries; failures or timeouts with unknown usage retain their reservation and stop automatic progress. Neither the watchdog nor finite retry allowances bypass this constraint.
+
 `limits.max_completion_retries` defaults to 0, accepts 0–8, and budgets bounded incomplete-response recovery per Turn separately from HTTP `max_retries` and the network watchdog. Disabling the watchdog preserves existing finite retry allowances. See [Core recovery](../api/core.en.md#recovery). HTTPS uses public roots and the host trust store; install private CAs there. Tools execute only from structured protocol fields, never from XML/JSON in response text.
 
 Byte and capacity limits are positive integers; fan-out and depth may be 0 to disable delegation. Output must be smaller than history, recent context smaller than the context window, and deadlines 1–86400 seconds. Context bytes are estimates rather than tokenizer windows. Active tasks, model requests and Runtime resources are counted separately.
@@ -87,6 +89,23 @@ The desktop runtime provider catalog uses `areal/provider/*` and `AREAL_CREDENTI
 <a id="tui"></a>
 ## TUI preferences
 
-Use `${XDG_CONFIG_HOME:-~/.config}/areal-harness/tui.toml`, overridden by `--tui-config` / `AREAL_TUI_CONFIG`. Fields are `theme=dark|light|terminal`, `color=auto|always|never`, `no_logo=false` and `ascii=false`. Precedence is CLI > `AREAL_TUI_*` > file > defaults. Nonempty `NO_COLOR` disables color. `--prompt` skips this file.
+Use `${XDG_CONFIG_HOME:-~/.config}/areal-harness/tui.toml`, overridden by `--tui-config` / `AREAL_TUI_CONFIG`. Fields are `theme=dark|light|terminal`, `color=auto|always|never`, `no_logo=false` and `ascii=false`. Precedence is CLI > `AREAL_TUI_*` > file > defaults. Nonempty `NO_COLOR` disables color. `--prompt` and `--goal` skip this file.
+
+<a id="goals"></a>
+## Goal execution policy
+
+Create a Goal explicitly through `/goal <objective>`, the Web panel, `--goal` or the API; no additional toggle is required. The optional TOML below only adjusts execution limits. Omitting the entire `[goals]` table uses defaults.
+
+```toml
+[goals]
+max_turns = 100
+max_active_seconds = 3600
+max_unreported_turns = 3
+turn_model_rounds = 32
+```
+
+The numeric values shown are defaults. The first three numeric fields accept 1–86400; turn_model_rounds accepts 2–1024. Goal maxTurns/maxActiveSeconds can narrow deployment limits; tokenBudget applies only when explicitly set. Root Turns use min(session maxModelRounds, turn_model_rounds), require at least two rounds, and require goal_read/goal_update in any tool allowlist. The final round remains tool-free for handoff. Consecutive root Turns without goal_update pause as progressUnreported at the configured threshold.
+
+Active time includes root-Turn model queuing, execution, tools, interactions and cleanup without adding child durations. Capacity waits between Turns, paused time and offline time are excluded. Existing Turn deadlines and Runtime hard limits still apply. Goal requests disable implicit HTTP retries to preserve per-request accounting; unknown usage stops automatic continuation. See [usage and recovery](clients.en.md#goals).
 
 See [Skills](skills.en.md) for discovery, [tools](tools.en.md) for extensions and [Runtime](runtime.en.md) for deployment permissions.

@@ -206,13 +206,21 @@ impl Engine {
         force: bool,
     ) -> anyhow::Result<()> {
         let snapshot = cell.state.lock().await.thread.clone();
-        let model = self.configured_model(
+        let configured = self.configured_model(
             &snapshot
                 .turns
                 .last()
                 .and_then(|t| t.configuration.clone())
                 .unwrap_or_default(),
         )?;
+        let model = cell
+            .state
+            .lock()
+            .await
+            .active
+            .as_ref()
+            .map(|a| a.model.clone())
+            .unwrap_or(configured);
         let messages = history(&snapshot, &self.store)?;
         let before_bytes = message_bytes(&messages);
         let estimated_tokens =
@@ -329,6 +337,8 @@ impl Engine {
                 accepted = Some(summary);
                 break;
             }
+            // Goal 计量失效时保留旧 checkpoint，不能重试或提交降级摘要。
+            model.check_work()?;
             if let Some(delay) = response.as_ref().err().and_then(|error| {
                 watchdog::retry_delay(self.limits.watchdog_disable, error, network_retries)
             }) {

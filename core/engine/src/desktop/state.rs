@@ -200,6 +200,7 @@ impl Engine {
         config: &EffectiveConfig,
         desktop_enabled: bool,
     ) -> Vec<Value> {
+        let goal_enabled = cell.goal_role.load(Ordering::Acquire) != 0;
         let bindings = cell.bindings.read().await;
         let mut definitions = bindings.registry.definitions();
         let core_names: Vec<_> = crate::desktop::definitions()
@@ -208,7 +209,9 @@ impl Engine {
             .collect();
         definitions.retain(|d| {
             let name = d["function"]["name"].as_str().unwrap_or("");
-            (!name.starts_with("workgroup_") || self.workgroups.get().is_some())
+            (!name.starts_with("goal_")
+                || (goal_enabled && (name != "goal_update" || cell.depth == 0)))
+                && (!name.starts_with("workgroup_") || self.workgroups.get().is_some())
                 && (!matches!(name, "agent_spawn" | "agent_spawn_configured")
                     || (cell.depth < self.limits.max_agent_depth
                         && self.limits.max_children_per_turn > 0))

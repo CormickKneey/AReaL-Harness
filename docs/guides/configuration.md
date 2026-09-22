@@ -55,6 +55,8 @@ endpoint 是完整 HTTP(S) 请求 URL；Core 只支持 `chat-completions` / `res
 
 网络 watchdog 默认启用，网络错误没有重试次数上限。设置 `AREAL_HARNESS_WATCHDOG_DISABLE=1` 关闭，删除该变量或设为 `0` 恢复默认；也接受 `true`/`false`，对应 TOML `limits.watchdog_disable`。环境变量覆盖 TOML。watchdog 覆盖连接/传输失败、请求与流空闲超时、提前断流、HTTP 408/429/5xx，以及 SSE 明确报告的限流/服务不可用。求解、子 Agent 与上下文摘要采用同一策略，250 ms 指数退避、最长 30 秒；取消、Turn 总期限及显式 Workgroup 实际请求预算仍有效。401/403、无效请求、额度不足、长度上限和空回复不进入无限重试。
 
+Goal 的共享预算与未知用量约束优先于重试配置。Goal 请求禁用 HTTP 内部重试；失败或超时产生未知消费时保留预算预留并停止自动推进，watchdog 与有限重试额度均不能绕过此限制。
+
 `limits.max_completion_retries` 默认为 0、范围 0–8，是每 Turn 的有限未完成响应恢复额度，与 HTTP `max_retries` 和网络 watchdog 分开；关闭 watchdog 不关闭已有的有限重试。恢复条件与审计见 [Core API](../api/core.md#recovery)。HTTPS 使用公开根证书和宿主系统信任库；私有 CA 应安装到信任库。工具调用仅来自协议结构化字段，正文中的 XML/JSON 不作为调用执行。
 
 字节与容量限额为正整数；扇出和深度可为 0 以禁用委派。output 小于 history，recent 小于 context window，时限为 1–86400 秒。上下文字节是估计值，不是 tokenizer 窗口。活动任务、模型请求和 Runtime 资源分别计数。
@@ -87,6 +89,23 @@ target/debug/areal-server config show --sources --config /absolute/config.toml
 <a id="tui"></a>
 ## TUI 偏好
 
-`${XDG_CONFIG_HOME:-~/.config}/areal-harness/tui.toml`，可用 `--tui-config` / `AREAL_TUI_CONFIG` 替代。字段为 `theme=dark|light|terminal`、`color=auto|always|never`、`no_logo=false`、`ascii=false`。优先级 CLI > `AREAL_TUI_*` > 文件 > 默认；非空 `NO_COLOR` 强制关闭颜色。`--prompt` 不读此文件。
+`${XDG_CONFIG_HOME:-~/.config}/areal-harness/tui.toml`，可用 `--tui-config` / `AREAL_TUI_CONFIG` 替代。字段为 `theme=dark|light|terminal`、`color=auto|always|never`、`no_logo=false`、`ascii=false`。优先级 CLI > `AREAL_TUI_*` > 文件 > 默认；非空 `NO_COLOR` 强制关闭颜色。`--prompt` 和 `--goal` 不读此文件。
 
 Skill 自动发现见[Skill](skills.md)，工具配置见[工具](tools.md)，部署权限见[Runtime](runtime.md)。
+
+<a id="goals"></a>
+## Goal 执行策略
+
+Goal 通过 `/goal <目标>`、Web 面板、`--goal` 或 API 显式创建，无需额外开关。下面的可选 TOML 配置只调整执行限制；省略整个 `[goals]` 表时使用默认值。
+
+```toml
+[goals]
+max_turns = 100
+max_active_seconds = 3600
+max_unreported_turns = 3
+turn_model_rounds = 32
+```
+
+示例中的数字为默认值。前三个数字字段的范围为 1–86400；turn_model_rounds 为 2–1024。创建 Goal 的 maxTurns/maxActiveSeconds 可以收窄到部署上限；tokenBudget 只在用户明确设置时启用。根 Turn 使用 min(会话 maxModelRounds, turn_model_rounds)，必须至少两轮，工具 allowlist 必须允许 goal_read 和 goal_update；最后一轮仍禁用工具用于交接。连续指定数量的根 Turn 未提交 goal_update 时暂停为 progressUnreported。
+
+活动时间包括根 Turn 的模型排队、执行、工具、交互等待和清理，子任务时间不叠加，轮次间容量等待、暂停和离线时间不计入。既有单 Turn 期限和 Runtime 硬限额继续生效。Goal 请求禁用 HTTP 层隐式重试，以保留逐次消费的归因；未知消费会停止自动推进。使用与恢复见 [Goal 模式](clients.md#goals)。

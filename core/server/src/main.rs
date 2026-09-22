@@ -281,6 +281,12 @@ async fn run(
     let model: Arc<dyn areal_engine::model::Model> =
         areal_engine::workgroup::native::SharedModel::pool(model, config.model_concurrency)?;
     let limits = Limits {
+        goals: areal_engine::goals::Policy {
+            max_turns: config.goals.max_turns,
+            max_active_seconds: config.goals.max_active_seconds,
+            max_unreported_turns: config.goals.max_unreported_turns,
+            turn_model_rounds: config.goals.turn_model_rounds,
+        },
         model_concurrency: config.model_concurrency,
         max_threads: config.max_threads,
         max_active_turns: config.max_active_turns,

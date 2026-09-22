@@ -62,3 +62,11 @@ Outer-container relaxations apply only to the explicitly selected controlled pro
 [CI](../../.github/workflows/ci.yml) runs native Harness checks on macOS, portable regression and Docker sandbox/file-ownership checks on Linux, and separate Rust/npm advisory checks. Actions are pinned by commit, repository permissions are read-only, and failures retain logs. Consult the run for the relevant commit for actual results.
 
 `make schemas` updates the pinned Codex schema; `make desktop-schemas` updates desktop schemas. Update types, callers and contracts together. Local fixtures do not validate real models, GUIs, third-party daemons, signing/notarization or other platforms. See the [benchmark guide](../benchmarks/README.en.md) for performance runs.
+
+## Goal regression
+
+`cargo test --locked -p areal-engine --test watchdog` checks ordinary network retries alongside Goal unknown-usage constraints, including transport failures, rate limits, service unavailability, interrupted streams, request/stream timeouts and summary failures. Goals avoid retry backoff, retain reservations and the previous checkpoint, and release model permits.
+
+`cargo test --locked -p areal-engine --test goals` covers ordinary Turns without continuation, completion across two Turns, CAS/idempotency, budget exhaustion/editing, unknown reservations, pause/resume, queue priority, child attribution, capacity waiting, active deadlines and restart without replay. `cargo test --locked -p areal-engine goals::budget` covers concurrent reservations, nested Workgroup pools, model replacement and single-charge summary accounting. Configuration tests cover default execution limits, TOML overrides and policy ranges; Goal behavior tests use default Limits.
+
+`node examples/desktop-api/run.mjs goal-mode` uses real Core/Runtime and an HTTP/SSE fixture with generated schema validation, file creation/verification across two Turns, isolated Workgroup accounting, observation permissions, retries, multi-client recovery and headless waiting across Turns. It runs under `make examples-desktop-api`; fixtures do not measure real-model task success.

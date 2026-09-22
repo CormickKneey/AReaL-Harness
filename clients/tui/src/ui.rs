@@ -260,6 +260,24 @@ fn context_panel(frame: &mut Frame, area: Rect, app: &mut App, p: Palette) {
 
 fn plan_lines(app: &App, p: Palette) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
+    if let Some(goal) = app.current().and_then(|t| t.goals.goal.as_ref()) {
+        lines.push(Line::styled(
+            format!("Goal · {:?}", goal.status),
+            p.style(Role::Muted),
+        ));
+        lines.push(Line::raw(safe_text(&goal.objective)));
+        lines.push(Line::raw(format!(
+            "{} tokens · {:.0}s · {}/{} Turns",
+            goal.usage.tokens_used,
+            goal.usage.time_used_seconds,
+            goal.usage.turns_started,
+            goal.max_turns
+        )));
+        if let Some(reason) = &goal.reason {
+            lines.push(Line::raw(safe_text(reason)));
+        }
+        lines.push(Line::raw("/goal-pause · /goal-resume · /goal-edit"));
+    }
     if let Some(desktop) = app.current().and_then(|t| t.desktop.as_ref()) {
         for step in &desktop.plan.steps {
             lines.push(Line::styled(
@@ -514,6 +532,12 @@ fn execution_status(app: &App) -> String {
         return "Loading session…".into();
     };
     let mut parts = vec![thread_status(t).to_owned()];
+    if let Some(goal) = &t.goals.goal {
+        parts.push(format!(
+            "Goal {:?} · {} tokens",
+            goal.status, goal.usage.tokens_used
+        ));
+    }
     if let Some(turn) = t.turns.last() {
         if let Some(at) = app.observed.get(&turn.id) {
             parts.push(format!("observed {}s", at.elapsed().as_secs()));
@@ -862,7 +886,7 @@ fn theme_picker(frame: &mut Frame, area: Rect, app: &App, p: Palette) {
     );
 }
 fn help_page(frame: &mut Frame, area: Rect, p: Palette) {
-    let text = "F1 /help: help · F2 /theme: theme picker\nF3 /topology: agents · F4 /groups: workgroups\nF5 /sessions: switch session · F6 /model: switch model\n/new · /tasks · /sessions · /open ID · /spawn PROMPT · /agents\n/group ID · /group-start JSON_FILE · /group-revise JSON_FILE\n/group-cancel ID · /welcome · /quit\n\n/: command suggestions · ↑↓ select · Tab complete\nTab / Shift-Tab: input, right panel, history focus\nNavigation: arrows select/expand, Enter open, r refresh\nHistory: PgUp/PgDn, Home/End, Space expand visible tool\nCtrl-C: interrupt the input target's active Turn\nCtrl-R: reconnect · Ctrl-Q: quit\n\nRead % describes loaded history; session plan counts are separate.\nTask trees include historical child sessions. Snapshot nodes can lag.\nPending questions/approvals are shown here; respond in the Web client.\nEsc: return to input";
+    let text = "F1 /help: help · F2 /theme: theme picker\nF3 /topology: agents · F4 /groups: workgroups\nF5 /sessions: switch session · F6 /model: switch model\n/goal OBJECTIVE · /goal-pause · /goal-resume · /goal-clear\n/goal-edit OBJECTIVE · /goal-budget TOKENS|none\n/new · /tasks · /sessions · /open ID · /spawn PROMPT · /agents\n/group ID · /group-start JSON_FILE · /group-revise JSON_FILE\n/group-cancel ID · /welcome · /quit\n\n/: command suggestions · ↑↓ select · Tab complete\nTab / Shift-Tab: input, right panel, history focus\nNavigation: arrows select/expand, Enter open, r refresh\nHistory: PgUp/PgDn, Home/End, Space expand visible tool\nCtrl-C: interrupt the input target's active Turn\nCtrl-R: reconnect · Ctrl-Q: quit\n\nRead % describes loaded history; session plan counts are separate.\nTask trees include historical child sessions. Snapshot nodes can lag.\nPending questions/approvals are shown here; respond in the Web client.\nEsc: return to input";
     frame.render_widget(
         Paragraph::new(text)
             .wrap(Wrap { trim: false })

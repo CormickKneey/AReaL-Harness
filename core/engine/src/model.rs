@@ -143,9 +143,11 @@ pub(crate) fn is_network_error(error: &anyhow::Error) -> bool {
     false
 }
 
-// Diagnostic attribution only; never changes provider request parameters.
+// 请求归属用于审计；Goal 标记另约束计量范围内的 HTTP 重试。
 tokio::task_local! {
     pub(crate) static REQUEST_OWNER: (String, String);
+    // 已计量请求不能在传输内部隐式重试，否则单次预留无法覆盖未知消费。
+    pub(crate) static GOAL_REQUEST: ();
 }
 
 /// Local admission measurements, not provider/GPU utilization or RPM/TPM.
@@ -282,6 +284,30 @@ impl ModelCapabilities {
 
 #[async_trait]
 pub trait Model: Send + Sync {
+    /// 传播目标计量，不扩大模型并发池或工具权限。
+    fn share_context(&self, inner: std::sync::Arc<dyn Model>) -> std::sync::Arc<dyn Model> {
+        inner
+    }
+    fn check_work(&self) -> Result<()> {
+        Ok(())
+    }
+    fn goal_id(&self) -> Option<&str> {
+        None
+    }
+    /// 自定义适配器必须显式支持逐请求输出限制，不能静默忽略预算。
+    async fn chat_limited(
+        &self,
+        messages: Vec<Message>,
+        tools: Vec<Value>,
+        purpose: RequestPurpose,
+        cap: Option<u64>,
+    ) -> Result<ModelStream> {
+        anyhow::ensure!(
+            cap.is_none(),
+            "model adapter does not support goal output limits"
+        );
+        self.chat_for(messages, tools, purpose).await
+    }
     /// 参数变化必须重建不可变请求配置，不能悄悄忽略。
     fn configure(
         &self,
@@ -550,6 +576,20 @@ impl HttpModel {
 
 #[async_trait]
 impl Model for HttpModel {
+    async fn chat_limited(
+        &self,
+        messages: Vec<Message>,
+        tools: Vec<Value>,
+        purpose: RequestPurpose,
+        cap: Option<u64>,
+    ) -> Result<ModelStream> {
+        let mut model = self.clone();
+        if let Some(cap) = cap {
+            model.options.max_output_tokens =
+                Some(model.options.max_output_tokens.unwrap_or(cap).min(cap));
+        }
+        model.chat_for(messages, tools, purpose).await
+    }
     fn configure(
         &self,
         p: &areal_protocol::desktop::ModelParameters,
@@ -672,7 +712,10 @@ impl Model for HttpModel {
                 Ok(r) => matches!(r.status().as_u16(), 408 | 429) || r.status().is_server_error(),
                 Err(e) => !e.is_builder(),
             };
-            if transient && attempt < self.options.max_retries {
+            if transient
+                && attempt < self.options.max_retries
+                && GOAL_REQUEST.try_with(|_| ()).is_err()
+            {
                 let delay = result
                     .as_ref()
                     .ok()

@@ -86,6 +86,19 @@ pub struct Start {
 /// Instantiated by the trusted server, never by an agent-provided command.
 pub trait Factory: Send + Sync + 'static {
     fn executor(&self, root: &Path, policy: &Policy) -> Result<Arc<dyn Executor>>;
+    /// 自定义工厂必须显式接入目标预算，禁止默默绕过计量。
+    fn executor_for_goal(
+        &self,
+        root: &Path,
+        policy: &Policy,
+        budget: Option<Arc<crate::goals::Budget>>,
+    ) -> Result<Arc<dyn Executor>> {
+        ensure!(
+            budget.is_none(),
+            "executor does not support Goal accounting"
+        );
+        self.executor(root, policy)
+    }
 }
 
 pub struct NativeFactory {
@@ -98,13 +111,24 @@ pub struct NativeFactory {
 }
 impl Factory for NativeFactory {
     fn executor(&self, root: &Path, policy: &Policy) -> Result<Arc<dyn Executor>> {
+        self.executor_for_goal(root, policy, None)
+    }
+    fn executor_for_goal(
+        &self,
+        root: &Path,
+        policy: &Policy,
+        budget: Option<Arc<crate::goals::Budget>>,
+    ) -> Result<Arc<dyn Executor>> {
         let capacity = self
             .model
             .load()
             .map_or(policy.workers, |m| m.capacity.min(policy.workers))
             .max(1);
-        let model =
-            native::SharedModel::new(self.model.clone(), capacity, policy.max_model_requests)?;
+        let model = native::SharedModel::new(
+            budget.map_or_else(|| self.model.clone(), |b| b.wrap(self.model.clone())),
+            capacity,
+            policy.max_model_requests,
+        )?;
         let mut executor = native::NativeExecutor::new(
             model,
             root.join("bindings"),
@@ -294,6 +318,15 @@ impl Service {
         request: Start,
         parent: CancellationToken,
     ) -> Result<Value> {
+        self.start_with_goal(owner, request, parent, None).await
+    }
+    pub(crate) async fn start_with_goal(
+        self: &Arc<Self>,
+        owner: String,
+        request: Start,
+        parent: CancellationToken,
+        budget: Option<Arc<crate::goals::Budget>>,
+    ) -> Result<Value> {
         ensure!(
             !owner.is_empty()
                 && owner.len() <= 256
@@ -380,7 +413,10 @@ impl Service {
             .await??;
             let control = group.control();
             let cancel = parent.child_token();
-            let inner = match service.factory.executor(&path, &service.policy) {
+            let inner = match service
+                .factory
+                .executor_for_goal(&path, &service.policy, budget)
+            {
                 Ok(inner) => inner,
                 Err(error) => {
                     group.record.status = "failed".into();

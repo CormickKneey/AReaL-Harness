@@ -100,6 +100,17 @@ impl History {
                     let mut block = block.unwrap_or_else(|| {
                         make_block(item, key.clone(), self.expanded.contains(&key), width)
                     });
+                    if turn
+                        .goal
+                        .as_ref()
+                        .is_some_and(|g| g.origin == "continuation")
+                        && turn
+                            .items
+                            .first()
+                            .is_some_and(|first| first.id() == item.id())
+                    {
+                        block.label = "Goal · automatic continuation".into();
+                    }
                     block.start = start;
                     start += block.height();
                     self.blocks.push(block);

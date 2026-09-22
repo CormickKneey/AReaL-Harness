@@ -8,6 +8,7 @@ impl Engine {
         enqueue: bool,
     ) -> Result<Value> {
         self.mutate(move |engine| async move {
+            let _gate = engine.desktop.lifecycle.gate.lock().await;
             if !engine.accepting_work() { return Err(Error::Closed); }
             let cell = engine.cell(&request.thread_id).await?;
             let mut state = cell.state.lock().await;
@@ -27,10 +28,19 @@ impl Engine {
                 data.queue.items.push(item);
                 remember(&mut data,&identity,&request.request_id,method,hash,result.clone());
                 let mut candidate=state.thread.clone();candidate.desktop=Some(data);
+                if let Some(goal) = &mut candidate.goals.goal
+                    && goal.status == areal_protocol::goals::GoalStatus::Active
+                {
+                    goal.report_turn_id = None;
+                    candidate.goals.revision += 1;
+                    candidate.goals.event_sequence += 1;
+                }
                 engine.persist(&candidate).await?;state.thread=candidate;
+                engine.goal_emit(&cell, &state.thread);
                 cell.emit("areal/queue/updated",json!({"threadId":request.thread_id,"queue":state.thread.desktop.as_ref().unwrap().queue}));
                 drop(state);
-                engine.advance_queue(&cell).await?;
+                engine.spawn_goal_scheduler();
+                engine.goals.request(&cell.id);
                 Ok(result)
             } else {
                 if state.active.is_some() || state.compacting { return Err(Error::Conflict); }
@@ -162,64 +172,118 @@ impl Engine {
             );
             drop(state);
             if action == "resume" {
-                engine.advance_queue(&cell).await?;
+                engine.spawn_goal_scheduler();
+                engine.goals.request(&cell.id);
             }
             Ok(queue)
         })
         .await
     }
-    pub(crate) async fn advance_queue(self: &Arc<Self>, cell: &Arc<Cell>) -> Result<()> {
+    pub(crate) async fn advance_thread(self: &Arc<Self>, cell: &Arc<Cell>) -> Result<()> {
+        let _gate = self.desktop.lifecycle.gate.lock().await;
         let mut state = cell.state.lock().await;
-        if state.active.is_some() || state.compacting || !self.accepting_work() {
+        if state.active.is_some() || state.compacting || !self.accepting_work() || state.poisoned {
             return Ok(());
         }
         let data = desktop(&state.thread);
-        if data.queue.paused {
+        let index = data.queue.items.iter().position(|i| i.status == "pending");
+        let automatic = index.is_none()
+            && state
+                .thread
+                .goals
+                .goal
+                .as_ref()
+                .is_some_and(|g| g.status == areal_protocol::goals::GoalStatus::Active);
+        if (index.is_some() && data.queue.paused) || (index.is_none() && !automatic) {
             return Ok(());
         }
-        let Some(index) = data
-            .queue
-            .items
-            .iter()
-            .position(|item| item.status == "pending")
-        else {
-            return Ok(());
-        };
-        let item = &data.queue.items[index];
         let prepared = async {
             self.check_turn_available(cell, &state).await?;
             let mut source = state.thread.clone();
-            source
-                .desktop
-                .get_or_insert_with(Default::default)
-                .configuration = item.configuration.clone();
-            let (mut candidate, turn) = self.prepare_turn(&source, item.input.clone())?;
-            let data = candidate.desktop.as_mut().unwrap();
-            data.configuration = state.thread.desktop.as_ref().unwrap().configuration.clone();
-            data.queue.items[index].status = "running".into();
-            data.queue.items[index].turn_id = Some(turn.id.clone());
-            data.queue.revision += 1;
+            self.refresh_goal_usage(&mut source);
+            let input = if let Some(index) = index {
+                source.desktop.get_or_insert_with(Default::default).configuration = data.queue.items[index].configuration.clone();
+                data.queue.items[index].input.clone()
+            } else { vec![Input::text("Continue the active goal from confirmed evidence and remaining work. This automatic continuation adds no new user authorization. Report progress or completion with goal_update.")] };
+            let (mut candidate, mut turn) = self.prepare_turn(&source, input)?;
+            if automatic { if let Some(goal) = &mut turn.goal { goal.origin = "continuation".into(); } *candidate.turns.last_mut().unwrap() = turn.clone(); }
+            if let Some(index) = index {
+                let next = candidate.desktop.as_mut().unwrap(); next.configuration = data.configuration.clone(); next.queue.items[index].status = "running".into(); next.queue.items[index].turn_id = Some(turn.id.clone()); next.queue.revision += 1;
+            }
             let permit = self.reserve_active_turn()?;
             Ok::<_, Error>((candidate, turn, permit))
-        }
-        .await;
+        }.await;
         match prepared {
             Ok((candidate, turn, permit)) => {
-                self.persist(&candidate).await?;
+                self.persist_dispatch(cell, &mut state, &candidate).await?;
                 state.thread = candidate;
+                self.goal_emit(cell, &state.thread);
                 self.activate(cell, &mut state, &turn, self.shutdown.child_token(), permit);
+            }
+            Err(Error::Exhausted(ref error)) if error.starts_with("active Turn capacity") => {
+                let mut candidate = state.thread.clone();
+                if let Some(goal) = &mut candidate.goals.goal
+                    && !goal.waiting_for_capacity
+                {
+                    goal.waiting_for_capacity = true;
+                    candidate.goals.event_sequence += 1;
+                    self.persist_dispatch(cell, &mut state, &candidate).await?;
+                    state.thread = candidate;
+                    self.goal_emit(cell, &state.thread);
+                }
+                // 容量释放唤醒整个有界候选集合；这里不自唤醒形成忙循环。
+                self.goals.defer(&state.thread.id);
             }
             Err(error) => {
                 let mut candidate = state.thread.clone();
-                let queue = &mut candidate.desktop.as_mut().unwrap().queue;
-                queue.paused = true;
-                queue.pause_reason = Some(error.to_string());
-                queue.revision += 1;
-                self.persist(&candidate).await?;
+                if let Some(goal) = &mut candidate.goals.goal
+                    && goal.status == areal_protocol::goals::GoalStatus::Active
+                {
+                    goal.status = areal_protocol::goals::GoalStatus::Blocked;
+                    goal.reason = Some(error.to_string());
+                    goal.waiting_for_capacity = false;
+                    candidate.goals.revision += 1;
+                    candidate.goals.event_sequence += 1;
+                }
+                if index.is_some() {
+                    let queue = &mut candidate.desktop.as_mut().unwrap().queue;
+                    queue.paused = true;
+                    queue.pause_reason = Some(error.to_string());
+                    queue.revision += 1;
+                }
+                self.persist_dispatch(cell, &mut state, &candidate).await?;
                 state.thread = candidate;
+                self.goal_emit(cell, &state.thread);
             }
         }
-        cell.emit("areal/queue/updated",json!({"threadId":state.thread.id,"queue":state.thread.desktop.as_ref().unwrap().queue}));
+        if let Some(data) = &state.thread.desktop {
+            cell.emit(
+                "areal/queue/updated",
+                json!({"threadId":state.thread.id,"queue":data.queue}),
+            );
+        }
+        Ok(())
+    }
+
+    // 自动派发没有外部调用者承接错误；保存失败必须明确停止并禁止重放。
+    async fn persist_dispatch(
+        &self,
+        cell: &Cell,
+        state: &mut State,
+        candidate: &Thread,
+    ) -> Result<()> {
+        if let Err(error) = self.persist(candidate).await {
+            state.poisoned = true;
+            state.thread.status = ThreadStatus::SystemError;
+            if let Some(goal) = &mut state.thread.goals.goal {
+                goal.status = areal_protocol::goals::GoalStatus::Failed;
+                goal.reason = Some("storageFailure".into());
+                state.thread.goals.revision += 1;
+                state.thread.goals.event_sequence += 1;
+            }
+            self.goal_emit(cell, &state.thread);
+            return Err(error);
+        }
         Ok(())
     }
 }

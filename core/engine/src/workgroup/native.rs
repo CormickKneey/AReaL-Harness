@@ -194,12 +194,21 @@ impl Stream for MeteredStream {
 
 #[async_trait]
 impl Model for SharedModel {
+    fn goal_id(&self) -> Option<&str> {
+        self.inner.goal_id()
+    }
+    fn check_work(&self) -> Result<()> {
+        self.inner.check_work()
+    }
+    fn share_context(&self, inner: Arc<dyn Model>) -> Arc<dyn Model> {
+        self.inner.share_context(inner)
+    }
     fn configure(&self, p: &areal_protocol::desktop::ModelParameters) -> Result<Arc<dyn Model>> {
         Ok(self.share_capacity(self.inner.configure(p)?))
     }
     fn share_capacity(&self, inner: Arc<dyn Model>) -> Arc<dyn Model> {
         Arc::new(Self {
-            inner,
+            inner: self.inner.share_context(inner),
             permits: self.permits.clone(),
             max_requests: self.max_requests,
             usage: self.usage.clone(),
@@ -233,6 +242,15 @@ impl Model for SharedModel {
         tools: Vec<Value>,
         purpose: crate::model::RequestPurpose,
     ) -> Result<ModelStream> {
+        self.chat_limited(messages, tools, purpose, None).await
+    }
+    async fn chat_limited(
+        &self,
+        messages: Vec<Message>,
+        tools: Vec<Value>,
+        purpose: crate::model::RequestPurpose,
+        cap: Option<u64>,
+    ) -> Result<ModelStream> {
         let load = RequestLoad::waiting(self.load.clone());
         let permit = self.permits.clone().acquire_owned().await?;
         {
@@ -247,7 +265,10 @@ impl Model for SharedModel {
             load: load.start(),
             _permit: permit,
         };
-        let stream = self.inner.chat_for(messages, tools, purpose).await?;
+        let stream = self
+            .inner
+            .chat_limited(messages, tools, purpose, cap)
+            .await?;
         Ok(Box::pin(MeteredStream {
             inner: stream,
             request,
@@ -326,6 +347,8 @@ fn successful_tool(messages: &[Message], result: &Message) -> Option<Value> {
     if output.get("error").is_some_and(|v| !v.is_null()) {
         return None;
     }
+    // 准入余量每轮递减，不代表工具结果或源码进展，不能影响重复成功的判定。
+    output.as_object_mut()?.remove("remainingToolCalls");
     match signature["name"].as_str()? {
         "run_command" => {
             if output.get("state") != Some(&Value::from("exited"))
@@ -468,6 +491,12 @@ fn repeated_failure(messages: &[Message]) -> bool {
 
 #[async_trait]
 impl Model for ProgressModel {
+    fn goal_id(&self) -> Option<&str> {
+        self.inner.goal_id()
+    }
+    fn check_work(&self) -> Result<()> {
+        self.inner.check_work()
+    }
     fn name(&self) -> &str {
         self.inner.name()
     }

@@ -3,6 +3,12 @@ use super::*;
 use areal_protocol::desktop::*;
 
 pub(crate) const METHODS: &[&str] = &[
+    "areal/goal/get",
+    "areal/goal/create",
+    "areal/goal/update",
+    "areal/goal/pause",
+    "areal/goal/resume",
+    "areal/goal/clear",
     "areal/provider/probe",
     "areal/workflow/list",
     "areal/workflow/read",
@@ -159,6 +165,27 @@ async fn dispatch_inner(
     params: Value,
 ) -> Result<Value, RpcError> {
     let result = match method {
+        "areal/goal/get" => {
+            let p: ThreadId = parse(params)?;
+            engine.goal_get(&p.thread_id).await
+        }
+        "areal/goal/create" => engine.goal_create(identity.into(), parse(params)?).await,
+        "areal/goal/update" => {
+            let p: areal_protocol::goals::GoalUpdate = parse(params)?;
+            engine
+                .goal_control(identity.into(), "update".into(), p.control.clone(), Some(p))
+                .await
+        }
+        "areal/goal/pause" | "areal/goal/resume" | "areal/goal/clear" => {
+            engine
+                .goal_control(
+                    identity.into(),
+                    method.rsplit('/').next().unwrap().into(),
+                    parse(params)?,
+                    None,
+                )
+                .await
+        }
         "areal/provider/probe" => {
             #[derive(Deserialize)]
             #[serde(deny_unknown_fields)]

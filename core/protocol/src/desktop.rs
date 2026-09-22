@@ -21,6 +21,8 @@ pub const METHODS: &[&str] = &[
     "areal/tool/acknowledge",
 ];
 pub const NOTIFICATIONS: &[&str] = &[
+    "areal/goal/updated",
+    "areal/goal/cleared",
     "thread/started",
     "turn/started",
     "turn/completed",

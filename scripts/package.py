@@ -55,7 +55,7 @@ def main():
         "workingTree": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=root)),
         "profile": args.profile,
         "apiVersion": "areal.core.v1",
-        "stateVersion": 6,
+        "stateVersion": 7,
         "platform": "darwin/arm64",
         "files": files,
         "prerequisites": [

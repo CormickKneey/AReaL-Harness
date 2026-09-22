@@ -121,6 +121,18 @@ impl Engine {
         }
         let thread_id = id();
         let mut thread = Thread {
+            goals: Default::default(),
+            goal_owner: parent.and_then(|p| {
+                p.goals
+                    .goal
+                    .as_ref()
+                    .filter(|g| g.status == areal_protocol::goals::GoalStatus::Active)
+                    .map(|g| areal_protocol::goals::GoalOwner {
+                        thread_id: p.id.clone(),
+                        goal_id: g.id.clone(),
+                    })
+                    .or_else(|| p.goal_owner.clone())
+            }),
             desktop,
             id: thread_id.clone(),
             session_id: parent.map_or(thread_id.clone(), |p| p.session_id.clone()),
@@ -218,6 +230,7 @@ impl Engine {
                 .await
                 .map_err(|e| Error::Storage(e.to_string()))?;
         }
+        self.refresh_goal_usage(&mut thread);
         if !include_turns {
             thread.turns.clear();
             thread.context_checkpoint = None;
@@ -252,6 +265,7 @@ impl Engine {
                 return Ok((data.clone(), data.last().map(|t: &Thread| t.id.clone())));
             }
             let mut thread = state.thread.clone();
+            self.refresh_goal_usage(&mut thread);
             thread.turns.clear();
             thread.context_checkpoint = None;
             data.push(thread);
@@ -269,7 +283,7 @@ impl Engine {
     ) -> Result<(Thread, broadcast::Receiver<Value>)> {
         let cell = self.raw_cell(thread_id).await?;
         let state = cell.state.lock().await;
-        let thread = if state.thread.desktop.as_ref().is_some_and(|d| d.archived) {
+        let mut thread = if state.thread.desktop.as_ref().is_some_and(|d| d.archived) {
             self.store
                 .read_thread(thread_id)
                 .await
@@ -277,6 +291,7 @@ impl Engine {
         } else {
             state.thread.clone()
         };
+        self.refresh_goal_usage(&mut thread);
         Ok((thread, cell.events.subscribe()))
     }
 
