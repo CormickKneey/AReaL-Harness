@@ -3,6 +3,8 @@ use super::*;
 use areal_protocol::desktop::*;
 
 pub(crate) const METHODS: &[&str] = &[
+    "areal/permissions/read",
+    "areal/permissions/forget",
     "areal/goal/get",
     "areal/goal/create",
     "areal/goal/update",
@@ -365,6 +367,21 @@ async fn dispatch_inner(
         "areal/interaction/list" => {
             let p: ThreadId = parse(params)?;
             engine.interactions(&p.thread_id).await
+        }
+        "areal/permissions/read" => {
+            let p: ThreadId = parse(params)?;
+            engine.permission_read(&p.thread_id).await
+        }
+        "areal/permissions/forget" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct Forget {
+                thread_id: String,
+                #[serde(default)]
+                project: bool,
+            }
+            let p: Forget = parse(params)?;
+            engine.permission_forget(p.thread_id, p.project).await
         }
         "areal/interaction/respond" => engine.respond(parse(params)?).await,
         "areal/provider/list" => {

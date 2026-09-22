@@ -21,6 +21,7 @@ pub struct ConfigInputs {
 /// Only explicit CLI values belong here. Text is validated without echoing it.
 #[derive(Clone, Default)]
 pub struct ConfigOverrides {
+    pub permissions: Option<String>,
     pub listen: Option<String>,
     pub data_dir: Option<PathBuf>,
     pub model: Option<String>,
@@ -34,6 +35,33 @@ pub struct ConfigOverrides {
     pub max_children_per_turn: Option<String>,
     pub max_agent_depth: Option<String>,
     pub log_filter: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PermissionMode {
+    #[default]
+    #[serde(rename = "YOLO", alias = "yolo")]
+    Yolo,
+    #[serde(rename = "ASK_PERMISSIONS", alias = "ask_permissions")]
+    AskPermissions,
+}
+
+impl PermissionMode {
+    pub const fn requires_approval(self) -> bool {
+        matches!(self, Self::AskPermissions)
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PermissionConfig {
+    pub mode: PermissionMode,
+    #[serde(default)]
+    pub allow: Vec<String>,
+    #[serde(default)]
+    pub ask: Vec<String>,
+    #[serde(default)]
+    pub deny: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -165,6 +193,7 @@ pub struct GoalConfig {
 }
 
 pub struct ResolvedCoreConfig {
+    pub permissions: PermissionConfig,
     pub goals: GoalConfig,
     pub home: PathBuf,
     pub config_file: Option<PathBuf>,
@@ -212,6 +241,7 @@ impl ResolvedCoreConfig {
             endpoint.to_string()
         };
         let mut result = serde_json::json!({
+            "permissions": self.permissions,
             "goals": self.goals,
             "home": self.home, "config_file": self.config_file,
             "server": { "listen": self.listen, "data_dir": self.data_dir },

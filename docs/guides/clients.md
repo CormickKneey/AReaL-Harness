@@ -9,7 +9,7 @@
 ```sh
 make tui
 make tui ARGS='--resume THREAD_ID'
-make tui ARGS='--workspace /absolute/task --allow-write --prompt "Describe the task"'
+make tui ARGS='--workspace /absolute/task --prompt "Describe the task"'
 # 连接已有服务；使用它的数据目录中的认证文件
 make tui ARGS='--endpoint ws://127.0.0.1:4500 --auth-file /absolute/core-data/security/auth.json'
 ```
@@ -41,6 +41,8 @@ Web 采用中性灰工作台布局：240px 可收起侧栏、任务标题与视�
 - 「任务记录」展示消息和可展开的工具结果；UNKNOWN 工具结果仍需记录检查说明。「协同任务与验收」保留计划提交、进度查询、取消和调整入口。
 
 外观与导航由 Web 客户端维护，任务、权限和执行状态以 Core 返回的数据为准。
+
+TUI 顶部和 Web 显示 YOLO/ASK_PERMISSIONS，以 Core 状态为准。TUI 审批展示有效参数，↑/↓ 选择拒绝/允许一次/记住会话/项目，Enter 回答，Esc 拒绝，PgUp/PgDn 阅读参数；初始选中拒绝。Web 提供对应按钮。强制审批只提供单次回答。`/permissions` 查看模式、来源和记忆；`/permissions clear-session` 或 `clear-project` 撤销记忆。详见[配置](configuration.md#permissions)。`--prompt`/`--input-file` 无交互应答通道，遇到请求会中断并提示使用交互式 TUI/Web。
 
 ## TUI 操作
 

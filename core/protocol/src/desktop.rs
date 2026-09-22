@@ -258,9 +258,19 @@ pub struct Queue {
     pub items: Vec<QueueItem>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PermissionGrant {
+    pub key: String,
+    pub tool: String,
+    pub arguments: Value,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DesktopState {
+    #[serde(default)]
+    pub permission_grants: Vec<PermissionGrant>,
     #[serde(default)]
     pub archived: bool,
     pub configuration: EffectiveConfig,

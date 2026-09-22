@@ -451,6 +451,8 @@ async function start() {
     "python3",
     [
       "scripts/launch.py",
+      "--sandbox-profile",
+      "native",
       "--config",
       join(root, "config.toml"),
       "--listen",

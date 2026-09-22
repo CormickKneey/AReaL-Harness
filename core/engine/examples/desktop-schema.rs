@@ -61,6 +61,7 @@ fn main() {
         "areal/skill/list",
         "areal/plan/read",
         "areal/interaction/list",
+        "areal/permissions/read",
         "areal/queue/list",
         "areal/process/list",
         "areal/context/compact",
@@ -70,6 +71,13 @@ fn main() {
             object(json!({"threadId":string}), vec!["threadId"]),
         );
     }
+    methods.insert(
+        "areal/permissions/forget".into(),
+        object(
+            json!({"threadId":string,"project":{"type":"boolean"}}),
+            vec!["threadId"],
+        ),
+    );
     for method in ["areal/provider/read", "areal/mcp/read"] {
         methods.insert(method.into(), object(json!({"id":string}), vec!["id"]));
     }

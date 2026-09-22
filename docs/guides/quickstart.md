@@ -42,19 +42,19 @@ make tui ARGS='--prompt Describe the workspace files'
 
 ## 可写工作区与 Web
 
-工作区必须位于可信二进制和 Core 数据目录之外：
+本地启动默认 YOLO，允许工作区外写入和工具联网。Core 数据目录仍需位于工作区外：
 
 ```sh
 mkdir -p ../areal-example-workspace
 printf 'hello\n' > ../areal-example-workspace/hello.txt
-make tui ARGS='--workspace ../areal-example-workspace --allow-write'
+make tui ARGS='--workspace ../areal-example-workspace'
 ```
 
-工具网络默认关闭，部署可显式使用 `--allow-network`；Core 的模型连接不受该工具权限控制。
+需要审批时，启动前设置 `ASK_PERMISSIONS=1`，或配置 `[permissions] mode = "ASK_PERMISSIONS"`，见[权限配置](configuration.md#permissions)。TUI `/permissions` 可查看生效策略；已有共享服务在修改权限后需显式 restart。
 
 ```sh
 python3 -I -S scripts/launch.py \
-  --workspace ../areal-example-workspace --allow-write \
+  --workspace ../areal-example-workspace \
   --data-dir ../areal-example-state --listen 127.0.0.1:4500
 ```
 

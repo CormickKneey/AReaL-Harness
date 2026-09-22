@@ -257,9 +257,14 @@ async fn parent_progresses_during_child_inference_and_can_read_or_cancel_owned_w
         assert_eq!(
             std::fs::read_dir(temp.path().join("scratch"))
                 .unwrap()
-                .count(),
-            1,
-            "failed admission must not leave an empty private directory"
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect::<std::collections::BTreeSet<_>>(),
+            [
+                format!("agent-{}", parent.id),
+                format!("agent-{}", child.id)
+            ]
+            .into(),
+            "only admitted parent and child tasks may have private scratch directories"
         );
         assert!(
             done.turns[0]

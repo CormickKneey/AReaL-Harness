@@ -4,7 +4,9 @@
 
 Core's registry binds names and JSON Schemas to built-in, command, client, MCP or plugin backends. Core validates inputs and outputs; Runtime handles local execution. Full model-tool schemas are in [tools.rs](../../core/engine/src/tools.rs).
 
-The `run_command` `oneOf` uses two complete object branches, each defining either `command` or `argv` and the common options, for compatibility with model endpoints that require complete branches. Both branches include the Runtime deadline ceiling. Call parameters are unchanged; Core still rejects supplying both entry points or neither.
+The Local launch defaults to YOLO. File tools and command cwd accept outside-workspace absolute paths normalized to `workspace://host`, requiring Runtime full-access. Relative paths remain workspace-relative; argv uses ordinary filesystem paths. ASK_PERMISSIONS gates effective arguments before execution; see [permissions](configuration.en.md#permissions). The launcher supplies per-Thread scratch; isolated Workgroups use private `.scratch/agent-<threadId>` within their workspace and retain their Scope boundaries.
+
+`run_command` `oneOf` uses two complete object branches, each defining either `command` or `argv` and the common options, for compatibility with model endpoints that require complete branches. Both branches include the Runtime deadline ceiling. Call parameters are unchanged; Core still rejects supplying both entry points or neither.
 
 | Tool | Key parameters and boundaries |
 |---|---|

@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 enum SandboxProfileArg {
     #[default]
     Native,
+    FullAccess,
     OuterContainerPerf,
 }
 
@@ -17,6 +18,7 @@ impl From<SandboxProfileArg> for SandboxProfile {
     fn from(value: SandboxProfileArg) -> Self {
         match value {
             SandboxProfileArg::Native => Self::Native,
+            SandboxProfileArg::FullAccess => Self::FullAccess,
             SandboxProfileArg::OuterContainerPerf => Self::OuterContainerPerf,
         }
     }
@@ -71,7 +73,8 @@ async fn main() -> Result<()> {
     anyhow::ensure!(workspace.is_dir(), "workspace must be a directory");
     let mut config = Config::read_only(workspace);
     config.scratch = args.scratch;
-    config.writable = args.allow_write;
+    config.full_access = matches!(args.sandbox_profile, SandboxProfileArg::FullAccess);
+    config.writable = args.allow_write || config.full_access;
     config.max_scopes = args.max_scopes;
     config.max_operations = args.max_operations;
     for path in args.task_credential_command {
@@ -100,7 +103,7 @@ async fn main() -> Result<()> {
             }
         }
     }
-    config.allow_network = args.allow_network;
+    config.allow_network = args.allow_network || config.full_access;
     config.concurrent_writes = args.allow_concurrent_writes;
     config.output_window_bytes = args.output_window_bytes;
     let helper = match args.file_helper {
@@ -114,14 +117,20 @@ async fn main() -> Result<()> {
         }
     };
     config.file_helper = helper.map(|path| path.canonicalize()).transpose()?;
-    if config.writable {
+    if !config.full_access {
         let mut trusted = vec![std::env::current_exe()?.canonicalize()?];
         trusted.extend(config.file_helper.clone());
+        let scratch = config
+            .scratch
+            .as_ref()
+            .map(|p| p.canonicalize())
+            .transpose()?;
         anyhow::ensure!(
-            trusted
-                .iter()
-                .all(|path| !path.starts_with(&config.workspace)),
-            "trusted executables must be outside the writable workspace"
+            trusted.iter().all(
+                |path| (!config.writable || !path.starts_with(&config.workspace))
+                    && scratch.as_ref().is_none_or(|root| !path.starts_with(root))
+            ),
+            "trusted executables must be outside writable workspace and scratch"
         );
     }
     config.limits.max_processes = args.max_processes;

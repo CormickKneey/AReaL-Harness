@@ -27,6 +27,7 @@ pub enum View {
     Tasks,
     Welcome,
     Help,
+    Permissions,
 }
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub enum Focus {
@@ -55,6 +56,9 @@ pub struct Page {
 }
 #[derive(Clone, Debug)]
 enum Purpose {
+    Permissions(String),
+    ForgetPermissions(String),
+    Interaction(String),
     Configuration,
     Ordinary,
     Create(u64),
@@ -90,6 +94,12 @@ pub struct RetryState {
 }
 
 pub struct App {
+    pub permission_info: Value,
+    pub permission_mode: String,
+    pub approval_choice: usize,
+    pub interaction_scroll: u16,
+    pub permission_scroll: u16,
+    approval_request: Option<String>,
     pub monitor_configuration: bool,
     pub restart_ready: bool,
     pub configuration_notice: Option<String>,
@@ -146,6 +156,12 @@ pub struct App {
 impl App {
     pub fn new(prefs: Preferences) -> Self {
         Self {
+            permission_info: Value::Null,
+            permission_mode: "Unknown".into(),
+            approval_choice: 0,
+            interaction_scroll: 0,
+            permission_scroll: 0,
+            approval_request: None,
             monitor_configuration: false,
             restart_ready: false,
             configuration_notice: None,
@@ -678,6 +694,24 @@ impl App {
                 self.picker = Some(Picker::new(PickerKind::Sessions));
                 self.load_page(None, true)?;
             }
+            "/permissions" => {
+                let id = self.selected.clone().context("Create a thread first")?;
+                self.view = View::Permissions;
+                self.permission_scroll = 0;
+                self.queue(
+                    "areal/permissions/read",
+                    json!({"threadId":id}),
+                    Purpose::Permissions(id),
+                )?;
+            }
+            "/permissions clear-session" | "/permissions clear-project" => {
+                let id = self.selected.clone().context("Create a thread first")?;
+                self.queue(
+                    "areal/permissions/forget",
+                    json!({"threadId":id,"project":input.ends_with("clear-project")}),
+                    Purpose::ForgetPermissions(id),
+                )?;
+            }
             "/model" => {
                 self.picker = Some(Picker::new(PickerKind::Models));
                 self.queue("areal/model/list", json!({}), Purpose::Models)?;
@@ -796,7 +830,7 @@ impl App {
                             Purpose::Ordinary,
                         )?;
                     }
-                    if matches!(self.view, View::Welcome | View::Help) {
+                    if matches!(self.view, View::Welcome | View::Help | View::Permissions) {
                         self.view = View::Conversation;
                     }
                     if let Some(h) = self.history() {
@@ -973,7 +1007,7 @@ impl App {
         Ok(())
     }
     pub fn paste(&mut self, text: &str) {
-        if self.theme_original.is_some() {
+        if self.theme_original.is_some() || self.pending_approval().is_some() {
             return;
         }
         let text = safe_text(text);
@@ -1062,6 +1096,20 @@ impl App {
         self.dirty = true;
     }
     pub fn mouse(&mut self, event: MouseEvent) {
+        if self.pending_approval().is_some() {
+            match event.kind {
+                MouseEventKind::ScrollUp => {
+                    self.interaction_scroll = self.interaction_scroll.saturating_sub(3)
+                }
+                MouseEventKind::ScrollDown => {
+                    self.interaction_scroll = self.interaction_scroll.saturating_add(3)
+                }
+                _ => {}
+            }
+            self.dirty = true;
+            return;
+        }
+
         if !self.prefs.mouse || self.picker.is_some() || self.theme_original.is_some() {
             self.mouse_down = None;
             return;
@@ -1114,6 +1162,47 @@ impl App {
             _ => self.mouse_down = None,
         }
     }
+    pub fn pending_approval(&self) -> Option<&areal_protocol::desktop::Interaction> {
+        fn pending(thread: &Thread) -> Option<&areal_protocol::desktop::Interaction> {
+            thread.desktop.as_ref().and_then(|d| {
+                d.interactions
+                    .iter()
+                    .find(|i| i.kind == "approval" && i.status == "pending")
+            })
+        }
+        if let Some(thread) = self.current()
+            && let Some(i) = pending(thread)
+        {
+            return Some(i);
+        }
+        self.threads
+            .values()
+            .filter(|t| Some(&t.id) != self.selected.as_ref())
+            .find_map(pending)
+    }
+    pub fn approval_selection(&self) -> usize {
+        if self.pending_approval().map(|i| i.request_id.as_str())
+            == self.approval_request.as_deref()
+        {
+            self.approval_choice
+        } else {
+            0
+        }
+    }
+    pub fn approval_choices(&self) -> Vec<(&'static str, &'static str)> {
+        let mut choices = vec![("deny", "Deny"), ("allowOnce", "Allow once")];
+        if self
+            .pending_approval()
+            .and_then(|i| i.effective_permissions.as_ref())
+            .is_some_and(|p| p["rememberAllowed"] == true)
+        {
+            choices.extend([
+                ("allowSession", "Remember exact request for this session"),
+                ("allowProject", "Remember exact request for this project"),
+            ]);
+        }
+        choices
+    }
     pub fn key(&mut self, key: KeyEvent) -> Result<bool> {
         self.dirty = true;
         self.mouse_down = None;
@@ -1142,7 +1231,8 @@ impl App {
                 KeyCode::Char(c)
                     if self.focus == Focus::Input
                         && self.picker.is_none()
-                        && self.theme_original.is_none() =>
+                        && self.theme_original.is_none()
+                        && self.pending_approval().is_none() =>
                 {
                     match c {
                         'a' => {
@@ -1157,6 +1247,40 @@ impl App {
                         }
                         'd' => self.delete_input(false),
                         _ => {}
+                    }
+                }
+                _ => {}
+            }
+            return Ok(false);
+        }
+        if let Some(interaction) = self.pending_approval().cloned() {
+            if self.approval_request.as_deref() != Some(&interaction.request_id) {
+                self.approval_request = Some(interaction.request_id.clone());
+                self.approval_choice = 0;
+                self.interaction_scroll = 0;
+            }
+            let choices = self.approval_choices();
+            match key.code {
+                KeyCode::Up => self.approval_choice = self.approval_choice.saturating_sub(1),
+                KeyCode::Down => {
+                    self.approval_choice = (self.approval_choice + 1).min(choices.len() - 1)
+                }
+                KeyCode::PageUp => {
+                    self.interaction_scroll = self.interaction_scroll.saturating_sub(10)
+                }
+                KeyCode::PageDown => {
+                    self.interaction_scroll = self.interaction_scroll.saturating_add(10)
+                }
+                KeyCode::Enter | KeyCode::Esc => {
+                    let decision = if key.code == KeyCode::Esc {
+                        "deny"
+                    } else {
+                        choices[self.approval_choice.min(choices.len() - 1)].0
+                    };
+                    if !self.pending.values().chain(self.outbox.iter()).any(|r| matches!(&r.purpose, Purpose::Interaction(id) if *id == interaction.thread_id)) {
+                        self.queue("areal/interaction/respond", json!({"threadId":interaction.thread_id,"turnId":interaction.turn_id,"requestId":interaction.request_id,"argumentsDigest":interaction.arguments_digest,"decision":decision}), Purpose::Interaction(interaction.thread_id))?;
+                        self.approval_choice = 0;
+                        self.interaction_scroll = 0;
                     }
                 }
                 _ => {}
@@ -1254,7 +1378,14 @@ impl App {
                 self.focus = Focus::Input;
             }
             KeyCode::PageUp | KeyCode::PageDown | KeyCode::Home | KeyCode::End => {
-                if matches!(self.view, View::Groups | View::Tasks)
+                if self.view == View::Permissions {
+                    self.permission_scroll = match key.code {
+                        KeyCode::PageUp => self.permission_scroll.saturating_sub(10),
+                        KeyCode::PageDown => self.permission_scroll.saturating_add(10),
+                        KeyCode::Home => 0,
+                        _ => self.permission_scroll.saturating_add(30),
+                    };
+                } else if matches!(self.view, View::Groups | View::Tasks)
                     && self.focus == Focus::Navigation
                 {
                     let scroll = if self.view == View::Tasks {
@@ -1275,7 +1406,7 @@ impl App {
                         KeyCode::Home => h.home(),
                         _ => h.end(),
                     }
-                    if matches!(self.view, View::Welcome | View::Help) {
+                    if matches!(self.view, View::Welcome | View::Help | View::Permissions) {
                         self.view = View::Conversation;
                     }
                 }
@@ -1595,6 +1726,21 @@ impl App {
                         .map(|i| self.models[*i].model.clone())
                 });
             match request.purpose {
+                Purpose::ForgetPermissions(id) => {
+                    self.queue(
+                        "areal/permissions/read",
+                        json!({"threadId":id}),
+                        Purpose::Permissions(id),
+                    )?;
+                }
+                Purpose::Permissions(id) => {
+                    if self.selected.as_ref() == Some(&id) {
+                        self.permission_info = result.clone();
+                    }
+                }
+                Purpose::Interaction(id) => {
+                    self.queue("thread/resume", json!({"threadId":id}), Purpose::Resume(id))?;
+                }
                 Purpose::Configuration => {
                     self.restart_ready = result["configuration"]["restartRequired"] == true
                         && result["restartSafe"] == true
@@ -1657,6 +1803,9 @@ impl App {
                     }
                 }
                 Purpose::Create(generation) => {
+                    if let Some(mode) = result["permissionMode"].as_str() {
+                        self.permission_mode = mode.into();
+                    }
                     let thread: Thread = serde_json::from_value(result["thread"].clone())?;
                     self.subscriptions.insert(thread.id.clone());
                     if self.generation == generation {
@@ -1666,6 +1815,9 @@ impl App {
                     self.snapshot(thread);
                 }
                 Purpose::Resume(id) => {
+                    if let Some(mode) = result["permissionMode"].as_str() {
+                        self.permission_mode = mode.into();
+                    }
                     let thread: Thread = serde_json::from_value(result["thread"].clone())?;
                     ensure!(thread.id == id, "resume returned a different thread");
                     self.subscriptions.insert(id);
@@ -2047,6 +2199,62 @@ pub(crate) mod tests {
     pub fn blocked_goal() -> areal_protocol::goals::Goal {
         serde_json::from_value(json!({"id":"goal","threadId":"root","objective":"inspect","status":"blocked","reason":"usageUnknown","tokenBudget":null,"maxTurns":10,"maxActiveSeconds":100,"usage":{"inputTokens":0,"cachedInputTokens":0,"outputTokens":0,"tokensUsed":0,"reservedTokens":500,"unknownRequests":1,"timeUsedSeconds":1.0,"turnsStarted":1,"accountingComplete":false},"activeTurnId":null,"settling":false,"waitingForInput":false,"waitingForCapacity":false,"report":null,"reportTurnId":null,"unreportedTurns":0})).unwrap()
     }
+    #[test]
+    fn approvals_preserve_digest_default_to_deny_and_follow_resolution() {
+        let mut app = App::new(Preferences::default());
+        app.connected = true;
+        app.selected = Some("root".into());
+        app.snapshot(thread("root", None));
+        app.paste("draft");
+        app.key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))
+            .unwrap();
+        let mut request = json!({"requestId":"r1","threadId":"root","turnId":"turn","callId":"call","kind":"approval","status":"pending","expiresAt":9999999999_i64,"questions":[],"tool":"run_command","argumentsDigest":"digest1","generation":null,"effectivePermissions":{"rememberAllowed":true},"effectiveArguments":{"argv":["echo","<untrusted>"]},"response":null});
+        let event = |request: &Value, revision| json!({"method":"areal/interaction/requested","params":{"revision":revision,"interaction":request}});
+        app.receive(event(&request, 1)).unwrap();
+        app.paste("hidden paste");
+        for c in ['a', 'd', 'e'] {
+            app.key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL))
+                .unwrap();
+            assert_eq!(app.input, "draft");
+            assert_eq!(app.input_cursor, 4);
+        }
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.outbox.back().unwrap().params["decision"], "deny");
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.outbox.len(), 1);
+        app.outbox.clear();
+        request["status"] = json!("answered");
+        app.receive(event(&request, 2)).unwrap();
+        assert!(app.pending_approval().is_none());
+        request["status"] = json!("pending");
+        request["requestId"] = json!("r2");
+        request["argumentsDigest"] = json!("digest2");
+        app.receive(event(&request, 3)).unwrap();
+        for _ in 0..2 {
+            app.key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+                .unwrap();
+        }
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            .unwrap();
+        let answer = &app.outbox.back().unwrap().params;
+        assert_eq!(answer["decision"], "allowSession");
+        assert_eq!(answer["argumentsDigest"], "digest2");
+        assert_eq!(answer["requestId"], "r2");
+        app.outbox.clear();
+        request["status"] = json!("answered");
+        app.receive(event(&request, 4)).unwrap();
+        request["status"] = json!("pending");
+        request["requestId"] = json!("r3");
+        request["effectivePermissions"]["rememberAllowed"] = json!(false);
+        app.receive(event(&request, 5)).unwrap();
+        assert_eq!(app.approval_choices().len(), 2);
+        app.key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.outbox.back().unwrap().params["decision"], "deny");
+    }
+
     #[test]
     fn retries_end_on_progress_completion_snapshot_and_disconnect() {
         let mut app = App::new(Preferences::default());

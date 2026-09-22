@@ -14,7 +14,7 @@ LIMIT = 14000
 
 def project_path(request):
     uri = request["path"]
-    for name in ("repo", "scratch"):
+    for name in ("repo", "scratch", "host"):
         prefix = "workspace://" + name
         if uri == prefix or uri.startswith(prefix + "/"):
             if not request["roots"].get(name):

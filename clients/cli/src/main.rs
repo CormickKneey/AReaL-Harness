@@ -62,7 +62,7 @@ struct Cli {
     effort: Option<String>,
     #[arg(long)]
     max_turns: Option<usize>,
-    #[arg(long,default_value="default",value_parser=["default","bypassPermissions","dontAsk","plan","acceptEdits"])]
+    #[arg(long,default_value="inherit",value_parser=["inherit","default","bypassPermissions","dontAsk","plan","acceptEdits"])]
     permission_mode: String,
     #[arg(long)]
     dangerously_skip_permissions: bool,
@@ -92,6 +92,10 @@ struct Cli {
     config: Option<PathBuf>,
     #[arg(long, conflicts_with = "endpoint")]
     workspace: Option<PathBuf>,
+    #[arg(long, conflicts_with = "endpoint")]
+    permissions: Option<String>,
+    #[arg(long, conflicts_with = "endpoint")]
+    scratch: Option<PathBuf>,
     #[arg(long, conflicts_with = "endpoint")]
     allow_write: bool,
     #[arg(long, conflicts_with = "endpoint")]

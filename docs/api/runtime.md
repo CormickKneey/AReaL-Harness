@@ -14,7 +14,7 @@ UTF-8 JSONL 请求 `{id,method,params}`，响应回显 id 和 result/error，诊
 
 握手返回 protocolVersion、connectionId、runtimeEpoch、rootScopeId、capabilities，版本必须精确匹配。初始化前其他方法 UNAUTHENTICATED。帧最多 128 KiB，规范载荷通常 64 KiB；fs.execute/process.write 编码后最多 124 KiB。
 
-capabilities 描述实际 sandbox、rootNetwork、方法和 processLimits；不授予新权限。coreHostIsolated/processTreeCleanupVerified/directoryObjectIsolation/sandboxDenialAttribution 为 false。旧 Runtime 缺少 rootNetwork 时 Core 保守视为无网络。
+capabilities 描述实际 sandbox、fullAccess、rootNetwork、方法和 processLimits；不授予新权限。coreHostIsolated/processTreeCleanupVerified/directoryObjectIsolation/sandboxDenialAttribution 为 false。旧 Runtime 缺少 rootNetwork 时 Core 保守视为无网络。
 
 ## 方法
 
@@ -39,7 +39,9 @@ capabilities 描述实际 sandbox、rootNetwork、方法和 processLimits；不�
 
 路径使用未编码 `workspace://repo[/path]`，拒绝百分号、问号、井号、反斜线、NUL 和 . / .. 段。子根须在父授权内，写根在读根内；network=inherit 继承父策略，deny 后不能恢复。owner 仅归因。argv 为 1–256 项，环境白名单见[部署](../guides/runtime.md)。
 
-配置独立 scratch 根后，文件与进程 cwd 可使用 `workspace://scratch[/path]`；未配置时拒绝。它与 repo 不重叠，根权限遵循 allow-write，子 Scope 仍只能收窄。目录身份检查、路径遍历和符号链接限制同样适用。Core 的短句柄在调用 Runtime 前解析，不改变 ProcessId、游标或 ExpectedFile wire 类型。
+配置独立 scratch 根后，文件与进程 cwd 可使用 `workspace://scratch[/path]`；未配置时拒绝。它与 repo 不重叠，scratch 根可写且独立于 repo 的 allow-write，子 Scope 仍只能收窄。目录身份检查、路径遍历和符号链接限制同样适用。Core 的短句柄在调用 Runtime 前解析，不改变 ProcessId、游标或 ExpectedFile wire 类型。
+
+`fullAccess=true` 时新增 `workspace://host[/绝对路径去掉前导斜线]`，根映射 `/`；普通部署拒绝此命名空间。Core 将工作区外绝对路径规范化为 host URI，文件助手继续拒绝符号链接遍历。只读/研究 Scope 不包含 host 根。
 
 有副作用的方法使用 `${runtimeEpoch}:op:${UUID}` operationId。相同键和规范请求摘要共享同次操作，不同摘要 CONFLICT。记录保留至 epoch 结束，容量满拒绝；旧 epoch 为 STALE_HANDLE。进程 start 的 succeeded 仅表示获得句柄，不表示命令成功；丢失响应不能换新键重放。
 

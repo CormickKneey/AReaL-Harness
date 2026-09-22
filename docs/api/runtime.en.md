@@ -14,7 +14,7 @@ UTF-8 JSONL requests are `{id,method,params}`; responses echo id with result/err
 
 Handshake returns protocolVersion, connectionId, runtimeEpoch, rootScopeId and capabilities with an exact version match. Other methods before initialization return UNAUTHENTICATED. Frames are limited to 128 KiB; normalized payloads usually to 64 KiB, with encoded fs.execute/process.write up to 124 KiB.
 
-capabilities reports actual sandbox, rootNetwork, methods and processLimits, without granting permissions. coreHostIsolated/processTreeCleanupVerified/directoryObjectIsolation/sandboxDenialAttribution are false. Core treats missing legacy rootNetwork as network-denied.
+capabilities reports actual sandbox, fullAccess, rootNetwork, methods and processLimits, without granting permissions. coreHostIsolated/processTreeCleanupVerified/directoryObjectIsolation/sandboxDenialAttribution are false. Core treats missing legacy rootNetwork as network-denied.
 
 ## Methods
 
@@ -39,7 +39,9 @@ Up to 32 long requests may wait; revocation, termination and synchronous queries
 
 Paths use unencoded `workspace://repo[/path]`, rejecting percent signs, question marks, hashes, backslashes, NUL and . / .. segments. Child roots must remain within parent grants, and write roots within read roots. network=inherit inherits the parent policy; deny cannot be reversed below it. owner is attribution only. argv has 1–256 entries; see [deployment](../guides/runtime.en.md) for environment allowlists.
 
-A separately configured scratch root enables `workspace://scratch[/path]` for files and process cwd; otherwise this namespace is rejected. It cannot overlap repo, follows allow-write, and child Scopes can only narrow access. Directory identity, traversal and symlink checks still apply. Core resolves short handles before Runtime calls without changing ProcessId, cursor or ExpectedFile wire types.
+A separately configured scratch root enables `workspace://scratch[/path]` for files and process cwd; otherwise this namespace is rejected. It cannot overlap repo; scratch is writable independently of repo allow-write, and children can only narrow access. Directory identity, traversal and symlink checks still apply. Core resolves short handles before Runtime calls without changing ProcessId, cursor or ExpectedFile wire types.
+
+With `fullAccess=true`, `workspace://host[/absolute-path-without-leading-slash]` maps to `/`; restricted deployments reject this namespace. Core normalizes outside-workspace absolute paths to host URIs. File helpers continue to reject symlink traversal. Read-only/research Scopes exclude the host root.
 
 Side-effecting methods use `${runtimeEpoch}:op:${UUID}` operationId. Identical keys and normalized request digests share the same operation; changed digests return CONFLICT. Records remain through the epoch and exhaustion rejects new operations. Old epochs return STALE_HANDLE. Successful process start means a handle was obtained, not command success. Lost responses never justify replay with a new key.
 

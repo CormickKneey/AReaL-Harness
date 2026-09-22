@@ -15,6 +15,7 @@ pub(crate) async fn run(
     let mut target_thread = None;
     let mut start_id = None;
     let mut target_turn = None;
+    let mut interaction_required = false;
     loop {
         // Core owns the configured Turn and stream deadlines, including long tasks.
         let event = client.rx.recv().await.context("connection closed")?;
@@ -38,6 +39,16 @@ pub(crate) async fn run(
                     .context("missing turn id")?
                     .to_owned(),
             );
+        }
+        if event["method"] == "areal/interaction/requested" {
+            let request = &event["params"]["interaction"];
+            if request["threadId"].as_str() == target_thread.as_deref() && !interaction_required {
+                interaction_required = true;
+                client.send(
+                    "turn/interrupt",
+                    json!({"threadId":request["threadId"],"turnId":request["turnId"]}),
+                )?;
+            }
         }
         // resume 可以交付旧 Turn 的增量；只接受本次 start 响应确定的 Turn。
         let event_turn = event["params"]["turnId"]
@@ -67,6 +78,11 @@ pub(crate) async fn run(
         }
         if event["method"] == "turn/completed" {
             println!();
+            if interaction_required {
+                bail!(
+                    "interaction required; turn interrupted. Use interactive TUI/Web or configure permissions before retrying"
+                );
+            }
             if event["params"]["turn"]["status"] != "completed" {
                 bail!("turn ended: {}", event["params"]["turn"]);
             }
@@ -112,6 +128,16 @@ pub(crate) async fn goal(
             goal_id = event["result"]["goal"]["id"].as_str().map(str::to_owned);
             get = Some(client.send("areal/goal/get", json!({"threadId":thread_id}))?);
         }
+        if event["method"] == "areal/interaction/requested" {
+            let request = &event["params"]["interaction"];
+            if request["threadId"].as_str() == thread_id.as_deref() {
+                eprintln!("Interaction required; interrupting. Resume with interactive TUI/Web.");
+                client.send(
+                    "turn/interrupt",
+                    json!({"threadId":request["threadId"],"turnId":request["turnId"]}),
+                )?;
+            }
+        }
         let view = if get.is_some() && event["id"].as_u64() == get {
             &event["result"]
         } else {
@@ -152,6 +178,49 @@ mod tests {
     use areal_protocol::notification;
     use std::time::Duration;
     use tokio::sync::mpsc;
+
+    #[tokio::test]
+    async fn headless_interrupts_when_approval_requires_a_human() {
+        let (tx, mut requests) = mpsc::channel(8);
+        let (events, rx) = mpsc::channel(8);
+        let mut client = Client { tx, rx, next: 1 };
+        let task =
+            tokio::spawn(async move { run(&mut client, None, vec![Input::text("fixture")]).await });
+        let create = requests.recv().await.unwrap();
+        events
+            .send(json!({"id":create["id"],"result":{"thread":{"id":"thread"}}}))
+            .await
+            .unwrap();
+        let start = requests.recv().await.unwrap();
+        events
+            .send(json!({"id":start["id"],"result":{"turn":{"id":"turn"}}}))
+            .await
+            .unwrap();
+        events
+            .send(notification(
+                "areal/interaction/requested",
+                json!({"interaction":{"threadId":"thread","turnId":"turn","kind":"approval"}}),
+            ))
+            .await
+            .unwrap();
+        let interrupt = requests.recv().await.unwrap();
+        assert_eq!(interrupt["method"], "turn/interrupt");
+        assert!(!task.is_finished());
+        events
+            .send(notification(
+                "turn/completed",
+                json!({"threadId":"thread","turn":{"id":"turn","status":"interrupted"}}),
+            ))
+            .await
+            .unwrap();
+        assert!(
+            task.await
+                .unwrap()
+                .unwrap_err()
+                .to_string()
+                .contains("interaction required")
+        );
+    }
 
     #[tokio::test(start_paused = true)]
     async fn headless_waits_for_core_beyond_six_minutes() {

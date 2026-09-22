@@ -245,3 +245,53 @@ test("stop pauses an active goal during reasoning and between turns", async () =
     assert.equal(c.get("progress").hidden, true);
   }
 });
+
+test("approval shows effective arguments, sends exact digest, and resolves across clients", async () => {
+  const c = client();
+  const interaction = {
+    requestId: "approval",
+    threadId: "thread",
+    turnId: "turn",
+    kind: "approval",
+    status: "pending",
+    tool: "run_command",
+    argumentsDigest: "digest",
+    effectiveArguments: { argv: ["echo", "<script>fixture</script>"] },
+    effectivePermissions: { rememberAllowed: true },
+  };
+  emit(c, "areal/interaction/requested", { revision: 1, interaction });
+  const panel = c.get("permission-request");
+  assert.equal(panel.hidden, false);
+  assert.match(panel.children[1].textContent, /<script>fixture/);
+  const buttons = panel.children.filter((n) => n.tag === "button");
+  assert.equal(buttons.length, 4);
+  const submitted = buttons[1].onclick();
+  const request = c.requests.at(-1);
+  assert.equal(request.method, "areal/interaction/respond");
+  assert.deepEqual(request.params, {
+    threadId: "thread",
+    turnId: "turn",
+    requestId: "approval",
+    decision: "allowSession",
+    argumentsDigest: "digest",
+  });
+  emit(c, "areal/interaction/resolved", {
+    revision: 2,
+    interaction: { ...interaction, status: "answered" },
+  });
+  assert.equal(panel.hidden, true);
+  c.run(`pending.get(${request.id}).resolve({decision:"allowSession", argumentsDigest:"digest"})`);
+  await Promise.resolve();
+  const refresh = c.requests.at(-1);
+  c.run(`pending.get(${refresh.id}).resolve({thread:{id:"thread",turns:[]}})`);
+  await submitted;
+  emit(c, "areal/interaction/requested", {
+    revision: 3,
+    interaction: {
+      ...interaction,
+      requestId: "forced",
+      effectivePermissions: { rememberAllowed: false },
+    },
+  });
+  assert.equal(panel.children.filter((n) => n.tag === "button").length, 2);
+});

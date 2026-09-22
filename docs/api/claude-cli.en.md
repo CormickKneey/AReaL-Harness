@@ -20,7 +20,7 @@ Models use configured Chat Completions/Responses APIs. State defaults to `~/.are
 | --resume, --model, --effort, --max-turns | Session, catalog model, reasoning parameter and per-Turn model rounds |
 | --tools / --disallowedTools | Exact visibility/deny sets; unknown IDs fail |
 | --allowedTools | Exempts only client-added approvals, never Profile requirements |
-| --permission-mode | default/acceptEdits/dontAsk/plan/bypassPermissions; never substitutes Runtime grants |
+| --permission-mode | inherit (default)/default/acceptEdits/dontAsk/plan/bypassPermissions; never substitutes Runtime grants |
 | --system-prompt[-file] / --append-system-prompt[-file] | Replace/append general instructions; files up to 32 KiB |
 | --mcp-config / --strict-mcp-config | Per-run MCP; strict disables deployment MCP; external Core rejects overrides |
 | --config / --workspace / --desktop-config | Local deployment, incompatible with external endpoint |
@@ -28,6 +28,8 @@ Models use configured Chat Completions/Responses APIs. State defaults to `~/.are
 | --endpoint / --auth-file | Connect externally without shutting down the service on exit |
 
 Tool aliases AskUserQuestion/Bash/Read/Write/Edit/TodoWrite/Task map to ask_user_question/run_command/fs_read/fs_create/fs_apply_patch/plan_update/agent_spawn. Shell pattern rules, arbitrary Claude settings/hooks, plugin marketplaces and interactive Claude TUI are unsupported; unknown options fail.
+
+`--permissions YOLO|ASK_PERMISSIONS` and `--scratch` configure local deployment; `--permission-mode` defaults to inherit, using global policy. Explicit default/acceptEdits/dontAsk/plan/bypassPermissions retain client restrictions and cannot weaken global ask/deny or Profile rules. Local launch now defaults to full-access without requiring --allow-write/--allow-network. Existing remote endpoints retain their own policy.
 
 ## Messages and termination
 

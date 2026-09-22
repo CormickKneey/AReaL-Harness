@@ -276,6 +276,12 @@ impl Local {
             .stderr(Stdio::inherit())
             .kill_on_drop(false)
             .envs(env);
+        if let Some(mode) = &args.permissions {
+            command.arg("--permissions").arg(mode);
+        }
+        if let Some(path) = &args.scratch {
+            command.arg("--scratch").arg(path);
+        }
         if let Some(path) = &args.config {
             command.arg("--config").arg(path);
         }

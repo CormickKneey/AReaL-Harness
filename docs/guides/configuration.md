@@ -2,7 +2,7 @@
 
 # 配置
 
-`core/config` 统一解析启动配置，由 server 注入各组件；不通过用户配置扩大 Runtime 授权。完整示例见 [config.toml](../../core/config/examples/config.toml)，字段类型见[配置源码](../../core/config/src/lib.rs)。
+`core/config` 统一解析启动配置，由 server 注入各组件；本地产品默认 YOLO，审批策略和 Runtime 执行边界分别管理。完整示例见 [config.toml](../../core/config/examples/config.toml)，字段类型见[配置源码](../../core/config/src/lib.rs)。
 
 ## 文件与优先级
 
@@ -11,6 +11,41 @@
 共享 TUI/Web 入口使用按工作区隔离的默认数据目录；显式 dataDir 仍遵循上述优先级。历史迁移与配置兼容性见[本地服务契约](../api/local-service.md)。
 
 默认文件不存在可继续；显式文件不存在、未知字段、类型/版本错误或已设置为空的值均拒绝。文件限普通 UTF-8、1 MiB，必须声明 `schema_version=1`。TOML 相对路径以配置文件目录为基准，CLI/env 相对路径以启动 cwd 为基准，不展开 `~`、变量或 glob。即使字段被高层覆盖，低层格式错误仍拒绝。
+
+<a id="permissions"></a>
+## 权限模式
+
+本地 TUI、Web、CLI 和 `scripts/launch.py` 默认 **YOLO**：普通任务可读写当前用户有权访问的文件（含工作区外和 `/tmp`），命令可联网，不逐次询问。无需再传 `--allow-write` / `--allow-network`。操作系统自身权限仍有效；显式 Profile、只读 Turn、工具拒绝规则和受限 Runtime 不能被 YOLO 覆盖。
+
+全局配置 `~/.areal-harness/config.toml`：
+
+```toml
+schema_version = 1
+[permissions]
+mode = "ASK_PERMISSIONS"
+# 规则只匹配工具 ID，支持 *；不是 shell 命令模式。
+# deny = ["mcp__untrusted__*"]
+# ask = ["run_command"]
+# allow = ["read_file"]
+```
+
+已有文件只添加 `[permissions]`，不要重复 `schema_version`。省略此表或设置 `mode = "YOLO"` 恢复默认。也可使用环境变量或单次启动参数：
+
+```sh
+ASK_PERMISSIONS=1 make tui
+AREAL_HARNESS_PERMISSION_MODE=ASK_PERMISSIONS target/debug/areal web
+make tui ARGS='--permissions ASK_PERMISSIONS'
+```
+
+优先级：`--permissions` > `AREAL_HARNESS_PERMISSION_MODE` > `ASK_PERMISSIONS` > TOML > YOLO。`ASK_PERMISSIONS` 接受 `1/true`（询问）、`0/false`（YOLO）。权限模式在服务启动时固定；已有共享服务需显式执行 `ASK_PERMISSIONS=1 target/debug/areal service restart`，带回原有自定义部署参数。重启默认拒绝忙碌服务。`--endpoint` 使用远端服务的策略。
+
+ASK_PERMISSIONS 自动允许内置工作区/scratch 读取、搜索和内部状态操作；命令、文件修改、工作区外读取、外部工具进入审批。它是工具调用审批，不是 shell 静态分析；允许一次命令即允许该命令在当前 Scope 内执行其子操作。TUI 弹窗和 Web 面板提供拒绝、允许一次、记住本会话/当前项目相同请求；强制审批与无法核验代际的 MCP 工具仅单次回答。当前不提供命令前缀规则或按域名联网授权。
+
+规则优先级固定为 `deny > ask > allow > mode`，每组最多 128 个、每个最多 128 字节的工具 ID glob。显式 ask 与 Profile/客户端追加的审批不能被授权记忆覆盖；allow 不能覆盖只读 Scope。批准绑定实际参数摘要；取消、过期、重复或摘要不符的回答不执行工具。
+
+记忆绑定工具、规范化参数、Host 代际、工作区与权限边界；修改命令或策略会重新询问。会话记忆随 Thread 持久化；项目记忆位于该部署的 `dataDir/desktop/permissions.json`，同工作区不同 dataDir 不共享。每组最多 64 条、128 KiB；文件含获批参数，应与会话数据一起管理。TUI `/permissions` 显示模式来源、Runtime 权限与记忆，`/permissions clear-session`、`/permissions clear-project` 撤销后续复用，不撤销已经受理的副作用。撤销要求目标 Thread 空闲。
+
+launcher 自动创建与 dataDir 同级的 `scratch/`，为每个 Thread 设置独立 `TMPDIR`；可用 `--scratch` 指定现有目录。目录与工作区/dataDir 不重叠，保留至部署数据被人工清理。只读/研究任务仍可写自己的 scratch。直接嵌入 Core 或运行 Runtime daemon 的默认边界保持受限；部署显式 `--sandbox-profile native` 可继续使用原有 write/network 开关，见 [Runtime 部署](runtime.md)。
 
 ## 模型与限额
 

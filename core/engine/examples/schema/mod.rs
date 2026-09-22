@@ -153,8 +153,17 @@ pub fn projections() -> (Value, Value) {
     );
     insert(
         &["interaction/respond"],
-        json!({"oneOf":[object(json!({"answers":{"type":"object","additionalProperties":{"type":"string"}}})),object(json!({"decision":{"enum":["allowOnce","deny"]},"argumentsDigest":string}))]}),
+        json!({"oneOf":[object(json!({"answers":{"type":"object","additionalProperties":{"type":"string"}}})),object(json!({"decision":{"enum":["allowOnce","allowSession","allowProject","deny"]},"argumentsDigest":string}))]}),
     );
+    insert(
+        &["permissions/read"],
+        object(json!({
+            "configuration":object(json!({"mode":{"enum":["YOLO","ASK_PERMISSIONS"]},"allow":array(string.clone()),"ask":array(string.clone()),"deny":array(string.clone())})),
+            "source":nullable(any_object.clone()),"sandbox":any_object,"workspace":string,
+            "session":nullable(array(schema::<PermissionGrant>())),"project":array(schema::<PermissionGrant>()),"projectFile":string
+        })),
+    );
+    insert(&["permissions/forget"], object(json!({"cleared":boolean})));
     insert(&["process/start"], process_target);
     insert(&["process/list"], data(process.clone()));
     insert(
@@ -261,7 +270,7 @@ pub fn projections() -> (Value, Value) {
     insert(&["tool/acknowledge"], object(json!({})));
     responses.insert("thread/read".into(), object(json!({"thread":thread})));
     for name in ["thread/start", "thread/resume"] {
-        responses.insert(name.into(),object(json!({"thread":thread,"cwd":string,"model":string,"modelProvider":string,"approvalPolicy":string,"approvalsReviewer":string,"sandbox":any_object,"reasoningEffort":nullable(string.clone())})));
+        responses.insert(name.into(),object(json!({"thread":thread,"cwd":string,"model":string,"modelProvider":string,"approvalPolicy":string,"permissionMode":{"enum":["YOLO","ASK_PERMISSIONS"]},"approvalsReviewer":string,"sandbox":any_object,"reasoningEffort":nullable(string.clone())})));
     }
     responses.insert(
         "thread/list".into(),

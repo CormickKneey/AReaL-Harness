@@ -78,7 +78,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 }),
             ),
             Span::styled(
-                format!("  · {}", safe_text(&app.model_label())),
+                format!(
+                    "  · {} · {}",
+                    safe_text(&app.model_label()),
+                    safe_text(&app.permission_mode)
+                ),
                 palette.style(Role::Muted),
             ),
         ]))
@@ -117,6 +121,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     .areas(conversation);
     let read_progress = if app.view == View::Welcome {
         welcome(frame, body, app, palette);
+        String::new()
+    } else if app.view == View::Permissions {
+        frame.render_widget(Paragraph::new(format!("/permissions clear-session | clear-project\nGlobal mode: config [permissions].mode or AREAL_HARNESS_PERMISSION_MODE; restart the service to apply.\n\n{}", serde_json::to_string_pretty(&app.permission_info).unwrap_or_default())).block(panel(" Permissions ", true, palette)).wrap(Wrap { trim:false }).scroll((app.permission_scroll,0)), body);
         String::new()
     } else if app.view == View::Help {
         help_page(frame, body, palette);
@@ -168,6 +175,67 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     if app.picker.is_some() {
         picker_popup(frame, area, app, palette);
+    }
+    if let Some(interaction) = app.pending_approval() {
+        let popup = area.inner(ratatui::layout::Margin {
+            horizontal: 2,
+            vertical: 1,
+        });
+        frame.render_widget(Clear, popup);
+        let block = panel(
+            " Permission required · ↑↓ choose · Enter confirm · PgUp/PgDn details ",
+            true,
+            palette,
+        );
+        let inner = block.inner(popup);
+        frame.render_widget(block, popup);
+        let choices = app.approval_choices();
+        let [details, buttons] =
+            Layout::vertical([Constraint::Min(1), Constraint::Length(choices.len() as u16)])
+                .areas(inner);
+        let permissions = interaction.effective_permissions.as_ref();
+        let scope = if permissions.is_some_and(|p| p["readOnly"] == true) {
+            "Read-only task · network blocked"
+        } else if permissions.is_some_and(|p| p["runtime"]["capabilities"]["fullAccess"] == true) {
+            "Full filesystem access · network allowed"
+        } else {
+            "Restricted deployment · inspect /permissions for its boundaries"
+        };
+        let text = format!(
+            "Session {} · {}\n{scope}.\nRemembering applies only to this exact tool and arguments.\n\n{}",
+            short(&interaction.thread_id),
+            interaction.tool.as_deref().unwrap_or("tool"),
+            serde_json::to_string_pretty(&interaction.effective_arguments).unwrap_or_default()
+        );
+        frame.render_widget(
+            Paragraph::new(safe_text(&text))
+                .wrap(Wrap { trim: false })
+                .scroll((app.interaction_scroll, 0)),
+            details,
+        );
+        let lines: Vec<Line> = choices
+            .iter()
+            .enumerate()
+            .map(|(index, (_, label))| {
+                Line::styled(
+                    format!(
+                        "{} {}",
+                        if index == app.approval_selection() {
+                            ">"
+                        } else {
+                            " "
+                        },
+                        label
+                    ),
+                    palette.style(if index == app.approval_selection() {
+                        Role::Accent
+                    } else {
+                        Role::Muted
+                    }),
+                )
+            })
+            .collect();
+        frame.render_widget(Paragraph::new(lines), buttons);
     }
 }
 
@@ -400,9 +468,12 @@ fn navigation_view(frame: &mut Frame, area: Rect, app: &mut App, p: Palette) {
         .position(|r| Some(&r.target) == app.nav_selected.as_ref())
         .unwrap_or(0);
     let title = match app.view {
-        View::Agents | View::Conversation | View::Welcome | View::Help | View::Tasks => {
-            " Agents · session tree "
-        }
+        View::Agents
+        | View::Conversation
+        | View::Welcome
+        | View::Help
+        | View::Tasks
+        | View::Permissions => " Agents · session tree ",
         View::Groups => " Workgroups ",
     };
     let items: Vec<_> = rows
@@ -634,7 +705,7 @@ fn execution_status(app: &App) -> String {
             .count();
         if pending > 0 {
             parts.push(format!(
-                "{pending} pending interaction(s) · use Web client to respond"
+                "{pending} pending interaction(s) · approvals open in this terminal"
             ));
         }
     }
@@ -743,6 +814,7 @@ fn input_view(frame: &mut Frame, area: Rect, app: &App, p: Palette) {
     if app.focus == Focus::Input
         && app.theme_original.is_none()
         && app.picker.is_none()
+        && app.pending_approval().is_none()
         && inner.width > 0
         && inner.height > 0
     {
@@ -955,7 +1027,7 @@ fn theme_picker(frame: &mut Frame, area: Rect, app: &App, p: Palette) {
     );
 }
 fn help_page(frame: &mut Frame, area: Rect, p: Palette) {
-    let text = "F1 /help: help · F2 /theme: theme picker\nF3 /topology: agents · F4 /groups: workgroups\nF5 /sessions: switch session · F6 /model: switch model\n/goal OBJECTIVE · /goal-pause · /goal-resume · /goal-clear\n/goal-edit OBJECTIVE · /goal-budget TOKENS|none\n/new · /tasks · /sessions · /open ID · /spawn PROMPT · /agents\n/group ID · /group-start JSON_FILE · /group-revise JSON_FILE\n/group-cancel ID · /welcome · /quit\n\n/: command suggestions · ↑↓ select · Tab complete\nTab / Shift-Tab: input, right panel, history focus\nInput: ←→ move · Ctrl-A/E line start/end\nCtrl-D/Delete: delete next · Backspace: delete previous\nNavigation: arrows select/expand, Enter open, r refresh\nHistory: ↑↓ select, Enter/Space expand, ←→ collapse/expand\nPgUp/PgDn scroll, Home/End, click a summary to expand\nCtrl-O /details: compact or detailed records\n/restore-input: restore failed submission; --mouse=false: native selection\nCtrl-C: interrupt the input target's active Turn\nCtrl-R: reconnect · Ctrl-Q: quit\n\nRead % describes loaded history; session plan counts are separate.\nTask trees include historical child sessions. Snapshot nodes can lag.\nPending questions/approvals are shown here; respond in the Web client.\nEsc: return to input";
+    let text = "F1 /help: help · F2 /theme: theme picker\nF3 /topology: agents · F4 /groups: workgroups\nF5 /sessions: switch session · F6 /model: switch model\n/goal OBJECTIVE · /goal-pause · /goal-resume · /goal-clear\n/goal-edit OBJECTIVE · /goal-budget TOKENS|none\n/new · /tasks · /sessions · /open ID · /spawn PROMPT · /agents\n/group ID · /group-start JSON_FILE · /group-revise JSON_FILE\n/group-cancel ID · /welcome · /quit\n\n/: command suggestions · ↑↓ select · Tab complete\nTab / Shift-Tab: input, right panel, history focus\nInput: ←→ move · Ctrl-A/E line start/end\nCtrl-D/Delete: delete next · Backspace: delete previous\nNavigation: arrows select/expand, Enter open, r refresh\nHistory: ↑↓ select, Enter/Space expand, ←→ collapse/expand\nPgUp/PgDn scroll, Home/End, click a summary to expand\nCtrl-O /details: compact or detailed records\n/restore-input: restore failed submission; --mouse=false: native selection\nCtrl-C: interrupt the input target's active Turn\nCtrl-R: reconnect · Ctrl-Q: quit\n\nRead % describes loaded history; session plan counts are separate.\nTask trees include historical child sessions. Snapshot nodes can lag.\nApprovals: use the terminal dialog. /permissions: inspect rules. Questions: respond in Web.\nEsc: return to input";
     frame.render_widget(
         Paragraph::new(text)
             .wrap(Wrap { trim: false })
@@ -1045,6 +1117,29 @@ mod tests {
             modifiers: crossterm::event::KeyModifiers::NONE,
         });
     }
+    #[test]
+    fn approval_dialog_keeps_decisions_visible_at_small_sizes() {
+        let mut app = App::new(Preferences::default());
+        app.connected = true;
+        app.selected = Some("root".into());
+        let mut t = thread("root", None);
+        t.desktop.get_or_insert_with(Default::default).interactions.push(serde_json::from_value(serde_json::json!({
+            "requestId":"approval","threadId":"root","turnId":"turn","callId":"call","kind":"approval","status":"pending","expiresAt":9999999999_i64,
+            "questions":[],"tool":"run_command","argumentsDigest":"digest","generation":null,
+            "effectiveArguments":{"command":"echo fixture"},"effectivePermissions":{"rememberAllowed":true,"runtime":{"capabilities":{"fullAccess":true}}},"response":null
+        })).unwrap());
+        app.threads.insert("root".into(), t);
+        for (width, height) in [(60, 18), (120, 36)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+            let text = screen(&terminal);
+            assert!(text.contains("run_command"));
+            assert!(text.contains("> Deny"));
+            assert!(text.contains("Allow once"));
+            assert!(text.contains("Remember exact request for this project"));
+        }
+    }
+
     #[test]
     fn mouse_and_keyboard_target_individual_records_after_resize() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};

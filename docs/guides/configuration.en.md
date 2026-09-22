@@ -2,7 +2,7 @@
 
 # Configuration
 
-`core/config` resolves startup settings and server injects them into components. User configuration cannot expand Runtime grants. See the [complete example](../../core/config/examples/config.toml) and [configuration source](../../core/config/src/lib.rs).
+`core/config` resolves startup settings and server injects them into components. Approval policy and Runtime execution boundaries are separate; local product launch defaults to YOLO. See the [complete example](../../core/config/examples/config.toml) and [configuration source](../../core/config/src/lib.rs).
 
 ## Files and precedence
 
@@ -11,6 +11,41 @@
 Shared TUI/Web entry points use a workspace-specific default data directory; explicit dataDir configuration retains the precedence above. See [local services](../api/local-service.en.md) for migration and compatibility.
 
 A missing default file is allowed. A missing explicit file, unknown field, type/version error or explicitly empty value is rejected. Files must be regular UTF-8, at most 1 MiB, with `schema_version=1`. TOML paths resolve against its directory; CLI/env paths resolve against startup cwd. There is no tilde, variable or glob expansion. Malformed lower-priority inputs are rejected even when overridden.
+
+<a id="permissions"></a>
+## Permission modes
+
+Local TUI, Web, CLI and `scripts/launch.py` default to **YOLO**: ordinary tasks may read/write files accessible to the current OS user, including outside the workspace and `/tmp`, and commands may use networking without per-call approval. `--allow-write` / `--allow-network` are no longer required. OS permissions, explicit Profiles, read-only Turns, deny rules and restricted Runtime deployments still apply.
+
+Global `~/.areal-harness/config.toml`:
+
+```toml
+schema_version = 1
+[permissions]
+mode = "ASK_PERMISSIONS"
+# Match tool IDs with * wildcards, not shell command patterns.
+# deny = ["mcp__untrusted__*"]
+# ask = ["run_command"]
+# allow = ["read_file"]
+```
+
+For an existing file, add only `[permissions]` without duplicating `schema_version`. Omit the table or set `mode = "YOLO"` to restore the default. Environment and launch overrides:
+
+```sh
+ASK_PERMISSIONS=1 make tui
+AREAL_HARNESS_PERMISSION_MODE=ASK_PERMISSIONS target/debug/areal web
+make tui ARGS='--permissions ASK_PERMISSIONS'
+```
+
+Precedence: `--permissions` > `AREAL_HARNESS_PERMISSION_MODE` > `ASK_PERMISSIONS` > TOML > YOLO. `ASK_PERMISSIONS` accepts `1/true` for asking and `0/false` for YOLO. The service fixes permissions at startup. For an existing shared service, explicitly run `ASK_PERMISSIONS=1 target/debug/areal service restart`, retaining original custom deployment arguments. Restart refuses busy services by default. `--endpoint` uses the remote service policy.
+
+ASK_PERMISSIONS automatically allows built-in workspace/scratch reads, searches and internal state operations. Commands, file changes, outside-workspace reads and external tools request approval. This is tool-call approval, not shell static analysis: approving a command permits its child operations within the current Scope. TUI dialogs and Web panels offer deny, allow once, and remember the exact request for this session/project. Mandatory approvals and MCP tools without verifiable connection generations accept single-use answers only. Command-prefix rules and per-domain network approval are not provided.
+
+Precedence is `deny > ask > allow > mode`. Each array permits at most 128 tool-ID globs of 128 bytes each. Explicit ask and Profile/client mandatory approvals cannot be bypassed by remembered grants; allow cannot bypass a read-only Scope. Answers bind the effective-argument digest. Cancelled, expired, duplicate or mismatched answers do not execute tools.
+
+Memory binds the tool, normalized arguments, Host generation, workspace and permission boundaries; changed commands or policy ask again. Session memory persists with its Thread. Project memory lives in the deployment's `dataDir/desktop/permissions.json`; separate data directories do not share grants. Each set permits 64 entries/128 KiB. The file contains approved arguments and should be managed with session data. TUI `/permissions` shows mode, source, Runtime grants and memory. `/permissions clear-session` and `/permissions clear-project` prevent future reuse without revoking already accepted effects; the target Thread must be idle.
+
+The launcher creates `scratch/` beside dataDir and sets an individual Thread `TMPDIR`; `--scratch` can select an existing directory. It must not overlap workspace/dataDir and remains until deployment data is manually cleaned. Read-only/research tasks may still write their own scratch. Direct Core embedding and standalone Runtime daemon defaults remain restricted. An explicit launcher `--sandbox-profile native` retains the previous write/network switches; see [Runtime deployment](runtime.en.md).
 
 ## Models and limits
 

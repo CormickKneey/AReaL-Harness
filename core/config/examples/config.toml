@@ -1,5 +1,9 @@
 schema_version = 1
 
+[permissions]
+# 默认 YOLO；需要工具审批时改为 ASK_PERMISSIONS。
+mode = "YOLO"
+
 [server]
 listen = "127.0.0.1:4500"
 # data_dir defaults to <AREAL_HARNESS_HOME>/state.

@@ -13,6 +13,11 @@ macro_rules! commands {
 }
 
 commands![
+    (
+        "/permissions",
+        "[clear-session|clear-project]",
+        "Inspect permissions and remembered approvals"
+    ),
     ("/goal", "OBJECTIVE", "Start or inspect a durable goal"),
     ("/goal-pause", "", "Pause the goal and stop its active Turn"),
     ("/goal-resume", "", "Resume a stopped goal"),

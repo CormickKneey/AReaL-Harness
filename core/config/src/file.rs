@@ -136,6 +136,7 @@ fn walk(
             | ["logging"]
             | ["tools"]
             | ["goals"]
+            | ["permissions"]
     );
     if table {
         let values = item
@@ -161,6 +162,29 @@ fn walk(
             walk(value, parts, path, text, layer)?;
             parts.pop();
         }
+        return Ok(());
+    }
+    if matches!(names.as_slice(), ["permissions", "allow" | "ask" | "deny"]) {
+        let rules = item.as_array().and_then(|a| {
+            a.iter()
+                .map(|v| v.as_str().map(str::to_owned))
+                .collect::<Option<Vec<_>>>()
+        });
+        let rules = rules.ok_or_else(|| {
+            error(
+                Kind::InvalidValue,
+                &key,
+                &at,
+                "expected an array of tool names",
+            )
+        })?;
+        layer.values.insert(
+            key,
+            Entry {
+                value: serde_json::to_string(&rules).unwrap(),
+                source: at,
+            },
+        );
         return Ok(());
     }
     let numeric = matches!(
@@ -206,6 +230,7 @@ fn walk(
             ]
             | ["logging", "filter"]
             | ["tools", "extensions_file"]
+            | ["permissions", "mode"]
     );
     let decimal = matches!(
         names.as_slice(),
