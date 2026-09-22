@@ -330,6 +330,14 @@ impl Engine {
             || (action == "ask"
                 && (explicit_ask || !can_remember || !(session_allowed || project_allowed)))
         {
+            if self.interaction_mode(cell).await
+                != areal_protocol::tasks::InteractionMode::Interactive
+            {
+                return Err(RuntimeError::new(
+                    ErrorCode::PermissionDenied,
+                    "NON_INTERACTIVE_APPROVAL_REQUIRED: execution denied; no synchronous approval can be awaited",
+                ));
+            }
             let result = self
                 .await_interaction(
                     cell,

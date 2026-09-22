@@ -44,3 +44,5 @@ Success exits 0; other outcomes are nonzero. SIGINT/SIGTERM await Core interrupt
 Per-run MCP supports stdio or HTTP Bearer only. `--task-credential-command` may inject task credentials solely into a designated trusted executable outside the workspace. Ordinary shells/file helpers do not inherit MULTICA_* identity. Real third-party daemon/GUI integration still needs external validation; see [examples](../examples/desktop-api.en.md).
 
 `areal service ensure/list/status/stop/bind` and `areal web` provide the [shared local service interface](local-service.en.md). Noninteractive `areal -p` retains its owned lifecycle; `areal serve` retains its existing foreground launcher behavior.
+
+CLI submissions without a bidirectional response channel use Core interactionMode=headless: questions immediately return unavailable and tools requiring human approval are denied, allowing independent work or a blocker report. Explicit bidirectional stream-json retains the host control protocol above; permission-mode=dontAsk selects headless even with that channel.

@@ -204,6 +204,9 @@ impl Engine {
                 .unwrap_or(engine.limits.goals.max_active_seconds);
             engine.validate_goal_limits(request.token_budget, max_turns, max_active_seconds)?;
             let goal = Goal {
+                interaction_mode: request
+                    .interaction_mode
+                    .unwrap_or(data.configuration.options.interaction_mode),
                 id: id(),
                 thread_id: request.thread_id.clone(),
                 objective: request.objective.clone(),
@@ -219,6 +222,7 @@ impl Engine {
                 active_turn_id: None,
                 settling: false,
                 waiting_for_input: false,
+                waiting_for_agents: false,
                 waiting_for_capacity: false,
                 report: None,
                 report_turn_id: None,
@@ -231,9 +235,14 @@ impl Engine {
             let permit = engine.reserve_active_turn()?;
             let budget = Budget::open(engine.store.root(), &goal).map_err(invalid)?;
             budget.flush().await.map_err(invalid)?;
+            let (task_id, run_id) = engine
+                .bind_goal_task(&identity, &request.request_id, &goal)
+                .await?;
             let result = {
                 let mut value = projection(&candidate);
                 value["turnId"] = json!(turn.id);
+                value["taskId"] = json!(task_id);
+                value["runId"] = json!(run_id);
                 value
             };
             desktop::remember(
@@ -285,12 +294,19 @@ impl Engine {
                 return Ok(value);
             }
             if candidate.goals.revision != request.expected_revision
-                || candidate.parent_thread_id.is_some()
+                || (candidate.parent_thread_id.is_some() || candidate.goal_owner.is_some())
             {
                 return Err(Error::Conflict);
             }
+            if action == "resume" && !engine.task_goal_can_resume(&request.goal_id).await {
+                return Err(Error::Conflict);
+            }
+            if action != "pause" {
+                engine.task_workers_settled(&candidate, false).await?;
+            }
             let budget = engine.goals.budget(&candidate).ok_or(Error::NotFound)?;
             engine.refresh_goal_usage(&mut candidate);
+            let previous_goal = candidate.goals.goal.clone();
             let goal = candidate
                 .goals
                 .goal
@@ -372,6 +388,7 @@ impl Engine {
                     )?;
                     budget.acknowledge_usage();
                     budget.flush().await.map_err(invalid)?;
+                    engine.ensure_goal_task(&identity, goal).await?;
                     goal.status = GoalStatus::Active;
                     goal.reason = None;
                     goal.unreported_turns = 0;
@@ -447,6 +464,14 @@ impl Engine {
             } else {
                 emit(&cell, &state.thread);
             }
+            engine
+                .sync_goal_task_control(
+                    &state.thread,
+                    &request.goal_id,
+                    &action,
+                    previous_goal.as_ref(),
+                )
+                .await?;
             if action == "resume" {
                 engine.spawn_goal_scheduler();
                 engine.goals.request(&state.thread.id);
@@ -470,6 +495,7 @@ impl Engine {
             return Err(Error::Exhausted("goal execution limit reached".into()));
         }
         let config = turn.configuration.get_or_insert_with(Default::default);
+        config.options.interaction_mode = goal.interaction_mode;
         self.validate_goal_config(config)?;
         config.options.max_model_rounds = Some(
             config
@@ -492,6 +518,8 @@ impl Engine {
         });
         goal.active_turn_id = Some(turn.id.clone());
         goal.waiting_for_capacity = false;
+        goal.waiting_for_input = false;
+        goal.waiting_for_agents = false;
         goal.settling = false;
         thread.goals.event_sequence += 1;
         Ok(())
@@ -503,7 +531,7 @@ impl Engine {
             let count = goal.usage.turns_started;
             goal.usage = budget.usage();
             goal.usage.turns_started = count;
-            goal.waiting_for_input = thread
+            goal.waiting_for_input |= thread
                 .desktop
                 .as_ref()
                 .is_some_and(|d| d.interactions.iter().any(|i| i.status == "pending"));
@@ -528,7 +556,6 @@ impl Engine {
         };
         goal.active_turn_id = None;
         goal.settling = false;
-        goal.waiting_for_input = false;
         if goal.status == GoalStatus::Active {
             let error = turn
                 .error
@@ -563,6 +590,9 @@ impl Engine {
                     }
                     .into(),
                 );
+            } else if goal.waiting_for_input || goal.waiting_for_agents {
+                // 主动挂起已完成本轮清理，不应被未报告次数触发暂停。
+                goal.unreported_turns = 0;
             } else if let Some(report) = &goal.report
                 && goal.report_turn_id.as_deref() == Some(&turn.id)
             {
@@ -606,7 +636,8 @@ impl Engine {
         }
         changed(&mut thread.goals);
         if let Some(budget) = self.goals.budget(thread) {
-            budget.configure(thread.goals.goal.as_ref().unwrap().token_budget, false);
+            let goal = thread.goals.goal.as_ref().unwrap();
+            budget.configure(goal.token_budget, goal.status == GoalStatus::Active);
         }
     }
     pub(super) fn goal_emit(&self, cell: &Cell, thread: &Thread) {

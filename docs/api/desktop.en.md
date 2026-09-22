@@ -44,7 +44,7 @@ Use initialize → initialized → areal/capabilities (optional apiVersion). Req
 
 requestId is a durable business key; RPC id only correlates responses. Identical identity, method, key and normalized parameters return the original result; changed parameters conflict. Each Thread permits 1024 receipts; management logs permit 4096. Exhaustion rejects instead of forgetting keys. Accepted management records without results become UNKNOWN after restart and are not reexecuted.
 
-turn/start/enqueue take `{requestId,threadId,input,expectedConfigRevision?}`. Queues retain at most 128 historical items with frozen configuration. Only success advances automatically. Stop/failure/UNKNOWN/restart/drain pauses the queue until explicit resume. After timeout, query request/read or authoritative state rather than assuming no side effects.
+turn/start/enqueue take `{requestId,threadId,input,expectedConfigRevision?,interactionMode?}`. Queues retain at most 128 historical items with frozen configuration. Only success advances automatically. Stop/failure/UNKNOWN/restart/drain pauses the queue until explicit resume. After timeout, query request/read or authoritative state rather than assuming no side effects.
 
 `EffectiveConfig.defaultModelRevision` is an optional opaque reference to a default-model snapshot, fixed when a Turn or queue item is submitted. Session defaults omit it; explicit Provider selections retain their semantics. The model archive belongs to the data directory and contains no environment credential values.
 
@@ -88,3 +88,7 @@ features.goals=true advertises Goal support without a separate configuration tog
 Local service discovery, window-independent lifecycle and Desktop Main integration use the [local service contract](local-service.en.md). `server/status` and `server/drain` additionally return `activeGoals` (Thread IDs) and `pendingQueueItems` (pending/running queue count). These are additive response fields; restartSafe still describes execution cleanup rather than absence of scheduled work.
 
 Shared services expose `server/status.configuration` as `{modelRevision,restartRequired,error}`; other deployments return null. `areal/server/configurationChanged` publishes `{threadId,configuration}` to subscribed threads. `server/drain` also accepts `strategy="ifIdle"`: check idle state and close admission under one gate; busy rejection keeps work running. See [configuration reload](../guides/configuration.en.md).
+
+## Task Mode integration
+
+`task/create/list/read/pause/resume/cancel/subscribe/unsubscribe`, `channel/read/reply` and `inbox/list` form task control and communication APIs independent of Threads; see the [Task contract](tasks.en.md). task/updated carries a Task projection and channelSequence; clients retrieve Channel messages through pagination. server/status and drain add activeTasks, including future schedules. GUI/TUI/WebUI can share this Inbox; existing conversation interaction panels still handle synchronous questions and approvals.

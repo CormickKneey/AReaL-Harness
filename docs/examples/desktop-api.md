@@ -38,3 +38,5 @@ root 相对清单目录，必须含 SKILL.md；Renderer 只传 ID/revision，不
 真实 GUI、外部消费者任务生命周期、签名/公证和其他平台需独立验证。fixture 的通过不证明这些集成已完成。三个契约分别为[桌面 API](../api/desktop.md)、[Native Host](../api/native-host.md)和 [CLI](../api/claude-cli.md)。
 
 Goal 用例 `node examples/desktop-api/run.mjs goal-mode` 覆盖无 Goal 配置时直接创建、CAS/幂等、两轮原生文件验证、隔离 Workgroup 共享计量、observe/interact 权限、重连恢复与 headless 跨 Turn 等待，纳入 `make examples-desktop-api`。契约见 [Core API](../api/core.md#goals)。
+
+Task 用例 `node examples/desktop-api/run.mjs task-mode` 验证提问后继续独立工作、释放协调 Turn、关闭原连接、从新连接的 Inbox 回答、observe 权限拒绝回复、幂等受理和同 Run 恢复；所有消息均通过生成 schema 验证。见 [Task 契约](../api/tasks.md)。

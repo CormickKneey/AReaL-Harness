@@ -33,6 +33,7 @@ struct Data {
     journal: Journal,
     token_budget: Option<u64>,
     running: Option<tokio::time::Instant>,
+    running_scopes: usize,
     enabled: bool,
     poisoned: bool,
 }
@@ -82,6 +83,7 @@ impl Budget {
                 journal,
                 token_budget: goal.token_budget,
                 running: None,
+                running_scopes: 0,
                 enabled: false,
                 poisoned: false,
             }),
@@ -102,12 +104,19 @@ impl Budget {
         d.enabled = enabled;
     }
     pub(crate) fn begin(&self) {
-        self.data.lock().unwrap().running = Some(tokio::time::Instant::now());
+        let mut d = self.data.lock().unwrap();
+        if d.running_scopes == 0 {
+            d.running = Some(tokio::time::Instant::now());
+        }
+        d.running_scopes += 1;
     }
     pub(crate) fn end(&self) {
         let mut d = self.data.lock().unwrap();
-        checkpoint(&mut d);
-        d.running = None;
+        d.running_scopes = d.running_scopes.saturating_sub(1);
+        if d.running_scopes == 0 {
+            checkpoint(&mut d);
+            d.running = None;
+        }
     }
     pub(crate) fn usage(&self) -> GoalUsage {
         let d = self.data.lock().unwrap();

@@ -37,6 +37,11 @@ impl Engine {
             ));
         }
         if report.status == GoalReportStatus::Complete {
+            if self.task_pending_required(cell).await {
+                return Err(invalid(
+                    "required task channel questions must be resolved before completion",
+                ));
+            }
             self.goal_completion_ready(cell).await?;
         }
         let mut state = cell.state.lock().await;
@@ -79,6 +84,7 @@ impl Engine {
         Ok(projection(&state.thread))
     }
     async fn goal_completion_ready(&self, cell: &Cell) -> Result<()> {
+        self.task_workers_ready(cell, true).await?;
         let (children, owner) = {
             let state = cell.state.lock().await;
             let active = state.active.as_ref().ok_or(Error::Conflict)?;

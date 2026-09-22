@@ -47,6 +47,9 @@ impl Engine {
             .and_then(|c| c.options.max_model_rounds);
         let mut model_rounds = 0;
         'restart: loop {
+            if self.task_wait_requested(cell).await {
+                return Ok(());
+            }
             if max_rounds.is_some_and(|max| model_rounds >= max) {
                 anyhow::bail!("MAX_MODEL_ROUNDS");
             }
@@ -93,7 +96,11 @@ impl Engine {
                     .await
             };
             let goal_instructions = self.goal_instructions(cell).await?;
+            let task_instructions = self.task_context(cell).await;
             let overhead = context::text_tokens(&serde_json::to_string(&tool_definitions)?)
+                + task_instructions
+                    .as_ref()
+                    .map_or(0, |s| context::text_tokens(s))
                 + goal_instructions
                     .as_ref()
                     .map_or(0, |s| context::text_tokens(s))
@@ -108,6 +115,9 @@ impl Engine {
                 let mut messages = history(&state.thread, &self.store)?;
                 if let Some(goal) = &goal_instructions {
                     messages.insert(0, Message::text("system", goal));
+                }
+                if let Some(task) = &task_instructions {
+                    messages.insert(0, Message::text("system", task));
                 }
                 if !final_round
                     && self.extensions.agents.is_none()

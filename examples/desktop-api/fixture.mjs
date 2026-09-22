@@ -27,6 +27,54 @@ export async function fixture() {
       )?.content;
       const goalView = goalText && JSON.parse(goalText.split("Current authoritative goal: ")[1]);
       const goalWorker = typeof first === "string" && first.includes("GOAL_WORKER_FIXTURE");
+      if (goalView?.goal.objective === "task-channel-fixture") {
+        if (goalView.goal.usage.turnsStarted === 1) {
+          if (result.length === 0)
+            tool = [
+              "ask_user_question",
+              {
+                questions: [
+                  {
+                    id: "target",
+                    title: "Choose the target",
+                    options: ["A", "B"],
+                    allowFreeText: false,
+                  },
+                ],
+                mode: "async",
+                required: true,
+              },
+            ];
+          else if (result.length === 1)
+            tool = [
+              "plan_update",
+              {
+                expectedRevision: 0,
+                steps: [
+                  { id: "independent", text: "Independent analysis finished", status: "completed" },
+                ],
+              },
+            ];
+          else tool = ["task_wait", {}];
+        } else if (result.length === 0) {
+          const channelText = request.messages.find(
+            (m) => typeof m.content === "string" && m.content.includes("Current task channel: "),
+          )?.content;
+          const channel = JSON.parse(channelText.split("Current task channel: ")[1].split("\n")[0]);
+          assert(channel.messages.some((m) => m.kind === "reply" && m.answers.target === "B"));
+          tool = [
+            "goal_update",
+            {
+              expectedRevision: goalView.revision,
+              status: "complete",
+              summary: "Independent work and answer verified",
+              evidence: ["task channel reply"],
+              remaining: [],
+            },
+          ];
+        } else reply = "TASK_CHANNEL_VERIFIED";
+      }
+
       if (goalView?.goal.objective === "goal-workgroup-fixture") {
         if (result.length === 0) {
           tool = [

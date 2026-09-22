@@ -10,6 +10,7 @@ pub mod model;
 mod permissions;
 mod sessions;
 mod store;
+mod task_mode;
 pub mod tools;
 mod turns;
 mod watchdog;
@@ -183,6 +184,7 @@ pub struct Engine {
     default_models: std::sync::RwLock<default_model::DefaultModels>,
     configuration_status: std::sync::RwLock<Value>,
     goals: goals::Goals,
+    task_modes: task_mode::Tasks,
     threads: RwLock<BTreeMap<String, Arc<Cell>>>,
     store: store::Store,
     model: Arc<dyn Model>,
@@ -451,6 +453,7 @@ impl Engine {
         } else {
             permissions::ProjectGrants::default()
         };
+        let task_modes = task_mode::Tasks::open(root)?;
         Ok(Arc::new(Self {
             permissions: permissions::Permissions {
                 config: Default::default(),
@@ -459,6 +462,7 @@ impl Engine {
             default_models: Default::default(),
             configuration_status: Default::default(),
             goals,
+            task_modes,
             desktop,
             threads: RwLock::new(threads),
             store,

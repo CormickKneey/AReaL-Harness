@@ -38,3 +38,5 @@ root resolves against the manifest directory and must contain SKILL.md. Renderer
 Real GUIs, external-consumer task lifecycles, signing/notarization and other platforms require independent checks. Passing fixtures does not establish these integrations. The three contracts are [desktop API](../api/desktop.en.md), [Native Host](../api/native-host.en.md) and [CLI](../api/claude-cli.en.md).
 
 `node examples/desktop-api/run.mjs goal-mode` covers Goal creation without Goal configuration, CAS/idempotency, native file verification across two Turns, isolated Workgroup accounting, observe/interact permissions, reconnect recovery and headless waiting across Turns. It is included in `make examples-desktop-api`. See the [Core API](../api/core.en.md#goals).
+
+The Task scenario `node examples/desktop-api/run.mjs task-mode` verifies independent work after asking, coordinator Turn release, closure of the original connection, an Inbox reply from a new connection, rejection of observer replies, idempotency and same-Run resumption. Generated schemas validate all messages. See the [Task contract](../api/tasks.en.md).

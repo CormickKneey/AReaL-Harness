@@ -26,6 +26,7 @@ const available = [
   "pgc-workflow",
   "adaptive-workgroup",
   "goal-mode",
+  "task-mode",
 ];
 const selection = (process.argv[2] ?? "all").replace(/^--all$/, "all");
 if (selection === "--list") {
@@ -61,6 +62,7 @@ const exampleIds = {
   "pgc-workflow": "EX-13",
   "adaptive-workgroup": "EX-13",
   "goal-mode": "GOAL-01",
+  "task-mode": "TASK-01",
 };
 async function startThread(client, prompt, extra = {}) {
   const created = await client.call("areal/thread/start", {
@@ -758,6 +760,72 @@ try {
           ),
         );
       }
+    } else if (name === "task-mode") {
+      assert.equal((await c.call("areal/capabilities")).features.taskChannels, true);
+      const created = await c.call("areal/task/create", {
+        requestId: crypto.randomUUID(),
+        mode: "background",
+        objective: "task-channel-fixture",
+        tokenBudget: 200000,
+        maxTurns: 4,
+      });
+      const snapshot = await c.call("areal/task/subscribe", { taskId: created.id });
+      const waiting =
+        snapshot.runs.at(-1)?.status === "waitingForInput"
+          ? { task: snapshot }
+          : await c.waitEvent(
+              "areal/task/updated",
+              (p) => p.taskId === created.id && p.task.runs.at(-1)?.status === "waitingForInput",
+            );
+      const run = waiting.task.runs.at(-1);
+      assert.equal(
+        (await c.call("areal/plan/read", { threadId: run.threadId })).steps[0].status,
+        "completed",
+      );
+      // 回复通过新连接的独立频道进入；无需恢复执行 Thread 的订阅。
+      await c.close();
+      const inboxClient = await client();
+      const inbox = await inboxClient.call("areal/inbox/list", {});
+      const question = inbox.data.find((row) => row.taskId === created.id).message;
+      await inboxClient.call("areal/task/subscribe", { taskId: created.id });
+      const observer = await connect(endpoint, join(directory, "observer-auth.json"));
+      clients.push(observer);
+      const reply = {
+        requestId: crypto.randomUUID(),
+        taskId: created.id,
+        runId: question.runId,
+        questionId: question.id,
+        answers: { target: "B" },
+      };
+      await assert.rejects(observer.call("areal/channel/reply", reply), (e) => e.code === -32003);
+      const accepted = await inboxClient.call("areal/channel/reply", reply);
+      assert.deepEqual(await inboxClient.call("areal/channel/reply", reply), accepted);
+      const completed = await inboxClient.waitEvent(
+        "areal/task/updated",
+        (p) =>
+          p.taskId === created.id &&
+          ["completed", "failed", "blocked", "paused", "cancelled"].includes(
+            p.task.runs.at(-1)?.status,
+          ),
+      );
+      assert.equal(
+        completed.task.runs.at(-1).status,
+        "completed",
+        JSON.stringify({ task: completed.task, failures: model.failures }),
+      );
+      assert.equal(completed.task.runs.at(-1).id, run.id);
+      assert.equal(completed.task.runs.at(-1).usage.turnsStarted, 2);
+      const channel = await inboxClient.call("areal/channel/read", { taskId: created.id });
+      assert(channel.data.some((m) => m.kind === "report"));
+      assert.equal(
+        (await inboxClient.call("areal/inbox/list", {})).data.some(
+          (row) => row.taskId === created.id,
+        ),
+        false,
+      );
+      await inboxClient.call("areal/task/unsubscribe", { taskId: created.id });
+      await observer.close();
+      await inboxClient.close();
     } else if (name === "goal-mode") {
       assert.equal((await c.call("areal/capabilities")).features.goals, true);
       const { threadId } = await startThread(c);

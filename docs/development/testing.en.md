@@ -102,3 +102,7 @@ The PTY helper continuously drains terminal output while waiting for CLI command
 TUI and shared-service PTY checks share a terminal screen parser that preserves unchanged characters during incremental redraws and handles split UTF-8/control sequences. Model reload checks wait for the new model name in the header, then verify that the service generation has not changed; they do not depend on raw output bytes or transient status notifications.
 
 `cargo test --locked -p areal-engine --test model_reload` verifies that active children and queued requests retain their model while new submissions follow the updated default; busy `ifIdle` drain must leave admission open. Local service smoke also covers invalid edits, queue recovery across restart, workspace selectors and idle restart after limits change.
+
+## Task Mode regression coverage
+
+`cargo test --locked -p areal-engine --test task_modes` covers independent work during asynchronous questions, Channel replies and same-Run resumption, wakeup when one question expires while another remains pending, headless questions/approvals, durable scheduling, asynchronous foreground Goal questions, workers surviving coordinator Turns with shared budgets, cancellation cleanup and reply deduplication across restart. app-server unit coverage validates Task requests/responses/notifications against generated schemas, Thread authorization filtering and independent subscriptions/unsubscriptions.
