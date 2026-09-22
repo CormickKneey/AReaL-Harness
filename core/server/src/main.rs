@@ -87,6 +87,12 @@ struct Args {
     /// 额外发布版本化桌面元数据，不改变 ready-file 的纯 endpoint 格式。
     #[arg(long)]
     ready_metadata_file: Option<PathBuf>,
+    /// 可信服务宿主提供的实例身份，仅用于认证后的发现验证。
+    #[arg(long, hide = true, requires = "runtime_stdio")]
+    service_info: Option<PathBuf>,
+    /// 启动器死亡时通过 EOF 关闭 Core，避免 SIGKILL 留下孤儿服务。
+    #[arg(long, hide = true, requires = "runtime_stdio")]
+    supervisor_fd: Option<i32>,
     /// Enable tools with this trusted Runtime binary over private pipes.
     #[arg(long, requires = "workspace")]
     runtime: Option<PathBuf>,
@@ -195,6 +201,22 @@ async fn main() -> Result<()> {
     }
     let telemetry = telemetry::TelemetryGuard::init(telemetry_config, &config.log_filter)?;
     let stopping = tokio_util::sync::CancellationToken::new();
+    #[cfg(unix)]
+    let supervisor_task = if let Some(fd) = args.supervisor_fd {
+        use std::os::fd::{FromRawFd, OwnedFd};
+        use tokio::io::AsyncReadExt;
+        anyhow::ensure!(fd >= 3, "invalid supervisor descriptor");
+        let mut pipe =
+            tokio::net::unix::pipe::Receiver::from_owned_fd(unsafe { OwnedFd::from_raw_fd(fd) })?;
+        let stop = stopping.clone();
+        Some(tokio::spawn(async move {
+            let mut byte = [0u8; 1];
+            let _ = pipe.read(&mut byte).await;
+            stop.cancel();
+        }))
+    } else {
+        None
+    };
     let signal = stopping.clone();
     #[cfg(unix)]
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
@@ -219,6 +241,11 @@ async fn main() -> Result<()> {
     .await;
     signal_task.abort();
     let _ = signal_task.await;
+    #[cfg(unix)]
+    if let Some(task) = supervisor_task {
+        task.abort();
+        let _ = task.await;
+    }
     telemetry.shutdown();
     result
 }
@@ -481,7 +508,14 @@ async fn run(
         eprintln!("AReaL Core listening on ws://{address}");
         tracing::info!(%address, "Core listener ready");
         let stop = tokio_util::sync::CancellationToken::new();
-        let server = areal_app_server::serve_authenticated(listener, engine.clone(), stop.clone(), Some(authentication));
+        let identity = if let Some(path) = &args.service_info {
+            let identity: areal_protocol::service::Identity = serde_json::from_slice(&std::fs::read(path)?)?;
+            anyhow::ensure!(identity.protocol_version == areal_protocol::service::VERSION
+                && identity.data_dir == config.data_dir.canonicalize()?
+                && Some(&identity.workspace) == args.workspace.as_ref(), "service identity does not match deployment");
+            Some(identity)
+        } else { None };
+        let server = areal_app_server::serve_service(listener, engine.clone(), stop.clone(), Some(authentication), identity);
         tokio::pin!(server);
         tokio::select! {
             result = &mut server => { engine.shutdown().await; result?; },

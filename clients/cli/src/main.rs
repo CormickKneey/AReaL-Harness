@@ -2,6 +2,7 @@
 mod local;
 mod rpc;
 mod run;
+mod service;
 use anyhow::{Result, ensure};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -21,6 +22,18 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// 管理可被 TUI、Web 与 Desktop 复用的本地服务。
+    Service {
+        #[command(subcommand)]
+        command: service::ServiceCommand,
+    },
+    /// 复用本地服务并打开 Web；--json 只返回连接描述。
+    Web {
+        #[command(flatten)]
+        local: Box<areal_local_service::LocalArgs>,
+        #[arg(long)]
+        json: bool,
+    },
     /// 启动桌面 Core + Runtime；参数遵循嵌入式可信 launcher。
     #[command(trailing_var_arg = true)]
     Serve {
@@ -105,6 +118,14 @@ async fn main() {
     let parsed = Args::parse();
     if let Some(command) = parsed.command {
         match command {
+            Command::Service { command } => {
+                service_result(service::execute(command).await);
+                return;
+            }
+            Command::Web { local, json } => {
+                service_result(service::web(*local, json).await);
+                return;
+            }
             Command::Serve { args } => {
                 use std::os::unix::process::CommandExt;
                 let executable = std::env::current_exe().expect("executable path");
@@ -135,4 +156,14 @@ async fn main() {
         }
     };
     std::process::exit(code);
+}
+
+fn service_result(result: Result<()>) {
+    if let Err(error) = result {
+        eprintln!(
+            "{}",
+            serde_json::json!({"error":{"code":"localServiceError","message":format!("{error:#}")}})
+        );
+        std::process::exit(1);
+    }
 }

@@ -2,6 +2,7 @@ name: Verify
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -11,6 +12,12 @@ permissions:
 defaults:
   run:
     shell: bash
+
+# CI 不使用调试器或增量编译；减少链接、缓存传输和服务二进制指纹计算的开销。
+env:
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
+  CARGO_INCREMENTAL: '0'
 
 concurrency:
   group: verify-${{ github.workflow }}-${{ github.ref }}
@@ -28,6 +35,11 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            runtime/sdk-typescript/package-lock.json
+            core/sdk-typescript/package-lock.json
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.13'
@@ -37,6 +49,9 @@ jobs:
           if ! command -v cmake; then brew install cmake; fi
           if ! command -v rg; then brew install ripgrep; fi
           python3 -m pip install uv==0.12.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Install locked dependencies
+        run: |
           make setup
           mkdir -p target/ci
       - name: Verify native behavior
@@ -50,8 +65,8 @@ jobs:
           path: target/ci/
           retention-days: 7
 
-  linux:
-    name: Linux checks and container Runtime
+  portable:
+    name: Linux portable checks
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -61,6 +76,11 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            runtime/sdk-typescript/package-lock.json
+            core/sdk-typescript/package-lock.json
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.13'
@@ -70,8 +90,34 @@ jobs:
           cmake --version
           if ! command -v rg; then sudo apt-get update && sudo apt-get install -y ripgrep; fi
           python3 -m pip install uv==0.12.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Install locked dependencies
+        run: |
           make setup
           mkdir -p target/ci
+      - name: Verify portable behavior
+        env:
+          NO_PROXY: 127.0.0.1,localhost
+        run: make verify CARGO_TEST_ARGS='--exclude areal-runtime-exec-native' 2>&1 | tee target/ci/verify.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: linux-portable-logs
+          path: target/ci/
+          retention-days: 7
+
+  container:
+    name: Linux container Runtime
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - run: mkdir -p target/ci
       - name: Verify container namespace prerequisites
         run: |
           # Ubuntu 的 userns 限制需要显式允许 Bubblewrap；不修改全局 sysctl。
@@ -89,23 +135,33 @@ jobs:
               exec bwrap --unshare-all --die-with-parent --cap-drop ALL \
                 --ro-bind / / --proc /proc --dev /dev -- /bin/true
             '
-      - name: Verify portable behavior
-        env:
-          NO_PROXY: 127.0.0.1,localhost
-        run: make verify CARGO_TEST_ARGS='--exclude areal-runtime-exec-native' 2>&1 | tee target/ci/verify.log
-      - name: Release host build space before container compilation
-        run: |
-          cargo clean --profile dev
-          df -h .
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build the supported container profile
-        run: >-
-          docker build -f tests/e2e/docker/Dockerfile
-          --build-arg INSTALL_CODEX=0 --build-arg INSTALL_CLAUDE_CODE=0
-          -t areal-ci:runtime . 2>&1 | tee target/ci/docker-build.log
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: tests/e2e/docker/Dockerfile
+          build-args: |
+            BUILD_PROFILE=ci
+            INSTALL_CODEX=0
+            INSTALL_CLAUDE_CODE=0
+          load: true
+          tags: areal-ci:runtime
+          cache-from: type=gha,scope=areal-runtime
+          cache-to: type=gha,scope=areal-runtime,mode=max
+      - name: Build native backend tests
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: tests/e2e/docker/Dockerfile
+          target: runtime-tests
+          build-args: BUILD_PROFILE=ci
+          load: true
+          tags: areal-ci:runtime-tests
+          cache-from: type=gha,scope=areal-runtime-tests
+          cache-to: type=gha,scope=areal-runtime-tests,mode=max
       - name: Verify native backend inside its supported container
         run: |
-          docker build -f tests/e2e/docker/Dockerfile --target runtime-tests \
-            -t areal-ci:runtime-tests . 2>&1 | tee target/ci/native-build.log
           docker run --rm --network none \
             --security-opt seccomp=unconfined --security-opt systempaths=unconfined \
             --security-opt apparmor=unconfined \
@@ -127,9 +183,23 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
         with:
-          name: linux-logs
+          name: linux-container-logs
           path: target/ci/
           retention-days: 7
+
+  # 保留原检查名，分支保护仍需两个独立任务都成功，不能把跳过或取消视为通过。
+  linux:
+    name: Linux checks and container Runtime
+    needs: [portable, container]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require both Linux jobs
+        env:
+          PORTABLE_RESULT: ${{ needs.portable.result }}
+          CONTAINER_RESULT: ${{ needs.container.result }}
+        run: test "$PORTABLE_RESULT" = success && test "$CONTAINER_RESULT" = success
 
   dependencies:
     name: Dependency advisories
@@ -142,10 +212,16 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22'
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        id: audit-cache
+        with:
+          path: ~/.cargo/bin/cargo-audit
+          key: cargo-audit-${{ runner.os }}-${{ runner.arch }}-0.22.2
+      - name: Install cargo-audit
+        if: steps.audit-cache.outputs.cache-hit != 'true'
+        run: cargo install cargo-audit --version 0.22.2 --locked
       - name: Check Rust advisories
-        run: |
-          cargo install cargo-audit --version 0.22.2 --locked
-          cargo audit
+        run: cargo audit
       - name: Check npm lockfiles
         run: |
           npm audit

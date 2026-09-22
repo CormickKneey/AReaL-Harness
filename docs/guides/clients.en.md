@@ -14,9 +14,15 @@ make tui ARGS='--workspace /absolute/task --allow-write --prompt "Describe the t
 make tui ARGS='--endpoint ws://127.0.0.1:4500 --auth-file /absolute/core-data/security/auth.json'
 ```
 
-Without an endpoint, TUI uses its embedded launcher to start Core/Runtime on a random loopback port and shuts them down on exit. An explicit endpoint (alias `--remote`) connects to an existing service and only disconnects on exit. Local deployment arguments cannot be combined with endpoint mode.
+Without an endpoint, interactive TUI attaches to a shared Core/Runtime on a random loopback port. Multiple windows in the same workspace reuse it; closing a window leaves service and tasks running. `--prompt`, `--goal` and `--input-file` default to owned mode and clean up on exit. `--local-mode shared|owned` overrides this choice. Explicit endpoint (alias `--remote`) only connects and cannot be combined with local deployment arguments.
 
-The default data directory is `~/.areal-harness/state`, with `launch-*.log` files inside it. Keep data and trusted binaries outside writable workspaces. A data directory has an exclusive lock; configure separate directories for multiple instances. The launcher uses system `/usr/bin/python3 -I -S` without importing workspace code.
+Shared mode defaults to a workspace-specific data directory under `~/.areal-harness/instances/`; explicit data configuration keeps its precedence. To open old `~/.areal-harness/state` history, specify `--data-dir` or bind it after stopping the old Core. Conflicting deployment permissions/configurations are rejected. Discovery, migration, logs and Desktop integration are specified in [local services](../api/local-service.en.md).
+
+```sh
+target/debug/areal web --workspace /absolute/task
+target/debug/areal service list --json
+target/debug/areal service stop --instance INSTANCE_ID --json
+```
 
 `areal -p 'prompt' --output-format stream-json --verbose` provides noninteractive CLI operation; `areal serve` starts a persistent service. See the [CLI contract](../api/claude-cli.en.md) for arguments, authentication, resume and exit codes. Web is served at `/ui`; log in with the local token from `security/auth.json` in the service data directory.
 
@@ -87,6 +93,6 @@ make tui ARGS='--goal "Complete the module migration and pass its tests" --goal-
 target/debug/areal-tui --endpoint ws://127.0.0.1:4500 --goal 'Inspect the code and prepare migration recommendations'
 ```
 
-`--goal` conflicts with `--prompt`/`--input-file`. `--resume THREAD_ID` can create a new Goal in an existing idle Thread. Headless mode waits across Turns, exits successfully only for completed, and prints Goal JSON/reasons with a nonzero exit for other stopped states. Remote headless exit/disconnection does not cancel server execution; local launcher exit shuts down its Core. Use interactive `/open` and `/goal-resume` for stopped Goals. Ordinary `--prompt` and Claude CLI retain single-execution semantics.
+`--goal` conflicts with `--prompt`/`--input-file`. `--resume THREAD_ID` can create a new Goal in an existing idle Thread. Headless mode waits across Turns, exits successfully only for completed, and prints Goal JSON/reasons with a nonzero exit for other stopped states. Remote headless exit/disconnection does not cancel server execution; owned local launcher exit shuts down its Core; shared mode only disconnects. Use interactive `/open` and `/goal-resume` for stopped Goals. Ordinary `--prompt` and Claude CLI retain single-execution semantics.
 
 Core restart restores active Goals as paused/serverRestarted; `thread/resume` does not restart them. Unknown model usage retains its reservation; explicit Goal resume acknowledges it without erasing consumption. Tool UNKNOWN still needs inspection and acknowledgement. Budget, active-time, Turn or history exhaustion stops execution without automatic retry. See [configuration](configuration.en.md#goals) and [Core API](../api/core.en.md#goals).

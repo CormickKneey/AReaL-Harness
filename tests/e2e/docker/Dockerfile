@@ -1,7 +1,10 @@
 ARG BASE_IMAGE=alpine:3.22.4
 ARG RUST_IMAGE=rust:1.94-alpine
+ARG BUILD_PROFILE=release
 
 FROM ${RUST_IMAGE} AS runtime-builder
+
+ARG BUILD_PROFILE
 
 RUN apk add --no-cache git build-base cmake
 WORKDIR /src
@@ -10,16 +13,17 @@ COPY core ./core
 COPY clients ./clients
 COPY runtime ./runtime
 COPY scripts/launch.py ./scripts/launch.py
-RUN cargo build --locked --release -p areal-runtime -p areal-runtime-fs -p areal-server -p areal-tui
+RUN cargo build --locked --profile "${BUILD_PROFILE}" -p areal-runtime -p areal-runtime-fs -p areal-server -p areal-tui -p areal-service-host -p areal-cli
 
 FROM runtime-builder AS runtime-tests
 
 RUN apk add --no-cache bubblewrap python3 coreutils
-RUN cargo test --locked -p areal-runtime-exec-native --lib --no-run
-CMD ["cargo", "test", "--offline", "--locked", "-p", "areal-runtime-exec-native", "--lib"]
+RUN cargo test --locked --profile ci -p areal-runtime-exec-native --lib --no-run
+CMD ["cargo", "test", "--offline", "--locked", "--profile", "ci", "-p", "areal-runtime-exec-native", "--lib"]
 
 FROM ${BASE_IMAGE}
 
+ARG BUILD_PROFILE
 ARG CODEX_VERSION=0.145.0
 ARG INSTALL_CODEX=1
 ARG CLAUDE_CODE_VERSION=2.1.273
@@ -61,10 +65,12 @@ RUN if [ "${INSTALL_CLAUDE_CODE}" = "1" ]; then \
       && test "$(claude --version)" = "${CLAUDE_CODE_VERSION} (Claude Code)"; \
     fi
 
-COPY --from=runtime-builder /src/target/release/areal-runtime /usr/local/bin/areal-runtime
-COPY --from=runtime-builder /src/target/release/areal-runtime-fs /usr/local/bin/areal-runtime-fs
-COPY --from=runtime-builder /src/target/release/areal-server /usr/local/bin/areal-server
-COPY --from=runtime-builder /src/target/release/areal-tui /usr/local/bin/areal-tui
+COPY --from=runtime-builder /src/target/${BUILD_PROFILE}/areal-runtime /usr/local/bin/areal-runtime
+COPY --from=runtime-builder /src/target/${BUILD_PROFILE}/areal-runtime-fs /usr/local/bin/areal-runtime-fs
+COPY --from=runtime-builder /src/target/${BUILD_PROFILE}/areal-server /usr/local/bin/areal-server
+COPY --from=runtime-builder /src/target/${BUILD_PROFILE}/areal-tui /usr/local/bin/areal-tui
+COPY --from=runtime-builder /src/target/${BUILD_PROFILE}/areal-service-host /usr/local/bin/areal-service-host
+COPY --from=runtime-builder /src/target/${BUILD_PROFILE}/areal /usr/local/bin/areal
 COPY tests/perf/runner /opt/areal-perf
 COPY tests/perf/trace_metrics.py /opt/areal-perf/trace_metrics.py
 COPY scripts/launch.py /opt/areal-launch/launch.py
@@ -89,6 +95,7 @@ LABEL org.opencontainers.image.title="AReaL-Harness local performance runner" \
       io.areal.perf.claudecode-version="${CLAUDE_CODE_VERSION}" \
       io.areal.perf.dsh-installed="${INSTALL_DSH}" \
       io.areal.perf.dsh-version="${DSH_VERSION}" \
+      io.areal.perf.build-profile="${BUILD_PROFILE}" \
       io.areal.perf.source-sha256="${PERF_SOURCE_SHA256}"
 
 ENTRYPOINT ["python3", "/opt/areal-perf/agent_entrypoint.py"]

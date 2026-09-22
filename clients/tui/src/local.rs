@@ -1,51 +1,7 @@
 use anyhow::{Context, Result};
-use std::{path::PathBuf, process::Command};
+use std::process::Command;
 
-/// Options consumed only when the TUI owns a local Core + Runtime.
-#[derive(clap::Args)]
-#[group(multiple = true)]
-pub struct LocalArgs {
-    /// Core TOML configuration file (otherwise uses Core's normal config lookup).
-    #[arg(long)]
-    config: Option<PathBuf>,
-    /// Task workspace (defaults to the current directory).
-    #[arg(long)]
-    workspace: Option<PathBuf>,
-    /// Override the data directory from Core configuration.
-    #[arg(long)]
-    data_dir: Option<PathBuf>,
-    /// Grant write access; trusted binaries and data must be outside the workspace.
-    #[arg(long)]
-    allow_write: bool,
-    #[arg(long, requires = "allow_write")]
-    workgroup_policy: Option<PathBuf>,
-    #[arg(long, requires = "workgroup_policy")]
-    workgroup_toolchain: Option<PathBuf>,
-    /// Inherit the deployment network for tool processes.
-    #[arg(long)]
-    allow_network: bool,
-    /// Permit overlapping workspace commands.
-    #[arg(long)]
-    allow_concurrent_writes: bool,
-    #[arg(long)]
-    command_timeout_ms: Option<u64>,
-    #[arg(long)]
-    command_output_bytes: Option<u64>,
-    /// Override the full model request URL from Core configuration.
-    #[arg(long)]
-    model_endpoint: Option<String>,
-    #[arg(long)]
-    model_protocol: Option<String>,
-    /// Override the model name from Core configuration.
-    #[arg(long)]
-    model: Option<String>,
-    /// Select a provider from Core configuration.
-    #[arg(long)]
-    model_provider: Option<String>,
-    /// Override the credential environment variable name from Core configuration.
-    #[arg(long)]
-    api_key_env: Option<String>,
-}
+pub use areal_local_service::LocalArgs;
 
 pub fn launch(args: &super::Args) -> Result<()> {
     let binary = std::env::current_exe().context("locate TUI executable")?;
@@ -76,26 +32,11 @@ pub fn launch(args: &super::Args) -> Result<()> {
             command.arg(format!("{flag}={value}"));
         }
     }
-    for (flag, value) in [
-        ("--config", &args.local.config),
-        ("--workspace", &args.local.workspace),
-        ("--data-dir", &args.local.data_dir),
-        ("--input-file", &args.input_file),
-        ("--workgroup-policy", &args.local.workgroup_policy),
-        ("--workgroup-toolchain", &args.local.workgroup_toolchain),
-    ] {
-        if let Some(value) = value {
-            let mut argument = std::ffi::OsString::from(format!("{flag}="));
-            argument.push(value);
-            command.arg(argument);
-        }
+    command.args(args.local.launcher_args());
+    if let Some(value) = &args.input_file {
+        command.arg("--input-file").arg(value);
     }
     for (flag, value) in [
-        ("--model-endpoint", &args.local.model_endpoint),
-        ("--model-protocol", &args.local.model_protocol),
-        ("--model", &args.local.model),
-        ("--model-provider", &args.local.model_provider),
-        ("--api-key-env", &args.local.api_key_env),
         ("--resume", &args.resume),
         ("--prompt", &args.prompt),
         ("--goal", &args.goal),
@@ -106,23 +47,6 @@ pub fn launch(args: &super::Args) -> Result<()> {
     }
     if let Some(budget) = args.goal_token_budget {
         command.arg(format!("--goal-token-budget={budget}"));
-    }
-    if args.local.allow_write {
-        command.arg("--allow-write");
-    }
-    if args.local.allow_network {
-        command.arg("--allow-network");
-    }
-    if args.local.allow_concurrent_writes {
-        command.arg("--allow-concurrent-writes");
-    }
-    for (flag, value) in [
-        ("--command-timeout-ms", args.local.command_timeout_ms),
-        ("--command-output-bytes", args.local.command_output_bytes),
-    ] {
-        if let Some(value) = value {
-            command.arg(format!("{flag}={value}"));
-        }
     }
     #[cfg(unix)]
     {

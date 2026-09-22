@@ -38,7 +38,7 @@ export AREAL_API_KEY
 make tui ARGS='--prompt Describe the workspace files'
 ```
 
-无认证的本地服务可省略凭据变量和读取命令。省略 `--prompt` 进入全屏 TUI；`Ctrl-C` 取消任务，`Ctrl-Q` 退出本地服务。模型配置与 Responses 示例见[配置](configuration.md)。
+无认证的本地服务可省略凭据变量和读取命令。省略 `--prompt` 进入全屏 TUI；`Ctrl-C` 取消任务，`Ctrl-Q` 关闭窗口并保留共享服务。模型配置与 Responses 示例见[配置](configuration.md)。
 
 ## 可写工作区与 Web
 

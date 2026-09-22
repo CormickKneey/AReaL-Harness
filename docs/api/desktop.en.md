@@ -77,3 +77,5 @@ Old-epoch handles return STALE_HANDLE without process restoration. Thread proces
 Events use areal/ prefixes, including thread/configured/archived, plan/updated, queue/updated, goal/updated/cleared, interaction/requested/resolved, process/updated and server/draining. Their revisions are not output cursors. Unknown model windows/usage remain null or absent rather than guessed. See [direct protocol examples](../examples/desktop-api.en.md).
 
 features.goals=true advertises Goal support without a separate configuration toggle. Goal events follow the same authorization and atomic subscription boundaries. drain closes automatic continuation admission and pauses Goals; archiving and explicit compaction require stopping the Goal and awaiting resource settlement.
+
+Local service discovery, window-independent lifecycle and Desktop Main integration use the [local service contract](local-service.en.md). `server/status` and `server/drain` additionally return `activeGoals` (Thread IDs) and `pendingQueueItems` (pending/running queue count). These are additive response fields; restartSafe still describes execution cleanup rather than absence of scheduled work.

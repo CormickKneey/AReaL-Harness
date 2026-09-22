@@ -40,3 +40,5 @@ target/debug/areal -p 'Continue' --resume SESSION_ID --output-format json
 成功退出 0，其余非 0；SIGINT/SIGTERM 等待 Core interrupt 和清理。已受理任务完成后无需等待 stdin EOF。断连不重放，消费者的恢复回退仍需单独测试。areal serve 是附加常驻管理入口。
 
 运行级 MCP 仅支持 stdio 或 HTTP Bearer。任务凭据只可经 `--task-credential-command` 注入工作区外的指定可信 executable；普通 shell/文件助手不继承 MULTICA_* 身份。真实第三方 daemon/GUI 联调仍需外部验收，见[示例](../examples/desktop-api.md)。
+
+`areal service ensure/list/status/stop/bind` 与 `areal web` 提供[共享本地服务入口](local-service.md)。非交互 `areal -p` 保持独占生命周期；`areal serve` 保持现有前台 launcher 行为。

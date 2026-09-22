@@ -14,9 +14,15 @@ make tui ARGS='--workspace /absolute/task --allow-write --prompt "Describe the t
 make tui ARGS='--endpoint ws://127.0.0.1:4500 --auth-file /absolute/core-data/security/auth.json'
 ```
 
-省略 endpoint 时 TUI 通过内嵌 launcher 启动本地 Core/Runtime，监听随机 loopback 端口；退出会关闭服务。显式 endpoint（别名 `--remote`）只连接已有服务，退出仅断开客户端。客户端本地部署参数不能与 endpoint 混用。
+省略 endpoint 时，交互式 TUI 连接共享 Core/Runtime，监听随机 loopback 端口。同一工作区多个窗口复用服务，关闭窗口保留后台服务和任务。`--prompt`、`--goal`、`--input-file` 默认使用 owned 模式，退出后清理所拥有的服务；`--local-mode shared|owned` 可覆盖默认选择。显式 endpoint（别名 `--remote`）只连接已有服务，不能与本地部署参数混用。
 
-默认数据目录为 `~/.areal-harness/state`，日志为其中 `launch-*.log`；数据目录和可信二进制须位于可写工作区外。同一数据目录有独占锁，多实例需分别配置。launcher 使用系统 `/usr/bin/python3 -I -S`，不导入工作区代码。
+共享模式默认在 `~/.areal-harness/instances/` 下按工作区保存数据；显式数据目录配置保持优先级。旧 `~/.areal-harness/state` 历史须使用 `--data-dir`，或停止旧 Core 后绑定。部署权限/配置不一致会明确报冲突。发现、迁移、日志和 Desktop 接入见[本地服务契约](../api/local-service.md)。
+
+```sh
+target/debug/areal web --workspace /absolute/task
+target/debug/areal service list --json
+target/debug/areal service stop --instance INSTANCE_ID --json
+```
 
 `areal -p 'prompt' --output-format stream-json --verbose` 提供非交互 CLI，`areal serve` 启动持续服务；参数、认证、恢复与退出码见 [CLI 契约](../api/claude-cli.md)。Web 位于服务的 `/ui`，使用服务数据目录 `security/auth.json` 中的本地 token 登录。
 
@@ -87,6 +93,6 @@ make tui ARGS='--goal "完成模块迁移并通过相关测试" --goal-token-bud
 target/debug/areal-tui --endpoint ws://127.0.0.1:4500 --goal '检查代码并整理迁移建议'
 ```
 
-`--goal` 与 `--prompt` / `--input-file` 互斥，可用 `--resume THREAD_ID` 在已有空闲 Thread 中创建新 Goal。headless 跨 Turn 等待目标终态，仅 completed 返回成功；其他停止状态返回非零并输出目标 JSON 和原因。远端 headless 退出或断连不取消服务器上的 Goal；本地 launcher 退出会关闭所拥有的 Core。通过交互式 `/open` 和 `/goal-resume` 恢复已停止目标。普通 `--prompt`、Claude CLI 入口保持单次执行语义。
+`--goal` 与 `--prompt` / `--input-file` 互斥，可用 `--resume THREAD_ID` 在已有空闲 Thread 中创建新 Goal。headless 跨 Turn 等待目标终态，仅 completed 返回成功；其他停止状态返回非零并输出目标 JSON 和原因。远端 headless 退出或断连不取消服务器上的 Goal；owned 本地 launcher 退出会关闭所拥有的 Core，shared 模式仅断开连接。通过交互式 `/open` 和 `/goal-resume` 恢复已停止目标。普通 `--prompt`、Claude CLI 入口保持单次执行语义。
 
 Core 重启后 active 目标恢复为 paused/serverRestarted，`thread/resume` 只恢复订阅，不自动运行。未知模型消费不会补零；显式 Goal resume 确认保守预留并继续保留该消费。工具 UNKNOWN 仍须检查和 acknowledge。预算、活动时间、轮次或历史容量耗尽时停止，不自动重试。预算配置见 [执行策略](configuration.md#goals)，接口字段见 [Core API](../api/core.md#goals)。

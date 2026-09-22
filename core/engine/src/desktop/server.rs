@@ -23,8 +23,18 @@ impl Engine {
         let mut resources = Vec::new();
         let mut unknown = Vec::new();
         let mut compacting = Vec::new();
+        let mut active_goals = Vec::new();
+        let mut pending_queue_items = 0usize;
         for cell in &cells {
             let s = cell.state.lock().await;
+            if s.thread
+                .goals
+                .goal
+                .as_ref()
+                .is_some_and(|goal| goal.status == areal_protocol::goals::GoalStatus::Active)
+            {
+                active_goals.push(s.thread.id.clone());
+            }
             if s.compacting {
                 compacting.push(s.thread.id.clone());
             }
@@ -32,6 +42,12 @@ impl Engine {
                 active.push(json!({"threadId":s.thread.id,"turnId":a.id}));
             }
             if let Some(d) = &s.thread.desktop {
+                pending_queue_items += d
+                    .queue
+                    .items
+                    .iter()
+                    .filter(|item| matches!(item.status.as_str(), "pending" | "running"))
+                    .count();
                 for p in &d.processes {
                     if !p.cleanup_confirmed {
                         resources.push(json!({"threadId":s.thread.id,"id":p.id,"state":p.state,"epoch":p.runtime_epoch}));
@@ -69,7 +85,7 @@ impl Engine {
             g.iter()
                 .any(|g| g["status"] == "running" || g["cleanupConfirmed"] != true)
         });
-        json!({"compactions":compacting,"workgroups":groups,"apiVersion":API_VERSION,"stateVersion":crate::store::STATE_VERSION,"productVersion":env!("CARGO_PKG_VERSION"),"draining":self.desktop.lifecycle.draining.load(Ordering::Acquire),"closed":self.is_closed(),"acceptingWork":self.accepting_work(),"activeTurns":active,"resources":resources,"unresolvedTools":unknown,"runtime":runtime,"capacity":{"threads":cells.len(),"maxThreads":self.limits.max_threads,"activeTurns":self.limits.max_active_turns-self.active_turns.available_permits(),"maxActiveTurns":self.limits.max_active_turns,"historyBytesPerThread":self.limits.max_history_bytes,"blobBytes":512*1024*1024u64},"restartSafe":active.is_empty()&&resources.is_empty()&&unknown.is_empty()&&compacting.is_empty()&&!unsettled})
+        json!({"activeGoals":active_goals,"pendingQueueItems":pending_queue_items,"compactions":compacting,"workgroups":groups,"apiVersion":API_VERSION,"stateVersion":crate::store::STATE_VERSION,"productVersion":env!("CARGO_PKG_VERSION"),"draining":self.desktop.lifecycle.draining.load(Ordering::Acquire),"closed":self.is_closed(),"acceptingWork":self.accepting_work(),"activeTurns":active,"resources":resources,"unresolvedTools":unknown,"runtime":runtime,"capacity":{"threads":cells.len(),"maxThreads":self.limits.max_threads,"activeTurns":self.limits.max_active_turns-self.active_turns.available_permits(),"maxActiveTurns":self.limits.max_active_turns,"historyBytesPerThread":self.limits.max_history_bytes,"blobBytes":512*1024*1024u64},"restartSafe":active.is_empty()&&resources.is_empty()&&unknown.is_empty()&&compacting.is_empty()&&!unsettled})
     }
     pub async fn drain(self: &Arc<Self>, strategy: String, timeout_ms: u64) -> Result<Value> {
         if !matches!(strategy.as_str(), "wait" | "cancel") || timeout_ms > 60000 {

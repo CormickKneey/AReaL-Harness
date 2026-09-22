@@ -30,9 +30,14 @@ struct Args {
     /// Connect to an existing Core instead of starting a local Harness.
     #[arg(long, visible_alias = "remote", conflicts_with = "LocalArgs")]
     endpoint: Option<String>,
+    /// 交互式默认 shared；脚本默认 owned，保持原有退出清理行为。
+    #[arg(long, value_parser = ["shared", "owned"], conflicts_with = "endpoint")]
+    local_mode: Option<String>,
     /// 可信启动器提供的认证文件，不把 token 放入 URL。
-    #[arg(long)]
+    #[arg(long, requires = "endpoint")]
     auth_file: Option<std::path::PathBuf>,
+    #[arg(skip)]
+    shared_service: Option<areal_local_service::LaunchSpec>,
     #[command(flatten)]
     local: local::LocalArgs,
     #[command(flatten)]
@@ -68,7 +73,7 @@ impl Drop for TerminalGuard {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = Args::parse();
+    let mut args = Args::parse();
     anyhow::ensure!(
         args.prompt.is_some()
             || args.goal.is_some()
@@ -81,9 +86,27 @@ async fn main() -> Result<()> {
     } else {
         None
     };
-    let Some(endpoint) = &args.endpoint else {
-        return local::launch(&args);
-    };
+    if args.endpoint.is_none() {
+        let owned = args
+            .local_mode
+            .as_deref()
+            .map(|mode| mode == "owned")
+            .unwrap_or(args.prompt.is_some() || args.goal.is_some() || args.input_file.is_some());
+        if owned {
+            return local::launch(&args);
+        }
+        let spec = areal_local_service::LaunchSpec::resolve(&args.local)?;
+        let service = areal_local_service::ensure(&spec).await?;
+        eprintln!(
+            "Shared Harness: {} · instance {}",
+            service.identity.workspace.display(),
+            service.identity.service_id
+        );
+        args.endpoint = Some(service.endpoint);
+        args.auth_file = Some(service.auth_file);
+        args.shared_service = Some(spec);
+    }
+    let endpoint = args.endpoint.as_ref().unwrap();
     let mut client = Client::connect(endpoint, args.auth_file.as_deref()).await.with_context(|| {
         format!("Cannot connect to Core at {endpoint}. Start the server first, or omit --endpoint to start a local Harness.")
     })?;
@@ -135,8 +158,16 @@ async fn interactive(
         if !app.connected && reconnect.is_none() && Instant::now() >= next_retry {
             let endpoint = args.endpoint.clone().unwrap();
             let auth_file = args.auth_file.clone();
+            let service_spec = args.shared_service.clone();
             reconnect = Some(tokio::spawn(async move {
-                Client::connect(&endpoint, auth_file.as_deref()).await
+                if let Some(spec) = service_spec {
+                    let current =
+                        areal_local_service::LaunchSpec::in_bin(&spec.args, spec.bin_dir)?;
+                    let service = areal_local_service::reconnect(&current).await?;
+                    Client::connect(&service.endpoint, Some(&service.auth_file)).await
+                } else {
+                    Client::connect(&endpoint, auth_file.as_deref()).await
+                }
             }));
         }
         if app.connected

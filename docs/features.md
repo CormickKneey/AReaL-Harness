@@ -15,6 +15,7 @@
 | 客户端 | CLI、TUI、本地 Web；CLI 实现选定 Claude Code 非交互参数与消息。[CLI 契约](api/claude-cli.md) |
 | Skills | 自动发现与显式 Profile 共用元信息登记、正文/附件按需读取；单个无效全局 Skill 告警隔离，不创建内容快照。[Skill 指南](guides/skills.md) |
 | Goal 持久目标 | 通过 `/goal` 等入口显式创建，无需配置开关；跨 Turn 自动推进、暂停/恢复/编辑/清除，用户输入优先；主/子 Agent、Workgroup、摘要共享预算。[客户端指南](guides/clients.md#goals) · [接口](api/core.md#goals) |
+| 共享本地服务 | 多 TUI 窗口与 Web 复用 Core/Runtime；公共 JSON 发现/控制供 Desktop Main 使用，按工作区隔离、显式停止与故障清理。[契约](api/local-service.md) |
 | SDK | 仓库内私有 `@areal/runtime` 和 `@areal/plugins`，Node.js 22.19.0+。[SDK 契约](api/typescript-sdk.md) |
 | 观测与验证 | tracing、可选 OTLP；确定性模型回归、原生 smoke、Docker lite/pro 评测。[测试](development/testing.md) |
 

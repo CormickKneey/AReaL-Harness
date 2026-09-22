@@ -28881,6 +28881,12 @@
         "acceptingWork": {
           "type": "boolean"
         },
+        "activeGoals": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "activeTurns": {
           "items": {
             "additionalProperties": true,
@@ -28952,6 +28958,10 @@
         },
         "draining": {
           "type": "boolean"
+        },
+        "pendingQueueItems": {
+          "minimum": 0,
+          "type": "integer"
         },
         "productVersion": {
           "type": "string"
@@ -29085,12 +29095,14 @@
       },
       "required": [
         "acceptingWork",
+        "activeGoals",
         "activeTurns",
         "apiVersion",
         "capacity",
         "closed",
         "compactions",
         "draining",
+        "pendingQueueItems",
         "productVersion",
         "resources",
         "restartSafe",
@@ -29130,6 +29142,12 @@
         "acceptingWork": {
           "type": "boolean"
         },
+        "activeGoals": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "activeTurns": {
           "items": {
             "additionalProperties": true,
@@ -29201,6 +29219,10 @@
         },
         "draining": {
           "type": "boolean"
+        },
+        "pendingQueueItems": {
+          "minimum": 0,
+          "type": "integer"
         },
         "productVersion": {
           "type": "string"
@@ -29334,12 +29356,14 @@
       },
       "required": [
         "acceptingWork",
+        "activeGoals",
         "activeTurns",
         "apiVersion",
         "capacity",
         "closed",
         "compactions",
         "draining",
+        "pendingQueueItems",
         "productVersion",
         "resources",
         "restartSafe",

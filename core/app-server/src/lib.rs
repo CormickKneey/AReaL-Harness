@@ -33,12 +33,13 @@ use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{Instrument, info_span};
 
 pub fn router(engine: Arc<Engine>) -> Router {
-    configured_router(engine, None, None)
+    configured_router(engine, None, None, None)
 }
 fn configured_router(
     engine: Arc<Engine>,
     browser_origin: Option<String>,
     authentication: Option<auth::Authentication>,
+    service: Option<areal_protocol::service::Identity>,
 ) -> Router {
     Router::new()
         .route("/", get(upgrade))
@@ -49,6 +50,7 @@ fn configured_router(
         .route("/ui/style.css", get(|| async { ([("content-type", "text/css; charset=utf-8"), ("x-content-type-options", "nosniff")], include_str!("../../../clients/web/style.css")) }))
         .route("/areal/auth/session", axum::routing::post(auth_session))
         .route("/healthz", get(|| async { "ok" }))
+        .route("/areal/service", get(service_identity))
         .route("/areal/blobs/{id}", get(read_blob))
         .route("/areal/blobs", axum::routing::post(upload_blob).layer(DefaultBodyLimit::max(16 * 1024 * 1024)))
         .route(
@@ -63,7 +65,32 @@ fn configured_router(
         )
         .layer(Extension(authentication))
         .layer(Extension(browser_origin))
+        .layer(Extension(service))
         .with_state(engine)
+}
+
+async fn service_identity(
+    Extension(authentication): Extension<Option<auth::Authentication>>,
+    Extension(service): Extension<Option<areal_protocol::service::Identity>>,
+    Extension(browser_origin): Extension<Option<String>>,
+    headers: HeaderMap,
+) -> Response {
+    if headers
+        .get("origin")
+        .is_some_and(|value| value.to_str().ok() != browser_origin.as_deref())
+    {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let Some(principal) = authentication.and_then(|auth| auth.authenticate(&headers)) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    if !principal.allows(auth::Permission::Observe) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    match service {
+        Some(identity) => axum::Json(identity).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 #[derive(Deserialize)]
@@ -182,6 +209,16 @@ pub async fn serve_authenticated(
     stop: CancellationToken,
     authentication: Option<auth::Authentication>,
 ) -> anyhow::Result<()> {
+    serve_service(listener, engine, stop, authentication, None).await
+}
+
+pub async fn serve_service(
+    listener: TcpListener,
+    engine: Arc<Engine>,
+    stop: CancellationToken,
+    authentication: Option<auth::Authentication>,
+    identity: Option<areal_protocol::service::Identity>,
+) -> anyhow::Result<()> {
     anyhow::ensure!(
         listener.local_addr()?.ip().is_loopback(),
         "Core listener must bind to loopback"
@@ -189,7 +226,7 @@ pub async fn serve_authenticated(
     let origin = format!("http://{}", listener.local_addr()?);
     axum::serve(
         listener,
-        configured_router(engine, Some(origin), authentication),
+        configured_router(engine, Some(origin), authentication, identity),
     )
     .with_graceful_shutdown(stop.cancelled_owned())
     .await?;

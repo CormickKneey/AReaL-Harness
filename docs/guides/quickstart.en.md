@@ -37,7 +37,7 @@ export AREAL_API_KEY
 make tui ARGS='--prompt Describe the workspace files'
 ```
 
-The secret-reading command works in Bash and Zsh; type the key and press Enter. For an unauthenticated local service, omit credential variables and the read command. Omit `--prompt` for fullscreen TUI; `Ctrl-C` cancels the task and `Ctrl-Q` exits the local service. See [configuration](configuration.en.md) for Responses and file-based settings.
+The secret-reading command works in Bash and Zsh; type the key and press Enter. For an unauthenticated local service, omit credential variables and the read command. Omit `--prompt` for fullscreen TUI; `Ctrl-C` cancels the task and `Ctrl-Q` closes the window while the shared service remains running. See [configuration](configuration.en.md) for Responses and file-based settings.
 
 ## Writable workspace and Web
 
