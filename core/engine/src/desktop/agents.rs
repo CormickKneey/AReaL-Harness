@@ -40,6 +40,9 @@ impl Engine {
         } else {
             previous.clone()
         };
+        if config.model.is_none() {
+            config.default_model_revision = previous.default_model_revision.clone();
+        }
         config.options = previous.options.clone();
         config.read_only |=
             previous.read_only || request.workspace_mode.as_deref() != Some("isolatedWrite");
@@ -193,6 +196,9 @@ impl Engine {
             Default::default(),
             1,
         )?;
+        if configuration.model.is_none() {
+            configuration.default_model_revision = task.default_model_revision.clone();
+        }
         configuration.read_only |= task.read_only;
         if let Some(skills) = &task.skills {
             if skills.iter().any(|s| {
@@ -295,6 +301,7 @@ impl Engine {
             integration_depends: vec![],
             checks: vec![],
             configuration: Some(crate::workgroup::TaskConfiguration {
+                default_model_revision: configuration.default_model_revision,
                 agent_profile: configuration.profile.as_ref().map(|p| VersionRef {
                     id: p.id.clone(),
                     revision: p.revision.clone(),

@@ -8,6 +8,7 @@ impl Engine {
         request: ProcessStart,
     ) -> Result<Value> {
         self.mutate(move|engine|async move{
+            let admission = engine.desktop.lifecycle.gate.lock().await;
             if !engine.accepting_work(){return Err(Error::Closed);}
             let runtime=engine.runtime.as_ref().ok_or_else(||invalid("Runtime is not configured"))?;
             let cell=engine.cell(&request.thread_id).await?;
@@ -34,6 +35,7 @@ impl Engine {
                 engine.persist(&candidate).await?;state.thread=candidate;
                 (record,permissions)
             };
+            drop(admission);
             let result=async{
                 let scope=runtime.client.create_scope(rt::CreateScope{operation_id:record.scope_operation_id.clone(),parent_scope_id:runtime.client.info().root_scope_id.clone(),owner:rt::Owner{task_id:request.thread_id.clone(),plugin_instance_id:None},permissions,limits:rt::LimitRequest::default()}).await;
                 let scope=match scope {Ok(scope)=>scope,Err(error)=>{

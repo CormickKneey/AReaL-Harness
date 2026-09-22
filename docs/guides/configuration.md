@@ -91,9 +91,17 @@ target/debug/areal-server config validate --config /absolute/config.toml
 target/debug/areal-server config show --sources --config /absolute/config.toml
 ```
 
-诊断不监听、不创建数据、不启动 Runtime/MCP/插件，也不探测模型；输出有效值和来源并脱敏。配置文件不热重载，启动凭据不进入 Runtime 环境。`OTEL_*` 由 server 的 telemetry 装配处理。
+诊断不监听、不创建数据、不启动 Runtime/MCP/插件，也不探测模型；输出有效值和来源并脱敏。共享本地服务支持下述模型配置热更新；启动凭据不进入 Runtime 环境。`OTEL_*` 由 server 的 telemetry 装配处理。
 
-桌面运行时 provider 目录使用 `areal/provider/*` 和 `AREAL_CREDENTIAL_<ref>`；只支持 chatCompletions/responses。`--desktop-config` 装配版本化 Profile/Skill/Workflow；会话配置可在空闲边界通过 CAS 更新并冻结到新 Turn/队列，见[桌面契约](../api/desktop.md)。这与启动 TOML 不热重载是不同机制。
+桌面运行时 provider 目录使用 `areal/provider/*` 和 `AREAL_CREDENTIAL_<ref>`；只支持 chatCompletions/responses。`--desktop-config` 装配版本化 Profile/Skill/Workflow；会话配置可在空闲边界通过 CAS 更新并冻结到新 Turn/队列，见[桌面契约](../api/desktop.md)。会话显式选择的 Provider 与 TOML 默认模型分别管理。
+
+## 模型配置热更新
+
+共享 TUI/Web 服务每秒读取选定 TOML，连续两次读到同一有效配置后应用。默认模型、端点、协议、凭据引用和采样/推理参数变更用于后续新提交；显式 CLI/环境覆盖仍有更高优先级。非法编辑保留旧配置，TUI/Web 显示错误。独占 launcher 和独立 Core 仍只读取启动配置。
+
+活动 Turn、其子任务、摘要和已入队请求保持原模型版本；会话显式选择的模型保持不变。Goal 自动续轮在下次提交边界使用当时的默认值。默认模型版本保存在私有 `dataDir/desktop/default-models.json` 中，供队列跨重启恢复，最多 128 个版本、1 MiB；不保存环境凭据值。退役凭据缺失时拒绝对应队列项执行，不替换成其他模型。迁移历史时需同时保留此文件。
+
+其他配置需要重启。TUI 等待 Turn、Goal、队列和资源结算后重启；`areal service ensure` 也会为空闲服务应用 TOML 或二进制更新。权限/部署变化和模型 CLI/环境覆盖变化需带目标参数执行 `areal service restart`。新终端环境变量不能更新现有进程，改变凭据值后应显式重启。默认重启拒绝忙碌服务；`--cancel` 才显式取消并结算工作。
 
 <a id="tui"></a>
 ## TUI 偏好

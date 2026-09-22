@@ -379,13 +379,15 @@ impl Engine {
             (Some(model), Some(provider)) => {
                 self.provider_model(provider, &model.model_id, &configuration.parameters)
             }
-            (None, None) if !self.model.name().is_empty() => {
+            (None, None) => {
+                let model = self.default_model_for(configuration)?;
+                if model.name().is_empty() {
+                    return Err(invalid("MODEL_NOT_CONFIGURED"));
+                }
                 if configuration.parameters == ModelParameters::default() {
-                    Ok(self.model.clone())
+                    Ok(model)
                 } else {
-                    self.model
-                        .configure(&configuration.parameters)
-                        .map_err(invalid)
+                    model.configure(&configuration.parameters).map_err(invalid)
                 }
             }
             _ => Err(invalid("MODEL_NOT_CONFIGURED")),
@@ -415,6 +417,7 @@ impl Engine {
             reasoning_summary: parameters.reasoning_summary.or(defaults.reasoning_summary),
         };
         let configuration = EffectiveConfig {
+            default_model_revision: None,
             options: ClientOptions::default(),
             selected_skills: None,
             revision,
@@ -426,7 +429,7 @@ impl Engine {
             parameters,
             instructions: String::new(),
         };
-        if configuration.model.is_some() || !self.model.name().is_empty() {
+        if configuration.model.is_some() || !self.default_model().name().is_empty() {
             let actual = self.configured_model(&configuration)?;
             if configuration.profile.as_ref().is_some_and(|p| {
                 p.required_modalities

@@ -776,9 +776,13 @@ impl Executor for NativeExecutor {
                 .as_ref()
                 .and_then(std::sync::Weak::upgrade)
                 .context("worker configuration requires trusted catalog")?;
-            self.model.share_capacity(
-                source.configured_model(&source.worker_configuration(configuration)?)?,
-            )
+            let configuration = source.worker_configuration(configuration)?;
+            if configuration.model.is_none() && configuration.default_model_revision.is_none() {
+                self.model.clone()
+            } else {
+                self.model
+                    .share_capacity(source.configured_model(&configuration)?)
+            }
         } else {
             self.model.clone()
         };

@@ -45,6 +45,8 @@ requestId is a durable business key; RPC id only correlates responses. Identical
 
 turn/start/enqueue take `{requestId,threadId,input,expectedConfigRevision?}`. Queues retain at most 128 historical items with frozen configuration. Only success advances automatically. Stop/failure/UNKNOWN/restart/drain pauses the queue until explicit resume. After timeout, query request/read or authoritative state rather than assuming no side effects.
 
+`EffectiveConfig.defaultModelRevision` is an optional opaque reference to a default-model snapshot, fixed when a Turn or queue item is submitted. Session defaults omit it; explicit Provider selections retain their semantics. The model archive belongs to the data directory and contains no environment credential values.
+
 thread/configure requires expectedRevision and an idle, non-compacting Thread. resetModel=true clears the session model override to Profile/service defaults and cannot accompany a nonempty model. Omitted parameters retain values; `{}` selects target Provider defaults. features.modelReset advertises support.
 
 Optional `parameters.reasoningSummary` accepts `auto` / `concise` / `detailed` for Responses only, merging Provider defaults with Thread overrides. Summary requests remain disabled when neither Provider/service defaults nor Thread overrides configure it. `areal/model/list.parameterCapabilities` includes `reasoningSummary` only for Responses providers; this advertises adapter support, not support for every upstream model or mode. See [Core reasoning progress](core.en.md#reasoning-progress) for events and parts.
@@ -81,3 +83,5 @@ Events use areal/ prefixes, including thread/configured/archived, plan/updated, 
 features.goals=true advertises Goal support without a separate configuration toggle. Goal events follow the same authorization and atomic subscription boundaries. drain closes automatic continuation admission and pauses Goals; archiving and explicit compaction require stopping the Goal and awaiting resource settlement.
 
 Local service discovery, window-independent lifecycle and Desktop Main integration use the [local service contract](local-service.en.md). `server/status` and `server/drain` additionally return `activeGoals` (Thread IDs) and `pendingQueueItems` (pending/running queue count). These are additive response fields; restartSafe still describes execution cleanup rather than absence of scheduled work.
+
+Shared services expose `server/status.configuration` as `{modelRevision,restartRequired,error}`; other deployments return null. `areal/server/configurationChanged` publishes `{threadId,configuration}` to subscribed threads. `server/drain` also accepts `strategy="ifIdle"`: check idle state and close admission under one gate; busy rejection keeps work running. See [configuration reload](../guides/configuration.en.md).

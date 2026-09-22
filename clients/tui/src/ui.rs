@@ -140,7 +140,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     );
     input_view(frame, input, app, palette);
     frame.render_widget(
-        Paragraph::new(safe_text(&app.status)).style(palette.style(if app.connected {
+        Paragraph::new(safe_text(
+            app.configuration_notice.as_deref().unwrap_or(&app.status),
+        ))
+        .style(palette.style(if app.connected {
             Role::Muted
         } else {
             Role::Warning
@@ -889,9 +892,11 @@ Idle Turns only · configured models; availability is not a connection probe",
     };
     frame.render_widget(Paragraph::new(note_text).style(p.style(Role::Muted)), note);
     frame.render_widget(
-        Paragraph::new(safe_text(&app.status))
-            .wrap(Wrap { trim: false })
-            .style(p.style(Role::Warning)),
+        Paragraph::new(safe_text(
+            app.configuration_notice.as_deref().unwrap_or(&app.status),
+        ))
+        .wrap(Wrap { trim: false })
+        .style(p.style(Role::Warning)),
         status,
     );
 }

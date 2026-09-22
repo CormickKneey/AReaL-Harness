@@ -244,7 +244,7 @@ async fn control(
                     service,
                     "areal/server/drain",
                     json!({
-                    "strategy":if cancel {"cancel"} else {"wait"},"timeoutMs":30000}),
+                    "strategy":if cancel {"cancel"} else {"ifIdle"},"timeoutMs":30000}),
                 )
                 .await?;
                 ensure!(

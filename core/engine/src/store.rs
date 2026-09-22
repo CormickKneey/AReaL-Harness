@@ -12,7 +12,7 @@ use std::{
 use tokio::sync::Semaphore;
 
 // 持久化版本与服务状态必须一致，避免客户端误判可恢复的数据格式。
-pub(crate) const STATE_VERSION: u32 = 8;
+pub(crate) const STATE_VERSION: u32 = 9;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Record {

@@ -1,14 +1,10 @@
 use anyhow::{Context, Result};
-use areal_config::{
-    ConfigInputs, ConfigOverrides, ModelProtocolConfig, ResolvedCoreConfig, load_config,
-};
-use areal_engine::{
-    Engine, Limits,
-    model::{HttpModel, ModelOptions, ModelProtocol},
-};
+use areal_config::{ConfigInputs, ConfigOverrides, ResolvedCoreConfig, load_config};
+use areal_engine::{Engine, Limits};
 use clap::{Parser, Subcommand};
 use std::{path::PathBuf, sync::Arc};
 
+mod reload;
 mod telemetry;
 mod tool_extensions;
 
@@ -229,16 +225,7 @@ async fn main() -> Result<()> {
         let _ = tokio::signal::ctrl_c().await;
         signal.cancel();
     });
-    let result = run(
-        args,
-        config,
-        credential,
-        stopping,
-        extensions,
-        inputs.env,
-        inputs.homedir,
-    )
-    .await;
+    let result = run(args, config, credential, stopping, extensions, inputs).await;
     signal_task.abort();
     let _ = signal_task.await;
     #[cfg(unix)]
@@ -275,37 +262,11 @@ async fn run(
     credential: Option<String>,
     stopping: tokio_util::sync::CancellationToken,
     extensions: areal_engine::tools::ToolExtensions,
-    mcp_env: std::collections::BTreeMap<std::ffi::OsString, std::ffi::OsString>,
-    homedir: Option<PathBuf>,
+    inputs: ConfigInputs,
 ) -> Result<()> {
-    let model: Arc<dyn areal_engine::model::Model> = if config.model.name.is_empty() {
-        Arc::new(areal_engine::model::UnconfiguredModel)
-    } else {
-        Arc::new(
-            HttpModel::with_protocol(
-                config.model.endpoint.clone(),
-                config.model.name.clone(),
-                credential,
-                match config.model.protocol {
-                    ModelProtocolConfig::ChatCompletions => ModelProtocol::ChatCompletions,
-                    ModelProtocolConfig::Responses => ModelProtocol::Responses,
-                },
-            )?
-            .with_audit_directory(config.data_dir.join("model-requests"))
-            .with_options(ModelOptions {
-                reasoning_effort: config.model.reasoning_effort.clone(),
-                reasoning_summary: config.model.reasoning_summary.clone(),
-                max_output_tokens: config.model.max_output_tokens,
-                max_retries: config.model.max_retries,
-                temperature: config.model.temperature,
-                top_p: config.model.top_p,
-                top_k: config.model.top_k,
-                min_p: config.model.min_p,
-                presence_penalty: config.model.presence_penalty,
-                repetition_penalty: config.model.repetition_penalty,
-            })?,
-        )
-    };
+    let mcp_env = inputs.env.clone();
+    let homedir = inputs.homedir.clone();
+    let model = reload::model(&config.model, credential, &config.data_dir)?;
     let model: Arc<dyn areal_engine::model::Model> =
         areal_engine::workgroup::native::SharedModel::pool(model, config.model_concurrency)?;
     let limits = Limits {
@@ -420,6 +381,7 @@ async fn run(
             plugins.iter().flat_map(|host| host.tools()).collect(),
         );
         let engine = opened?;
+        let reload = if args.service_info.is_some() { Some(reload::Reload::open(inputs, &config, &engine)?) } else { None };
         if let Some(path) = &args.desktop_config { engine.install_deployment(path)?; }
         let workspace = PathBuf::from(engine.default_cwd());
         let skills = areal_config::skills::discover(Some(&workspace), homedir.as_deref())?;
@@ -517,7 +479,13 @@ async fn run(
         } else { None };
         let server = areal_app_server::serve_service(listener, engine.clone(), stop.clone(), Some(authentication), identity);
         tokio::pin!(server);
+        let reload = async {
+            if let Some(reload) = reload { reload.run(engine.clone()).await; }
+            std::future::pending::<()>().await;
+        };
+        tokio::pin!(reload);
         tokio::select! {
+            _ = &mut reload => unreachable!(),
             result = &mut server => { engine.shutdown().await; result?; },
             _ = stopping.cancelled() => {
                 engine.shutdown().await;

@@ -134,6 +134,7 @@ async fn main() -> Result<()> {
         return headless::run(&mut client, args.resume, input).await;
     }
     let mut app = App::new(prefs.unwrap());
+    app.monitor_configuration = args.shared_service.is_some();
     app.bootstrap(args.resume.clone(), true)?;
     let mut terminal = ratatui::init();
     let _guard = TerminalGuard;
@@ -157,9 +158,21 @@ async fn interactive(
     refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut clock = tokio::time::interval(Duration::from_secs(1));
     let mut reconnect: Option<tokio::task::JoinHandle<Result<Client>>> = None;
+    let mut updating: Option<tokio::task::JoinHandle<Result<()>>> = None;
     let mut next_retry = Instant::now();
     let mut retry_seconds = 1;
     loop {
+        if app.restart_ready
+            && updating.is_none()
+            && let Some(spec) = args.shared_service.clone()
+        {
+            app.restart_ready = false;
+            updating = Some(tokio::spawn(async move {
+                let current = areal_local_service::LaunchSpec::in_bin(&spec.args, spec.bin_dir)?;
+                areal_local_service::reconnect(&current).await?;
+                Ok(())
+            }));
+        }
         if app.reconnect_requested {
             app.reconnect_requested = false;
             app.disconnect("manual reconnect");
@@ -186,6 +199,14 @@ async fn interactive(
             app.disconnect(&e.to_string());
         }
         tokio::select! {
+            result = async { updating.as_mut().unwrap().await }, if updating.is_some() => {
+                updating = None;
+                match result {
+                    Ok(Ok(())) => { app.disconnect("Configuration updated · reconnecting"); next_retry = Instant::now(); }
+                    Ok(Err(error)) => { app.configuration_notice = Some(format!("Restart pending: {error:#}")); app.dirty = true; }
+                    Err(error) => { app.status = error.to_string(); app.dirty = true; }
+                }
+            }
             value = client.rx.recv(), if app.connected => {
                 match value {
                     Some(value) => if let Err(e) = app.receive(value) { app.disconnect(&format!("projection error: {e}")); },

@@ -89,7 +89,7 @@ Transport failures, HTTP error statuses and non-SSE responses before stream cons
 
 Tool error audits add `errorCode` and `toolCallError`: `invalid_tool_call_index` includes a fixed reason, protocol, field path, one-based SSE data-event number, index JSON type and buffered call count; `tool_call_budget_exceeded` includes budget kind, limit and observed value. Fields contain only fixed labels and bounded numbers, never copied SSE, arguments, reasoning or invalid field values; the same record supplies the local `requestId`. The existing `responseShape.toolArgumentBytes` name counts validated ID/name/argument bytes together.
 
-Snapshots are written in format 8 and formats 1–8 can be read; older Core cannot read new snapshots. contextCheckpoint affects model input without deleting original history. modelContext retains opaque Responses context, not user content. Missing usage/duration is unknown, not zero.
+Snapshots are written in format 9 and formats 1–9 can be read; older Core cannot read new snapshots. contextCheckpoint affects model input without deleting original history. modelContext retains opaque Responses context, not user content. Missing usage/duration is unknown, not zero.
 
 <a id="dynamic-tools"></a>
 ## Dynamic tool callbacks

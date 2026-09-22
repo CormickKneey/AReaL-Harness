@@ -41,6 +41,7 @@ pub const NOTIFICATIONS: &[&str] = &[
     "areal/interaction/resolved",
     "areal/process/updated",
     "areal/server/draining",
+    "areal/server/configurationChanged",
 ];
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
@@ -141,6 +142,9 @@ pub struct ClientOptions {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EffectiveConfig {
+    /// 服务默认模型在提交时固定；不包含端点或凭据。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_model_revision: Option<String>,
     #[serde(default)]
     pub options: ClientOptions,
     #[serde(default)]
@@ -161,6 +165,7 @@ pub struct EffectiveConfig {
 impl Default for EffectiveConfig {
     fn default() -> Self {
         Self {
+            default_model_revision: None,
             revision: 1,
             options: ClientOptions::default(),
             selected_skills: None,

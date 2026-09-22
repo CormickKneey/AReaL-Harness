@@ -22,8 +22,11 @@ impl Engine {
     pub async fn context_compact(self: &Arc<Self>, thread_id: String) -> Result<Value> {
         self.mutate(move|engine|async move{
             if !engine.accepting_work(){return Err(Error::Closed);}
+            let admission=engine.desktop.lifecycle.gate.lock().await;
+            if !engine.accepting_work(){return Err(Error::Closed);}
             let cell=engine.cell(&thread_id).await?;
             {let mut state=cell.state.lock().await;if state.active.is_some()||state.compacting||state.thread.goals.goal.as_ref().is_some_and(|g|g.status==areal_protocol::goals::GoalStatus::Active){return Err(Error::Conflict);}state.compacting=true;}
+            drop(admission);
             let result=async {
                 let _permit=tokio::select!{_=engine.shutdown.cancelled()=>return Err(invalid("compaction cancelled")),p=engine.permits.acquire()=>p.map_err(invalid)?};
                 tokio::time::timeout(engine.limits.turn_timeout,engine.compact_context(&cell,&engine.shutdown,0,None,true)).await.map_err(invalid)?.map_err(invalid)

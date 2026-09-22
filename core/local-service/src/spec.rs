@@ -139,6 +139,7 @@ impl LaunchSpec {
             },
         };
         let config = areal_config::load_management_config(&inputs)?;
+        config.credential(&inputs)?;
         let root = storage::canonical_pending(&config.home)?;
         let workspace_key = storage::digest(workspace.as_os_str().as_encoded_bytes());
         let mapping = root
@@ -209,8 +210,8 @@ impl LaunchSpec {
         }
         let mut effective = config.diagnostic(false);
         effective["server"]["data_dir"] = json!(data);
-        // diagnostic 会脱敏 URL；兼容性仍须比较完整地址，但登记中只保存摘要。
-        effective["model"]["endpoint"] = json!(config.model.endpoint);
+        // 默认模型单独按版本比较；热更新不改变部署身份。
+        effective.as_object_mut().unwrap().remove("model");
         let mut files = BTreeMap::new();
         for (key, path) in [
             ("extensions", config.tool_extensions_file.as_ref()),
@@ -222,7 +223,30 @@ impl LaunchSpec {
             }
         }
         let mut components = BTreeMap::new();
+        let model_environment: BTreeMap<_, _> = config
+            .sources
+            .iter()
+            .filter_map(|(field, source)| {
+                if field.starts_with("model.")
+                    && let ConfigSource::Env { name } = source
+                {
+                    Some((
+                        name,
+                        inputs
+                            .env
+                            .get(std::ffi::OsStr::new(name))
+                            .map(|v| v.to_string_lossy()),
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect();
         for (key, value) in [
+            (
+                "model-inputs",
+                json!({"environment":model_environment,"cli":[args.model.clone(),args.model_provider.clone(),args.model_endpoint.clone(),args.model_protocol.clone(),args.api_key_env.clone()]}),
+            ),
             ("workspace", json!(workspace)),
             ("configuration", effective),
             (
@@ -244,6 +268,7 @@ impl LaunchSpec {
             components.insert(key.into(), storage::digest(&serde_json::to_vec(&value)?));
         }
         let fingerprint = storage::digest(&serde_json::to_vec(&components)?);
+        components.insert("model".into(), config.model.fingerprint());
         let service_id = storage::digest(data.as_os_str().as_encoded_bytes())[..24].to_owned();
         storage::registry(&root, &service_id)?;
         Ok(Self {
