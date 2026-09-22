@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+areal-runtime-host-tools.workspace = true
 areal-runtime-protocol.workspace = true
 areal-runtime-supervisor.workspace = true
 async-trait.workspace = true

@@ -304,6 +304,14 @@ impl Invocation<'_> {
                 }
                 let mut verification_receipt = None;
                 if let Request::Command(command) = &mut request {
+                    // 在 scratch 的 env 包装及验证子进程之前解析系统 shim。
+                    if command
+                        .argv
+                        .first()
+                        .is_some_and(|arg| arg == "/usr/bin/python3")
+                    {
+                        command.argv[0] = super::navigation::python_executable()?;
+                    }
                     let scope: rt::ScopeInfo = runtime
                         .client
                         .call("scope.get", json!({"scopeId":self.scope}))
@@ -332,7 +340,7 @@ impl Invocation<'_> {
                         ));
                         let request = json!({"argv":command.argv,"cwd":cwd,"workspace":runtime.workspace,"scratch":scratch,"identity":identity});
                         command.argv = vec![
-                            "/usr/bin/python3".into(),
+                            super::navigation::python_executable()?,
                             "-I".into(),
                             "-B".into(),
                             "-c".into(),

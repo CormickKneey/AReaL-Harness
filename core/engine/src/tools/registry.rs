@@ -163,6 +163,15 @@ fn compile(schema: &Value) -> anyhow::Result<jsonschema::Validator> {
 }
 
 impl Registry {
+    /// 缺少部署 scratch 时，不向模型提供无法执行的验证工具。
+    pub fn with_command_scratch(mut self, available: bool) -> Self {
+        if !available {
+            self.tools.remove("verify_command");
+            self.order.retain(|name| name != "verify_command");
+        }
+        self
+    }
+
     /// Generated from the deployed Runtime, not a second Core timeout policy.
     pub fn with_runtime_limits(mut self, limits: &rt::Limits) -> anyhow::Result<Self> {
         anyhow::ensure!(
@@ -380,6 +389,24 @@ impl ToolExtensions {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn verification_tool_requires_deployment_scratch() {
+        for available in [false, true] {
+            let registry = Registry::new(true, &ToolExtensions::default())
+                .unwrap()
+                .with_command_scratch(available);
+            assert_eq!(registry.tools.contains_key("verify_command"), available);
+            assert_eq!(
+                registry
+                    .definitions()
+                    .iter()
+                    .any(|d| d["function"]["name"] == "verify_command"),
+                available
+            );
+            assert!(registry.tools.contains_key("run_command"));
+        }
+    }
+
     #[test]
     fn command_schema_and_validation_share_the_deployed_deadline() {
         for maximum in [7000, 120_000] {

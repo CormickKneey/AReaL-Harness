@@ -16,7 +16,7 @@ pub(super) async fn invoke(
             operation_id: operation.into(),
             scope_id: scope.into(),
             argv: vec![
-                "/usr/bin/python3".into(),
+                python_executable()?,
                 "-I".into(),
                 "-B".into(),
                 "-c".into(),
@@ -89,4 +89,15 @@ pub(super) async fn invoke(
     } else {
         (true, value["result"].clone())
     })
+}
+
+pub(super) fn python_executable() -> rt::Result<String> {
+    areal_runtime_host_tools::system_python()
+        .map(|path| path.to_string_lossy().into_owned())
+        .map_err(|error| {
+            rt::Error::new(
+                rt::ErrorCode::Unavailable,
+                format!("system Python is unavailable: {error}"),
+            )
+        })
 }

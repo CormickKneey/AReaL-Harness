@@ -409,6 +409,11 @@ impl Engine {
             );
         }
         let mut registry = tools::Registry::new(runtime.is_some(), &extensions)?
+            .with_command_scratch(
+                runtime
+                    .as_ref()
+                    .is_some_and(|r| r.command_scratch.is_some()),
+            )
             .with_mcp(mcp_tools)?
             .with_plugins(plugin_tools)?
             .with_agents(

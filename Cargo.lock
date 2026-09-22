@@ -177,6 +177,7 @@ dependencies = [
  "areal-mcp",
  "areal-protocol",
  "areal-runtime-client",
+ "areal-runtime-host-tools",
  "areal-runtime-protocol",
  "async-trait",
  "axum",
@@ -285,6 +286,7 @@ dependencies = [
 name = "areal-runtime-exec-native"
 version = "0.1.0"
 dependencies = [
+ "areal-runtime-host-tools",
  "areal-runtime-protocol",
  "areal-runtime-supervisor",
  "async-trait",
@@ -306,6 +308,10 @@ dependencies = [
  "tempfile",
  "uuid",
 ]
+
+[[package]]
+name = "areal-runtime-host-tools"
+version = "0.1.0"
 
 [[package]]
 name = "areal-runtime-protocol"

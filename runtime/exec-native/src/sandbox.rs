@@ -26,6 +26,8 @@ impl Profile {
 // Keep system allowances explicit. In particular, /System includes the writable
 // Data volume. Shared temporary directories must not become writable either.
 // Neither is an appropriate read/write boundary for an ExecutionScope.
+// Core 在可信宿主侧解析系统 Python，避免在任务沙箱中启动 xcode-select/xcrun。
+// 这里只允许默认及带数字版本号的 Xcode / Command Line Tools Python，不开放整个工具链。
 const BASE: &str = r#"
 (version 1)
 (deny default)
@@ -36,6 +38,16 @@ const BASE: &str = r#"
 (allow process-exec file-read* file-map-executable
   (regex #"^/(System/(Library|iOSSupport/System/Library)|bin|sbin|usr/(bin|sbin|lib|libexec|share))(/|$)"))
 (allow file-read* file-test-existence (literal "/"))
+(allow file-read-metadata
+  (literal "/Applications")
+  (regex #"^/Applications/Xcode(_[0-9]+([.][0-9]+)*)?[.]app(/Contents(/Developer(/Library(/Frameworks)?)?)?)?$"))
+(allow file-read-metadata
+  (literal "/Library") (literal "/Library/Developer")
+  (literal "/Library/Developer/CommandLineTools")
+  (literal "/Library/Developer/CommandLineTools/Library")
+  (literal "/Library/Developer/CommandLineTools/Library/Frameworks"))
+(allow process-exec file-read* file-map-executable
+  (regex #"^/(Applications/Xcode(_[0-9]+([.][0-9]+)*)?[.]app/Contents/Developer|Library/Developer/CommandLineTools)/Library/Frameworks/Python3[.]framework(/|$)"))
 (allow file-read*
   (regex #"^/private/(etc/(passwd|group|localtime)|var/select/sh)$")
   (regex #"^/private/var/db/timezone(/|$)")

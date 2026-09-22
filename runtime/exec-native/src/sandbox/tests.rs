@@ -189,3 +189,80 @@ fn sandbox_cannot_be_replaced_and_caller_arguments_cannot_be_options() {
     let execution = fixture.execution(vec!["-p".into(), "(version 1)(allow default)".into()]);
     denied(&run(&prepared(&execution), &execution));
 }
+
+#[test]
+fn resolved_system_python_reads_workspace_without_expanding_file_permissions() {
+    let fixture = Fixture::new();
+    let execution = fixture.execution(vec![
+        areal_runtime_host_tools::system_python()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .into(),
+        "-I".into(),
+        "-B".into(),
+        "-c".into(),
+        "import json,pathlib,sys; print(json.dumps(pathlib.Path(sys.argv[1]).read_text()))".into(),
+        fixture.allowed.join("fixture").to_str().unwrap().into(),
+    ]);
+    let output = run(&prepared(&execution), &execution);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(output.stdout, b"\"allowed-fixture\"\n");
+    let mut outside = execution.clone();
+    *outside.argv.last_mut().unwrap() = fixture.outside.join("fixture").to_str().unwrap().into();
+    denied(&run(&prepared(&outside), &outside));
+}
+
+#[test]
+fn versioned_xcode_python_policy_preserves_framework_boundary() {
+    let fixture = Fixture::new();
+    for (app, allowed) in [
+        ("Xcode.app", true),
+        ("Xcode_16.4.app", true),
+        ("Xcode_26.0.1.app", true),
+        ("Xcode_evil.app", false),
+        ("Xcode_16..4.app", false),
+    ] {
+        let framework = format!("{app}/Contents/Developer/Library/Frameworks/Python3.framework");
+        let python = format!("/Applications/{framework}/Versions/3.9/bin/python3.9");
+        assert_eq!(
+            areal_runtime_host_tools::is_macos_system_python(Path::new(&python)),
+            allowed
+        );
+        let local = fixture.root.join(&framework);
+        fs::create_dir_all(&local).unwrap();
+        let program = local.join("python-fixture");
+        fs::write(&program, "#!/bin/sh\nprintf python-fixture").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
+        let execution = fixture.execution(vec![program.to_str().unwrap().into()]);
+        let mut argv = prepared(&execution);
+        // 在临时树中执行同一策略，覆盖 CI 的版本目录；不修改系统 Xcode 或选择器。
+        let policy = argv.iter().position(|arg| arg == "-p").unwrap() + 1;
+        argv[policy] = argv[policy].replace(
+            "Applications",
+            escape(fixture.root.to_str().unwrap()).trim_start_matches('/'),
+        );
+        let output = run(&argv, &execution);
+        assert_eq!(output.status.success(), allowed, "{app}: {output:?}");
+        if allowed {
+            assert_eq!(output.stdout, b"python-fixture");
+            let sibling = local.with_file_name("Python3.framework-sibling");
+            fs::create_dir(&sibling).unwrap();
+            fs::write(sibling.join("secret"), "outside-fixture").unwrap();
+            for code in [
+                format!("cat '{}'", sibling.join("secret").display()),
+                format!("printf forbidden > '{}/new-file'", local.display()),
+            ] {
+                let denied_execution = fixture.shell(&code, &[]);
+                let mut denied_argv = prepared(&denied_execution);
+                denied_argv[policy] = argv[policy].clone();
+                denied(&run(&denied_argv, &denied_execution));
+            }
+            assert!(!local.join("new-file").exists());
+        }
+        assert!(!areal_runtime_host_tools::is_macos_system_python(
+            Path::new(&format!("/Applications/{framework}-sibling/bin/python3"))
+        ));
+    }
+}

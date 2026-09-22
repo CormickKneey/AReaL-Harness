@@ -30,6 +30,10 @@ Core, Node Hosts and stdio MCP are outside the Runtime sandbox. Process-group te
 
 The Linux profile establishes a session when spawning Bubblewrap and keeps namespace init in the managed process group, so cancellation covers init and its PID namespace. This does not set cross-platform processTreeCleanupVerified to true. There are no per-Scope cgroup pids/memory limits; deployment must bound internal forks and memory. A signaled inner command may make the launcher exit normally with `128 + signal`. Runtime reports the launcher's actual exitCode/signal without inferring inner signals or OOM. Cleanup still requires confirmation.
 
+On macOS, Python from the default Xcode, `/Applications/Xcode_<numeric version>.app` (for example `Xcode_16.4.app`), or Command Line Tools installation is discovered through shared `runtime/host-tools` by Core and Runtime: the trusted host runs `/usr/bin/xcrun --find python3`, resolves and validates the actual file before entering the existing sandbox; no `/var/select/developer_dir` link is required. Direct `/usr/bin/python3` and `python3` on the default PATH use the real interpreter, avoiding the xcode-select shim. Only the system Python framework gains read/execute access; out-of-workspace files and shared `/tmp` writes remain denied. Custom Xcode locations and Homebrew Node/Python do not gain permissions automatically and require explicit toolchain preparation.
+
+Without command scratch, Core does not advertise `verify_command` to the model. Deployments requiring verification receipts must supply a separate directory through launcher `--scratch`. Shared `/tmp` is not a substitute for task scratch.
+
 ## Lifecycle
 
 EOF, SIGINT/SIGTERM or explicit close shuts admission and awaits resources. Dropping an RPC waiter does not cancel an operation; revoke/terminate and then wait. Lost backend facts or failed cleanup preserve UNKNOWN and budget occupancy, close new admission and return CLEANUP_FAILED.

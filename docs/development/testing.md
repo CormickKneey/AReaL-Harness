@@ -21,6 +21,16 @@
 
 Linux 宿主常规检查使用 `make verify CARGO_TEST_ARGS='--exclude areal-runtime-exec-native'`。原生后端测试要求容器边界；CI 的独立任务构建 Dockerfile 的 `runtime-tests` 目标，在带 Bubblewrap 的受控容器中实际运行全部后端测试，不能仅排除后就视为完成验收。
 
+## Python 与 scratch
+
+macOS Python/scratch 的独立回归（本地模型，不需要供应商密钥）：
+
+```sh
+python3 scripts/native-python-smoke.py --bin-dir target/debug
+```
+
+`make harness-smoke`（由 macOS CI 的 `make verify-harness` 调用）包含此回归。共享解析器测试覆盖已安装 CLT 但无 `developer_dir` 链接的发现路径，并验证 framework 外的解释器被拒绝。
+
 ## 恢复与研究 Agent
 
 ```sh
