@@ -4,11 +4,11 @@ import errno
 import fcntl
 import json
 import os
-import select
 import struct
 import subprocess
 import sys
 import termios
+import threading
 import time
 from pathlib import Path
 
@@ -27,28 +27,33 @@ def window():
         start_new_session=True,
     )
     os.close(slave)
-    item = (master, child)
+    output = bytearray()
+    ready = threading.Condition()
+    item = (master, child, output, ready)
     windows.append(item)
+
+    def read_output():
+        # PTY 与真实终端一样持续消费输出；等待退出或执行 CLI 时也不能阻塞重绘。
+        try:
+            while chunk := os.read(master, 65536):
+                with ready:
+                    output.extend(chunk)
+                    del output[:-262144]
+                    ready.notify_all()
+        except OSError as error:
+            if error.errno != errno.EIO:
+                raise
+
+    threading.Thread(target=read_output, daemon=True).start()
     return item
 
 
 def expect(item, text):
-    master, child = item
-    data = bytearray()
-    end = time.monotonic() + 20
-    while time.monotonic() < end:
-        if select.select([master], [], [], 0.1)[0]:
-            try:
-                data.extend(os.read(master, 65536))
-            except OSError as error:
-                if error.errno != errno.EIO:
-                    raise
-                break
-            if text in data:
-                return
-        if child.poll() is not None:
-            break
-    raise AssertionError(f"missing {text!r}, exit={child.poll()}, output={data!r}")
+    _, child, output, ready = item
+    with ready:
+        if ready.wait_for(lambda: text in output, timeout=20):
+            return
+        raise AssertionError(f"missing {text!r}, exit={child.poll()}, output={output!r}")
 
 
 try:
@@ -85,7 +90,7 @@ try:
     os.write(second[0], b"\x11")
     assert second[1].wait(timeout=5) == 0
 finally:
-    for master, child in windows:
+    for master, child, _, _ in windows:
         if child.poll() is None:
             child.kill()
             child.wait(timeout=5)

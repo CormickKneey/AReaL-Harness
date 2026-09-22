@@ -57,3 +57,9 @@ areal-runtime-exec-native = { path = "runtime/exec-native" }
 
 [profile.release]
 lto = "thin"
+
+# 容器行为测试保留调试断言，省去调试符号和增量产物；性能镜像仍使用 release。
+[profile.ci]
+inherits = "dev"
+debug = 0
+incremental = false

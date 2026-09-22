@@ -19,7 +19,7 @@ Snapshot format changes require `make verify-harness`: Harness and plugin smoke 
 
 Native smoke tests require macOS Seatbelt; never substitute unsandboxed execution for a failure. Linux CI uses controlled containers. Default `cargo test` excludes explicitly ignored native Workgroup and capacity cases.
 
-Linux host checks use `make verify CARGO_TEST_ARGS='--exclude areal-runtime-exec-native'`. Native backend tests require a container boundary; CI then builds the Dockerfile's `runtime-tests` target and runs every backend test inside the controlled Bubblewrap container. Excluding the backend alone does not complete validation.
+Linux host checks use `make verify CARGO_TEST_ARGS='--exclude areal-runtime-exec-native'`. Native backend tests require a container boundary; a separate CI job builds the Dockerfile's `runtime-tests` target and runs every backend test inside the controlled Bubblewrap container. Excluding the backend alone does not complete validation.
 
 ## Recovery and research agents
 
@@ -65,6 +65,12 @@ Outer-container relaxations apply only to the explicitly selected controlled pro
 
 [CI](../../.github/workflows/ci.yml) runs native Harness checks on macOS, portable regression and Docker sandbox/file-ownership checks on Linux, and separate Rust/npm advisory checks. Actions are pinned by commit, repository permissions are read-only, and failures retain logs. Consult the run for the relevant commit for actual results.
 
+Pull requests, pushes to `main`, and manual dispatch run the full checks, avoiding duplicate push and PR runs for feature branches. Linux portable and container checks run in parallel. The existing `Linux checks and container Runtime` check remains as an aggregate gate that requires both jobs to succeed. macOS still runs all of `make verify-harness`.
+
+Host jobs cache Cargo dependency artifacts and npm downloads; Docker uses BuildKit's GitHub Actions layer cache. Cache hits still execute tests. Rust caches are separated by platform, toolchain and dependency manifests. CI disables debug symbols and incremental compilation to reduce artifact size. Only the pinned `cargo-audit` binary is cached; every run still reads advisories and audits the lockfile.
+
+Container behavior checks pass `--build-arg BUILD_PROFILE=ci`, selecting the Cargo `ci` profile inherited from `dev`: debug assertions remain enabled, with debug symbols and incremental compilation disabled. `runtime-tests` uses the same profile to reuse dependency artifacts. The Dockerfile still defaults to `release` with thin LTO; use that default for performance tests. The image label `io.areal.perf.build-profile` records the selected profile. CI images must not be used as release performance measurements.
+
 `make schemas` updates the pinned Codex schema; `make desktop-schemas` updates desktop schemas. Update types, callers and contracts together. Local fixtures do not validate real models, GUIs, third-party daemons, signing/notarization or other platforms. See the [benchmark guide](../benchmarks/README.en.md) for performance runs.
 
 ## Goal regression
@@ -78,3 +84,5 @@ Outer-container relaxations apply only to the explicitly selected controlled pro
 ## Shared local services
 
 `make local-service-smoke` uses temporary directories, real Core/Runtime, two PTYs and an HTTP model fixture. It verifies concurrent ensure, workspace/symlink identity, configuration conflicts, authentication, Web discovery, window exit, busy/cancel stop, persistent history, launcher/host SIGKILL cleanup and reattachment. It is included in `make harness-smoke`. `make desktop-schemas` also exports `schemas/local-service-v1.json`.
+
+The PTY helper continuously drains terminal output while waiting for CLI commands, service shutdown and window exit, preventing terminal backpressure from blocking the TUI. `make script-test` includes a deterministic regression that writes more than the PTY capacity before exiting.
