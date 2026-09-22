@@ -93,6 +93,8 @@ def main():
     parser.add_argument("--resume")
     headless = parser.add_mutually_exclusive_group()
     headless.add_argument("--prompt")
+    headless.add_argument("--goal")
+    parser.add_argument("--goal-token-budget", type=int)
     headless.add_argument("--input-file", type=Path)
     parser.add_argument("--theme", choices=("dark", "light", "terminal"))
     parser.add_argument("--color", choices=("auto", "always", "never"))
@@ -119,9 +121,14 @@ def main():
     if not args.tui and args.workspace is None:
         parser.error("--workspace is required without --tui")
     if not args.tui and (
-        args.resume is not None or args.prompt is not None or args.input_file is not None
+        args.resume is not None
+        or args.prompt is not None
+        or args.goal is not None
+        or args.input_file is not None
     ):
-        parser.error("--resume and --prompt require --tui")
+        parser.error("--resume, --prompt, --goal and --input-file require --tui")
+    if args.goal_token_budget is not None and (args.goal is None or args.goal_token_budget <= 0):
+        parser.error("--goal-token-budget requires --goal and a positive integer")
     if not args.tui and tui_arguments(args):
         parser.error("client appearance options require --tui")
     workspace = (args.workspace or Path.cwd()).resolve()
@@ -203,7 +210,7 @@ def main():
 
             termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, terminal_state)
             terminal_state = None
-            if args.prompt is None and args.input_file is None:
+            if args.prompt is None and args.goal is None and args.input_file is None:
                 # Restore even when the client died before ratatui could do so.
                 sys.stderr.write("\x1b[?1049l\x1b[?25h")
                 sys.stderr.flush()
@@ -359,6 +366,12 @@ def main():
                         json.loads(metadata.read_text())["authFile"],
                         *([f"--resume={args.resume}"] if args.resume is not None else []),
                         *([f"--prompt={args.prompt}"] if args.prompt is not None else []),
+                        *([f"--goal={args.goal}"] if args.goal is not None else []),
+                        *(
+                            [f"--goal-token-budget={args.goal_token_budget}"]
+                            if args.goal_token_budget is not None
+                            else []
+                        ),
                         *tui_arguments(args),
                         *(["--input-file", str(args.input_file)] if args.input_file else []),
                     ]

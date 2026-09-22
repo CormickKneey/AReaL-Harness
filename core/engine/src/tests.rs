@@ -25,6 +25,7 @@ async fn model_history_preserves_completion_batches_and_defers_tool_images() {
         .unwrap()
     };
     thread.turns.push(Turn {
+        goal: None,
         configuration: None,
         instruction_snapshot: None,
         id: "turn".into(),
@@ -94,6 +95,7 @@ async fn model_history_keeps_short_references_and_preserves_runtime_audit() {
         );
     }
     thread.turns.push(Turn {
+        goal: None,
         configuration: None,
         instruction_snapshot: None,
         id: "turn".into(),

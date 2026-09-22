@@ -36,3 +36,5 @@ make desktop-schemas
 root 相对清单目录，必须含 SKILL.md；Renderer 只传 ID/revision，不注册任意宿主路径。清单只登记引用和元信息，Profile 不冻结文件内容；同一引用后续读取当前磁盘文件。不需要显式清单时可用[自动 Skill 发现](../guides/skills.md)。阶段 Workflow 和 Workgroup 策略见[指南](../guides/workgroups.md)。
 
 真实 GUI、外部消费者任务生命周期、签名/公证和其他平台需独立验证。fixture 的通过不证明这些集成已完成。三个契约分别为[桌面 API](../api/desktop.md)、[Native Host](../api/native-host.md)和 [CLI](../api/claude-cli.md)。
+
+Goal 用例 `node examples/desktop-api/run.mjs goal-mode` 覆盖无 Goal 配置时直接创建、CAS/幂等、两轮原生文件验证、隔离 Workgroup 共享计量、observe/interact 权限、重连恢复与 headless 跨 Turn 等待，纳入 `make examples-desktop-api`。契约见 [Core API](../api/core.md#goals)。

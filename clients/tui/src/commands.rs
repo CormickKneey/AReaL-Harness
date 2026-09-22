@@ -13,6 +13,20 @@ macro_rules! commands {
 }
 
 commands![
+    ("/goal", "OBJECTIVE", "Start or inspect a durable goal"),
+    ("/goal-pause", "", "Pause the goal and stop its active Turn"),
+    ("/goal-resume", "", "Resume a stopped goal"),
+    (
+        "/goal-edit",
+        "OBJECTIVE",
+        "Edit a stopped goal, preserving usage"
+    ),
+    (
+        "/goal-budget",
+        "TOKENS|none",
+        "Update a stopped goal token budget"
+    ),
+    ("/goal-clear", "", "Clear a settled goal"),
     ("/sessions", "", "Find and switch sessions"),
     ("/model", "", "Choose a model for this session"),
     ("/new", "", "Start a new session"),

@@ -27,7 +27,7 @@ pub(crate) struct Desktop {
     pub(crate) default_profile: std::sync::RwLock<Option<VersionRef>>,
     worker_model: std::sync::atomic::AtomicBool,
     submissions: submissions::Submissions,
-    lifecycle: server::Lifecycle,
+    pub(crate) lifecycle: server::Lifecycle,
     pub(crate) mcp: mcp::Manager,
     catalog: std::sync::RwLock<catalog::Catalog>,
     catalog_write: Mutex<()>,
@@ -52,7 +52,7 @@ impl Desktop {
 fn invalid(error: impl std::fmt::Display) -> Error {
     Error::Invalid(error.to_string())
 }
-fn digest(value: &impl Serialize) -> Result<String> {
+pub(crate) fn digest(value: &impl Serialize) -> Result<String> {
     Ok(format!(
         "{:x}",
         Sha256::digest(serde_json::to_vec(value).map_err(invalid)?)
@@ -68,7 +68,7 @@ fn valid_id(value: &str) -> bool {
 fn desktop(thread: &Thread) -> DesktopState {
     thread.desktop.clone().unwrap_or_default()
 }
-fn receipt(
+pub(crate) fn receipt(
     state: &DesktopState,
     identity: &str,
     request: &str,
@@ -98,7 +98,7 @@ fn receipt(
     }
     Ok(None)
 }
-fn remember(
+pub(crate) fn remember(
     state: &mut DesktopState,
     identity: &str,
     request: &str,

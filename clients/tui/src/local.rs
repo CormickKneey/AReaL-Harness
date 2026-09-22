@@ -98,10 +98,14 @@ pub fn launch(args: &super::Args) -> Result<()> {
         ("--api-key-env", &args.local.api_key_env),
         ("--resume", &args.resume),
         ("--prompt", &args.prompt),
+        ("--goal", &args.goal),
     ] {
         if let Some(value) = value {
             command.arg(format!("{flag}={value}"));
         }
+    }
+    if let Some(budget) = args.goal_token_budget {
+        command.arg(format!("--goal-token-budget={budget}"));
     }
     if args.local.allow_write {
         command.arg("--allow-write");

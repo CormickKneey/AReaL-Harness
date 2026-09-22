@@ -272,7 +272,7 @@ impl Engine {
                 "parent/profile does not authorize an isolated writer",
             ));
         }
-        let owner = active.id.clone();
+        let owner = format!("{}/{}", state.thread.id, active.id);
         let cancel = active.cancel.clone();
         let writes = request.writes.clone().ok_or_else(|| {
             invalid("isolatedWrite requires exact writes within Workgroup policy")
@@ -319,7 +319,12 @@ impl Engine {
         let result = self
             .workgroups()
             .map_err(invalid)?
-            .start(owner, request, cancel)
+            .start_with_goal(
+                owner.clone(),
+                request,
+                cancel,
+                self.goal_for_owner(&owner).await,
+            )
             .await
             .map_err(invalid)?;
         Ok(

@@ -3,6 +3,7 @@ pub mod concurrency;
 mod context;
 pub mod desktop;
 mod generation;
+pub mod goals;
 mod history;
 pub mod model;
 mod sessions;
@@ -37,6 +38,7 @@ use tracing::{Instrument, info_span};
 
 #[derive(Clone, Debug)]
 pub struct Limits {
+    pub goals: goals::Policy,
     pub max_threads: usize,
     pub model_concurrency: usize,
     pub max_active_turns: usize,
@@ -62,6 +64,7 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
+            goals: goals::Policy::default(),
             max_threads: 20_000,
             model_concurrency: 32,
             max_active_turns: 256,
@@ -129,6 +132,8 @@ struct State {
     quarantined_admission: Option<OwnedSemaphorePermit>,
 }
 struct Cell {
+    // 工具投影可能已持有会话锁，原子角色避免为读取 Goal 可见性再次加锁。
+    goal_role: AtomicUsize,
     depth: usize,
     research: bool,
     id: String,
@@ -144,6 +149,7 @@ struct Cell {
 impl Cell {
     fn new(thread: Thread, depth: usize, bindings: tools::Bindings) -> Arc<Self> {
         Arc::new(Self {
+            goal_role: AtomicUsize::new(if thread.goal_owner.is_some() { 2 } else { 0 }),
             depth,
             research: thread.source == "nativeResearchAgent",
             id: thread.id.clone(),
@@ -169,6 +175,7 @@ impl Cell {
 }
 
 pub struct Engine {
+    goals: goals::Goals,
     threads: RwLock<BTreeMap<String, Arc<Cell>>>,
     store: store::Store,
     model: Arc<dyn Model>,
@@ -340,6 +347,13 @@ impl Engine {
                 && !limits.stream_idle_timeout.is_zero(),
             "invalid Core limits"
         );
+        anyhow::ensure!(
+            (1..=86400).contains(&limits.goals.max_turns)
+                && (1..=86400).contains(&limits.goals.max_active_seconds)
+                && (1..=86400).contains(&limits.goals.max_unreported_turns)
+                && (2..=1024).contains(&limits.goals.turn_model_rounds),
+            "invalid goal policy"
+        );
         let store = store::Store::open(root)?;
         if let Some(runtime) = runtime.as_mut() {
             runtime.workspace = runtime.workspace.canonicalize()?;
@@ -411,7 +425,9 @@ impl Engine {
             &registry,
         )?;
         let desktop = desktop::Desktop::open(root)?;
+        let goals = goals::Goals::open(root, &threads)?;
         Ok(Arc::new(Self {
+            goals,
             desktop,
             threads: RwLock::new(threads),
             store,

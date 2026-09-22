@@ -22,6 +22,100 @@ export async function fixture() {
       const result = request.messages.slice(lastUser + 1).filter((m) => m.role === "tool");
       let tool;
       let reply = "完成：" + request.model;
+      const goalText = request.messages.find(
+        (m) => typeof m.content === "string" && m.content.includes("Current authoritative goal: "),
+      )?.content;
+      const goalView = goalText && JSON.parse(goalText.split("Current authoritative goal: ")[1]);
+      const goalWorker = typeof first === "string" && first.includes("GOAL_WORKER_FIXTURE");
+      if (goalView?.goal.objective === "goal-workgroup-fixture") {
+        if (result.length === 0) {
+          tool = [
+            "workgroup_start",
+            {
+              requestId: "goal-worker",
+              workers: 1,
+              plan: {
+                objective: "Verify isolated Goal accounting",
+                tasks: [
+                  {
+                    id: "page",
+                    instruction: "GOAL_WORKER_FIXTURE",
+                    writes: ["game/index.html", "game/PRD.md"],
+                  },
+                ],
+              },
+            },
+          ];
+        } else {
+          const group = JSON.parse(
+            result.findLast((r) => JSON.parse(r.content).id)?.content ?? "null",
+          );
+          if (group?.status === "completed" && !result.some((r) => JSON.parse(r.content).goal)) {
+            tool = [
+              "goal_update",
+              {
+                expectedRevision: goalView.revision,
+                status: "complete",
+                summary: "Isolated candidate verified",
+                evidence: [group.id],
+                remaining: [],
+              },
+            ];
+          } else if (group?.status !== "completed") {
+            assert.equal(group?.status, "running", JSON.stringify(result));
+            tool = [
+              "workgroup_wait",
+              { id: group.id, afterRevision: group.revision, timeoutMs: 60000 },
+            ];
+          }
+        }
+      }
+      if (goalWorker && result.length === 0) {
+        tool = [
+          "run_command",
+          {
+            argv: [
+              "/bin/sh",
+              "-c",
+              "mkdir -p game; printf specification > game/PRD.md; printf '<!doctype html><p>Goal worker</p>' > game/index.html",
+            ],
+            cwd: ".",
+            timeoutMs: 3000,
+          },
+        ];
+      }
+      if (goalView?.goal.objective === "goal-native-fixture") {
+        assert(request.tools.some((t) => t.function.name === "goal_update"));
+        if (result.length === 0) {
+          tool = [
+            "run_command",
+            {
+              argv: [
+                "/bin/sh",
+                "-c",
+                goalView.goal.usage.turnsStarted === 1
+                  ? "printf goal-evidence > goal.txt"
+                  : 'test "$(cat goal.txt)" = goal-evidence',
+              ],
+              cwd: ".",
+              timeoutMs: 3000,
+            },
+          ];
+        } else if (result.length === 1) {
+          assert(!JSON.parse(result[0].content).isError, result[0].content);
+          const complete = goalView.goal.usage.turnsStarted > 1;
+          tool = [
+            "goal_update",
+            {
+              expectedRevision: goalView.revision,
+              status: complete ? "complete" : "continue",
+              summary: complete ? "File verified" : "File created; verify in the next Turn",
+              evidence: ["run_command completed"],
+              remaining: complete ? [] : ["verify goal.txt"],
+            },
+          ];
+        } else reply = "GOAL_NATIVE_VERIFIED";
+      }
       if (first === "skill-discovery") {
         if (result.length === 0) {
           assert(
@@ -209,7 +303,7 @@ export async function fixture() {
       }
       if (tool) {
         res.end(
-          `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: `call-${result.length}`, type: "function", function: { name: tool[0], arguments: JSON.stringify(tool[1]) } }] }, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] })}\n\ndata: [DONE]\n\n`,
+          `data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: `call-${result.length}`, type: "function", function: { name: tool[0], arguments: JSON.stringify(tool[1]) } }] }, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }], ...(goalView || goalWorker ? { usage: { prompt_tokens: 10, completion_tokens: 4 } } : {}) })}\n\ndata: [DONE]\n\n`,
         );
       } else {
         const bytes = Buffer.from(

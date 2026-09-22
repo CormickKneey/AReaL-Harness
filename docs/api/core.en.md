@@ -38,13 +38,15 @@ Confirmed argument/schema errors can return to the model for correction. Persist
 
 The watchdog keeps the same messages, tools, sampling parameters and model round. It does not consume `max_completion_retries` or reserve another Agent logical-request slot; Workgroups still account for each physical request and enforce deployment budgets. Backoff starts at 250 ms and doubles up to 30 seconds. Failed streams release their shared model permits before waiting, and cancellation and overall deadlines remain effective; solve requests also respond to steer. Core audits and discards the failed response's text, context and unexecuted calls, restores its output-byte allowance, and retains earlier executed tools and observed usage. Events are `areal/model/completionDiscarded` (new `retryKind=network|completion`) and `areal/model/watchdogRetry {threadId,turnId,purpose:solve|summary,retry,delayMs}`. Discarding a response neither rolls back executed tools nor restarts the Turn.
 
+Goal requests check the shared budget and known usage before retrying. A failed or timed-out request with unknown usage retains its reservation and blocks the Goal with usageUnknown, without watchdog backoff or finite completion retries. Summary requests follow the same rule: the previous checkpoint is retained without a degraded replacement. Metered HTTP requests disable internal transport retries so one reservation cannot hide multiple requests.
+
 `max_completion_retries` defaults to 0 and enables finite recovery for classified length truncation or empty completions (reasoning alone is not a final answer). With the watchdog disabled, classified network failures also use this finite allowance. Tools execute only after a complete successful stream; UNKNOWN, persistence errors, cancellation and overall deadline errors are never replayed.
 
 Compaction retains the original goal and recent content without splitting completion/tool-result or opaque-reasoning boundaries. Summaries are at most 16 KiB with throughItemId and a persisted checkpoint. Network failures retry the same summary input without consuming validation attempts. Empty or pseudo-tool summaries get one retry; subsequent failure permits explicitly marked DEGRADED CONTEXT only if it reduces input, otherwise the Turn fails. Cancellation preserves the old checkpoint. Compaction never deletes history, journals or Turn tool state.
 
 Model audits in `data_dir/model-requests/*.json` and `requests.jsonl` record solve/summary, parameters, body digest/size, attempts, usage, stopReason, duration and bounded response shape, without headers, endpoints or prompts. `usageObserved=true` means a complete parseable usage event was received, including zero; missing/false is not known zero. A length termination still collects same-frame/tail usage within deadlines and cancellation, then marks truncation and prevents tool execution.
 
-Snapshot format 5 reads formats 1–4; older Core cannot read new snapshots. contextCheckpoint affects model input without deleting original history. modelContext retains opaque Responses context, not user content. Missing usage/duration is unknown, not zero.
+Snapshots are written in format 7 and formats 1–7 can be read; older Core cannot read new snapshots. contextCheckpoint affects model input without deleting original history. modelContext retains opaque Responses context, not user content. Missing usage/duration is unknown, not zero.
 
 <a id="dynamic-tools"></a>
 ## Dynamic tool callbacks
@@ -102,3 +104,52 @@ Rust launchers call `areal_config::skills::discover(workspace, homedir)` for `Sk
 ## Errors
 
 Standard -32700/-32600/-32601/-32602/-32603 mean parse/request/method/argument/internal errors. -32000 is closed, -32001 capacity, -32003 authentication, -32004 missing and -32009 conflict. Transport id is not a business deduplication key. Read authoritative state after losing old turn/start or spawn responses; never replay automatically. See [desktop submissions](desktop.en.md#submissions) for requestId semantics.
+
+<a id="goals"></a>
+## Goal mode
+
+Goals need no deployment toggle. `areal/capabilities.features.goals` is always true to advertise support; automatic continuation starts only after explicitly creating a Goal. See [client usage and recovery](../guides/clients.en.md#goals) and [deployment limits](../guides/configuration.en.md#goals). These are AReaL extensions to the pinned Codex 0.145.0 baseline, not upstream `thread/goal/*` compatibility.
+
+### Client control
+
+Reads require observe; mutations require interact and authorization for the Thread. Mutations require `requestId`, `threadId` and `expectedRevision`; existing-Goal mutations also require `goalId`. Identical principal/method/requestId and parameters return the original receipt before checking revision; changed parameters conflict. Read a fresh snapshot after conflicts instead of blindly retrying writes.
+
+| Method | Additional parameters | Behavior |
+|---|---|---|
+| `areal/goal/get` | `threadId` | Return the projection, including control revision when goal=null |
+| `areal/goal/create` | `objective, tokenBudget?, maxTurns?, maxActiveSeconds?` | Create on an idle root Thread without pending input and atomically accept the first Turn; an uncleared Goal conflicts |
+| `areal/goal/update` | `goalId, objective?, tokenBudget?, maxTurns?, maxActiveSeconds?` | Edit after stopping and cleanup; retain identity and usage without starting execution |
+| `areal/goal/pause` | `goalId` | Persist paused, pause the user queue and request cancellation; cleanup may still be running when the response arrives |
+| `areal/goal/resume` | `goalId` | Validate budget, UNKNOWN and hosts, then resume; wait for active-Turn capacity if needed; only queue pauses caused by Goal pause/Stop are resumed automatically |
+| `areal/goal/clear` | `goalId` | Require stopped execution, no active Turn, pending input or unsettled resources; increment control revision and retain historical attribution, evidence and accounting |
+
+objective is 1–4000 Unicode characters and cannot be whitespace-only. Budgets are positive integers. maxTurns includes the first root Turn; maxActiveSeconds counts root-Turn model queues, execution, tools, interactions and cleanup without adding child duration or capacity waits between Turns, paused time or offline time. Omitting tokenBudget at creation leaves tokens unlimited by the Goal. For updates, omitted fields retain values and explicit null removes the Goal token limit; deployment limits still apply. Only client control can raise limits. update needs at least one field. completed Goals are read-only; clear/create starts a new Goal.
+
+resume retains all usage and cannot bypass exhausted limits or resume completed Goals. It acknowledges conservative reservations for unknown model consumption without deleting them or restoring accountingComplete=true. Tool UNKNOWN still requires independent inspection and acknowledgement. Ordinary `thread/resume` restores subscriptions and snapshots without resuming Goal execution. Only the queue pause owned by that Goal pause can be cleared by Goal resume.
+
+The projection contains `threadId`, `revision`, `eventSequence` and `goal`. A Goal contains `id`, `threadId`, `objective`, `status`, `reason`, budgets/usage, `activeTurnId`, `settling`, `waitingForInput`, `waitingForCapacity`, latest `report`/`reportTurnId` and `unreportedTurns`. Status is active/paused/blocked/completed/budgetLimited/failed. Control changes advance revision; persistent projection changes advance eventSequence. get and atomic resume include current usage; events are not emitted per token. State and receipts are persisted before events. A save failure emits in-memory failed/SystemError and recovery remains conservative.
+
+goal.usage contains `inputTokens`, `cachedInputTokens`, `outputTokens`, `tokensUsed`, `reservedTokens`, `unknownRequests`, `timeUsedSeconds`, `turnsStarted` and `accountingComplete`. tokensUsed sums confirmed input/output; cached input is a subset, not an extra charge. Outstanding reservations also count toward admission. Unknown statistics never become zero. A crash window or missing usage makes accountingComplete=false. Estimated request admission does not guarantee that provider charges cannot exceed tokenBudget.
+
+```json
+{"id":20,"method":"areal/goal/create","params":{"requestId":"goal-migration-1","threadId":"THREAD_ID","expectedRevision":0,"objective":"Complete the module migration, preserve public API compatibility and pass the relevant behavior tests.","tokenBudget":200000,"maxTurns":20,"maxActiveSeconds":3600}}
+```
+
+create returns the projection and first turnId. Events `areal/goal/updated` and `areal/goal/cleared` carry threadId, revision, eventSequence and the projection; clear also carries the removed goalId. Existing Turn events and terminal meanings remain intact. Thread adds optional `goals:{revision,eventSequence,goal}`; children use `goalOwner:{threadId,goalId}`. Turn adds `goal:{goalId,sequence,origin,predecessorTurnId}`, where origin is initial/user/continuation. Old data defaults to no Goal; clear preserves revision to reject stale requests.
+
+Goal events use the existing atomic snapshot/subscription boundary, authorization filters and backpressure rules. Reconnect by replacing local state with the full resume snapshot before applying events. Separate get/subscribe calls do not provide that atomic boundary. Rust types generate request, response and event definitions in [areal-core-v1.json](../../schemas/areal-core-v1.json).
+
+### Model tools
+
+| Tool | Parameters | Authority and behavior |
+|---|---|---|
+| `goal_read` | `{}` | Read the bound Goal, state, budget and remaining work; children receive a read-only projection |
+| `goal_update` | `{expectedRevision, status, summary, evidence, remaining, blocker?}` | Current root Goal Turn only; continue/complete/blocked reports progress or requests settlement |
+
+Core binds Goal/root identity. summary is nonempty and at most 4096 characters; evidence and remaining each allow 16 entries of at most 1024 characters, with at most 32 KiB total arguments. complete requires nonempty evidence and empty remaining; blocked requires a nonempty blocker describing the obstacle and resolution. Evidence is model-reported text referencing tools, checks or artifacts, not independent semantic verification. Core checks report structure, unconsumed verification handles, pending input and child/Workgroup settlement; actual checks and model reporting still determine business correctness.
+
+`goal_update` returns the accepted control revision. complete remains pending until the Turn settles normally. User control, steer or queued input invalidates the previous completion request; cleanup, persistence or child failure cannot publish completed. Models cannot create, resume, raise budgets or clear Goals, bypass approvals, or finish a Goal through ordinary final text or Turn completion.
+
+Rust embedders use `Limits.goals: goals::Policy` and `Engine::goal_get/goal_create/goal_control`. Custom Model implementations must explicitly support per-request output caps in `chat_limited` and preserve accounting via `share_context`; the HTTP adapter supports both. Custom Workgroup Factories must implement `executor_for_goal` and retain the supplied Budget; the default rejects Goal calls. Ordinary Turns and standalone Workgroups retain their existing behavior.
+
+Goal request ledgers are stored at `goals/<goal-id>.json`, with reservations persisted before sending. Root/child Agents, native Workgroups and active-Turn summaries share accounting. Each ledger permits 4096 requests/4 MiB; clear retains ledgers and history. Snapshot format 7 stores Goals and Turn attribution and cannot be read by older binaries; the API remains areal.core.v1.

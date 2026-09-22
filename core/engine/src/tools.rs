@@ -601,6 +601,7 @@ impl Engine {
         cancel: &CancellationToken,
         call: ToolCall,
     ) -> anyhow::Result<usize> {
+        self.goal_tool_guard(cell, &call.name).await?;
         let bindings = cell.bindings.read().await.clone();
         let entry = bindings.registry.get(&call.name);
         let coordination = entry

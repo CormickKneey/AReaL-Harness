@@ -1,7 +1,7 @@
 //! Drain 关闭准入后保留观察与取消；不隐式重建仍有资源或 UNKNOWN 的实例。
 use super::*;
 use std::sync::atomic::{AtomicBool, Ordering};
-pub(super) struct Lifecycle {
+pub(crate) struct Lifecycle {
     pub draining: AtomicBool,
     pub gate: Mutex<()>,
 }
@@ -69,7 +69,7 @@ impl Engine {
             g.iter()
                 .any(|g| g["status"] == "running" || g["cleanupConfirmed"] != true)
         });
-        json!({"compactions":compacting,"workgroups":groups,"apiVersion":API_VERSION,"stateVersion":6,"productVersion":env!("CARGO_PKG_VERSION"),"draining":self.desktop.lifecycle.draining.load(Ordering::Acquire),"closed":self.is_closed(),"acceptingWork":self.accepting_work(),"activeTurns":active,"resources":resources,"unresolvedTools":unknown,"runtime":runtime,"capacity":{"threads":cells.len(),"maxThreads":self.limits.max_threads,"activeTurns":self.limits.max_active_turns-self.active_turns.available_permits(),"maxActiveTurns":self.limits.max_active_turns,"historyBytesPerThread":self.limits.max_history_bytes,"blobBytes":512*1024*1024u64},"restartSafe":active.is_empty()&&resources.is_empty()&&unknown.is_empty()&&compacting.is_empty()&&!unsettled})
+        json!({"compactions":compacting,"workgroups":groups,"apiVersion":API_VERSION,"stateVersion":7,"productVersion":env!("CARGO_PKG_VERSION"),"draining":self.desktop.lifecycle.draining.load(Ordering::Acquire),"closed":self.is_closed(),"acceptingWork":self.accepting_work(),"activeTurns":active,"resources":resources,"unresolvedTools":unknown,"runtime":runtime,"capacity":{"threads":cells.len(),"maxThreads":self.limits.max_threads,"activeTurns":self.limits.max_active_turns-self.active_turns.available_permits(),"maxActiveTurns":self.limits.max_active_turns,"historyBytesPerThread":self.limits.max_history_bytes,"blobBytes":512*1024*1024u64},"restartSafe":active.is_empty()&&resources.is_empty()&&unknown.is_empty()&&compacting.is_empty()&&!unsettled})
     }
     pub async fn drain(self: &Arc<Self>, strategy: String, timeout_ms: u64) -> Result<Value> {
         if !matches!(strategy.as_str(), "wait" | "cancel") || timeout_ms > 60000 {
@@ -93,6 +93,20 @@ impl Engine {
                     continue;
                 }
                 let mut candidate = state.thread.clone();
+                if let Some(goal) = &mut candidate.goals.goal
+                    && goal.status == areal_protocol::goals::GoalStatus::Active
+                {
+                    goal.status = areal_protocol::goals::GoalStatus::Paused;
+                    goal.reason = Some("serverDraining".into());
+                    candidate.goals.revision += 1;
+                    candidate.goals.event_sequence += 1;
+                    if let Some(budget) = engine.goals.budget(&candidate) {
+                        budget.configure(
+                            candidate.goals.goal.as_ref().and_then(|g| g.token_budget),
+                            strategy == "wait",
+                        );
+                    }
+                }
                 if let Some(d) = &mut candidate.desktop {
                     d.queue.paused = true;
                     d.queue.pause_reason = Some("serverDraining".into());
@@ -100,6 +114,7 @@ impl Engine {
                 }
                 engine.persist(&candidate).await?;
                 state.thread = candidate;
+                engine.goal_emit(cell, &state.thread);
                 if strategy == "cancel"
                     && let Some(active) = &state.active
                 {

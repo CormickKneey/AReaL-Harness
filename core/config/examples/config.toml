@@ -34,3 +34,10 @@ filter = "info"
 # 可选：工具等待策略、自定义命令工具与 hooks；详见 docs/guides/tools.md。
 # [tools]
 # extensions_file = "tools.json"
+
+# Goal 执行限制；客户端用 /goal 创建目标，无需功能开关。
+[goals]
+max_turns = 100
+max_active_seconds = 3600
+max_unreported_turns = 3
+turn_model_rounds = 32

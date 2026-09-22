@@ -18,6 +18,11 @@ fn main() {
         };
     }
     add!("areal/capabilities", CapabilitiesRequest);
+    add!("areal/goal/create", areal_protocol::goals::GoalCreate);
+    add!("areal/goal/update", areal_protocol::goals::GoalUpdate);
+    for action in ["areal/goal/pause", "areal/goal/resume", "areal/goal/clear"] {
+        add!(action, areal_protocol::goals::GoalControl);
+    }
     add!("areal/subscription/remove", RemoveSubscriptions);
     add!("areal/thread/start", ThreadStart);
     add!("areal/thread/configure", ConfigureThread);
@@ -49,6 +54,7 @@ fn main() {
     }
     let object = |properties: Value, required: Vec<&str>| json!({"type":"object","properties":properties,"required":required,"additionalProperties":false});
     for method in [
+        "areal/goal/get",
         "areal/thread/inspect",
         "areal/thread/archive",
         "areal/thread/closeResources",

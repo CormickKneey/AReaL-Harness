@@ -70,13 +70,28 @@ impl Store {
             }
             let mut record: Record = serde_json::from_slice(&std::fs::read(&path)?)
                 .with_context(|| format!("invalid session: {}", path.display()))?;
-            if !matches!(record.version, 1..=6)
+            if !matches!(record.version, 1..=7)
                 || path.file_stem().and_then(|s| s.to_str()) != Some(&record.thread.id)
                 || uuid::Uuid::parse_str(&record.thread.id).is_err()
             {
                 bail!("unsupported or inconsistent session: {}", path.display());
             }
             let mut repaired = false;
+            if let Some(goal) = &mut record.thread.goals.goal {
+                if goal.status == areal_protocol::goals::GoalStatus::Active {
+                    goal.status = areal_protocol::goals::GoalStatus::Paused;
+                    goal.reason = Some("serverRestarted".into());
+                    goal.usage.accounting_complete = false;
+                    goal.report_turn_id = None;
+                    record.thread.goals.revision += 1;
+                    record.thread.goals.event_sequence += 1;
+                    repaired = true;
+                }
+                goal.active_turn_id = None;
+                goal.settling = false;
+                goal.waiting_for_input = false;
+                goal.waiting_for_capacity = false;
+            }
             for turn in &mut record.thread.turns {
                 if turn.status == TurnStatus::InProgress {
                     turn.status = TurnStatus::Interrupted;
@@ -286,7 +301,7 @@ fn atomic_write(root: &Path, thread: &Thread) -> Result<()> {
     serde_json::to_writer(
         &mut file,
         &Record {
-            version: 6,
+            version: 7,
             thread: thread.clone(),
         },
     )?;

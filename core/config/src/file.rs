@@ -135,6 +135,7 @@ fn walk(
             | ["limits"]
             | ["logging"]
             | ["tools"]
+            | ["goals"]
     );
     if table {
         let values = item
@@ -165,6 +166,10 @@ fn walk(
     let numeric = matches!(
         names.as_slice(),
         ["schema_version"]
+            | [
+                "goals",
+                "max_turns" | "max_active_seconds" | "max_unreported_turns" | "turn_model_rounds"
+            ]
             | [
                 "limits",
                 "model_concurrency"

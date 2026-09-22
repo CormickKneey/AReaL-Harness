@@ -551,6 +551,13 @@ impl App {
             return Ok(false);
         }
         match input.as_str() {
+            "/goal" => {
+                let id = self.selected.clone().context("Create a thread first")?;
+                self.queue("areal/goal/get", json!({"threadId":id}), Purpose::Ordinary)?;
+            }
+            "/goal-pause" | "/goal-resume" | "/goal-clear" => {
+                self.goal_control(input.strip_prefix("/goal-").unwrap(), None)?
+            }
             "/quit" => return Ok(true),
             "/new" => {
                 self.new_thread()?;
@@ -585,7 +592,19 @@ impl App {
                 self.load_page(parent, false)?;
             }
             _ => {
-                if let Some(prefix) = input.strip_prefix("/open ") {
+                if let Some(text) = input.strip_prefix("/goal ") {
+                    let thread = self.current().context("Create a thread first")?;
+                    self.queue("areal/goal/create", json!({"threadId":thread.id,"requestId":crate::goal_request_id(),"expectedRevision":thread.goals.revision,"objective":text}), Purpose::Ordinary)?;
+                } else if let Some(text) = input.strip_prefix("/goal-edit ") {
+                    self.goal_control("update", Some(json!({"objective":text})))?;
+                } else if let Some(value) = input.strip_prefix("/goal-budget ") {
+                    let budget = if value == "none" {
+                        Value::Null
+                    } else {
+                        json!(value.parse::<u64>()?)
+                    };
+                    self.goal_control("update", Some(json!({"tokenBudget":budget})))?;
+                } else if let Some(prefix) = input.strip_prefix("/open ") {
                     let matches: Vec<_> = self
                         .threads
                         .keys()
@@ -860,13 +879,28 @@ impl App {
         }
         Ok(())
     }
+    fn goal_control(&mut self, action: &str, patch: Option<Value>) -> Result<()> {
+        let thread = self.current().context("Select a thread first")?;
+        let goal = thread.goals.goal.as_ref().context("No current goal")?;
+        let mut params = json!({"threadId":thread.id,"requestId":crate::goal_request_id(),"goalId":goal.id,"expectedRevision":thread.goals.revision});
+        if let Some(Value::Object(patch)) = patch {
+            params.as_object_mut().unwrap().extend(patch);
+        }
+        self.queue(&format!("areal/goal/{action}"), params, Purpose::Ordinary)
+    }
     pub fn key(&mut self, key: KeyEvent) -> Result<bool> {
         self.dirty = true;
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
                 KeyCode::Char('q') => return Ok(true),
                 KeyCode::Char('c') => {
-                    if let Some(turn) = self.active() {
+                    if self
+                        .current()
+                        .and_then(|t| t.goals.goal.as_ref())
+                        .is_some_and(|g| g.status == areal_protocol::goals::GoalStatus::Active)
+                    {
+                        self.goal_control("pause", None)?;
+                    } else if let Some(turn) = self.active() {
                         self.queue(
                             "turn/interrupt",
                             json!({"threadId":self.selected,"turnId":turn.id}),
@@ -1391,6 +1425,18 @@ impl App {
                             .filter_map(|v| v.as_str().map(str::to_owned))
                             .collect();
                     }
+                    method if method.starts_with("areal/goal/") => {
+                        if let Some(id) = result["threadId"].as_str()
+                            && let Some(t) = self.threads.get_mut(id)
+                        {
+                            let sequence = result["eventSequence"].as_u64().unwrap_or(0);
+                            if sequence >= t.goals.event_sequence {
+                                t.goals.revision = result["revision"].as_u64().unwrap_or(0);
+                                t.goals.event_sequence = sequence;
+                                t.goals.goal = serde_json::from_value(result["goal"].clone())?;
+                            }
+                        }
+                    }
                     "areal/agent/spawn" => {
                         self.snapshot(serde_json::from_value(result["thread"].clone())?);
                     }
@@ -1481,6 +1527,14 @@ impl App {
         }
         let thread = self.threads.get_mut(id).unwrap();
         match method {
+            "areal/goal/updated" | "areal/goal/cleared" => {
+                let sequence = p["eventSequence"].as_u64().unwrap_or(0);
+                if sequence >= thread.goals.event_sequence {
+                    thread.goals.revision = p["revision"].as_u64().unwrap_or(0);
+                    thread.goals.event_sequence = sequence;
+                    thread.goals.goal = serde_json::from_value(p["goal"].clone())?;
+                }
+            }
             "areal/plan/updated" => {
                 let plan: areal_protocol::desktop::Plan =
                     serde_json::from_value(p["plan"].clone())?;

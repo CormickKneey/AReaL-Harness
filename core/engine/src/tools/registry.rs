@@ -212,7 +212,10 @@ impl Registry {
             config.validate()?;
         }
         let mut registry = Self::default();
-        for definition in crate::desktop::definitions() {
+        for definition in crate::desktop::definitions()
+            .into_iter()
+            .chain(crate::goals::definitions())
+        {
             registry.insert(definition, Backend::Core)?;
         }
         if runtime {

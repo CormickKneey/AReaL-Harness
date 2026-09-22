@@ -14,6 +14,7 @@ This page describes implemented behavior. Compilation, mechanism tests and real-
 | Desktop interface | Authentication, Profiles/Skills/Plans, approvals/questions, submission receipts and queues, shared terminals, configuration CAS, model switching, media Blobs, archiving and GC. [Desktop API](api/desktop.en.md) |
 | Clients | CLI, TUI and local Web; selected Claude Code noninteractive arguments and messages. [CLI contract](api/claude-cli.en.md) |
 | Skills | Discovery and explicit Profiles share metadata registration and on-demand body/attachment reads; invalid individual global Skills are isolated with warnings, without content snapshots. [Skill guide](guides/skills.en.md) |
+| Persistent Goals | Explicit creation through `/goal` or other clients, with no configuration toggle; automatic continuation across Turns, pause/resume/edit/clear and user-input priority; root/child Agents, Workgroups and summaries share accounting. [Client guide](guides/clients.en.md#goals) · [API](api/core.en.md#goals) |
 | SDKs | Private in-repository `@areal/runtime` and `@areal/plugins` packages; Node.js 22.19.0+. [SDK contracts](api/typescript-sdk.en.md) |
 | Observability and validation | tracing and optional OTLP; deterministic regression tests, native smoke tests and Docker lite/pro benchmarks. [Testing](development/testing.en.md) |
 
@@ -25,3 +26,4 @@ This page describes implemented behavior. Compilation, mechanism tests and real-
 - A pinned Codex app-server subset and Claude CLI message adaptation do not establish full official-client compatibility. DSH support covers selected tools/filesystem services, not Core loop replacement.
 - Workgroups support up to 64 tasks and 32 Workers; the CLI defaults to `balanced + fixed` with 2 Workers. Greater width or adaptive admission does not guarantee a speedup.
 - Real GUI integration, signed/notarized packages, third-party services and production capacity need independent validation. All 20 pro cases provide [public Dockerfiles](../tests/perf/suites/pro/README.en.md); historical source images are provenance only.
+- Goals do not resume automatically after restart. Each ledger permits 4096 requests/4 MiB; history and Thread capacities remain bounded. clear retains ledgers, with no automatic ledger GC. Conservative tokenBudget admission estimates do not guarantee a strict provider billing ceiling; unknown consumption retains reservations and stops automatic continuation.

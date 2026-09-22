@@ -40,6 +40,20 @@
         </form>
         <section id="groups" aria-label="协同任务列表"></section>
       </details>
+      <details id="goal-panel" hidden open>
+        <summary id="goal-status">持续目标</summary>
+        <p id="goal-progress" role="status"></p>
+        <form id="goal-form">
+          <label for="goal-objective">目标与验收条件</label>
+          <textarea id="goal-objective" rows="2" maxlength="4000" required></textarea>
+          <label for="goal-budget">Token 预算（留空不设置）</label>
+          <input id="goal-budget" type="number" min="1" step="1" />
+          <button id="goal-save" type="submit">开始目标</button>
+          <button id="goal-pause" type="button" class="secondary">暂停</button>
+          <button id="goal-resume" type="button" class="secondary">恢复</button>
+          <button id="goal-clear" type="button" class="secondary">清除</button>
+        </form>
+      </details>
       <section id="history" aria-label="任务记录"></section>
       <form id="composer">
         <label for="prompt">任务或补充说明</label
