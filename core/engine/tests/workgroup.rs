@@ -1026,14 +1026,20 @@ impl areal_engine::model::Model for ToolFixture {
                 .count()
                 == 1
             {
+                // Worker 的 TMPDIR 必须位于当前 Thread 子目录，不能退回共享 scratch 根。
+                let check_scratch = r#"test "${TMPDIR%/*}" = "$PWD/.scratch" &&
+case "${TMPDIR##*/}" in
+    agent-?*) test "$PYTHONDONTWRITEBYTECODE" = 1 && touch "$TMPDIR/temporary" ;;
+    *) exit 1 ;;
+esac"#;
                 ModelEvent::ToolCall(ToolCall {id:"check-scratch".into(),name:"run_command".into(),
-                    arguments:serde_json::json!({"argv":["/bin/sh","-c","test \"$TMPDIR\" = \"$PWD/.scratch\" && test \"$PYTHONDONTWRITEBYTECODE\" = 1 && touch \"$TMPDIR/temporary\""],"cwd":"workspace://repo","timeoutMs":1000}).to_string()})
+                    arguments:serde_json::json!({"argv":["/bin/sh","-c",check_scratch],"cwd":"workspace://repo","timeoutMs":1000}).to_string()})
             } else {
                 let output: serde_json::Value =
                     serde_json::from_str(&messages.last().unwrap().text_content())?;
                 anyhow::ensure!(
                     output["exitCode"] == 0,
-                    "worker command did not receive private scratch environment"
+                    "worker command did not receive private scratch environment: {output}"
                 );
                 ModelEvent::TextDelta("Finished".into())
             }

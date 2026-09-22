@@ -31,6 +31,8 @@ python3 scripts/native-python-smoke.py --bin-dir target/debug
 
 `make harness-smoke`（由 macOS CI 的 `make verify-harness` 调用）包含此回归。它在默认 YOLO 和显式 native 沙箱下分别验证自动 scratch 与自定义 `--scratch`：两者均暴露 `verify_command`，并在 Thread 私有子目录保存退出码为 0 和 7 的验证回执。共享解析器测试覆盖已安装 CLT 但无 `developer_dir` 链接的发现路径，并验证 framework 外的解释器被拒绝。
 
+`make workgroup-smoke` 同时验证 Worker 命令的 `TMPDIR` 位于私有工作区下的 `.scratch/agent-<threadId>`，该目录可写且 Python 字节码写入被禁用。
+
 ## 恢复与研究 Agent
 
 ```sh

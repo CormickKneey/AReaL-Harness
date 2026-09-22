@@ -31,6 +31,8 @@ python3 scripts/native-python-smoke.py --bin-dir target/debug
 
 `make harness-smoke` (called by `make verify-harness` in macOS CI) includes this regression. It checks automatic scratch and a custom `--scratch` under both default YOLO and the explicit native sandbox: both expose `verify_command` and save verification receipts with exit codes 0 and 7 in a private per-thread directory. Shared resolver tests cover installed CLT without a `developer_dir` link and reject interpreters outside supported frameworks.
 
+`make workgroup-smoke` also verifies that Worker commands receive a writable `TMPDIR` at `.scratch/agent-<threadId>` inside their private workspace, with Python bytecode writes disabled.
+
 ## Recovery and research agents
 
 ```sh
