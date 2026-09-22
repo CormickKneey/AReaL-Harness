@@ -160,7 +160,7 @@ impl Engine {
                     "responses" => model::ModelProtocol::Responses.capabilities(),
                     _ => model::ModelProtocol::ChatCompletions.capabilities(),
                 };
-                data.push(json!({"providerId":p.id,"providerRevision":p.revision,"modelId":name,"transport":p.protocol,"input":capabilities.input,"output":capabilities.output,"available":result.is_ok(),"credentialState":self.provider_view(p)["credentialState"],"contextWindowTokens":null,"parameterCapabilities":["temperature","maxOutputTokens","reasoningEffort"],"connectionState":"unchecked"}));
+                data.push(json!({"providerId":p.id,"providerRevision":p.revision,"modelId":name,"transport":p.protocol,"input":capabilities.input,"output":capabilities.output,"available":result.is_ok(),"credentialState":self.provider_view(p)["credentialState"],"contextWindowTokens":null,"parameterCapabilities":if p.protocol == "responses" {vec!["temperature","maxOutputTokens","reasoningEffort","reasoningSummary"]} else {vec!["temperature","maxOutputTokens","reasoningEffort"]},"connectionState":"unchecked"}));
             }
         }
         json!({"data":data})

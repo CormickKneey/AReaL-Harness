@@ -194,7 +194,10 @@ fn walk(
     let string = matches!(
         names.as_slice(),
         ["server", "listen" | "data_dir"]
-            | ["model", "provider" | "name" | "reasoning_effort"]
+            | [
+                "model",
+                "provider" | "name" | "reasoning_effort" | "reasoning_summary"
+            ]
             | [
                 "model",
                 "providers",

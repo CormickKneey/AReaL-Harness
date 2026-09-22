@@ -600,3 +600,31 @@ fn tool_buffer_budget_defaults_and_overrides_are_validated_and_visible() {
         assert!(load_config(&i).is_err(), "{value}");
     }
 }
+
+#[test]
+fn reasoning_summary_is_opt_in_responses_only_and_env_can_override_it() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut i = inputs(temp.path());
+    assert!(load_config(&i).unwrap().model.reasoning_summary.is_none());
+    write(
+        &mut i,
+        "schema_version=1\n[model]\nreasoning_summary='auto'\n",
+    );
+    assert_eq!(failure(&i).kind, ConfigErrorKind::Conflict);
+    set(&mut i, "AREAL_HARNESS_MODEL_PROTOCOL", "responses");
+    assert_eq!(
+        load_config(&i).unwrap().model.reasoning_summary.as_deref(),
+        Some("auto")
+    );
+    for value in ["concise", "detailed"] {
+        set(&mut i, "AREAL_HARNESS_REASONING_SUMMARY", value);
+        let c = load_config(&i).unwrap();
+        assert_eq!(c.model.reasoning_summary.as_deref(), Some(value));
+        assert!(matches!(
+            c.sources["model.reasoning_summary"],
+            ConfigSource::Env { .. }
+        ));
+    }
+    set(&mut i, "AREAL_HARNESS_REASONING_SUMMARY", "unsupported");
+    assert_eq!(failure(&i).kind, ConfigErrorKind::InvalidValue);
+}

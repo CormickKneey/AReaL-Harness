@@ -50,6 +50,8 @@ endpoint 是完整 HTTP(S) 请求 URL；Core 只支持 `chat-completions` / `res
 
 `reasoning_effort` 可为 none/minimal/low/medium/high/xhigh，供应商需支持；可选 `max_output_tokens` 映射到协议对应字段。`max_retries` 为 0–8，控制接受流之前的有限 HTTP 重试，涵盖传输错误、HTTP 408/429 和全部 5xx。该额度耗尽后，默认启用的 Core watchdog 仍会继续网络恢复。
 
+可选 `model.reasoning_summary = "auto"`（也可为 `concise` / `detailed`）仅适用于 `responses`，映射到请求的 `reasoning.summary`；环境变量为 `AREAL_HARNESS_REASONING_SUMMARY`。默认省略，不向 Chat Completions 或未选择此功能的模型附加摘要参数。端点/模型必须支持所选摘要模式；是否返回摘要取决于供应商，不保证始终有思考文本。
+
 可选采样参数不配置时省略，显式 0 保留。`temperature` 为有限数 [0,2]，`top_p` / `min_p` 为 [0,1]，`top_k` 为正整数或 -1，`presence_penalty` 为 [-2,2]，`repetition_penalty` 大于 0。Chat 与 Responses 均接受 temperature/top_p；其余四项只支持 Chat，Responses 配置时拒绝。参数发送不证明供应商实际采纳。求解与摘要使用同一采样/推理配置；摘要禁用工具，输出上限为 `min(max_output_tokens,16384)`，未配置时为 16384。
 
 `context_window_tokens=0` 禁用 token 估计，最大 2000000；启用时 reserve 必须小于 window。历史、system 与工具定义的估计达到 window 减 reserve，或字节阈值时触发压缩。估计按 ASCII 约 3 字节/token、非 ASCII 约 2 token/字符及媒体代理成本计算，可由上次输入用量向上校准；缓存命中不降低估计，不保证匹配供应商 tokenizer。
@@ -67,7 +69,7 @@ Goal 的共享预算与未知用量约束优先于重试配置。Goal 请求禁�
 | 环境变量（前缀 `AREAL_HARNESS_`） | 对应配置 |
 |---|---|
 | `MODEL`, `MODEL_PROVIDER`, `MODEL_ENDPOINT`, `MODEL_PROTOCOL`, `API_KEY_ENV` | 模型名称、provider、完整 URL、协议与凭据引用 |
-| `REASONING_EFFORT`, `MAX_OUTPUT_TOKENS`, `MODEL_MAX_RETRIES` | 模型参数 |
+| `REASONING_EFFORT`, `REASONING_SUMMARY`, `MAX_OUTPUT_TOKENS`, `MODEL_MAX_RETRIES` | 模型参数 |
 | `TEMPERATURE`, `TOP_P`, `TOP_K`, `MIN_P`, `PRESENCE_PENALTY`, `REPETITION_PENALTY` | 采样参数 |
 | `CONTEXT_WINDOW_TOKENS`, `CONTEXT_OUTPUT_RESERVE_TOKENS` | 可选上下文 token 预算 |
 | `LISTEN`, `DATA_DIR`, `TOOL_EXTENSIONS`, `LOG_FILTER` | server、扩展文件与日志 |

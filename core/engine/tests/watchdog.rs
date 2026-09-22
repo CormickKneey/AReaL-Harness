@@ -58,7 +58,10 @@ impl Model for Flaky {
                     .chain(stream::pending()),
             )),
             Some(Fault::Error(failure)) => {
-                let mut events = vec![Ok(ModelEvent::text("discard ".repeat(8192)))];
+                let mut events = vec![
+                    Ok(ModelEvent::reasoning("discarded thought")),
+                    Ok(ModelEvent::text("discard ".repeat(8192))),
+                ];
                 if self.write_first {
                     events.push(Ok(call("must-not-execute")));
                 }
@@ -178,6 +181,12 @@ async fn repeated_network_failures_preserve_request_usage_and_confirmed_tools() 
             .items
             .iter()
             .any(|i| matches!(i, Item::AgentMessage {text,..} if text.contains("discard")))
+    );
+    assert!(
+        !result.turns[0]
+            .items
+            .iter()
+            .any(|i| matches!(i, Item::Reasoning { .. }))
     );
     assert_eq!(result.turns[0].usage.as_ref().unwrap().input_tokens, 50);
     let audits: Vec<Value> = std::fs::read_dir(data.path().join("audit"))

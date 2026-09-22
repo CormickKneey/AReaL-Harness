@@ -354,6 +354,7 @@ impl Engine {
         .map_err(invalid)?
         .with_options(model::ModelOptions {
             reasoning_effort: parameters.reasoning_effort.clone(),
+            reasoning_summary: parameters.reasoning_summary.clone(),
             max_output_tokens: parameters.max_output_tokens,
             max_retries: 0,
             ..Default::default()
@@ -411,6 +412,7 @@ impl Engine {
             temperature: parameters.temperature.or(defaults.temperature),
             max_output_tokens: parameters.max_output_tokens.or(defaults.max_output_tokens),
             reasoning_effort: parameters.reasoning_effort.or(defaults.reasoning_effort),
+            reasoning_summary: parameters.reasoning_summary.or(defaults.reasoning_summary),
         };
         let configuration = EffectiveConfig {
             options: ClientOptions::default(),

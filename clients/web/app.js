@@ -9,6 +9,8 @@ let socket,
 const pending = new Map();
 let goalsSupported = false,
   displayedGoal = null;
+let waiting = null,
+  stopping = null;
 const labels = {
   inProgress: "执行中",
   completed: "已完成",
@@ -139,6 +141,16 @@ function icon(name, className) {
 function active() {
   return thread?.turns?.at(-1)?.status === "inProgress";
 }
+function isStopping() {
+  return Boolean(
+    stopping &&
+    stopping.threadId === thread?.id &&
+    ((active() && stopping.turnId === thread.turns.at(-1).id) ||
+      (stopping.goalId &&
+        stopping.goalId === thread?.goals?.goal?.id &&
+        thread.goals.goal.status === "active")),
+  );
+}
 function renderComposer() {
   const hasText = Boolean($("prompt").value.trim());
   $("send").disabled = !connected || !thread || !hasText || submitting;
@@ -147,7 +159,10 @@ function renderComposer() {
   const label = active() ? "补充说明" : "发送";
   $("send").setAttribute("aria-label", label);
   $("send").title = label;
-  $("interrupt").disabled = !connected || !running;
+  $("interrupt").disabled = !connected || !running || isStopping();
+  const stopLabel = isStopping() ? "正在停止…" : "停止执行";
+  $("interrupt").setAttribute("aria-label", stopLabel);
+  $("interrupt").title = stopLabel;
   $("interrupt").hidden = !running;
 }
 $("prompt").oninput = renderComposer;
@@ -159,6 +174,7 @@ $("prompt").onkeydown = (event) => {
   }
 };
 function render() {
+  if (stopping?.threadId === thread?.id && !isStopping()) stopping = null;
   const cwd = thread?.cwd;
   $("workspace").textContent = cwd?.split(/[\\/]/).filter(Boolean).at(-1) ?? "工作区";
   $("workspace").title = cwd ?? "工作区";
@@ -187,10 +203,15 @@ function render() {
   $("composer-context").querySelector("span").textContent = cwd ?? "从侧栏新建任务以使用当前工作区";
   $("composer-context").title = cwd ?? "";
   $("new").disabled = !connected;
-  $("refresh").disabled = !connected;
+  $("refresh").disabled = !connected || refreshing;
+  const refreshLabel = refreshing ? "刷新中…" : "刷新任务";
+  $("refresh").setAttribute("aria-label", refreshLabel);
+  $("refresh").title = refreshLabel;
+  $("refresh").setAttribute("aria-busy", String(refreshing));
   $("groups-refresh").disabled = !connected;
   $("group-start").querySelector("button").disabled = !connected;
   renderComposer();
+  renderProgress();
   renderGoal();
   const history = $("history"),
     atBottom = history.scrollHeight - history.scrollTop - history.clientHeight < 100;
@@ -200,7 +221,23 @@ function render() {
   history.replaceChildren();
   for (const turn of thread?.turns ?? []) {
     for (const item of turn.items) {
-      if (item.type === "dynamicToolCall") {
+      if (item.type === "agentMessage" && !item.text) continue;
+      if (item.type === "reasoning") {
+        const card = node("details", undefined, "item tool reasoning");
+        card.dataset.id = item.id;
+        card.open = opened.has(item.id);
+        const summary = node("summary");
+        summary.append(
+          node(
+            "span",
+            item.summary?.some(Boolean) && !item.content?.some(Boolean) ? "思考摘要" : "模型思考",
+          ),
+          icon("chevron", "disclosure-chevron"),
+        );
+        card.append(summary);
+        card.append(node("pre", [...(item.summary ?? []), ...(item.content ?? [])].join("\n")));
+        history.append(card);
+      } else if (item.type === "dynamicToolCall") {
         const unknown =
             item.execution?.outcome === "unknown" ||
             item.execution?.hooks?.some((hook) => hook.outcome === "unknown"),
@@ -292,6 +329,45 @@ function render() {
   }
   if (atBottom) history.scrollTop = history.scrollHeight;
 }
+function renderProgress() {
+  const progress = $("progress"),
+    turn = thread?.turns?.at(-1);
+  progress.hidden = !active();
+  if (!active()) {
+    waiting = null;
+    return;
+  }
+  const message = turn.items.findLast((item) => item.type === "agentMessage");
+  const key = `${thread.id}:${turn.id}:${message?.id ?? "pending"}`;
+  if (waiting?.key !== key) waiting = { key, since: Date.now() };
+  if (!connected) {
+    progress.textContent = "连接已断开，任务可能仍在执行。请重新连接后刷新状态。";
+    return;
+  }
+  if (isStopping()) {
+    progress.textContent = "已请求停止，正在等待任务与工具结束…";
+    return;
+  }
+  const tail = message ? turn.items.slice(turn.items.indexOf(message) + 1) : [];
+  const tool = tail.findLast((item) => item.type === "dynamicToolCall");
+  if (tool) {
+    progress.textContent =
+      tool.status === "inProgress" ? `正在执行 ${tool.tool}…` : "任务执行中，等待下一步…";
+    return;
+  }
+  if (message?.text?.trim() || tail.some((item) => item.type === "agentMedia")) {
+    progress.textContent = "任务执行中…";
+    return;
+  }
+  const reasoning = tail.some(
+    (item) =>
+      item.type === "reasoning" && [...(item.content ?? []), ...(item.summary ?? [])].some(Boolean),
+  );
+  const seconds = Math.floor((Date.now() - waiting.since) / 1000);
+  progress.textContent = `${reasoning ? "已收到模型思考，等待正文" : "正在等待模型回复"} · 已观察 ${seconds} 秒。${seconds >= 30 ? "仍未收到正文，可继续等待、刷新任务状态或停止执行。" : ""}`;
+}
+setInterval(renderProgress, 1000);
+
 async function list(more = false) {
   if (listing) return;
   listing = true;
@@ -339,12 +415,14 @@ async function select(id) {
 async function reload() {
   if (refreshing || !thread) return;
   refreshing = true;
+  const id = thread.id;
+  render();
   try {
-    const result = await call("thread/resume", { threadId: thread.id });
-    thread = result.thread;
-    render();
+    const result = await call("thread/resume", { threadId: id });
+    if (thread?.id === id) thread = result.thread;
   } finally {
     refreshing = false;
+    render();
   }
 }
 let renderQueued = false;
@@ -365,6 +443,10 @@ function event(message) {
   }
   if (message.method === "areal/goal/updated" || message.method === "areal/goal/cleared") {
     applyGoal(p);
+  } else if (message.method === "areal/model/completionDiscarded") {
+    const discarded = new Set(p.itemIds);
+    for (const turn of thread.turns)
+      turn.items = turn.items.filter((item) => !discarded.has(item.id));
   } else if (message.method === "turn/started" || message.method === "turn/completed") {
     const index = thread.turns.findIndex((turn) => turn.id === p.turn.id);
     if (index === -1) thread.turns.push(p.turn);
@@ -380,6 +462,19 @@ function event(message) {
       const index = turn.items.findIndex((item) => item.id === p.item.id);
       if (index === -1) turn.items.push(p.item);
       else turn.items[index] = p.item;
+    }
+    if (
+      message.method === "item/reasoning/textDelta" ||
+      message.method === "item/reasoning/summaryTextDelta"
+    ) {
+      const item = turn.items.find((item) => item.id === p.itemId);
+      const summary = message.method === "item/reasoning/summaryTextDelta";
+      const index = summary ? p.summaryIndex : p.contentIndex;
+      if (item?.type === "reasoning" && Number.isInteger(index) && index >= 0 && index < 64) {
+        const parts = summary ? item.summary : item.content;
+        while (parts.length <= index) parts.push("");
+        parts[index] += p.delta;
+      }
     }
     if (message.method === "item/agentMessage/delta") {
       const item = turn.items.find((item) => item.id === p.itemId);
@@ -408,6 +503,7 @@ $("refresh").onclick = async () => {
   try {
     await reload();
     await list();
+    notice("");
   } catch (error) {
     notice(error);
   }
@@ -438,11 +534,28 @@ $("composer").onsubmit = async (e) => {
     renderComposer();
   }
 };
-$("interrupt").onclick = () => {
-  if (thread?.goals?.goal?.status === "active") goalControl("pause").catch(notice);
-  else
-    call("turn/interrupt", { threadId: thread.id, turnId: thread.turns.at(-1).id }).catch(notice);
+$("interrupt").onclick = async () => {
+  const goal = thread?.goals?.goal;
+  if (!connected || (!active() && goal?.status !== "active") || isStopping()) return;
+  const request = {
+    threadId: thread.id,
+    turnId: thread.turns.at(-1)?.id,
+    goalId: goal?.status === "active" ? goal.id : null,
+  };
+  stopping = request;
+  render();
+  try {
+    if (request.goalId) await goalControl("pause");
+    else await call("turn/interrupt", { threadId: request.threadId, turnId: request.turnId });
+    if (thread?.id === request.threadId) await reload();
+  } catch (error) {
+    if (stopping === request) stopping = null;
+    notice(error);
+  } finally {
+    render();
+  }
 };
+
 function applyGoal(view) {
   if (!thread || view.threadId !== thread.id) return;
   if ((view.eventSequence ?? 0) >= (thread.goals?.eventSequence ?? 0))

@@ -25,6 +25,30 @@ input 为有序 text/image/audio/file 等内容，UTF-8 文本合计最多 1 MiB
 
 事件包括 thread/started、turn/started/completed、item/started/completed、item/agentMessage/delta；AReaL 媒体通知为 areal/item/agentMedia/available。终态 completed/interrupted/failed 在保存后发布。steer 保留已输出文本，取消当前模型请求后在同一 Turn 继续。
 
+### 思考进度
+
+模型适配器将可展示的思考转换为独立的 `reasoning` Item，不等待正文或完整流终态。Item 生命周期为 `item/started` → 思考增量 → `item/completed`；开始时 `summary: []`、`content: []`。客户端按索引补齐空字符串，再将增量追加到对应段：
+
+| 模型协议数据 | 客户端事件与位置 |
+|---|---|
+| Chat Completions `delta.reasoning_content` | `item/reasoning/textDelta`，`contentIndex=0` |
+| Responses `response.reasoning_summary_text.delta` | `item/reasoning/summaryTextDelta`，`summary[summaryIndex]` |
+| Responses `response.reasoning_text.delta` | `item/reasoning/textDelta`，`content[contentIndex]` |
+
+Responses 按供应商 item ID 在每次请求内映射为稳定的 Core Item ID，保留多个 Item 和各自的 summary/content 索引，不拼成一个无边界字符串。`*.done`、`reasoning_summary_part.added/done`、`output_item.done` 及 `response.completed.output` 中的全文只补尚未透传的后缀；重复快照不重复追加，不一致快照判为协议错误。每段索引小于 64，解码器最多保留 128 个思考段、1 MiB 思考文本，Core 每次模型请求最多 64 个思考 Item，且受 Turn 输出限额约束。
+
+```json
+{"method":"item/reasoning/summaryTextDelta","params":{"threadId":"THREAD_ID","turnId":"TURN_ID","itemId":"REASONING_ITEM_ID","summaryIndex":0,"delta":"检查依赖关系"}}
+```
+
+Responses 摘要通过可选 `reasoning_summary` / `reasoningSummary` 显式开启，见[配置](../guides/configuration.md)与[桌面参数](desktop.md#submissions)。默认不附加摘要请求参数，避免改变现有模型/兼容端点的请求要求；端点未返回可展示文本时，客户端仍显示通用等待提示。其他供应商自定义字段或原生协议不在此适配范围。
+
+`thread/read` 和 `thread/resume` 的快照包含已收到的思考前缀；resume 后以快照替换客户端基线，再接增量，不能把快照再次追加。停止或 steer 保留已收到内容；失败响应被重试时，`areal/model/completionDiscarded.itemIds` 同时移除其思考与正文。`item/completed` 只表示该 Item 不再更新，成功与否以 Turn 终态为准。
+
+思考文本计入现有 Turn 文本输出字节上限，不拼入 `agentMessage`，不算最终答案；仅有思考而没有正文、媒体或工具调用仍按空回复处理。展示用 `reasoning` Item 不回放为模型输入。Chat 原有不回放思考的行为保留；旧 `modelContext.value.type=chat_reasoning` 继续可读，新 Chat 请求不再重复归档这份内部上下文。Responses 原始 reasoning 对象仍独立存入 `modelContext` 并完整回放一次，保留 summary、encrypted_content 等供应商字段；客户端只展示明文段，不解密或显示加密内容。
+
+这是新增的 Item 类型和通知，客户端须识别或忽略 `reasoning`，Rust 的 `Item` / `ModelEvent` 穷尽匹配需增加对应分支，`ModelOptions` / `ModelParameters` / `SelectedModelConfig` 新增可选摘要字段。字段见 [Core schema](../../schemas/areal-core-v1.json)，本地客户端显示行为见[客户端指南](../guides/clients.md)。
+
 <a id="recovery"></a>
 ## 执行与恢复
 
@@ -52,7 +76,7 @@ Rust `Model::chat_with_limits(messages, tools, purpose, ToolCallLimits, cap)` �
 
 工具错误审计新增 `errorCode` 与 `toolCallError`：`invalid_tool_call_index` 附固定原因、协议、字段路径、从 1 开始的 SSE 数据事件序号、index JSON 类型及已缓冲调用数量；`tool_call_budget_exceeded` 附预算类别、上限和观测值。字段只含固定标签和有界数值，诊断不复制 SSE、参数、reasoning 或非法字段值，使用同一记录的本地 `requestId` 关联。`responseShape.toolArgumentBytes` 沿用旧名称，实际累计通过校验的 id/name/arguments 字节。
 
-快照写入格式 7，可读取 1–7，旧 Core 不能读取新快照。contextCheckpoint 影响模型视图，不删原始历史；modelContext 保存不透明 Responses 上下文，不投影成用户内容。缺失 usage/duration 为未知，不是 0。
+快照写入格式 8，可读取 1–8，旧 Core 不能读取新快照。contextCheckpoint 影响模型视图，不删原始历史；modelContext 保存不透明 Responses 上下文，不投影成用户内容。缺失 usage/duration 为未知，不是 0。
 
 <a id="dynamic-tools"></a>
 ## 动态工具回调
@@ -172,4 +196,4 @@ goalId 和根线程身份由 Core 绑定，模型不能自报其他目标。summ
 
 Rust 嵌入式调用使用 `Limits.goals: goals::Policy` 及 `Engine::goal_get/goal_create/goal_control`。自定义 Model 的 `chat_limited` 必须显式接受逐请求输出上限，`share_context` 保留预算归因；内置 HTTP adapter 已支持。自定义 Workgroup Factory 需实现 `executor_for_goal` 并保留传入 Budget；默认实现对有 Goal 的调用明确报错。普通 Turn 和独立 Workgroup 沿用原行为。
 
-Goal 请求账本位于 `goals/<goal-id>.json`，发送前持久预留；主/子 Agent、原生 Workgroup 和活动 Turn 的摘要共享计量，cachedInputTokens 是 inputTokens 的子集、不重复累加。每账本最多 4096 请求/4 MiB；clear 保留账本且不回收历史。快照格式 7 保存 Goal 和 Turn 归因，旧二进制不能读取；API 版本仍为 areal.core.v1。
+Goal 请求账本位于 `goals/<goal-id>.json`，发送前持久预留；主/子 Agent、原生 Workgroup 和活动 Turn 的摘要共享计量，cachedInputTokens 是 inputTokens 的子集、不重复累加。每账本最多 4096 请求/4 MiB；clear 保留账本且不回收历史。快照格式 8 保存 Goal、Turn 归因与思考 Item，旧二进制不能读取；API 版本仍为 areal.core.v1。

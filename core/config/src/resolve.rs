@@ -31,6 +31,11 @@ const ENV: &[(&str, &str, &str)] = &[
     ),
     ("AREAL_HARNESS_MAX_THREADS", "", "limits.max_threads"),
     (
+        "AREAL_HARNESS_REASONING_SUMMARY",
+        "",
+        "model.reasoning_summary",
+    ),
+    (
         "AREAL_HARNESS_MAX_ACTIVE_TURNS",
         "",
         "limits.max_active_turns",
@@ -230,6 +235,11 @@ fn valid(field: &str, entry: &Entry) -> Result<()> {
                 .all(|(i, b)| b.is_ascii_alphabetic() || b == b'_' || (i > 0 && b.is_ascii_digit()))
             {
                 return Err(reject("expected an environment variable name"));
+            }
+        }
+        "reasoning_summary" => {
+            if !matches!(value.as_str(), "auto" | "concise" | "detailed") {
+                return Err(reject("unsupported reasoning summary"));
             }
         }
         "reasoning_effort" => {
@@ -669,6 +679,9 @@ fn load_mode(inputs: &ConfigInputs, management: bool) -> Result<ResolvedCoreConf
             api_key_env: values
                 .get(&format!("{prefix}.api_key_env"))
                 .map(|e| e.value.clone()),
+            reasoning_summary: values
+                .get("model.reasoning_summary")
+                .map(|e| e.value.clone()),
             reasoning_effort: values
                 .get("model.reasoning_effort")
                 .map(|e| e.value.clone()),
@@ -746,6 +759,16 @@ fn load_mode(inputs: &ConfigInputs, management: bool) -> Result<ResolvedCoreConf
             "limits.context_recent_bytes",
             &result.sources["limits.context_recent_bytes"],
             "recent context budget must be smaller than context window budget",
+        ));
+    }
+    if result.model.protocol != ModelProtocolConfig::Responses
+        && let Some(entry) = values.get("model.reasoning_summary")
+    {
+        return Err(error(
+            ConfigErrorKind::Conflict,
+            "model.reasoning_summary",
+            &entry.source,
+            "reasoning summary requires responses protocol",
         ));
     }
     if result.model.protocol == ModelProtocolConfig::Responses {

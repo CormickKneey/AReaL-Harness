@@ -193,11 +193,16 @@ impl Model for ArchivedChatReasoning {
         unreachable!()
     }
     async fn chat(&self, messages: Vec<Message>, _: Vec<Value>) -> anyhow::Result<AgentStream> {
-        assert!(!messages.iter().any(|m| m.provider_context.is_some()));
+        assert!(
+            !messages
+                .iter()
+                .any(|m| m.provider_context.is_some() || m.text_content().contains("thought"))
+        );
         Ok(Box::pin(stream::iter([
             Ok(ModelEvent::ProviderContext(
                 serde_json::json!({"type":"chat_reasoning", "reasoning_content":"internal thought ".repeat(2000)}),
             )),
+            Ok(ModelEvent::reasoning("streamed thought ".repeat(2000))),
             Ok(ModelEvent::text("verified")),
         ])))
     }
@@ -215,6 +220,7 @@ async fn archived_chat_reasoning_does_not_trigger_compaction_or_disappear_from_h
             TurnStatus::Completed
         );
         assert!(completed.context_checkpoint.is_none());
+        assert!(completed.turns.last().unwrap().items.iter().any(|item| matches!(item, areal_protocol::Item::Reasoning { content, .. } if content[0].len() > 16 * 1024)));
         assert!(completed.turns.last().unwrap().items.iter().any(|item| matches!(item, areal_protocol::Item::ModelContext { value, .. } if value["reasoning_content"].as_str().unwrap().len() > 16*1024)));
     }
     engine.shutdown().await;

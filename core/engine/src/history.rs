@@ -107,6 +107,7 @@ pub(super) fn history(thread: &Thread, store: &store::Store) -> anyhow::Result<V
                 tool_call_id: None,
                 provider_context: None,
             },
+            Item::Reasoning { .. } => continue,
             Item::ModelContext { value, .. } => {
                 // Chat reasoning is archived for inspection, not replayed to
                 // either HTTP protocol or charged to its input context window.

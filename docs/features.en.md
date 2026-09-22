@@ -6,7 +6,7 @@ This page describes implemented behavior. Compilation, mechanism tests and real-
 
 | Capability | Implementation and entry point |
 |---|---|
-| Sessions and models | Persistent Threads/Turns, streaming, steering, cancellation and resume; Chat Completions / Responses, with modalities constrained by adapter and model. [Clients](guides/clients.en.md) |
+| Sessions and models | Persistent Threads/Turns, streaming text, Chat Completions reasoning and Responses reasoning summary/text events, steering, cancellation and resume; Chat Completions / Responses, with modalities constrained by adapter and model. [Clients](guides/clients.en.md) |
 | Files and processes | Conditional writes, commands, stdin, PTYs, bounded output, narrowing Scopes and cleanup. [Runtime](api/runtime.en.md) |
 | Tool extensions | Command tools, hooks, client callbacks, MCP stdio/Streamable HTTP and trusted Node plugin Hosts. [Tools](guides/tools.en.md) |
 | Multiple agents | Model delegation, independent histories, shared workspace, checkpoints and result aggregation. [Agent design](design/multi-agent.en.md) |

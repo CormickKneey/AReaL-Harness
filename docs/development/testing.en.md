@@ -7,7 +7,7 @@ Install dependencies using the [development guide](README.en.md). Regular tests 
 | Entry point | Coverage |
 |---|---|
 | `make verify` | Cordis pin, formatting, static checks, Rust workspace, both SDKs, Python, documentation and TUI smoke |
-| `make script-test` | Launcher, benchmark statistics/evidence and documentation links/language pairs |
+| `make script-test` | Launcher, Web reasoning/wait/cancel projections, benchmark statistics/evidence and documentation links/language pairs |
 | `make test-core` / `make test-protocol` | Engine / app-server |
 | `make test-concurrency` | Concurrency primitives |
 | `make verify-runtime` | Runtime unit tests and real file, process, permission and shutdown smoke |

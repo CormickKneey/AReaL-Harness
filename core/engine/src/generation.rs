@@ -202,6 +202,7 @@ impl Engine {
             'request: loop {
                 let output_before = (text_output_bytes, media_output_bytes);
                 let item_id = id();
+                let mut reasoning_items = BTreeMap::new();
                 {
                     let mut state = cell.state.lock().await;
                     state
@@ -227,7 +228,11 @@ impl Engine {
                 let response = tokio::select! {
                     biased;
                     _ = cancel.cancelled() => anyhow::bail!("cancelled"),
-                    _ = steer.recv() => { complete_item(cell, &thread_id, &turn_id, &item_id).await; continue 'restart; },
+                    _ = steer.recv() => {
+                        complete_reasoning(cell, &thread_id, &turn_id, &reasoning_items).await;
+                        complete_item(cell, &thread_id, &turn_id, &item_id).await;
+                        continue 'restart;
+                    },
                     result = tokio::time::timeout(
                         self.limits.stream_idle_timeout,
                         model::REQUEST_OWNER.scope((thread_id.clone(), turn_id.clone()), model.chat_with_limits(messages.clone(), tool_definitions.clone(), model::RequestPurpose::Solve, tool_limits, None)).instrument(model_span.clone()),
@@ -244,7 +249,11 @@ impl Engine {
                     let next = tokio::select! {
                         biased;
                         _ = cancel.cancelled() => anyhow::bail!("cancelled"),
-                        _ = steer.recv() => { complete_item(cell, &thread_id, &turn_id, &item_id).await; continue 'restart; },
+                        _ = steer.recv() => {
+                            complete_reasoning(cell, &thread_id, &turn_id, &reasoning_items).await;
+                            complete_item(cell, &thread_id, &turn_id, &item_id).await;
+                            continue 'restart;
+                        },
                         next = tokio::time::timeout(
                             self.limits.stream_idle_timeout,
                             stream.next().instrument(model_span.clone()),
@@ -257,6 +266,7 @@ impl Engine {
                         let state = cell.state.lock().await;
                         if !steer.is_empty() {
                             drop(state);
+                            complete_reasoning(cell, &thread_id, &turn_id, &reasoning_items).await;
                             complete_item(cell, &thread_id, &turn_id, &item_id).await;
                             continue 'restart;
                         }
@@ -319,6 +329,7 @@ impl Engine {
                         if calls.is_empty() {
                             drop(state);
                             drop(permit);
+                            complete_reasoning(cell, &thread_id, &turn_id, &reasoning_items).await;
                             complete_item(cell, &thread_id, &turn_id, &item_id).await;
                             let reports = tokio::select! { biased;
                                 _ = cancel.cancelled() => anyhow::bail!("cancelled"),
@@ -347,6 +358,7 @@ impl Engine {
                         }
                         drop(state);
                         drop(permit);
+                        complete_reasoning(cell, &thread_id, &turn_id, &reasoning_items).await;
                         complete_item(cell, &thread_id, &turn_id, &item_id).await;
                         for call in calls {
                             if !steer.is_empty() {
@@ -469,6 +481,70 @@ impl Engine {
                             tool_budget.record(&call)?;
                             calls.push(call);
                             continue;
+                        }
+                        ModelEvent::ReasoningDelta {
+                            item_id: source_id,
+                            kind,
+                            index,
+                            delta,
+                        } => {
+                            if delta.is_empty() {
+                                continue;
+                            }
+                            text_output_bytes += delta.len();
+                            anyhow::ensure!(
+                                text_output_bytes <= self.limits.max_output_bytes,
+                                "turn reasoning output limit exceeded"
+                            );
+                            let mut state = cell.state.lock().await;
+                            anyhow::ensure!(index < 64, "reasoning part index exceeds limit");
+                            anyhow::ensure!(
+                                reasoning_items.contains_key(&source_id)
+                                    || reasoning_items.len() < 64,
+                                "too many reasoning items"
+                            );
+                            let reasoning_id =
+                                reasoning_items.entry(source_id).or_insert_with(id).clone();
+                            if completion_items.insert(reasoning_id.clone()) {
+                                let item = Item::Reasoning {
+                                    id: reasoning_id.clone(),
+                                    summary: Vec::new(),
+                                    content: Vec::new(),
+                                };
+                                state
+                                    .active
+                                    .as_mut()
+                                    .unwrap()
+                                    .open_items
+                                    .insert(reasoning_id.clone());
+                                state
+                                    .thread
+                                    .turns
+                                    .last_mut()
+                                    .unwrap()
+                                    .items
+                                    .push(item.clone());
+                                emit_item(cell, "item/started", &thread_id, &turn_id, &item);
+                            }
+                            let turn = state.thread.turns.last_mut().unwrap();
+                            if let Some(Item::Reasoning {
+                                summary, content, ..
+                            }) = turn.items.iter_mut().find(|i| i.id() == reasoning_id)
+                            {
+                                let parts = if kind == model::ReasoningKind::Summary {
+                                    summary
+                                } else {
+                                    content
+                                };
+                                parts.resize_with(parts.len().max(index + 1), String::new);
+                                parts[index].push_str(&delta);
+                            }
+                            let (method, field) = if kind == model::ReasoningKind::Summary {
+                                ("item/reasoning/summaryTextDelta", "summaryIndex")
+                            } else {
+                                ("item/reasoning/textDelta", "contentIndex")
+                            };
+                            cell.emit(method, json!({"threadId":thread_id,"turnId":turn_id,"itemId":reasoning_id,field:index,"delta":delta}));
                         }
                         ModelEvent::TextDelta(delta) => {
                             visible_output |= !delta.trim().is_empty();
@@ -628,5 +704,16 @@ async fn complete_item(cell: &Cell, thread_id: &str, turn_id: &str, item_id: &st
         .find(|i| i.id() == item_id)
     {
         emit_item(cell, "item/completed", thread_id, turn_id, item);
+    }
+}
+
+async fn complete_reasoning(
+    cell: &Cell,
+    thread_id: &str,
+    turn_id: &str,
+    items: &BTreeMap<String, String>,
+) {
+    for item_id in items.values() {
+        complete_item(cell, thread_id, turn_id, item_id).await;
     }
 }

@@ -242,6 +242,13 @@ pub enum ModelEvent {
     Activity,
     ProviderContext(Value),
     TextDelta(String),
+    /// 供应商显式返回的思考增量，不是可见正文或不透明上下文。
+    ReasoningDelta {
+        item_id: String,
+        kind: ReasoningKind,
+        index: usize,
+        delta: String,
+    },
     ToolCall(ToolCall),
     Binary {
         modality: Modality,
@@ -251,7 +258,21 @@ pub enum ModelEvent {
     Usage(ModelUsage),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ReasoningKind {
+    Summary,
+    Text,
+}
+
 impl ModelEvent {
+    pub fn reasoning(text: impl Into<String>) -> Self {
+        Self::ReasoningDelta {
+            item_id: "chat".into(),
+            kind: ReasoningKind::Text,
+            index: 0,
+            delta: text.into(),
+        }
+    }
     pub fn text(text: impl Into<String>) -> Self {
         Self::TextDelta(text.into())
     }
@@ -405,6 +426,7 @@ pub struct HttpModel {
 #[derive(Clone, Debug)]
 pub struct ModelOptions {
     pub reasoning_effort: Option<String>,
+    pub reasoning_summary: Option<String>,
     pub temperature: Option<f64>,
     pub top_p: Option<f64>,
     pub top_k: Option<i64>,
@@ -419,6 +441,7 @@ impl Default for ModelOptions {
     fn default() -> Self {
         Self {
             reasoning_effort: None,
+            reasoning_summary: None,
             temperature: None,
             top_p: None,
             top_k: None,
@@ -522,6 +545,17 @@ impl HttpModel {
                     && options.repetition_penalty.is_none()),
             "top_k, min_p, presence_penalty and repetition_penalty require chat-completions protocol"
         );
+        anyhow::ensure!(
+            options
+                .reasoning_summary
+                .as_deref()
+                .is_none_or(|v| matches!(v, "auto" | "concise" | "detailed")),
+            "invalid reasoning summary"
+        );
+        anyhow::ensure!(
+            options.reasoning_summary.is_none() || self.protocol == ModelProtocol::Responses,
+            "reasoning summary requires responses protocol"
+        );
         self.options = options;
         Ok(self)
     }
@@ -614,6 +648,10 @@ impl Model for HttpModel {
                         .reasoning_effort
                         .clone()
                         .or(self.options.reasoning_effort.clone()),
+                    reasoning_summary: p
+                        .reasoning_summary
+                        .clone()
+                        .or(self.options.reasoning_summary.clone()),
                     max_output_tokens: p.max_output_tokens.or(self.options.max_output_tokens),
                     ..self.options.clone()
                 })?
@@ -685,10 +723,13 @@ impl Model for HttpModel {
         if let Some(value) = self.options.top_k {
             body["top_k"] = json!(value);
         }
+        if let Some(summary) = &self.options.reasoning_summary {
+            body["reasoning"] = json!({"summary":summary});
+        }
         if let Some(effort) = &self.options.reasoning_effort {
             match self.protocol {
                 ModelProtocol::ChatCompletions => body["reasoning_effort"] = json!(effort),
-                ModelProtocol::Responses => body["reasoning"] = json!({"effort":effort}),
+                ModelProtocol::Responses => body["reasoning"]["effort"] = json!(effort),
             }
         }
         let output_tokens = match (self.options.max_output_tokens, cap) {
@@ -837,7 +878,7 @@ impl Model for HttpModel {
                                     audit.value["stopReason"] = json!(chat.stop_reason);
                                     audit.value["responseShape"] = json!({
                                         "contentFieldBytes":chat.content_bytes,
-                                        "reasoningFieldBytes":chat.reasoning.len(),
+                                        "reasoningFieldBytes":chat.reasoning_bytes,
                                         "toolArgumentBytes":chat.tool_bytes
                                     });
                                 }

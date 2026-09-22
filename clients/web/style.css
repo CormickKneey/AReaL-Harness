@@ -502,6 +502,12 @@ main {
   margin: 0 auto;
   padding: 0 16px 24px;
 }
+#progress {
+  margin: 0 8px 10px;
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
 #goal-panel {
   max-height: 35dvh;
   overflow: auto;

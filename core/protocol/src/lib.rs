@@ -136,6 +136,14 @@ pub enum Item {
         id: String,
         text: String,
     },
+    /// 模型显式返回的思考文本，独立于正文且不回放为模型输入。
+    Reasoning {
+        id: String,
+        #[serde(default)]
+        summary: Vec<String>,
+        #[serde(default)]
+        content: Vec<String>,
+    },
     DynamicToolCall {
         id: String,
         tool: String,
@@ -165,6 +173,7 @@ impl Item {
         match self {
             Self::UserMessage { id, .. }
             | Self::AgentMessage { id, .. }
+            | Self::Reasoning { id, .. }
             | Self::DynamicToolCall { id, .. }
             | Self::ModelContext { id, .. }
             | Self::AgentMedia { id, .. } => id,

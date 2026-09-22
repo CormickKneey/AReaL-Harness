@@ -106,8 +106,9 @@ sdk-test: ## 编译两套 SDK 并验证 Runtime 与插件行为
 	npm --prefix runtime/sdk-typescript test
 	npm --prefix core/sdk-typescript test
 
-script-test: ## 启动器、perf 与文档的离线回归
+script-test: ## 启动器、Web 投影、perf 与文档的离线回归
 	python3 scripts/check-docs.py
+	node --test scripts/web-progress.test.mjs
 	python3 -m unittest discover -s scripts/tests
 	python3 tests/perf/perf.py self-test
 

@@ -50,6 +50,8 @@ The endpoint is a complete HTTP(S) request URL. Core supports only `chat-complet
 
 `reasoning_effort` accepts none/minimal/low/medium/high/xhigh when supported upstream. Optional `max_output_tokens` maps to the protocol-specific field. `max_retries` is 0–8 and controls bounded HTTP retries before stream acceptance for transport failures, HTTP 408/429 and all 5xx statuses. After that allowance is exhausted, the default Core watchdog continues network recovery.
 
+Optional `model.reasoning_summary = "auto"` (also `concise` / `detailed`) is Responses-only and maps to `reasoning.summary`. Its environment variable is `AREAL_HARNESS_REASONING_SUMMARY`. It is omitted by default; no summary parameter is added to Chat Completions or models that have not opted in. The endpoint/model must support the selected summary mode; providers determine whether a summary is returned, so reasoning text is not guaranteed.
+
 Optional sampling fields are omitted when unset and preserve explicit zero. `temperature` is finite [0,2], `top_p` / `min_p` are [0,1], `top_k` is a positive integer or -1, `presence_penalty` is [-2,2], and `repetition_penalty` is positive. Both protocols accept temperature/top_p; the other four are Chat-only and rejected for Responses. Sending a parameter does not prove provider support. Solve and summary requests share sampling/reasoning settings; summaries disable tools and cap output at `min(max_output_tokens,16384)`, or 16384 when unset.
 
 `context_window_tokens=0` disables token estimation; its maximum is 2000000. When enabled, reserve must be below window. Estimated history, system and tool definitions trigger compaction at window minus reserve, or at the byte threshold. Estimates use roughly 3 ASCII bytes/token, 2 tokens/non-ASCII character and media proxies, and may be calibrated upward from prior input usage. Cache hits do not reduce estimates; these are not exact provider tokenizer counts.
@@ -67,7 +69,7 @@ Byte and capacity limits are positive integers; fan-out and depth may be 0 to di
 | Environment suffix (prefix `AREAL_HARNESS_`) | Configuration |
 |---|---|
 | `MODEL`, `MODEL_PROVIDER`, `MODEL_ENDPOINT`, `MODEL_PROTOCOL`, `API_KEY_ENV` | Model name, provider, complete URL, protocol and credential reference |
-| `REASONING_EFFORT`, `MAX_OUTPUT_TOKENS`, `MODEL_MAX_RETRIES` | Model parameters |
+| `REASONING_EFFORT`, `REASONING_SUMMARY`, `MAX_OUTPUT_TOKENS`, `MODEL_MAX_RETRIES` | Model parameters |
 | `TEMPERATURE`, `TOP_P`, `TOP_K`, `MIN_P`, `PRESENCE_PENALTY`, `REPETITION_PENALTY` | Sampling parameters |
 | `CONTEXT_WINDOW_TOKENS`, `CONTEXT_OUTPUT_RESERVE_TOKENS` | Optional context token budget |
 | `LISTEN`, `DATA_DIR`, `TOOL_EXTENSIONS`, `LOG_FILTER` | Server, extensions file and logging |

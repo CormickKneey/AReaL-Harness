@@ -70,7 +70,7 @@ impl Store {
             }
             let mut record: Record = serde_json::from_slice(&std::fs::read(&path)?)
                 .with_context(|| format!("invalid session: {}", path.display()))?;
-            if !matches!(record.version, 1..=7)
+            if !matches!(record.version, 1..=8)
                 || path.file_stem().and_then(|s| s.to_str()) != Some(&record.thread.id)
                 || uuid::Uuid::parse_str(&record.thread.id).is_err()
             {
@@ -301,7 +301,7 @@ fn atomic_write(root: &Path, thread: &Thread) -> Result<()> {
     serde_json::to_writer(
         &mut file,
         &Record {
-            version: 7,
+            version: 8,
             thread: thread.clone(),
         },
     )?;

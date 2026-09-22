@@ -98,6 +98,12 @@
               "null"
             ]
           },
+          "reasoningSummary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "temperature": {
             "format": "double",
             "type": [
@@ -281,6 +287,12 @@
                     ]
                   },
                   "reasoningEffort": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "reasoningSummary": {
                     "type": [
                       "string",
                       "null"
@@ -1456,6 +1468,37 @@
               "type": "object"
             },
             {
+              "description": "模型显式返回的思考文本，独立于正文且不回放为模型输入。",
+              "properties": {
+                "content": {
+                  "default": [],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "summary": {
+                  "default": [],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "type": {
+                  "const": "reasoning",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
               "properties": {
                 "arguments": true,
                 "callId": {
@@ -2050,6 +2093,12 @@
                               "null"
                             ]
                           },
+                          "reasoningSummary": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "temperature": {
                             "format": "double",
                             "type": [
@@ -2233,6 +2282,12 @@
                                     ]
                                   },
                                   "reasoningEffort": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "reasoningSummary": {
                                     "type": [
                                       "string",
                                       "null"
@@ -2673,6 +2728,12 @@
                     "null"
                   ]
                 },
+                "reasoningSummary": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "temperature": {
                   "format": "double",
                   "type": [
@@ -2856,6 +2917,12 @@
                           ]
                         },
                         "reasoningEffort": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "reasoningSummary": {
                           "type": [
                             "string",
                             "null"
@@ -3197,6 +3264,37 @@
               "type": "object"
             },
             {
+              "description": "模型显式返回的思考文本，独立于正文且不回放为模型输入。",
+              "properties": {
+                "content": {
+                  "default": [],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "summary": {
+                  "default": [],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "type": {
+                  "const": "reasoning",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
               "properties": {
                 "arguments": true,
                 "callId": {
@@ -3485,6 +3583,64 @@
       ],
       "type": "object"
     },
+    "item/reasoning/summaryTextDelta": {
+      "additionalProperties": true,
+      "properties": {
+        "delta": {
+          "type": "string"
+        },
+        "itemId": {
+          "type": "string"
+        },
+        "summaryIndex": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "delta",
+        "itemId",
+        "summaryIndex",
+        "threadId",
+        "turnId"
+      ],
+      "type": "object"
+    },
+    "item/reasoning/textDelta": {
+      "additionalProperties": true,
+      "properties": {
+        "contentIndex": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "delta": {
+          "type": "string"
+        },
+        "itemId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "contentIndex",
+        "delta",
+        "itemId",
+        "threadId",
+        "turnId"
+      ],
+      "type": "object"
+    },
     "item/started": {
       "additionalProperties": true,
       "properties": {
@@ -3686,6 +3842,37 @@
                 "type",
                 "id",
                 "text"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "模型显式返回的思考文本，独立于正文且不回放为模型输入。",
+              "properties": {
+                "content": {
+                  "default": [],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "summary": {
+                  "default": [],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "type": {
+                  "const": "reasoning",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "id"
               ],
               "type": "object"
             },
@@ -4160,6 +4347,12 @@
                                 "null"
                               ]
                             },
+                            "reasoningSummary": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
                             "temperature": {
                               "format": "double",
                               "type": [
@@ -4343,6 +4536,12 @@
                                       ]
                                     },
                                     "reasoningEffort": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    },
+                                    "reasoningSummary": {
                                       "type": [
                                         "string",
                                         "null"
@@ -4814,6 +5013,12 @@
                                           "null"
                                         ]
                                       },
+                                      "reasoningSummary": {
+                                        "type": [
+                                          "string",
+                                          "null"
+                                        ]
+                                      },
                                       "temperature": {
                                         "format": "double",
                                         "type": [
@@ -4997,6 +5202,12 @@
                                                 ]
                                               },
                                               "reasoningEffort": {
+                                                "type": [
+                                                  "string",
+                                                  "null"
+                                                ]
+                                              },
+                                              "reasoningSummary": {
                                                 "type": [
                                                   "string",
                                                   "null"
@@ -5814,6 +6025,12 @@
                                   "null"
                                 ]
                               },
+                              "reasoningSummary": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
                               "temperature": {
                                 "format": "double",
                                 "type": [
@@ -5997,6 +6214,12 @@
                                         ]
                                       },
                                       "reasoningEffort": {
+                                        "type": [
+                                          "string",
+                                          "null"
+                                        ]
+                                      },
+                                      "reasoningSummary": {
                                         "type": [
                                           "string",
                                           "null"
@@ -6349,6 +6572,37 @@
                             "type",
                             "id",
                             "text"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "description": "模型显式返回的思考文本，独立于正文且不回放为模型输入。",
+                          "properties": {
+                            "content": {
+                              "default": [],
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "id": {
+                              "type": "string"
+                            },
+                            "summary": {
+                              "default": [],
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "type": {
+                              "const": "reasoning",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "id"
                           ],
                           "type": "object"
                         },
@@ -6816,6 +7070,12 @@
                             "null"
                           ]
                         },
+                        "reasoningSummary": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
                         "temperature": {
                           "format": "double",
                           "type": [
@@ -6999,6 +7259,12 @@
                                   ]
                                 },
                                 "reasoningEffort": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "reasoningSummary": {
                                   "type": [
                                     "string",
                                     "null"
@@ -7351,6 +7617,37 @@
                       "type",
                       "id",
                       "text"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "description": "模型显式返回的思考文本，独立于正文且不回放为模型输入。",
+                    "properties": {
+                      "content": {
+                        "default": [],
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "summary": {
+                        "default": [],
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "type": {
+                        "const": "reasoning",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "id"
                     ],
                     "type": "object"
                   },
@@ -7796,6 +8093,12 @@
                             "null"
                           ]
                         },
+                        "reasoningSummary": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
                         "temperature": {
                           "format": "double",
                           "type": [
@@ -7979,6 +8282,12 @@
                                   ]
                                 },
                                 "reasoningEffort": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "reasoningSummary": {
                                   "type": [
                                     "string",
                                     "null"
@@ -8331,6 +8640,37 @@
                       "type",
                       "id",
                       "text"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "description": "模型显式返回的思考文本，独立于正文且不回放为模型输入。",
+                    "properties": {
+                      "content": {
+                        "default": [],
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "summary": {
+                        "default": [],
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "type": {
+                        "const": "reasoning",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "id"
                     ],
                     "type": "object"
                   },
@@ -8972,6 +9312,12 @@
               "null"
             ]
           },
+          "reasoningSummary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "temperature": {
             "format": "double",
             "type": [
@@ -9101,6 +9447,12 @@
                       ]
                     },
                     "reasoningEffort": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "reasoningSummary": {
                       "type": [
                         "string",
                         "null"
@@ -9289,6 +9641,12 @@
                               ]
                             },
                             "reasoningEffort": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "reasoningSummary": {
                               "type": [
                                 "string",
                                 "null"
@@ -10870,6 +11228,12 @@
                     "null"
                   ]
                 },
+                "reasoningSummary": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "temperature": {
                   "format": "double",
                   "type": [
@@ -12173,6 +12537,12 @@
                     "null"
                   ]
                 },
+                "reasoningSummary": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "temperature": {
                   "format": "double",
                   "type": [
@@ -12311,6 +12681,12 @@
               ]
             },
             "reasoningEffort": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "reasoningSummary": {
               "type": [
                 "string",
                 "null"
@@ -13948,6 +14324,12 @@
                                   "null"
                                 ]
                               },
+                              "reasoningSummary": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
                               "temperature": {
                                 "format": "double",
                                 "type": [
@@ -14131,6 +14513,12 @@
                                         ]
                                       },
                                       "reasoningEffort": {
+                                        "type": [
+                                          "string",
+                                          "null"
+                                        ]
+                                      },
+                                      "reasoningSummary": {
                                         "type": [
                                           "string",
                                           "null"
@@ -14602,6 +14990,12 @@
                                             "null"
                                           ]
                                         },
+                                        "reasoningSummary": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
                                         "temperature": {
                                           "format": "double",
                                           "type": [
@@ -14785,6 +15179,12 @@
                                                   ]
                                                 },
                                                 "reasoningEffort": {
+                                                  "type": [
+                                                    "string",
+                                                    "null"
+                                                  ]
+                                                },
+                                                "reasoningSummary": {
                                                   "type": [
                                                     "string",
                                                     "null"
@@ -15602,6 +16002,12 @@
                                     "null"
                                   ]
                                 },
+                                "reasoningSummary": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
                                 "temperature": {
                                   "format": "double",
                                   "type": [
@@ -15785,6 +16191,12 @@
                                           ]
                                         },
                                         "reasoningEffort": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "reasoningSummary": {
                                           "type": [
                                             "string",
                                             "null"
@@ -16137,6 +16549,37 @@
                               "type",
                               "id",
                               "text"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "description": "模型显式返回的思考文本，独立于正文且不回放为模型输入。",
+                            "properties": {
+                              "content": {
+                                "default": [],
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              },
+                              "id": {
+                                "type": "string"
+                              },
+                              "summary": {
+                                "default": [],
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              },
+                              "type": {
+                                "const": "reasoning",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "id"
                             ],
                             "type": "object"
                           },
@@ -16703,6 +17146,12 @@
                                     "null"
                                   ]
                                 },
+                                "reasoningSummary": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
                                 "temperature": {
                                   "format": "double",
                                   "type": [
@@ -16886,6 +17335,12 @@
                                           ]
                                         },
                                         "reasoningEffort": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "reasoningSummary": {
                                           "type": [
                                             "string",
                                             "null"
@@ -17357,6 +17812,12 @@
                                               "null"
                                             ]
                                           },
+                                          "reasoningSummary": {
+                                            "type": [
+                                              "string",
+                                              "null"
+                                            ]
+                                          },
                                           "temperature": {
                                             "format": "double",
                                             "type": [
@@ -17540,6 +18001,12 @@
                                                     ]
                                                   },
                                                   "reasoningEffort": {
+                                                    "type": [
+                                                      "string",
+                                                      "null"
+                                                    ]
+                                                  },
+                                                  "reasoningSummary": {
                                                     "type": [
                                                       "string",
                                                       "null"
@@ -18357,6 +18824,12 @@
                                       "null"
                                     ]
                                   },
+                                  "reasoningSummary": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
                                   "temperature": {
                                     "format": "double",
                                     "type": [
@@ -18540,6 +19013,12 @@
                                             ]
                                           },
                                           "reasoningEffort": {
+                                            "type": [
+                                              "string",
+                                              "null"
+                                            ]
+                                          },
+                                          "reasoningSummary": {
                                             "type": [
                                               "string",
                                               "null"
@@ -18892,6 +19371,37 @@
                                 "type",
                                 "id",
                                 "text"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "description": "模型显式返回的思考文本，独立于正文且不回放为模型输入。",
+                              "properties": {
+                                "content": {
+                                  "default": [],
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "id": {
+                                  "type": "string"
+                                },
+                                "summary": {
+                                  "default": [],
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "type": {
+                                  "const": "reasoning",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "type",
+                                "id"
                               ],
                               "type": "object"
                             },
@@ -19350,6 +19860,12 @@
                                 "null"
                               ]
                             },
+                            "reasoningSummary": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
                             "temperature": {
                               "format": "double",
                               "type": [
@@ -19533,6 +20049,12 @@
                                       ]
                                     },
                                     "reasoningEffort": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    },
+                                    "reasoningSummary": {
                                       "type": [
                                         "string",
                                         "null"
@@ -19885,6 +20407,37 @@
                           "type",
                           "id",
                           "text"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "description": "模型显式返回的思考文本，独立于正文且不回放为模型输入。",
+                        "properties": {
+                          "content": {
+                            "default": [],
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "summary": {
+                            "default": [],
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "type": {
+                            "const": "reasoning",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "id"
                         ],
                         "type": "object"
                       },
@@ -24318,6 +24871,12 @@
                       "null"
                     ]
                   },
+                  "reasoningSummary": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "temperature": {
                     "format": "double",
                     "type": [
@@ -24524,6 +25083,12 @@
                 "null"
               ]
             },
+            "reasoningSummary": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "temperature": {
               "format": "double",
               "type": [
@@ -24593,6 +25158,12 @@
               ]
             },
             "reasoningEffort": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "reasoningSummary": {
               "type": [
                 "string",
                 "null"
@@ -24727,6 +25298,12 @@
                         ]
                       },
                       "reasoningEffort": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "reasoningSummary": {
                         "type": [
                           "string",
                           "null"
@@ -24915,6 +25492,12 @@
                                 ]
                               },
                               "reasoningEffort": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "reasoningSummary": {
                                 "type": [
                                   "string",
                                   "null"
@@ -25318,6 +25901,12 @@
                           "null"
                         ]
                       },
+                      "reasoningSummary": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
                       "temperature": {
                         "format": "double",
                         "type": [
@@ -25501,6 +26090,12 @@
                                 ]
                               },
                               "reasoningEffort": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "reasoningSummary": {
                                 "type": [
                                   "string",
                                   "null"
@@ -25904,6 +26499,12 @@
                           "null"
                         ]
                       },
+                      "reasoningSummary": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
                       "temperature": {
                         "format": "double",
                         "type": [
@@ -26087,6 +26688,12 @@
                                 ]
                               },
                               "reasoningEffort": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "reasoningSummary": {
                                 "type": [
                                   "string",
                                   "null"
@@ -26490,6 +27097,12 @@
                           "null"
                         ]
                       },
+                      "reasoningSummary": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
                       "temperature": {
                         "format": "double",
                         "type": [
@@ -26673,6 +27286,12 @@
                                 ]
                               },
                               "reasoningEffort": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "reasoningSummary": {
                                 "type": [
                                   "string",
                                   "null"
@@ -27076,6 +27695,12 @@
                           "null"
                         ]
                       },
+                      "reasoningSummary": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
                       "temperature": {
                         "format": "double",
                         "type": [
@@ -27259,6 +27884,12 @@
                                 ]
                               },
                               "reasoningEffort": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "reasoningSummary": {
                                 "type": [
                                   "string",
                                   "null"
@@ -27662,6 +28293,12 @@
                           "null"
                         ]
                       },
+                      "reasoningSummary": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
                       "temperature": {
                         "format": "double",
                         "type": [
@@ -27845,6 +28482,12 @@
                                 ]
                               },
                               "reasoningEffort": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "reasoningSummary": {
                                 "type": [
                                   "string",
                                   "null"
@@ -28972,6 +29615,12 @@
                 "null"
               ]
             },
+            "reasoningSummary": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "temperature": {
               "format": "double",
               "type": [
@@ -29155,6 +29804,12 @@
                       ]
                     },
                     "reasoningEffort": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "reasoningSummary": {
                       "type": [
                         "string",
                         "null"
@@ -29353,6 +30008,12 @@
                     "null"
                   ]
                 },
+                "reasoningSummary": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "temperature": {
                   "format": "double",
                   "type": [
@@ -29536,6 +30197,12 @@
                           ]
                         },
                         "reasoningEffort": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "reasoningSummary": {
                           "type": [
                             "string",
                             "null"
@@ -30006,6 +30673,12 @@
                                 "null"
                               ]
                             },
+                            "reasoningSummary": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
                             "temperature": {
                               "format": "double",
                               "type": [
@@ -30189,6 +30862,12 @@
                                       ]
                                     },
                                     "reasoningEffort": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    },
+                                    "reasoningSummary": {
                                       "type": [
                                         "string",
                                         "null"
@@ -30660,6 +31339,12 @@
                                           "null"
                                         ]
                                       },
+                                      "reasoningSummary": {
+                                        "type": [
+                                          "string",
+                                          "null"
+                                        ]
+                                      },
                                       "temperature": {
                                         "format": "double",
                                         "type": [
@@ -30843,6 +31528,12 @@
                                                 ]
                                               },
                                               "reasoningEffort": {
+                                                "type": [
+                                                  "string",
+                                                  "null"
+                                                ]
+                                              },
+                                              "reasoningSummary": {
                                                 "type": [
                                                   "string",
                                                   "null"
@@ -31660,6 +32351,12 @@
                                   "null"
                                 ]
                               },
+                              "reasoningSummary": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
                               "temperature": {
                                 "format": "double",
                                 "type": [
@@ -31843,6 +32540,12 @@
                                         ]
                                       },
                                       "reasoningEffort": {
+                                        "type": [
+                                          "string",
+                                          "null"
+                                        ]
+                                      },
+                                      "reasoningSummary": {
                                         "type": [
                                           "string",
                                           "null"
@@ -32195,6 +32898,37 @@
                             "type",
                             "id",
                             "text"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "description": "模型显式返回的思考文本，独立于正文且不回放为模型输入。",
+                          "properties": {
+                            "content": {
+                              "default": [],
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "id": {
+                              "type": "string"
+                            },
+                            "summary": {
+                              "default": [],
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "type": {
+                              "const": "reasoning",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "id"
                           ],
                           "type": "object"
                         },
@@ -32687,6 +33421,12 @@
                             "null"
                           ]
                         },
+                        "reasoningSummary": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
                         "temperature": {
                           "format": "double",
                           "type": [
@@ -32870,6 +33610,12 @@
                                   ]
                                 },
                                 "reasoningEffort": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "reasoningSummary": {
                                   "type": [
                                     "string",
                                     "null"
@@ -33222,6 +33968,37 @@
                       "type",
                       "id",
                       "text"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "description": "模型显式返回的思考文本，独立于正文且不回放为模型输入。",
+                    "properties": {
+                      "content": {
+                        "default": [],
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "summary": {
+                        "default": [],
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "type": {
+                        "const": "reasoning",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "id"
                     ],
                     "type": "object"
                   },
@@ -37675,6 +38452,12 @@
                                   "null"
                                 ]
                               },
+                              "reasoningSummary": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
                               "temperature": {
                                 "format": "double",
                                 "type": [
@@ -37858,6 +38641,12 @@
                                         ]
                                       },
                                       "reasoningEffort": {
+                                        "type": [
+                                          "string",
+                                          "null"
+                                        ]
+                                      },
+                                      "reasoningSummary": {
                                         "type": [
                                           "string",
                                           "null"
@@ -38329,6 +39118,12 @@
                                             "null"
                                           ]
                                         },
+                                        "reasoningSummary": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
                                         "temperature": {
                                           "format": "double",
                                           "type": [
@@ -38512,6 +39307,12 @@
                                                   ]
                                                 },
                                                 "reasoningEffort": {
+                                                  "type": [
+                                                    "string",
+                                                    "null"
+                                                  ]
+                                                },
+                                                "reasoningSummary": {
                                                   "type": [
                                                     "string",
                                                     "null"
@@ -39329,6 +40130,12 @@
                                     "null"
                                   ]
                                 },
+                                "reasoningSummary": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
                                 "temperature": {
                                   "format": "double",
                                   "type": [
@@ -39512,6 +40319,12 @@
                                           ]
                                         },
                                         "reasoningEffort": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "reasoningSummary": {
                                           "type": [
                                             "string",
                                             "null"
@@ -39864,6 +40677,37 @@
                               "type",
                               "id",
                               "text"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "description": "模型显式返回的思考文本，独立于正文且不回放为模型输入。",
+                            "properties": {
+                              "content": {
+                                "default": [],
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              },
+                              "id": {
+                                "type": "string"
+                              },
+                              "summary": {
+                                "default": [],
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              },
+                              "type": {
+                                "const": "reasoning",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "id"
                             ],
                             "type": "object"
                           },
@@ -40418,6 +41262,12 @@
                                 "null"
                               ]
                             },
+                            "reasoningSummary": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
                             "temperature": {
                               "format": "double",
                               "type": [
@@ -40601,6 +41451,12 @@
                                       ]
                                     },
                                     "reasoningEffort": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    },
+                                    "reasoningSummary": {
                                       "type": [
                                         "string",
                                         "null"
@@ -41072,6 +41928,12 @@
                                           "null"
                                         ]
                                       },
+                                      "reasoningSummary": {
+                                        "type": [
+                                          "string",
+                                          "null"
+                                        ]
+                                      },
                                       "temperature": {
                                         "format": "double",
                                         "type": [
@@ -41255,6 +42117,12 @@
                                                 ]
                                               },
                                               "reasoningEffort": {
+                                                "type": [
+                                                  "string",
+                                                  "null"
+                                                ]
+                                              },
+                                              "reasoningSummary": {
                                                 "type": [
                                                   "string",
                                                   "null"
@@ -42072,6 +42940,12 @@
                                   "null"
                                 ]
                               },
+                              "reasoningSummary": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
                               "temperature": {
                                 "format": "double",
                                 "type": [
@@ -42255,6 +43129,12 @@
                                         ]
                                       },
                                       "reasoningEffort": {
+                                        "type": [
+                                          "string",
+                                          "null"
+                                        ]
+                                      },
+                                      "reasoningSummary": {
                                         "type": [
                                           "string",
                                           "null"
@@ -42607,6 +43487,37 @@
                             "type",
                             "id",
                             "text"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "description": "模型显式返回的思考文本，独立于正文且不回放为模型输入。",
+                          "properties": {
+                            "content": {
+                              "default": [],
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "id": {
+                              "type": "string"
+                            },
+                            "summary": {
+                              "default": [],
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "type": {
+                              "const": "reasoning",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "id"
                           ],
                           "type": "object"
                         },
@@ -43176,6 +44087,12 @@
                                 "null"
                               ]
                             },
+                            "reasoningSummary": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
                             "temperature": {
                               "format": "double",
                               "type": [
@@ -43359,6 +44276,12 @@
                                       ]
                                     },
                                     "reasoningEffort": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    },
+                                    "reasoningSummary": {
                                       "type": [
                                         "string",
                                         "null"
@@ -43830,6 +44753,12 @@
                                           "null"
                                         ]
                                       },
+                                      "reasoningSummary": {
+                                        "type": [
+                                          "string",
+                                          "null"
+                                        ]
+                                      },
                                       "temperature": {
                                         "format": "double",
                                         "type": [
@@ -44013,6 +44942,12 @@
                                                 ]
                                               },
                                               "reasoningEffort": {
+                                                "type": [
+                                                  "string",
+                                                  "null"
+                                                ]
+                                              },
+                                              "reasoningSummary": {
                                                 "type": [
                                                   "string",
                                                   "null"
@@ -44830,6 +45765,12 @@
                                   "null"
                                 ]
                               },
+                              "reasoningSummary": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
                               "temperature": {
                                 "format": "double",
                                 "type": [
@@ -45013,6 +45954,12 @@
                                         ]
                                       },
                                       "reasoningEffort": {
+                                        "type": [
+                                          "string",
+                                          "null"
+                                        ]
+                                      },
+                                      "reasoningSummary": {
                                         "type": [
                                           "string",
                                           "null"
@@ -45365,6 +46312,37 @@
                             "type",
                             "id",
                             "text"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "description": "模型显式返回的思考文本，独立于正文且不回放为模型输入。",
+                          "properties": {
+                            "content": {
+                              "default": [],
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "id": {
+                              "type": "string"
+                            },
+                            "summary": {
+                              "default": [],
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "type": {
+                              "const": "reasoning",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "id"
                           ],
                           "type": "object"
                         },
@@ -45941,6 +46919,12 @@
                                 "null"
                               ]
                             },
+                            "reasoningSummary": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
                             "temperature": {
                               "format": "double",
                               "type": [
@@ -46124,6 +47108,12 @@
                                       ]
                                     },
                                     "reasoningEffort": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    },
+                                    "reasoningSummary": {
                                       "type": [
                                         "string",
                                         "null"
@@ -46595,6 +47585,12 @@
                                           "null"
                                         ]
                                       },
+                                      "reasoningSummary": {
+                                        "type": [
+                                          "string",
+                                          "null"
+                                        ]
+                                      },
                                       "temperature": {
                                         "format": "double",
                                         "type": [
@@ -46778,6 +47774,12 @@
                                                 ]
                                               },
                                               "reasoningEffort": {
+                                                "type": [
+                                                  "string",
+                                                  "null"
+                                                ]
+                                              },
+                                              "reasoningSummary": {
                                                 "type": [
                                                   "string",
                                                   "null"
@@ -47595,6 +48597,12 @@
                                   "null"
                                 ]
                               },
+                              "reasoningSummary": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
                               "temperature": {
                                 "format": "double",
                                 "type": [
@@ -47778,6 +48786,12 @@
                                         ]
                                       },
                                       "reasoningEffort": {
+                                        "type": [
+                                          "string",
+                                          "null"
+                                        ]
+                                      },
+                                      "reasoningSummary": {
                                         "type": [
                                           "string",
                                           "null"
@@ -48130,6 +49144,37 @@
                             "type",
                             "id",
                             "text"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "description": "模型显式返回的思考文本，独立于正文且不回放为模型输入。",
+                          "properties": {
+                            "content": {
+                              "default": [],
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "id": {
+                              "type": "string"
+                            },
+                            "summary": {
+                              "default": [],
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "type": {
+                              "const": "reasoning",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "id"
                           ],
                           "type": "object"
                         },
@@ -48607,6 +49652,12 @@
                             "null"
                           ]
                         },
+                        "reasoningSummary": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
                         "temperature": {
                           "format": "double",
                           "type": [
@@ -48790,6 +49841,12 @@
                                   ]
                                 },
                                 "reasoningEffort": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "reasoningSummary": {
                                   "type": [
                                     "string",
                                     "null"
@@ -49142,6 +50199,37 @@
                       "type",
                       "id",
                       "text"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "description": "模型显式返回的思考文本，独立于正文且不回放为模型输入。",
+                    "properties": {
+                      "content": {
+                        "default": [],
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "summary": {
+                        "default": [],
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "type": {
+                        "const": "reasoning",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "id"
                     ],
                     "type": "object"
                   },
@@ -49789,6 +50877,12 @@
                           "null"
                         ]
                       },
+                      "reasoningSummary": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
                       "temperature": {
                         "format": "double",
                         "type": [
@@ -49972,6 +51066,12 @@
                                 ]
                               },
                               "reasoningEffort": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "reasoningSummary": {
                                 "type": [
                                   "string",
                                   "null"
@@ -50443,6 +51543,12 @@
                                     "null"
                                   ]
                                 },
+                                "reasoningSummary": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
                                 "temperature": {
                                   "format": "double",
                                   "type": [
@@ -50626,6 +51732,12 @@
                                           ]
                                         },
                                         "reasoningEffort": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "reasoningSummary": {
                                           "type": [
                                             "string",
                                             "null"
@@ -51443,6 +52555,12 @@
                             "null"
                           ]
                         },
+                        "reasoningSummary": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
                         "temperature": {
                           "format": "double",
                           "type": [
@@ -51626,6 +52744,12 @@
                                   ]
                                 },
                                 "reasoningEffort": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "reasoningSummary": {
                                   "type": [
                                     "string",
                                     "null"
@@ -51978,6 +53102,37 @@
                       "type",
                       "id",
                       "text"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "description": "模型显式返回的思考文本，独立于正文且不回放为模型输入。",
+                    "properties": {
+                      "content": {
+                        "default": [],
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "id": {
+                        "type": "string"
+                      },
+                      "summary": {
+                        "default": [],
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "type": {
+                        "const": "reasoning",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "id"
                     ],
                     "type": "object"
                   },
@@ -52433,6 +53588,12 @@
                       "null"
                     ]
                   },
+                  "reasoningSummary": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "temperature": {
                     "format": "double",
                     "type": [
@@ -52616,6 +53777,12 @@
                             ]
                           },
                           "reasoningEffort": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "reasoningSummary": {
                             "type": [
                               "string",
                               "null"
@@ -52968,6 +54135,37 @@
                 "type",
                 "id",
                 "text"
+              ],
+              "type": "object"
+            },
+            {
+              "description": "模型显式返回的思考文本，独立于正文且不回放为模型输入。",
+              "properties": {
+                "content": {
+                  "default": [],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "summary": {
+                  "default": [],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "type": {
+                  "const": "reasoning",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "id"
               ],
               "type": "object"
             },

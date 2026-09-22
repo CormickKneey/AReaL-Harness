@@ -25,6 +25,30 @@ input preserves text/image/audio/file ordering with at most 1 MiB aggregate UTF-
 
 Events include thread/started, turn/started/completed, item/started/completed and item/agentMessage/delta; AReaL media uses areal/item/agentMedia/available. Terminal completed/interrupted/failed state is published after persistence. steer preserves emitted text, cancels the current model request and continues within the same Turn.
 
+### Reasoning progress
+
+Model adapters project displayable reasoning into separate `reasoning` Items before body text or stream completion. Their lifecycle is `item/started` → reasoning deltas → `item/completed`; they start with `summary: []` and `content: []`. Clients extend the corresponding array with empty strings before appending a delta at its index:
+
+| Model protocol data | Client event and destination |
+|---|---|
+| Chat Completions `delta.reasoning_content` | `item/reasoning/textDelta`, `contentIndex=0` |
+| Responses `response.reasoning_summary_text.delta` | `item/reasoning/summaryTextDelta`, `summary[summaryIndex]` |
+| Responses `response.reasoning_text.delta` | `item/reasoning/textDelta`, `content[contentIndex]` |
+
+Responses maps each provider item ID to a stable Core Item ID within a request, preserving multiple Items and their summary/content indices. Full text in `*.done`, `reasoning_summary_part.added/done`, `output_item.done`, and `response.completed.output` only supplies the suffix not yet emitted. Repeated snapshots do not duplicate text; conflicting snapshots are protocol errors. Part indices must be below 64. The decoder retains at most 128 reasoning parts and 1 MiB of reasoning text. Core allows at most 64 reasoning Items per model request, also bounded by Turn output limits.
+
+```json
+{"method":"item/reasoning/summaryTextDelta","params":{"threadId":"THREAD_ID","turnId":"TURN_ID","itemId":"REASONING_ITEM_ID","summaryIndex":0,"delta":"Inspect dependencies"}}
+```
+
+Responses summaries are explicitly enabled with optional `reasoning_summary` / `reasoningSummary`; see [configuration](../guides/configuration.en.md) and [desktop parameters](desktop.en.md#submissions). No summary request parameter is added by default, preserving existing model and compatible-endpoint requirements. Clients show a generic waiting indicator when the endpoint returns no displayable text. Other provider-specific fields and native protocols are outside this adapter's scope.
+
+Snapshots from `thread/read` and `thread/resume` include the received reasoning prefix. Replace the client baseline on resume, then apply deltas; do not append the snapshot again. Interrupt and steer preserve received content. When retrying a discarded completion, `areal/model/completionDiscarded.itemIds` removes its reasoning and body together. `item/completed` means the Item will no longer change; the Turn terminal state determines success.
+
+Reasoning counts toward the existing Turn text output byte limit. It is separate from `agentMessage` and does not count as a final answer; reasoning without body text, media, or tool calls still triggers empty-completion handling. Display `reasoning` Items are excluded from model input replay. Chat retains its existing no-replay behavior; legacy `modelContext.value.type=chat_reasoning` records remain readable, while new Chat requests no longer archive a duplicate internal context. Original Responses reasoning objects remain in separate `modelContext` Items and replay once with provider fields such as summary and encrypted_content intact. Clients display only plaintext parts, never decrypting or displaying encrypted content.
+
+This adds an Item variant and notifications. Clients must recognize or ignore `reasoning`; exhaustive Rust `Item` / `ModelEvent` matches need corresponding branches. `ModelOptions` / `ModelParameters` / `SelectedModelConfig` gain an optional summary field. See the [Core schema](../../schemas/areal-core-v1.json) and [client guide](../guides/clients.en.md).
+
 <a id="recovery"></a>
 ## Execution and recovery
 
@@ -52,7 +76,7 @@ Model audits in `data_dir/model-requests/*.json` and `requests.jsonl` record sol
 
 Tool error audits add `errorCode` and `toolCallError`: `invalid_tool_call_index` includes a fixed reason, protocol, field path, one-based SSE data-event number, index JSON type and buffered call count; `tool_call_budget_exceeded` includes budget kind, limit and observed value. Fields contain only fixed labels and bounded numbers, never copied SSE, arguments, reasoning or invalid field values; the same record supplies the local `requestId`. The existing `responseShape.toolArgumentBytes` name counts validated ID/name/argument bytes together.
 
-Snapshots are written in format 7 and formats 1–7 can be read; older Core cannot read new snapshots. contextCheckpoint affects model input without deleting original history. modelContext retains opaque Responses context, not user content. Missing usage/duration is unknown, not zero.
+Snapshots are written in format 8 and formats 1–8 can be read; older Core cannot read new snapshots. contextCheckpoint affects model input without deleting original history. modelContext retains opaque Responses context, not user content. Missing usage/duration is unknown, not zero.
 
 <a id="dynamic-tools"></a>
 ## Dynamic tool callbacks
@@ -158,4 +182,4 @@ Core binds Goal/root identity. summary is nonempty and at most 4096 characters; 
 
 Rust embedders use `Limits.goals: goals::Policy` and `Engine::goal_get/goal_create/goal_control`. Custom Model implementations must explicitly support per-request output caps in `chat_limited` and preserve accounting via `share_context`; the HTTP adapter supports both. Custom Workgroup Factories must implement `executor_for_goal` and retain the supplied Budget; the default rejects Goal calls. Ordinary Turns and standalone Workgroups retain their existing behavior.
 
-Goal request ledgers are stored at `goals/<goal-id>.json`, with reservations persisted before sending. Root/child Agents, native Workgroups and active-Turn summaries share accounting. Each ledger permits 4096 requests/4 MiB; clear retains ledgers and history. Snapshot format 7 stores Goals and Turn attribution and cannot be read by older binaries; the API remains areal.core.v1.
+Goal request ledgers are stored at `goals/<goal-id>.json`, with reservations persisted before sending. Root/child Agents, native Workgroups and active-Turn summaries share accounting. Each ledger permits 4096 requests/4 MiB; clear retains ledgers and history. Snapshot format 8 stores Goals, Turn attribution and reasoning Items and cannot be read by older binaries; the API remains areal.core.v1.

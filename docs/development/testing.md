@@ -7,7 +7,7 @@
 | 入口 | 范围 |
 |---|---|
 | `make verify` | Cordis pin、格式、静态检查、Rust workspace、两套 SDK、Python、文档和 TUI smoke |
-| `make script-test` | 启动器、perf 统计/证据与文档链接/语言配对 |
+| `make script-test` | 启动器、Web 思考/等待/取消投影、perf 统计/证据与文档链接/语言配对 |
 | `make test-core` / `make test-protocol` | Engine / app-server |
 | `make test-concurrency` | 并发原语 |
 | `make verify-runtime` | Runtime 单元测试与真实文件、进程、权限和关闭 smoke |
