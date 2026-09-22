@@ -555,7 +555,15 @@ impl Engine {
         let probe = async {
             let _permit = self.permits.acquire().await.map_err(invalid)?;
             let mut stream = adapter
-                .chat(vec![model::Message::text("user", "Reply with OK.")], vec![])
+                .chat_with_limits(
+                    vec![model::Message::text("user", "Reply with OK.")],
+                    vec![],
+                    model::RequestPurpose::Solve,
+                    model::ToolCallLimits {
+                        max_calls: 0,
+                        max_buffer_bytes: self.limits.max_tool_buffer_bytes,
+                    },
+                )
                 .await
                 .map_err(invalid)?;
             let mut text = false;

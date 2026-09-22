@@ -2,7 +2,7 @@ use super::*;
 use areal_protocol::{DynamicToolResponse, ToolDefinition};
 use serde::Serialize;
 
-pub const MAX_ARGUMENT_BYTES: usize = 64 * 1024;
+pub const MAX_ARGUMENT_BYTES: usize = crate::model::MAX_TOOL_ARGUMENT_BYTES;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields, default)]

@@ -396,7 +396,7 @@ fn request_with_policy(
 ) -> anyhow::Result<Request> {
     let mut args: Value = serde_json::from_str(&call.arguments)?;
     anyhow::ensure!(
-        args.is_object() && call.arguments.len() <= 64 * 1024,
+        args.is_object() && call.arguments.len() <= model::MAX_TOOL_ARGUMENT_BYTES,
         "tool arguments must be an object of at most 64 KiB"
     );
     for field in ["path", "cwd"] {

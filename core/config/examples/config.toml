@@ -23,6 +23,7 @@ stream_idle_timeout_seconds = 30
 max_history_bytes = 2097152
 max_output_bytes = 262144
 max_tool_calls = 128
+max_tool_buffer_bytes = 4194304
 context_window_bytes = 196608
 context_recent_bytes = 65536
 model_concurrency = 32

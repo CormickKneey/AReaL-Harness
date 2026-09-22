@@ -22,7 +22,7 @@ Linux 宿主常规检查使用 `make verify CARGO_TEST_ARGS='--exclude areal-run
 ## 恢复与研究 Agent
 
 ```sh
-cargo test --locked -p areal-engine --test truncated_usage --test http_model --test context --test tools --test async_agents --test recovery
+cargo test --locked -p areal-engine --test truncated_usage --test tool_call_stream --test http_model --test context --test tools --test async_agents --test recovery
 python3 -m unittest discover -s scripts/tests
 python3 scripts/native-tools-smoke.py --bin-dir target/debug --sandbox-profile outer-container-perf
 python3 scripts/native-agents-smoke.py --bin-dir target/debug --sandbox-profile outer-container-perf

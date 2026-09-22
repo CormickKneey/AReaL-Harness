@@ -2,6 +2,7 @@ mod decoder;
 use decoder::{ChatDecoder, Decoder, ResponsesDecoder};
 
 mod audit;
+mod tool_calls;
 use anyhow::{Context, Result, bail};
 use areal_protocol::{ImageDetail, Modality, ModelUsage};
 use async_trait::async_trait;
@@ -10,6 +11,9 @@ use futures_util::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{collections::VecDeque, pin::Pin, time::Duration};
+pub(crate) use tool_calls::tool_index;
+pub use tool_calls::{MAX_TOOL_ARGUMENT_BYTES, ToolCallLimits};
+pub(crate) use tool_calls::{ToolCallBudget, ToolCallIndexError, tool_error_detail};
 
 const MAX_SSE_BYTES: usize = 24 * 1024 * 1024;
 const MAX_LOCAL_MEDIA_BYTES: usize = 16 * 1024 * 1024;
@@ -319,6 +323,16 @@ pub trait Model: Send + Sync {
     ) -> Result<AgentStream> {
         self.chat(messages, tools).await
     }
+    /// 默认兼容自定义模型；内置适配器与包装器必须转发并在缓冲时执行预算。
+    async fn chat_with_limits(
+        &self,
+        messages: Vec<Message>,
+        tools: Vec<Value>,
+        purpose: RequestPurpose,
+        _limits: ToolCallLimits,
+    ) -> Result<AgentStream> {
+        self.chat_for(messages, tools, purpose).await
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -593,10 +607,25 @@ impl Model for HttpModel {
     async fn chat_for(
         &self,
         messages: Vec<Message>,
-        mut tools: Vec<Value>,
+        tools: Vec<Value>,
         purpose: RequestPurpose,
     ) -> Result<AgentStream> {
+        self.chat_with_limits(messages, tools, purpose, ToolCallLimits::default())
+            .await
+    }
+    async fn chat_with_limits(
+        &self,
+        messages: Vec<Message>,
+        mut tools: Vec<Value>,
+        purpose: RequestPurpose,
+        mut limits: ToolCallLimits,
+    ) -> Result<AgentStream> {
+        anyhow::ensure!(
+            limits.max_buffer_bytes > 0,
+            "tool buffer budget must be positive"
+        );
         if purpose == RequestPurpose::Summary {
+            limits.max_calls = 0;
             tools.clear();
         }
         let mut body = self.request_body(messages).await?;
@@ -719,8 +748,8 @@ impl Model for HttpModel {
             bail!("model response must use text/event-stream");
         }
         let decoder = match self.protocol {
-            ModelProtocol::ChatCompletions => Decoder::Chat(ChatDecoder::default()),
-            ModelProtocol::Responses => Decoder::Responses(ResponsesDecoder::default()),
+            ModelProtocol::ChatCompletions => Decoder::Chat(ChatDecoder::new(limits)),
+            ModelProtocol::Responses => Decoder::Responses(ResponsesDecoder::new(limits)),
         };
         let state = (
             response.bytes_stream(),
@@ -744,34 +773,39 @@ impl Model for HttpModel {
                         }
                         return Some((Ok(event), (stream, decoder, queued, failed, audit)));
                     }
-                    if failed || decoder.done() {
+                    let pending_error = decoder.take_pending_error();
+                    if failed || (decoder.done() && pending_error.is_none()) {
                         if !failed {
                             audit.value["outcome"] = json!("completed");
                         }
                         return None;
                     }
-                    let result = match stream.next().await {
-                        Some(Ok(bytes)) => {
-                            let parts = decoder.feed(&bytes);
-                            if let Decoder::Chat(chat) = &decoder {
-                                audit.value["stopReason"] = json!(chat.stop_reason);
-                                audit.value["responseShape"] = json!({
-                                    "contentFieldBytes":chat.content_bytes,
-                                    "reasoningFieldBytes":chat.reasoning.len(),
-                                    "toolArgumentBytes":chat.tool_bytes
-                                });
+                    let result = if let Some(error) = pending_error {
+                        Err(error)
+                    } else {
+                        match stream.next().await {
+                            Some(Ok(bytes)) => {
+                                let parts = decoder.feed(&bytes);
+                                if let Decoder::Chat(chat) = &decoder {
+                                    audit.value["stopReason"] = json!(chat.stop_reason);
+                                    audit.value["responseShape"] = json!({
+                                        "contentFieldBytes":chat.content_bytes,
+                                        "reasoningFieldBytes":chat.reasoning.len(),
+                                        "toolArgumentBytes":chat.tool_bytes
+                                    });
+                                }
+                                if !bytes.is_empty() {
+                                    queued.push_back(ModelEvent::Activity);
+                                }
+                                parts
                             }
-                            if !bytes.is_empty() {
-                                queued.push_back(ModelEvent::Activity);
+                            Some(Err(_)) => Err(match &decoder {
+                                Decoder::Chat(chat) if chat.truncated => ModelFailure::Truncated,
+                                _ => ModelFailure::Transport,
                             }
-                            parts
+                            .into()),
+                            None => decoder.finish(),
                         }
-                        Some(Err(_)) => Err(match &decoder {
-                            Decoder::Chat(chat) if chat.truncated => ModelFailure::Truncated,
-                            _ => ModelFailure::Transport,
-                        }
-                        .into()),
-                        None => decoder.finish(),
                     };
                     match result {
                         Ok(parts) => queued.extend(parts),
@@ -780,6 +814,10 @@ impl Model for HttpModel {
                             audit.value["outcome"] = json!("failed");
                             if let Some(detail) = error.downcast_ref::<StreamError>() {
                                 audit.value["streamError"] = json!(detail);
+                            }
+                            if let Some(detail) = tool_error_detail(&error) {
+                                audit.value["errorCode"] = detail["code"].clone();
+                                audit.value["toolCallError"] = detail;
                             }
                             audit.value["error"] = json!(
                                 error

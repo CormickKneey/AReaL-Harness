@@ -540,3 +540,33 @@ fn watchdog_defaults_enabled_and_environment_overrides_toml() {
     write(&mut i, "schema_version=1\n[limits]\nwatchdog_disable=1\n");
     assert_eq!(failure(&i).field, "limits.watchdog_disable");
 }
+
+#[test]
+fn tool_buffer_budget_defaults_and_overrides_are_validated_and_visible() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut i = inputs(temp.path());
+    assert_eq!(
+        load_config(&i).unwrap().max_tool_buffer_bytes,
+        4 * 1024 * 1024
+    );
+    write(
+        &mut i,
+        "schema_version=1\n[limits]\nmax_tool_buffer_bytes=8388608\n",
+    );
+    assert_eq!(
+        load_config(&i).unwrap().max_tool_buffer_bytes,
+        8 * 1024 * 1024
+    );
+    set(&mut i, "AREAL_HARNESS_MAX_TOOL_BUFFER_BYTES", "1024");
+    let config = load_config(&i).unwrap();
+    assert_eq!(config.max_tool_buffer_bytes, 1024);
+    assert_eq!(
+        config.diagnostic(true)["limits"]["max_tool_buffer_bytes"],
+        1024
+    );
+    assert!(config.sources.contains_key("limits.max_tool_buffer_bytes"));
+    for value in ["0", "-1", "1.5", "18446744073709551616", ""] {
+        set(&mut i, "AREAL_HARNESS_MAX_TOOL_BUFFER_BYTES", value);
+        assert!(load_config(&i).is_err(), "{value}");
+    }
+}

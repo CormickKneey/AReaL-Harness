@@ -3,7 +3,7 @@
 use super::*;
 use crate::{
     Engine, Limits,
-    model::{Message, Model, ModelEvent, ModelFailure, ModelLoad, ModelStream},
+    model::{Message, Model, ModelEvent, ModelFailure, ModelLoad, ModelStream, ToolCallLimits},
     tools::{RuntimeConfig, verify_command},
 };
 use areal_protocol::{Input, ModelUsage, TurnStatus};
@@ -233,6 +233,16 @@ impl Model for SharedModel {
         tools: Vec<Value>,
         purpose: crate::model::RequestPurpose,
     ) -> Result<ModelStream> {
+        self.chat_with_limits(messages, tools, purpose, ToolCallLimits::default())
+            .await
+    }
+    async fn chat_with_limits(
+        &self,
+        messages: Vec<Message>,
+        tools: Vec<Value>,
+        purpose: crate::model::RequestPurpose,
+        limits: ToolCallLimits,
+    ) -> Result<ModelStream> {
         let load = RequestLoad::waiting(self.load.clone());
         let permit = self.permits.clone().acquire_owned().await?;
         {
@@ -247,7 +257,10 @@ impl Model for SharedModel {
             load: load.start(),
             _permit: permit,
         };
-        let stream = self.inner.chat_for(messages, tools, purpose).await?;
+        let stream = self
+            .inner
+            .chat_with_limits(messages, tools, purpose, limits)
+            .await?;
         Ok(Box::pin(MeteredStream {
             inner: stream,
             request,
@@ -486,13 +499,36 @@ impl Model for ProgressModel {
         tools: Vec<Value>,
         purpose: crate::model::RequestPurpose,
     ) -> Result<ModelStream> {
+        self.chat_with_limits(messages, tools, purpose, ToolCallLimits::default())
+            .await
+    }
+    async fn chat_with_limits(
+        &self,
+        messages: Vec<Message>,
+        tools: Vec<Value>,
+        purpose: crate::model::RequestPurpose,
+        limits: ToolCallLimits,
+    ) -> Result<ModelStream> {
         if purpose == crate::model::RequestPurpose::Summary {
-            self.inner.chat_for(messages, tools, purpose).await
+            self.inner
+                .chat_with_limits(messages, tools, purpose, limits)
+                .await
         } else {
-            self.chat(messages, tools).await
+            self.solve_with_limits(messages, tools, limits).await
         }
     }
     async fn chat(&self, messages: Vec<Message>, tools: Vec<Value>) -> Result<ModelStream> {
+        self.solve_with_limits(messages, tools, ToolCallLimits::default())
+            .await
+    }
+}
+impl ProgressModel {
+    async fn solve_with_limits(
+        &self,
+        messages: Vec<Message>,
+        tools: Vec<Value>,
+        limits: ToolCallLimits,
+    ) -> Result<ModelStream> {
         let failed = repeated_failure(&messages);
         let unchanged = !failed
             && self
@@ -530,7 +566,11 @@ impl Model for ProgressModel {
         } else {
             tools
         };
-        let stream = match self.inner.chat(messages, tools).await {
+        let stream = match self
+            .inner
+            .chat_with_limits(messages, tools, crate::model::RequestPurpose::Solve, limits)
+            .await
+        {
             Ok(stream) => stream,
             Err(error) => {
                 *self.failure.lock().unwrap() = error.downcast_ref::<ModelFailure>().copied();
@@ -556,6 +596,7 @@ pub struct NativeExecutor {
     pub runtime_limits: areal_runtime_protocol::Limits,
     pub context_bytes: usize,
     pub watchdog_disable: bool,
+    pub tool_call_limits: ToolCallLimits,
     pub max_unchanged_rounds: usize,
     /// Model tool exposure only; Engine and Runtime permissions are unchanged.
     pub command_tools_only: bool,
@@ -607,6 +648,7 @@ impl NativeExecutor {
             },
             context_bytes: 65536,
             watchdog_disable: false,
+            tool_call_limits: ToolCallLimits::default(),
             max_unchanged_rounds: 0,
             command_tools_only: false,
             sequence: AtomicUsize::new(0),
@@ -717,7 +759,8 @@ impl Executor for NativeExecutor {
             let engine = Engine::open_with_runtime(&root.join("history"), worker_model.clone(),
                 Limits { max_active_turns: 1, max_children_per_turn: 0, max_agent_depth: 0,
                     max_history_bytes: 8 * 1024 * 1024, max_output_bytes: 512 * 1024,
-                    turn_timeout: Duration::from_secs(900), watchdog_disable: self.watchdog_disable, ..Limits::default() },
+                    turn_timeout: Duration::from_secs(900), watchdog_disable: self.watchdog_disable,
+                    max_tool_calls: self.tool_call_limits.max_calls, max_tool_buffer_bytes: self.tool_call_limits.max_buffer_bytes, ..Limits::default() },
                 RuntimeConfig { client: runtime.clone(), workspace: workspace.clone(), writable: true, command_scratch: Some(workspace.join(".scratch")) })?;
             let execution: Result<()> = async {
                 let thread = if let Some(configuration)=&task.configuration {
@@ -880,7 +923,15 @@ pub async fn propose(
         "Plan a coding task into a useful dependency graph of at most {MAX_TASKS} tasks. Task count is independent of execution concurrency; create only boundaries that enable useful independent work. Return ONLY JSON with objective and tasks; each task has id (ASCII letters/digits/underscore), instruction (include exact interfaces and behavior), writes (exact relative file paths), depends (task ids that must integrate before execution), optional integrationDepends (task ids that only block acceptance; specify the agreed interface in instruction), checks (argv arrays for public local tests, or []). Shared-file changes will be coalesced by Core. Do not create duplicate implementations. Use a single task if splitting has no useful independent work. Do not edit tests. Final verification is supplied independently.\nObjective: {objective}\nCaller-authorized writable paths (do not expand): {allowed:?}\nPublic repository context:{context}"
     );
     let mut stream = model
-        .chat(vec![Message::text("user", prompt)], vec![])
+        .chat_with_limits(
+            vec![Message::text("user", prompt)],
+            vec![],
+            crate::model::RequestPurpose::Solve,
+            ToolCallLimits {
+                max_calls: 0,
+                ..ToolCallLimits::default()
+            },
+        )
         .await?;
     let mut text = String::new();
     while let Some(event) = stream.next().await {
@@ -1150,5 +1201,88 @@ mod progress_tests {
         }
         assert!(!guard.observe(&successful_history(4), &workspace.path().join("missing")));
         assert!(!guard.observe(&successful_history(5), workspace.path()));
+    }
+}
+
+#[cfg(test)]
+mod request_budget_tests {
+    use super::*;
+    use crate::model::RequestPurpose;
+
+    struct BudgetModel(Mutex<Vec<(RequestPurpose, usize, usize)>>);
+    #[async_trait]
+    impl Model for BudgetModel {
+        fn name(&self) -> &str {
+            "budget-fixture"
+        }
+        async fn stream(&self, _: Vec<Message>) -> Result<ModelStream> {
+            panic!("budget forwarding was lost")
+        }
+        async fn chat_with_limits(
+            &self,
+            _: Vec<Message>,
+            _: Vec<Value>,
+            purpose: RequestPurpose,
+            limits: ToolCallLimits,
+        ) -> Result<ModelStream> {
+            self.0
+                .lock()
+                .unwrap()
+                .push((purpose, limits.max_calls, limits.max_buffer_bytes));
+            let error = crate::model::tool_index(&serde_json::json!({}), 1, 0, 0, 0).unwrap_err();
+            Ok(Box::pin(futures_util::stream::iter([Err(error)])))
+        }
+    }
+
+    #[tokio::test]
+    async fn worker_forwards_solve_and_summary_budgets_without_protocol_checkpoints() {
+        let workspace = tempfile::tempdir().unwrap();
+        let inner = Arc::new(BudgetModel(Mutex::new(Vec::new())));
+        let worker = ProgressModel {
+            inner: inner.clone(),
+            stalled: Arc::new(AtomicBool::new(false)),
+            failure: Arc::new(Mutex::new(None)),
+            workspace: workspace.path().into(),
+            successful: Mutex::new(SuccessfulTools::default()),
+            context_bytes: 65536,
+            context_audit: Mutex::new(vec![]),
+            progress: Mutex::new(SourceProgress {
+                hash: String::new(),
+                edited: false,
+                unchanged: 0,
+                observed: false,
+            }),
+            max_unchanged_rounds: 0,
+            command_tools_only: false,
+        };
+        for purpose in [RequestPurpose::Solve, RequestPurpose::Summary] {
+            let mut stream = worker
+                .chat_with_limits(
+                    vec![],
+                    vec![],
+                    purpose,
+                    ToolCallLimits {
+                        max_calls: 3,
+                        max_buffer_bytes: 1234,
+                    },
+                )
+                .await
+                .unwrap();
+            let error = stream.next().await.unwrap().unwrap_err();
+            assert!(
+                error
+                    .downcast_ref::<crate::model::ToolCallIndexError>()
+                    .is_some()
+            );
+            assert!(!crate::model::is_network_error(&error));
+            assert!(worker.failure.lock().unwrap().is_none());
+        }
+        assert_eq!(
+            *inner.0.lock().unwrap(),
+            [
+                (RequestPurpose::Solve, 3, 1234),
+                (RequestPurpose::Summary, 3, 1234)
+            ]
+        );
     }
 }

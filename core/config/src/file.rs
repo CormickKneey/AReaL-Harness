@@ -177,6 +177,7 @@ fn walk(
                     | "max_history_bytes"
                     | "max_output_bytes"
                     | "max_tool_calls"
+                    | "max_tool_buffer_bytes"
                     | "context_window_bytes"
                     | "context_window_tokens"
                     | "context_output_reserve_tokens"

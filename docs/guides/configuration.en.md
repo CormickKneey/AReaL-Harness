@@ -35,6 +35,7 @@ stream_idle_timeout_seconds = 30
 max_history_bytes = 2097152
 max_output_bytes = 262144
 max_tool_calls = 128
+max_tool_buffer_bytes = 4194304
 context_window_bytes = 196608
 context_recent_bytes = 65536
 context_window_tokens = 0
@@ -57,6 +58,8 @@ The network watchdog is enabled by default with no retry count limit. Set `AREAL
 
 `limits.max_completion_retries` defaults to 0, accepts 0–8, and budgets bounded incomplete-response recovery per Turn separately from HTTP `max_retries` and the network watchdog. Disabling the watchdog preserves existing finite retry allowances. See [Core recovery](../api/core.en.md#recovery). HTTPS uses public roots and the host trust store; install private CAs there. Tools execute only from structured protocol fields, never from XML/JSON in response text.
 
+`limits.max_tool_buffer_bytes` defaults to 4194304 (4 MiB) and must be positive. It bounds the UTF-8 bytes of all buffered tool IDs, names and arguments per response; it excludes reasoning and separate audio/video/image blobs, while media strings embedded in arguments still count as UTF-8 bytes. This is not a process memory limit. It is independent of Turn `max_output_bytes` and history budgets: raising it does not increase execution or persistence allowances. Chat Completions and Responses share this budget; repeated Responses terminal items are not charged twice. Each call still permits at most 64 KiB of arguments. Call count uses the remaining Turn `max_tool_calls` allowance, replacing the fixed 16-call response cap. The environment variable is `AREAL_HARNESS_MAX_TOOL_BUFFER_BYTES`.
+
 Byte and capacity limits are positive integers; fan-out and depth may be 0 to disable delegation. Output must be smaller than history, recent context smaller than the context window, and deadlines 1–86400 seconds. Context bytes are estimates rather than tokenizer windows. Active tasks, model requests and Runtime resources are counted separately.
 
 | Environment suffix (prefix `AREAL_HARNESS_`) | Configuration |
@@ -69,7 +72,7 @@ Byte and capacity limits are positive integers; fan-out and depth may be 0 to di
 | `MODEL_CONCURRENCY`, `MAX_THREADS`, `MAX_ACTIVE_TURNS`, `MAX_CHILDREN_PER_TURN`, `MAX_AGENT_DEPTH` | Concurrency and task capacity |
 | `TURN_TIMEOUT_SECONDS`, `STREAM_IDLE_TIMEOUT_SECONDS` | Deadlines |
 | `WATCHDOG_DISABLE` | `limits.watchdog_disable`; `1` disables, default `0` |
-| `MAX_HISTORY_BYTES`, `MAX_OUTPUT_BYTES`, `MAX_TOOL_CALLS`, `CONTEXT_WINDOW_BYTES`, `CONTEXT_RECENT_BYTES` | History, tools and context budgets |
+| `MAX_HISTORY_BYTES`, `MAX_OUTPUT_BYTES`, `MAX_TOOL_CALLS`, `MAX_TOOL_BUFFER_BYTES`, `CONTEXT_WINDOW_BYTES`, `CONTEXT_RECENT_BYTES` | History, tools and context budgets |
 
 Unknown `AREAL_HARNESS_*` names are errors. Legacy `AREAL_MODEL*` and `RUST_LOG` are lower-priority aliases. Legacy model entry points without a provider file record may use optional `AREAL_API_KEY`; explicit file providers do not inherit it implicitly.
 

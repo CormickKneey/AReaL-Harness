@@ -247,6 +247,7 @@ async fn main() -> Result<()> {
         let mut executor = NativeExecutor::new(model.clone(), args.state_dir.join("bindings"), args.runtime.canonicalize()?,
             args.file_helper.canonicalize()?, args.toolchain.map(|p| p.canonicalize()).transpose()?)?;
         executor.watchdog_disable = config.watchdog_disable;
+        executor.tool_call_limits = areal_engine::model::ToolCallLimits { max_calls: config.max_tool_calls, max_buffer_bytes: config.max_tool_buffer_bytes };
         executor.context_bytes = args.worker_context_bytes;
         executor.max_unchanged_rounds = args.worker_stall_rounds;
         executor.command_tools_only = args.worker_tools == "command";

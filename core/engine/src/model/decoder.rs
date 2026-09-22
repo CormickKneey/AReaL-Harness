@@ -51,9 +51,7 @@ impl Decoder {
         }
     }
     pub(super) fn finish(&mut self) -> Result<Vec<ModelEvent>> {
-        if let Self::Chat(decoder) = self
-            && let Some(error) = decoder.pending_error.take()
-        {
+        if let Some(error) = self.take_pending_error() {
             return Err(error);
         }
         if self.done() {
@@ -72,6 +70,12 @@ impl Decoder {
             return decoder.complete();
         }
         Err(ModelFailure::Incomplete.into())
+    }
+    pub(super) fn take_pending_error(&mut self) -> Option<anyhow::Error> {
+        match self {
+            Self::Chat(d) => d.pending_error.take(),
+            Self::Responses(d) => d.pending_error.take(),
+        }
     }
     pub(super) fn done(&self) -> bool {
         match self {
@@ -92,10 +96,19 @@ pub(super) struct ChatDecoder {
     pending_error: Option<anyhow::Error>,
     calls: std::collections::BTreeMap<u64, ToolCall>,
     pub(super) tool_bytes: usize,
+    budget: ToolCallBudget,
+    event_number: u64,
     pub(super) reasoning: String,
 }
 
 impl ChatDecoder {
+    pub(super) fn new(limits: ToolCallLimits) -> Self {
+        Self {
+            budget: ToolCallBudget::new(limits),
+            ..Self::default()
+        }
+    }
+
     fn complete(&mut self) -> Result<Vec<ModelEvent>> {
         // A length finish is a failed inference even after clean HTTP EOF.
         // Hold partial calls while accepting the provider's trailing usage.
@@ -133,7 +146,8 @@ impl ChatDecoder {
             }
         })?;
         for data in frames {
-            let result = self.decode_event(&data).map_err(|error| {
+            self.event_number = self.event_number.saturating_add(1);
+            let result = self.decode_event(&data, &mut output).map_err(|error| {
                 if self.truncated {
                     anyhow::Error::new(ModelFailure::Truncated)
                 } else {
@@ -141,7 +155,7 @@ impl ChatDecoder {
                 }
             });
             match result {
-                Ok(events) => output.extend(events),
+                Ok(()) => {}
                 Err(error) if output.is_empty() => return Err(error),
                 Err(error) => {
                     self.pending_error = Some(error);
@@ -152,21 +166,23 @@ impl ChatDecoder {
         Ok(output)
     }
 
-    fn decode_event(&mut self, data: &str) -> Result<Vec<ModelEvent>> {
+    fn decode_event(&mut self, data: &str, output: &mut Vec<ModelEvent>) -> Result<()> {
         if data == "[DONE]" {
-            return self.complete();
+            output.extend(self.complete()?);
+            return Ok(());
         }
         let event: Value = serde_json::from_str(data).context("invalid SSE JSON")?;
         if let Some(error) = event.get("error").filter(|v| !v.is_null()) {
             return Err(StreamError::from_value(error, "error").into());
         }
-        let mut output = Vec::new();
         if let Some(usage) = parse_usage(event.get("usage")) {
             output.push(ModelEvent::Usage(usage));
         }
-        for choice in event["choices"]
+        for (choice_position, choice) in event["choices"]
             .as_array()
             .context("missing stream choices")?
+            .iter()
+            .enumerate()
         {
             if choice["index"].as_u64() != Some(0) {
                 bail!("unexpected model choice index");
@@ -182,32 +198,49 @@ impl ChatDecoder {
             }
             if let Some(calls) = delta.get("tool_calls").filter(|v| !v.is_null()) {
                 anyhow::ensure!(!self.finished, "tool data after completion");
-                for fragment in calls.as_array().context("invalid tool_calls")? {
-                    let index = fragment["index"].as_u64().context("missing tool index")?;
-                    anyhow::ensure!(index < 16, "too many tool calls in one completion");
+                for (position, fragment) in calls
+                    .as_array()
+                    .context("invalid tool_calls")?
+                    .iter()
+                    .enumerate()
+                {
+                    let index = tool_index(
+                        fragment,
+                        self.event_number,
+                        choice_position,
+                        position,
+                        self.calls.len(),
+                    )?;
+                    if let Some(kind) = fragment["type"].as_str() {
+                        anyhow::ensure!(kind == "function", "unsupported tool type");
+                    }
+                    let mut parts = [""; 3];
+                    for (part, value) in parts.iter_mut().zip([
+                        &fragment["id"],
+                        &fragment["function"]["name"],
+                        &fragment["function"]["arguments"],
+                    ]) {
+                        if !value.is_null() {
+                            *part = value.as_str().context("tool fragment must be a string")?;
+                        }
+                    }
+                    let existing = self.calls.get(&index);
+                    let lengths = existing.map_or([0; 3], |call| {
+                        [call.id.len(), call.name.len(), call.arguments.len()]
+                    });
+                    self.budget
+                        .reserve(existing.is_none(), lengths, parts.map(str::len))?;
+                    self.tool_bytes = self.budget.bytes;
                     let call = self.calls.entry(index).or_insert_with(|| ToolCall {
                         id: String::new(),
                         name: String::new(),
                         arguments: String::new(),
                     });
-                    if let Some(kind) = fragment["type"].as_str() {
-                        anyhow::ensure!(kind == "function", "unsupported tool type");
-                    }
-                    for (field, value) in [
-                        (&mut call.id, &fragment["id"]),
-                        (&mut call.name, &fragment["function"]["name"]),
-                        (&mut call.arguments, &fragment["function"]["arguments"]),
-                    ] {
-                        if value.is_null() {
-                            continue;
-                        }
-                        let text = value.as_str().context("tool fragment must be a string")?;
-                        self.tool_bytes += text.len();
-                        anyhow::ensure!(
-                            self.tool_bytes <= 64 * 1024,
-                            "tool arguments exceed 64 KiB"
-                        );
-                        field.push_str(text);
+                    for (field, part) in [&mut call.id, &mut call.name, &mut call.arguments]
+                        .into_iter()
+                        .zip(parts)
+                    {
+                        field.push_str(part);
                     }
                 }
             }
@@ -243,7 +276,7 @@ impl ChatDecoder {
                     // Do not discard usage already parsed from this event or
                     // stop before a separate usage trailer. complete() reports
                     // Truncated without releasing any buffered tool calls.
-                    return Ok(output);
+                    return Ok(());
                 }
                 if reason != "stop" && reason != "tool_calls" {
                     bail!("model stopped with reason: {reason}");
@@ -272,7 +305,7 @@ impl ChatDecoder {
                 self.finished = true;
             }
         }
-        Ok(output)
+        Ok(())
     }
 }
 
@@ -285,9 +318,18 @@ pub(super) struct ResponsesDecoder {
     contexts: Vec<Value>,
     calls: Vec<ToolCall>,
     item_ids: std::collections::HashSet<String>,
+    budget: ToolCallBudget,
+    pending_error: Option<anyhow::Error>,
 }
 
 impl ResponsesDecoder {
+    pub(super) fn new(limits: ToolCallLimits) -> Self {
+        Self {
+            budget: ToolCallBudget::new(limits),
+            ..Self::default()
+        }
+    }
+
     fn record_item(&mut self, item: &Value) -> Result<()> {
         match item["type"].as_str() {
             Some("reasoning") => {
@@ -302,35 +344,30 @@ impl ResponsesDecoder {
                 }
             }
             Some("function_call") => {
-                let call = ToolCall {
-                    id: item["call_id"].as_str().context("missing call ID")?.into(),
-                    name: item["name"]
-                        .as_str()
-                        .context("missing function name")?
-                        .into(),
-                    arguments: item["arguments"]
-                        .as_str()
-                        .context("missing function arguments")?
-                        .into(),
-                };
-                anyhow::ensure!(
-                    !call.id.is_empty() && call.id.len() <= 256 && call.id.is_ascii(),
-                    "invalid call ID"
-                );
-                anyhow::ensure!(
-                    !call.name.is_empty() && call.name.len() <= 128 && call.name.is_ascii(),
-                    "invalid function name"
-                );
-                anyhow::ensure!(
-                    call.arguments.len() <= 64 * 1024
-                        && serde_json::from_str::<Value>(&call.arguments)?.is_object(),
-                    "invalid function arguments"
-                );
-                if let Some(existing) = self.calls.iter().find(|existing| existing.id == call.id) {
-                    anyhow::ensure!(existing == &call, "conflicting function call replay");
+                let id = item["call_id"].as_str().context("missing call ID")?;
+                let name = item["name"].as_str().context("missing function name")?;
+                let arguments = item["arguments"]
+                    .as_str()
+                    .context("missing function arguments")?;
+                anyhow::ensure!(!id.is_empty() && id.is_ascii(), "invalid call ID");
+                anyhow::ensure!(!name.is_empty() && name.is_ascii(), "invalid function name");
+                if let Some(existing) = self.calls.iter().find(|call| call.id == id) {
+                    anyhow::ensure!(
+                        existing.name == name && existing.arguments == arguments,
+                        "conflicting function call replay"
+                    );
                 } else {
-                    anyhow::ensure!(self.calls.len() < 16, "too many function calls");
-                    self.calls.push(call);
+                    self.budget
+                        .reserve(true, [0; 3], [id.len(), name.len(), arguments.len()])?;
+                    anyhow::ensure!(
+                        serde_json::from_str::<Value>(arguments)?.is_object(),
+                        "invalid function arguments"
+                    );
+                    self.calls.push(ToolCall {
+                        id: id.into(),
+                        name: name.into(),
+                        arguments: arguments.into(),
+                    });
                 }
             }
             Some("computer_call" | "custom_tool_call") => bail!("unsupported Responses tool type"),
@@ -340,99 +377,118 @@ impl ResponsesDecoder {
     }
 
     fn feed(&mut self, bytes: &[u8]) -> Result<Vec<ModelEvent>> {
+        if let Some(error) = self.pending_error.take() {
+            return Err(error);
+        }
         let mut output = Vec::new();
         for data in self.frames.feed(bytes)? {
-            if data == "[DONE]" {
-                self.done = self.finished;
-                if !self.done {
-                    return Err(ModelFailure::Incomplete.into());
+            match self.decode_event(&data, &mut output) {
+                Ok(()) => {}
+                Err(error) if output.is_empty() => return Err(error),
+                Err(error) => {
+                    self.pending_error = Some(error);
+                    break;
                 }
-                break;
             }
-            let event: Value = serde_json::from_str(&data).context("invalid Responses SSE JSON")?;
-            match event["type"].as_str().unwrap_or_default() {
-                "response.output_text.delta" | "response.refusal.delta" => {
-                    if let Some(delta) = event["delta"].as_str().filter(|v| !v.is_empty()) {
-                        output.push(ModelEvent::text(delta));
-                    }
-                }
-                "response.audio.delta" => {
-                    if let Some(delta) = event["delta"].as_str() {
-                        self.audio.push_str(delta);
-                        if self.audio.len() > MAX_LOCAL_MEDIA_BYTES * 2 {
-                            bail!("audio output exceeds encoded size limit");
-                        }
-                    }
-                }
-                "response.audio.done" => {
-                    if !self.audio.is_empty() {
-                        output.push(ModelEvent::Binary {
-                            modality: Modality::Audio,
-                            mime_type: "audio/mpeg".into(),
-                            data: STANDARD
-                                .decode(std::mem::take(&mut self.audio))
-                                .context("invalid response audio base64")?,
-                        });
-                    }
-                }
-                "response.output_item.done" => {
-                    let item = &event["item"];
-                    self.record_item(item)?;
-                    if item["type"] == "image_generation_call"
-                        && let Some(result) = item["result"].as_str()
-                    {
-                        output.push(ModelEvent::Binary {
-                            modality: Modality::Image,
-                            mime_type: "image/png".into(),
-                            data: STANDARD
-                                .decode(result)
-                                .context("invalid generated image base64")?,
-                        });
-                    }
-                }
-                "response.completed" => {
-                    if event["response"]["status"] != "completed" {
-                        bail!("Responses request did not complete successfully");
-                    }
-                    if let Some(items) = event["response"]["output"].as_array() {
-                        for item in items {
-                            self.record_item(item)?;
-                        }
-                    }
-                    output.extend(
-                        std::mem::take(&mut self.contexts)
-                            .into_iter()
-                            .map(ModelEvent::ProviderContext),
-                    );
-                    output.extend(
-                        std::mem::take(&mut self.calls)
-                            .into_iter()
-                            .map(ModelEvent::ToolCall),
-                    );
-                    if let Some(usage) = parse_usage(event["response"].get("usage")) {
-                        output.push(ModelEvent::Usage(usage));
-                    }
-                    self.finished = true;
-                    self.done = true;
-                }
-                "response.failed" | "response.incomplete" | "error" => {
-                    let value = event
-                        .get("error")
-                        .filter(|v| !v.is_null())
-                        .or_else(|| event["response"].get("error").filter(|v| !v.is_null()))
-                        .or_else(|| event["response"].get("incomplete_details"))
-                        .unwrap_or(&event);
-                    let kind = match event["type"].as_str() {
-                        Some("response.failed") => "response.failed",
-                        Some("response.incomplete") => "response.incomplete",
-                        _ => "error",
-                    };
-                    return Err(StreamError::from_value(value, kind).into());
-                }
-                _ => {}
+            if self.done {
+                break;
             }
         }
         Ok(output)
+    }
+
+    fn decode_event(&mut self, data: &str, output: &mut Vec<ModelEvent>) -> Result<()> {
+        if data == "[DONE]" {
+            self.done = self.finished;
+            if !self.done {
+                return Err(ModelFailure::Incomplete.into());
+            }
+            return Ok(());
+        }
+        let event: Value = serde_json::from_str(data).context("invalid Responses SSE JSON")?;
+        match event["type"].as_str().unwrap_or_default() {
+            "response.output_text.delta" | "response.refusal.delta" => {
+                if let Some(delta) = event["delta"].as_str().filter(|v| !v.is_empty()) {
+                    output.push(ModelEvent::text(delta));
+                }
+            }
+            "response.audio.delta" => {
+                if let Some(delta) = event["delta"].as_str() {
+                    self.audio.push_str(delta);
+                    if self.audio.len() > MAX_LOCAL_MEDIA_BYTES * 2 {
+                        bail!("audio output exceeds encoded size limit");
+                    }
+                }
+            }
+            "response.audio.done" => {
+                if !self.audio.is_empty() {
+                    output.push(ModelEvent::Binary {
+                        modality: Modality::Audio,
+                        mime_type: "audio/mpeg".into(),
+                        data: STANDARD
+                            .decode(std::mem::take(&mut self.audio))
+                            .context("invalid response audio base64")?,
+                    });
+                }
+            }
+            "response.output_item.done" => {
+                let item = &event["item"];
+                self.record_item(item)?;
+                if item["type"] == "image_generation_call"
+                    && let Some(result) = item["result"].as_str()
+                {
+                    output.push(ModelEvent::Binary {
+                        modality: Modality::Image,
+                        mime_type: "image/png".into(),
+                        data: STANDARD
+                            .decode(result)
+                            .context("invalid generated image base64")?,
+                    });
+                }
+            }
+            "response.completed" => {
+                if event["response"]["status"] != "completed" {
+                    bail!("Responses request did not complete successfully");
+                }
+                if let Some(usage) = parse_usage(event["response"].get("usage")) {
+                    output.push(ModelEvent::Usage(usage));
+                }
+                if let Some(items) = event["response"]["output"].as_array() {
+                    for item in items {
+                        self.record_item(item)?;
+                    }
+                }
+                output.extend(
+                    std::mem::take(&mut self.contexts)
+                        .into_iter()
+                        .map(ModelEvent::ProviderContext),
+                );
+                output.extend(
+                    std::mem::take(&mut self.calls)
+                        .into_iter()
+                        .map(ModelEvent::ToolCall),
+                );
+
+                self.finished = true;
+                self.done = true;
+            }
+            "response.failed" | "response.incomplete" | "error" => {
+                let value = event
+                    .get("error")
+                    .filter(|v| !v.is_null())
+                    .or_else(|| event["response"].get("error").filter(|v| !v.is_null()))
+                    .or_else(|| event["response"].get("incomplete_details"))
+                    .unwrap_or(&event);
+                let kind = match event["type"].as_str() {
+                    Some("response.failed") => "response.failed",
+                    Some("response.incomplete") => "response.incomplete",
+                    _ => "error",
+                };
+                return Err(StreamError::from_value(value, kind).into());
+            }
+            _ => {}
+        }
+        Ok(())
     }
 }
 
@@ -901,5 +957,190 @@ mod tests {
                 .to_string()
                 .contains("exceeds 24 MiB")
         );
+    }
+}
+
+#[cfg(test)]
+mod tool_call_tests {
+    use super::*;
+
+    fn frame(value: Value) -> String {
+        format!("data: {value}\n\n")
+    }
+    fn delta(calls: Value) -> Value {
+        json!({"choices":[{"index":0,"delta":{"tool_calls":calls}}]})
+    }
+    fn fragment(index: u64, id: &str, arguments: &str) -> Value {
+        json!({"index":index,"id":id,"function":{"name":"test","arguments":arguments}})
+    }
+
+    #[test]
+    fn invalid_indices_keep_typed_diagnostics_and_usage_across_frames_and_eof() {
+        let secret = "secret-api-key-image-prompt".repeat(1000);
+        for (fragment, reason, kind) in [
+            (json!({}), "missing", "missing"),
+            (json!({"index":null}), "null", "null"),
+            (json!({"index":secret}), "wrong_type", "string"),
+            (json!({"index":true}), "wrong_type", "boolean"),
+            (json!({"index":[]}), "wrong_type", "array"),
+            (json!({"index":{}}), "wrong_type", "object"),
+            (json!({"index":-1}), "negative", "number"),
+            (json!({"index":1.5}), "non_integer", "number"),
+            (json!({"index":1.0}), "non_integer", "number"),
+            (json!({"index":1e30}), "out_of_range", "number"),
+            (json!(secret), "fragment_not_object", "missing"),
+            (Value::Null, "fragment_not_object", "missing"),
+        ] {
+            for prefix in [false, true] {
+                for same_chunk in [false, true] {
+                    for eof in [false, true] {
+                        let mut decoder = Decoder::Chat(ChatDecoder::default());
+                        let previous = if prefix {
+                            frame(
+                                json!({"choices":[{"index":0,"delta":{"content":"partial","tool_calls":[{"index":100,"id":"good","function":{"name":"test","arguments":"{}"}}]}}]}),
+                            )
+                        } else {
+                            String::new()
+                        };
+                        let mut bad = delta(json!([fragment.clone()]));
+                        bad["usage"] = json!({"prompt_tokens":7,"completion_tokens":3});
+                        let bad = frame(bad);
+                        let mut output = Vec::new();
+                        if same_chunk {
+                            output.extend(decoder.feed((previous + &bad).as_bytes()).unwrap());
+                        } else {
+                            output.extend(decoder.feed(previous.as_bytes()).unwrap());
+                            output.extend(decoder.feed(bad.as_bytes()).unwrap());
+                        }
+                        let error = if eof {
+                            decoder.finish()
+                        } else {
+                            decoder.feed(b"data: [DONE]\n\n")
+                        }
+                        .unwrap_err();
+                        assert!(error.downcast_ref::<ToolCallIndexError>().is_some());
+                        assert!(!is_network_error(&error));
+                        let detail = tool_error_detail(&error).unwrap();
+                        assert_eq!(detail["reason"], reason);
+                        assert_eq!(detail["indexType"], kind);
+                        assert_eq!(detail["eventNumber"], 1 + u64::from(prefix));
+                        assert_eq!(detail["callCount"], usize::from(prefix));
+                        assert_eq!(detail["path"], "choices[0].delta.tool_calls[0].index");
+                        assert!(detail.to_string().len() < 1024);
+                        assert!(!format!("{error:?}{detail}").contains("secret-api"));
+                        assert_eq!(
+                            output
+                                .iter()
+                                .filter(|e| matches!(e, ModelEvent::Usage(_)))
+                                .count(),
+                            1
+                        );
+                        assert!(output.iter().all(|e| !matches!(e, ModelEvent::ToolCall(_))));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn sparse_interleaved_calls_over_sixteen_and_over_64k_keep_identity() {
+        let mut decoder = Decoder::Chat(ChatDecoder::default());
+        let arguments = json!({"text":"x".repeat(40 * 1024)}).to_string();
+        for n in 0..17 {
+            let index = if n == 16 { u64::MAX } else { 100 + n };
+            let start = frame(delta(json!([fragment(index, &format!("call{n}"), "{")])));
+            assert!(decoder.feed(start.as_bytes()).unwrap().is_empty());
+        }
+        for n in (0..17).rev() {
+            let index = if n == 16 { u64::MAX } else { 100 + n };
+            let tail = if n < 2 { &arguments[1..] } else { "}" };
+            let bytes = frame(delta(
+                json!([{"index":index,"function":{"arguments":tail}}]),
+            ));
+            for chunk in bytes.as_bytes().chunks(509) {
+                assert!(decoder.feed(chunk).unwrap().is_empty());
+            }
+        }
+        assert!(
+            decoder
+                .feed(
+                    frame(json!({"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}))
+                        .as_bytes()
+                )
+                .unwrap()
+                .is_empty()
+        );
+        let events = decoder.finish().unwrap();
+        assert_eq!(events.len(), 17);
+        for (n, event) in events.into_iter().enumerate() {
+            let ModelEvent::ToolCall(call) = event else {
+                panic!()
+            };
+            assert_eq!(call.id, format!("call{n}"));
+            assert_eq!(call.name, "test");
+            assert_eq!(
+                call.arguments,
+                if n < 2 { arguments.as_str() } else { "{}" }
+            );
+        }
+    }
+
+    #[test]
+    fn protocols_share_budget_boundaries_and_responses_do_not_charge_repeated_items() {
+        for size in [MAX_TOOL_ARGUMENT_BYTES, MAX_TOOL_ARGUMENT_BYTES + 1] {
+            let arguments = json!({"text":"x".repeat(size - 11)}).to_string();
+            assert_eq!(arguments.len(), size);
+            for max_calls in [0, 1] {
+                for max_buffer_bytes in [size + 4, size + 5] {
+                    for chat in [false, true] {
+                        let limits = ToolCallLimits {
+                            max_calls,
+                            max_buffer_bytes,
+                        };
+                        let mut decoder = if chat {
+                            Decoder::Chat(ChatDecoder::new(limits))
+                        } else {
+                            Decoder::Responses(ResponsesDecoder::new(limits))
+                        };
+                        let item = json!({"type":"function_call","call_id":"c","name":"test","arguments":arguments});
+                        let bytes = if chat {
+                            frame(delta(json!([fragment(100, "c", &arguments)])))
+                                + &frame(
+                                    json!({"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}),
+                                )
+                                + "data: [DONE]\n\n"
+                        } else {
+                            frame(json!({"type":"response.output_item.done","item":item}))
+                                + &frame(
+                                    json!({"type":"response.completed","response":{"status":"completed","output":[item]}}),
+                                )
+                        };
+                        let expected = if max_calls == 0 {
+                            Some("calls")
+                        } else if size > MAX_TOOL_ARGUMENT_BYTES {
+                            Some("argument_bytes")
+                        } else if max_buffer_bytes < size + 5 {
+                            Some("buffer_bytes")
+                        } else {
+                            None
+                        };
+                        match (decoder.feed(bytes.as_bytes()), expected) {
+                            (Ok(events), None) => assert_eq!(
+                                events
+                                    .iter()
+                                    .filter(|e| matches!(e, ModelEvent::ToolCall(_)))
+                                    .count(),
+                                1
+                            ),
+                            (Err(error), Some(kind)) => {
+                                assert_eq!(tool_error_detail(&error).unwrap()["budget"], kind);
+                                assert!(!is_network_error(&error));
+                            }
+                            (result, expected) => panic!("{result:?} != {expected:?}"),
+                        }
+                    }
+                }
+            }
+        }
     }
 }
