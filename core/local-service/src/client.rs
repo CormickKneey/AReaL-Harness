@@ -88,7 +88,9 @@ async fn ensure_inner(
         }
         stop_unlocked(&spec.home, &spec.service_id, restart.unwrap_or(false)).await
             .context("configuration requires a restart; wait for background work to finish, or run `areal service restart --cancel` to explicitly cancel it")?;
-        eprintln!("Restarting local service with the updated configuration");
+        if !reconnect {
+            eprintln!("Restarting local service with the updated configuration");
+        }
     }
     ensure!(
         storage::store_available(data)?,

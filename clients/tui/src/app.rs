@@ -320,6 +320,7 @@ impl App {
     }
     pub fn disconnect(&mut self, reason: &str) {
         self.connected = false;
+        self.restart_ready = false;
         self.status =
             format!("Disconnected · {reason} · reconnecting; submitted actions are not replayed");
         for request in self.pending.values().chain(self.outbox.iter()) {

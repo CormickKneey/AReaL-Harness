@@ -98,13 +98,26 @@ try:
             r"^max_threads = \d+$", "max_threads = 1235", changed, count=1, flags=re.MULTILINE
         )
         assert count == 1
+        with second[3]:
+            second[2].clear()
         pending.write_text(changed)
         pending.replace(config)
-        expect(second, b"Reconnected")
-        after = json.loads(
-            subprocess.check_output([binary, "service", "ensure", *sys.argv[2:]], text=True)
-        )
-        assert after["generation"] != before["generation"]
+        # 重连提示可能在绘制前被会话快照覆盖；检查只读状态及恢复后的实际请求。
+        end = time.monotonic() + 30
+        while True:
+            result = subprocess.run(
+                [binary, "service", "status", "--instance", before["serviceId"]],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                after = json.loads(result.stdout)
+                if after["state"] == "ready" and after["generation"] != before["generation"]:
+                    break
+            assert time.monotonic() < end, result.stderr
+            time.sleep(0.1)
+        expect(second, b"live")
         os.write(second[0], b"after-config-restart\r")
         expect(second, b"reply:after-config-restart")
     if os.environ.get("TEST_EXPLICIT_STOP"):

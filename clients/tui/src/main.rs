@@ -162,7 +162,8 @@ async fn interactive(
     let mut next_retry = Instant::now();
     let mut retry_seconds = 1;
     loop {
-        if app.restart_ready
+        if app.connected
+            && app.restart_ready
             && updating.is_none()
             && let Some(spec) = args.shared_service.clone()
         {
@@ -178,7 +179,11 @@ async fn interactive(
             app.disconnect("manual reconnect");
             next_retry = Instant::now();
         }
-        if !app.connected && reconnect.is_none() && Instant::now() >= next_retry {
+        if !app.connected
+            && updating.is_none()
+            && reconnect.is_none()
+            && Instant::now() >= next_retry
+        {
             let endpoint = args.endpoint.clone().unwrap();
             let auth_file = args.auth_file.clone();
             let service_spec = args.shared_service.clone();
