@@ -567,6 +567,476 @@
       ],
       "type": "object"
     },
+    "areal/goal/cleared": {
+      "additionalProperties": true,
+      "properties": {
+        "eventSequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "goal": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "activeTurnId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "type": "string"
+                },
+                "maxActiveSeconds": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "maxTurns": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "objective": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "report": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "blocker": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "evidence": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "expectedRevision": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "remaining": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "status": {
+                          "enum": [
+                            "continue",
+                            "complete",
+                            "blocked"
+                          ],
+                          "type": "string"
+                        },
+                        "summary": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "expectedRevision",
+                        "status",
+                        "summary",
+                        "evidence",
+                        "remaining"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "reportTurnId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "settling": {
+                  "type": "boolean"
+                },
+                "status": {
+                  "enum": [
+                    "active",
+                    "paused",
+                    "blocked",
+                    "completed",
+                    "budgetLimited",
+                    "failed"
+                  ],
+                  "type": "string"
+                },
+                "threadId": {
+                  "type": "string"
+                },
+                "tokenBudget": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "unreportedTurns": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "usage": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "accountingComplete": {
+                      "type": "boolean"
+                    },
+                    "cachedInputTokens": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "inputTokens": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "outputTokens": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "reservedTokens": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "timeUsedSeconds": {
+                      "format": "double",
+                      "type": "number"
+                    },
+                    "tokensUsed": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "turnsStarted": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "unknownRequests": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "inputTokens",
+                    "cachedInputTokens",
+                    "outputTokens",
+                    "tokensUsed",
+                    "reservedTokens",
+                    "unknownRequests",
+                    "timeUsedSeconds",
+                    "turnsStarted",
+                    "accountingComplete"
+                  ],
+                  "type": "object"
+                },
+                "waitingForCapacity": {
+                  "type": "boolean"
+                },
+                "waitingForInput": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "threadId",
+                "objective",
+                "status",
+                "maxTurns",
+                "maxActiveSeconds",
+                "usage",
+                "settling",
+                "waitingForInput",
+                "waitingForCapacity",
+                "unreportedTurns"
+              ],
+              "title": "Goal",
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "goalId": {
+          "type": "string"
+        },
+        "revision": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "eventSequence",
+        "goal",
+        "goalId",
+        "revision",
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "areal/goal/updated": {
+      "additionalProperties": true,
+      "properties": {
+        "eventSequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "goal": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "activeTurnId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "type": "string"
+                },
+                "maxActiveSeconds": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "maxTurns": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "objective": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "report": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "blocker": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "evidence": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "expectedRevision": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "remaining": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "status": {
+                          "enum": [
+                            "continue",
+                            "complete",
+                            "blocked"
+                          ],
+                          "type": "string"
+                        },
+                        "summary": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "expectedRevision",
+                        "status",
+                        "summary",
+                        "evidence",
+                        "remaining"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "reportTurnId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "settling": {
+                  "type": "boolean"
+                },
+                "status": {
+                  "enum": [
+                    "active",
+                    "paused",
+                    "blocked",
+                    "completed",
+                    "budgetLimited",
+                    "failed"
+                  ],
+                  "type": "string"
+                },
+                "threadId": {
+                  "type": "string"
+                },
+                "tokenBudget": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "unreportedTurns": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "usage": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "accountingComplete": {
+                      "type": "boolean"
+                    },
+                    "cachedInputTokens": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "inputTokens": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "outputTokens": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "reservedTokens": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "timeUsedSeconds": {
+                      "format": "double",
+                      "type": "number"
+                    },
+                    "tokensUsed": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "turnsStarted": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "unknownRequests": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "inputTokens",
+                    "cachedInputTokens",
+                    "outputTokens",
+                    "tokensUsed",
+                    "reservedTokens",
+                    "unknownRequests",
+                    "timeUsedSeconds",
+                    "turnsStarted",
+                    "accountingComplete"
+                  ],
+                  "type": "object"
+                },
+                "waitingForCapacity": {
+                  "type": "boolean"
+                },
+                "waitingForInput": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "threadId",
+                "objective",
+                "status",
+                "maxTurns",
+                "maxActiveSeconds",
+                "usage",
+                "settling",
+                "waitingForInput",
+                "waitingForCapacity",
+                "unreportedTurns"
+              ],
+              "title": "Goal",
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "revision": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "eventSequence",
+        "goal",
+        "revision",
+        "threadId"
+      ],
+      "type": "object"
+    },
     "areal/interaction/requested": {
       "additionalProperties": true,
       "properties": {
@@ -4921,6 +5391,258 @@
             "ephemeral": {
               "type": "boolean"
             },
+            "goalOwner": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "goalId": {
+                      "type": "string"
+                    },
+                    "threadId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "threadId",
+                    "goalId"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "goals": {
+              "additionalProperties": false,
+              "properties": {
+                "eventSequence": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "goal": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "activeTurnId": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "maxActiveSeconds": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "maxTurns": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "objective": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "report": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "blocker": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "evidence": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "expectedRevision": {
+                                  "format": "uint64",
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                "remaining": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "status": {
+                                  "enum": [
+                                    "continue",
+                                    "complete",
+                                    "blocked"
+                                  ],
+                                  "type": "string"
+                                },
+                                "summary": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "expectedRevision",
+                                "status",
+                                "summary",
+                                "evidence",
+                                "remaining"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reportTurnId": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "settling": {
+                          "type": "boolean"
+                        },
+                        "status": {
+                          "enum": [
+                            "active",
+                            "paused",
+                            "blocked",
+                            "completed",
+                            "budgetLimited",
+                            "failed"
+                          ],
+                          "type": "string"
+                        },
+                        "threadId": {
+                          "type": "string"
+                        },
+                        "tokenBudget": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        },
+                        "unreportedTurns": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "usage": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "accountingComplete": {
+                              "type": "boolean"
+                            },
+                            "cachedInputTokens": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "inputTokens": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "outputTokens": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "reservedTokens": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "timeUsedSeconds": {
+                              "format": "double",
+                              "type": "number"
+                            },
+                            "tokensUsed": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "turnsStarted": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "unknownRequests": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "inputTokens",
+                            "cachedInputTokens",
+                            "outputTokens",
+                            "tokensUsed",
+                            "reservedTokens",
+                            "unknownRequests",
+                            "timeUsedSeconds",
+                            "turnsStarted",
+                            "accountingComplete"
+                          ],
+                          "type": "object"
+                        },
+                        "waitingForCapacity": {
+                          "type": "boolean"
+                        },
+                        "waitingForInput": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "threadId",
+                        "objective",
+                        "status",
+                        "maxTurns",
+                        "maxActiveSeconds",
+                        "usage",
+                        "settling",
+                        "waitingForInput",
+                        "waitingForCapacity",
+                        "unreportedTurns"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "revision": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "revision",
+                "eventSequence"
+              ],
+              "type": "object"
+            },
             "id": {
               "type": "string"
             },
@@ -5376,6 +6098,41 @@
                         },
                         "required": [
                           "message"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "goal": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "goalId": {
+                            "type": "string"
+                          },
+                          "origin": {
+                            "type": "string"
+                          },
+                          "predecessorTurnId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "sequence": {
+                            "format": "uint64",
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "goalId",
+                          "sequence",
+                          "origin"
                         ],
                         "type": "object"
                       },
@@ -6351,6 +7108,41 @@
                 }
               ]
             },
+            "goal": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "goalId": {
+                      "type": "string"
+                    },
+                    "origin": {
+                      "type": "string"
+                    },
+                    "predecessorTurnId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "sequence": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "goalId",
+                    "sequence",
+                    "origin"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "id": {
               "type": "string"
             },
@@ -7288,6 +8080,41 @@
                   },
                   "required": [
                     "message"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "goal": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "goalId": {
+                      "type": "string"
+                    },
+                    "origin": {
+                      "type": "string"
+                    },
+                    "predecessorTurnId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "sequence": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "goalId",
+                    "sequence",
+                    "origin"
                   ],
                   "type": "object"
                 },
@@ -9150,6 +9977,207 @@
       "required": [
         "threadId"
       ],
+      "type": "object"
+    },
+    "areal/goal/clear": {
+      "additionalProperties": false,
+      "properties": {
+        "expectedRevision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "goalId": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "threadId",
+        "expectedRevision",
+        "goalId"
+      ],
+      "title": "GoalControl",
+      "type": "object"
+    },
+    "areal/goal/create": {
+      "additionalProperties": false,
+      "properties": {
+        "expectedRevision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxActiveSeconds": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "maxTurns": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "objective": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "tokenBudget": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "requestId",
+        "threadId",
+        "expectedRevision",
+        "objective"
+      ],
+      "title": "GoalCreate",
+      "type": "object"
+    },
+    "areal/goal/get": {
+      "additionalProperties": false,
+      "properties": {
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "areal/goal/pause": {
+      "additionalProperties": false,
+      "properties": {
+        "expectedRevision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "goalId": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "threadId",
+        "expectedRevision",
+        "goalId"
+      ],
+      "title": "GoalControl",
+      "type": "object"
+    },
+    "areal/goal/resume": {
+      "additionalProperties": false,
+      "properties": {
+        "expectedRevision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "goalId": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "threadId",
+        "expectedRevision",
+        "goalId"
+      ],
+      "title": "GoalControl",
+      "type": "object"
+    },
+    "areal/goal/update": {
+      "additionalProperties": false,
+      "properties": {
+        "expectedRevision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "goalId": {
+          "type": "string"
+        },
+        "maxActiveSeconds": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "maxTurns": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "objective": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "tokenBudget": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "requestId",
+        "threadId",
+        "expectedRevision",
+        "goalId"
+      ],
+      "title": "GoalUpdate",
       "type": "object"
     },
     "areal/interaction/list": {
@@ -14151,6 +15179,258 @@
               "ephemeral": {
                 "type": "boolean"
               },
+              "goalOwner": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "goalId": {
+                        "type": "string"
+                      },
+                      "threadId": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "threadId",
+                      "goalId"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "goals": {
+                "additionalProperties": false,
+                "properties": {
+                  "eventSequence": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "goal": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "activeTurnId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "maxActiveSeconds": {
+                            "format": "uint64",
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "maxTurns": {
+                            "format": "uint64",
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "objective": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "report": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "blocker": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "evidence": {
+                                    "items": {
+                                      "type": "string"
+                                    },
+                                    "type": "array"
+                                  },
+                                  "expectedRevision": {
+                                    "format": "uint64",
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "remaining": {
+                                    "items": {
+                                      "type": "string"
+                                    },
+                                    "type": "array"
+                                  },
+                                  "status": {
+                                    "enum": [
+                                      "continue",
+                                      "complete",
+                                      "blocked"
+                                    ],
+                                    "type": "string"
+                                  },
+                                  "summary": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "expectedRevision",
+                                  "status",
+                                  "summary",
+                                  "evidence",
+                                  "remaining"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "reportTurnId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "settling": {
+                            "type": "boolean"
+                          },
+                          "status": {
+                            "enum": [
+                              "active",
+                              "paused",
+                              "blocked",
+                              "completed",
+                              "budgetLimited",
+                              "failed"
+                            ],
+                            "type": "string"
+                          },
+                          "threadId": {
+                            "type": "string"
+                          },
+                          "tokenBudget": {
+                            "format": "uint64",
+                            "minimum": 0,
+                            "type": [
+                              "integer",
+                              "null"
+                            ]
+                          },
+                          "unreportedTurns": {
+                            "format": "uint64",
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "usage": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "accountingComplete": {
+                                "type": "boolean"
+                              },
+                              "cachedInputTokens": {
+                                "format": "uint64",
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "inputTokens": {
+                                "format": "uint64",
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "outputTokens": {
+                                "format": "uint64",
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "reservedTokens": {
+                                "format": "uint64",
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "timeUsedSeconds": {
+                                "format": "double",
+                                "type": "number"
+                              },
+                              "tokensUsed": {
+                                "format": "uint64",
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "turnsStarted": {
+                                "format": "uint64",
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "unknownRequests": {
+                                "format": "uint64",
+                                "minimum": 0,
+                                "type": "integer"
+                              }
+                            },
+                            "required": [
+                              "inputTokens",
+                              "cachedInputTokens",
+                              "outputTokens",
+                              "tokensUsed",
+                              "reservedTokens",
+                              "unknownRequests",
+                              "timeUsedSeconds",
+                              "turnsStarted",
+                              "accountingComplete"
+                            ],
+                            "type": "object"
+                          },
+                          "waitingForCapacity": {
+                            "type": "boolean"
+                          },
+                          "waitingForInput": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "threadId",
+                          "objective",
+                          "status",
+                          "maxTurns",
+                          "maxActiveSeconds",
+                          "usage",
+                          "settling",
+                          "waitingForInput",
+                          "waitingForCapacity",
+                          "unreportedTurns"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "revision": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "revision",
+                  "eventSequence"
+                ],
+                "type": "object"
+              },
               "id": {
                 "type": "string"
               },
@@ -14606,6 +15886,41 @@
                           },
                           "required": [
                             "message"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "goal": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "goalId": {
+                              "type": "string"
+                            },
+                            "origin": {
+                              "type": "string"
+                            },
+                            "predecessorTurnId": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "sequence": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "goalId",
+                            "sequence",
+                            "origin"
                           ],
                           "type": "object"
                         },
@@ -16619,6 +17934,258 @@
                 "ephemeral": {
                   "type": "boolean"
                 },
+                "goalOwner": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "goalId": {
+                          "type": "string"
+                        },
+                        "threadId": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "threadId",
+                        "goalId"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "goals": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "eventSequence": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "goal": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "activeTurnId": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "id": {
+                              "type": "string"
+                            },
+                            "maxActiveSeconds": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "maxTurns": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "objective": {
+                              "type": "string"
+                            },
+                            "reason": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "report": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "blocker": {
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    },
+                                    "evidence": {
+                                      "items": {
+                                        "type": "string"
+                                      },
+                                      "type": "array"
+                                    },
+                                    "expectedRevision": {
+                                      "format": "uint64",
+                                      "minimum": 0,
+                                      "type": "integer"
+                                    },
+                                    "remaining": {
+                                      "items": {
+                                        "type": "string"
+                                      },
+                                      "type": "array"
+                                    },
+                                    "status": {
+                                      "enum": [
+                                        "continue",
+                                        "complete",
+                                        "blocked"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "summary": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "expectedRevision",
+                                    "status",
+                                    "summary",
+                                    "evidence",
+                                    "remaining"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "reportTurnId": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "settling": {
+                              "type": "boolean"
+                            },
+                            "status": {
+                              "enum": [
+                                "active",
+                                "paused",
+                                "blocked",
+                                "completed",
+                                "budgetLimited",
+                                "failed"
+                              ],
+                              "type": "string"
+                            },
+                            "threadId": {
+                              "type": "string"
+                            },
+                            "tokenBudget": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": [
+                                "integer",
+                                "null"
+                              ]
+                            },
+                            "unreportedTurns": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "usage": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "accountingComplete": {
+                                  "type": "boolean"
+                                },
+                                "cachedInputTokens": {
+                                  "format": "uint64",
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                "inputTokens": {
+                                  "format": "uint64",
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                "outputTokens": {
+                                  "format": "uint64",
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                "reservedTokens": {
+                                  "format": "uint64",
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                "timeUsedSeconds": {
+                                  "format": "double",
+                                  "type": "number"
+                                },
+                                "tokensUsed": {
+                                  "format": "uint64",
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                "turnsStarted": {
+                                  "format": "uint64",
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                "unknownRequests": {
+                                  "format": "uint64",
+                                  "minimum": 0,
+                                  "type": "integer"
+                                }
+                              },
+                              "required": [
+                                "inputTokens",
+                                "cachedInputTokens",
+                                "outputTokens",
+                                "tokensUsed",
+                                "reservedTokens",
+                                "unknownRequests",
+                                "timeUsedSeconds",
+                                "turnsStarted",
+                                "accountingComplete"
+                              ],
+                              "type": "object"
+                            },
+                            "waitingForCapacity": {
+                              "type": "boolean"
+                            },
+                            "waitingForInput": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "threadId",
+                            "objective",
+                            "status",
+                            "maxTurns",
+                            "maxActiveSeconds",
+                            "usage",
+                            "settling",
+                            "waitingForInput",
+                            "waitingForCapacity",
+                            "unreportedTurns"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "revision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "revision",
+                    "eventSequence"
+                  ],
+                  "type": "object"
+                },
                 "id": {
                   "type": "string"
                 },
@@ -17074,6 +18641,41 @@
                             },
                             "required": [
                               "message"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "goal": {
+                        "anyOf": [
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "goalId": {
+                                "type": "string"
+                              },
+                              "origin": {
+                                "type": "string"
+                              },
+                              "predecessorTurnId": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "sequence": {
+                                "format": "uint64",
+                                "minimum": 0,
+                                "type": "integer"
+                              }
+                            },
+                            "required": [
+                              "goalId",
+                              "sequence",
+                              "origin"
                             ],
                             "type": "object"
                           },
@@ -18032,6 +19634,41 @@
                       },
                       "required": [
                         "message"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "goal": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "goalId": {
+                          "type": "string"
+                        },
+                        "origin": {
+                          "type": "string"
+                        },
+                        "predecessorTurnId": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "sequence": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "goalId",
+                        "sequence",
+                        "origin"
                       ],
                       "type": "object"
                     },
@@ -19122,6 +20759,1401 @@
         "systemInstructionsIncluded",
         "threadId",
         "view"
+      ],
+      "type": "object"
+    },
+    "areal/goal/clear": {
+      "additionalProperties": true,
+      "properties": {
+        "eventSequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "goal": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "activeTurnId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "type": "string"
+                },
+                "maxActiveSeconds": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "maxTurns": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "objective": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "report": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "blocker": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "evidence": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "expectedRevision": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "remaining": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "status": {
+                          "enum": [
+                            "continue",
+                            "complete",
+                            "blocked"
+                          ],
+                          "type": "string"
+                        },
+                        "summary": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "expectedRevision",
+                        "status",
+                        "summary",
+                        "evidence",
+                        "remaining"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "reportTurnId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "settling": {
+                  "type": "boolean"
+                },
+                "status": {
+                  "enum": [
+                    "active",
+                    "paused",
+                    "blocked",
+                    "completed",
+                    "budgetLimited",
+                    "failed"
+                  ],
+                  "type": "string"
+                },
+                "threadId": {
+                  "type": "string"
+                },
+                "tokenBudget": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "unreportedTurns": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "usage": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "accountingComplete": {
+                      "type": "boolean"
+                    },
+                    "cachedInputTokens": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "inputTokens": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "outputTokens": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "reservedTokens": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "timeUsedSeconds": {
+                      "format": "double",
+                      "type": "number"
+                    },
+                    "tokensUsed": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "turnsStarted": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "unknownRequests": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "inputTokens",
+                    "cachedInputTokens",
+                    "outputTokens",
+                    "tokensUsed",
+                    "reservedTokens",
+                    "unknownRequests",
+                    "timeUsedSeconds",
+                    "turnsStarted",
+                    "accountingComplete"
+                  ],
+                  "type": "object"
+                },
+                "waitingForCapacity": {
+                  "type": "boolean"
+                },
+                "waitingForInput": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "threadId",
+                "objective",
+                "status",
+                "maxTurns",
+                "maxActiveSeconds",
+                "usage",
+                "settling",
+                "waitingForInput",
+                "waitingForCapacity",
+                "unreportedTurns"
+              ],
+              "title": "Goal",
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "revision": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "eventSequence",
+        "goal",
+        "revision",
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "areal/goal/create": {
+      "additionalProperties": true,
+      "properties": {
+        "eventSequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "goal": {
+          "additionalProperties": false,
+          "properties": {
+            "activeTurnId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "maxActiveSeconds": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "maxTurns": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "objective": {
+              "type": "string"
+            },
+            "reason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "report": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "blocker": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "evidence": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "expectedRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "remaining": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "status": {
+                      "enum": [
+                        "continue",
+                        "complete",
+                        "blocked"
+                      ],
+                      "type": "string"
+                    },
+                    "summary": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "expectedRevision",
+                    "status",
+                    "summary",
+                    "evidence",
+                    "remaining"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "reportTurnId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "settling": {
+              "type": "boolean"
+            },
+            "status": {
+              "enum": [
+                "active",
+                "paused",
+                "blocked",
+                "completed",
+                "budgetLimited",
+                "failed"
+              ],
+              "type": "string"
+            },
+            "threadId": {
+              "type": "string"
+            },
+            "tokenBudget": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "unreportedTurns": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "usage": {
+              "additionalProperties": false,
+              "properties": {
+                "accountingComplete": {
+                  "type": "boolean"
+                },
+                "cachedInputTokens": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "inputTokens": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "outputTokens": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "reservedTokens": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "timeUsedSeconds": {
+                  "format": "double",
+                  "type": "number"
+                },
+                "tokensUsed": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "turnsStarted": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "unknownRequests": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "inputTokens",
+                "cachedInputTokens",
+                "outputTokens",
+                "tokensUsed",
+                "reservedTokens",
+                "unknownRequests",
+                "timeUsedSeconds",
+                "turnsStarted",
+                "accountingComplete"
+              ],
+              "type": "object"
+            },
+            "waitingForCapacity": {
+              "type": "boolean"
+            },
+            "waitingForInput": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id",
+            "threadId",
+            "objective",
+            "status",
+            "maxTurns",
+            "maxActiveSeconds",
+            "usage",
+            "settling",
+            "waitingForInput",
+            "waitingForCapacity",
+            "unreportedTurns"
+          ],
+          "title": "Goal",
+          "type": "object"
+        },
+        "revision": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "eventSequence",
+        "goal",
+        "revision",
+        "threadId",
+        "turnId"
+      ],
+      "type": "object"
+    },
+    "areal/goal/get": {
+      "additionalProperties": true,
+      "properties": {
+        "eventSequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "goal": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "activeTurnId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "type": "string"
+                },
+                "maxActiveSeconds": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "maxTurns": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "objective": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "report": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "blocker": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "evidence": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "expectedRevision": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "remaining": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "status": {
+                          "enum": [
+                            "continue",
+                            "complete",
+                            "blocked"
+                          ],
+                          "type": "string"
+                        },
+                        "summary": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "expectedRevision",
+                        "status",
+                        "summary",
+                        "evidence",
+                        "remaining"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "reportTurnId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "settling": {
+                  "type": "boolean"
+                },
+                "status": {
+                  "enum": [
+                    "active",
+                    "paused",
+                    "blocked",
+                    "completed",
+                    "budgetLimited",
+                    "failed"
+                  ],
+                  "type": "string"
+                },
+                "threadId": {
+                  "type": "string"
+                },
+                "tokenBudget": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "unreportedTurns": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "usage": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "accountingComplete": {
+                      "type": "boolean"
+                    },
+                    "cachedInputTokens": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "inputTokens": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "outputTokens": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "reservedTokens": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "timeUsedSeconds": {
+                      "format": "double",
+                      "type": "number"
+                    },
+                    "tokensUsed": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "turnsStarted": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "unknownRequests": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "inputTokens",
+                    "cachedInputTokens",
+                    "outputTokens",
+                    "tokensUsed",
+                    "reservedTokens",
+                    "unknownRequests",
+                    "timeUsedSeconds",
+                    "turnsStarted",
+                    "accountingComplete"
+                  ],
+                  "type": "object"
+                },
+                "waitingForCapacity": {
+                  "type": "boolean"
+                },
+                "waitingForInput": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "threadId",
+                "objective",
+                "status",
+                "maxTurns",
+                "maxActiveSeconds",
+                "usage",
+                "settling",
+                "waitingForInput",
+                "waitingForCapacity",
+                "unreportedTurns"
+              ],
+              "title": "Goal",
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "revision": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "eventSequence",
+        "goal",
+        "revision",
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "areal/goal/pause": {
+      "additionalProperties": true,
+      "properties": {
+        "eventSequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "goal": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "activeTurnId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "type": "string"
+                },
+                "maxActiveSeconds": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "maxTurns": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "objective": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "report": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "blocker": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "evidence": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "expectedRevision": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "remaining": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "status": {
+                          "enum": [
+                            "continue",
+                            "complete",
+                            "blocked"
+                          ],
+                          "type": "string"
+                        },
+                        "summary": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "expectedRevision",
+                        "status",
+                        "summary",
+                        "evidence",
+                        "remaining"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "reportTurnId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "settling": {
+                  "type": "boolean"
+                },
+                "status": {
+                  "enum": [
+                    "active",
+                    "paused",
+                    "blocked",
+                    "completed",
+                    "budgetLimited",
+                    "failed"
+                  ],
+                  "type": "string"
+                },
+                "threadId": {
+                  "type": "string"
+                },
+                "tokenBudget": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "unreportedTurns": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "usage": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "accountingComplete": {
+                      "type": "boolean"
+                    },
+                    "cachedInputTokens": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "inputTokens": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "outputTokens": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "reservedTokens": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "timeUsedSeconds": {
+                      "format": "double",
+                      "type": "number"
+                    },
+                    "tokensUsed": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "turnsStarted": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "unknownRequests": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "inputTokens",
+                    "cachedInputTokens",
+                    "outputTokens",
+                    "tokensUsed",
+                    "reservedTokens",
+                    "unknownRequests",
+                    "timeUsedSeconds",
+                    "turnsStarted",
+                    "accountingComplete"
+                  ],
+                  "type": "object"
+                },
+                "waitingForCapacity": {
+                  "type": "boolean"
+                },
+                "waitingForInput": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "threadId",
+                "objective",
+                "status",
+                "maxTurns",
+                "maxActiveSeconds",
+                "usage",
+                "settling",
+                "waitingForInput",
+                "waitingForCapacity",
+                "unreportedTurns"
+              ],
+              "title": "Goal",
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "revision": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "eventSequence",
+        "goal",
+        "revision",
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "areal/goal/resume": {
+      "additionalProperties": true,
+      "properties": {
+        "eventSequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "goal": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "activeTurnId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "type": "string"
+                },
+                "maxActiveSeconds": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "maxTurns": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "objective": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "report": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "blocker": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "evidence": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "expectedRevision": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "remaining": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "status": {
+                          "enum": [
+                            "continue",
+                            "complete",
+                            "blocked"
+                          ],
+                          "type": "string"
+                        },
+                        "summary": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "expectedRevision",
+                        "status",
+                        "summary",
+                        "evidence",
+                        "remaining"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "reportTurnId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "settling": {
+                  "type": "boolean"
+                },
+                "status": {
+                  "enum": [
+                    "active",
+                    "paused",
+                    "blocked",
+                    "completed",
+                    "budgetLimited",
+                    "failed"
+                  ],
+                  "type": "string"
+                },
+                "threadId": {
+                  "type": "string"
+                },
+                "tokenBudget": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "unreportedTurns": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "usage": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "accountingComplete": {
+                      "type": "boolean"
+                    },
+                    "cachedInputTokens": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "inputTokens": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "outputTokens": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "reservedTokens": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "timeUsedSeconds": {
+                      "format": "double",
+                      "type": "number"
+                    },
+                    "tokensUsed": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "turnsStarted": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "unknownRequests": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "inputTokens",
+                    "cachedInputTokens",
+                    "outputTokens",
+                    "tokensUsed",
+                    "reservedTokens",
+                    "unknownRequests",
+                    "timeUsedSeconds",
+                    "turnsStarted",
+                    "accountingComplete"
+                  ],
+                  "type": "object"
+                },
+                "waitingForCapacity": {
+                  "type": "boolean"
+                },
+                "waitingForInput": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "threadId",
+                "objective",
+                "status",
+                "maxTurns",
+                "maxActiveSeconds",
+                "usage",
+                "settling",
+                "waitingForInput",
+                "waitingForCapacity",
+                "unreportedTurns"
+              ],
+              "title": "Goal",
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "revision": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "eventSequence",
+        "goal",
+        "revision",
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "areal/goal/update": {
+      "additionalProperties": true,
+      "properties": {
+        "eventSequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "goal": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "activeTurnId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "type": "string"
+                },
+                "maxActiveSeconds": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "maxTurns": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "objective": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "report": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "blocker": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "evidence": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "expectedRevision": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "remaining": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "status": {
+                          "enum": [
+                            "continue",
+                            "complete",
+                            "blocked"
+                          ],
+                          "type": "string"
+                        },
+                        "summary": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "expectedRevision",
+                        "status",
+                        "summary",
+                        "evidence",
+                        "remaining"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "reportTurnId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "settling": {
+                  "type": "boolean"
+                },
+                "status": {
+                  "enum": [
+                    "active",
+                    "paused",
+                    "blocked",
+                    "completed",
+                    "budgetLimited",
+                    "failed"
+                  ],
+                  "type": "string"
+                },
+                "threadId": {
+                  "type": "string"
+                },
+                "tokenBudget": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "unreportedTurns": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "usage": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "accountingComplete": {
+                      "type": "boolean"
+                    },
+                    "cachedInputTokens": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "inputTokens": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "outputTokens": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "reservedTokens": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "timeUsedSeconds": {
+                      "format": "double",
+                      "type": "number"
+                    },
+                    "tokensUsed": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "turnsStarted": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "unknownRequests": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "inputTokens",
+                    "cachedInputTokens",
+                    "outputTokens",
+                    "tokensUsed",
+                    "reservedTokens",
+                    "unknownRequests",
+                    "timeUsedSeconds",
+                    "turnsStarted",
+                    "accountingComplete"
+                  ],
+                  "type": "object"
+                },
+                "waitingForCapacity": {
+                  "type": "boolean"
+                },
+                "waitingForInput": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "threadId",
+                "objective",
+                "status",
+                "maxTurns",
+                "maxActiveSeconds",
+                "usage",
+                "settling",
+                "waitingForInput",
+                "waitingForCapacity",
+                "unreportedTurns"
+              ],
+              "title": "Goal",
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "revision": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "eventSequence",
+        "goal",
+        "revision",
+        "threadId"
       ],
       "type": "object"
     },
@@ -28205,6 +31237,258 @@
             "ephemeral": {
               "type": "boolean"
             },
+            "goalOwner": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "goalId": {
+                      "type": "string"
+                    },
+                    "threadId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "threadId",
+                    "goalId"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "goals": {
+              "additionalProperties": false,
+              "properties": {
+                "eventSequence": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "goal": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "activeTurnId": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "maxActiveSeconds": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "maxTurns": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "objective": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "report": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "blocker": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "evidence": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "expectedRevision": {
+                                  "format": "uint64",
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                "remaining": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "status": {
+                                  "enum": [
+                                    "continue",
+                                    "complete",
+                                    "blocked"
+                                  ],
+                                  "type": "string"
+                                },
+                                "summary": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "expectedRevision",
+                                "status",
+                                "summary",
+                                "evidence",
+                                "remaining"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reportTurnId": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "settling": {
+                          "type": "boolean"
+                        },
+                        "status": {
+                          "enum": [
+                            "active",
+                            "paused",
+                            "blocked",
+                            "completed",
+                            "budgetLimited",
+                            "failed"
+                          ],
+                          "type": "string"
+                        },
+                        "threadId": {
+                          "type": "string"
+                        },
+                        "tokenBudget": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        },
+                        "unreportedTurns": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "usage": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "accountingComplete": {
+                              "type": "boolean"
+                            },
+                            "cachedInputTokens": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "inputTokens": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "outputTokens": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "reservedTokens": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "timeUsedSeconds": {
+                              "format": "double",
+                              "type": "number"
+                            },
+                            "tokensUsed": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "turnsStarted": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "unknownRequests": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "inputTokens",
+                            "cachedInputTokens",
+                            "outputTokens",
+                            "tokensUsed",
+                            "reservedTokens",
+                            "unknownRequests",
+                            "timeUsedSeconds",
+                            "turnsStarted",
+                            "accountingComplete"
+                          ],
+                          "type": "object"
+                        },
+                        "waitingForCapacity": {
+                          "type": "boolean"
+                        },
+                        "waitingForInput": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "threadId",
+                        "objective",
+                        "status",
+                        "maxTurns",
+                        "maxActiveSeconds",
+                        "usage",
+                        "settling",
+                        "waitingForInput",
+                        "waitingForCapacity",
+                        "unreportedTurns"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "revision": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "revision",
+                "eventSequence"
+              ],
+              "type": "object"
+            },
             "id": {
               "type": "string"
             },
@@ -28660,6 +31944,41 @@
                         },
                         "required": [
                           "message"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "goal": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "goalId": {
+                            "type": "string"
+                          },
+                          "origin": {
+                            "type": "string"
+                          },
+                          "predecessorTurnId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "sequence": {
+                            "format": "uint64",
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "goalId",
+                          "sequence",
+                          "origin"
                         ],
                         "type": "object"
                       },
@@ -29652,6 +32971,41 @@
                   },
                   "required": [
                     "message"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "goal": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "goalId": {
+                      "type": "string"
+                    },
+                    "origin": {
+                      "type": "string"
+                    },
+                    "predecessorTurnId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "sequence": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "goalId",
+                    "sequence",
+                    "origin"
                   ],
                   "type": "object"
                 },
@@ -35552,6 +38906,258 @@
               "ephemeral": {
                 "type": "boolean"
               },
+              "goalOwner": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "goalId": {
+                        "type": "string"
+                      },
+                      "threadId": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "threadId",
+                      "goalId"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "goals": {
+                "additionalProperties": false,
+                "properties": {
+                  "eventSequence": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "goal": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "activeTurnId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "maxActiveSeconds": {
+                            "format": "uint64",
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "maxTurns": {
+                            "format": "uint64",
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "objective": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "report": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "blocker": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "evidence": {
+                                    "items": {
+                                      "type": "string"
+                                    },
+                                    "type": "array"
+                                  },
+                                  "expectedRevision": {
+                                    "format": "uint64",
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "remaining": {
+                                    "items": {
+                                      "type": "string"
+                                    },
+                                    "type": "array"
+                                  },
+                                  "status": {
+                                    "enum": [
+                                      "continue",
+                                      "complete",
+                                      "blocked"
+                                    ],
+                                    "type": "string"
+                                  },
+                                  "summary": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "expectedRevision",
+                                  "status",
+                                  "summary",
+                                  "evidence",
+                                  "remaining"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "reportTurnId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "settling": {
+                            "type": "boolean"
+                          },
+                          "status": {
+                            "enum": [
+                              "active",
+                              "paused",
+                              "blocked",
+                              "completed",
+                              "budgetLimited",
+                              "failed"
+                            ],
+                            "type": "string"
+                          },
+                          "threadId": {
+                            "type": "string"
+                          },
+                          "tokenBudget": {
+                            "format": "uint64",
+                            "minimum": 0,
+                            "type": [
+                              "integer",
+                              "null"
+                            ]
+                          },
+                          "unreportedTurns": {
+                            "format": "uint64",
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "usage": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "accountingComplete": {
+                                "type": "boolean"
+                              },
+                              "cachedInputTokens": {
+                                "format": "uint64",
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "inputTokens": {
+                                "format": "uint64",
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "outputTokens": {
+                                "format": "uint64",
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "reservedTokens": {
+                                "format": "uint64",
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "timeUsedSeconds": {
+                                "format": "double",
+                                "type": "number"
+                              },
+                              "tokensUsed": {
+                                "format": "uint64",
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "turnsStarted": {
+                                "format": "uint64",
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "unknownRequests": {
+                                "format": "uint64",
+                                "minimum": 0,
+                                "type": "integer"
+                              }
+                            },
+                            "required": [
+                              "inputTokens",
+                              "cachedInputTokens",
+                              "outputTokens",
+                              "tokensUsed",
+                              "reservedTokens",
+                              "unknownRequests",
+                              "timeUsedSeconds",
+                              "turnsStarted",
+                              "accountingComplete"
+                            ],
+                            "type": "object"
+                          },
+                          "waitingForCapacity": {
+                            "type": "boolean"
+                          },
+                          "waitingForInput": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "threadId",
+                          "objective",
+                          "status",
+                          "maxTurns",
+                          "maxActiveSeconds",
+                          "usage",
+                          "settling",
+                          "waitingForInput",
+                          "waitingForCapacity",
+                          "unreportedTurns"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "revision": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "revision",
+                  "eventSequence"
+                ],
+                "type": "object"
+              },
               "id": {
                 "type": "string"
               },
@@ -36007,6 +39613,41 @@
                           },
                           "required": [
                             "message"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "goal": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "goalId": {
+                              "type": "string"
+                            },
+                            "origin": {
+                              "type": "string"
+                            },
+                            "predecessorTurnId": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "sequence": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "goalId",
+                            "sequence",
+                            "origin"
                           ],
                           "type": "object"
                         },
@@ -38008,6 +41649,258 @@
             "ephemeral": {
               "type": "boolean"
             },
+            "goalOwner": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "goalId": {
+                      "type": "string"
+                    },
+                    "threadId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "threadId",
+                    "goalId"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "goals": {
+              "additionalProperties": false,
+              "properties": {
+                "eventSequence": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "goal": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "activeTurnId": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "maxActiveSeconds": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "maxTurns": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "objective": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "report": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "blocker": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "evidence": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "expectedRevision": {
+                                  "format": "uint64",
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                "remaining": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "status": {
+                                  "enum": [
+                                    "continue",
+                                    "complete",
+                                    "blocked"
+                                  ],
+                                  "type": "string"
+                                },
+                                "summary": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "expectedRevision",
+                                "status",
+                                "summary",
+                                "evidence",
+                                "remaining"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reportTurnId": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "settling": {
+                          "type": "boolean"
+                        },
+                        "status": {
+                          "enum": [
+                            "active",
+                            "paused",
+                            "blocked",
+                            "completed",
+                            "budgetLimited",
+                            "failed"
+                          ],
+                          "type": "string"
+                        },
+                        "threadId": {
+                          "type": "string"
+                        },
+                        "tokenBudget": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        },
+                        "unreportedTurns": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "usage": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "accountingComplete": {
+                              "type": "boolean"
+                            },
+                            "cachedInputTokens": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "inputTokens": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "outputTokens": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "reservedTokens": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "timeUsedSeconds": {
+                              "format": "double",
+                              "type": "number"
+                            },
+                            "tokensUsed": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "turnsStarted": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "unknownRequests": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "inputTokens",
+                            "cachedInputTokens",
+                            "outputTokens",
+                            "tokensUsed",
+                            "reservedTokens",
+                            "unknownRequests",
+                            "timeUsedSeconds",
+                            "turnsStarted",
+                            "accountingComplete"
+                          ],
+                          "type": "object"
+                        },
+                        "waitingForCapacity": {
+                          "type": "boolean"
+                        },
+                        "waitingForInput": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "threadId",
+                        "objective",
+                        "status",
+                        "maxTurns",
+                        "maxActiveSeconds",
+                        "usage",
+                        "settling",
+                        "waitingForInput",
+                        "waitingForCapacity",
+                        "unreportedTurns"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "revision": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "revision",
+                "eventSequence"
+              ],
+              "type": "object"
+            },
             "id": {
               "type": "string"
             },
@@ -38463,6 +42356,41 @@
                         },
                         "required": [
                           "message"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "goal": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "goalId": {
+                            "type": "string"
+                          },
+                          "origin": {
+                            "type": "string"
+                          },
+                          "predecessorTurnId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "sequence": {
+                            "format": "uint64",
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "goalId",
+                          "sequence",
+                          "origin"
                         ],
                         "type": "object"
                       },
@@ -40479,6 +44407,258 @@
             "ephemeral": {
               "type": "boolean"
             },
+            "goalOwner": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "goalId": {
+                      "type": "string"
+                    },
+                    "threadId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "threadId",
+                    "goalId"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "goals": {
+              "additionalProperties": false,
+              "properties": {
+                "eventSequence": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "goal": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "activeTurnId": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "maxActiveSeconds": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "maxTurns": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "objective": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "report": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "blocker": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "evidence": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "expectedRevision": {
+                                  "format": "uint64",
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                "remaining": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "status": {
+                                  "enum": [
+                                    "continue",
+                                    "complete",
+                                    "blocked"
+                                  ],
+                                  "type": "string"
+                                },
+                                "summary": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "expectedRevision",
+                                "status",
+                                "summary",
+                                "evidence",
+                                "remaining"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reportTurnId": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "settling": {
+                          "type": "boolean"
+                        },
+                        "status": {
+                          "enum": [
+                            "active",
+                            "paused",
+                            "blocked",
+                            "completed",
+                            "budgetLimited",
+                            "failed"
+                          ],
+                          "type": "string"
+                        },
+                        "threadId": {
+                          "type": "string"
+                        },
+                        "tokenBudget": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        },
+                        "unreportedTurns": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "usage": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "accountingComplete": {
+                              "type": "boolean"
+                            },
+                            "cachedInputTokens": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "inputTokens": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "outputTokens": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "reservedTokens": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "timeUsedSeconds": {
+                              "format": "double",
+                              "type": "number"
+                            },
+                            "tokensUsed": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "turnsStarted": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "unknownRequests": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "inputTokens",
+                            "cachedInputTokens",
+                            "outputTokens",
+                            "tokensUsed",
+                            "reservedTokens",
+                            "unknownRequests",
+                            "timeUsedSeconds",
+                            "turnsStarted",
+                            "accountingComplete"
+                          ],
+                          "type": "object"
+                        },
+                        "waitingForCapacity": {
+                          "type": "boolean"
+                        },
+                        "waitingForInput": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "threadId",
+                        "objective",
+                        "status",
+                        "maxTurns",
+                        "maxActiveSeconds",
+                        "usage",
+                        "settling",
+                        "waitingForInput",
+                        "waitingForCapacity",
+                        "unreportedTurns"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "revision": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "revision",
+                "eventSequence"
+              ],
+              "type": "object"
+            },
             "id": {
               "type": "string"
             },
@@ -40934,6 +45114,41 @@
                         },
                         "required": [
                           "message"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "goal": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "goalId": {
+                            "type": "string"
+                          },
+                          "origin": {
+                            "type": "string"
+                          },
+                          "predecessorTurnId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "sequence": {
+                            "format": "uint64",
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "goalId",
+                          "sequence",
+                          "origin"
                         ],
                         "type": "object"
                       },
@@ -42957,6 +47172,258 @@
             "ephemeral": {
               "type": "boolean"
             },
+            "goalOwner": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "goalId": {
+                      "type": "string"
+                    },
+                    "threadId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "threadId",
+                    "goalId"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "goals": {
+              "additionalProperties": false,
+              "properties": {
+                "eventSequence": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "goal": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "activeTurnId": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "maxActiveSeconds": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "maxTurns": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "objective": {
+                          "type": "string"
+                        },
+                        "reason": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "report": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "blocker": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "evidence": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "expectedRevision": {
+                                  "format": "uint64",
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                "remaining": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "status": {
+                                  "enum": [
+                                    "continue",
+                                    "complete",
+                                    "blocked"
+                                  ],
+                                  "type": "string"
+                                },
+                                "summary": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "expectedRevision",
+                                "status",
+                                "summary",
+                                "evidence",
+                                "remaining"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "reportTurnId": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "settling": {
+                          "type": "boolean"
+                        },
+                        "status": {
+                          "enum": [
+                            "active",
+                            "paused",
+                            "blocked",
+                            "completed",
+                            "budgetLimited",
+                            "failed"
+                          ],
+                          "type": "string"
+                        },
+                        "threadId": {
+                          "type": "string"
+                        },
+                        "tokenBudget": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        },
+                        "unreportedTurns": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "usage": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "accountingComplete": {
+                              "type": "boolean"
+                            },
+                            "cachedInputTokens": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "inputTokens": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "outputTokens": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "reservedTokens": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "timeUsedSeconds": {
+                              "format": "double",
+                              "type": "number"
+                            },
+                            "tokensUsed": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "turnsStarted": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "unknownRequests": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "inputTokens",
+                            "cachedInputTokens",
+                            "outputTokens",
+                            "tokensUsed",
+                            "reservedTokens",
+                            "unknownRequests",
+                            "timeUsedSeconds",
+                            "turnsStarted",
+                            "accountingComplete"
+                          ],
+                          "type": "object"
+                        },
+                        "waitingForCapacity": {
+                          "type": "boolean"
+                        },
+                        "waitingForInput": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "threadId",
+                        "objective",
+                        "status",
+                        "maxTurns",
+                        "maxActiveSeconds",
+                        "usage",
+                        "settling",
+                        "waitingForInput",
+                        "waitingForCapacity",
+                        "unreportedTurns"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "revision": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "revision",
+                "eventSequence"
+              ],
+              "type": "object"
+            },
             "id": {
               "type": "string"
             },
@@ -43412,6 +47879,41 @@
                         },
                         "required": [
                           "message"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "goal": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "goalId": {
+                            "type": "string"
+                          },
+                          "origin": {
+                            "type": "string"
+                          },
+                          "predecessorTurnId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "sequence": {
+                            "format": "uint64",
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "goalId",
+                          "sequence",
+                          "origin"
                         ],
                         "type": "object"
                       },
@@ -44389,6 +48891,41 @@
                   },
                   "required": [
                     "message"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "goal": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "goalId": {
+                      "type": "string"
+                    },
+                    "origin": {
+                      "type": "string"
+                    },
+                    "predecessorTurnId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "sequence": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "goalId",
+                    "sequence",
+                    "origin"
                   ],
                   "type": "object"
                 },
@@ -46483,6 +51020,258 @@
       "ephemeral": {
         "type": "boolean"
       },
+      "goalOwner": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "goalId": {
+                "type": "string"
+              },
+              "threadId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "threadId",
+              "goalId"
+            ],
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "goals": {
+        "additionalProperties": false,
+        "properties": {
+          "eventSequence": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "goal": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "activeTurnId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "maxActiveSeconds": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "maxTurns": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "objective": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "report": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "blocker": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "evidence": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "expectedRevision": {
+                            "format": "uint64",
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          "remaining": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "status": {
+                            "enum": [
+                              "continue",
+                              "complete",
+                              "blocked"
+                            ],
+                            "type": "string"
+                          },
+                          "summary": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "expectedRevision",
+                          "status",
+                          "summary",
+                          "evidence",
+                          "remaining"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "reportTurnId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "settling": {
+                    "type": "boolean"
+                  },
+                  "status": {
+                    "enum": [
+                      "active",
+                      "paused",
+                      "blocked",
+                      "completed",
+                      "budgetLimited",
+                      "failed"
+                    ],
+                    "type": "string"
+                  },
+                  "threadId": {
+                    "type": "string"
+                  },
+                  "tokenBudget": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "unreportedTurns": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "usage": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "accountingComplete": {
+                        "type": "boolean"
+                      },
+                      "cachedInputTokens": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "inputTokens": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "outputTokens": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "reservedTokens": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "timeUsedSeconds": {
+                        "format": "double",
+                        "type": "number"
+                      },
+                      "tokensUsed": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "turnsStarted": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "unknownRequests": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "inputTokens",
+                      "cachedInputTokens",
+                      "outputTokens",
+                      "tokensUsed",
+                      "reservedTokens",
+                      "unknownRequests",
+                      "timeUsedSeconds",
+                      "turnsStarted",
+                      "accountingComplete"
+                    ],
+                    "type": "object"
+                  },
+                  "waitingForCapacity": {
+                    "type": "boolean"
+                  },
+                  "waitingForInput": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "id",
+                  "threadId",
+                  "objective",
+                  "status",
+                  "maxTurns",
+                  "maxActiveSeconds",
+                  "usage",
+                  "settling",
+                  "waitingForInput",
+                  "waitingForCapacity",
+                  "unreportedTurns"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "eventSequence"
+        ],
+        "type": "object"
+      },
       "id": {
         "type": "string"
       },
@@ -46938,6 +51727,41 @@
                   },
                   "required": [
                     "message"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "goal": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "goalId": {
+                      "type": "string"
+                    },
+                    "origin": {
+                      "type": "string"
+                    },
+                    "predecessorTurnId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "sequence": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    }
+                  },
+                  "required": [
+                    "goalId",
+                    "sequence",
+                    "origin"
                   ],
                   "type": "object"
                 },
@@ -47893,6 +52717,41 @@
             },
             "required": [
               "message"
+            ],
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "goal": {
+        "anyOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "goalId": {
+                "type": "string"
+              },
+              "origin": {
+                "type": "string"
+              },
+              "predecessorTurnId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "sequence": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "goalId",
+              "sequence",
+              "origin"
             ],
             "type": "object"
           },

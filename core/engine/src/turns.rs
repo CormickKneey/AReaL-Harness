@@ -34,9 +34,10 @@ impl Engine {
         cancel: CancellationToken,
     ) -> Result<Turn> {
         let _admission = self.tasks.token();
+        let _gate = self.desktop.lifecycle.gate.lock().await;
         let cell = self.cell(thread_id).await?;
         let mut state = cell.state.lock().await;
-        if self.is_closed() || cancel.is_cancelled() {
+        if !self.accepting_work() || cancel.is_cancelled() {
             return Err(Error::Closed);
         }
         if state.active.is_some() || state.compacting {
@@ -101,7 +102,8 @@ impl Engine {
         if candidate.preview.is_empty() {
             candidate.preview = text.chars().take(120).collect();
         }
-        let turn = Turn {
+        let mut turn = Turn {
+            goal: None,
             instruction_snapshot: None,
             configuration: thread.desktop.as_ref().map(|d| d.configuration.clone()),
             id: id(),
@@ -113,6 +115,7 @@ impl Engine {
             }],
             usage: None,
         };
+        self.prepare_goal_turn(&mut candidate, &mut turn)?;
         candidate.turns.push(turn.clone());
         candidate.updated_at = now();
         candidate.status = ThreadStatus::Active {
@@ -146,7 +149,24 @@ impl Engine {
         cancel: CancellationToken,
         admission: OwnedSemaphorePermit,
     ) {
+        self.spawn_goal_scheduler();
         let (tx, rx) = mpsc::channel(self.limits.mailbox_capacity);
+        let mut model = self
+            .configured_model(&turn.configuration.clone().unwrap_or_default())
+            .expect("configuration validated before admission");
+        if turn.goal.is_some() || state.thread.goal_owner.is_some() {
+            if let Some(budget) = self.goals.budget(&state.thread) {
+                if let Some(goal) = &state.thread.goals.goal {
+                    budget.configure(goal.token_budget, true);
+                    budget.begin();
+                }
+                model = budget.wrap(model);
+                cell.goal_role
+                    .store(if turn.goal.is_some() { 1 } else { 2 }, Ordering::Release);
+            }
+        } else {
+            cell.goal_role.store(0, Ordering::Release);
+        }
         state.active = Some(Active {
             isolated_children: 0,
             _admission: admission,
@@ -158,9 +178,7 @@ impl Engine {
             open_items: HashSet::new(),
             sealed: false,
             scope: None,
-            model: self
-                .configured_model(&turn.configuration.clone().unwrap_or_default())
-                .expect("configuration validated before admission"),
+            model,
             tools: TaskTracker::new(),
             process_cursors: BTreeMap::new(),
             handles: tools::Handles::default(),
@@ -223,6 +241,11 @@ impl Engine {
         };
         let mut candidate = state.thread.clone();
         candidate.turns.last_mut().unwrap().items.push(item.clone());
+        if let Some(goal) = &mut candidate.goals.goal {
+            goal.report_turn_id = None;
+            candidate.goals.revision += 1;
+            candidate.goals.event_sequence += 1;
+        }
         if serde_json::to_vec(&candidate).unwrap().len() + self.limits.max_output_bytes * 6 + 1024
             > self.limits.max_history_bytes
         {
@@ -232,6 +255,7 @@ impl Engine {
         state.thread = candidate;
         emit_item(&cell, "item/started", thread_id, turn_id, &item);
         emit_item(&cell, "item/completed", thread_id, turn_id, &item);
+        self.goal_emit(&cell, &state.thread);
         permit.send(());
         Ok(())
     }
@@ -246,7 +270,38 @@ impl Engine {
         } else if !state.thread.turns.iter().any(|t| t.id == turn_id) {
             return Err(Error::Conflict);
         }
-        if state.thread.desktop.is_some() {
+        if state.thread.goals.goal.is_some() {
+            let mut candidate = state.thread.clone();
+            let goal = candidate.goals.goal.as_mut().unwrap();
+            if goal.status == areal_protocol::goals::GoalStatus::Active {
+                goal.status = areal_protocol::goals::GoalStatus::Paused;
+                goal.reason = Some("user".into());
+                goal.settling = state.active.is_some();
+                goal.report_turn_id = None;
+                candidate.goals.revision += 1;
+                candidate.goals.event_sequence += 1;
+                let queue = &mut candidate.desktop.get_or_insert_with(Default::default).queue;
+                if !queue.paused {
+                    queue.paused = true;
+                    queue.pause_reason = Some(format!("goal:{}", goal.id));
+                    queue.revision += 1;
+                }
+                self.persist(&candidate).await?;
+                state.thread = candidate;
+                if let Some(budget) = self.goals.budget(&state.thread) {
+                    budget.configure(
+                        state
+                            .thread
+                            .goals
+                            .goal
+                            .as_ref()
+                            .and_then(|g| g.token_budget),
+                        false,
+                    );
+                }
+                self.goal_emit(&cell, &state.thread);
+            }
+        } else if state.thread.desktop.is_some() {
             let mut candidate = state.thread.clone();
             let queue = &mut candidate.desktop.as_mut().unwrap().queue;
             queue.paused = true;
@@ -333,11 +388,24 @@ impl Engine {
                     .turn_timeout
                     .min(Duration::from_secs(a.worker_timeout_seconds))
             });
-        let deadline = tokio::time::Instant::now() + timeout;
+        let goal_seconds = {
+            let state = cell.state.lock().await;
+            state
+                .thread
+                .goals
+                .goal
+                .as_ref()
+                .filter(|_| state.thread.turns.last().is_some_and(|t| t.goal.is_some()))
+                .map(|g| (g.max_active_seconds as f64 - g.usage.time_used_seconds).max(0.0))
+        };
+        let goal_deadline =
+            goal_seconds.map(|v| tokio::time::Instant::now() + Duration::from_secs_f64(v));
+        let deadline = (tokio::time::Instant::now() + timeout)
+            .min(goal_deadline.unwrap_or(tokio::time::Instant::now() + timeout));
         let mut result = tokio::select! {
             biased;
             _ = cancel.cancelled() => Err(anyhow::anyhow!("cancelled")),
-            _ = tokio::time::sleep_until(deadline) => Err(anyhow::anyhow!("turn deadline exceeded")),
+            _ = tokio::time::sleep_until(deadline) => Err(anyhow::anyhow!(if goal_deadline.is_some_and(|g| g <= tokio::time::Instant::now()) {"GOAL_TIME_BUDGET"} else {"turn deadline exceeded"})),
             result = std::panic::AssertUnwindSafe(self.generate(&cell, &cancel, &mut steer)).catch_unwind() =>
                 result.unwrap_or_else(|_| Err(anyhow::anyhow!("model task panicked"))),
         };
@@ -355,6 +423,7 @@ impl Engine {
         tools.close();
         tools.wait().await;
         let mut cleanup_failed = false;
+        let mut dependency_failed = false;
         let active_id = cell.state.lock().await.active.as_ref().unwrap().id.clone();
         if let Err(error) = self.close_managed(&cell, Some(&active_id)).await {
             cleanup_failed = true;
@@ -369,7 +438,11 @@ impl Engine {
                 Ok(groups)
                     if groups
                         .iter()
-                        .all(|g| g["record"]["cleanupConfirmed"] == true) => {}
+                        .all(|g| g["record"]["cleanupConfirmed"] == true) =>
+                {
+                    dependency_failed |=
+                        groups.iter().any(|g| g["record"]["status"] != "completed");
+                }
                 _ => {
                     cleanup_failed = true;
                     result = Err(anyhow::anyhow!("workgroup cleanup could not be confirmed"));
@@ -393,7 +466,12 @@ impl Engine {
         }
         for child in children {
             match self.wait(&child).await {
-                Ok(thread) if !matches!(thread.status, ThreadStatus::SystemError) => {}
+                Ok(thread) if !matches!(thread.status, ThreadStatus::SystemError) => {
+                    dependency_failed |= thread
+                        .turns
+                        .last()
+                        .is_none_or(|t| t.status != TurnStatus::Completed);
+                }
                 _ => {
                     cleanup_failed = true;
                     result = Err(anyhow::anyhow!(
@@ -402,7 +480,34 @@ impl Engine {
                 }
             }
         }
+        let budget = {
+            let state = cell.state.lock().await;
+            if state.thread.turns.last().is_some_and(|t| t.goal.is_some()) {
+                self.goals.budget(&state.thread)
+            } else {
+                None
+            }
+        };
+        if let Some(budget) = &budget {
+            budget.end();
+            if let Err(error) = budget.flush().await {
+                cleanup_failed = true;
+                result = Err(anyhow::anyhow!("goal ledger persistence failed: {error}"));
+            }
+        }
         let mut state = cell.state.lock().await;
+        if dependency_failed
+            && state.thread.goals.goal.as_ref().is_some_and(|g| {
+                g.report_turn_id.as_deref() == Some(active_id.as_str())
+                    && g.report.as_ref().is_some_and(|r| {
+                        r.status == areal_protocol::goals::GoalReportStatus::Complete
+                    })
+            })
+        {
+            result = Err(anyhow::anyhow!(
+                "GOAL_DEPENDENCY_FAILED: completion requires successful child tasks"
+            ));
+        }
         state.poisoned |= cleanup_failed;
         let thread_id = state.thread.id.clone();
         let open_items = std::mem::take(&mut state.active.as_mut().unwrap().open_items);
@@ -480,12 +585,16 @@ impl Engine {
                 .into();
                 data.queue.revision += 1;
             }
-            if final_turn.status != TurnStatus::Completed {
+            if final_turn.status != TurnStatus::Completed
+                && !data.queue.paused
+                && final_turn.goal.is_none()
+            {
                 data.queue.paused = true;
                 data.queue.pause_reason = Some("turn did not complete successfully".into());
                 data.queue.revision += 1;
             }
         }
+        self.settle_goal(&mut state.thread);
         state.thread.updated_at = now();
         state.thread.status = if state.poisoned {
             ThreadStatus::SystemError
@@ -495,6 +604,10 @@ impl Engine {
         if let Err(error) = self.persist(&state.thread).await {
             state.poisoned = true;
             state.thread.status = ThreadStatus::SystemError;
+            if let Some(goal) = &mut state.thread.goals.goal {
+                goal.status = areal_protocol::goals::GoalStatus::Failed;
+                goal.reason = Some("storageFailure".into());
+            }
             let turn = state.thread.turns.last_mut().unwrap();
             turn.status = TurnStatus::Failed;
             turn.error = Some(TurnError {
@@ -517,11 +630,11 @@ impl Engine {
             "turn/completed",
             json!({"threadId": thread_id, "turn": state.thread.turns.last()}),
         );
+        self.goal_emit(&cell, &state.thread);
         cell.settled.send_replace(true);
         drop(state);
         // 队列推进仍调用同一 Turn 准入与 activate，先持久化唯一的 item→Turn 关联。
-        if let Err(error) = self.advance_queue(&cell).await {
-            tracing::error!(%error, "queue dispatch failed");
-        }
+        self.goals.request(&cell.id);
+        self.goals.wake();
     }
 }

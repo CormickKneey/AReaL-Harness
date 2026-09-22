@@ -288,6 +288,21 @@ fn valid(field: &str, entry: &Entry) -> Result<()> {
                 return Err(reject("model retries must be between 0 and 8"));
             }
         }
+        "max_turns" | "max_active_seconds" | "max_unreported_turns" | "turn_model_rounds" => {
+            let max = if field.ends_with("turn_model_rounds") {
+                1024
+            } else {
+                86400
+            };
+            let min = if field.ends_with("turn_model_rounds") {
+                2
+            } else {
+                1
+            };
+            if value.parse::<u64>().ok().is_none_or(|n| n < min || n > max) {
+                return Err(reject("goal limit is out of range"));
+            }
+        }
         "turn_timeout_seconds" | "stream_idle_timeout_seconds" => {
             if !value.bytes().all(|b| b.is_ascii_digit())
                 || value
@@ -433,6 +448,10 @@ fn load_mode(inputs: &ConfigInputs, management: bool) -> Result<ResolvedCoreConf
         ("server.listen", "127.0.0.1:4500"),
         ("model.provider", "default"),
         ("limits.model_concurrency", "32"),
+        ("goals.max_turns", "100"),
+        ("goals.max_active_seconds", "3600"),
+        ("goals.max_unreported_turns", "3"),
+        ("goals.turn_model_rounds", "32"),
         ("limits.max_threads", "20000"),
         ("limits.max_active_turns", "256"),
         ("limits.max_children_per_turn", "64"),
@@ -626,6 +645,12 @@ fn load_mode(inputs: &ConfigInputs, management: bool) -> Result<ResolvedCoreConf
     sources.insert("home".into(), home_source);
     sources.insert("config_file".into(), selected_source);
     let result = ResolvedCoreConfig {
+        goals: GoalConfig {
+            max_turns: values["goals.max_turns"].value.parse().unwrap(),
+            max_active_seconds: values["goals.max_active_seconds"].value.parse().unwrap(),
+            max_unreported_turns: values["goals.max_unreported_turns"].value.parse().unwrap(),
+            turn_model_rounds: values["goals.turn_model_rounds"].value.parse().unwrap(),
+        },
         home,
         config_file: file.loaded.then_some(selected),
         listen: values["server.listen"].value.parse().unwrap(),

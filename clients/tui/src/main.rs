@@ -42,6 +42,11 @@ struct Args {
     /// 使用同一协议客户端运行一次任务，不启动全屏界面。
     #[arg(long)]
     prompt: Option<String>,
+    /// 持续推进目标直到完成或需要用户操作。
+    #[arg(long, conflicts_with_all = ["prompt", "input_file"])]
+    goal: Option<String>,
+    #[arg(long, requires = "goal")]
+    goal_token_budget: Option<u64>,
     /// Read a turn input array (text, images, or other supported media) from JSON.
     #[arg(long, conflicts_with = "prompt")]
     input_file: Option<std::path::PathBuf>,
@@ -65,10 +70,13 @@ impl Drop for TerminalGuard {
 async fn main() -> Result<()> {
     let args = Args::parse();
     anyhow::ensure!(
-        args.prompt.is_some() || args.input_file.is_some() || std::io::stdin().is_terminal(),
+        args.prompt.is_some()
+            || args.goal.is_some()
+            || args.input_file.is_some()
+            || std::io::stdin().is_terminal(),
         "interactive TUI requires a terminal; use --prompt or --input-file for scripts"
     );
-    let prefs = if args.prompt.is_none() && args.input_file.is_none() {
+    let prefs = if args.prompt.is_none() && args.goal.is_none() && args.input_file.is_none() {
         Some(Preferences::load(&args.ui)?)
     } else {
         None
@@ -79,6 +87,9 @@ async fn main() -> Result<()> {
     let mut client = Client::connect(endpoint, args.auth_file.as_deref()).await.with_context(|| {
         format!("Cannot connect to Core at {endpoint}. Start the server first, or omit --endpoint to start a local Harness.")
     })?;
+    if let Some(goal) = args.goal {
+        return headless::goal(&mut client, args.resume, goal, args.goal_token_budget).await;
+    }
     if let Some(prompt) = args.prompt {
         return headless::run(&mut client, args.resume, vec![Input::text(prompt)]).await;
     }
@@ -177,4 +188,15 @@ async fn interactive(
         reconnect.abort();
     }
     Ok(())
+}
+
+fn goal_request_id() -> String {
+    format!(
+        "goal-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    )
 }

@@ -120,7 +120,16 @@ pub struct SelectedModelConfig {
     pub max_retries: usize,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct GoalConfig {
+    pub max_turns: u64,
+    pub max_active_seconds: u64,
+    pub max_unreported_turns: u64,
+    pub turn_model_rounds: usize,
+}
+
 pub struct ResolvedCoreConfig {
+    pub goals: GoalConfig,
     pub home: PathBuf,
     pub config_file: Option<PathBuf>,
     pub listen: SocketAddr,
@@ -180,6 +189,7 @@ impl ResolvedCoreConfig {
         endpoint.set_query(None);
         endpoint.set_fragment(None);
         let mut result = serde_json::json!({
+            "goals": self.goals,
             "home": self.home, "config_file": self.config_file,
             "server": { "listen": self.listen, "data_dir": self.data_dir },
             "tools": { "extensions_file": self.tool_extensions_file },

@@ -24,6 +24,7 @@ initialize → initialized → areal/capabilities（可带 apiVersion）。请�
 | provider/list/read/upsert/remove/probe | manage | 凭据引用、CAS 写入与显式连通性探测 |
 | model/list | observe | providerId/modelId、能力和可用状态 |
 | turn/start/enqueue, queue/list/update/remove/reorder/pause/resume | observe / interact | 持久提交、冻结配置与队列管理 |
+| goal/get, goal/create/update/pause/resume/clear | observe / interact | 持久目标、CAS 控制与共享预算；显式创建目标后运行，见 [Goal 契约](core.md#goals) |
 | request/read | observe | 按当前身份找回受理收据 |
 | process/start/list/get/read/wait/write/resize/closeStdin/terminate | observe / interact | 受管进程与共享终端 |
 | process/acknowledgeCleanup | manage | 旧 epoch 的外部清理证据，保留 UNKNOWN |
@@ -71,4 +72,6 @@ process/start 默认 lifetime=turn；thread 生命周期需 Profile allowThreadP
 
 旧 epoch 句柄为 STALE_HANDLE，不恢复活进程。Thread 进程、UNKNOWN、活动组或压缩阻止 restartSafe。归档需空闲且队列/资源结算，释放热历史并保留磁盘和去重键；GC 在 drain 完成后扫描冷热引用，不能删除历史仍引用的 Blob。
 
-事件使用 areal/ 前缀，包括 thread/configured/archived、plan/updated、queue/updated、interaction/requested/resolved、process/updated、server/draining。各自 revision 不可与输出 cursor 混用。未知模型窗口/usage 保留 null 或缺失，不猜测。示例见[直接协议验收](../examples/desktop-api.md)。
+事件使用 areal/ 前缀，包括 thread/configured/archived、plan/updated、queue/updated、goal/updated/cleared、interaction/requested/resolved、process/updated、server/draining。各自 revision 不可与输出 cursor 混用。未知模型窗口/usage 保留 null 或缺失，不猜测。示例见[直接协议验收](../examples/desktop-api.md)。
+
+features.goals=true 表示服务支持 Goal，无需单独配置开关；Goal 事件遵循相同的权限与原子订阅边界。drain 关闭自动续轮准入并暂停目标；归档和显式上下文压缩要求先停止 Goal 并等待资源结算。

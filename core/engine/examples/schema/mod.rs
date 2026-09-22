@@ -67,6 +67,25 @@ pub fn projections() -> (Value, Value) {
             responses.insert(format!("areal/{name}"), value.clone());
         }
     };
+    let goal_view = object(
+        json!({"threadId":string,"revision":number,"eventSequence":number,"goal":nullable(schema::<areal_protocol::goals::Goal>())}),
+    );
+    insert(
+        &[
+            "goal/get",
+            "goal/update",
+            "goal/pause",
+            "goal/resume",
+            "goal/clear",
+        ],
+        goal_view.clone(),
+    );
+    insert(
+        &["goal/create"],
+        object(
+            json!({"threadId":string,"revision":number,"eventSequence":number,"goal":schema::<areal_protocol::goals::Goal>(),"turnId":string}),
+        ),
+    );
     insert(
         &["capabilities"],
         object(
@@ -257,6 +276,8 @@ pub fn projections() -> (Value, Value) {
     );
     responses.insert("model/list".into(),object(json!({"data":array(object(json!({"id":string,"model":string,"displayName":string,"description":string,"hidden":boolean,"isDefault":boolean,"defaultReasoningEffort":string,"supportedReasoningEfforts":array(any_object.clone()),"inputModalities":array(string.clone()),"arealCapabilities":object(json!({"inputModalities":array(string.clone()),"outputModalities":array(string.clone())}))}))),"nextCursor":nullable(string.clone())})));
     let mut notifications = serde_json::Map::new();
+    notifications.insert("areal/goal/updated".into(), goal_view);
+    notifications.insert("areal/goal/cleared".into(),object(json!({"threadId":string,"revision":number,"eventSequence":number,"goal":nullable(schema::<areal_protocol::goals::Goal>()),"goalId":string})));
     notifications.insert("thread/started".into(), object(json!({"thread":thread})));
     for name in ["turn/started", "turn/completed"] {
         notifications.insert(name.into(), object(json!({"threadId":string,"turn":turn})));

@@ -7,6 +7,8 @@ let socket,
   listCursor = null,
   listing = false;
 const pending = new Map();
+let goalsSupported = false,
+  displayedGoal = null;
 const labels = {
   inProgress: "执行中",
   completed: "已完成",
@@ -51,7 +53,8 @@ function render() {
   $("status").textContent = labels[thread?.turns?.at(-1)?.status] ?? "就绪";
   $("send").disabled = !connected || !thread;
   $("send").textContent = active() ? "补充说明" : "发送";
-  $("interrupt").disabled = !active();
+  $("interrupt").disabled = !active() && thread?.goals?.goal?.status !== "active";
+  renderGoal();
   const history = $("history"),
     atBottom = history.scrollHeight - history.scrollTop - history.clientHeight < 100;
   const opened = new Set(
@@ -110,7 +113,16 @@ function render() {
       } else if (item.type !== "modelContext") {
         const user = item.type === "userMessage",
           card = node("article", undefined, `item${user ? " user" : ""}`);
-        card.append(node("h3", user ? "你" : "Agent"));
+        card.append(
+          node(
+            "h3",
+            user
+              ? turn.goal?.origin === "continuation" && item === turn.items[0]
+                ? "自动续轮"
+                : "你"
+              : "Agent",
+          ),
+        );
         card.append(
           node(
             "pre",
@@ -200,7 +212,9 @@ function event(message) {
     reload().catch(notice);
     return;
   }
-  if (message.method === "turn/started" || message.method === "turn/completed") {
+  if (message.method === "areal/goal/updated" || message.method === "areal/goal/cleared") {
+    applyGoal(p);
+  } else if (message.method === "turn/started" || message.method === "turn/completed") {
     const index = thread.turns.findIndex((turn) => turn.id === p.turn.id);
     if (index === -1) thread.turns.push(p.turn);
     else thread.turns[index] = p.turn;
@@ -266,11 +280,76 @@ $("composer").onsubmit = async (e) => {
     notice(error);
   }
 };
-$("interrupt").onclick = () =>
-  call("turn/interrupt", {
+$("interrupt").onclick = () => {
+  if (thread?.goals?.goal?.status === "active") goalControl("pause").catch(notice);
+  else
+    call("turn/interrupt", { threadId: thread.id, turnId: thread.turns.at(-1).id }).catch(notice);
+};
+function applyGoal(view) {
+  if (!thread || view.threadId !== thread.id) return;
+  if ((view.eventSequence ?? 0) >= (thread.goals?.eventSequence ?? 0))
+    thread.goals = { revision: view.revision, eventSequence: view.eventSequence, goal: view.goal };
+}
+function renderGoal() {
+  $("goal-panel").hidden = !goalsSupported || !thread;
+  const goal = thread?.goals?.goal;
+  const busy = active() || goal?.status === "active";
+  const status = {
+    active: "执行中",
+    paused: "已暂停",
+    blocked: "等待处理",
+    completed: "已完成",
+    budgetLimited: "达到预算",
+    failed: "执行失败",
+  };
+  $("goal-status").textContent = goal
+    ? `持续目标 · ${status[goal.status] ?? goal.status}`
+    : "持续目标";
+  $("goal-progress").textContent = goal
+    ? `${goal.objective} · ${goal.usage.tokensUsed} tokens${goal.tokenBudget ? ` / ${goal.tokenBudget}` : ""} · ${Math.round(goal.usage.timeUsedSeconds)} 秒 · ${goal.usage.turnsStarted}/${goal.maxTurns} 轮${goal.reason ? ` · ${goal.reason}` : ""}${goal.usage.accountingComplete ? "" : " · 用量不完整，预留额度保留"}`
+    : "设置目标后，Agent 会在轮次结束后继续推进。";
+  const key = `${thread?.id}:${goal?.id ?? ""}`;
+  if (displayedGoal !== key) {
+    displayedGoal = key;
+    $("goal-objective").value = goal?.objective ?? "";
+    $("goal-budget").value = goal?.tokenBudget ?? "";
+  }
+  $("goal-save").textContent = goal ? "保存修改" : "开始目标";
+  $("goal-save").disabled = busy || goal?.status === "completed";
+  $("goal-pause").disabled = goal?.status !== "active";
+  $("goal-resume").disabled = !goal || busy || goal.status === "completed";
+  $("goal-clear").disabled = !goal || busy;
+}
+async function goalControl(action, patch = {}) {
+  if (!thread) return;
+  const params = {
     threadId: thread.id,
-    turnId: thread.turns.at(-1).id,
-  }).catch(notice);
+    requestId: crypto.randomUUID(),
+    expectedRevision: thread.goals?.revision ?? 0,
+    ...patch,
+  };
+  if (action !== "create") params.goalId = thread.goals.goal.id;
+  try {
+    applyGoal(await call(`areal/goal/${action}`, params));
+    render();
+  } catch (error) {
+    await reload();
+    throw error;
+  }
+}
+$("goal-form").onsubmit = async (e) => {
+  e.preventDefault();
+  try {
+    await goalControl(thread.goals?.goal ? "update" : "create", {
+      objective: $("goal-objective").value,
+      tokenBudget: $("goal-budget").value ? Number($("goal-budget").value) : null,
+    });
+  } catch (error) {
+    notice(error);
+  }
+};
+for (const action of ["pause", "resume", "clear"])
+  $("goal-" + action).onclick = () => goalControl(action).catch(notice);
 async function connect() {
   const url = new URL("/", location.href);
   url.protocol = "ws:";
@@ -309,6 +388,7 @@ async function connect() {
     clientInfo: { name: "areal-web", version: "0.1.0" },
   });
   socket.send(JSON.stringify({ method: "initialized", params: {} }));
+  goalsSupported = (await call("areal/capabilities", {})).features?.goals === true;
   $("connection").textContent = "已连接本地 Core";
   await list();
   render();

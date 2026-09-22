@@ -75,6 +75,77 @@ pub(crate) async fn run(
     }
 }
 
+pub(crate) async fn goal(
+    client: &mut Client,
+    resume: Option<String>,
+    objective: String,
+    token_budget: Option<u64>,
+) -> Result<()> {
+    let start = match resume {
+        Some(id) => client.send("thread/resume", json!({"threadId":id}))?,
+        None => client.send("thread/start", json!({}))?,
+    };
+    let mut thread_id = None;
+    let mut create = None;
+    let mut get = None;
+    let mut goal_id = None;
+    loop {
+        let event = client
+            .rx
+            .recv()
+            .await
+            .context("connection closed; inspect the Goal before retrying")?;
+        if let Some(error) = event.get("error") {
+            bail!("{}", error["message"]);
+        }
+        if event["id"] == start {
+            let thread = &event["result"]["thread"];
+            let id = thread["id"]
+                .as_str()
+                .context("missing thread id")?
+                .to_owned();
+            eprintln!("Thread: {id}");
+            create = Some(client.send("areal/goal/create",json!({"threadId":id,"requestId":crate::goal_request_id(),"expectedRevision":thread["goals"]["revision"].as_u64().unwrap_or(0),"objective":objective,"tokenBudget":token_budget}))?);
+            thread_id = Some(id);
+        }
+        if create.is_some() && event["id"].as_u64() == create {
+            goal_id = event["result"]["goal"]["id"].as_str().map(str::to_owned);
+            get = Some(client.send("areal/goal/get", json!({"threadId":thread_id}))?);
+        }
+        let view = if get.is_some() && event["id"].as_u64() == get {
+            &event["result"]
+        } else {
+            &event["params"]
+        };
+        if view["threadId"].as_str() != thread_id.as_deref() {
+            continue;
+        }
+        if event["method"] == "areal/goal/cleared" && view["goalId"].as_str() == goal_id.as_deref()
+        {
+            bail!("goal was cleared by another client");
+        }
+        if event["method"] == "item/agentMessage/delta" {
+            use std::io::Write;
+            print!("{}", safe_text(view["delta"].as_str().unwrap_or("")));
+            std::io::stdout().flush()?;
+        }
+        if goal_id.is_some()
+            && view["goal"]["id"].as_str() == goal_id.as_deref()
+            && view["goal"]["status"] != "active"
+            && view["goal"]["activeTurnId"].is_null()
+        {
+            println!("\nGoal: {}", view["goal"]);
+            anyhow::ensure!(
+                view["goal"]["status"] == "completed",
+                "goal stopped: {} ({})",
+                view["goal"]["status"],
+                view["goal"]["reason"]
+            );
+            return Ok(());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

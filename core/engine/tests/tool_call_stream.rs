@@ -488,6 +488,7 @@ async fn summary_requests_and_configured_models_preserve_buffer_limits() {
                     max_calls: 1,
                     max_buffer_bytes: 1,
                 },
+                None,
             )
             .await
             .unwrap()
@@ -582,6 +583,89 @@ async fn engine_enforces_remaining_count_and_bytes_for_legacy_custom_models() {
             1 + usize::from(prefix)
         );
         engine.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn goal_requests_keep_output_caps_and_tool_budgets_through_shared_pools() {
+    for responses in [false, true] {
+        for (count, buffer, expected, limit) in [(2, 4096, "calls", 1), (1, 1, "buffer_bytes", 1)] {
+            let fixture = Fixture::start(vec![calls_body(count, 2, responses)], None).await;
+            let data = tempfile::tempdir().unwrap();
+            let audit = data.path().join("requests");
+            let model = fixture
+                .model(&audit, responses)
+                .configure(&areal_protocol::desktop::ModelParameters {
+                    max_output_tokens: Some(16000),
+                    ..Default::default()
+                })
+                .unwrap();
+            let pool = SharedModel::pool(model, 1).unwrap();
+            let engine = Engine::open(
+                &data.path().join("core"),
+                pool.clone(),
+                Limits {
+                    max_tool_calls: 1,
+                    max_tool_buffer_bytes: buffer,
+                    max_completion_retries: 2,
+                    ..Limits::default()
+                },
+            )
+            .unwrap();
+            let writes = Arc::new(Writes::default());
+            let thread = thread(&engine, writes.clone()).await;
+            engine
+                .goal_create(
+                    "fixture".into(),
+                    areal_protocol::goals::GoalCreate {
+                        request_id: "goal-budget".into(),
+                        thread_id: thread.id.clone(),
+                        expected_revision: 0,
+                        objective: "Run the fixture with both request budgets".into(),
+                        token_budget: Some(8000),
+                        max_turns: Some(1),
+                        max_active_seconds: None,
+                    },
+                )
+                .await
+                .unwrap();
+            let goal = tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    let goal = engine.goal_get(&thread.id).await.unwrap();
+                    if goal["goal"]["status"] != "active" && goal["goal"]["activeTurnId"].is_null()
+                    {
+                        break goal;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            assert_eq!(goal["goal"]["status"], "blocked", "{goal}");
+            assert_eq!(goal["goal"]["reason"], "usageUnknown");
+            assert_eq!(goal["goal"]["usage"]["unknownRequests"], 1);
+            assert!(writes.ids.lock().unwrap().is_empty());
+            assert_eq!(pool.load().unwrap().in_flight, 0);
+            {
+                let requests = fixture.requests.lock().unwrap();
+                assert_eq!(requests.len(), 1);
+                let field = if responses {
+                    "max_output_tokens"
+                } else {
+                    "max_completion_tokens"
+                };
+                assert!(
+                    requests[0][field]
+                        .as_u64()
+                        .is_some_and(|cap| cap > 0 && cap < 8000)
+                );
+            }
+            let records = audits(&audit);
+            assert_eq!(records[0]["errorCode"], "tool_call_budget_exceeded");
+            assert_eq!(records[0]["toolCallError"]["budget"], expected);
+            assert_eq!(records[0]["toolCallError"]["limit"], limit);
+            engine.shutdown().await;
+        }
     }
 }
 

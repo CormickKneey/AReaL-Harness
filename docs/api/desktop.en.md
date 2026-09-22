@@ -24,6 +24,7 @@ Use initialize → initialized → areal/capabilities (optional apiVersion). Req
 | provider/list/read/upsert/remove/probe | manage | Credential references, CAS writes and explicit probes |
 | model/list | observe | providerId/modelId, capabilities and availability |
 | turn/start/enqueue, queue/list/update/remove/reorder/pause/resume | observe / interact | Durable submissions, frozen configuration and queue management |
+| goal/get, goal/create/update/pause/resume/clear | observe / interact | Persistent Goals, CAS control and shared budgets; execution begins when a Goal is explicitly created; see the [Goal contract](core.en.md#goals) |
 | request/read | observe | Recover receipts for the authenticated identity |
 | process/start/list/get/read/wait/write/resize/closeStdin/terminate | observe / interact | Managed processes and shared terminals |
 | process/acknowledgeCleanup | manage | External cleanup evidence for old epochs, retaining UNKNOWN |
@@ -71,4 +72,6 @@ process/start defaults to lifetime=turn. Thread lifetime needs Profile allowThre
 
 Old-epoch handles return STALE_HANDLE without process restoration. Thread processes, UNKNOWN, active groups or compaction prevent restartSafe. Archiving requires idle, settled queues/resources and releases hot history while retaining disk snapshots and deduplication keys. GC after drain scans hot/cold references and cannot collect referenced Blobs.
 
-Events use areal/ prefixes, including thread/configured/archived, plan/updated, queue/updated, interaction/requested/resolved, process/updated and server/draining. Their revisions are not output cursors. Unknown model windows/usage remain null or absent rather than guessed. See [direct protocol examples](../examples/desktop-api.en.md).
+Events use areal/ prefixes, including thread/configured/archived, plan/updated, queue/updated, goal/updated/cleared, interaction/requested/resolved, process/updated and server/draining. Their revisions are not output cursors. Unknown model windows/usage remain null or absent rather than guessed. See [direct protocol examples](../examples/desktop-api.en.md).
+
+features.goals=true advertises Goal support without a separate configuration toggle. Goal events follow the same authorization and atomic subscription boundaries. drain closes automatic continuation admission and pauses Goals; archiving and explicit compaction require stopping the Goal and awaiting resource settlement.

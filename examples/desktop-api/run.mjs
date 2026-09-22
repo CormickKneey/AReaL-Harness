@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
+import { spawnNative } from "../../scripts/native-child.mjs";
 import { mkdtemp, mkdir, writeFile, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir, platform, arch } from "node:os";
 import { join, resolve, dirname } from "node:path";
@@ -24,6 +25,7 @@ const available = [
   "agent-inspector",
   "pgc-workflow",
   "adaptive-workgroup",
+  "goal-mode",
 ];
 const selection = (process.argv[2] ?? "all").replace(/^--all$/, "all");
 if (selection === "--list") {
@@ -58,6 +60,7 @@ const exampleIds = {
   "agent-inspector": "EX-15",
   "pgc-workflow": "EX-13",
   "adaptive-workgroup": "EX-13",
+  "goal-mode": "GOAL-01",
 };
 async function startThread(client, prompt, extra = {}) {
   const created = await client.call("areal/thread/start", {
@@ -734,6 +737,98 @@ try {
           ),
         );
       }
+    } else if (name === "goal-mode") {
+      assert.equal((await c.call("areal/capabilities")).features.goals, true);
+      const { threadId } = await startThread(c);
+      const request = {
+        requestId: crypto.randomUUID(),
+        threadId,
+        expectedRevision: 0,
+        objective: "goal-native-fixture",
+        tokenBudget: 200000,
+        maxTurns: 4,
+      };
+      const accepted = await c.call("areal/goal/create", request);
+      const completed = await c.waitEvent(
+        "areal/goal/updated",
+        (p) => p.threadId === threadId && p.goal?.status === "completed",
+      );
+      assert.equal(completed.goal.usage.turnsStarted, 2);
+      assert.equal(completed.goal.usage.tokensUsed, 84);
+      assert.equal(completed.goal.usage.accountingComplete, true);
+      assert.equal(await readFile(join(workspace, "goal.txt"), "utf8"), "goal-evidence");
+      assert.deepEqual(await c.call("areal/goal/create", request), accepted);
+      const connected = await client();
+      const snapshot = (await connected.call("thread/resume", { threadId })).thread;
+      assert.equal(snapshot.goals.goal.id, accepted.goal.id);
+      assert.equal(snapshot.turns.length, 2);
+      assert.equal(snapshot.turns[1].goal.origin, "continuation");
+      const observer = await connect(endpoint, join(directory, "observer-auth.json"));
+      clients.push(observer);
+      assert.equal((await observer.call("areal/goal/get", { threadId })).goal.status, "completed");
+      const control = {
+        requestId: crypto.randomUUID(),
+        threadId,
+        expectedRevision: completed.revision,
+        goalId: completed.goal.id,
+      };
+      await assert.rejects(observer.call("areal/goal/clear", control), (e) => e.code === -32003);
+      await assert.rejects(c.call("areal/goal/clear", { ...control, expectedRevision: 0 }));
+      assert.equal((await c.call("areal/goal/clear", control)).goal, null);
+      await connected.close();
+      await observer.close();
+      const groupTarget = await startThread(c);
+      const before = model.requests.length;
+      await c.call("areal/goal/create", {
+        requestId: crypto.randomUUID(),
+        threadId: groupTarget.threadId,
+        expectedRevision: 0,
+        objective: "goal-workgroup-fixture",
+        tokenBudget: 200000,
+      });
+      const groupDone = await c.waitEvent(
+        "areal/goal/updated",
+        (p) =>
+          p.threadId === groupTarget.threadId &&
+          p.goal?.status !== "active" &&
+          !p.goal?.activeTurnId,
+      );
+      assert.equal(
+        groupDone.goal.status,
+        "completed",
+        JSON.stringify({ groupDone, failures: model.failures.map((s) => s.slice(0, 500)) }),
+      );
+      assert.equal(groupDone.goal.usage.tokensUsed, (model.requests.length - before) * 14);
+      assert.equal(groupDone.goal.usage.accountingComplete, true);
+      assert(
+        model.requests
+          .slice(before)
+          .some((r) => JSON.stringify(r.messages).includes("GOAL_WORKER_FIXTURE")),
+      );
+      const headless = spawnNative(
+        join(repo, "target/debug/areal-tui"),
+        [
+          "--endpoint",
+          endpoint,
+          "--auth-file",
+          authFile,
+          "--goal",
+          "goal-native-fixture",
+          "--goal-token-budget",
+          "200000",
+        ],
+        { stdio: ["ignore", "pipe", "pipe"] },
+      );
+      let output = "",
+        error = "";
+      headless.stdout.on("data", (b) => (output += b));
+      headless.stderr.on("data", (b) => (error += b));
+      const timer = setTimeout(() => headless.kill("SIGKILL"), 30000);
+      const [code] = await once(headless, "exit");
+      clearTimeout(timer);
+      assert.equal(code, 0, error);
+      assert.match(output, /"status":"completed"/);
+      assert.match(output, /"turnsStarted":2/);
     } else if (name === "agent-inspector") {
       const target = await startThread(c, "hello");
       await done(c, target);

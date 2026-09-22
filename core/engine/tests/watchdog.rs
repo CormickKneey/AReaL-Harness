@@ -436,6 +436,121 @@ async fn summary_network_retries_do_not_consume_semantic_attempts_or_change_inpu
 }
 
 #[tokio::test]
+async fn goal_unknown_usage_stops_before_network_backoff_and_keeps_reservations() {
+    for fault in [
+        Fault::Error(ModelFailure::Transport),
+        Fault::Error(ModelFailure::RateLimited),
+        Fault::Error(ModelFailure::Unavailable),
+        Fault::Error(ModelFailure::Incomplete),
+        Fault::RequestIdle,
+        Fault::StreamIdle,
+    ] {
+        let data = tempfile::tempdir().unwrap();
+        let model = flaky(vec![fault], false);
+        let pool = SharedModel::pool(model.clone(), 1).unwrap();
+        let engine = Engine::open(
+            data.path(),
+            pool.clone(),
+            Limits {
+                stream_idle_timeout: Duration::from_millis(40),
+                max_completion_retries: 2,
+                ..Limits::default()
+            },
+        )
+        .unwrap();
+        let thread = engine.create("/workspace".into()).await.unwrap();
+        let mut events = engine.subscribe(&thread.id).await.unwrap();
+        engine
+            .goal_create(
+                "test".into(),
+                serde_json::from_value(json!({
+                    "requestId":"goal-network", "threadId":thread.id,
+                    "expectedRevision":0, "objective":"Verify the result"
+                }))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        settled(&engine, &thread.id).await;
+        let goal = engine.goal_get(&thread.id).await.unwrap();
+        assert_eq!(goal["goal"]["status"], "blocked");
+        assert_eq!(goal["goal"]["reason"], "usageUnknown");
+        assert_eq!(goal["goal"]["usage"]["unknownRequests"], 1);
+        assert!(
+            !goal["goal"]["usage"]["accountingComplete"]
+                .as_bool()
+                .unwrap()
+        );
+        assert!(goal["goal"]["usage"]["reservedTokens"].as_u64().unwrap() > 0);
+        assert_eq!(model.requests.load(Ordering::SeqCst), 1);
+        assert_eq!(pool.load().unwrap().in_flight, 0);
+        while let Ok(event) = events.try_recv() {
+            assert_ne!(event["method"], "areal/model/watchdogRetry");
+        }
+        engine.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn goal_summary_network_failure_blocks_without_replacing_the_checkpoint() {
+    let data = tempfile::tempdir().unwrap();
+    let model = Arc::new(SummaryNetwork {
+        attempts: AtomicUsize::new(0),
+        requests: Mutex::new(vec![]),
+    });
+    let engine = Engine::open(
+        data.path(),
+        model.clone(),
+        Limits {
+            context_window_bytes: 2200,
+            context_recent_bytes: 256,
+            ..Limits::default()
+        },
+    )
+    .unwrap();
+    let thread = engine.create("/workspace".into()).await.unwrap();
+    for prompt in ["Original", "Continue"] {
+        engine
+            .start(&thread.id, vec![Input::text(prompt)])
+            .await
+            .unwrap();
+        settled(&engine, &thread.id).await;
+    }
+    let previous = engine
+        .read(&thread.id, true)
+        .await
+        .unwrap()
+        .context_checkpoint;
+    let mut events = engine.subscribe(&thread.id).await.unwrap();
+    engine
+        .goal_create(
+            "test".into(),
+            serde_json::from_value(json!({
+                "requestId":"goal-summary", "threadId":thread.id,
+                "expectedRevision":0, "objective":"Verify the result"
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    let result = settled(&engine, &thread.id).await;
+    let goal = engine.goal_get(&thread.id).await.unwrap();
+    assert_eq!(goal["goal"]["status"], "blocked");
+    assert_eq!(goal["goal"]["reason"], "usageUnknown");
+    assert_eq!(goal["goal"]["usage"]["unknownRequests"], 1);
+    assert_eq!(goal["goal"]["usage"]["tokensUsed"], 4);
+    assert_eq!(model.attempts.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        serde_json::to_value(result.context_checkpoint).unwrap(),
+        serde_json::to_value(previous).unwrap()
+    );
+    while let Ok(event) = events.try_recv() {
+        assert_ne!(event["method"], "areal/model/watchdogRetry");
+    }
+    engine.shutdown().await;
+}
+
+#[tokio::test]
 async fn http_status_eof_and_sse_service_errors_recover_with_identical_requests() {
     use areal_engine::model::{HttpModel, ModelOptions, ModelProtocol};
     use axum::{Json, Router, response::IntoResponse, routing::post};

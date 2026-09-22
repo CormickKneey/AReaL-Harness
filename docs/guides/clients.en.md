@@ -28,7 +28,7 @@ TUI `--input-file /absolute/input.json` is mutually exclusive with `--prompt` an
 |---|---|
 | Enter | Start a Turn when idle; steer while running |
 | `/`, Tab, Esc | Slash candidates, completion and dismissal |
-| Ctrl-C / Ctrl-Q | Cancel the current task / exit |
+| Ctrl-C / Ctrl-Q | Pause the current Goal and cancel its Turn (interrupt the Turn without a Goal) / exit |
 | Ctrl-R | Reconnect and restore a snapshot without replay |
 | F5, `/sessions`, `/new`, `/open ID` | Select, create or open sessions |
 | F6, `/model` | Select a model or reset to default while idle |
@@ -54,3 +54,19 @@ make server
 ```
 
 OTLP supports HTTP/protobuf only. It is disabled without an endpoint and can be disabled with `OTEL_SDK_DISABLED=true`. Default spans contain IDs, usage, status and timing rather than prompt bodies or credentials. Export failure does not change Turn outcomes.
+
+<a id="goals"></a>
+## Goal mode
+
+No configuration change is needed. In TUI, `/goal Complete the module migration and pass its tests` creates and starts a Goal; `/goal` reads it. `/goal-pause` pauses; after Turn cleanup, `/goal-resume` resumes. `/goal-edit New objective` and `/goal-budget 200000` (or `none`) edit a stopped Goal while retaining usage. `/goal-clear` requires a stopped Goal with settled queues/resources. Web provides the same controls in its Goal panel.
+
+Clients display status, token usage, active time, Turn count and stop reasons, and label automatic continuation Turns. Ordinary final text only ends its Turn. The model reports completion through `goal_update`; Core commits the final state after resource settlement. User input takes priority over automatic continuation and invalidates prior completion requests.
+
+```sh
+make tui ARGS='--goal "Complete the module migration and pass its tests" --goal-token-budget 200000'
+target/debug/areal-tui --endpoint ws://127.0.0.1:4500 --goal 'Inspect the code and prepare migration recommendations'
+```
+
+`--goal` conflicts with `--prompt`/`--input-file`. `--resume THREAD_ID` can create a new Goal in an existing idle Thread. Headless mode waits across Turns, exits successfully only for completed, and prints Goal JSON/reasons with a nonzero exit for other stopped states. Remote headless exit/disconnection does not cancel server execution; local launcher exit shuts down its Core. Use interactive `/open` and `/goal-resume` for stopped Goals. Ordinary `--prompt` and Claude CLI retain single-execution semantics.
+
+Core restart restores active Goals as paused/serverRestarted; `thread/resume` does not restart them. Unknown model usage retains its reservation; explicit Goal resume acknowledges it without erasing consumption. Tool UNKNOWN still needs inspection and acknowledgement. Budget, active-time, Turn or history exhaustion stops execution without automatic retry. See [configuration](configuration.en.md#goals) and [Core API](../api/core.en.md#goals).

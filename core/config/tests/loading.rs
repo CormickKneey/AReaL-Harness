@@ -29,6 +29,36 @@ fn failure(i: &ConfigInputs) -> ConfigError {
 }
 
 #[test]
+fn goals_have_default_limits_and_validate_overrides() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut i = inputs(temp.path());
+    let defaults = load_config(&i).unwrap();
+    assert_eq!(defaults.goals.max_turns, 100);
+    assert_eq!(defaults.goals.max_active_seconds, 3600);
+    assert_eq!(defaults.goals.max_unreported_turns, 3);
+    assert_eq!(defaults.goals.turn_model_rounds, 32);
+    write(
+        &mut i,
+        "schema_version=1\n[goals]\nmax_turns=12\nmax_active_seconds=90\nmax_unreported_turns=2\nturn_model_rounds=8\n",
+    );
+    let config = load_config(&i).unwrap();
+    assert_eq!(config.goals.max_turns, 12);
+    assert_eq!(config.goals.max_active_seconds, 90);
+    assert_eq!(config.goals.max_unreported_turns, 2);
+    assert_eq!(config.goals.turn_model_rounds, 8);
+    for text in [
+        "max_turns=0",
+        "max_active_seconds=86401",
+        "max_unreported_turns=0",
+        "turn_model_rounds=1",
+        "turn_model_rounds=1025",
+    ] {
+        write(&mut i, &format!("schema_version=1\n[goals]\n{text}\n"));
+        assert_eq!(failure(&i).kind, ConfigErrorKind::InvalidValue);
+    }
+}
+
+#[test]
 fn temperature_validates_numbers_and_environment_precedence() {
     let temp = tempfile::tempdir().unwrap();
     let mut i = inputs(temp.path());

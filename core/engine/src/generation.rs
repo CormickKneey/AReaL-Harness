@@ -92,15 +92,23 @@ impl Engine {
                 self.visible_tools(cell, &configuration, desktop_enabled)
                     .await
             };
+            let goal_instructions = self.goal_instructions(cell).await?;
             let overhead = context::text_tokens(&serde_json::to_string(&tool_definitions)?)
+                + goal_instructions
+                    .as_ref()
+                    .map_or(0, |s| context::text_tokens(s))
                 + instructions.as_ref().map_or(0, |s| context::text_tokens(s))
                 + 512;
             self.compact_context(cell, cancel, overhead, previous_usage, false)
                 .await?;
 
+            let goal_instructions = self.goal_instructions(cell).await?;
             let (messages, thread_id, session_id, turn_id) = {
                 let state = cell.state.lock().await;
                 let mut messages = history(&state.thread, &self.store)?;
+                if let Some(goal) = &goal_instructions {
+                    messages.insert(0, Message::text("system", goal));
+                }
                 if !final_round
                     && self.extensions.agents.is_none()
                     && !cell.research
@@ -222,7 +230,7 @@ impl Engine {
                     _ = steer.recv() => { complete_item(cell, &thread_id, &turn_id, &item_id).await; continue 'restart; },
                     result = tokio::time::timeout(
                         self.limits.stream_idle_timeout,
-                        model::REQUEST_OWNER.scope((thread_id.clone(), turn_id.clone()), model.chat_with_limits(messages.clone(), tool_definitions.clone(), model::RequestPurpose::Solve, tool_limits)).instrument(model_span.clone()),
+                        model::REQUEST_OWNER.scope((thread_id.clone(), turn_id.clone()), model.chat_with_limits(messages.clone(), tool_definitions.clone(), model::RequestPurpose::Solve, tool_limits, None)).instrument(model_span.clone()),
                     ) => result.map_err(|_| watchdog::idle_error("model request")).and_then(|v| v),
                 };
                 let mut stream: model::ModelStream = match response {
@@ -368,6 +376,8 @@ impl Engine {
                         Err(error) => {
                             // 先释放失败流及共享模型许可，再等待退避；绝不重放已执行的工具。
                             drop(stream);
+                            // Goal 的未知消费必须先停止推进，不能进入 watchdog 或有限重试。
+                            model.check_work()?;
                             // HTTP 解码器会先拒绝收尾轮的零调用额度；保留轮次错误分类和原始预算原因。
                             if final_round
                                 && error

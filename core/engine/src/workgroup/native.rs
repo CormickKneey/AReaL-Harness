@@ -194,12 +194,21 @@ impl Stream for MeteredStream {
 
 #[async_trait]
 impl Model for SharedModel {
+    fn goal_id(&self) -> Option<&str> {
+        self.inner.goal_id()
+    }
+    fn check_work(&self) -> Result<()> {
+        self.inner.check_work()
+    }
+    fn share_context(&self, inner: Arc<dyn Model>) -> Arc<dyn Model> {
+        self.inner.share_context(inner)
+    }
     fn configure(&self, p: &areal_protocol::desktop::ModelParameters) -> Result<Arc<dyn Model>> {
         Ok(self.share_capacity(self.inner.configure(p)?))
     }
     fn share_capacity(&self, inner: Arc<dyn Model>) -> Arc<dyn Model> {
         Arc::new(Self {
-            inner,
+            inner: self.inner.share_context(inner),
             permits: self.permits.clone(),
             max_requests: self.max_requests,
             usage: self.usage.clone(),
@@ -233,7 +242,16 @@ impl Model for SharedModel {
         tools: Vec<Value>,
         purpose: crate::model::RequestPurpose,
     ) -> Result<ModelStream> {
-        self.chat_with_limits(messages, tools, purpose, ToolCallLimits::default())
+        self.chat_limited(messages, tools, purpose, None).await
+    }
+    async fn chat_limited(
+        &self,
+        messages: Vec<Message>,
+        tools: Vec<Value>,
+        purpose: crate::model::RequestPurpose,
+        cap: Option<u64>,
+    ) -> Result<ModelStream> {
+        self.chat_with_limits(messages, tools, purpose, ToolCallLimits::default(), cap)
             .await
     }
     async fn chat_with_limits(
@@ -242,6 +260,7 @@ impl Model for SharedModel {
         tools: Vec<Value>,
         purpose: crate::model::RequestPurpose,
         limits: ToolCallLimits,
+        cap: Option<u64>,
     ) -> Result<ModelStream> {
         let load = RequestLoad::waiting(self.load.clone());
         let permit = self.permits.clone().acquire_owned().await?;
@@ -259,7 +278,7 @@ impl Model for SharedModel {
         };
         let stream = self
             .inner
-            .chat_with_limits(messages, tools, purpose, limits)
+            .chat_with_limits(messages, tools, purpose, limits, cap)
             .await?;
         Ok(Box::pin(MeteredStream {
             inner: stream,
@@ -339,6 +358,8 @@ fn successful_tool(messages: &[Message], result: &Message) -> Option<Value> {
     if output.get("error").is_some_and(|v| !v.is_null()) {
         return None;
     }
+    // 准入余量每轮递减，不代表工具结果或源码进展，不能影响重复成功的判定。
+    output.as_object_mut()?.remove("remainingToolCalls");
     match signature["name"].as_str()? {
         "run_command" => {
             if output.get("state") != Some(&Value::from("exited"))
@@ -481,6 +502,12 @@ fn repeated_failure(messages: &[Message]) -> bool {
 
 #[async_trait]
 impl Model for ProgressModel {
+    fn goal_id(&self) -> Option<&str> {
+        self.inner.goal_id()
+    }
+    fn check_work(&self) -> Result<()> {
+        self.inner.check_work()
+    }
     fn name(&self) -> &str {
         self.inner.name()
     }
@@ -499,7 +526,16 @@ impl Model for ProgressModel {
         tools: Vec<Value>,
         purpose: crate::model::RequestPurpose,
     ) -> Result<ModelStream> {
-        self.chat_with_limits(messages, tools, purpose, ToolCallLimits::default())
+        self.chat_limited(messages, tools, purpose, None).await
+    }
+    async fn chat_limited(
+        &self,
+        messages: Vec<Message>,
+        tools: Vec<Value>,
+        purpose: crate::model::RequestPurpose,
+        cap: Option<u64>,
+    ) -> Result<ModelStream> {
+        self.chat_with_limits(messages, tools, purpose, ToolCallLimits::default(), cap)
             .await
     }
     async fn chat_with_limits(
@@ -508,17 +544,18 @@ impl Model for ProgressModel {
         tools: Vec<Value>,
         purpose: crate::model::RequestPurpose,
         limits: ToolCallLimits,
+        cap: Option<u64>,
     ) -> Result<ModelStream> {
         if purpose == crate::model::RequestPurpose::Summary {
             self.inner
-                .chat_with_limits(messages, tools, purpose, limits)
+                .chat_with_limits(messages, tools, purpose, limits, cap)
                 .await
         } else {
-            self.solve_with_limits(messages, tools, limits).await
+            self.solve_with_limits(messages, tools, limits, cap).await
         }
     }
     async fn chat(&self, messages: Vec<Message>, tools: Vec<Value>) -> Result<ModelStream> {
-        self.solve_with_limits(messages, tools, ToolCallLimits::default())
+        self.solve_with_limits(messages, tools, ToolCallLimits::default(), None)
             .await
     }
 }
@@ -528,6 +565,7 @@ impl ProgressModel {
         messages: Vec<Message>,
         tools: Vec<Value>,
         limits: ToolCallLimits,
+        cap: Option<u64>,
     ) -> Result<ModelStream> {
         let failed = repeated_failure(&messages);
         let unchanged = !failed
@@ -568,7 +606,13 @@ impl ProgressModel {
         };
         let stream = match self
             .inner
-            .chat_with_limits(messages, tools, crate::model::RequestPurpose::Solve, limits)
+            .chat_with_limits(
+                messages,
+                tools,
+                crate::model::RequestPurpose::Solve,
+                limits,
+                cap,
+            )
             .await
         {
             Ok(stream) => stream,
@@ -931,6 +975,7 @@ pub async fn propose(
                 max_calls: 0,
                 ..ToolCallLimits::default()
             },
+            None,
         )
         .await?;
     let mut text = String::new();
@@ -1209,7 +1254,8 @@ mod request_budget_tests {
     use super::*;
     use crate::model::RequestPurpose;
 
-    struct BudgetModel(Mutex<Vec<(RequestPurpose, usize, usize)>>);
+    type ObservedBudget = (RequestPurpose, usize, usize, Option<u64>);
+    struct BudgetModel(Mutex<Vec<ObservedBudget>>);
     #[async_trait]
     impl Model for BudgetModel {
         fn name(&self) -> &str {
@@ -1224,11 +1270,12 @@ mod request_budget_tests {
             _: Vec<Value>,
             purpose: RequestPurpose,
             limits: ToolCallLimits,
+            cap: Option<u64>,
         ) -> Result<ModelStream> {
             self.0
                 .lock()
                 .unwrap()
-                .push((purpose, limits.max_calls, limits.max_buffer_bytes));
+                .push((purpose, limits.max_calls, limits.max_buffer_bytes, cap));
             let error = crate::model::tool_index(&serde_json::json!({}), 1, 0, 0, 0).unwrap_err();
             Ok(Box::pin(futures_util::stream::iter([Err(error)])))
         }
@@ -1265,6 +1312,7 @@ mod request_budget_tests {
                         max_calls: 3,
                         max_buffer_bytes: 1234,
                     },
+                    Some(567),
                 )
                 .await
                 .unwrap();
@@ -1280,8 +1328,8 @@ mod request_budget_tests {
         assert_eq!(
             *inner.0.lock().unwrap(),
             [
-                (RequestPurpose::Solve, 3, 1234),
-                (RequestPurpose::Summary, 3, 1234)
+                (RequestPurpose::Solve, 3, 1234, Some(567)),
+                (RequestPurpose::Summary, 3, 1234, Some(567))
             ]
         );
     }

@@ -111,10 +111,11 @@ impl Engine {
         let value = match name {
             "workgroup_start" => {
                 service
-                    .start(
+                    .start_with_goal(
                         owner.into(),
                         serde_json::from_value::<Start>(args.clone())?,
                         cancel.clone(),
+                        self.goal_for_owner(owner).await,
                     )
                     .await?
             }

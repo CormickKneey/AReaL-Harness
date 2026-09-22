@@ -563,6 +563,7 @@ impl Engine {
                         max_calls: 0,
                         max_buffer_bytes: self.limits.max_tool_buffer_bytes,
                     },
+                    None,
                 )
                 .await
                 .map_err(invalid)?;

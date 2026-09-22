@@ -6,6 +6,7 @@ impl Engine {
    let cell=engine.cell(&thread_id).await?;let _resources=cell.resource_gate.lock().await;let mut state=cell.state.lock().await;
    if state.active.is_some()||state.compacting||state.poisoned {return Err(Error::Conflict);}
    let mut candidate=state.thread.clone();
+   if candidate.goals.goal.as_ref().is_some_and(|g| g.status == areal_protocol::goals::GoalStatus::Active) { return Err(invalid("pause Goal before archiving")); }
    if candidate.turns.iter().flat_map(|t|&t.items).any(|i|matches!(i,Item::DynamicToolCall{execution,..}if execution.inspection.is_none()&&(execution.outcome==areal_protocol::ToolOutcome::Unknown||execution.hooks.iter().any(|h|h.outcome==areal_protocol::ToolOutcome::Unknown)))){return Err(invalid("inspect UNKNOWN before archiving"));}
    let data=candidate.desktop.get_or_insert_with(Default::default);
    if data.processes.iter().any(|p|!p.cleanup_confirmed)||data.queue.items.iter().any(|i|matches!(i.status.as_str(),"pending"|"running")){return Err(invalid("settle queue and resources before archiving"));}

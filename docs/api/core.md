@@ -38,11 +38,13 @@ input 为有序 text/image/audio/file 等内容，UTF-8 文本合计最多 1 MiB
 
 watchdog 保留同一请求的 messages、tools、采样参数与模型轮次，不消耗 `max_completion_retries`；重试不会再次预留 Agent 逻辑请求额度，Workgroup 仍计入每次实际请求及部署预算。250 ms 指数退避封顶 30 秒，释放失败流持有的共享模型许可后等待；取消与总期限仍能结束等待，求解请求还响应 steer。Core 审计并丢弃失败响应的文本、上下文与未执行工具调用，恢复该响应占用的输出字节额度，保留此前已执行工具和已观测 usage。发布 `areal/model/completionDiscarded`（新增 `retryKind=network|completion`）及 `areal/model/watchdogRetry {threadId,turnId,purpose:solve|summary,retry,delayMs}`。这里的丢弃不回滚已执行工具，也不重启整个 Turn。
 
+Goal 请求先检查共享预算与用量是否已知，再决定是否重试。请求失败或超时留下未知消费时，保留预留并将 Goal 置为 blocked（usageUnknown）；不进入 watchdog 退避或有限响应重试。摘要请求同样受此约束，保留旧 checkpoint，不写入降级摘要。已计量的 HTTP 请求禁用传输层内部重试，避免同一预留隐含多次消费。
+
 `max_completion_retries` 默认 0，可为已分类的长度截断、非法工具 index、空回复等提供有限恢复（仅 reasoning 不算最终回复）；关闭 watchdog 后，已分类网络错误也沿用此有限额度。工具仍只在完整成功流后执行；UNKNOWN、持久化错误、取消与总期限错误不重放。
 
 Chat 工具 index 缺失、null、非整数类型、负数、超出 u64 范围或片段非对象时，使用明确的内部协议错误，只进入上述有限恢复，不进入网络 watchdog，也不作为 Workgroup 推理检查点。Core 不猜测编号或片段归属；数量、参数和缓冲预算错误不自动恢复。失败响应的模型视图被丢弃，已有确认工具、steer 和已观测 usage 保留。解析错误在已排队事件交付后立即传播；同事件或前序事件的已解析 usage 只累计一次，直接 EOF 保留原始错误类型。
 
-Rust `Model::chat_with_limits(messages, tools, purpose, ToolCallLimits)` 显式传递请求预算，内置 HTTP、共享池和 Worker 包装器均转发。默认实现委托 `chat_for`，保持已有自定义 Model 实现可编译；自定义模型自行约束内部缓冲，Engine 仍在工具执行前检查其输出。摘要使用零调用预算。`Limits` 新增 `max_tool_buffer_bytes`，`NativeFactory`/`NativeExecutor` 新增 `tool_call_limits`，显式结构体初始化需补充字段；构造器提供默认值。不增加客户端协议方法或更改快照格式。
+Rust `Model::chat_with_limits(messages, tools, purpose, ToolCallLimits, cap)` 显式传递请求预算，内置 HTTP、共享池和 Worker 包装器均转发。可选的输出 token 上限与工具预算一起经过 Goal 计量传递。默认实现委托 `chat_limited`，保持已有自定义 Model 实现可编译，并拒绝不受支持的非空 token 上限；自定义模型自行约束内部缓冲，Engine 仍在工具执行前检查其输出。摘要使用零调用预算。`Limits` 新增 `max_tool_buffer_bytes`，`NativeFactory`/`NativeExecutor` 新增 `tool_call_limits`，显式结构体初始化需补充字段；构造器提供默认值。不增加客户端协议方法或更改快照格式。
 
 上下文压缩保留原目标与近期内容，不拆 completion/工具结果或不透明 reasoning 边界。摘要最多 16 KiB，记录 throughItemId 与 checkpoint；网络故障重试相同摘要输入，不占用摘要格式校验次数；空摘要或伪工具摘要重试一次，仍失败时只有确实缩短输入才使用明确标记的 DEGRADED CONTEXT，否则 Turn 失败。取消不覆盖旧 checkpoint，压缩不删除历史、journal 或 Turn 工具状态。
 
@@ -50,7 +52,7 @@ Rust `Model::chat_with_limits(messages, tools, purpose, ToolCallLimits)` 显式�
 
 工具错误审计新增 `errorCode` 与 `toolCallError`：`invalid_tool_call_index` 附固定原因、协议、字段路径、从 1 开始的 SSE 数据事件序号、index JSON 类型及已缓冲调用数量；`tool_call_budget_exceeded` 附预算类别、上限和观测值。字段只含固定标签和有界数值，诊断不复制 SSE、参数、reasoning 或非法字段值，使用同一记录的本地 `requestId` 关联。`responseShape.toolArgumentBytes` 沿用旧名称，实际累计通过校验的 id/name/arguments 字节。
 
-快照格式 5 可读 1–4，旧 Core 不能读取新快照。contextCheckpoint 影响模型视图，不删原始历史；modelContext 保存不透明 Responses 上下文，不投影成用户内容。缺失 usage/duration 为未知，不是 0。
+快照写入格式 7，可读取 1–7，旧 Core 不能读取新快照。contextCheckpoint 影响模型视图，不删原始历史；modelContext 保存不透明 Responses 上下文，不投影成用户内容。缺失 usage/duration 为未知，不是 0。
 
 <a id="dynamic-tools"></a>
 ## 动态工具回调
@@ -108,3 +110,66 @@ Rust 启动器调用 `areal_config::skills::discover(workspace, homedir)` 获得
 ## 错误
 
 标准 -32700/-32600/-32601/-32602/-32603 分别表示解析/请求/方法/参数/内部错误；-32000 关闭，-32001 容量，-32003 认证，-32004 不存在，-32009 冲突。传输 id 不是业务去重键，旧 turn/start 或 spawn 断线后先读状态，不自动重放。产品 requestId 语义见[桌面提交](desktop.md#submissions)。
+
+<a id="goals"></a>
+## Goal 模式
+
+Goal 无需部署开关；`areal/capabilities.features.goals` 固定为 true，表示服务支持此能力。只有显式创建 Goal 后才会自动续轮。使用与恢复见 [客户端说明](../guides/clients.md#goals)，预算限制见 [配置规范](../guides/configuration.md#goals)。协议保留 Codex 0.145.0 协议基线，使用 AReaL 扩展，不声明支持上游 `thread/goal/*`。
+
+### 客户端控制
+
+所有修改需要 interact 权限及对应 Thread 授权；查询需要 observe。修改携带 `requestId`、`threadId`、`expectedRevision`，修改现有目标还需 `goalId`。同身份、方法和 requestId 的同参数重试返回原受理结果，不同参数冲突。去重命中先于 revision 校验；客户端收到冲突后读取新快照，不盲目重试写入。
+
+| 方法 | 专有参数 | 语义 |
+|---|---|---|
+| `areal/goal/get` | `threadId` | 返回目标投影；没有目标时 goal=null，仍返回控制 revision |
+| `areal/goal/create` | `objective, tokenBudget?, maxTurns?, maxActiveSeconds?` | 根 Thread 空闲且无待处理用户队列时创建目标并原子受理首轮；已有未清除目标时冲突 |
+| `areal/goal/update` | `goalId, objective?, tokenBudget?, maxTurns?, maxActiveSeconds?` | 在目标停止且清理完毕后编辑；保留目标 ID 和全部用量，不隐式启动 |
+| `areal/goal/pause` | `goalId` | 持久化 paused、暂停用户队列并请求活动 Turn 取消；响应不保证清理已经完成 |
+| `areal/goal/resume` | `goalId` | 校验预算、UNKNOWN 和宿主后恢复；活动容量不足时等待；队列因 Goal pause/Stop 暂停时一并恢复，其他原因的队列暂停需单独处理 |
+| `areal/goal/clear` | `goalId` | 仅目标停止、无活动 Turn、无待处理用户队列或未清理资源时清除；控制 revision 递增，既有 Turn 归因、证据和计量记录保留 |
+
+objective 为 1–4000 个 Unicode 字符且不能全空白。预算为正整数，maxTurns 包含首次根 Turn，maxActiveSeconds 统计根 Turn 的模型排队、执行、工具、交互等待和清理时间，不叠加子任务时间，不计入轮次间容量等待、暂停和离线时间。创建省略 tokenBudget 表示不设置目标 token 限额；更新省略字段表示保留原值，显式 null 可移除目标 token 限额，仍受部署上限限制。提高限额需要用户控制接口，模型不能执行。update 必须至少修改一个字段，completed 目标只读；执行新目标先 clear/create。
+
+resume 保留计量，不能使已经达到的限额失效；completed 不可恢复。resume 同时确认此前未知模型消费的保守预留，但不删除该预留，不将 accountingComplete 改回 true；工具 UNKNOWN 仍需独立检查与 acknowledge。普通 `thread/resume` 仍只恢复订阅和快照，不恢复 Goal 执行。暂停时保存原因，只有属于该次 Goal 暂停的队列暂停才可被 Goal resume 自动撤销。
+
+投影包含 `threadId`、`revision`、`eventSequence` 和 `goal`。goal 包括 `id`、`threadId`、`objective`、`status`、`reason`、预算及计量、`activeTurnId`、`settling`、`waitingForInput`、`waitingForCapacity` 和最近报告 `report`、`reportTurnId` 和连续未报告计数 `unreportedTurns`。status 使用 `active / paused / blocked / completed / budgetLimited / failed`。`revision` 只随控制状态变化，eventSequence 随持久投影变化；get 和原子 resume 返回当前计量，流式用量不逐 token 发布 Goal 事件。持久状态和受理结果保存后发布；保存失败时仅发布内存中的 failed/SystemError，重启以保守恢复为准。
+
+goal.usage 包含 `inputTokens`、`cachedInputTokens`、`outputTokens`、`tokensUsed`、`reservedTokens`、`unknownRequests`、`timeUsedSeconds`、`turnsStarted` 和 `accountingComplete`。tokensUsed 仅包含已确认输入与输出，reservedTokens 单独展示且参与准入；未知统计不补零。timeUsedSeconds 包含根 Turn 内的执行和等待，不叠加子任务时长；崩溃窗口或缺失 usage 时 accountingComplete=false。该口径不保证 provider 计费绝对不超过 tokenBudget。
+
+创建 Goal 示例：
+
+```json
+{
+  "id": 20,
+  "method": "areal/goal/create",
+  "params": {
+    "requestId": "goal-migration-1",
+    "threadId": "THREAD_ID",
+    "expectedRevision": 0,
+    "objective": "完成指定模块的迁移，保持公共 API 兼容，并通过对应行为测试。",
+    "tokenBudget": 200000,
+    "maxTurns": 20,
+    "maxActiveSeconds": 3600
+  }
+}
+```
+
+create 返回目标投影及首轮 turnId。事件 `areal/goal/updated` / `areal/goal/cleared` 携带 threadId、revision、eventSequence 及目标投影；clear 还携带被清除的 goalId。现有 `turn/started`、`turn/completed` 不改名也不改变 Turn 终态含义。Thread 新增可选 `goals:{revision,eventSequence,goal}`，子 Thread 使用 `goalOwner:{threadId,goalId}`；Turn 新增 `goal:{goalId,sequence,origin,predecessorTurnId}`，origin 为 initial/user/continuation。无 Goal 的旧数据按原方式读取，clear 保留控制 revision 以拒绝旧请求。
+
+Goal 事件纳入现有 snapshot-and-subscribe 边界、权限过滤和背压规则。重新连接后使用完整快照替换客户端状态，再消费增量；不能以只读 get 与单独 subscribe 拼接而假设没有事件缺口。请求、响应和事件 schema 由 Rust 类型生成至 `schemas/areal-core-v1.json`。
+
+### 模型状态工具
+
+| 工具 | 参数 | 权限和行为 |
+|---|---|---|
+| `goal_read` | `{}` | 从调用上下文读取当前目标、状态、预算和剩余工作；子 Agent 仅获得只读投影 |
+| `goal_update` | `{expectedRevision, status, summary, evidence, remaining, blocker?}` | 仅当前 Goal 的根 Turn；status 为 continue/complete/blocked；仅报告进展或提交结算申请 |
+
+goalId 和根线程身份由 Core 绑定，模型不能自报其他目标。summary 非空、最多 4096 字符；evidence 和 remaining 各最多 16 条、每条最多 1024 字符，总参数最多 32 KiB。complete 要求 remaining 为空且 evidence 非空；blocked 要求非空 blocker 描述具体障碍及解除条件。evidence 是模型提交的文字报告，可引用工具 Item、检查回执或产物；它不是独立的语义验收器。Core 校验报告结构、未消费的验证句柄、待处理输入、子任务和 Workgroup 结算状态；业务正确性仍依赖实际检查和模型报告。
+
+`goal_update` 返回受理后的控制 revision，complete 在当前 Turn 正常结算前只是待处理申请。用户修改状态、steer 或排队追加输入会使旧申请失效；资源清理、持久化或子任务失败不得发布 completed。模型不能通过工具创建目标、解除暂停、提高预算、清除目标或绕过审批；自然语言“完成”及普通 Turn completed 也不能直接改变 Goal 状态。
+
+Rust 嵌入式调用使用 `Limits.goals: goals::Policy` 及 `Engine::goal_get/goal_create/goal_control`。自定义 Model 的 `chat_limited` 必须显式接受逐请求输出上限，`share_context` 保留预算归因；内置 HTTP adapter 已支持。自定义 Workgroup Factory 需实现 `executor_for_goal` 并保留传入 Budget；默认实现对有 Goal 的调用明确报错。普通 Turn 和独立 Workgroup 沿用原行为。
+
+Goal 请求账本位于 `goals/<goal-id>.json`，发送前持久预留；主/子 Agent、原生 Workgroup 和活动 Turn 的摘要共享计量，cachedInputTokens 是 inputTokens 的子集、不重复累加。每账本最多 4096 请求/4 MiB；clear 保留账本且不回收历史。快照格式 7 保存 Goal 和 Turn 归因，旧二进制不能读取；API 版本仍为 areal.core.v1。

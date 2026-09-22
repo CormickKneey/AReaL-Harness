@@ -206,13 +206,21 @@ impl Engine {
         force: bool,
     ) -> anyhow::Result<()> {
         let snapshot = cell.state.lock().await.thread.clone();
-        let model = self.configured_model(
+        let configured = self.configured_model(
             &snapshot
                 .turns
                 .last()
                 .and_then(|t| t.configuration.clone())
                 .unwrap_or_default(),
         )?;
+        let model = cell
+            .state
+            .lock()
+            .await
+            .active
+            .as_ref()
+            .map(|a| a.model.clone())
+            .unwrap_or(configured);
         let messages = history(&snapshot, &self.store)?;
         let before_bytes = message_bytes(&messages);
         let estimated_tokens =
@@ -296,7 +304,7 @@ impl Engine {
                 }
                 let mut stream = tokio::select! {
                     _ = cancel.cancelled() => anyhow::bail!("cancelled"),
-                    result = tokio::time::timeout(self.limits.stream_idle_timeout, model::REQUEST_OWNER.scope((snapshot.id.clone(), snapshot.turns.last().map_or_else(String::new, |t| t.id.clone())), model.chat_with_limits(input.clone(), Vec::new(), model::RequestPurpose::Summary, model::ToolCallLimits { max_calls: 0, max_buffer_bytes: self.limits.max_tool_buffer_bytes }))) => result.map_err(|_| watchdog::idle_error("compaction request"))??,
+                    result = tokio::time::timeout(self.limits.stream_idle_timeout, model::REQUEST_OWNER.scope((snapshot.id.clone(), snapshot.turns.last().map_or_else(String::new, |t| t.id.clone())), model.chat_with_limits(input.clone(), Vec::new(), model::RequestPurpose::Summary, model::ToolCallLimits { max_calls: 0, max_buffer_bytes: self.limits.max_tool_buffer_bytes }, None))) => result.map_err(|_| watchdog::idle_error("compaction request"))??,
                 };
                 loop {
                     let event = tokio::select! {
@@ -329,6 +337,8 @@ impl Engine {
                 accepted = Some(summary);
                 break;
             }
+            // Goal 计量失效时保留旧 checkpoint，不能重试或提交降级摘要。
+            model.check_work()?;
             if let Some(delay) = response.as_ref().err().and_then(|error| {
                 watchdog::retry_delay(self.limits.watchdog_disable, error, network_retries)
             }) {
