@@ -94,6 +94,12 @@ pub(crate) struct ToolCallBudgetError {
     observed: usize,
 }
 
+impl ToolCallBudgetError {
+    pub fn is_call_limit(&self) -> bool {
+        self.budget == "calls"
+    }
+}
+
 fn check(budget: &'static str, current: usize, added: usize, limit: usize) -> Result<()> {
     if current.checked_add(added).is_none_or(|size| size > limit) {
         return Err(ToolCallBudgetError {

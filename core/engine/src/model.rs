@@ -13,7 +13,9 @@ use serde_json::{Value, json};
 use std::{collections::VecDeque, pin::Pin, time::Duration};
 pub(crate) use tool_calls::tool_index;
 pub use tool_calls::{MAX_TOOL_ARGUMENT_BYTES, ToolCallLimits};
-pub(crate) use tool_calls::{ToolCallBudget, ToolCallIndexError, tool_error_detail};
+pub(crate) use tool_calls::{
+    ToolCallBudget, ToolCallBudgetError, ToolCallIndexError, tool_error_detail,
+};
 
 const MAX_SSE_BYTES: usize = 24 * 1024 * 1024;
 const MAX_LOCAL_MEDIA_BYTES: usize = 16 * 1024 * 1024;

@@ -586,6 +586,90 @@ async fn engine_enforces_remaining_count_and_bytes_for_legacy_custom_models() {
 }
 
 #[tokio::test]
+async fn final_round_only_classifies_http_call_budget_errors_as_round_exhaustion() {
+    let invalid = frame(json!({"choices":[{"index":0,"delta":{"tool_calls":[{}]}}]}));
+    for (responses, body, expected, error_code, retries) in [
+        (
+            false,
+            calls_body(1, 2, false),
+            "MAX_MODEL_ROUNDS",
+            "tool_call_budget_exceeded",
+            2,
+        ),
+        (
+            true,
+            calls_body(1, 2, true),
+            "MAX_MODEL_ROUNDS",
+            "tool_call_budget_exceeded",
+            2,
+        ),
+        (
+            false,
+            invalid,
+            "invalid_tool_call_index",
+            "invalid_tool_call_index",
+            0,
+        ),
+    ] {
+        let fixture = Fixture::start(vec![body], None).await;
+        let data = tempfile::tempdir().unwrap();
+        let audit = data.path().join("requests");
+        let pool = SharedModel::pool(Arc::new(fixture.model(&audit, responses)), 1).unwrap();
+        let engine = Engine::open(
+            &data.path().join("core"),
+            pool.clone(),
+            Limits {
+                max_completion_retries: retries,
+                ..Limits::default()
+            },
+        )
+        .unwrap();
+        let writes = Arc::new(Writes::default());
+        let thread = thread(&engine, writes.clone()).await;
+        engine
+            .configure_thread(
+                serde_json::from_value(json!({
+                    "threadId":thread.id,"expectedRevision":1,"options":{"maxModelRounds":1}
+                }))
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        engine
+            .start(&thread.id, vec![Input::text("fixture")])
+            .await
+            .unwrap();
+        let result = settled(&engine, &thread.id).await;
+        assert_eq!(result.turns[0].status, TurnStatus::Failed);
+        let message = &result.turns[0].error.as_ref().unwrap().message;
+        assert!(message.contains(expected), "{message}");
+        if expected != "MAX_MODEL_ROUNDS" {
+            assert!(!message.contains("MAX_MODEL_ROUNDS"));
+        }
+        assert!(writes.ids.lock().unwrap().is_empty());
+        assert!(
+            !result.turns[0]
+                .items
+                .iter()
+                .any(|item| matches!(item, Item::DynamicToolCall { .. }))
+        );
+        assert_eq!(pool.load().unwrap().in_flight, 0);
+        {
+            let requests = fixture.requests.lock().unwrap();
+            assert_eq!(requests.len(), 1);
+            assert!(requests[0]["tools"].as_array().is_none_or(Vec::is_empty));
+        }
+        let records = audits(&audit);
+        assert_eq!(records[0]["errorCode"], error_code);
+        if error_code == "tool_call_budget_exceeded" {
+            assert_eq!(records[0]["toolCallError"]["budget"], "calls");
+            assert_eq!(records[0]["toolCallError"]["limit"], 0);
+        }
+        engine.shutdown().await;
+    }
+}
+
+#[tokio::test]
 async fn remaining_turn_allowance_reaches_http_decoder_after_a_confirmed_call() {
     let fixture = Fixture::start(vec![calls_body(1, 2, false)], None).await;
     let data = tempfile::tempdir().unwrap();
@@ -607,10 +691,11 @@ async fn remaining_turn_allowance_reaches_http_decoder_after_a_confirmed_call() 
         .start(&thread.id, vec![Input::text("fixture")])
         .await
         .unwrap();
-    assert_eq!(
-        settled(&engine, &thread.id).await.turns[0].status,
-        TurnStatus::Failed
-    );
+    let result = settled(&engine, &thread.id).await;
+    assert_eq!(result.turns[0].status, TurnStatus::Failed);
+    let message = &result.turns[0].error.as_ref().unwrap().message;
+    assert!(message.contains("tool_call_budget_exceeded"));
+    assert!(!message.contains("MAX_MODEL_ROUNDS"));
     assert_eq!(writes.ids.lock().unwrap().len(), 1);
     assert_eq!(fixture.requests.lock().unwrap().len(), 2);
     let records = audits(&audit);

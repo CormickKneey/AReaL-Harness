@@ -368,6 +368,16 @@ impl Engine {
                         Err(error) => {
                             // 先释放失败流及共享模型许可，再等待退避；绝不重放已执行的工具。
                             drop(stream);
+                            // HTTP 解码器会先拒绝收尾轮的零调用额度；保留轮次错误分类和原始预算原因。
+                            if final_round
+                                && error
+                                    .downcast_ref::<model::ToolCallBudgetError>()
+                                    .is_some_and(model::ToolCallBudgetError::is_call_limit)
+                            {
+                                return Err(error.context(
+                                    "MAX_MODEL_ROUNDS: final handoff cannot execute tools",
+                                ));
+                            }
                             if let Some(delay) = watchdog::retry_delay(
                                 self.limits.watchdog_disable,
                                 &error,
