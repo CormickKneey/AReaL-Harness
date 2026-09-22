@@ -297,6 +297,7 @@ async fn run(
         max_history_bytes: config.max_history_bytes,
         max_output_bytes: config.max_output_bytes,
         max_tool_calls: config.max_tool_calls,
+        max_tool_buffer_bytes: config.max_tool_buffer_bytes,
         context_window_bytes: config.context_window_bytes,
         context_window_tokens: config.context_window_tokens,
         context_output_reserve_tokens: config.context_output_reserve_tokens,
@@ -424,6 +425,7 @@ async fn run(
             );
             let factory = Arc::new(NativeFactory {
                 watchdog_disable: config.watchdog_disable,
+                tool_call_limits: areal_engine::model::ToolCallLimits { max_calls: config.max_tool_calls, max_buffer_bytes: config.max_tool_buffer_bytes },
                 catalog:Some(Arc::downgrade(&engine)),
                 model: model.clone(),
                 runtime: binary,

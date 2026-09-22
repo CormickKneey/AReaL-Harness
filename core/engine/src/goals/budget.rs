@@ -1,6 +1,6 @@
 //! 请求先持久预留再发送；未落盘的结算在重启后保守恢复为未知消费。
 use super::*;
-use crate::model::{ModelLoad, ModelStream, RequestPurpose};
+use crate::model::{ModelLoad, ModelStream, RequestPurpose, ToolCallLimits};
 use futures_util::Stream;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -359,6 +359,17 @@ impl Model for MeteredModel {
         messages: Vec<Message>,
         tools: Vec<Value>,
         purpose: RequestPurpose,
+        cap: Option<u64>,
+    ) -> anyhow::Result<ModelStream> {
+        self.chat_with_limits(messages, tools, purpose, ToolCallLimits::default(), cap)
+            .await
+    }
+    async fn chat_with_limits(
+        &self,
+        messages: Vec<Message>,
+        tools: Vec<Value>,
+        purpose: RequestPurpose,
+        limits: ToolCallLimits,
         outer_cap: Option<u64>,
     ) -> anyhow::Result<ModelStream> {
         let estimate = (context::estimate_tokens(&messages)
@@ -369,7 +380,11 @@ impl Model for MeteredModel {
             (a, b) => a.or(b),
         };
         let inner = model::GOAL_REQUEST
-            .scope((), self.inner.chat_limited(messages, tools, purpose, cap))
+            .scope(
+                (),
+                self.inner
+                    .chat_with_limits(messages, tools, purpose, limits, cap),
+            )
             .await?;
         Ok(Box::pin(MeteredStream {
             inner,

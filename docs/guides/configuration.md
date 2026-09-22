@@ -35,6 +35,7 @@ stream_idle_timeout_seconds = 30
 max_history_bytes = 2097152
 max_output_bytes = 262144
 max_tool_calls = 128
+max_tool_buffer_bytes = 4194304
 context_window_bytes = 196608
 context_recent_bytes = 65536
 context_window_tokens = 0
@@ -59,6 +60,8 @@ Goal 的共享预算与未知用量约束优先于重试配置。Goal 请求禁�
 
 `limits.max_completion_retries` 默认为 0、范围 0–8，是每 Turn 的有限未完成响应恢复额度，与 HTTP `max_retries` 和网络 watchdog 分开；关闭 watchdog 不关闭已有的有限重试。恢复条件与审计见 [Core API](../api/core.md#recovery)。HTTPS 使用公开根证书和宿主系统信任库；私有 CA 应安装到信任库。工具调用仅来自协议结构化字段，正文中的 XML/JSON 不作为调用执行。
 
+`limits.max_tool_buffer_bytes` 默认为 4194304（4 MiB），必须为正整数，限制每次响应缓冲的所有工具 id、name、arguments 的 UTF-8 字节总量；不包含 reasoning 或独立音视频/图像 Blob；嵌入参数的媒体字符串仍按 UTF-8 字节计数。这不是进程内存总上限。它与 Turn 的 `max_output_bytes` 和历史预算独立，调高缓冲不扩大执行或持久化额度。Chat Completions 与 Responses 共用该预算，重复的 Responses 终态条目不重复计数。单调用 arguments 仍最多 64 KiB；调用数量使用当前 Turn 剩余的 `max_tool_calls`，不再限制为每响应 16 个。环境变量为 `AREAL_HARNESS_MAX_TOOL_BUFFER_BYTES`。
+
 字节与容量限额为正整数；扇出和深度可为 0 以禁用委派。output 小于 history，recent 小于 context window，时限为 1–86400 秒。上下文字节是估计值，不是 tokenizer 窗口。活动任务、模型请求和 Runtime 资源分别计数。
 
 | 环境变量（前缀 `AREAL_HARNESS_`） | 对应配置 |
@@ -71,7 +74,7 @@ Goal 的共享预算与未知用量约束优先于重试配置。Goal 请求禁�
 | `MODEL_CONCURRENCY`, `MAX_THREADS`, `MAX_ACTIVE_TURNS`, `MAX_CHILDREN_PER_TURN`, `MAX_AGENT_DEPTH` | 并发与任务容量 |
 | `TURN_TIMEOUT_SECONDS`, `STREAM_IDLE_TIMEOUT_SECONDS` | 时限 |
 | `WATCHDOG_DISABLE` | `limits.watchdog_disable`；`1` 关闭，默认 `0` |
-| `MAX_HISTORY_BYTES`, `MAX_OUTPUT_BYTES`, `MAX_TOOL_CALLS`, `CONTEXT_WINDOW_BYTES`, `CONTEXT_RECENT_BYTES` | 历史、工具与上下文预算 |
+| `MAX_HISTORY_BYTES`, `MAX_OUTPUT_BYTES`, `MAX_TOOL_CALLS`, `MAX_TOOL_BUFFER_BYTES`, `CONTEXT_WINDOW_BYTES`, `CONTEXT_RECENT_BYTES` | 历史、工具与上下文预算 |
 
 未知 `AREAL_HARNESS_*` 报错。旧 `AREAL_MODEL*` 与 `RUST_LOG` 为低优先级兼容别名。无 provider 文件记录的旧模型入口可使用可选 `AREAL_API_KEY`；显式文件 provider 不隐式继承它。
 

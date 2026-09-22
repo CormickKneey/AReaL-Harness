@@ -18,9 +18,9 @@ Core 注册表将名称、JSON Schema 与内置/命令/客户端/MCP/插件后�
 | `read_process/write_process/terminate_process` | 本 Turn 进程句柄；续读、输入与终止 |
 | `task_state` | `{}`；返回有界的已观察文件/进程/子任务/scratch 与 summaryThroughItemId，不进行实时探测 |
 
-文件最大 8 MiB，单次写/patch 64 KiB，另受工具参数 64 KiB 总预算限制。显式 fileVersion 和 expectedSha256 互斥；SHA 为 null 表示仅新建。成功编辑返回新版本与规范路径，shell/外部编辑不自动刷新观察，CAS 冲突后需重新读取。行过长时使用 fs_read。read/search 通过同一 Scope 中的 Python/rg 执行、最长 15 秒；需要 `/usr/bin/python3` 和 PATH 中的 rg，不自动扩大沙箱权限。
+文件最大 8 MiB，单次写/patch 64 KiB，另受每个调用参数 64 KiB 预算限制。显式 fileVersion 和 expectedSha256 互斥；SHA 为 null 表示仅新建。成功编辑返回新版本与规范路径，shell/外部编辑不自动刷新观察，CAS 冲突后需重新读取。行过长时使用 fs_read。read/search 通过同一 Scope 中的 Python/rg 执行、最长 15 秒；需要 `/usr/bin/python3` 和 PATH 中的 rg，不自动扩大沙箱权限。
 
-每个完整模型响应最多 16 个调用，依次执行；工具结果最多 16 KiB，参数错误和已知命令失败返回模型处理，UNKNOWN 停止。结果报告 remainingToolCalls，剩余 ≤32 时提示收尾。
+每个完整模型响应的调用数量受当前 Turn 剩余 `max_tool_calls` 限制，依次执行；Chat 的 index 用于关联片段，允许稀疏非负整数编号，没有小于 16 的要求。两种协议均使用可配置的 `max_tool_buffer_bytes` 缓冲预算（默认 4 MiB），累计工具 id、name 和 arguments；编号非法或预算超限时，当前响应的所有调用均不执行。工具结果最多 16 KiB，参数错误和已知命令失败返回模型处理，UNKNOWN 停止。结果报告 remainingToolCalls，剩余 ≤32 时提示收尾。
 
 `verify_command` 将完整输出（最多 64 MiB）及 receipt 写入 scratch/verification，记录退出状态、日志与执行前后源码指纹。指纹覆盖 Git 跟踪和未忽略文件，非 Git 目录使用排除依赖/构建/缓存的扫描；源码变化使验证过期。receipt 位于任务可写目录，不是对恶意任务的认证。收尾时未结束的验证进程需要续读终态或显式终止；普通后台 run_command 不受此约束，也不会唤醒已结束 Turn。
 

@@ -178,6 +178,14 @@ impl Engine {
             let request_estimate = context::estimate_tokens(&messages)
                 + context::text_tokens(&serde_json::to_string(&tool_definitions)?);
             let tools_enabled = !tool_definitions.is_empty();
+            let tool_limits = model::ToolCallLimits {
+                max_calls: if tools_enabled {
+                    self.limits.max_tool_calls.saturating_sub(tool_count)
+                } else {
+                    0
+                },
+                max_buffer_bytes: self.limits.max_tool_buffer_bytes,
+            };
             let model_span = info_span!(
                 "gen_ai.client.operation",
                 otel.name = "chat",
@@ -222,7 +230,7 @@ impl Engine {
                     _ = steer.recv() => { complete_item(cell, &thread_id, &turn_id, &item_id).await; continue 'restart; },
                     result = tokio::time::timeout(
                         self.limits.stream_idle_timeout,
-                        model::REQUEST_OWNER.scope((thread_id.clone(), turn_id.clone()), model.chat(messages.clone(), tool_definitions.clone())).instrument(model_span.clone()),
+                        model::REQUEST_OWNER.scope((thread_id.clone(), turn_id.clone()), model.chat_with_limits(messages.clone(), tool_definitions.clone(), model::RequestPurpose::Solve, tool_limits, None)).instrument(model_span.clone()),
                     ) => result.map_err(|_| watchdog::idle_error("model request")).and_then(|v| v),
                 };
                 let mut stream: model::ModelStream = match response {
@@ -230,6 +238,7 @@ impl Engine {
                     Err(error) => Box::pin(futures_util::stream::once(async move { Err(error) })),
                 };
                 let mut calls = Vec::new();
+                let mut tool_budget = model::ToolCallBudget::new(tool_limits);
                 let mut visible_output = false;
                 loop {
                     let next = tokio::select! {
@@ -369,6 +378,16 @@ impl Engine {
                             drop(stream);
                             // Goal 的未知消费必须先停止推进，不能进入 watchdog 或有限重试。
                             model.check_work()?;
+                            // HTTP 解码器会先拒绝收尾轮的零调用额度；保留轮次错误分类和原始预算原因。
+                            if final_round
+                                && error
+                                    .downcast_ref::<model::ToolCallBudgetError>()
+                                    .is_some_and(model::ToolCallBudgetError::is_call_limit)
+                            {
+                                return Err(error.context(
+                                    "MAX_MODEL_ROUNDS: final handoff cannot execute tools",
+                                ));
+                            }
                             if let Some(delay) = watchdog::retry_delay(
                                 self.limits.watchdog_disable,
                                 &error,
@@ -447,10 +466,7 @@ impl Engine {
                                 tools_enabled,
                                 "model requested tools without registered tools"
                             );
-                            anyhow::ensure!(
-                                calls.len() < 16,
-                                "too many tool calls in one model completion"
-                            );
+                            tool_budget.record(&call)?;
                             calls.push(call);
                             continue;
                         }
@@ -531,7 +547,8 @@ impl Engine {
         retries: usize,
     ) -> anyhow::Result<bool> {
         if retries >= self.limits.max_completion_retries
-            || error.downcast_ref::<model::ModelFailure>().is_none()
+            || (error.downcast_ref::<model::ModelFailure>().is_none()
+                && error.downcast_ref::<model::ToolCallIndexError>().is_none())
         {
             return Ok(false);
         }

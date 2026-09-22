@@ -51,6 +51,7 @@ pub struct Limits {
     pub turn_timeout: Duration,
     pub stream_idle_timeout: Duration,
     pub max_tool_calls: usize,
+    pub max_tool_buffer_bytes: usize,
     pub context_window_bytes: usize,
     pub context_window_tokens: usize,
     pub context_output_reserve_tokens: usize,
@@ -77,6 +78,7 @@ impl Default for Limits {
             turn_timeout: Duration::from_secs(300),
             stream_idle_timeout: Duration::from_secs(30),
             max_tool_calls: 128,
+            max_tool_buffer_bytes: 4 * 1024 * 1024,
             context_window_bytes: 192 * 1024,
             context_window_tokens: 0,
             context_output_reserve_tokens: 0,
@@ -336,6 +338,7 @@ impl Engine {
                 && limits.mailbox_capacity > 0
                 && limits.max_output_bytes > 0
                 && limits.max_tool_calls > 0
+                && limits.max_tool_buffer_bytes > 0
                 && limits.context_recent_bytes > 0
                 && limits.context_recent_bytes < limits.context_window_bytes
                 && limits.max_completion_retries <= 8

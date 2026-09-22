@@ -97,6 +97,11 @@ const ENV: &[(&str, &str, &str)] = &[
     ),
     ("AREAL_HARNESS_MAX_TOOL_CALLS", "", "limits.max_tool_calls"),
     (
+        "AREAL_HARNESS_MAX_TOOL_BUFFER_BYTES",
+        "",
+        "limits.max_tool_buffer_bytes",
+    ),
+    (
         "AREAL_HARNESS_CONTEXT_WINDOW_BYTES",
         "",
         "limits.context_window_bytes",
@@ -317,6 +322,7 @@ fn valid(field: &str, entry: &Entry) -> Result<()> {
         | "max_history_bytes"
         | "max_output_bytes"
         | "max_tool_calls"
+        | "max_tool_buffer_bytes"
         | "context_window_bytes"
         | "context_recent_bytes" => {
             // Tokio semaphores and Engine capacity must never panic on user input.
@@ -455,6 +461,7 @@ fn load_mode(inputs: &ConfigInputs, management: bool) -> Result<ResolvedCoreConf
         ("limits.max_history_bytes", "2097152"),
         ("limits.max_output_bytes", "262144"),
         ("limits.max_tool_calls", "128"),
+        ("limits.max_tool_buffer_bytes", "4194304"),
         ("limits.context_window_bytes", "196608"),
         ("limits.context_window_tokens", "0"),
         ("limits.context_output_reserve_tokens", "0"),
@@ -698,6 +705,10 @@ fn load_mode(inputs: &ConfigInputs, management: bool) -> Result<ResolvedCoreConf
         max_history_bytes: values["limits.max_history_bytes"].value.parse().unwrap(),
         max_output_bytes: values["limits.max_output_bytes"].value.parse().unwrap(),
         max_tool_calls: values["limits.max_tool_calls"].value.parse().unwrap(),
+        max_tool_buffer_bytes: values["limits.max_tool_buffer_bytes"]
+            .value
+            .parse()
+            .unwrap(),
         context_window_bytes: values["limits.context_window_bytes"].value.parse().unwrap(),
         context_window_tokens: values["limits.context_window_tokens"]
             .value

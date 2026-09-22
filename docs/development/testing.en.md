@@ -22,13 +22,15 @@ Linux host checks use `make verify CARGO_TEST_ARGS='--exclude areal-runtime-exec
 ## Recovery and research agents
 
 ```sh
-cargo test --locked -p areal-engine --test truncated_usage --test http_model --test context --test tools --test async_agents --test recovery
+cargo test --locked -p areal-engine --test truncated_usage --test tool_call_stream --test http_model --test context --test tools --test async_agents --test recovery
 python3 -m unittest discover -s scripts/tests
 python3 scripts/native-tools-smoke.py --bin-dir target/debug --sandbox-profile outer-container-perf
 python3 scripts/native-agents-smoke.py --bin-dir target/debug --sandbox-profile outer-container-perf
 ```
 
 Native tools/agent smoke tests use a local fixed-response HTTP model, the standard launcher and temporary workspaces without external model services. They cover file CAS, search, verification receipts, images, no delegation, a single Worker, synchronous waits, budget failures, parent cancellation and default asynchronous dispatch. The asynchronous case requires parent progress before three Worker requests finish and checks parent/child sampling parameters. Stream tests cover same-frame/tail length usage, EOF/cancellation, no UNKNOWN replay, post-compaction handles and cross-Turn boundaries.
+
+Request-budget tests cover `MAX_MODEL_ROUNDS` classification when Chat Completions or Responses returns tools in the final round, with no tool execution or retries and the original budget audit preserved. Ordinary tool-call budget exhaustion and invalid indices must retain their own classifications. Desktop CLI acceptance also checks the corresponding `error_max_turns` result. Goal HTTP regressions verify that output-token caps and tool count/buffer budgets survive shared pools, while unknown usage from failed requests prevents retries and tool execution.
 
 Linux requires Bubblewrap user/PID namespaces, seccomp, Python, Bash and rg. The public Dockerfile provides the toolchain:
 

@@ -63,6 +63,7 @@ fn diagnostics_use_file_and_env_and_cli_without_creating_state_or_leaking_secret
         ("FIXTURE_KEY", "private-key"),
         ("AREAL_HARNESS_MODEL", "environment"),
         ("AREAL_HARNESS_WATCHDOG_DISABLE", "1"),
+        ("AREAL_HARNESS_MAX_TOOL_BUFFER_BYTES", "8388608"),
     ];
     let out = invoke(
         temp.path(),
@@ -94,6 +95,11 @@ fn diagnostics_use_file_and_env_and_cli_without_creating_state_or_leaking_secret
     assert_eq!(json["sources"]["model.name"]["kind"], "cli");
     assert_eq!(json["limits"]["max_active_turns"], 5);
     assert_eq!(json["limits"]["watchdog_disable"], true);
+    assert_eq!(json["limits"]["max_tool_buffer_bytes"], 8388608);
+    assert_eq!(
+        json["sources"]["limits.max_tool_buffer_bytes"]["kind"],
+        "env"
+    );
     assert_eq!(json["limits"]["max_children_per_turn"], 3);
     assert_eq!(json["limits"]["max_agent_depth"], 1);
     assert_eq!(

@@ -304,7 +304,7 @@ impl Engine {
                 }
                 let mut stream = tokio::select! {
                     _ = cancel.cancelled() => anyhow::bail!("cancelled"),
-                    result = tokio::time::timeout(self.limits.stream_idle_timeout, model::REQUEST_OWNER.scope((snapshot.id.clone(), snapshot.turns.last().map_or_else(String::new, |t| t.id.clone())), model.chat_for(input.clone(), Vec::new(), model::RequestPurpose::Summary))) => result.map_err(|_| watchdog::idle_error("compaction request"))??,
+                    result = tokio::time::timeout(self.limits.stream_idle_timeout, model::REQUEST_OWNER.scope((snapshot.id.clone(), snapshot.turns.last().map_or_else(String::new, |t| t.id.clone())), model.chat_with_limits(input.clone(), Vec::new(), model::RequestPurpose::Summary, model::ToolCallLimits { max_calls: 0, max_buffer_bytes: self.limits.max_tool_buffer_bytes }, None))) => result.map_err(|_| watchdog::idle_error("compaction request"))??,
                 };
                 loop {
                     let event = tokio::select! {
