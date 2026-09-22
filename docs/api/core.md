@@ -25,6 +25,17 @@ input 为有序 text/image/audio/file 等内容，UTF-8 文本合计最多 1 MiB
 
 事件包括 thread/started、turn/started/completed、item/started/completed、item/agentMessage/delta；AReaL 媒体通知为 areal/item/agentMedia/available。终态 completed/interrupted/failed 在保存后发布。steer 保留已输出文本，取消当前模型请求后在同一 Turn 继续。
 
+<a id="agent-message-phase"></a>
+### Agent 消息阶段
+
+`agentMessage` 增加可选 `phase`：`commentary` 或 `final_answer`。Core 创建流式消息时标为 commentary，在 `item/completed` 中提交最终阶段。工具调用前、steer 前或还需消费子任务/Workgroup 结果的正文保留 commentary；确认模型轮次无需继续后才标为 final_answer。这是执行元数据，不依赖正文关键词或供应商思考字段，不改变上下文回放与计费。客户端替换完成 Item 时需接收阶段变化，是否成功仍以 Turn 终态为准。
+
+```json
+{"type":"agentMessage","id":"message-id","text":"Observed result","phase":"final_answer"}
+```
+
+失败或取消可能留下部分 commentary；TUI 保留最后一条非空部分回复并标记未完成。旧记录缺失阶段时正常反序列化并保留正文；快照和事件只增加可选字段，不提升版本。忽略字段的客户端保持原行为。Rust 调用方构造 `Item::AgentMessage` 时需为未分类旧消息填写 `phase: None`，或填写适用阶段。
+
 ### 思考进度
 
 模型适配器将可展示的思考转换为独立的 `reasoning` Item，不等待正文或完整流终态。Item 生命周期为 `item/started` → 思考增量 → `item/completed`；开始时 `summary: []`、`content: []`。客户端按索引补齐空字符串，再将增量追加到对应段：

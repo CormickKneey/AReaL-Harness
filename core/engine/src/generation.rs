@@ -212,6 +212,7 @@ impl Engine {
                         .open_items
                         .insert(item_id.clone());
                     let item = Item::AgentMessage {
+                        phase: Some(areal_protocol::AgentMessagePhase::Commentary),
                         id: item_id.clone(),
                         text: String::new(),
                     };
@@ -330,30 +331,53 @@ impl Engine {
                             drop(state);
                             drop(permit);
                             complete_reasoning(cell, &thread_id, &turn_id, &reasoning_items).await;
-                            complete_item(cell, &thread_id, &turn_id, &item_id).await;
                             let reports = tokio::select! { biased;
                                 _ = cancel.cancelled() => anyhow::bail!("cancelled"),
-                                _ = steer.recv() => continue 'restart,
+                                _ = steer.recv() => {
+                                    complete_item(cell, &thread_id, &turn_id, &item_id).await;
+                                    continue 'restart;
+                                },
                                 reports = self.join_model_children(cell, &mut observed_children, false) => reports?,
                             };
                             if reports != child_results {
                                 child_results = reports;
+                                complete_item(cell, &thread_id, &turn_id, &item_id).await;
                                 continue 'restart;
                             }
                             if let Some(service) = self.workgroups.get() {
                                 let owner = format!("{thread_id}/{turn_id}");
                                 let reports = tokio::select! { biased;
                                     _ = cancel.cancelled() => anyhow::bail!("cancelled"),
-                                    _ = steer.recv() => continue 'restart,
+                                    _ = steer.recv() => {
+                                        complete_item(cell, &thread_id, &turn_id, &item_id).await;
+                                        continue 'restart;
+                                    },
                                     reports = service.settle_owner(&owner, false) => reports?,
                                 };
                                 let reports = workgroup::tools::summaries(&reports);
                                 if reports != group_results {
                                     group_results = reports;
+                                    complete_item(cell, &thread_id, &turn_id, &item_id).await;
                                     continue 'restart;
                                 }
                             }
-                            cell.state.lock().await.active.as_mut().unwrap().sealed = true;
+                            {
+                                let mut state = cell.state.lock().await;
+                                // 工具与子任务都不再要求续轮后，才将本条正文作为最终回答发布。
+                                if let Some(Item::AgentMessage { phase, .. }) = state
+                                    .thread
+                                    .turns
+                                    .last_mut()
+                                    .unwrap()
+                                    .items
+                                    .iter_mut()
+                                    .find(|i| i.id() == item_id)
+                                {
+                                    *phase = Some(areal_protocol::AgentMessagePhase::FinalAnswer);
+                                }
+                                state.active.as_mut().unwrap().sealed = true;
+                            }
+                            complete_item(cell, &thread_id, &turn_id, &item_id).await;
                             return Ok(());
                         }
                         drop(state);

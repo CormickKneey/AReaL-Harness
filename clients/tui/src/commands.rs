@@ -35,6 +35,16 @@ commands![
     ("/tasks", "", "Browse the session plan"),
     ("/groups", "", "Browse Workgroups in the side panel"),
     ("/theme", "", "Preview and save a theme"),
+    (
+        "/details",
+        "",
+        "Toggle compact and detailed execution records"
+    ),
+    (
+        "/restore-input",
+        "",
+        "Restore the last failed submission to the input"
+    ),
     ("/open", "ID", "Open a session by ID or unique prefix"),
     ("/spawn", "PROMPT", "Delegate work under the active Turn"),
     ("/group", "ID", "Inspect a Workgroup"),

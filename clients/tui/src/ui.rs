@@ -13,7 +13,7 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    app::{App, Focus, NavTarget, View, short, thread_status},
+    app::{App, Focus, NavTarget, View, short},
     commands::PickerKind,
     safe_text,
     theme::{Palette, Role, Theme},
@@ -39,6 +39,7 @@ const CUP_ASCII: [&str; 7] = [
 ];
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
+    app.history_area = None;
     let palette = app.prefs.palette();
     let area = frame.area();
     frame.render_widget(Block::default().style(palette.base), area);
@@ -94,9 +95,23 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     } else {
         (workspace, None)
     };
-    let [body, progress, input] = Layout::vertical([
+    let request_notice = app
+        .selected
+        .as_ref()
+        .and_then(|id| app.submission_failures.get(id))
+        .map(|failure| format!("Submission issue: {} · /restore-input", failure.message));
+    let notice_lines = request_notice
+        .as_ref()
+        .map(|s| wrap_context(vec![Line::raw(s.clone())], conversation.width))
+        .unwrap_or_default();
+    let notice_height = notice_lines
+        .len()
+        .min(3)
+        .min(usize::from(conversation.height.saturating_sub(6))) as u16;
+    let [body, progress, notice, input] = Layout::vertical([
         Constraint::Min(2),
         Constraint::Length(1),
+        Constraint::Length(notice_height),
         Constraint::Length(3),
     ])
     .areas(conversation);
@@ -119,6 +134,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Paragraph::new(read_progress).style(palette.style(Role::Accent)),
         progress,
     );
+    frame.render_widget(
+        Paragraph::new(notice_lines).style(palette.style(Role::Error)),
+        notice,
+    );
     input_view(frame, input, app, palette);
     frame.render_widget(
         Paragraph::new(safe_text(&app.status)).style(palette.style(if app.connected {
@@ -136,7 +155,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             " ↑↓: select · ←→: tree · Enter: open · PgUp/PgDn: group · Tab: focus · Esc: input"
         }
         Focus::Content => {
-            " ↑↓/PgUp/PgDn: browse · Home/End · Space: tool details · Tab: focus · Esc: input"
+            " ↑↓: select · Enter/Space: expand · ←→ · PgUp/PgDn · Ctrl-O: details · Esc: input"
         }
     };
     frame.render_widget(Paragraph::new(hint).style(palette.surface), help);
@@ -162,10 +181,15 @@ fn conversation_view(frame: &mut Frame, area: Rect, app: &mut App, p: Palette) -
     );
     let inner = block.inner(area);
     frame.render_widget(block, area);
+    let execution_lines = wrap_context(vec![Line::raw(execution_status(app))], inner.width);
+    let execution_height = execution_lines
+        .len()
+        .min(3)
+        .min(usize::from(inner.height.saturating_sub(1))) as u16;
     let [execution, history_area] =
-        Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(inner);
+        Layout::vertical([Constraint::Length(execution_height), Constraint::Min(1)]).areas(inner);
     frame.render_widget(
-        Paragraph::new(execution_status(app)).style(p.style(Role::Muted)),
+        Paragraph::new(execution_lines).style(p.style(Role::Muted)),
         execution,
     );
     if let Some(id) = &app.selected
@@ -176,6 +200,7 @@ fn conversation_view(frame: &mut Frame, area: Rect, app: &mut App, p: Palette) -
             width: history_area.width.saturating_sub(1),
             ..history_area
         };
+        app.history_area = Some((id.clone(), text_area));
         history.prepare(thread, text_area.width, text_area.height);
         frame.render_widget(Paragraph::new(history.lines(p)), text_area);
         let mut scrollbar = ScrollbarState::new(history.total)
@@ -267,14 +292,14 @@ fn plan_lines(app: &App, p: Palette) -> Vec<Line<'static>> {
         ));
         lines.push(Line::raw(safe_text(&goal.objective)));
         lines.push(Line::raw(format!(
-            "{} tokens · {:.0}s · {}/{} Turns",
-            goal.usage.tokens_used,
+            "{} · {:.0}s · {}/{} Turns",
+            crate::history::goal_usage(goal),
             goal.usage.time_used_seconds,
             goal.usage.turns_started,
             goal.max_turns
         )));
-        if let Some(reason) = &goal.reason {
-            lines.push(Line::raw(safe_text(reason)));
+        if goal.reason.is_some() {
+            lines.push(Line::raw(crate::history::goal_reason(goal)));
         }
         lines.push(Line::raw("/goal-pause · /goal-resume · /goal-edit"));
     }
@@ -531,30 +556,54 @@ fn execution_status(app: &App) -> String {
     let Some(t) = app.current() else {
         return "Loading session…".into();
     };
-    let mut parts = vec![thread_status(t).to_owned()];
-    if let Some(goal) = &t.goals.goal {
-        parts.push(format!(
-            "Goal {:?} · {} tokens",
-            goal.status, goal.usage.tokens_used
-        ));
-    }
+    let live = app.connected && app.subscriptions.contains(&t.id);
+    let mut parts = vec![if !live {
+        "Status awaiting synchronization".into()
+    } else if app.syncing.contains(&t.id) {
+        "Synchronizing execution state".into()
+    } else {
+        format!(
+            "Turn {}",
+            t.turns.last().map_or("Idle", |turn| match turn.status {
+                areal_protocol::TurnStatus::InProgress => "Running",
+                areal_protocol::TurnStatus::Completed => "Completed",
+                areal_protocol::TurnStatus::Failed => "Failed",
+                areal_protocol::TurnStatus::Interrupted => "Interrupted",
+            })
+        )
+    }];
     if let Some(turn) = t.turns.last() {
-        if let Some(at) = app.observed.get(&turn.id) {
-            parts.push(format!("observed {}s", at.elapsed().as_secs()));
-        }
-        if let Some(areal_protocol::Item::DynamicToolCall {
-            tool, execution, ..
-        }) = turn.items.last()
-            && execution.outcome == ToolOutcome::Running
+        if live
+            && !app.syncing.contains(&t.id)
+            && turn.status == areal_protocol::TurnStatus::InProgress
         {
-            parts.push(format!("tool: {}", safe_text(tool)));
+            if let Some(retry) = app.retries.get(&t.id).filter(|r| r.turn_id == turn.id) {
+                let wait = retry.until.saturating_duration_since(std::time::Instant::now()).as_millis().div_ceil(1000);
+                parts.push(if wait > 0 { format!("{} retry {} in {wait}s", retry.purpose, retry.attempt) } else { format!("Retrying {} · attempt {}", retry.purpose, retry.attempt) });
+            } else if let Some(areal_protocol::Item::DynamicToolCall { tool, .. }) = turn.items.iter().rev().find(|i| matches!(i, areal_protocol::Item::DynamicToolCall { execution, .. } if execution.outcome == ToolOutcome::Running)) {
+                parts.push(format!("tool: {}", crate::history::short_text(tool, 48)));
+            } else {
+                parts.push("Waiting for model response".into());
+            }
+            if let Some(at) = app.observed.get(&turn.id) {
+                parts.push(format!("observed {}s", at.elapsed().as_secs()));
+            }
         }
         if let Some(usage) = &turn.usage {
             parts.push(format!(
                 "tokens in/out {}/{}",
                 usage.input_tokens, usage.output_tokens
             ));
+        } else {
+            parts.push("Turn usage unknown".into());
         }
+    }
+    if let Some(goal) = &t.goals.goal {
+        parts.push(format!(
+            "Goal {:?} · {}",
+            goal.status,
+            crate::history::goal_usage(goal)
+        ));
     }
     if let Some(d) = &t.desktop {
         if !d.plan.steps.is_empty() {
@@ -886,7 +935,7 @@ fn theme_picker(frame: &mut Frame, area: Rect, app: &App, p: Palette) {
     );
 }
 fn help_page(frame: &mut Frame, area: Rect, p: Palette) {
-    let text = "F1 /help: help · F2 /theme: theme picker\nF3 /topology: agents · F4 /groups: workgroups\nF5 /sessions: switch session · F6 /model: switch model\n/goal OBJECTIVE · /goal-pause · /goal-resume · /goal-clear\n/goal-edit OBJECTIVE · /goal-budget TOKENS|none\n/new · /tasks · /sessions · /open ID · /spawn PROMPT · /agents\n/group ID · /group-start JSON_FILE · /group-revise JSON_FILE\n/group-cancel ID · /welcome · /quit\n\n/: command suggestions · ↑↓ select · Tab complete\nTab / Shift-Tab: input, right panel, history focus\nNavigation: arrows select/expand, Enter open, r refresh\nHistory: PgUp/PgDn, Home/End, Space expand visible tool\nCtrl-C: interrupt the input target's active Turn\nCtrl-R: reconnect · Ctrl-Q: quit\n\nRead % describes loaded history; session plan counts are separate.\nTask trees include historical child sessions. Snapshot nodes can lag.\nPending questions/approvals are shown here; respond in the Web client.\nEsc: return to input";
+    let text = "F1 /help: help · F2 /theme: theme picker\nF3 /topology: agents · F4 /groups: workgroups\nF5 /sessions: switch session · F6 /model: switch model\n/goal OBJECTIVE · /goal-pause · /goal-resume · /goal-clear\n/goal-edit OBJECTIVE · /goal-budget TOKENS|none\n/new · /tasks · /sessions · /open ID · /spawn PROMPT · /agents\n/group ID · /group-start JSON_FILE · /group-revise JSON_FILE\n/group-cancel ID · /welcome · /quit\n\n/: command suggestions · ↑↓ select · Tab complete\nTab / Shift-Tab: input, right panel, history focus\nNavigation: arrows select/expand, Enter open, r refresh\nHistory: ↑↓ select, Enter/Space expand, ←→ collapse/expand\nPgUp/PgDn scroll, Home/End, click a summary to expand\nCtrl-O /details: compact or detailed records\n/restore-input: restore failed submission; --mouse=false: native selection\nCtrl-C: interrupt the input target's active Turn\nCtrl-R: reconnect · Ctrl-Q: quit\n\nRead % describes loaded history; session plan counts are separate.\nTask trees include historical child sessions. Snapshot nodes can lag.\nPending questions/approvals are shown here; respond in the Web client.\nEsc: return to input";
     frame.render_widget(
         Paragraph::new(text)
             .wrap(Wrap { trim: false })
@@ -910,6 +959,167 @@ mod tests {
     use super::*;
     use crate::{app::tests::thread, theme::Preferences};
     use ratatui::{Terminal, backend::TestBackend};
+    fn screen(terminal: &Terminal<TestBackend>) -> String {
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .chunks(usize::from(terminal.size().unwrap().width))
+            .map(|row| row.iter().map(|c| c.symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+    fn mouse(app: &mut App, kind: crossterm::event::MouseEventKind, column: u16, row: u16) {
+        app.mouse(crossterm::event::MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        });
+    }
+    #[test]
+    fn mouse_and_keyboard_target_individual_records_after_resize() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};
+        let mut app = App::new(Preferences::default());
+        let mut t = thread("root", None);
+        t.turns[0].items = (0..3).map(|i| serde_json::from_value(serde_json::json!({
+            "type":"dynamicToolCall","id":format!("t{i}"),"tool":format!("inspect_{i}"),
+            "arguments":{"path":"参数内容"},"status":"completed","success":true,"callId":format!("t{i}"),
+            "contentItems":[{"type":"inputText","text":format!("OUTPUT_{i}")}],
+            "execution":{"runtimeEpoch":"","scopeId":"","operationId":format!("t{i}"),"outcome":"succeeded"}
+        })).unwrap()).collect();
+        app.selected = Some("root".into());
+        app.threads.insert("root".into(), t);
+        app.view = View::Conversation;
+        let mut terminal = Terminal::new(TestBackend::new(120, 36)).unwrap();
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        assert!(!screen(&terminal).contains("OUTPUT_"));
+        let (_, area) = app.history_area.clone().unwrap();
+        mouse(
+            &mut app,
+            MouseEventKind::Down(MouseButton::Left),
+            area.x,
+            area.y,
+        );
+        mouse(
+            &mut app,
+            MouseEventKind::Drag(MouseButton::Left),
+            area.x + 1,
+            area.y,
+        );
+        mouse(
+            &mut app,
+            MouseEventKind::Up(MouseButton::Left),
+            area.x,
+            area.y,
+        );
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        assert!(!screen(&terminal).contains("Tool ·"));
+        app.prefs.mouse = false;
+        mouse(
+            &mut app,
+            MouseEventKind::Down(MouseButton::Left),
+            area.x,
+            area.y,
+        );
+        mouse(
+            &mut app,
+            MouseEventKind::Up(MouseButton::Left),
+            area.x,
+            area.y,
+        );
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        assert!(!screen(&terminal).contains("Tool ·"));
+        app.prefs.mouse = true;
+        mouse(
+            &mut app,
+            MouseEventKind::Down(MouseButton::Left),
+            area.x,
+            area.y,
+        );
+        let item = app.threads["root"].turns[0].items[2].clone();
+        app.receive(serde_json::json!({"method":"item/completed","params":{"threadId":"root","turnId":"turn","item":item}})).unwrap();
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        mouse(
+            &mut app,
+            MouseEventKind::Up(MouseButton::Left),
+            area.x,
+            area.y,
+        );
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        assert!(screen(&terminal).contains("Tool · inspect_2"));
+        assert!(!screen(&terminal).contains("OUTPUT_"));
+        terminal.backend_mut().resize(42, 32);
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        let row = screen(&terminal)
+            .lines()
+            .position(|line| line.contains("Tool · inspect_1"))
+            .unwrap() as u16;
+        let (_, area) = app.history_area.clone().unwrap();
+        mouse(
+            &mut app,
+            MouseEventKind::Down(MouseButton::Left),
+            area.x,
+            row,
+        );
+        mouse(&mut app, MouseEventKind::Up(MouseButton::Left), area.x, row);
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        assert!(screen(&terminal).contains("OUTPUT_1"));
+        assert!(!screen(&terminal).contains("OUTPUT_0"));
+        assert!(!screen(&terminal).contains("OUTPUT_2"));
+        app.key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))
+            .unwrap();
+        app.key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))
+            .unwrap();
+        app.key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+            .unwrap();
+        terminal.draw(|f| draw(f, &mut app)).unwrap();
+        assert!(!screen(&terminal).contains("OUTPUT_1"));
+        assert!(screen(&terminal).contains("OUTPUT_2"));
+        assert!(app.input.is_empty());
+    }
+    #[test]
+    fn failure_and_unknown_usage_survive_history_rebuild_in_narrow_monochrome_view() {
+        use areal_protocol::{Item, TurnStatus};
+        let mut app = App::new(Preferences {
+            color: crate::theme::ColorMode::Never,
+            ..Default::default()
+        });
+        let mut t = thread("root", None);
+        t.turns[0].status = TurnStatus::Failed;
+        t.turns[0].error = Some(
+            serde_json::from_value(serde_json::json!({"message":"Provider rejected request"}))
+                .unwrap(),
+        );
+        t.turns[0].items.push(Item::AgentMessage {
+            id: "empty".into(),
+            text: String::new(),
+            phase: None,
+        });
+        t.goals.goal = Some(crate::app::tests::blocked_goal());
+        app.selected = Some("root".into());
+        app.connected = true;
+        app.subscriptions.insert("root".into());
+        t.status = areal_protocol::ThreadStatus::Active {
+            active_flags: vec![],
+        };
+        app.view = View::Conversation;
+        let mut terminal = Terminal::new(TestBackend::new(60, 32)).unwrap();
+        for _ in 0..2 {
+            app.threads.insert("root".into(), t.clone());
+            app.histories.entry("root".into()).or_default().invalidate();
+            terminal.draw(|f| draw(f, &mut app)).unwrap();
+            let text = screen(&terminal);
+            assert!(text.contains("Turn failed"), "{text}");
+            assert!(text.contains("Provider rejected request"));
+            assert!(text.contains("Goal Blocked"));
+            assert!(text.contains("unconfirmed usage"));
+            assert!(!text.contains("Session plan"));
+            assert!(!text.contains("Waiting for model"));
+            assert!(text.contains("Turn Failed"));
+            assert!(!text.contains("Turn Running"));
+        }
+    }
     #[test]
     fn conversation_is_left_and_unrelated_sessions_only_appear_in_picker() {
         let mut app = App::new(Preferences::default());
@@ -1024,6 +1234,7 @@ mod tests {
                 }],
             },
             Item::AgentMessage {
+                phase: None,
                 id: "agent".into(),
                 text: "answer".into(),
             },

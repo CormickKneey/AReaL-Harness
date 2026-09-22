@@ -34,6 +34,7 @@ async fn model_history_preserves_completion_batches_and_defers_tool_images() {
         usage: None,
         items: vec![
             Item::AgentMessage {
+                phase: None,
                 id: "completion-1".into(),
                 text: "Inspect both".into(),
             },
@@ -41,6 +42,7 @@ async fn model_history_preserves_completion_batches_and_defers_tool_images() {
             call("b", false),
             // An empty text item still marks a new model decision.
             Item::AgentMessage {
+                phase: None,
                 id: "completion-2".into(),
                 text: String::new(),
             },

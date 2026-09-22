@@ -30,6 +30,14 @@ class Model(http.server.BaseHTTPRequestHandler):
             messages = request["messages"]
             prompt = next(m["content"] for m in reversed(messages) if m["role"] == "user")
             tool_results = [m for m in messages if m["role"] == "tool"]
+            if prompt == "error-fixture":
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps({"error": {"message": "fixture model unavailable"}}).encode()
+                )
+                return
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.end_headers()
@@ -54,7 +62,37 @@ class Model(http.server.BaseHTTPRequestHandler):
                 )
                 self.wfile.flush()
 
-            if prompt == "read-fixture" and not tool_results:
+            current_messages = messages[
+                next(i for i in range(len(messages) - 1, -1, -1) if messages[i]["role"] == "user")
+                + 1 :
+            ]
+            if prompt == "trace-fixture" and not any(m["role"] == "tool" for m in current_messages):
+                event({"reasoning_content": "PRIVATE_REASONING"})
+                event({"content": "PRIVATE_COMMENTARY"})
+                event(
+                    {
+                        "tool_calls": [
+                            {
+                                "index": i,
+                                "id": f"trace_{i}",
+                                "type": "function",
+                                "function": {
+                                    "name": "fs_read",
+                                    "arguments": json.dumps(
+                                        {
+                                            "path": f"workspace://repo/trace-{i}.txt",
+                                            "offset": 0,
+                                            "maxBytes": 1024,
+                                        }
+                                    ),
+                                },
+                            }
+                            for i in range(3)
+                        ]
+                    }
+                )
+                event({}, "tool_calls")
+            elif prompt == "read-fixture" and not tool_results:
                 event(
                     {
                         "tool_calls": [
@@ -105,6 +143,8 @@ try:
         workspace, data = root / "workspace", root / "data"
         workspace.mkdir()
         (workspace / "input.txt").write_text("local-runtime-fixture\n")
+        for index in range(3):
+            (workspace / f"trace-{index}.txt").write_text(f"PRIVATE_OUTPUT_{index}\n")
         # Both module and interpreter lookup must be independent of task files.
         marker = root / "untrusted-launcher-ran"
         untrusted = (
@@ -153,6 +193,7 @@ endpoint = "http://127.0.0.1:{model.server_port}"
                 "PYTHONPATH": str(pythonpath),
                 "AREAL_CODEX_EXECUTABLE": "/nonexistent/must-not-be-used",
                 "OTEL_SDK_DISABLED": "true",
+                "AREAL_PTY_TRACES": "1",
                 "NO_PROXY": "127.0.0.1,localhost",
                 "no_proxy": "127.0.0.1,localhost",
             }

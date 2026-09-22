@@ -58,6 +58,8 @@ pub struct UiArgs {
     pub no_logo: Option<bool>,
     #[arg(long, env = "AREAL_TUI_ASCII", num_args = 0..=1, default_missing_value = "true", require_equals = true)]
     pub ascii: Option<bool>,
+    #[arg(long, env = "AREAL_TUI_MOUSE", num_args = 0..=1, default_missing_value = "true", require_equals = true)]
+    pub mouse: Option<bool>,
 }
 
 #[derive(Debug)]
@@ -66,6 +68,7 @@ pub struct Preferences {
     pub color: ColorMode,
     pub no_logo: bool,
     pub ascii: bool,
+    pub mouse: bool,
     pub path: Option<PathBuf>,
 }
 impl Default for Preferences {
@@ -75,6 +78,7 @@ impl Default for Preferences {
             color: ColorMode::Auto,
             no_logo: false,
             ascii: false,
+            mouse: true,
             path: None,
         }
     }
@@ -117,6 +121,9 @@ impl Preferences {
         if let Some(value) = args.ascii {
             prefs.ascii = value;
         }
+        if let Some(value) = args.mouse {
+            prefs.mouse = value;
+        }
         Ok(prefs)
     }
     fn parse(&mut self, text: &str) -> Result<()> {
@@ -137,6 +144,7 @@ impl Preferences {
                 }
                 "no_logo" => self.no_logo = value.as_bool().context("no_logo must be a boolean")?,
                 "ascii" => self.ascii = value.as_bool().context("ascii must be a boolean")?,
+                "mouse" => self.mouse = value.as_bool().context("mouse must be a boolean")?,
                 _ => bail!("unknown TUI preference: {key}"),
             }
         }
@@ -155,11 +163,12 @@ impl Preferences {
         let mut file = tempfile::NamedTempFile::new_in(parent)?;
         write!(
             file,
-            "theme = {:?}\ncolor = {:?}\nno_logo = {}\nascii = {}\n",
+            "theme = {:?}\ncolor = {:?}\nno_logo = {}\nascii = {}\nmouse = {}\n",
             self.theme.key(),
             self.color.key(),
             self.no_logo,
-            self.ascii
+            self.ascii,
+            self.mouse
         )?;
         file.as_file().sync_all()?;
         file.persist(path)?;
@@ -278,7 +287,7 @@ mod tests {
             path: Some(dir.path().join("tui.toml")),
             ..Default::default()
         };
-        p.parse("theme = 'light'\ncolor = 'never'\nascii = true")
+        p.parse("theme = 'light'\ncolor = 'never'\nascii = true\nmouse = false")
             .unwrap();
         p.save().unwrap();
         let loaded = Preferences::load(&UiArgs {
@@ -290,6 +299,7 @@ mod tests {
         assert_eq!(loaded.theme, Theme::Terminal);
         assert_eq!(loaded.color, ColorMode::Never);
         assert!(loaded.ascii);
+        assert!(!loaded.mouse);
         assert!(p.parse("theme = 'typo'").is_err());
         assert!(p.parse("no_logo = 'yes'").is_err());
         assert!(p.parse("unknown = true").is_err());

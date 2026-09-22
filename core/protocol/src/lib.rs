@@ -126,6 +126,13 @@ impl ModelUsage {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentMessagePhase {
+    Commentary,
+    FinalAnswer,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum Item {
@@ -136,6 +143,9 @@ pub enum Item {
     AgentMessage {
         id: String,
         text: String,
+        /// Core 按执行轮次确认正文阶段；旧快照缺失时客户端保留正文。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        phase: Option<AgentMessagePhase>,
     },
     /// 模型显式返回的思考文本，独立于正文且不回放为模型输入。
     Reasoning {

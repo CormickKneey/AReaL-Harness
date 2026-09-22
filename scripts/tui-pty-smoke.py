@@ -236,8 +236,51 @@ try:
     # 连接恢复后还需等权威快照；旧历史仍在屏幕上，不能作为可发送的信号。
     expect("Completed · live".encode())
     expect(rb"0599")
+    if os.environ.get("AREAL_PTY_TRACES"):
+        os.write(master, b"trace-fixture\r")
+        expect(rb"reply:trace-fixture")
+        expect(rb"3 reads")
+        assert b"PRIVATE_" not in screen.text()
+
+        def click_row(row):
+            os.write(master, f"\x1b[<0;3;{row + 1}M\x1b[<0;3;{row + 1}m".encode())
+
+        group_row = next(i for i, row in enumerate(screen.text().splitlines()) if b"3 reads" in row)
+        click_row(group_row)
+        expect(rb"Tool.*fs_read")
+        assert b"PRIVATE_" not in screen.text()
+        tool_rows = [
+            i
+            for i, row in enumerate(screen.text().splitlines())
+            if b"Tool" in row and b"fs_read" in row
+        ]
+        assert len(tool_rows) == 3, screen.text()
+        click_row(tool_rows[1])
+        expect(rb"PRIVATE_OUTPUT_1")
+        assert b"PRIVATE_OUTPUT_0" not in screen.text()
+        assert b"PRIVATE_OUTPUT_2" not in screen.text()
+        os.write(master, b"\x1b[D\x1b[B\r")
+        expect(rb"PRIVATE_OUTPUT_2")
+        expect(rb"PRIVATE_OUTPUT_1", absent=True)
+        os.write(master, b"\x1b[D")
+        expect(rb"PRIVATE_OUTPUT_2", absent=True)
+        os.write(master, b"\x1b")
+        expect(rb"/: commands")
+        os.write(master, b"\x1b[F")
+        expect(rb"Read 100%.*LIVE")
+        os.write(master, b"error-fixture\r")
+        expect(rb"Turn failed")
+        expect(rb"model HTTP status 400")
+        os.write(master, b"\x12")
+        expect(rb"Reconnected")
+        expect("Failed · live".encode())
+        expect(rb"Turn failed")
+        expect(rb"model HTTP status 400")
     offset = len(output)
     os.write(master, b"hang\r")
+    # 流式过程正文默认折叠；显式进入详细视图后才能看到。
+    expect(rb"Waiting for model response")
+    os.write(master, b"\x0f\x1b[F")
     expect(rb"reply:hang", offset)
     os.write(master, b"/spawn pty-child\r")
     os.write(master, b"/topology\r")
@@ -269,6 +312,11 @@ try:
             break
         record(chunk)
     assert b"\x1b[?1049l" in output
+    assert b"\x1b[?1000l" in output, "mouse capture was not disabled"
+    if os.environ.get("AREAL_PTY_TRACES"):
+        print(
+            "PASS compact traces: hidden payloads, second-record mouse hit, third-record keyboard expansion, failure survives reconnect"
+        )
     print(
         "PASS full-screen PTY: welcome, slash completion, session/model pickers, theme persistence, long history, reconnect, topology, child navigation, resize, cancellation and terminal cleanup"
     )

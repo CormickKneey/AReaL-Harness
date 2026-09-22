@@ -96,7 +96,9 @@ target/debug/areal-server config show --sources --config /absolute/config.toml
 <a id="tui"></a>
 ## TUI 偏好
 
-`${XDG_CONFIG_HOME:-~/.config}/areal-harness/tui.toml`，可用 `--tui-config` / `AREAL_TUI_CONFIG` 替代。字段为 `theme=dark|light|terminal`、`color=auto|always|never`、`no_logo=false`、`ascii=false`。优先级 CLI > `AREAL_TUI_*` > 文件 > 默认；非空 `NO_COLOR` 强制关闭颜色。`--prompt` 和 `--goal` 不读此文件。
+`${XDG_CONFIG_HOME:-~/.config}/areal-harness/tui.toml`，可用 `--tui-config` / `AREAL_TUI_CONFIG` 替代。字段为 `theme=dark|light|terminal`、`color=auto|always|never`、`no_logo=false`、`ascii=false`、`mouse=true`。优先级 CLI > `AREAL_TUI_*` > 文件 > 默认；非空 `NO_COLOR` 强制关闭颜色。`--prompt` 和 `--goal` 不读此文件。
+
+可用 `--mouse=false`、`AREAL_TUI_MOUSE=false` 或文件中的 `mouse = false` 关闭鼠标捕获。默认开启；关闭后历史仍可通过键盘完整操作。
 
 Skill 自动发现见[Skill](skills.md)，工具配置见[工具](tools.md)，部署权限见[Runtime](runtime.md)。
 
