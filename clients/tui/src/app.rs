@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, bail, ensure};
 use areal_protocol::{Item, Thread, ThreadStatus, Turn, TurnStatus};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::layout::Rect;
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
@@ -72,6 +73,19 @@ struct Request {
     method: String,
     params: Value,
     purpose: Purpose,
+    submitted_input: Option<String>,
+}
+
+pub struct SubmissionFailure {
+    pub message: String,
+    pub input: String,
+}
+
+pub struct RetryState {
+    pub turn_id: String,
+    pub purpose: String,
+    pub attempt: u64,
+    pub until: Instant,
 }
 
 pub struct App {
@@ -90,6 +104,12 @@ pub struct App {
     pub completion_index: usize,
     completion_dismissed: bool,
     pub histories: BTreeMap<String, History>,
+    pub retries: BTreeMap<String, RetryState>,
+    pub submission_failures: BTreeMap<String, SubmissionFailure>,
+    pub history_area: Option<(String, Rect)>,
+    mouse_down: Option<(String, crate::history::BlockKey)>,
+    pub syncing: BTreeSet<String>,
+    resynced: BTreeMap<String, (String, u64)>,
     pub tree_root: Option<String>,
     tree_direct: bool,
     pub expanded: BTreeSet<String>,
@@ -138,6 +158,12 @@ impl App {
             completion_index: 0,
             completion_dismissed: false,
             histories: BTreeMap::new(),
+            retries: BTreeMap::new(),
+            submission_failures: BTreeMap::new(),
+            history_area: None,
+            mouse_down: None,
+            syncing: BTreeSet::new(),
+            resynced: BTreeMap::new(),
             tree_root: None,
             tree_direct: false,
             expanded: BTreeSet::new(),
@@ -201,10 +227,13 @@ impl App {
             self.outbox.len() < 128,
             "Client request queue is full; try again shortly."
         );
+        let submitted_input = matches!(method, "turn/start" | "turn/steer" | "areal/goal/create")
+            .then(|| self.input.clone());
         self.outbox.push_back(Request {
             method: method.into(),
             params,
             purpose,
+            submitted_input,
         });
         Ok(())
     }
@@ -284,8 +313,23 @@ impl App {
         self.connected = false;
         self.status =
             format!("Disconnected · {reason} · reconnecting; submitted actions are not replayed");
+        for request in self.pending.values().chain(self.outbox.iter()) {
+            if let (Some(input), Some(id)) = (
+                &request.submitted_input,
+                request.params["threadId"].as_str(),
+            ) {
+                self.submission_failures.insert(id.into(), SubmissionFailure {
+                    message: "Connection lost; submission outcome unknown. Inspect the restored session before resubmitting.".into(), input: input.clone(),
+                });
+            }
+        }
         self.pending.clear();
         self.outbox.clear();
+        self.retries.clear();
+        self.syncing.clear();
+        self.resynced.clear();
+        self.history_area = None;
+        self.mouse_down = None;
         self.subscriptions.clear();
         self.releasing.clear();
         self.observed.clear();
@@ -488,6 +532,29 @@ impl App {
             }
         }
         self.sync_subscriptions()?;
+        if let Some(thread) = self.current()
+            && let Some(turn) = thread.turns.last()
+            && let Some(goal) = &thread.goals.goal
+            && turn.status == TurnStatus::InProgress
+            && goal.active_turn_id.is_none()
+            && !goal.settling
+            && goal.status != areal_protocol::goals::GoalStatus::Active
+            && turn.goal.as_ref().is_some_and(|g| g.goal_id == goal.id)
+        {
+            let id = thread.id.clone();
+            let fingerprint = (turn.id.clone(), thread.goals.event_sequence);
+            if self.resynced.get(&id) != Some(&fingerprint)
+                && !self.in_flight("thread/resume", "threadId", &id)
+            {
+                self.queue(
+                    "thread/resume",
+                    json!({"threadId":id}),
+                    Purpose::Resume(id.clone()),
+                )?;
+                self.resynced.insert(id.clone(), fingerprint);
+                self.syncing.insert(id);
+            }
+        }
         self.watch_group()
     }
     fn watch_group(&mut self) -> Result<()> {
@@ -583,6 +650,17 @@ impl App {
             "/help" => self.view = View::Help,
             "/welcome" => self.view = View::Welcome,
             "/theme" => self.theme_original = Some(self.prefs.theme),
+            "/details" => self.toggle_details(),
+            "/restore-input" => {
+                let id = self.selected.as_ref().context("Select a session first")?;
+                let failure = self
+                    .submission_failures
+                    .get(id)
+                    .context("No failed submission to restore")?;
+                self.input = failure.input.clone();
+                self.completion_dismissed = true;
+                return Ok(false);
+            }
             "/more" => {
                 let parent = if self.agent_panel() {
                     self.tree_root.clone()
@@ -888,8 +966,69 @@ impl App {
         }
         self.queue(&format!("areal/goal/{action}"), params, Purpose::Ordinary)
     }
+    fn toggle_details(&mut self) {
+        self.view = View::Conversation;
+        if let Some(history) = self.history() {
+            history.toggle_details();
+        }
+        self.dirty = true;
+    }
+    pub fn mouse(&mut self, event: MouseEvent) {
+        if !self.prefs.mouse || self.picker.is_some() || self.theme_original.is_some() {
+            self.mouse_down = None;
+            return;
+        }
+        let Some((id, area)) = self
+            .history_area
+            .clone()
+            .filter(|(id, _)| self.selected.as_ref() == Some(id))
+        else {
+            return;
+        };
+        let inside = event.column >= area.x
+            && event.column < area.right()
+            && event.row >= area.y
+            && event.row < area.bottom();
+        match event.kind {
+            MouseEventKind::Down(MouseButton::Left) if inside => {
+                self.mouse_down = self
+                    .histories
+                    .get(&id)
+                    .and_then(|h| h.hit(usize::from(event.row - area.y)))
+                    .map(|key| (id.clone(), key));
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                let down = self.mouse_down.take();
+                if inside
+                    && let Some(history) = self.histories.get_mut(&id)
+                    // 增量可在按下和松开间到达；比较内容身份，避免误点或每个增量都取消点击。
+                    && down.is_some()
+                    && down == history.hit(usize::from(event.row - area.y)).map(|key| (id, key))
+                {
+                    self.focus = Focus::Content;
+                    history.click(usize::from(event.row - area.y));
+                    self.dirty = true;
+                }
+                self.mouse_down = None;
+            }
+            MouseEventKind::Drag(_) => self.mouse_down = None,
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown if inside => {
+                self.mouse_down = None;
+                if let Some(history) = self.histories.get_mut(&id) {
+                    history.move_by(if event.kind == MouseEventKind::ScrollUp {
+                        -3
+                    } else {
+                        3
+                    });
+                }
+                self.dirty = true;
+            }
+            _ => self.mouse_down = None,
+        }
+    }
     pub fn key(&mut self, key: KeyEvent) -> Result<bool> {
         self.dirty = true;
+        self.mouse_down = None;
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
                 KeyCode::Char('q') => return Ok(true),
@@ -909,6 +1048,9 @@ impl App {
                     }
                 }
                 KeyCode::Char('r') => self.reconnect_requested = true,
+                KeyCode::Char('o') if self.picker.is_none() && self.theme_original.is_none() => {
+                    self.toggle_details()
+                }
                 _ => {}
             }
             return Ok(false);
@@ -1032,12 +1174,18 @@ impl App {
             _ if self.focus == Focus::Navigation => self.nav_key(key.code)?,
             KeyCode::Up | KeyCode::Down if self.focus == Focus::Content => {
                 if let Some(h) = self.history() {
-                    h.move_by(if key.code == KeyCode::Up { -1 } else { 1 });
+                    h.select_next(key.code == KeyCode::Down);
                 }
             }
-            KeyCode::Char(' ') if self.focus == Focus::Content => {
+            KeyCode::Char(' ') | KeyCode::Enter | KeyCode::Left | KeyCode::Right
+                if self.focus == Focus::Content =>
+            {
                 if let Some(h) = self.history() {
-                    h.toggle_tool();
+                    h.expand_selected(match key.code {
+                        KeyCode::Left => Some(false),
+                        KeyCode::Right => Some(true),
+                        _ => None,
+                    });
                 }
             }
             KeyCode::Enter if self.focus == Focus::Input => return self.submit(),
@@ -1238,12 +1386,22 @@ impl App {
                 thread.status = old.status.clone();
                 thread.desktop = old.desktop.take();
             }
+            if old.goals.event_sequence >= thread.goals.event_sequence {
+                thread.goals = old.goals.clone();
+            }
         }
         self.freshness.insert(thread.id.clone(), Instant::now());
         self.threads.insert(thread.id.clone(), thread);
     }
     fn snapshot(&mut self, thread: Thread) {
         let id = thread.id.clone();
+        self.retries.remove(&id);
+        self.syncing.remove(&id);
+        if let Some(old) = self.threads.get(&id) {
+            for turn in &old.turns {
+                self.observed.remove(&turn.id);
+            }
+        }
         self.histories.entry(id.clone()).or_default().invalidate();
         if let Some(turn) = thread
             .turns
@@ -1270,6 +1428,27 @@ impl App {
                 return Ok(());
             };
             if let Some(error) = value.get("error") {
+                if let (Some(input), Some(thread_id)) = (
+                    &request.submitted_input,
+                    request.params["threadId"].as_str(),
+                ) {
+                    self.submission_failures.insert(
+                        thread_id.into(),
+                        SubmissionFailure {
+                            message: crate::history::short_text(
+                                error["message"].as_str().unwrap_or("Request failed"),
+                                240,
+                            ),
+                            input: input.clone(),
+                        },
+                    );
+                    if self.selected.as_deref() == Some(thread_id) && self.input.is_empty() {
+                        self.input = input.clone();
+                    }
+                }
+                if let Purpose::Resume(id) = &request.purpose {
+                    self.syncing.remove(id);
+                }
                 if let Purpose::Release(ids) = &request.purpose {
                     for id in ids {
                         self.releasing.remove(id);
@@ -1290,6 +1469,11 @@ impl App {
                     )?;
                 }
                 return Ok(());
+            }
+            if request.submitted_input.is_some()
+                && let Some(id) = request.params["threadId"].as_str()
+            {
+                self.submission_failures.remove(id);
             }
             let result = &value["result"];
             // 列表刷新不能把键盘当前选择悄悄移到另一个会话。
@@ -1434,6 +1618,7 @@ impl App {
                                 t.goals.revision = result["revision"].as_u64().unwrap_or(0);
                                 t.goals.event_sequence = sequence;
                                 t.goals.goal = serde_json::from_value(result["goal"].clone())?;
+                                self.histories.entry(id.into()).or_default().invalidate();
                             }
                         }
                     }
@@ -1506,7 +1691,9 @@ impl App {
                     desktop
                         .interactions
                         .retain(|i| i.request_id != interaction.request_id);
+                    let thread_id = interaction.thread_id.clone();
                     desktop.interactions.push(interaction);
+                    self.histories.entry(thread_id).or_default().invalidate();
                 }
             }
             return Ok(());
@@ -1525,6 +1712,46 @@ impl App {
             self.receive_turn(id, serde_json::from_value(p["turn"].clone())?);
             return Ok(());
         }
+        if method == "areal/model/watchdogRetry" {
+            if let (Some(turn_id), Some(attempt), Some(delay)) = (
+                p["turnId"].as_str(),
+                p["retry"].as_u64(),
+                p["delayMs"].as_u64(),
+            ) && self.threads[id]
+                .turns
+                .last()
+                .is_some_and(|t| t.id == turn_id && t.status == TurnStatus::InProgress)
+            {
+                self.retries.insert(
+                    id.into(),
+                    RetryState {
+                        turn_id: turn_id.into(),
+                        purpose: if p["purpose"] == "summary" {
+                            "summary"
+                        } else {
+                            "model"
+                        }
+                        .into(),
+                        attempt,
+                        until: Instant::now() + Duration::from_millis(delay.min(3_600_000)),
+                    },
+                );
+            }
+            return Ok(());
+        }
+        if matches!(
+            method,
+            "item/agentMessage/delta"
+                | "item/reasoning/textDelta"
+                | "item/reasoning/summaryTextDelta"
+                | "item/completed"
+        ) && self
+            .retries
+            .get(id)
+            .is_some_and(|retry| Some(retry.turn_id.as_str()) == p["turnId"].as_str())
+        {
+            self.retries.remove(id);
+        }
         let thread = self.threads.get_mut(id).unwrap();
         match method {
             "areal/goal/updated" | "areal/goal/cleared" => {
@@ -1533,6 +1760,7 @@ impl App {
                     thread.goals.revision = p["revision"].as_u64().unwrap_or(0);
                     thread.goals.event_sequence = sequence;
                     thread.goals.goal = serde_json::from_value(p["goal"].clone())?;
+                    self.histories.entry(id.into()).or_default().invalidate();
                 }
             }
             "areal/plan/updated" => {
@@ -1602,7 +1830,9 @@ impl App {
                     .turns
                     .iter_mut()
                     .find(|t| Some(t.id.as_str()) == p["turnId"].as_str())
-                    && let Some(Item::AgentMessage { id: item_id, text }) = turn
+                    && let Some(Item::AgentMessage {
+                        id: item_id, text, ..
+                    }) = turn
                         .items
                         .iter_mut()
                         .find(|i| Some(i.id()) == p["itemId"].as_str())
@@ -1642,6 +1872,20 @@ impl App {
                 .or_insert_with(Instant::now);
         } else {
             self.observed.remove(&turn.id);
+            if self.retries.get(id).is_some_and(|r| r.turn_id == turn.id) {
+                self.retries.remove(id);
+            }
+        }
+        if status == TurnStatus::Failed
+            && !thread
+                .turns
+                .iter()
+                .any(|old| old.id == turn.id && old.status == TurnStatus::Failed)
+        {
+            self.histories
+                .entry(id.into())
+                .or_default()
+                .failed(&turn.id);
         }
         if let Some(old) = thread.turns.iter_mut().find(|t| t.id == turn.id) {
             *old = turn;
@@ -1685,6 +1929,144 @@ pub(crate) mod tests {
     use super::*;
     pub fn thread(id: &str, parent: Option<&str>) -> Thread {
         serde_json::from_value(json!({"id":id,"sessionId":"session","parentThreadId":parent,"preview":format!("Task {id}"),"modelProvider":"fixture","createdAt":0,"updatedAt":0,"status":{"type":"idle"},"cwd":"/workspace","cliVersion":"test","source":"test","ephemeral":false,"turns":[{"id":"turn","items":[],"status":"completed","error":null}]})).unwrap()
+    }
+    pub fn blocked_goal() -> areal_protocol::goals::Goal {
+        serde_json::from_value(json!({"id":"goal","threadId":"root","objective":"inspect","status":"blocked","reason":"usageUnknown","tokenBudget":null,"maxTurns":10,"maxActiveSeconds":100,"usage":{"inputTokens":0,"cachedInputTokens":0,"outputTokens":0,"tokensUsed":0,"reservedTokens":500,"unknownRequests":1,"timeUsedSeconds":1.0,"turnsStarted":1,"accountingComplete":false},"activeTurnId":null,"settling":false,"waitingForInput":false,"waitingForCapacity":false,"report":null,"reportTurnId":null,"unreportedTurns":0})).unwrap()
+    }
+    #[test]
+    fn retries_end_on_progress_completion_snapshot_and_disconnect() {
+        let mut app = App::new(Preferences::default());
+        app.selected = Some("root".into());
+        let mut t = thread("root", None);
+        t.turns[0].status = TurnStatus::InProgress;
+        t.turns[0].items.push(Item::AgentMessage {
+            id: "a".into(),
+            text: String::new(),
+            phase: Some(areal_protocol::AgentMessagePhase::Commentary),
+        });
+        app.snapshot(t.clone());
+        let retry = json!({"method":"areal/model/watchdogRetry","params":{"threadId":"root","turnId":"turn","purpose":"solve","retry":2,"delayMs":4000}});
+        app.receive(retry.clone()).unwrap();
+        assert_eq!(app.retries["root"].attempt, 2);
+        app.receive(json!({"method":"item/agentMessage/delta","params":{"threadId":"root","turnId":"turn","itemId":"a","delta":"prefix"}})).unwrap();
+        assert!(app.retries.is_empty());
+        app.receive(retry.clone()).unwrap();
+        app.snapshot(t.clone());
+        assert!(app.retries.is_empty());
+        app.receive(retry.clone()).unwrap();
+        app.history().unwrap().follow = false;
+        let mut failed = t.turns[0].clone();
+        failed.status = TurnStatus::Failed;
+        app.receive_turn("root", failed.clone());
+        app.receive_turn("root", failed);
+        assert!(app.retries.is_empty());
+        assert!(!app.observed.contains_key("turn"));
+        let snapshot = app.current().unwrap().clone();
+        app.history().unwrap().prepare(&snapshot, 80, 20);
+        assert!(
+            app.history()
+                .unwrap()
+                .progress()
+                .starts_with("1 new failure(s)")
+        );
+        app.history().unwrap().end();
+        assert!(!app.history().unwrap().progress().contains("new failure"));
+        app.receive(retry.clone()).unwrap();
+        assert!(app.retries.is_empty());
+        app.receive_turn("root", t.turns[0].clone());
+        assert_eq!(app.current().unwrap().turns[0].status, TurnStatus::Failed);
+        assert_eq!(app.current().unwrap().turns.len(), 1);
+        app.snapshot(t);
+        app.receive(retry).unwrap();
+        app.disconnect("fixture");
+        assert!(app.retries.is_empty());
+    }
+    #[test]
+    fn submission_failures_restore_empty_input_without_overwriting_new_drafts() {
+        let mut app = App::new(Preferences::default());
+        app.selected = Some("root".into());
+        app.snapshot(thread("root", None));
+        app.subscriptions.insert("root".into());
+        app.input = "original request".into();
+        app.submit().unwrap();
+        let request = app.outbox.pop_front().unwrap();
+        app.pending.insert(1, request);
+        app.receive(json!({"id":1,"error":{"message":"fixture rejected"}}))
+            .unwrap();
+        assert_eq!(app.input, "original request");
+        assert_eq!(app.submission_failures["root"].message, "fixture rejected");
+        app.submit().unwrap();
+        let request = app.outbox.pop_front().unwrap();
+        app.pending.insert(2, request);
+        app.input = "new draft".into();
+        app.receive(json!({"id":2,"error":{"message":"rejected again"}}))
+            .unwrap();
+        assert_eq!(app.input, "new draft");
+        app.input = "/restore-input".into();
+        app.submit().unwrap();
+        assert_eq!(app.input, "original request");
+        assert!(app.outbox.is_empty());
+    }
+    #[test]
+    fn conflicting_goal_projection_resyncs_once_and_preserves_newer_goal_updates() {
+        let mut app = App::new(Preferences::default());
+        app.selected = Some("root".into());
+        app.subscriptions.insert("root".into());
+        let mut t = thread("root", None);
+        t.turns[0].status = TurnStatus::InProgress;
+        t.turns[0].goal = Some(
+            serde_json::from_value(json!({"goalId":"goal","sequence":1,"origin":"initial"}))
+                .unwrap(),
+        );
+        t.goals.goal = Some(blocked_goal());
+        t.goals.event_sequence = 2;
+        app.snapshot(t.clone());
+        app.refresh().unwrap();
+        app.refresh().unwrap();
+        assert_eq!(
+            app.outbox
+                .iter()
+                .filter(|r| r.method == "thread/resume")
+                .count(),
+            1
+        );
+        assert!(app.syncing.contains("root"));
+        let mut stale = t.clone();
+        stale.goals.event_sequence = 1;
+        stale.goals.goal = None;
+        app.merge_summary(stale);
+        assert!(app.current().unwrap().goals.goal.is_some());
+        app.outbox.clear();
+        app.snapshot(t);
+        app.refresh().unwrap();
+        assert!(app.outbox.iter().all(|r| r.method != "thread/resume"));
+        let goal = app
+            .threads
+            .get_mut("root")
+            .unwrap()
+            .goals
+            .goal
+            .as_mut()
+            .unwrap();
+        goal.active_turn_id = Some("turn".into());
+        app.resynced.clear();
+        app.refresh().unwrap();
+        assert!(app.outbox.iter().all(|r| r.method != "thread/resume"));
+    }
+    #[test]
+    fn details_toggle_preserves_input_and_does_not_submit() {
+        let mut app = App::new(Preferences::default());
+        app.selected = Some("root".into());
+        app.input = "unsent draft".into();
+        app.key(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::CONTROL))
+            .unwrap();
+        assert!(app.histories["root"].detailed);
+        assert_eq!(app.input, "unsent draft");
+        assert!(app.outbox.is_empty());
+        app.input = "/details".into();
+        app.submit().unwrap();
+        assert!(!app.histories["root"].detailed);
+        assert!(app.outbox.is_empty());
     }
     #[test]
     fn reasoning_deltas_and_discard_update_the_authoritative_projection() {
@@ -1796,6 +2178,7 @@ pub(crate) mod tests {
     fn catalog_refresh_keeps_model_identity_and_does_not_invent_a_default() {
         let mut app = App::new(Preferences::default());
         let request = || Request {
+            submitted_input: None,
             method: "areal/model/list".into(),
             params: json!({}),
             purpose: Purpose::Models,
@@ -1835,6 +2218,7 @@ pub(crate) mod tests {
         app.pending.insert(
             1,
             Request {
+                submitted_input: None,
                 method: "areal/thread/configure".into(),
                 params: json!({}),
                 purpose: Purpose::Configure("root".into()),
@@ -1859,6 +2243,7 @@ pub(crate) mod tests {
         app.selected = Some("parent".into());
         let mut old = thread("child", Some("parent"));
         old.turns[0].items.push(Item::AgentMessage {
+            phase: None,
             id: "old".into(),
             text: "stale delta".into(),
         });
@@ -1866,6 +2251,7 @@ pub(crate) mod tests {
         app.pending.insert(
             1,
             Request {
+                submitted_input: None,
                 method: "thread/resume".into(),
                 params: json!({}),
                 purpose: Purpose::Resume("child".into()),
@@ -1883,6 +2269,7 @@ pub(crate) mod tests {
         app.pending.insert(
             1,
             Request {
+                submitted_input: None,
                 method: "areal/agent/list".into(),
                 params: json!({}),
                 purpose: Purpose::List {
@@ -1951,6 +2338,7 @@ pub(crate) mod tests {
         app.pending.insert(
             1,
             Request {
+                submitted_input: None,
                 method: "areal/workgroup/read".into(),
                 params: json!({}),
                 purpose: Purpose::Group(1),
@@ -1970,6 +2358,7 @@ pub(crate) mod tests {
         app.pending.insert(
             2,
             Request {
+                submitted_input: None,
                 method: "thread/list".into(),
                 params: json!({}),
                 purpose: Purpose::List {

@@ -29,7 +29,7 @@ CORE_OPTIONS = (
     "max_agent_depth",
 )
 
-TUI_OPTIONS = ("theme", "color", "tui_config", "no_logo", "ascii")
+TUI_OPTIONS = ("theme", "color", "tui_config", "no_logo", "ascii", "mouse")
 
 
 def tui_arguments(args):
@@ -102,6 +102,7 @@ def main():
     parser.add_argument("--tui-config")
     parser.add_argument("--no-logo", choices=("true", "false"), nargs="?", const="true")
     parser.add_argument("--ascii", choices=("true", "false"), nargs="?", const="true")
+    parser.add_argument("--mouse", choices=("true", "false"), nargs="?", const="true")
     args = parser.parse_args()
     if args.desktop and args.tui:
         parser.error("--desktop and --tui are mutually exclusive")

@@ -1452,6 +1452,21 @@
                 "id": {
                   "type": "string"
                 },
+                "phase": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "commentary",
+                        "final_answer"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Core 按执行轮次确认正文阶段；旧快照缺失时客户端保留正文。"
+                },
                 "text": {
                   "type": "string"
                 },
@@ -3248,6 +3263,21 @@
                 "id": {
                   "type": "string"
                 },
+                "phase": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "commentary",
+                        "final_answer"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Core 按执行轮次确认正文阶段；旧快照缺失时客户端保留正文。"
+                },
                 "text": {
                   "type": "string"
                 },
@@ -3829,6 +3859,21 @@
               "properties": {
                 "id": {
                   "type": "string"
+                },
+                "phase": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "commentary",
+                        "final_answer"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Core 按执行轮次确认正文阶段；旧快照缺失时客户端保留正文。"
                 },
                 "text": {
                   "type": "string"
@@ -6560,6 +6605,21 @@
                             "id": {
                               "type": "string"
                             },
+                            "phase": {
+                              "anyOf": [
+                                {
+                                  "enum": [
+                                    "commentary",
+                                    "final_answer"
+                                  ],
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ],
+                              "description": "Core 按执行轮次确认正文阶段；旧快照缺失时客户端保留正文。"
+                            },
                             "text": {
                               "type": "string"
                             },
@@ -7605,6 +7665,21 @@
                       "id": {
                         "type": "string"
                       },
+                      "phase": {
+                        "anyOf": [
+                          {
+                            "enum": [
+                              "commentary",
+                              "final_answer"
+                            ],
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "description": "Core 按执行轮次确认正文阶段；旧快照缺失时客户端保留正文。"
+                      },
                       "text": {
                         "type": "string"
                       },
@@ -8627,6 +8702,21 @@
                     "properties": {
                       "id": {
                         "type": "string"
+                      },
+                      "phase": {
+                        "anyOf": [
+                          {
+                            "enum": [
+                              "commentary",
+                              "final_answer"
+                            ],
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "description": "Core 按执行轮次确认正文阶段；旧快照缺失时客户端保留正文。"
                       },
                       "text": {
                         "type": "string"
@@ -16537,6 +16627,21 @@
                               "id": {
                                 "type": "string"
                               },
+                              "phase": {
+                                "anyOf": [
+                                  {
+                                    "enum": [
+                                      "commentary",
+                                      "final_answer"
+                                    ],
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ],
+                                "description": "Core 按执行轮次确认正文阶段；旧快照缺失时客户端保留正文。"
+                              },
                               "text": {
                                 "type": "string"
                               },
@@ -19359,6 +19464,21 @@
                                 "id": {
                                   "type": "string"
                                 },
+                                "phase": {
+                                  "anyOf": [
+                                    {
+                                      "enum": [
+                                        "commentary",
+                                        "final_answer"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ],
+                                  "description": "Core 按执行轮次确认正文阶段；旧快照缺失时客户端保留正文。"
+                                },
                                 "text": {
                                   "type": "string"
                                 },
@@ -20394,6 +20514,21 @@
                         "properties": {
                           "id": {
                             "type": "string"
+                          },
+                          "phase": {
+                            "anyOf": [
+                              {
+                                "enum": [
+                                  "commentary",
+                                  "final_answer"
+                                ],
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "Core 按执行轮次确认正文阶段；旧快照缺失时客户端保留正文。"
                           },
                           "text": {
                             "type": "string"
@@ -32910,6 +33045,21 @@
                             "id": {
                               "type": "string"
                             },
+                            "phase": {
+                              "anyOf": [
+                                {
+                                  "enum": [
+                                    "commentary",
+                                    "final_answer"
+                                  ],
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ],
+                              "description": "Core 按执行轮次确认正文阶段；旧快照缺失时客户端保留正文。"
+                            },
                             "text": {
                               "type": "string"
                             },
@@ -33979,6 +34129,21 @@
                     "properties": {
                       "id": {
                         "type": "string"
+                      },
+                      "phase": {
+                        "anyOf": [
+                          {
+                            "enum": [
+                              "commentary",
+                              "final_answer"
+                            ],
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "description": "Core 按执行轮次确认正文阶段；旧快照缺失时客户端保留正文。"
                       },
                       "text": {
                         "type": "string"
@@ -40689,6 +40854,21 @@
                               "id": {
                                 "type": "string"
                               },
+                              "phase": {
+                                "anyOf": [
+                                  {
+                                    "enum": [
+                                      "commentary",
+                                      "final_answer"
+                                    ],
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ],
+                                "description": "Core 按执行轮次确认正文阶段；旧快照缺失时客户端保留正文。"
+                              },
                               "text": {
                                 "type": "string"
                               },
@@ -43498,6 +43678,21 @@
                           "properties": {
                             "id": {
                               "type": "string"
+                            },
+                            "phase": {
+                              "anyOf": [
+                                {
+                                  "enum": [
+                                    "commentary",
+                                    "final_answer"
+                                  ],
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ],
+                              "description": "Core 按执行轮次确认正文阶段；旧快照缺失时客户端保留正文。"
                             },
                             "text": {
                               "type": "string"
@@ -46323,6 +46518,21 @@
                           "properties": {
                             "id": {
                               "type": "string"
+                            },
+                            "phase": {
+                              "anyOf": [
+                                {
+                                  "enum": [
+                                    "commentary",
+                                    "final_answer"
+                                  ],
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ],
+                              "description": "Core 按执行轮次确认正文阶段；旧快照缺失时客户端保留正文。"
                             },
                             "text": {
                               "type": "string"
@@ -49156,6 +49366,21 @@
                             "id": {
                               "type": "string"
                             },
+                            "phase": {
+                              "anyOf": [
+                                {
+                                  "enum": [
+                                    "commentary",
+                                    "final_answer"
+                                  ],
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ],
+                              "description": "Core 按执行轮次确认正文阶段；旧快照缺失时客户端保留正文。"
+                            },
                             "text": {
                               "type": "string"
                             },
@@ -50210,6 +50435,21 @@
                     "properties": {
                       "id": {
                         "type": "string"
+                      },
+                      "phase": {
+                        "anyOf": [
+                          {
+                            "enum": [
+                              "commentary",
+                              "final_answer"
+                            ],
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "description": "Core 按执行轮次确认正文阶段；旧快照缺失时客户端保留正文。"
                       },
                       "text": {
                         "type": "string"
@@ -53114,6 +53354,21 @@
                       "id": {
                         "type": "string"
                       },
+                      "phase": {
+                        "anyOf": [
+                          {
+                            "enum": [
+                              "commentary",
+                              "final_answer"
+                            ],
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "description": "Core 按执行轮次确认正文阶段；旧快照缺失时客户端保留正文。"
+                      },
                       "text": {
                         "type": "string"
                       },
@@ -54146,6 +54401,21 @@
               "properties": {
                 "id": {
                   "type": "string"
+                },
+                "phase": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "commentary",
+                        "final_answer"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Core 按执行轮次确认正文阶段；旧快照缺失时客户端保留正文。"
                 },
                 "text": {
                   "type": "string"

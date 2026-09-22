@@ -4,6 +4,8 @@
 
 This contract extends [Core WebSocket](core.en.md), separately from Runtime JSONL and [CLI stdio](claude-cli.en.md). Full requests, responses, notifications and persistent types are in [areal-core-v1.json](../../schemas/areal-core-v1.json). Requests reject unknown fields.
 
+Thread snapshots and Item notifications accept the optional `agentMessage.phase` field; see [Core message phases](core.en.md#agent-message-phase) for lifecycle, examples and legacy compatibility. This additive response field keeps `areal.core.v1` unchanged.
+
 ## Authentication and connection
 
 Product servers listen on loopback and authenticate WebSocket/Blob requests. Trusted Main reads its Bearer token from authFile in ready metadata; Renderer receives neither that file nor model credentials. Built-in Web exchanges credentials at POST /areal/auth/session for an HttpOnly, SameSite=Strict cookie and validates Origin.

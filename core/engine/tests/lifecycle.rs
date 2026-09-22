@@ -648,6 +648,7 @@ async fn legacy_text_sessions_load_and_upgrade_on_next_write() {
                         content: vec![Input::text("old")],
                     },
                     Item::AgentMessage {
+                        phase: None,
                         id: uuid::Uuid::new_v4().to_string(),
                         text: "reply:old".into(),
                     },

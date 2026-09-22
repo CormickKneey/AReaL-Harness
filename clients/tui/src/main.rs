@@ -2,7 +2,10 @@ use anyhow::{Context, Result};
 use areal_protocol::Input;
 use clap::Parser;
 use crossterm::{
-    event::{DisableBracketedPaste, EnableBracketedPaste, Event, EventStream, KeyEventKind},
+    event::{
+        DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        Event, EventStream, KeyEventKind,
+    },
     execute,
 };
 use futures_util::StreamExt;
@@ -66,7 +69,11 @@ pub fn safe_text(text: &str) -> String {
 struct TerminalGuard;
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        let _ = execute!(std::io::stdout(), DisableBracketedPaste);
+        let _ = execute!(
+            std::io::stdout(),
+            DisableBracketedPaste,
+            DisableMouseCapture
+        );
         ratatui::restore();
     }
 }
@@ -131,6 +138,9 @@ async fn main() -> Result<()> {
     let mut terminal = ratatui::init();
     let _guard = TerminalGuard;
     execute!(std::io::stdout(), EnableBracketedPaste)?;
+    if app.prefs.mouse {
+        execute!(std::io::stdout(), EnableMouseCapture)?;
+    }
     interactive(&mut client, &mut app, &mut terminal, &args).await
 }
 
@@ -209,7 +219,8 @@ async fn interactive(
                         Err(e) => { app.status = e.to_string(); app.dirty = true; },
                     },
                     Event::Paste(text) => app.paste(&text),
-                    Event::Resize(_, _) => app.dirty = true,
+                    Event::Mouse(event) => app.mouse(event),
+                    Event::Resize(_, _) => { app.history_area = None; app.dirty = true; },
                     _ => {},
                 }
             }

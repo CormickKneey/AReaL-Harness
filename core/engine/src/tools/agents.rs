@@ -370,6 +370,7 @@ mod tests {
                     .unwrap()
                     .items
                     .push(Item::AgentMessage {
+                        phase: None,
                         id: id(),
                         text: "observed evidence ".repeat(100),
                     });

@@ -25,6 +25,17 @@ input preserves text/image/audio/file ordering with at most 1 MiB aggregate UTF-
 
 Events include thread/started, turn/started/completed, item/started/completed and item/agentMessage/delta; AReaL media uses areal/item/agentMedia/available. Terminal completed/interrupted/failed state is published after persistence. steer preserves emitted text, cancels the current model request and continues within the same Turn.
 
+<a id="agent-message-phase"></a>
+### Agent message phases
+
+`agentMessage` has an optional `phase`: `commentary` or `final_answer`. Core creates streaming messages as commentary and finalizes the phase in `item/completed`. A message preceding tools, steering or additional child/Workgroup results remains commentary. Only a model round requiring no further continuation becomes final_answer. This is execution metadata, not a guess based on text or a provider-specific reasoning field; it does not change replay or accounting. Clients must accept phase updates when replacing the completed Item, and still use the Turn terminal status to determine success.
+
+```json
+{"type":"agentMessage","id":"message-id","text":"Observed result","phase":"final_answer"}
+```
+
+Failures or interruption may leave partial commentary. TUI preserves the last nonempty partial reply as incomplete. Old records lacking phase deserialize without it and remain visible; snapshots and events add an optional field without a version bump. Clients that ignore it retain their previous behavior. Rust callers constructing `Item::AgentMessage` must supply `phase: None` for unclassified legacy messages or the applicable phase.
+
 ### Reasoning progress
 
 Model adapters project displayable reasoning into separate `reasoning` Items before body text or stream completion. Their lifecycle is `item/started` → reasoning deltas → `item/completed`; they start with `summary: []` and `content: []`. Clients extend the corresponding array with empty strings before appending a delta at its index:

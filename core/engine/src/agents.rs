@@ -133,7 +133,7 @@ fn snapshot(state: &State, offset: usize, bytes: usize) -> anyhow::Result<Value>
         .enumerate()
         .rev()
         .find_map(|(index, item)| match item {
-            Item::AgentMessage { id, text } if !text.trim().is_empty() => {
+            Item::AgentMessage { id, text, .. } if !text.trim().is_empty() => {
                 Some((index, id.as_str(), Cow::Borrowed(text.as_str()), "message"))
             }
             _ => None,
@@ -623,10 +623,12 @@ mod tests {
         let mut state = cell.state.lock().await;
         let text = format!("{}{}", "中".repeat(1500), "\u{0001}".repeat(2500));
         state.thread.turns[0].items.push(Item::AgentMessage {
+            phase: None,
             id: id(),
             text: text.clone(),
         });
         state.thread.turns[0].items.push(Item::AgentMessage {
+            phase: None,
             id: id(),
             text: "\n \t".into(),
         });
@@ -741,6 +743,7 @@ mod tests {
             {
                 let mut state = cell.state.lock().await;
                 state.thread.turns[0].items.push(Item::AgentMessage {
+                    phase: None,
                     id: id(),
                     text: "\u{0001}".repeat(3000),
                 });

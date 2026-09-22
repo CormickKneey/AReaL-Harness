@@ -96,7 +96,9 @@ The desktop runtime provider catalog uses `areal/provider/*` and `AREAL_CREDENTI
 <a id="tui"></a>
 ## TUI preferences
 
-Use `${XDG_CONFIG_HOME:-~/.config}/areal-harness/tui.toml`, overridden by `--tui-config` / `AREAL_TUI_CONFIG`. Fields are `theme=dark|light|terminal`, `color=auto|always|never`, `no_logo=false` and `ascii=false`. Precedence is CLI > `AREAL_TUI_*` > file > defaults. Nonempty `NO_COLOR` disables color. `--prompt` and `--goal` skip this file.
+Use `${XDG_CONFIG_HOME:-~/.config}/areal-harness/tui.toml`, overridden by `--tui-config` / `AREAL_TUI_CONFIG`. Fields are `theme=dark|light|terminal`, `color=auto|always|never`, `no_logo=false`, `ascii=false` and `mouse=true`. Precedence is CLI > `AREAL_TUI_*` > file > defaults. Nonempty `NO_COLOR` disables color. `--prompt` and `--goal` skip this file.
+
+Set `--mouse=false`, `AREAL_TUI_MOUSE=false` or `mouse = false` in this file to disable mouse capture. Mouse capture defaults to enabled; history remains fully operable with the keyboard.
 
 <a id="goals"></a>
 ## Goal execution policy

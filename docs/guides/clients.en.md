@@ -55,6 +55,10 @@ The Web client owns appearance and navigation; task, permission, and execution s
 | `/spawn prompt` | Manually spawn a child of the active Turn |
 | `/tasks`, `/groups` | Plan and Workgroups |
 | PageUp/PageDown/Home, End | Read history; End resumes following |
+| Click a history summary | Expand the group, then an individual record; the wheel scrolls |
+| ↑/↓, Enter/Space, ←/→ | With history focused: select, toggle, collapse/expand; Esc returns to input |
+| Ctrl-O, `/details` | Toggle compact/detailed history, preserving local expansion choices |
+| `/restore-input` | Restore input retained after a failed or unconfirmed submission |
 
 `--prompt` emits only the current Turn's text, writes Thread ID to stderr and exits nonzero on failure. It skips TUI preferences. See [appearance configuration](configuration.en.md#tui).
 
@@ -64,7 +68,9 @@ Web displays Chat Completions / Responses reasoning in an expandable section, la
 
 Refresh shows its pending state and replaces history with the latest Core snapshot. Stop shows a pending state after submitting cancellation and waits for Core to settle the task and tools. Controls are disabled while disconnected; the server task may continue. Refresh after reconnecting to confirm state without automatically resending the task.
 
-TUI displays a separate Reasoning / Reasoning summary history block, expandable with Space. Noninteractive text output still contains only the answer. See [Core API](../api/core.en.md#reasoning-progress) for events, recovery, and retry behavior.
+TUI starts with compact history: consecutive tool calls, reasoning and commentary form one Activity summary. Arguments, successful output previews and reasoning require explicit expansion. Final answers stay visible; legacy messages without a phase remain visible. Click a group and then a record, or focus history with Tab and use the keys above. `--mouse=false` disables capture for native terminal selection.
+
+Failure reasons persist beside the affected Turn, even after reconnect; empty Agent titles are omitted. Partial replies are marked incomplete. Goal blockage, pending interactions, automatic retries and unconfirmed usage have explicit notices. Failed submissions restore the original input only when the editor is empty; `/restore-input` explicitly replaces the current draft. A disconnected session awaits synchronization and never automatically resends submissions or tools. Noninteractive output retains its existing body-text behavior. See [TUI design](../design/tui.en.md) and [Core API](../api/core.en.md#reasoning-progress).
 
 ## History, recovery and observability
 

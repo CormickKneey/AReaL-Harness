@@ -21,6 +21,7 @@ class CoreArgumentsTest(unittest.TestCase):
         args.theme = "light"
         args.color = "never"
         args.no_logo = "false"
+        args.mouse = "false"
         args.tui_config = "/client config/tui.toml"
         self.assertEqual(launch.core_arguments(args), [])
         self.assertEqual(
@@ -30,6 +31,7 @@ class CoreArgumentsTest(unittest.TestCase):
                 "--color=never",
                 "--tui-config=/client config/tui.toml",
                 "--no-logo=false",
+                "--mouse=false",
             ],
         )
 

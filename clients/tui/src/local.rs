@@ -27,7 +27,11 @@ pub fn launch(args: &super::Args) -> Result<()> {
         argument.push(std::path::absolute(path).context("locate TUI preferences")?);
         command.arg(argument);
     }
-    for (flag, value) in [("--no-logo", args.ui.no_logo), ("--ascii", args.ui.ascii)] {
+    for (flag, value) in [
+        ("--no-logo", args.ui.no_logo),
+        ("--ascii", args.ui.ascii),
+        ("--mouse", args.ui.mouse),
+    ] {
         if let Some(value) = value {
             command.arg(format!("{flag}={value}"));
         }
@@ -109,12 +113,14 @@ mod tests {
                 "--color=never",
                 "--ascii",
                 "--no-logo=false",
+                "--mouse=false",
             ]);
             let args = Args::try_parse_from(args).unwrap();
             assert_eq!(args.ui.theme, Some(crate::theme::Theme::Light));
             assert_eq!(args.ui.color, Some(crate::theme::ColorMode::Never));
             assert_eq!(args.ui.no_logo, Some(false));
             assert_eq!(args.ui.ascii, Some(true));
+            assert_eq!(args.ui.mouse, Some(false));
         }
     }
 }
