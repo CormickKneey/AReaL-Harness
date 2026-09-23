@@ -105,7 +105,7 @@ export OTEL_EXPORTER_OTLP_PROTOCOL='http/protobuf'
 make server
 ```
 
-OTLP supports HTTP/protobuf only. It is disabled without an endpoint and can be disabled with `OTEL_SDK_DISABLED=true`. Default spans contain IDs, usage, status and timing rather than prompt bodies or credentials. Export failure does not change Turn outcomes.
+OTLP supports HTTP/protobuf only. It is disabled without an endpoint and can be disabled with `OTEL_SDK_DISABLED=true`. Trajectories contain actual model inputs/outputs and tool arguments/results, together with IDs, usage, status and timing, without redaction. Export failure does not change Turn outcomes; see [reporting configuration](configuration.en.md#opentelemetry-trajectory-reporting).
 
 <a id="goals"></a>
 ## Goal mode

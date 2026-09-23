@@ -20,7 +20,7 @@ This page describes implemented behavior. Compilation, mechanism tests and real-
 | Persistent Goals | Explicit creation through `/goal` or other clients, with no configuration toggle; automatic continuation across Turns, pause/resume/edit/clear and user-input priority; root/child Agents, Workgroups and summaries share accounting. [Client guide](guides/clients.en.md#goals) · [API](api/core.en.md#goals) |
 | Shared local services | Multiple TUI windows and Web reuse one Core/Runtime; local Web launches sign in automatically with one-time codes; public JSON discovery/control for Desktop Main, workspace isolation, model configuration reload, safe idle restart, explicit stop and crash cleanup. [Contract](api/local-service.en.md) |
 | SDKs | Private in-repository `@areal/runtime` and `@areal/plugins` packages; Node.js 22.19.0+. [SDK contracts](api/typescript-sdk.en.md) |
-| Observability and validation | tracing and optional OTLP; deterministic regression tests, native smoke tests and Docker lite/pro benchmarks. [Testing](development/testing.en.md) |
+| Observability and validation | Standard OpenTelemetry Traces and Events/Logs, full trajectory export through standard OTEL configuration (OTLP HTTP/protobuf); deterministic regression tests, native smoke tests and Docker lite/pro benchmarks. [Configuration](guides/configuration.en.md) · [Testing](development/testing.en.md) |
 
 ## Limitations
 

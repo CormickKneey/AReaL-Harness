@@ -110,7 +110,7 @@ impl Engine {
                 .await?;
 
             let goal_instructions = self.goal_instructions(cell).await?;
-            let (messages, thread_id, session_id, turn_id) = {
+            let (messages, thread_id, session_id, turn_id, turn_number) = {
                 let state = cell.state.lock().await;
                 let mut messages = history(&state.thread, &self.store)?;
                 if let Some(goal) = &goal_instructions {
@@ -183,7 +183,13 @@ impl Engine {
                 let thread_id = state.thread.id.clone();
                 let session_id = state.thread.session_id.clone();
                 let turn_id = state.thread.turns.last().unwrap().id.clone();
-                (messages, thread_id, session_id, turn_id)
+                (
+                    messages,
+                    thread_id,
+                    session_id,
+                    turn_id,
+                    state.thread.turns.len() as u64,
+                )
             };
             let request_estimate = context::estimate_tokens(&messages)
                 + context::text_tokens(&serde_json::to_string(&tool_definitions)?);
@@ -196,20 +202,36 @@ impl Engine {
                 },
                 max_buffer_bytes: self.limits.max_tool_buffer_bytes,
             };
-            let model_span = info_span!(
-                "gen_ai.client.operation",
-                otel.name = "chat",
-                gen_ai.operation.name = "chat",
-                gen_ai.provider.name = %model.provider(),
-                gen_ai.request.model = %model.name(),
-                gen_ai.conversation.id = %session_id,
-                gen_ai.usage.input_tokens = tracing::field::Empty,
-                gen_ai.usage.cached_input_tokens = tracing::field::Empty,
-                gen_ai.usage.output_tokens = tracing::field::Empty,
-            );
             self.reserve_agent_model_request(cell)?;
             let mut network_retries: usize = 0;
             'request: loop {
+                let mut operation = trajectory::Operation::new(
+                    info_span!(
+                        target: trajectory::TARGET,
+                        "gen_ai.client.operation",
+                        otel.name = %format!("chat {}", model.name()),
+                        otel.kind = "client",
+                        otel.status_code = tracing::field::Empty,
+                        error.type = tracing::field::Empty,
+                        error.message = tracing::field::Empty,
+                        gen_ai.operation.name = "chat",
+                        gen_ai.provider.name = %model.provider(),
+                        gen_ai.request.model = %model.name(),
+                        gen_ai.request.stream = true,
+                        gen_ai.conversation.id = %session_id,
+                        areal.turn.id = %turn_id,
+                        areal.turn.number = turn_number,
+                        areal.duration_ms = tracing::field::Empty,
+                        gen_ai.input.messages = %trajectory::messages(&messages),
+                        gen_ai.output.messages = tracing::field::Empty,
+                        gen_ai.usage.input_tokens = tracing::field::Empty,
+                        gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+                        gen_ai.usage.output_tokens = tracing::field::Empty,
+                    ),
+                    "gen_ai.client.inference.operation.details",
+                );
+                let mut request_usage = areal_protocol::ModelUsage::default();
+                let model_span = operation.span.clone();
                 let output_before = (text_output_bytes, media_output_bytes);
                 let item_id = id();
                 let mut reasoning_items = BTreeMap::new();
@@ -271,6 +293,11 @@ impl Engine {
                         ) => match next { Ok(next) => next, Err(_) => Some(Err(watchdog::idle_error("model stream"))) },
                     };
                     let Some(delta) = next else {
+                        operation.finish(
+                            (calls.is_empty() && !visible_output).then_some("empty_completion"),
+                        );
+                        drop(operation);
+                        drop(model_span);
                         // The shared model pool owns a permit in the stream itself.
                         // Release both permits before tools or child/group joins.
                         drop(stream);
@@ -420,6 +447,10 @@ impl Engine {
                     let delta = match delta {
                         Ok(delta) => delta,
                         Err(error) => {
+                            operation.span.record("error.message", format!("{error:#}"));
+                            operation.finish(Some("model_request_failed"));
+                            drop(operation);
+                            drop(model_span);
                             // 先释放失败流及共享模型许可，再等待退避；绝不重放已执行的工具。
                             drop(stream);
                             // Goal 的未知消费阻止重试，但不能覆盖导致请求失败的原始诊断。
@@ -487,6 +518,7 @@ impl Engine {
                             return Err(error);
                         }
                     };
+                    operation.observe(&delta);
                     match delta {
                         ModelEvent::Activity => continue,
                         ModelEvent::ProviderContext(value) => {
@@ -634,12 +666,15 @@ impl Engine {
                             if usage.input_tokens > 0 {
                                 previous_usage = Some((request_estimate, usage.input_tokens));
                             }
-                            model_span.record("gen_ai.usage.input_tokens", usage.input_tokens);
+                            request_usage.add_assign(&usage);
+                            model_span
+                                .record("gen_ai.usage.input_tokens", request_usage.input_tokens);
                             model_span.record(
-                                "gen_ai.usage.cached_input_tokens",
-                                usage.cached_input_tokens,
+                                "gen_ai.usage.cache_read.input_tokens",
+                                request_usage.cached_input_tokens,
                             );
-                            model_span.record("gen_ai.usage.output_tokens", usage.output_tokens);
+                            model_span
+                                .record("gen_ai.usage.output_tokens", request_usage.output_tokens);
                             let mut state = cell.state.lock().await;
                             let turn = state.thread.turns.last_mut().unwrap();
                             turn.usage

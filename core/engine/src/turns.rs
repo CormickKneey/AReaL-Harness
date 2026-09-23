@@ -198,7 +198,12 @@ impl Engine {
         let session_id = state.thread.session_id.clone();
         let parent_thread_id = state.thread.parent_thread_id.clone().unwrap_or_default();
         let span = info_span!(
+            target: trajectory::TARGET,
             "invoke_agent",
+            otel.kind = "internal",
+            otel.status_code = tracing::field::Empty,
+            error.type = tracing::field::Empty,
+            areal.turn.number = state.thread.turns.len() as u64,
             otel.name = "invoke_agent",
             gen_ai.operation.name = "invoke_agent",
             gen_ai.conversation.id = %session_id,
@@ -383,6 +388,33 @@ impl Engine {
         cancel: CancellationToken,
         mut steer: mpsc::Receiver<()>,
     ) {
+        let input = {
+            let state = cell.state.lock().await;
+            state
+                .thread
+                .turns
+                .last()
+                .map(|turn| {
+                    turn.items
+                        .iter()
+                        .filter_map(|item| {
+                            if let Item::UserMessage { content, .. } = item {
+                                let mut message = model::Message::text("user", "");
+                                message.content =
+                                    content.iter().map(model::content_from_input).collect();
+                                Some(message)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        };
+        tracing::event!(target: trajectory::TARGET, tracing::Level::INFO, {
+            "event.name" = "areal.user_prompt",
+            gen_ai.input.messages = %trajectory::messages(&input)
+        });
         let timeout = self
             .extensions
             .agents
@@ -594,6 +626,10 @@ impl Engine {
             TurnStatus::InProgress => "in_progress",
         };
         tracing::Span::current().record("areal.turn.status", status);
+        if turn.status != TurnStatus::Completed {
+            tracing::Span::current().record("otel.status_code", "ERROR");
+            tracing::Span::current().record("error.type", status);
+        }
         tracing::info!(areal.turn.status = status, "agent turn settled");
         // 中断时仍提交已送达的文本前缀，不重放模型请求。
         for item in turn.items.iter().filter(|i| open_items.contains(i.id())) {

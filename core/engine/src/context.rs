@@ -273,148 +273,209 @@ impl Engine {
         let Some(cut) = cut else {
             return Ok(());
         };
-        let boundary = items[cut - 1].id().to_owned();
-        let mut prefix = snapshot.clone();
-        let mut left = cut;
-        for turn in &mut prefix.turns {
-            let take = left.min(turn.items.len());
-            turn.items.truncate(take);
-            left -= take;
-        }
-        let mut input = history(&prefix, &self.store)?;
-        input.insert(
-            0,
-            Message::text("system", include_str!("summary-instructions.md")),
+        let mut operation = trajectory::Operation::new(
+            info_span!(
+                target: trajectory::TARGET,
+                "compaction",
+                otel.name = "compaction",
+                otel.kind = "internal",
+                otel.status_code = tracing::field::Empty,
+                error.type = tracing::field::Empty,
+                gen_ai.operation.name = "areal.compact_context",
+                gen_ai.input.messages = tracing::field::Empty,
+                gen_ai.output.messages = tracing::field::Empty,
+                gen_ai.conversation.id = %snapshot.session_id,
+                areal.turn.id = %snapshot.turns.last().map(|t| t.id.as_str()).unwrap_or_default(),
+                areal.turn.number = snapshot.turns.len() as u64,
+                areal.duration_ms = tracing::field::Empty,
+            ),
+            "areal.context.compacted",
         );
-        input.push(Message::text(
-            "user",
-            "Produce the continuation summary now.",
-        ));
-        let started = tokio::time::Instant::now();
-        let mut usage = areal_protocol::ModelUsage::default();
-        let mut accepted = None;
-        let mut attempt = 0;
-        let mut network_retries: usize = 0;
-        let mut request_reserved = false;
-        while attempt < 2 {
-            let mut summary = String::new();
-            let mut attempt_usage = areal_protocol::ModelUsage::default();
-            let mut rejected_tools = Vec::new();
-            let response: anyhow::Result<()> = async {
-                if !request_reserved {
-                    self.reserve_agent_model_request(cell)?;
-                    request_reserved = true;
-                }
-                let mut stream = tokio::select! {
-                    _ = cancel.cancelled() => anyhow::bail!("cancelled"),
-                    result = tokio::time::timeout(self.limits.stream_idle_timeout, model::REQUEST_OWNER.scope((snapshot.id.clone(), snapshot.turns.last().map_or_else(String::new, |t| t.id.clone())), model.chat_with_limits(input.clone(), Vec::new(), model::RequestPurpose::Summary, model::ToolCallLimits { max_calls: 0, max_buffer_bytes: self.limits.max_tool_buffer_bytes }, None))) => result.map_err(|_| watchdog::idle_error("compaction request"))??,
-                };
-                loop {
-                    let event = tokio::select! {
-                        _ = cancel.cancelled() => anyhow::bail!("cancelled"),
-                        result = tokio::time::timeout(self.limits.stream_idle_timeout, stream.next()) => result.map_err(|_| watchdog::idle_error("compaction stream"))?,
-                    };
-                    let Some(event) = event else { break; };
-                    match event? {
-                        ModelEvent::TextDelta(text) => {
-                            // Archive a bounded response even when rejecting its size.
-                            summary.push_str(tools::prefix(&text, SUMMARY_LIMIT + 1 - summary.len()));
-                            anyhow::ensure!(summary.len() <= SUMMARY_LIMIT, "context summary exceeds 16 KiB");
-                        }
-                        ModelEvent::Usage(value) => attempt_usage.add_assign(&value),
-                        ModelEvent::ToolCall(call) => {
-                            rejected_tools.push(json!({"name":call.name,"arguments":tools::prefix(&call.arguments,4096)}));
-                            anyhow::bail!("context summary must be text without tools");
-                        }
-                        ModelEvent::Activity | ModelEvent::ProviderContext(_) | ModelEvent::ReasoningDelta { .. } => {}
-                        ModelEvent::Binary { .. } => anyhow::bail!("context summary must be text"),
-                    }
-                }
-                anyhow::ensure!(valid_summary(&summary), "model returned an empty or tool-shaped context summary");
-                Ok(())
-            }.await;
-            usage.add_assign(&attempt_usage);
-            self.store.save_audit(json!({"kind":"contextSummary","threadId":snapshot.id,"attempt":attempt+1,"networkRetries":network_retries,"beforeBytes":before_bytes,"estimatedInputTokens":estimated_tokens,"tokenWindow":self.limits.context_window_tokens,"outputReserveTokens":self.limits.context_output_reserve_tokens,"response":summary,"rejectedTools":rejected_tools,"usage":attempt_usage,"error":response.as_ref().err().map(|e|e.to_string()),"cancelled":cancel.is_cancelled()})).await?;
-            anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
-            let error = match response {
-                Ok(()) => {
-                    accepted = Some(summary);
-                    break;
-                }
-                Err(error) => error,
-            };
-            // Goal 计量失效时保留旧 checkpoint，不能重试或提交降级摘要。
-            if let Err(blocker) = model.check_work() {
-                let diagnostic = format!("{blocker}: {error}");
-                return Err(error.context(diagnostic));
+        let span = operation.span.clone();
+        let result: anyhow::Result<()> = async {
+            let boundary = items[cut - 1].id().to_owned();
+            let mut prefix = snapshot.clone();
+            let mut left = cut;
+            for turn in &mut prefix.turns {
+                let take = left.min(turn.items.len());
+                turn.items.truncate(take);
+                left -= take;
             }
-            if let Some(delay) =
-                watchdog::retry_delay(self.limits.watchdog_disable, &error, network_retries)
-            {
-                network_retries = network_retries.saturating_add(1);
-                cell.emit("areal/model/watchdogRetry", json!({"threadId":snapshot.id,"turnId":snapshot.turns.last().map(|t| &t.id),"purpose":"summary","retry":network_retries,"delayMs":delay.as_millis() as u64}));
-                tracing::warn!(
-                    retry = network_retries,
-                    delay_ms = delay.as_millis() as u64,
-                    "network watchdog retrying context summary"
+            let mut input = history(&prefix, &self.store)?;
+            input.insert(
+                0,
+                Message::text("system", include_str!("summary-instructions.md")),
+            );
+            input.push(Message::text(
+                "user",
+                "Produce the continuation summary now.",
+            ));
+            tracing::Span::current().record("gen_ai.input.messages", trajectory::messages(&input));
+            let started = tokio::time::Instant::now();
+            let mut usage = areal_protocol::ModelUsage::default();
+            let mut accepted = None;
+            let mut attempt = 0;
+            let mut network_retries: usize = 0;
+            let mut request_reserved = false;
+            while attempt < 2 {
+                let mut summary = String::new();
+                let mut attempt_usage = areal_protocol::ModelUsage::default();
+                let mut rejected_tools = Vec::new();
+                let mut request = trajectory::Operation::new(
+                    info_span!(
+                        target: trajectory::TARGET,
+                        "gen_ai.client.operation",
+                        otel.name = %format!("chat {}", model.name()),
+                        otel.kind = "client",
+                        otel.status_code = tracing::field::Empty,
+                        error.type = tracing::field::Empty,
+                        error.message = tracing::field::Empty,
+                        gen_ai.operation.name = "chat",
+                        gen_ai.provider.name = %model.provider(),
+                        gen_ai.request.model = %model.name(),
+                        gen_ai.request.stream = true,
+                        gen_ai.conversation.id = %snapshot.session_id,
+                        gen_ai.input.messages = %trajectory::messages(&input),
+                        gen_ai.output.messages = tracing::field::Empty,
+                        gen_ai.usage.input_tokens = tracing::field::Empty,
+                        gen_ai.usage.cache_read.input_tokens = tracing::field::Empty,
+                        gen_ai.usage.output_tokens = tracing::field::Empty,
+                        areal.duration_ms = tracing::field::Empty,
+                    ),
+                    "gen_ai.client.inference.operation.details",
                 );
-                tokio::select! { biased;
-                    _ = cancel.cancelled() => anyhow::bail!("cancelled"),
-                    _ = tokio::time::sleep(delay) => {},
+                let request_span = request.span.clone();
+                let response: anyhow::Result<()> = async {
+                    if !request_reserved {
+                        self.reserve_agent_model_request(cell)?;
+                        request_reserved = true;
+                    }
+                    let mut stream = tokio::select! {
+                        _ = cancel.cancelled() => anyhow::bail!("cancelled"),
+                        result = tokio::time::timeout(self.limits.stream_idle_timeout, model::REQUEST_OWNER.scope((snapshot.id.clone(), snapshot.turns.last().map_or_else(String::new, |t| t.id.clone())), model.chat_with_limits(input.clone(), Vec::new(), model::RequestPurpose::Summary, model::ToolCallLimits { max_calls: 0, max_buffer_bytes: self.limits.max_tool_buffer_bytes }, None))) => result.map_err(|_| watchdog::idle_error("compaction request"))??,
+                    };
+                    loop {
+                        let event = tokio::select! {
+                            _ = cancel.cancelled() => anyhow::bail!("cancelled"),
+                            result = tokio::time::timeout(self.limits.stream_idle_timeout, stream.next()) => result.map_err(|_| watchdog::idle_error("compaction stream"))?,
+                        };
+                        let Some(event) = event else { break; };
+                        let event = event?;
+                        request.observe(&event);
+                        match event {
+                            ModelEvent::TextDelta(text) => {
+                                // Archive a bounded response even when rejecting its size.
+                                summary.push_str(tools::prefix(&text, SUMMARY_LIMIT + 1 - summary.len()));
+                                anyhow::ensure!(summary.len() <= SUMMARY_LIMIT, "context summary exceeds 16 KiB");
+                            }
+                            ModelEvent::Usage(value) => {
+                                attempt_usage.add_assign(&value);
+                                request.span.record("gen_ai.usage.input_tokens", attempt_usage.input_tokens);
+                                request.span.record("gen_ai.usage.cache_read.input_tokens", attempt_usage.cached_input_tokens);
+                                request.span.record("gen_ai.usage.output_tokens", attempt_usage.output_tokens);
+                            },
+                            ModelEvent::ToolCall(call) => {
+                                rejected_tools.push(json!({"name":call.name,"arguments":tools::prefix(&call.arguments,4096)}));
+                                anyhow::bail!("context summary must be text without tools");
+                            }
+                            ModelEvent::Activity | ModelEvent::ProviderContext(_) | ModelEvent::ReasoningDelta { .. } => {}
+                            ModelEvent::Binary { .. } => anyhow::bail!("context summary must be text"),
+                        }
+                    }
+                    anyhow::ensure!(valid_summary(&summary), "model returned an empty or tool-shaped context summary");
+                    Ok(())
+                }.instrument(request_span).await;
+                if let Err(error) = &response {
+                    request.span.record("error.message", format!("{error:#}"));
                 }
-                continue;
+                request.finish(response.as_ref().err().map(|_| "model_request_failed"));
+                drop(request);
+                usage.add_assign(&attempt_usage);
+                self.store.save_audit(json!({"kind":"contextSummary","threadId":snapshot.id,"attempt":attempt+1,"networkRetries":network_retries,"beforeBytes":before_bytes,"estimatedInputTokens":estimated_tokens,"tokenWindow":self.limits.context_window_tokens,"outputReserveTokens":self.limits.context_output_reserve_tokens,"response":summary,"rejectedTools":rejected_tools,"usage":attempt_usage,"error":response.as_ref().err().map(|e|e.to_string()),"cancelled":cancel.is_cancelled()})).await?;
+                anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
+                let error = match response {
+                    Ok(()) => {
+                        accepted = Some(summary);
+                        break;
+                    }
+                    Err(error) => error,
+                };
+                // Goal 计量失效时保留旧 checkpoint，不能重试或提交降级摘要。
+                if let Err(blocker) = model.check_work() {
+                    let diagnostic = format!("{blocker}: {error}");
+                    return Err(error.context(diagnostic));
+                }
+                if let Some(delay) =
+                    watchdog::retry_delay(self.limits.watchdog_disable, &error, network_retries)
+                {
+                    network_retries = network_retries.saturating_add(1);
+                    cell.emit("areal/model/watchdogRetry", json!({"threadId":snapshot.id,"turnId":snapshot.turns.last().map(|t| &t.id),"purpose":"summary","retry":network_retries,"delayMs":delay.as_millis() as u64}));
+                    tracing::warn!(
+                        retry = network_retries,
+                        delay_ms = delay.as_millis() as u64,
+                        "network watchdog retrying context summary"
+                    );
+                    tokio::select! { biased;
+                        _ = cancel.cancelled() => anyhow::bail!("cancelled"),
+                        _ = tokio::time::sleep(delay) => {},
+                    }
+                    continue;
+                }
+                attempt += 1;
+                network_retries = 0;
+                request_reserved = false;
+                input.push(Message::text("user", "The summary was rejected. Return plain factual text only, without tool calls or markup. Use fewer than 1800 words and 12000 UTF-8 bytes. Keep unfinished work and verification status explicit."));
             }
-            attempt += 1;
-            network_retries = 0;
-            request_reserved = false;
-            input.push(Message::text("user", "The summary was rejected. Return plain factual text only, without tool calls or markup. Use fewer than 1800 words and 12000 UTF-8 bytes. Keep unfinished work and verification status explicit."));
-        }
-        let summary = accepted
-            .unwrap_or_else(|| retained_evidence(&prefix, SUMMARY_LIMIT.min(before_bytes / 3)));
-        let mut state = cell.state.lock().await;
-        let mut candidate = state.thread.clone();
-        let mut cumulative_usage = snapshot
-            .context_checkpoint
-            .as_ref()
-            .map(|checkpoint| checkpoint.usage.clone())
-            .unwrap_or_default();
-        cumulative_usage.add_assign(&usage);
-        candidate.context_checkpoint = Some(areal_protocol::ContextCheckpoint {
-            through_item_id: boundary,
-            summary,
-            total_duration_ms: started.elapsed().as_millis() as u64
-                + snapshot
-                    .context_checkpoint
-                    .as_ref()
-                    .map_or(0, |checkpoint| checkpoint.total_duration_ms),
-            usage: cumulative_usage,
-            compactions: snapshot
+            let summary = accepted
+                .unwrap_or_else(|| retained_evidence(&prefix, SUMMARY_LIMIT.min(before_bytes / 3)));
+            tracing::Span::current().record("gen_ai.output.messages", trajectory::messages(&[Message::text("assistant", &summary)]));
+            let mut state = cell.state.lock().await;
+            let mut candidate = state.thread.clone();
+            let mut cumulative_usage = snapshot
                 .context_checkpoint
                 .as_ref()
-                .map_or(1, |checkpoint| checkpoint.compactions + 1),
-        });
-        candidate
-            .turns
-            .last_mut()
-            .unwrap()
-            .usage
-            .get_or_insert_with(Default::default)
-            .add_assign(&usage);
-        let after_bytes = message_bytes(&history(&candidate, &self.store)?);
-        anyhow::ensure!(
-            after_bytes < before_bytes,
-            "context compaction did not reduce input size"
-        );
-        self.persist(&candidate).await?;
-        state.thread = candidate;
-        cell.emit("areal/context/compacted", json!({"threadId":state.thread.id,"beforeBytes":before_bytes,"afterBytes":after_bytes,"durationMs":started.elapsed().as_millis() as u64,"usage":usage}));
-        tracing::info!(
-            before_bytes,
-            after_bytes,
-            duration_ms = started.elapsed().as_millis() as u64,
-            "model context compacted"
-        );
-        Ok(())
+                .map(|checkpoint| checkpoint.usage.clone())
+                .unwrap_or_default();
+            cumulative_usage.add_assign(&usage);
+            candidate.context_checkpoint = Some(areal_protocol::ContextCheckpoint {
+                through_item_id: boundary,
+                summary,
+                total_duration_ms: started.elapsed().as_millis() as u64
+                    + snapshot
+                        .context_checkpoint
+                        .as_ref()
+                        .map_or(0, |checkpoint| checkpoint.total_duration_ms),
+                usage: cumulative_usage,
+                compactions: snapshot
+                    .context_checkpoint
+                    .as_ref()
+                    .map_or(1, |checkpoint| checkpoint.compactions + 1),
+            });
+            candidate
+                .turns
+                .last_mut()
+                .unwrap()
+                .usage
+                .get_or_insert_with(Default::default)
+                .add_assign(&usage);
+            let after_bytes = message_bytes(&history(&candidate, &self.store)?);
+            anyhow::ensure!(
+                after_bytes < before_bytes,
+                "context compaction did not reduce input size"
+            );
+            self.persist(&candidate).await?;
+            state.thread = candidate;
+            cell.emit("areal/context/compacted", json!({"threadId":state.thread.id,"beforeBytes":before_bytes,"afterBytes":after_bytes,"durationMs":started.elapsed().as_millis() as u64,"usage":usage}));
+            tracing::info!(
+                before_bytes,
+                after_bytes,
+                duration_ms = started.elapsed().as_millis() as u64,
+                "model context compacted"
+            );
+            Ok(())
+        }.instrument(span).await;
+        operation.finish(result.as_ref().err().map(|_| "compaction_failed"));
+        result
     }
 }
 

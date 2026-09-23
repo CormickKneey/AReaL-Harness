@@ -595,22 +595,83 @@ impl Engine {
             let state = cell.state.lock().await;
             let active = state.active.as_ref().unwrap();
             anyhow::ensure!(!active.sealed && !cancel.is_cancelled(), "cancelled");
-            active.tools.spawn(async move {
-                let result =
-                    std::panic::AssertUnwindSafe(engine.tool_owned(&owned_cell, &token, call))
-                        .catch_unwind()
-                        .await
-                        .unwrap_or_else(|_| {
-                            Err(anyhow::anyhow!(
-                                "tool task panicked; outcome may be UNKNOWN"
-                            ))
-                        });
-                let _ = sent.send(result);
-            });
+            active.tools.spawn(
+                async move {
+                    let result =
+                        std::panic::AssertUnwindSafe(engine.tool_owned(&owned_cell, &token, call))
+                            .catch_unwind()
+                            .await
+                            .unwrap_or_else(|_| {
+                                Err(anyhow::anyhow!(
+                                    "tool task panicked; outcome may be UNKNOWN"
+                                ))
+                            });
+                    let _ = sent.send(result);
+                }
+                .instrument(tracing::Span::current()),
+            );
         }
         received.await?
     }
     async fn tool_owned(
+        self: &Arc<Self>,
+        cell: &Arc<Cell>,
+        cancel: &CancellationToken,
+        call: ToolCall,
+    ) -> anyhow::Result<usize> {
+        let (session_id, turn_id, turn_number) = {
+            let state = cell.state.lock().await;
+            (
+                state.thread.session_id.clone(),
+                state.active.as_ref().unwrap().id.clone(),
+                state.thread.turns.len() as u64,
+            )
+        };
+        let backend = {
+            let bindings = cell.bindings.read().await;
+            match bindings.registry.get(&call.name).map(|e| e.backend.clone()) {
+                Ok(Backend::Mcp(_)) => "extension",
+                Ok(Backend::Plugin(_)) => "extension",
+                _ => "function",
+            }
+        };
+        let mut operation = trajectory::Operation::new(
+            info_span!(
+                target: trajectory::TARGET,
+                "execute_tool",
+                otel.name = %format!("execute_tool {}", call.name),
+                otel.kind = "internal",
+                otel.status_code = tracing::field::Empty,
+                error.type = tracing::field::Empty,
+                error.message = tracing::field::Empty,
+                gen_ai.operation.name = "execute_tool",
+                gen_ai.conversation.id = %session_id,
+                areal.turn.id = %turn_id,
+                areal.turn.number = turn_number,
+                gen_ai.tool.name = %call.name,
+                gen_ai.tool.type = backend,
+                gen_ai.tool.call.id = %call.id,
+                gen_ai.tool.call.arguments = %call.arguments,
+                gen_ai.tool.call.result = tracing::field::Empty,
+                areal.duration_ms = tracing::field::Empty,
+            ),
+            "areal.tool.result",
+        );
+        let span = operation.span.clone();
+        let result = async {
+            tracing::event!(target: trajectory::TARGET, tracing::Level::INFO, { "event.name" = "areal.tool.call" });
+            self.tool_inner(cell, cancel, call).await
+        }
+        .instrument(span)
+        .await;
+        if let Err(error) = &result {
+            operation.span.record("error.message", format!("{error:#}"));
+        }
+        operation.finish(result.as_ref().err().map(|_| "tool_execution_failed"));
+        result
+    }
+
+    async fn tool_inner(
         self: &Arc<Self>,
         cell: &Arc<Cell>,
         cancel: &CancellationToken,
@@ -784,6 +845,17 @@ impl Engine {
                 (outcome, false, json!({"error":error}))
             }
         };
+        if !success {
+            tracing::Span::current().record("otel.status_code", "ERROR");
+            tracing::Span::current().record(
+                "error.type",
+                match outcome {
+                    ToolOutcome::Unknown => "tool_outcome_unknown",
+                    ToolOutcome::Cancelled => "tool_cancelled",
+                    _ => "tool_execution_failed",
+                },
+            );
+        }
         let unknown = outcome == ToolOutcome::Unknown;
         let cursor = result["processId"]
             .as_str()
@@ -830,6 +902,7 @@ impl Engine {
                 }
             }
         }
+        tracing::Span::current().record("gen_ai.tool.call.result", result.to_string());
         let custom_content = result
             .get("contentItems")
             .map(|_| extensions::content_items(&result));
