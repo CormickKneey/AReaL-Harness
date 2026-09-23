@@ -52,7 +52,7 @@ thread/configure requires expectedRevision and an idle, non-compacting Thread. r
 
 Optional `parameters.reasoningSummary` accepts `auto` / `concise` / `detailed` for Responses only, merging Provider defaults with Thread overrides. Summary requests remain disabled when neither Provider/service defaults nor Thread overrides configure it. `areal/model/list.parameterCapabilities` includes `reasoningSummary` only for Responses providers; this advertises adapter support, not support for every upstream model or mode. See [Core reasoning progress](core.en.md#reasoning-progress) for events and parts.
 
-options.readOnly narrows Scope write roots and networking. toolAllowlist narrows the Profile; preapprovedTools cannot remove mandatory deployment approvals. maxModelRounds is 1–1024 with a handoff-only final round, not a team request budget. Profile/Workflow definitions use immutable id/revision pairs; Skill references do not freeze resource content, as described below.
+options.readOnly narrows Scope write roots and networking. toolAllowlist narrows the Profile; preapprovedTools cannot remove mandatory deployment approvals and matches only the current tool name; preapproving a read tool does not exempt its hooks. maxModelRounds is 1–1024 with a handoff-only final round, not a team request budget. Profile/Workflow definitions use immutable id/revision pairs; Skill references do not freeze resource content, as described below.
 
 <a id="skills"></a>
 ## Skill metadata and resources
