@@ -3,19 +3,40 @@ use anyhow::{Result, ensure};
 use areal_config::{ConfigInputs, ModelProtocolConfig, ResolvedCoreConfig, SelectedModelConfig};
 use areal_engine::{
     Engine,
-    model::{HttpModel, Model, ModelOptions, ModelProtocol, UnconfiguredModel},
+    model::{
+        CredentialUnavailableModel, HttpModel, Model, ModelOptions, ModelProtocol,
+        UnconfiguredModel,
+    },
 };
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
 
 pub fn model(
     config: &SelectedModelConfig,
-    credential: Option<String>,
+    inputs: &ConfigInputs,
     data: &Path,
+    allow_missing_credential: bool,
 ) -> Result<Arc<dyn Model>> {
     if config.name.is_empty() {
         return Ok(Arc::new(UnconfiguredModel));
     }
+    let credential = match config.credential(inputs) {
+        Ok(credential) => credential,
+        Err(error)
+            if allow_missing_credential
+                && error.kind == areal_config::ConfigErrorKind::MissingValue =>
+        {
+            return Ok(Arc::new(CredentialUnavailableModel {
+                name: config.name.clone(),
+                provider: config.provider.clone(),
+                credential_env: config
+                    .api_key_env
+                    .clone()
+                    .expect("missing credential requires a reference"),
+            }));
+        }
+        Err(error) => return Err(error.into()),
+    };
     Ok(Arc::new(
         HttpModel::with_protocol(
             config.endpoint.clone(),
@@ -83,11 +104,7 @@ impl Reload {
                 "model configuration archive digest mismatch"
             );
             // 退役凭据缺失不阻止服务启动；使用该版本的队列恢复会明确拒绝。
-            if let Ok(model) = previous
-                .credential(&inputs)
-                .map_err(anyhow::Error::from)
-                .and_then(|credential| model(previous, credential, &config.data_dir))
-            {
+            if let Ok(model) = model(previous, &inputs, &config.data_dir, false) {
                 engine.register_default_model(revision.clone(), model, false);
             }
         }
@@ -98,16 +115,21 @@ impl Reload {
             current: String::new(),
             data: config.data_dir.clone(),
         };
-        reload.apply(&config.model, engine)?;
+        reload.apply(&config.model, engine, true)?;
         Ok(reload)
     }
 
-    fn apply(&mut self, config: &SelectedModelConfig, engine: &Engine) -> Result<()> {
+    fn apply(
+        &mut self,
+        config: &SelectedModelConfig,
+        engine: &Engine,
+        startup: bool,
+    ) -> Result<()> {
         let revision = config.fingerprint();
         if revision == self.current {
             return Ok(());
         }
-        let model = model(config, config.credential(&self.inputs)?, &self.data)?;
+        let model = model(config, &self.inputs, &self.data, startup)?;
         let mut candidate = self.models.clone();
         candidate.insert(revision.clone(), config.clone());
         ensure!(
@@ -153,7 +175,7 @@ impl Reload {
                     if candidate.0 != self.deployment {
                         Ok(true)
                     } else {
-                        self.apply(&config.model, &engine).map(|()| false)
+                        self.apply(&config.model, &engine, false).map(|()| false)
                     }
                 }
                 Err(error) => {
@@ -171,5 +193,55 @@ impl Reload {
                 )
                 .await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn management_model_rejects_missing_credential_before_network() {
+        let mut inputs = ConfigInputs::default();
+        inputs.cwd = std::env::current_dir().unwrap();
+        inputs.homedir = Some(inputs.cwd.clone());
+        inputs.overrides.model = Some("test".into());
+        inputs.overrides.model_endpoint = Some("http://127.0.0.1:1/v1/chat/completions".into());
+        inputs.overrides.api_key_env = Some("GROK_API_KEY".into());
+        let config = areal_config::load_management_config(&inputs).unwrap();
+        let unavailable = model(&config.model, &inputs, &config.data_dir, true).unwrap();
+        let error = unavailable.check_work().unwrap_err().to_string();
+        assert!(error.contains("MODEL_CREDENTIAL_UNAVAILABLE"));
+        assert!(error.contains("GROK_API_KEY"));
+        assert!(
+            unavailable
+                .configure(&Default::default())
+                .unwrap()
+                .check_work()
+                .unwrap_err()
+                .to_string()
+                .contains("MODEL_CREDENTIAL_UNAVAILABLE")
+        );
+        assert!(model(&config.model, &inputs, &config.data_dir, false).is_err());
+    }
+
+    #[test]
+    fn missing_credential_on_reload_preserves_last_valid_revision() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut inputs = ConfigInputs::default();
+        inputs.cwd = temp.path().into();
+        inputs.homedir = Some(temp.path().into());
+        inputs.overrides.model = Some("valid".into());
+        inputs.overrides.model_endpoint = Some("http://127.0.0.1:1/v1/chat/completions".into());
+        let valid = areal_config::load_config(&inputs).unwrap();
+        let engine =
+            Engine::open(temp.path(), Arc::new(UnconfiguredModel), Default::default()).unwrap();
+        let mut reload = Reload::open(inputs.clone(), &valid, &engine).unwrap();
+        let revision = reload.current.clone();
+        inputs.overrides.api_key_env = Some("MISSING_KEY".into());
+        let unavailable = areal_config::load_management_config(&inputs).unwrap();
+        assert!(reload.apply(&unavailable.model, &engine, false).is_err());
+        assert_eq!(reload.current, revision);
+        assert_eq!(reload.models.len(), 1);
     }
 }
