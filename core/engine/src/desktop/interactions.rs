@@ -1,4 +1,5 @@
 use super::*;
+use crate::tools::Backend;
 
 impl Engine {
     pub async fn interactions(&self, thread_id: &str) -> Result<Value> {
@@ -45,10 +46,13 @@ impl Engine {
             } else {
                 if request.answers.is_some()
                     || request.arguments_digest != interaction.arguments_digest
-                    || !matches!(request.decision.as_deref(), Some("allowOnce" | "deny"))
+                    || !matches!(
+                        request.decision.as_deref(),
+                        Some("allowOnce" | "allowSession" | "allowProject" | "deny")
+                    )
                 {
                     return Err(invalid(
-                        "approval requires the current digest and allowOnce or deny",
+                        "approval requires the current digest and a supported decision",
                     ));
                 }
                 json!({"decision":request.decision,"argumentsDigest":request.arguments_digest})
@@ -56,6 +60,43 @@ impl Engine {
             interaction.status = "answered".into();
             interaction.response = Some(response.clone());
             let resolved = interaction.clone();
+            if matches!(
+                request.decision.as_deref(),
+                Some("allowSession" | "allowProject")
+            ) {
+                if resolved
+                    .effective_permissions
+                    .as_ref()
+                    .is_none_or(|p| p["rememberAllowed"] != true)
+                {
+                    return Err(invalid("this approval cannot be remembered"));
+                }
+                let grant: PermissionGrant = serde_json::from_value(
+                    resolved.effective_permissions.as_ref().unwrap()["grant"].clone(),
+                )
+                .map_err(invalid)?;
+                if request.decision.as_deref() == Some("allowProject") {
+                    let mut project = engine.permissions.project.lock().await;
+                    let mut grants = if project.workspace == engine.default_cwd() {
+                        project.grants.clone()
+                    } else {
+                        Vec::new()
+                    };
+                    crate::permissions::remember(&mut grants, grant)?;
+                    let saved = crate::permissions::ProjectGrants {
+                        workspace: engine.default_cwd(),
+                        grants,
+                    };
+                    engine
+                        .store
+                        .save_metadata("permissions", &saved)
+                        .await
+                        .map_err(|e| Error::Storage(e.to_string()))?;
+                    *project = saved;
+                } else {
+                    crate::permissions::remember(&mut data.permission_grants, grant)?;
+                }
+            }
             data.interaction_revision += 1;
             let revision = data.interaction_revision;
             engine.persist(&candidate).await?;
@@ -107,22 +148,38 @@ impl Engine {
             if active.cancel.is_cancelled() {
                 return Err(Error::Closed);
             }
-            let permissions = json!({"readOnly":state.thread.turns.last().and_then(|t|t.configuration.as_ref()).is_some_and(|c|c.read_only),"runtime":self.runtime_capabilities()});
-            let generation = if let Some((tool, args)) = &approval {
-                let name = args.get("tool").and_then(Value::as_str).unwrap_or(tool);
-                let bindings = cell.bindings.read().await;
-                match bindings.registry.get(name).ok().map(|t| t.backend.clone()) {
-                    Some(crate::tools::registry::Backend::Plugin(p)) => {
-                        Some(p.host.generation.clone())
-                    }
-                    _ => args
-                        .get("generation")
-                        .and_then(Value::as_str)
-                        .map(str::to_owned),
-                }
+            let mut permissions = json!({"readOnly":cell.research || state.thread.turns.last().and_then(|t|t.configuration.as_ref()).is_some_and(|c|c.read_only),"runtime":self.runtime_capabilities()});
+            let (generation, can_remember) = if let Some((tool, args)) = &approval {
+                self.permission_identity(cell, tool, args).await
             } else {
-                None
+                (None, false)
             };
+            if let Some((tool, args)) = &approval {
+                let config = self.permission_config();
+                let turn = state
+                    .thread
+                    .turns
+                    .last()
+                    .and_then(|t| t.configuration.as_ref());
+                let forced = crate::permissions::forced(turn, tool, args);
+                permissions["rememberAllowed"] = json!(
+                    can_remember
+                        && !forced
+                        && !config
+                            .ask
+                            .iter()
+                            .any(|p| crate::permissions::matches_tool(p, tool))
+                );
+                permissions["grant"] = json!(
+                    self.permission_grant(
+                        tool,
+                        args,
+                        generation.as_deref(),
+                        &crate::permissions::restrictions(turn)
+                    )
+                    .map_err(invalid)?
+                );
+            }
             let interaction = Interaction {
                 request_id:request_id.clone(),thread_id:state.thread.id.clone(),turn_id:active.id.clone(),call_id:call_id.into(),
                 kind:if approval.is_some() {"approval"} else {"question"}.into(),status:"pending".into(),expires_at:now()+timeout_seconds as i64,
@@ -205,16 +262,82 @@ impl Engine {
         cancel: &CancellationToken,
     ) -> areal_runtime_protocol::Result<()> {
         use areal_runtime_protocol::{Error as RuntimeError, ErrorCode};
-        let needed = {
+        let mut effective = arguments.clone();
+        let backend = {
+            cell.bindings
+                .read()
+                .await
+                .registry
+                .get(tool)
+                .ok()
+                .map(|t| t.backend.clone())
+        };
+        if matches!(backend, Some(Backend::Builtin))
+            && let Some(runtime) = &self.runtime
+        {
+            for field in ["path", "cwd"] {
+                if let Some(path) = effective[field].as_str() {
+                    effective[field] =
+                        json!(crate::tools::resource_uri(path, runtime).map_err(|e| {
+                            RuntimeError::new(ErrorCode::InvalidArgument, e.to_string())
+                        })?);
+                }
+            }
+        }
+        let arguments = &effective;
+        let action = self.permission_action(cell, tool, arguments).await;
+        if action == "deny" {
+            return Err(RuntimeError::new(
+                ErrorCode::PermissionDenied,
+                "tool denied by permissions.deny",
+            ));
+        }
+        let (forced, restrictions) = {
             let state = cell.state.lock().await;
             let config = state
                 .thread
                 .turns
                 .last()
                 .and_then(|t| t.configuration.as_ref());
-            config.is_some_and(|c| requires_approval(c, tool, arguments))
+            (
+                crate::permissions::forced(config, tool, arguments),
+                crate::permissions::restrictions(config),
+            )
         };
-        if needed {
+        let (generation, can_remember) = self.permission_identity(cell, tool, arguments).await;
+        let grant = self
+            .permission_grant(tool, arguments, generation.as_deref(), &restrictions)
+            .map_err(|e| RuntimeError::new(ErrorCode::InvalidArgument, e.to_string()))?;
+        let session_allowed = cell
+            .state
+            .lock()
+            .await
+            .thread
+            .desktop
+            .as_ref()
+            .is_some_and(|d| d.permission_grants.iter().any(|g| g.key == grant.key));
+        let project_allowed = {
+            let project = self.permissions.project.lock().await;
+            project.workspace == self.default_cwd()
+                && project.grants.iter().any(|g| g.key == grant.key)
+        };
+        let explicit_ask = self
+            .permission_config()
+            .ask
+            .iter()
+            .any(|p| crate::permissions::matches_tool(p, tool));
+        if forced
+            || (action == "ask"
+                && (explicit_ask || !can_remember || !(session_allowed || project_allowed)))
+        {
+            if self.interaction_mode(cell).await
+                != areal_protocol::tasks::InteractionMode::Interactive
+            {
+                return Err(RuntimeError::new(
+                    ErrorCode::PermissionDenied,
+                    "NON_INTERACTIVE_APPROVAL_REQUIRED: execution denied; no synchronous approval can be awaited",
+                ));
+            }
             let result = self
                 .await_interaction(
                     cell,
@@ -235,7 +358,10 @@ impl Engine {
                         e.to_string(),
                     )
                 })?;
-            if result["decision"] != "allowOnce" {
+            if !matches!(
+                result["decision"].as_str(),
+                Some("allowOnce" | "allowSession" | "allowProject")
+            ) {
                 return Err(RuntimeError::new(
                     ErrorCode::PermissionDenied,
                     "tool approval denied",
@@ -249,70 +375,5 @@ impl Engine {
             ));
         }
         Ok(())
-    }
-}
-
-// Hook 可按父工具要求审批，但预批准只匹配当前操作，不能沿父工具传播。
-fn requires_approval(config: &EffectiveConfig, tool: &str, arguments: &Value) -> bool {
-    let parent_tool = arguments.get("tool").and_then(Value::as_str);
-    let matches = |name: &str| name == "*" || name == tool || parent_tool == Some(name);
-    config
-        .profile
-        .as_ref()
-        .is_some_and(|p| p.approval_tools.iter().any(|n| matches(n)))
-        || (config.options.approval_tools.iter().any(|n| matches(n))
-            && !config
-                .options
-                .preapproved_tools
-                .iter()
-                .any(|n| n == "*" || n == tool))
-}
-
-#[cfg(test)]
-mod permission_tests {
-    use super::*;
-    #[test]
-    fn readonly_preapproval_does_not_approve_hooks_or_external_tool_arguments() {
-        let mut config = EffectiveConfig::default();
-        config.options.approval_tools = vec!["*".into()];
-        config.options.preapproved_tools = vec!["fs_read".into()];
-        assert!(!requires_approval(
-            &config,
-            "fs_read",
-            &json!({"path":"file"})
-        ));
-        assert!(requires_approval(
-            &config,
-            "fs_create",
-            &json!({"path":"file"})
-        ));
-        assert!(requires_approval(
-            &config,
-            "hook:audit",
-            &json!({"tool":"fs_read"})
-        ));
-        assert!(requires_approval(
-            &config,
-            "external_tool",
-            &json!({"tool":"fs_read"})
-        ));
-        config.options.preapproved_tools.push("hook:audit".into());
-        assert!(!requires_approval(
-            &config,
-            "hook:audit",
-            &json!({"tool":"fs_read"})
-        ));
-    }
-    #[test]
-    fn profile_approval_remains_mandatory() {
-        let mut config = EffectiveConfig::default();
-        config.options.preapproved_tools = vec!["*".into()];
-        config.profile = Some(serde_json::from_value(json!({"id":"test","revision":"1","displayName":"test","instructions":"","approvalTools":["fs_read"]})).unwrap());
-        assert!(requires_approval(&config, "fs_read", &json!({})));
-        assert!(requires_approval(
-            &config,
-            "hook:audit",
-            &json!({"tool":"fs_read"})
-        ));
     }
 }

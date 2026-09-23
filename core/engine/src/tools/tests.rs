@@ -250,6 +250,7 @@ async fn command_with_policy(
     execute(
         client,
         Request::Command(Command {
+            environment: BTreeMap::new(),
             argv: vec!["fixture".into()],
             cwd: "workspace://repo".into(),
             timeout_ms: 300_000,

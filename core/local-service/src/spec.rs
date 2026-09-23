@@ -11,6 +11,10 @@ use std::{collections::BTreeMap, ffi::OsString, path::PathBuf};
 #[serde(deny_unknown_fields)]
 pub struct LocalArgs {
     #[arg(long)]
+    pub permissions: Option<String>,
+    #[arg(long)]
+    pub scratch: Option<PathBuf>,
+    #[arg(long)]
     pub config: Option<PathBuf>,
     #[arg(long)]
     pub workspace: Option<PathBuf>,
@@ -18,7 +22,7 @@ pub struct LocalArgs {
     pub data_dir: Option<PathBuf>,
     #[arg(long)]
     pub allow_write: bool,
-    #[arg(long, requires = "allow_write")]
+    #[arg(long)]
     pub workgroup_policy: Option<PathBuf>,
     #[arg(long, requires = "workgroup_policy")]
     pub workgroup_toolchain: Option<PathBuf>,
@@ -48,6 +52,7 @@ impl LocalArgs {
     pub fn launcher_args(&self) -> Vec<OsString> {
         let mut out = Vec::new();
         for (name, value) in [
+            ("scratch", &self.scratch),
             ("config", &self.config),
             ("workspace", &self.workspace),
             ("data-dir", &self.data_dir),
@@ -60,6 +65,7 @@ impl LocalArgs {
             }
         }
         for (name, value) in [
+            ("permissions", &self.permissions),
             ("model-endpoint", &self.model_endpoint),
             ("model-protocol", &self.model_protocol),
             ("model", &self.model),
@@ -128,6 +134,7 @@ impl LaunchSpec {
             env: std::env::vars_os().collect(),
             config_file: args.config.clone(),
             overrides: ConfigOverrides {
+                permissions: args.permissions.clone(),
                 listen: Some("127.0.0.1:0".into()),
                 data_dir: args.data_dir.clone(),
                 model: args.model.clone(),
@@ -139,6 +146,7 @@ impl LaunchSpec {
             },
         };
         let config = areal_config::load_management_config(&inputs)?;
+        config.credential(&inputs)?;
         let root = storage::canonical_pending(&config.home)?;
         let workspace_key = storage::digest(workspace.as_os_str().as_encoded_bytes());
         let mapping = root
@@ -186,10 +194,6 @@ impl LaunchSpec {
                 .join(name)
                 .canonicalize()
                 .with_context(|| format!("missing {name}; run make build"))?;
-            ensure!(
-                !args.allow_write || !path.starts_with(&workspace),
-                "trusted binaries must be outside the writable workspace"
-            );
             // 比较文件内容，避免原路径被重新构建后静默复用旧服务。
             binaries.insert(name, storage::file_digest(&path)?);
         }
@@ -198,6 +202,7 @@ impl LaunchSpec {
         resolved.data_dir = Some(data.clone());
         resolved.config = config.config_file.clone();
         for path in [
+            &mut resolved.scratch,
             &mut resolved.workgroup_policy,
             &mut resolved.workgroup_toolchain,
             &mut resolved.desktop_config,
@@ -209,8 +214,8 @@ impl LaunchSpec {
         }
         let mut effective = config.diagnostic(false);
         effective["server"]["data_dir"] = json!(data);
-        // diagnostic 会脱敏 URL；兼容性仍须比较完整地址，但登记中只保存摘要。
-        effective["model"]["endpoint"] = json!(config.model.endpoint);
+        // 默认模型单独按版本比较；热更新不改变部署身份。
+        effective.as_object_mut().unwrap().remove("model");
         let mut files = BTreeMap::new();
         for (key, path) in [
             ("extensions", config.tool_extensions_file.as_ref()),
@@ -222,16 +227,36 @@ impl LaunchSpec {
             }
         }
         let mut components = BTreeMap::new();
+        let model_environment: BTreeMap<_, _> = config
+            .sources
+            .iter()
+            .filter_map(|(field, source)| {
+                if field.starts_with("model.")
+                    && let ConfigSource::Env { name } = source
+                {
+                    Some((
+                        name,
+                        inputs
+                            .env
+                            .get(std::ffi::OsStr::new(name))
+                            .map(|v| v.to_string_lossy()),
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect();
         for (key, value) in [
+            (
+                "model-inputs",
+                json!({"environment":model_environment,"cli":[args.model.clone(),args.model_provider.clone(),args.model_endpoint.clone(),args.model_protocol.clone(),args.api_key_env.clone()]}),
+            ),
             ("workspace", json!(workspace)),
             ("configuration", effective),
             (
                 "permissions",
-                json!([
-                    args.allow_write,
-                    args.allow_network,
-                    args.allow_concurrent_writes
-                ]),
+                json!({"policy":config.permissions,"scratch":resolved.scratch,
+                    "sandbox":"full-access","allowConcurrentWrites":args.allow_concurrent_writes}),
             ),
             (
                 "runtime",
@@ -244,6 +269,7 @@ impl LaunchSpec {
             components.insert(key.into(), storage::digest(&serde_json::to_vec(&value)?));
         }
         let fingerprint = storage::digest(&serde_json::to_vec(&components)?);
+        components.insert("model".into(), config.model.fingerprint());
         let service_id = storage::digest(data.as_os_str().as_encoded_bytes())[..24].to_owned();
         storage::registry(&root, &service_id)?;
         Ok(Self {

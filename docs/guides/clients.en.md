@@ -9,19 +9,21 @@ Complete the [quickstart](quickstart.en.md) first. Clients share Core history; R
 ```sh
 make tui
 make tui ARGS='--resume THREAD_ID'
-make tui ARGS='--workspace /absolute/task --allow-write --prompt "Describe the task"'
+make tui ARGS='--workspace /absolute/task --prompt "Describe the task"'
 # Connect using the authentication file in the existing Core data directory
 make tui ARGS='--endpoint ws://127.0.0.1:4500 --auth-file /absolute/core-data/security/auth.json'
 ```
 
 Without an endpoint, interactive TUI attaches to a shared Core/Runtime on a random loopback port. Multiple windows in the same workspace reuse it; closing a window leaves service and tasks running. `--prompt`, `--goal` and `--input-file` default to owned mode and clean up on exit. `--local-mode shared|owned` overrides this choice. Explicit endpoint (alias `--remote`) only connects and cannot be combined with local deployment arguments.
 
-Shared mode defaults to a workspace-specific data directory under `~/.areal-harness/instances/`; explicit data configuration keeps its precedence. To open old `~/.areal-harness/state` history, specify `--data-dir` or bind it after stopping the old Core. Conflicting deployment permissions/configurations are rejected. Discovery, migration, logs and Desktop integration are specified in [local services](../api/local-service.en.md).
+Shared mode defaults to a workspace-specific data directory under `~/.areal-harness/instances/`; explicit data configuration keeps its precedence. To open old `~/.areal-harness/state` history, specify `--data-dir` or bind it after stopping the old Core. Model TOML changes reload automatically; other TOML changes restart after background work settles, while permission/deployment argument changes require explicit restart. Discovery, migration, logs and Desktop integration are specified in [local services](../api/local-service.en.md).
 
 ```sh
 target/debug/areal web --workspace /absolute/task
 target/debug/areal service list --json
-target/debug/areal service stop --instance INSTANCE_ID --json
+target/debug/areal service status --json
+target/debug/areal service restart --json
+target/debug/areal service stop --json
 ```
 
 `areal -p 'prompt' --output-format stream-json --verbose` provides noninteractive CLI operation; `areal serve` starts a persistent service. See the [CLI contract](../api/claude-cli.en.md) for arguments, authentication, resume and exit codes. Web is served at `/ui`; log in with the local token from `security/auth.json` in the service data directory.
@@ -40,11 +42,15 @@ Web uses a neutral workbench layout: a collapsible 240px sidebar, a task heading
 
 The Web client owns appearance and navigation; task, permission, and execution state come from Core.
 
+TUI headers and Web show YOLO/ASK_PERMISSIONS and Core remains authoritative. TUI approvals show effective arguments; ↑/↓ selects deny/allow once/remember session/project, Enter submits, Esc denies and PgUp/PgDn scrolls arguments. Deny is selected initially. Web provides equivalent buttons. Forced approvals only offer single-use answers. `/permissions` displays mode, source and memory; `/permissions clear-session` or `clear-project` revokes remembered grants. See [configuration](configuration.en.md#permissions). `--prompt`/`--input-file` cannot answer interactive requests: they interrupt and return an error asking for interactive TUI/Web.
+
 ## TUI controls
 
 | Control | Behavior |
 |---|---|
 | Enter | Start a Turn when idle; steer while running |
+| ←/→, Ctrl-A / Ctrl-E | In the editor, move by grapheme or jump to the current line start / end |
+| Ctrl-D / Delete, Backspace | Delete the grapheme at / before the cursor; empty input or the corresponding boundary is a no-op, without exiting |
 | `/`, Tab, Esc | Slash candidates, completion and dismissal |
 | Ctrl-C / Ctrl-Q | Pause the current Goal and cancel its Turn (interrupt the Turn without a Goal) / exit |
 | Ctrl-R | Reconnect and restore a snapshot without replay |
@@ -102,3 +108,11 @@ target/debug/areal-tui --endpoint ws://127.0.0.1:4500 --goal 'Inspect the code a
 `--goal` conflicts with `--prompt`/`--input-file`. `--resume THREAD_ID` can create a new Goal in an existing idle Thread. Headless mode waits across Turns, exits successfully only for completed, and prints Goal JSON/reasons with a nonzero exit for other stopped states. Remote headless exit/disconnection does not cancel server execution; owned local launcher exit shuts down its Core; shared mode only disconnects. Use interactive `/open` and `/goal-resume` for stopped Goals. Ordinary `--prompt` and Claude CLI retain single-execution semantics.
 
 Core restart restores active Goals as paused/serverRestarted; `thread/resume` does not restart them. Unknown model usage retains its reservation; explicit Goal resume acknowledges it without erasing consumption. Tool UNKNOWN still needs inspection and acknowledgement. Budget, active-time, Turn or history exhaustion stops execution without automatic retry. See [configuration](configuration.en.md#goals) and [Core API](../api/core.en.md#goals).
+
+## Background tasks and Inbox
+
+Core exposes a unified [Task Mode API](../api/tasks.en.md) for foreground, scheduled and background work. Models may ask asynchronously even inside foreground Goals; the Task Channel is separate from execution conversations. Find questions with inbox/list and answer with channel/reply. The Web Background and schedules tab provides creation, progress, channels, pause, resume and cancellation. The sidebar Inbox is independent of the selected execution conversation. A dedicated TUI Inbox panel remains to be integrated; API clients use channel/reply rather than interaction/respond for asynchronous answers.
+
+Background tasks can use asynchronous questions or headless execution. Schedules bind to the selected conversation, accept a local date/time and an optional fixed repeat interval, and default to headless. Headless is an interaction policy; ordinary headless conversations and Goals do not automatically create schedules. Accepted controls still need execution to settle; replying while paused does not resume a task. Refreshing the Inbox retains current form drafts, while a full page reload can retrieve durable questions again.
+
+TUI headless and Claude CLI without a bidirectional response channel use headless interaction policy. Explicit bidirectional stream-json retains host responses; dontAsk still forbids waiting. In headless mode, questions immediately return unavailable and tools requiring human approval are denied, allowing other work or a blocker report. To continue after closing a window, use a persistent shared or external Core service; an owned launcher still shuts down its service on exit.

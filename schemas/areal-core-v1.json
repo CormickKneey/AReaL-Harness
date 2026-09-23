@@ -3,6 +3,13 @@
   "effectiveConfig": {
     "additionalProperties": false,
     "properties": {
+      "defaultModelRevision": {
+        "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
       "instructions": {
         "default": "",
         "type": "string"
@@ -43,6 +50,14 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "interactionMode": {
+            "enum": [
+              "interactive",
+              "asynchronous",
+              "headless"
+            ],
+            "type": "string"
           },
           "maxModelRounds": {
             "format": "uint",
@@ -600,6 +615,14 @@
                 "id": {
                   "type": "string"
                 },
+                "interactionMode": {
+                  "enum": [
+                    "interactive",
+                    "asynchronous",
+                    "headless"
+                  ],
+                  "type": "string"
+                },
                 "maxActiveSeconds": {
                   "format": "uint64",
                   "minimum": 0,
@@ -767,6 +790,10 @@
                     "accountingComplete"
                   ],
                   "type": "object"
+                },
+                "waitingForAgents": {
+                  "default": false,
+                  "type": "boolean"
                 },
                 "waitingForCapacity": {
                   "type": "boolean"
@@ -837,6 +864,14 @@
                 "id": {
                   "type": "string"
                 },
+                "interactionMode": {
+                  "enum": [
+                    "interactive",
+                    "asynchronous",
+                    "headless"
+                  ],
+                  "type": "string"
+                },
                 "maxActiveSeconds": {
                   "format": "uint64",
                   "minimum": 0,
@@ -1004,6 +1039,10 @@
                     "accountingComplete"
                   ],
                   "type": "object"
+                },
+                "waitingForAgents": {
+                  "default": false,
+                  "type": "boolean"
                 },
                 "waitingForCapacity": {
                   "type": "boolean"
@@ -2013,6 +2052,13 @@
                   "configuration": {
                     "additionalProperties": false,
                     "properties": {
+                      "defaultModelRevision": {
+                        "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
                       "instructions": {
                         "default": "",
                         "type": "string"
@@ -2053,6 +2099,14 @@
                               "type": "string"
                             },
                             "type": "array"
+                          },
+                          "interactionMode": {
+                            "enum": [
+                              "interactive",
+                              "asynchronous",
+                              "headless"
+                            ],
+                            "type": "string"
                           },
                           "maxModelRounds": {
                             "format": "uint",
@@ -2611,13 +2665,54 @@
       ],
       "type": "object"
     },
+    "areal/server/configurationChanged": {
+      "additionalProperties": true,
+      "properties": {
+        "configuration": {
+          "additionalProperties": true,
+          "properties": {
+            "error": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "modelRevision": {
+              "type": "string"
+            },
+            "restartRequired": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "error",
+            "modelRevision",
+            "restartRequired"
+          ],
+          "type": "object"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "configuration",
+        "threadId"
+      ],
+      "type": "object"
+    },
     "areal/server/draining": {
       "additionalProperties": true,
       "properties": {
         "strategy": {
           "enum": [
             "wait",
-            "cancel"
+            "cancel",
+            "ifIdle"
           ]
         },
         "threadId": {
@@ -2627,6 +2722,320 @@
       "required": [
         "strategy",
         "threadId"
+      ],
+      "type": "object"
+    },
+    "areal/task/updated": {
+      "additionalProperties": true,
+      "properties": {
+        "channelSequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "revision": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "task": {
+          "properties": {
+            "cancelled": {
+              "type": "boolean"
+            },
+            "channelSequence": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "id": {
+              "type": "string"
+            },
+            "interactionMode": {
+              "enum": [
+                "interactive",
+                "asynchronous",
+                "headless"
+              ],
+              "type": "string"
+            },
+            "maxActiveSeconds": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "maxTurns": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "mode": {
+              "enum": [
+                "foreground",
+                "scheduled",
+                "background"
+              ],
+              "type": "string"
+            },
+            "nextRunAt": {
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "objective": {
+              "type": "string"
+            },
+            "owner": {
+              "type": "string"
+            },
+            "paused": {
+              "type": "boolean"
+            },
+            "pendingQuestions": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "runs": {
+              "items": {
+                "properties": {
+                  "completedAt": {
+                    "format": "int64",
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "goalId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "scheduledAt": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "status": {
+                    "enum": [
+                      "queued",
+                      "running",
+                      "waitingForInput",
+                      "waitingForAgents",
+                      "paused",
+                      "blocked",
+                      "completed",
+                      "failed",
+                      "cancelled"
+                    ],
+                    "type": "string"
+                  },
+                  "threadId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "usage": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "accountingComplete": {
+                        "type": "boolean"
+                      },
+                      "cachedInputTokens": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "inputTokens": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "outputTokens": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "reservedTokens": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "timeUsedSeconds": {
+                        "format": "double",
+                        "type": "number"
+                      },
+                      "tokensUsed": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "turnsStarted": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "unknownRequests": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "inputTokens",
+                      "cachedInputTokens",
+                      "outputTokens",
+                      "tokensUsed",
+                      "reservedTokens",
+                      "unknownRequests",
+                      "timeUsedSeconds",
+                      "turnsStarted",
+                      "accountingComplete"
+                    ],
+                    "type": "object"
+                  },
+                  "waitRequested": {
+                    "type": "boolean"
+                  },
+                  "workers": {
+                    "default": [],
+                    "items": {
+                      "properties": {
+                        "settled": {
+                          "type": "boolean"
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "threadId": {
+                          "type": "string"
+                        },
+                        "turnId": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "threadId",
+                        "turnId",
+                        "status",
+                        "settled"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "id",
+                  "status",
+                  "scheduledAt",
+                  "usage",
+                  "waitRequested"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "schedule": {
+              "anyOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "at": {
+                      "description": "UTC Unix 秒；间隔以该时间为锚点，避免执行耗时导致漂移。",
+                      "format": "int64",
+                      "type": "integer"
+                    },
+                    "intervalSeconds": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "at"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "threadId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tokenBudget": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "revision",
+            "channelSequence",
+            "owner",
+            "mode",
+            "interactionMode",
+            "objective",
+            "paused",
+            "cancelled",
+            "runs",
+            "pendingQuestions"
+          ],
+          "title": "Task",
+          "type": "object"
+        },
+        "taskId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "channelSequence",
+        "revision",
+        "runId",
+        "task",
+        "taskId"
       ],
       "type": "object"
     },
@@ -2648,6 +3057,13 @@
         "configuration": {
           "additionalProperties": false,
           "properties": {
+            "defaultModelRevision": {
+              "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "instructions": {
               "default": "",
               "type": "string"
@@ -2688,6 +3104,14 @@
                     "type": "string"
                   },
                   "type": "array"
+                },
+                "interactionMode": {
+                  "enum": [
+                    "interactive",
+                    "asynchronous",
+                    "headless"
+                  ],
+                  "type": "string"
                 },
                 "maxModelRounds": {
                   "format": "uint",
@@ -4297,6 +4721,13 @@
                     "configuration": {
                       "additionalProperties": false,
                       "properties": {
+                        "defaultModelRevision": {
+                          "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
                         "instructions": {
                           "default": "",
                           "type": "string"
@@ -4337,6 +4768,14 @@
                                 "type": "string"
                               },
                               "type": "array"
+                            },
+                            "interactionMode": {
+                              "enum": [
+                                "interactive",
+                                "asynchronous",
+                                "headless"
+                              ],
+                              "type": "string"
                             },
                             "maxModelRounds": {
                               "format": "uint",
@@ -4779,6 +5218,28 @@
                       },
                       "type": "object"
                     },
+                    "permissionGrants": {
+                      "default": [],
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "arguments": true,
+                          "key": {
+                            "type": "string"
+                          },
+                          "tool": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "tool",
+                          "arguments"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
                     "plan": {
                       "additionalProperties": false,
                       "properties": {
@@ -4963,6 +5424,13 @@
                               "configuration": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "defaultModelRevision": {
+                                    "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
                                   "instructions": {
                                     "default": "",
                                     "type": "string"
@@ -5003,6 +5471,14 @@
                                           "type": "string"
                                         },
                                         "type": "array"
+                                      },
+                                      "interactionMode": {
+                                        "enum": [
+                                          "interactive",
+                                          "asynchronous",
+                                          "headless"
+                                        ],
+                                        "type": "string"
                                       },
                                       "maxModelRounds": {
                                         "format": "uint",
@@ -5692,6 +6168,14 @@
                         "id": {
                           "type": "string"
                         },
+                        "interactionMode": {
+                          "enum": [
+                            "interactive",
+                            "asynchronous",
+                            "headless"
+                          ],
+                          "type": "string"
+                        },
                         "maxActiveSeconds": {
                           "format": "uint64",
                           "minimum": 0,
@@ -5860,6 +6344,10 @@
                           ],
                           "type": "object"
                         },
+                        "waitingForAgents": {
+                          "default": false,
+                          "type": "boolean"
+                        },
                         "waitingForCapacity": {
                           "type": "boolean"
                         },
@@ -5975,6 +6463,13 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "defaultModelRevision": {
+                            "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "instructions": {
                             "default": "",
                             "type": "string"
@@ -6015,6 +6510,14 @@
                                   "type": "string"
                                 },
                                 "type": "array"
+                              },
+                              "interactionMode": {
+                                "enum": [
+                                  "interactive",
+                                  "asynchronous",
+                                  "headless"
+                                ],
+                                "type": "string"
                               },
                               "maxModelRounds": {
                                 "format": "uint",
@@ -7035,6 +7538,13 @@
                 {
                   "additionalProperties": false,
                   "properties": {
+                    "defaultModelRevision": {
+                      "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "instructions": {
                       "default": "",
                       "type": "string"
@@ -7075,6 +7585,14 @@
                             "type": "string"
                           },
                           "type": "array"
+                        },
+                        "interactionMode": {
+                          "enum": [
+                            "interactive",
+                            "asynchronous",
+                            "headless"
+                          ],
+                          "type": "string"
                         },
                         "maxModelRounds": {
                           "format": "uint",
@@ -8073,6 +8591,13 @@
                 {
                   "additionalProperties": false,
                   "properties": {
+                    "defaultModelRevision": {
+                      "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "instructions": {
                       "default": "",
                       "type": "string"
@@ -8113,6 +8638,14 @@
                             "type": "string"
                           },
                           "type": "array"
+                        },
+                        "interactionMode": {
+                          "enum": [
+                            "interactive",
+                            "asynchronous",
+                            "headless"
+                          ],
+                          "type": "string"
                         },
                         "maxModelRounds": {
                           "format": "uint",
@@ -9447,6 +9980,13 @@
             "configuration": {
               "additionalProperties": false,
               "properties": {
+                "defaultModelRevision": {
+                  "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "instructions": {
                   "default": "",
                   "type": "string"
@@ -9487,6 +10027,14 @@
                         "type": "string"
                       },
                       "type": "array"
+                    },
+                    "interactionMode": {
+                      "enum": [
+                        "interactive",
+                        "asynchronous",
+                        "headless"
+                      ],
+                      "type": "string"
                     },
                     "maxModelRounds": {
                       "format": "uint",
@@ -10394,6 +10942,68 @@
       "title": "CapabilitiesRequest",
       "type": "object"
     },
+    "areal/channel/read": {
+      "additionalProperties": false,
+      "properties": {
+        "afterSequence": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "limit": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "taskId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "taskId"
+      ],
+      "title": "ChannelRead",
+      "type": "object"
+    },
+    "areal/channel/reply": {
+      "additionalProperties": false,
+      "properties": {
+        "answers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "questionId": {
+          "type": "string"
+        },
+        "requestId": {
+          "description": "回复操作的幂等键，与原问题的 questionId 分开。",
+          "type": "string"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "taskId",
+        "runId",
+        "questionId",
+        "answers"
+      ],
+      "title": "ChannelReply",
+      "type": "object"
+    },
     "areal/context/compact": {
       "additionalProperties": false,
       "properties": {
@@ -10461,6 +11071,22 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "interactionMode": {
+          "anyOf": [
+            {
+              "enum": [
+                "interactive",
+                "asynchronous",
+                "headless"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "maxActiveSeconds": {
           "format": "uint64",
@@ -10626,6 +11252,27 @@
         "goalId"
       ],
       "title": "GoalUpdate",
+      "type": "object"
+    },
+    "areal/inbox/list": {
+      "additionalProperties": false,
+      "properties": {
+        "after": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "title": "TaskList",
       "type": "object"
     },
     "areal/interaction/list": {
@@ -10872,6 +11519,33 @@
     "areal/model/list": {
       "additionalProperties": false,
       "properties": {},
+      "type": "object"
+    },
+    "areal/permissions/forget": {
+      "additionalProperties": false,
+      "properties": {
+        "project": {
+          "type": "boolean"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "areal/permissions/read": {
+      "additionalProperties": false,
+      "properties": {
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
       "type": "object"
     },
     "areal/plan/read": {
@@ -12372,7 +13046,8 @@
         "strategy": {
           "enum": [
             "wait",
-            "cancel"
+            "cancel",
+            "ifIdle"
           ]
         },
         "timeoutMs": {
@@ -12465,6 +13140,235 @@
         "threadIds"
       ],
       "title": "RemoveSubscriptions",
+      "type": "object"
+    },
+    "areal/task/cancel": {
+      "additionalProperties": false,
+      "properties": {
+        "expectedRevision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "taskId",
+        "expectedRevision"
+      ],
+      "title": "TaskControl",
+      "type": "object"
+    },
+    "areal/task/create": {
+      "additionalProperties": false,
+      "properties": {
+        "interactionMode": {
+          "anyOf": [
+            {
+              "enum": [
+                "interactive",
+                "asynchronous",
+                "headless"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "maxActiveSeconds": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "maxTurns": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "mode": {
+          "enum": [
+            "foreground",
+            "scheduled",
+            "background"
+          ],
+          "type": "string"
+        },
+        "objective": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "schedule": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "at": {
+                  "description": "UTC Unix 秒；间隔以该时间为锚点，避免执行耗时导致漂移。",
+                  "format": "int64",
+                  "type": "integer"
+                },
+                "intervalSeconds": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "at"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threadId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tokenBudget": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "requestId",
+        "mode",
+        "objective"
+      ],
+      "title": "TaskCreate",
+      "type": "object"
+    },
+    "areal/task/list": {
+      "additionalProperties": false,
+      "properties": {
+        "after": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "title": "TaskList",
+      "type": "object"
+    },
+    "areal/task/pause": {
+      "additionalProperties": false,
+      "properties": {
+        "expectedRevision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "taskId",
+        "expectedRevision"
+      ],
+      "title": "TaskControl",
+      "type": "object"
+    },
+    "areal/task/read": {
+      "additionalProperties": false,
+      "properties": {
+        "taskId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "taskId"
+      ],
+      "title": "TaskTarget",
+      "type": "object"
+    },
+    "areal/task/resume": {
+      "additionalProperties": false,
+      "properties": {
+        "expectedRevision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "taskId",
+        "expectedRevision"
+      ],
+      "title": "TaskControl",
+      "type": "object"
+    },
+    "areal/task/subscribe": {
+      "additionalProperties": false,
+      "properties": {
+        "taskId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "taskId"
+      ],
+      "title": "TaskTarget",
+      "type": "object"
+    },
+    "areal/task/unsubscribe": {
+      "additionalProperties": false,
+      "properties": {
+        "taskId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "taskId"
+      ],
+      "title": "TaskTarget",
       "type": "object"
     },
     "areal/thread/archive": {
@@ -12565,6 +13469,14 @@
                     "type": "string"
                   },
                   "type": "array"
+                },
+                "interactionMode": {
+                  "enum": [
+                    "interactive",
+                    "asynchronous",
+                    "headless"
+                  ],
+                  "type": "string"
                 },
                 "maxModelRounds": {
                   "format": "uint",
@@ -12995,6 +13907,22 @@
           },
           "type": "array"
         },
+        "interactionMode": {
+          "anyOf": [
+            {
+              "enum": [
+                "interactive",
+                "asynchronous",
+                "headless"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "requestId": {
           "type": "string"
         },
@@ -13182,6 +14110,22 @@
             ]
           },
           "type": "array"
+        },
+        "interactionMode": {
+          "anyOf": [
+            {
+              "enum": [
+                "interactive",
+                "asynchronous",
+                "headless"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "requestId": {
           "type": "string"
@@ -13378,6 +14322,12 @@
                               }
                             ]
                           },
+                          "defaultModelRevision": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "model": {
                             "anyOf": [
                               {
@@ -13559,6 +14509,12 @@
                               {
                                 "type": "null"
                               }
+                            ]
+                          },
+                          "defaultModelRevision": {
+                            "type": [
+                              "string",
+                              "null"
                             ]
                           },
                           "model": {
@@ -14319,6 +15275,13 @@
                       "configuration": {
                         "additionalProperties": false,
                         "properties": {
+                          "defaultModelRevision": {
+                            "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "instructions": {
                             "default": "",
                             "type": "string"
@@ -14359,6 +15322,14 @@
                                   "type": "string"
                                 },
                                 "type": "array"
+                              },
+                              "interactionMode": {
+                                "enum": [
+                                  "interactive",
+                                  "asynchronous",
+                                  "headless"
+                                ],
+                                "type": "string"
                               },
                               "maxModelRounds": {
                                 "format": "uint",
@@ -14801,6 +15772,28 @@
                         },
                         "type": "object"
                       },
+                      "permissionGrants": {
+                        "default": [],
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "arguments": true,
+                            "key": {
+                              "type": "string"
+                            },
+                            "tool": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "key",
+                            "tool",
+                            "arguments"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
                       "plan": {
                         "additionalProperties": false,
                         "properties": {
@@ -14985,6 +15978,13 @@
                                 "configuration": {
                                   "additionalProperties": false,
                                   "properties": {
+                                    "defaultModelRevision": {
+                                      "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    },
                                     "instructions": {
                                       "default": "",
                                       "type": "string"
@@ -15025,6 +16025,14 @@
                                             "type": "string"
                                           },
                                           "type": "array"
+                                        },
+                                        "interactionMode": {
+                                          "enum": [
+                                            "interactive",
+                                            "asynchronous",
+                                            "headless"
+                                          ],
+                                          "type": "string"
                                         },
                                         "maxModelRounds": {
                                           "format": "uint",
@@ -15714,6 +16722,14 @@
                           "id": {
                             "type": "string"
                           },
+                          "interactionMode": {
+                            "enum": [
+                              "interactive",
+                              "asynchronous",
+                              "headless"
+                            ],
+                            "type": "string"
+                          },
                           "maxActiveSeconds": {
                             "format": "uint64",
                             "minimum": 0,
@@ -15882,6 +16898,10 @@
                             ],
                             "type": "object"
                           },
+                          "waitingForAgents": {
+                            "default": false,
+                            "type": "boolean"
+                          },
                           "waitingForCapacity": {
                             "type": "boolean"
                           },
@@ -15997,6 +17017,13 @@
                         {
                           "additionalProperties": false,
                           "properties": {
+                            "defaultModelRevision": {
+                              "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
                             "instructions": {
                               "default": "",
                               "type": "string"
@@ -16037,6 +17064,14 @@
                                     "type": "string"
                                   },
                                   "type": "array"
+                                },
+                                "interactionMode": {
+                                  "enum": [
+                                    "interactive",
+                                    "asynchronous",
+                                    "headless"
+                                  ],
+                                  "type": "string"
                                 },
                                 "maxModelRounds": {
                                   "format": "uint",
@@ -17156,6 +18191,13 @@
                         "configuration": {
                           "additionalProperties": false,
                           "properties": {
+                            "defaultModelRevision": {
+                              "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
                             "instructions": {
                               "default": "",
                               "type": "string"
@@ -17196,6 +18238,14 @@
                                     "type": "string"
                                   },
                                   "type": "array"
+                                },
+                                "interactionMode": {
+                                  "enum": [
+                                    "interactive",
+                                    "asynchronous",
+                                    "headless"
+                                  ],
+                                  "type": "string"
                                 },
                                 "maxModelRounds": {
                                   "format": "uint",
@@ -17638,6 +18688,28 @@
                           },
                           "type": "object"
                         },
+                        "permissionGrants": {
+                          "default": [],
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "arguments": true,
+                              "key": {
+                                "type": "string"
+                              },
+                              "tool": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "key",
+                              "tool",
+                              "arguments"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
                         "plan": {
                           "additionalProperties": false,
                           "properties": {
@@ -17822,6 +18894,13 @@
                                   "configuration": {
                                     "additionalProperties": false,
                                     "properties": {
+                                      "defaultModelRevision": {
+                                        "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                                        "type": [
+                                          "string",
+                                          "null"
+                                        ]
+                                      },
                                       "instructions": {
                                         "default": "",
                                         "type": "string"
@@ -17862,6 +18941,14 @@
                                               "type": "string"
                                             },
                                             "type": "array"
+                                          },
+                                          "interactionMode": {
+                                            "enum": [
+                                              "interactive",
+                                              "asynchronous",
+                                              "headless"
+                                            ],
+                                            "type": "string"
                                           },
                                           "maxModelRounds": {
                                             "format": "uint",
@@ -18551,6 +19638,14 @@
                             "id": {
                               "type": "string"
                             },
+                            "interactionMode": {
+                              "enum": [
+                                "interactive",
+                                "asynchronous",
+                                "headless"
+                              ],
+                              "type": "string"
+                            },
                             "maxActiveSeconds": {
                               "format": "uint64",
                               "minimum": 0,
@@ -18719,6 +19814,10 @@
                               ],
                               "type": "object"
                             },
+                            "waitingForAgents": {
+                              "default": false,
+                              "type": "boolean"
+                            },
                             "waitingForCapacity": {
                               "type": "boolean"
                             },
@@ -18834,6 +19933,13 @@
                           {
                             "additionalProperties": false,
                             "properties": {
+                              "defaultModelRevision": {
+                                "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
                               "instructions": {
                                 "default": "",
                                 "type": "string"
@@ -18874,6 +19980,14 @@
                                       "type": "string"
                                     },
                                     "type": "array"
+                                  },
+                                  "interactionMode": {
+                                    "enum": [
+                                      "interactive",
+                                      "asynchronous",
+                                      "headless"
+                                    ],
+                                    "type": "string"
                                   },
                                   "maxModelRounds": {
                                     "format": "uint",
@@ -19885,6 +20999,13 @@
                     {
                       "additionalProperties": false,
                       "properties": {
+                        "defaultModelRevision": {
+                          "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
                         "instructions": {
                           "default": "",
                           "type": "string"
@@ -19925,6 +21046,14 @@
                                 "type": "string"
                               },
                               "type": "array"
+                            },
+                            "interactionMode": {
+                              "enum": [
+                                "interactive",
+                                "asynchronous",
+                                "headless"
+                              ],
+                              "type": "string"
                             },
                             "maxModelRounds": {
                               "format": "uint",
@@ -21132,6 +22261,166 @@
       ],
       "type": "object"
     },
+    "areal/channel/read": {
+      "additionalProperties": true,
+      "properties": {
+        "channelSequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "data": {
+          "items": {
+            "properties": {
+              "answers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "author": {
+                "type": "string"
+              },
+              "createdAt": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "expiresAt": {
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "inReplyTo": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "type": "string"
+              },
+              "questions": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "allowFreeText": {
+                      "default": true,
+                      "type": "boolean"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "options": {
+                      "default": [],
+                      "items": {
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "title": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "required": {
+                "type": "boolean"
+              },
+              "runId": {
+                "type": "string"
+              },
+              "sequence": {
+                "description": "每次新增或状态变化递增；客户端按 id 替换，不重复追加。",
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "status": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "sequence",
+              "runId",
+              "author",
+              "kind",
+              "status",
+              "createdAt",
+              "questions",
+              "required",
+              "text"
+            ],
+            "title": "ChannelMessage",
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "hasMore": {
+          "type": "boolean"
+        },
+        "nextSequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "taskId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "channelSequence",
+        "data",
+        "hasMore",
+        "nextSequence",
+        "taskId"
+      ],
+      "type": "object"
+    },
+    "areal/channel/reply": {
+      "additionalProperties": true,
+      "properties": {
+        "accepted": {
+          "type": "boolean"
+        },
+        "channelSequence": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "messageId": {
+          "type": "string"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "accepted",
+        "channelSequence",
+        "messageId",
+        "runId",
+        "taskId"
+      ],
+      "type": "object"
+    },
     "areal/context/compact": {
       "additionalProperties": true,
       "properties": {
@@ -21471,6 +22760,14 @@
                 "id": {
                   "type": "string"
                 },
+                "interactionMode": {
+                  "enum": [
+                    "interactive",
+                    "asynchronous",
+                    "headless"
+                  ],
+                  "type": "string"
+                },
                 "maxActiveSeconds": {
                   "format": "uint64",
                   "minimum": 0,
@@ -21639,6 +22936,10 @@
                   ],
                   "type": "object"
                 },
+                "waitingForAgents": {
+                  "default": false,
+                  "type": "boolean"
+                },
                 "waitingForCapacity": {
                   "type": "boolean"
                 },
@@ -21700,6 +23001,14 @@
               ]
             },
             "id": {
+              "type": "string"
+            },
+            "interactionMode": {
+              "enum": [
+                "interactive",
+                "asynchronous",
+                "headless"
+              ],
               "type": "string"
             },
             "maxActiveSeconds": {
@@ -21870,6 +23179,10 @@
               ],
               "type": "object"
             },
+            "waitingForAgents": {
+              "default": false,
+              "type": "boolean"
+            },
             "waitingForCapacity": {
               "type": "boolean"
             },
@@ -21897,6 +23210,12 @@
           "minimum": 0,
           "type": "integer"
         },
+        "runId": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
         "threadId": {
           "type": "string"
         },
@@ -21908,6 +23227,8 @@
         "eventSequence",
         "goal",
         "revision",
+        "runId",
+        "taskId",
         "threadId",
         "turnId"
       ],
@@ -21932,6 +23253,14 @@
                   ]
                 },
                 "id": {
+                  "type": "string"
+                },
+                "interactionMode": {
+                  "enum": [
+                    "interactive",
+                    "asynchronous",
+                    "headless"
+                  ],
                   "type": "string"
                 },
                 "maxActiveSeconds": {
@@ -22101,6 +23430,10 @@
                     "accountingComplete"
                   ],
                   "type": "object"
+                },
+                "waitingForAgents": {
+                  "default": false,
+                  "type": "boolean"
                 },
                 "waitingForCapacity": {
                   "type": "boolean"
@@ -22167,6 +23500,14 @@
                 "id": {
                   "type": "string"
                 },
+                "interactionMode": {
+                  "enum": [
+                    "interactive",
+                    "asynchronous",
+                    "headless"
+                  ],
+                  "type": "string"
+                },
                 "maxActiveSeconds": {
                   "format": "uint64",
                   "minimum": 0,
@@ -22334,6 +23675,10 @@
                     "accountingComplete"
                   ],
                   "type": "object"
+                },
+                "waitingForAgents": {
+                  "default": false,
+                  "type": "boolean"
                 },
                 "waitingForCapacity": {
                   "type": "boolean"
@@ -22400,6 +23745,14 @@
                 "id": {
                   "type": "string"
                 },
+                "interactionMode": {
+                  "enum": [
+                    "interactive",
+                    "asynchronous",
+                    "headless"
+                  ],
+                  "type": "string"
+                },
                 "maxActiveSeconds": {
                   "format": "uint64",
                   "minimum": 0,
@@ -22567,6 +23920,10 @@
                     "accountingComplete"
                   ],
                   "type": "object"
+                },
+                "waitingForAgents": {
+                  "default": false,
+                  "type": "boolean"
                 },
                 "waitingForCapacity": {
                   "type": "boolean"
@@ -22633,6 +23990,14 @@
                 "id": {
                   "type": "string"
                 },
+                "interactionMode": {
+                  "enum": [
+                    "interactive",
+                    "asynchronous",
+                    "headless"
+                  ],
+                  "type": "string"
+                },
                 "maxActiveSeconds": {
                   "format": "uint64",
                   "minimum": 0,
@@ -22801,6 +24166,10 @@
                   ],
                   "type": "object"
                 },
+                "waitingForAgents": {
+                  "default": false,
+                  "type": "boolean"
+                },
                 "waitingForCapacity": {
                   "type": "boolean"
                 },
@@ -22842,6 +24211,147 @@
         "goal",
         "revision",
         "threadId"
+      ],
+      "type": "object"
+    },
+    "areal/inbox/list": {
+      "additionalProperties": true,
+      "properties": {
+        "data": {
+          "items": {
+            "additionalProperties": true,
+            "properties": {
+              "message": {
+                "properties": {
+                  "answers": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": [
+                      "object",
+                      "null"
+                    ]
+                  },
+                  "author": {
+                    "type": "string"
+                  },
+                  "createdAt": {
+                    "format": "int64",
+                    "type": "integer"
+                  },
+                  "expiresAt": {
+                    "format": "int64",
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "inReplyTo": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "questions": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "allowFreeText": {
+                          "default": true,
+                          "type": "boolean"
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "options": {
+                          "default": [],
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "title": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "title"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "required": {
+                    "type": "boolean"
+                  },
+                  "runId": {
+                    "type": "string"
+                  },
+                  "sequence": {
+                    "description": "每次新增或状态变化递增；客户端按 id 替换，不重复追加。",
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "sequence",
+                  "runId",
+                  "author",
+                  "kind",
+                  "status",
+                  "createdAt",
+                  "questions",
+                  "required",
+                  "text"
+                ],
+                "title": "ChannelMessage",
+                "type": "object"
+              },
+              "objective": {
+                "type": "string"
+              },
+              "taskId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message",
+              "objective",
+              "taskId"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "data",
+        "nextCursor"
       ],
       "type": "object"
     },
@@ -22981,6 +24491,8 @@
             "decision": {
               "enum": [
                 "allowOnce",
+                "allowSession",
+                "allowProject",
                 "deny"
               ]
             }
@@ -24008,6 +25520,139 @@
       },
       "required": [
         "data"
+      ],
+      "type": "object"
+    },
+    "areal/permissions/forget": {
+      "additionalProperties": true,
+      "properties": {
+        "cleared": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "cleared"
+      ],
+      "type": "object"
+    },
+    "areal/permissions/read": {
+      "additionalProperties": true,
+      "properties": {
+        "configuration": {
+          "additionalProperties": true,
+          "properties": {
+            "allow": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "ask": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "deny": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "mode": {
+              "enum": [
+                "YOLO",
+                "ASK_PERMISSIONS"
+              ]
+            }
+          },
+          "required": [
+            "allow",
+            "ask",
+            "deny",
+            "mode"
+          ],
+          "type": "object"
+        },
+        "project": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "arguments": true,
+              "key": {
+                "type": "string"
+              },
+              "tool": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "tool",
+              "arguments"
+            ],
+            "title": "PermissionGrant",
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "projectFile": {
+          "type": "string"
+        },
+        "sandbox": {
+          "type": "object"
+        },
+        "session": {
+          "anyOf": [
+            {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": true,
+                  "key": {
+                    "type": "string"
+                  },
+                  "tool": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "key",
+                  "tool",
+                  "arguments"
+                ],
+                "title": "PermissionGrant",
+                "type": "object"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "workspace": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "configuration",
+        "project",
+        "projectFile",
+        "sandbox",
+        "session",
+        "source",
+        "workspace"
       ],
       "type": "object"
     },
@@ -25343,6 +26988,13 @@
               "configuration": {
                 "additionalProperties": false,
                 "properties": {
+                  "defaultModelRevision": {
+                    "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "instructions": {
                     "default": "",
                     "type": "string"
@@ -25383,6 +27035,14 @@
                           "type": "string"
                         },
                         "type": "array"
+                      },
+                      "interactionMode": {
+                        "enum": [
+                          "interactive",
+                          "asynchronous",
+                          "headless"
+                        ],
+                        "type": "string"
                       },
                       "maxModelRounds": {
                         "format": "uint",
@@ -25941,6 +27601,13 @@
               "configuration": {
                 "additionalProperties": false,
                 "properties": {
+                  "defaultModelRevision": {
+                    "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "instructions": {
                     "default": "",
                     "type": "string"
@@ -25981,6 +27648,14 @@
                           "type": "string"
                         },
                         "type": "array"
+                      },
+                      "interactionMode": {
+                        "enum": [
+                          "interactive",
+                          "asynchronous",
+                          "headless"
+                        ],
+                        "type": "string"
                       },
                       "maxModelRounds": {
                         "format": "uint",
@@ -26539,6 +28214,13 @@
               "configuration": {
                 "additionalProperties": false,
                 "properties": {
+                  "defaultModelRevision": {
+                    "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "instructions": {
                     "default": "",
                     "type": "string"
@@ -26579,6 +28261,14 @@
                           "type": "string"
                         },
                         "type": "array"
+                      },
+                      "interactionMode": {
+                        "enum": [
+                          "interactive",
+                          "asynchronous",
+                          "headless"
+                        ],
+                        "type": "string"
                       },
                       "maxModelRounds": {
                         "format": "uint",
@@ -27137,6 +28827,13 @@
               "configuration": {
                 "additionalProperties": false,
                 "properties": {
+                  "defaultModelRevision": {
+                    "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "instructions": {
                     "default": "",
                     "type": "string"
@@ -27177,6 +28874,14 @@
                           "type": "string"
                         },
                         "type": "array"
+                      },
+                      "interactionMode": {
+                        "enum": [
+                          "interactive",
+                          "asynchronous",
+                          "headless"
+                        ],
+                        "type": "string"
                       },
                       "maxModelRounds": {
                         "format": "uint",
@@ -27735,6 +29440,13 @@
               "configuration": {
                 "additionalProperties": false,
                 "properties": {
+                  "defaultModelRevision": {
+                    "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "instructions": {
                     "default": "",
                     "type": "string"
@@ -27775,6 +29487,14 @@
                           "type": "string"
                         },
                         "type": "array"
+                      },
+                      "interactionMode": {
+                        "enum": [
+                          "interactive",
+                          "asynchronous",
+                          "headless"
+                        ],
+                        "type": "string"
                       },
                       "maxModelRounds": {
                         "format": "uint",
@@ -28333,6 +30053,13 @@
               "configuration": {
                 "additionalProperties": false,
                 "properties": {
+                  "defaultModelRevision": {
+                    "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "instructions": {
                     "default": "",
                     "type": "string"
@@ -28373,6 +30100,14 @@
                           "type": "string"
                         },
                         "type": "array"
+                      },
+                      "interactionMode": {
+                        "enum": [
+                          "interactive",
+                          "asynchronous",
+                          "headless"
+                        ],
+                        "type": "string"
                       },
                       "maxModelRounds": {
                         "format": "uint",
@@ -29022,6 +30757,10 @@
           },
           "type": "array"
         },
+        "activeTasks": {
+          "minimum": 0,
+          "type": "integer"
+        },
         "activeTurns": {
           "items": {
             "additionalProperties": true,
@@ -29090,6 +30829,40 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "configuration": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "properties": {
+                "error": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "modelRevision": {
+                  "type": "string"
+                },
+                "restartRequired": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "error",
+                "modelRevision",
+                "restartRequired"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "draining": {
           "type": "boolean"
@@ -29231,11 +31004,13 @@
       "required": [
         "acceptingWork",
         "activeGoals",
+        "activeTasks",
         "activeTurns",
         "apiVersion",
         "capacity",
         "closed",
         "compactions",
+        "configuration",
         "draining",
         "pendingQueueItems",
         "productVersion",
@@ -29283,6 +31058,10 @@
           },
           "type": "array"
         },
+        "activeTasks": {
+          "minimum": 0,
+          "type": "integer"
+        },
         "activeTurns": {
           "items": {
             "additionalProperties": true,
@@ -29351,6 +31130,40 @@
             "type": "string"
           },
           "type": "array"
+        },
+        "configuration": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "properties": {
+                "error": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "modelRevision": {
+                  "type": "string"
+                },
+                "restartRequired": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "error",
+                "modelRevision",
+                "restartRequired"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "draining": {
           "type": "boolean"
@@ -29492,11 +31305,13 @@
       "required": [
         "acceptingWork",
         "activeGoals",
+        "activeTasks",
         "activeTurns",
         "apiVersion",
         "capacity",
         "closed",
         "compactions",
+        "configuration",
         "draining",
         "pendingQueueItems",
         "productVersion",
@@ -29640,6 +31455,2001 @@
       ],
       "type": "object"
     },
+    "areal/task/cancel": {
+      "properties": {
+        "cancelled": {
+          "type": "boolean"
+        },
+        "channelSequence": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "interactionMode": {
+          "enum": [
+            "interactive",
+            "asynchronous",
+            "headless"
+          ],
+          "type": "string"
+        },
+        "maxActiveSeconds": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "maxTurns": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "mode": {
+          "enum": [
+            "foreground",
+            "scheduled",
+            "background"
+          ],
+          "type": "string"
+        },
+        "nextRunAt": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "objective": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "paused": {
+          "type": "boolean"
+        },
+        "pendingQuestions": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "revision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runs": {
+          "items": {
+            "properties": {
+              "completedAt": {
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "goalId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "scheduledAt": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "status": {
+                "enum": [
+                  "queued",
+                  "running",
+                  "waitingForInput",
+                  "waitingForAgents",
+                  "paused",
+                  "blocked",
+                  "completed",
+                  "failed",
+                  "cancelled"
+                ],
+                "type": "string"
+              },
+              "threadId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "usage": {
+                "additionalProperties": false,
+                "properties": {
+                  "accountingComplete": {
+                    "type": "boolean"
+                  },
+                  "cachedInputTokens": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "inputTokens": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "outputTokens": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "reservedTokens": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "timeUsedSeconds": {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  "tokensUsed": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "turnsStarted": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "unknownRequests": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "inputTokens",
+                  "cachedInputTokens",
+                  "outputTokens",
+                  "tokensUsed",
+                  "reservedTokens",
+                  "unknownRequests",
+                  "timeUsedSeconds",
+                  "turnsStarted",
+                  "accountingComplete"
+                ],
+                "type": "object"
+              },
+              "waitRequested": {
+                "type": "boolean"
+              },
+              "workers": {
+                "default": [],
+                "items": {
+                  "properties": {
+                    "settled": {
+                      "type": "boolean"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "threadId": {
+                      "type": "string"
+                    },
+                    "turnId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "threadId",
+                    "turnId",
+                    "status",
+                    "settled"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "id",
+              "status",
+              "scheduledAt",
+              "usage",
+              "waitRequested"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "schedule": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "at": {
+                  "description": "UTC Unix 秒；间隔以该时间为锚点，避免执行耗时导致漂移。",
+                  "format": "int64",
+                  "type": "integer"
+                },
+                "intervalSeconds": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "at"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threadId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tokenBudget": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "channelSequence",
+        "owner",
+        "mode",
+        "interactionMode",
+        "objective",
+        "paused",
+        "cancelled",
+        "runs",
+        "pendingQuestions"
+      ],
+      "title": "Task",
+      "type": "object"
+    },
+    "areal/task/create": {
+      "properties": {
+        "cancelled": {
+          "type": "boolean"
+        },
+        "channelSequence": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "interactionMode": {
+          "enum": [
+            "interactive",
+            "asynchronous",
+            "headless"
+          ],
+          "type": "string"
+        },
+        "maxActiveSeconds": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "maxTurns": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "mode": {
+          "enum": [
+            "foreground",
+            "scheduled",
+            "background"
+          ],
+          "type": "string"
+        },
+        "nextRunAt": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "objective": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "paused": {
+          "type": "boolean"
+        },
+        "pendingQuestions": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "revision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runs": {
+          "items": {
+            "properties": {
+              "completedAt": {
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "goalId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "scheduledAt": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "status": {
+                "enum": [
+                  "queued",
+                  "running",
+                  "waitingForInput",
+                  "waitingForAgents",
+                  "paused",
+                  "blocked",
+                  "completed",
+                  "failed",
+                  "cancelled"
+                ],
+                "type": "string"
+              },
+              "threadId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "usage": {
+                "additionalProperties": false,
+                "properties": {
+                  "accountingComplete": {
+                    "type": "boolean"
+                  },
+                  "cachedInputTokens": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "inputTokens": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "outputTokens": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "reservedTokens": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "timeUsedSeconds": {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  "tokensUsed": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "turnsStarted": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "unknownRequests": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "inputTokens",
+                  "cachedInputTokens",
+                  "outputTokens",
+                  "tokensUsed",
+                  "reservedTokens",
+                  "unknownRequests",
+                  "timeUsedSeconds",
+                  "turnsStarted",
+                  "accountingComplete"
+                ],
+                "type": "object"
+              },
+              "waitRequested": {
+                "type": "boolean"
+              },
+              "workers": {
+                "default": [],
+                "items": {
+                  "properties": {
+                    "settled": {
+                      "type": "boolean"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "threadId": {
+                      "type": "string"
+                    },
+                    "turnId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "threadId",
+                    "turnId",
+                    "status",
+                    "settled"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "id",
+              "status",
+              "scheduledAt",
+              "usage",
+              "waitRequested"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "schedule": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "at": {
+                  "description": "UTC Unix 秒；间隔以该时间为锚点，避免执行耗时导致漂移。",
+                  "format": "int64",
+                  "type": "integer"
+                },
+                "intervalSeconds": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "at"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threadId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tokenBudget": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "channelSequence",
+        "owner",
+        "mode",
+        "interactionMode",
+        "objective",
+        "paused",
+        "cancelled",
+        "runs",
+        "pendingQuestions"
+      ],
+      "title": "Task",
+      "type": "object"
+    },
+    "areal/task/list": {
+      "additionalProperties": true,
+      "properties": {
+        "data": {
+          "items": {
+            "properties": {
+              "cancelled": {
+                "type": "boolean"
+              },
+              "channelSequence": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "id": {
+                "type": "string"
+              },
+              "interactionMode": {
+                "enum": [
+                  "interactive",
+                  "asynchronous",
+                  "headless"
+                ],
+                "type": "string"
+              },
+              "maxActiveSeconds": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "maxTurns": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "mode": {
+                "enum": [
+                  "foreground",
+                  "scheduled",
+                  "background"
+                ],
+                "type": "string"
+              },
+              "nextRunAt": {
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "objective": {
+                "type": "string"
+              },
+              "owner": {
+                "type": "string"
+              },
+              "paused": {
+                "type": "boolean"
+              },
+              "pendingQuestions": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "runs": {
+                "items": {
+                  "properties": {
+                    "completedAt": {
+                      "format": "int64",
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "goalId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "scheduledAt": {
+                      "format": "int64",
+                      "type": "integer"
+                    },
+                    "status": {
+                      "enum": [
+                        "queued",
+                        "running",
+                        "waitingForInput",
+                        "waitingForAgents",
+                        "paused",
+                        "blocked",
+                        "completed",
+                        "failed",
+                        "cancelled"
+                      ],
+                      "type": "string"
+                    },
+                    "threadId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "usage": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "accountingComplete": {
+                          "type": "boolean"
+                        },
+                        "cachedInputTokens": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "inputTokens": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "outputTokens": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "reservedTokens": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "timeUsedSeconds": {
+                          "format": "double",
+                          "type": "number"
+                        },
+                        "tokensUsed": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "turnsStarted": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "unknownRequests": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "inputTokens",
+                        "cachedInputTokens",
+                        "outputTokens",
+                        "tokensUsed",
+                        "reservedTokens",
+                        "unknownRequests",
+                        "timeUsedSeconds",
+                        "turnsStarted",
+                        "accountingComplete"
+                      ],
+                      "type": "object"
+                    },
+                    "waitRequested": {
+                      "type": "boolean"
+                    },
+                    "workers": {
+                      "default": [],
+                      "items": {
+                        "properties": {
+                          "settled": {
+                            "type": "boolean"
+                          },
+                          "status": {
+                            "type": "string"
+                          },
+                          "threadId": {
+                            "type": "string"
+                          },
+                          "turnId": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "threadId",
+                          "turnId",
+                          "status",
+                          "settled"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "status",
+                    "scheduledAt",
+                    "usage",
+                    "waitRequested"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "schedule": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "at": {
+                        "description": "UTC Unix 秒；间隔以该时间为锚点，避免执行耗时导致漂移。",
+                        "format": "int64",
+                        "type": "integer"
+                      },
+                      "intervalSeconds": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "at"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "threadId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "tokenBudget": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "revision",
+              "channelSequence",
+              "owner",
+              "mode",
+              "interactionMode",
+              "objective",
+              "paused",
+              "cancelled",
+              "runs",
+              "pendingQuestions"
+            ],
+            "title": "Task",
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "data",
+        "nextCursor"
+      ],
+      "type": "object"
+    },
+    "areal/task/pause": {
+      "properties": {
+        "cancelled": {
+          "type": "boolean"
+        },
+        "channelSequence": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "interactionMode": {
+          "enum": [
+            "interactive",
+            "asynchronous",
+            "headless"
+          ],
+          "type": "string"
+        },
+        "maxActiveSeconds": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "maxTurns": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "mode": {
+          "enum": [
+            "foreground",
+            "scheduled",
+            "background"
+          ],
+          "type": "string"
+        },
+        "nextRunAt": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "objective": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "paused": {
+          "type": "boolean"
+        },
+        "pendingQuestions": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "revision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runs": {
+          "items": {
+            "properties": {
+              "completedAt": {
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "goalId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "scheduledAt": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "status": {
+                "enum": [
+                  "queued",
+                  "running",
+                  "waitingForInput",
+                  "waitingForAgents",
+                  "paused",
+                  "blocked",
+                  "completed",
+                  "failed",
+                  "cancelled"
+                ],
+                "type": "string"
+              },
+              "threadId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "usage": {
+                "additionalProperties": false,
+                "properties": {
+                  "accountingComplete": {
+                    "type": "boolean"
+                  },
+                  "cachedInputTokens": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "inputTokens": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "outputTokens": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "reservedTokens": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "timeUsedSeconds": {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  "tokensUsed": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "turnsStarted": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "unknownRequests": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "inputTokens",
+                  "cachedInputTokens",
+                  "outputTokens",
+                  "tokensUsed",
+                  "reservedTokens",
+                  "unknownRequests",
+                  "timeUsedSeconds",
+                  "turnsStarted",
+                  "accountingComplete"
+                ],
+                "type": "object"
+              },
+              "waitRequested": {
+                "type": "boolean"
+              },
+              "workers": {
+                "default": [],
+                "items": {
+                  "properties": {
+                    "settled": {
+                      "type": "boolean"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "threadId": {
+                      "type": "string"
+                    },
+                    "turnId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "threadId",
+                    "turnId",
+                    "status",
+                    "settled"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "id",
+              "status",
+              "scheduledAt",
+              "usage",
+              "waitRequested"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "schedule": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "at": {
+                  "description": "UTC Unix 秒；间隔以该时间为锚点，避免执行耗时导致漂移。",
+                  "format": "int64",
+                  "type": "integer"
+                },
+                "intervalSeconds": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "at"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threadId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tokenBudget": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "channelSequence",
+        "owner",
+        "mode",
+        "interactionMode",
+        "objective",
+        "paused",
+        "cancelled",
+        "runs",
+        "pendingQuestions"
+      ],
+      "title": "Task",
+      "type": "object"
+    },
+    "areal/task/read": {
+      "properties": {
+        "cancelled": {
+          "type": "boolean"
+        },
+        "channelSequence": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "interactionMode": {
+          "enum": [
+            "interactive",
+            "asynchronous",
+            "headless"
+          ],
+          "type": "string"
+        },
+        "maxActiveSeconds": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "maxTurns": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "mode": {
+          "enum": [
+            "foreground",
+            "scheduled",
+            "background"
+          ],
+          "type": "string"
+        },
+        "nextRunAt": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "objective": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "paused": {
+          "type": "boolean"
+        },
+        "pendingQuestions": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "revision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runs": {
+          "items": {
+            "properties": {
+              "completedAt": {
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "goalId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "scheduledAt": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "status": {
+                "enum": [
+                  "queued",
+                  "running",
+                  "waitingForInput",
+                  "waitingForAgents",
+                  "paused",
+                  "blocked",
+                  "completed",
+                  "failed",
+                  "cancelled"
+                ],
+                "type": "string"
+              },
+              "threadId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "usage": {
+                "additionalProperties": false,
+                "properties": {
+                  "accountingComplete": {
+                    "type": "boolean"
+                  },
+                  "cachedInputTokens": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "inputTokens": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "outputTokens": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "reservedTokens": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "timeUsedSeconds": {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  "tokensUsed": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "turnsStarted": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "unknownRequests": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "inputTokens",
+                  "cachedInputTokens",
+                  "outputTokens",
+                  "tokensUsed",
+                  "reservedTokens",
+                  "unknownRequests",
+                  "timeUsedSeconds",
+                  "turnsStarted",
+                  "accountingComplete"
+                ],
+                "type": "object"
+              },
+              "waitRequested": {
+                "type": "boolean"
+              },
+              "workers": {
+                "default": [],
+                "items": {
+                  "properties": {
+                    "settled": {
+                      "type": "boolean"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "threadId": {
+                      "type": "string"
+                    },
+                    "turnId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "threadId",
+                    "turnId",
+                    "status",
+                    "settled"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "id",
+              "status",
+              "scheduledAt",
+              "usage",
+              "waitRequested"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "schedule": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "at": {
+                  "description": "UTC Unix 秒；间隔以该时间为锚点，避免执行耗时导致漂移。",
+                  "format": "int64",
+                  "type": "integer"
+                },
+                "intervalSeconds": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "at"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threadId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tokenBudget": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "channelSequence",
+        "owner",
+        "mode",
+        "interactionMode",
+        "objective",
+        "paused",
+        "cancelled",
+        "runs",
+        "pendingQuestions"
+      ],
+      "title": "Task",
+      "type": "object"
+    },
+    "areal/task/resume": {
+      "properties": {
+        "cancelled": {
+          "type": "boolean"
+        },
+        "channelSequence": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "interactionMode": {
+          "enum": [
+            "interactive",
+            "asynchronous",
+            "headless"
+          ],
+          "type": "string"
+        },
+        "maxActiveSeconds": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "maxTurns": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "mode": {
+          "enum": [
+            "foreground",
+            "scheduled",
+            "background"
+          ],
+          "type": "string"
+        },
+        "nextRunAt": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "objective": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "paused": {
+          "type": "boolean"
+        },
+        "pendingQuestions": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "revision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runs": {
+          "items": {
+            "properties": {
+              "completedAt": {
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "goalId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "scheduledAt": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "status": {
+                "enum": [
+                  "queued",
+                  "running",
+                  "waitingForInput",
+                  "waitingForAgents",
+                  "paused",
+                  "blocked",
+                  "completed",
+                  "failed",
+                  "cancelled"
+                ],
+                "type": "string"
+              },
+              "threadId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "usage": {
+                "additionalProperties": false,
+                "properties": {
+                  "accountingComplete": {
+                    "type": "boolean"
+                  },
+                  "cachedInputTokens": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "inputTokens": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "outputTokens": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "reservedTokens": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "timeUsedSeconds": {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  "tokensUsed": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "turnsStarted": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "unknownRequests": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "inputTokens",
+                  "cachedInputTokens",
+                  "outputTokens",
+                  "tokensUsed",
+                  "reservedTokens",
+                  "unknownRequests",
+                  "timeUsedSeconds",
+                  "turnsStarted",
+                  "accountingComplete"
+                ],
+                "type": "object"
+              },
+              "waitRequested": {
+                "type": "boolean"
+              },
+              "workers": {
+                "default": [],
+                "items": {
+                  "properties": {
+                    "settled": {
+                      "type": "boolean"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "threadId": {
+                      "type": "string"
+                    },
+                    "turnId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "threadId",
+                    "turnId",
+                    "status",
+                    "settled"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "id",
+              "status",
+              "scheduledAt",
+              "usage",
+              "waitRequested"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "schedule": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "at": {
+                  "description": "UTC Unix 秒；间隔以该时间为锚点，避免执行耗时导致漂移。",
+                  "format": "int64",
+                  "type": "integer"
+                },
+                "intervalSeconds": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "at"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threadId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tokenBudget": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "channelSequence",
+        "owner",
+        "mode",
+        "interactionMode",
+        "objective",
+        "paused",
+        "cancelled",
+        "runs",
+        "pendingQuestions"
+      ],
+      "title": "Task",
+      "type": "object"
+    },
+    "areal/task/subscribe": {
+      "properties": {
+        "cancelled": {
+          "type": "boolean"
+        },
+        "channelSequence": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "interactionMode": {
+          "enum": [
+            "interactive",
+            "asynchronous",
+            "headless"
+          ],
+          "type": "string"
+        },
+        "maxActiveSeconds": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "maxTurns": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "mode": {
+          "enum": [
+            "foreground",
+            "scheduled",
+            "background"
+          ],
+          "type": "string"
+        },
+        "nextRunAt": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "objective": {
+          "type": "string"
+        },
+        "owner": {
+          "type": "string"
+        },
+        "paused": {
+          "type": "boolean"
+        },
+        "pendingQuestions": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "revision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "runs": {
+          "items": {
+            "properties": {
+              "completedAt": {
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "goalId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "reason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "scheduledAt": {
+                "format": "int64",
+                "type": "integer"
+              },
+              "status": {
+                "enum": [
+                  "queued",
+                  "running",
+                  "waitingForInput",
+                  "waitingForAgents",
+                  "paused",
+                  "blocked",
+                  "completed",
+                  "failed",
+                  "cancelled"
+                ],
+                "type": "string"
+              },
+              "threadId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "usage": {
+                "additionalProperties": false,
+                "properties": {
+                  "accountingComplete": {
+                    "type": "boolean"
+                  },
+                  "cachedInputTokens": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "inputTokens": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "outputTokens": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "reservedTokens": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "timeUsedSeconds": {
+                    "format": "double",
+                    "type": "number"
+                  },
+                  "tokensUsed": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "turnsStarted": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "unknownRequests": {
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "inputTokens",
+                  "cachedInputTokens",
+                  "outputTokens",
+                  "tokensUsed",
+                  "reservedTokens",
+                  "unknownRequests",
+                  "timeUsedSeconds",
+                  "turnsStarted",
+                  "accountingComplete"
+                ],
+                "type": "object"
+              },
+              "waitRequested": {
+                "type": "boolean"
+              },
+              "workers": {
+                "default": [],
+                "items": {
+                  "properties": {
+                    "settled": {
+                      "type": "boolean"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "threadId": {
+                      "type": "string"
+                    },
+                    "turnId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "threadId",
+                    "turnId",
+                    "status",
+                    "settled"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "id",
+              "status",
+              "scheduledAt",
+              "usage",
+              "waitRequested"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "schedule": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "at": {
+                  "description": "UTC Unix 秒；间隔以该时间为锚点，避免执行耗时导致漂移。",
+                  "format": "int64",
+                  "type": "integer"
+                },
+                "intervalSeconds": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "at"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "threadId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tokenBudget": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "channelSequence",
+        "owner",
+        "mode",
+        "interactionMode",
+        "objective",
+        "paused",
+        "cancelled",
+        "runs",
+        "pendingQuestions"
+      ],
+      "title": "Task",
+      "type": "object"
+    },
+    "areal/task/unsubscribe": {
+      "additionalProperties": true,
+      "properties": {
+        "removed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "removed"
+      ],
+      "type": "object"
+    },
     "areal/thread/archive": {
       "additionalProperties": true,
       "properties": {
@@ -29679,6 +33489,13 @@
     "areal/thread/configure": {
       "additionalProperties": false,
       "properties": {
+        "defaultModelRevision": {
+          "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "instructions": {
           "default": "",
           "type": "string"
@@ -29719,6 +33536,14 @@
                 "type": "string"
               },
               "type": "array"
+            },
+            "interactionMode": {
+              "enum": [
+                "interactive",
+                "asynchronous",
+                "headless"
+              ],
+              "type": "string"
             },
             "maxModelRounds": {
               "format": "uint",
@@ -30072,6 +33897,13 @@
         "configuration": {
           "additionalProperties": false,
           "properties": {
+            "defaultModelRevision": {
+              "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "instructions": {
               "default": "",
               "type": "string"
@@ -30112,6 +33944,14 @@
                     "type": "string"
                   },
                   "type": "array"
+                },
+                "interactionMode": {
+                  "enum": [
+                    "interactive",
+                    "asynchronous",
+                    "headless"
+                  ],
+                  "type": "string"
                 },
                 "maxModelRounds": {
                   "format": "uint",
@@ -30737,6 +34577,13 @@
                     "configuration": {
                       "additionalProperties": false,
                       "properties": {
+                        "defaultModelRevision": {
+                          "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
                         "instructions": {
                           "default": "",
                           "type": "string"
@@ -30777,6 +34624,14 @@
                                 "type": "string"
                               },
                               "type": "array"
+                            },
+                            "interactionMode": {
+                              "enum": [
+                                "interactive",
+                                "asynchronous",
+                                "headless"
+                              ],
+                              "type": "string"
                             },
                             "maxModelRounds": {
                               "format": "uint",
@@ -31219,6 +35074,28 @@
                       },
                       "type": "object"
                     },
+                    "permissionGrants": {
+                      "default": [],
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "arguments": true,
+                          "key": {
+                            "type": "string"
+                          },
+                          "tool": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "tool",
+                          "arguments"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
                     "plan": {
                       "additionalProperties": false,
                       "properties": {
@@ -31403,6 +35280,13 @@
                               "configuration": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "defaultModelRevision": {
+                                    "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
                                   "instructions": {
                                     "default": "",
                                     "type": "string"
@@ -31443,6 +35327,14 @@
                                           "type": "string"
                                         },
                                         "type": "array"
+                                      },
+                                      "interactionMode": {
+                                        "enum": [
+                                          "interactive",
+                                          "asynchronous",
+                                          "headless"
+                                        ],
+                                        "type": "string"
                                       },
                                       "maxModelRounds": {
                                         "format": "uint",
@@ -32132,6 +36024,14 @@
                         "id": {
                           "type": "string"
                         },
+                        "interactionMode": {
+                          "enum": [
+                            "interactive",
+                            "asynchronous",
+                            "headless"
+                          ],
+                          "type": "string"
+                        },
                         "maxActiveSeconds": {
                           "format": "uint64",
                           "minimum": 0,
@@ -32300,6 +36200,10 @@
                           ],
                           "type": "object"
                         },
+                        "waitingForAgents": {
+                          "default": false,
+                          "type": "boolean"
+                        },
                         "waitingForCapacity": {
                           "type": "boolean"
                         },
@@ -32415,6 +36319,13 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "defaultModelRevision": {
+                            "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "instructions": {
                             "default": "",
                             "type": "string"
@@ -32455,6 +36366,14 @@
                                   "type": "string"
                                 },
                                 "type": "array"
+                              },
+                              "interactionMode": {
+                                "enum": [
+                                  "interactive",
+                                  "asynchronous",
+                                  "headless"
+                                ],
+                                "type": "string"
                               },
                               "maxModelRounds": {
                                 "format": "uint",
@@ -33500,6 +37419,13 @@
                 {
                   "additionalProperties": false,
                   "properties": {
+                    "defaultModelRevision": {
+                      "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "instructions": {
                       "default": "",
                       "type": "string"
@@ -33540,6 +37466,14 @@
                             "type": "string"
                           },
                           "type": "array"
+                        },
+                        "interactionMode": {
+                          "enum": [
+                            "interactive",
+                            "asynchronous",
+                            "headless"
+                          ],
+                          "type": "string"
                         },
                         "maxModelRounds": {
                           "format": "uint",
@@ -34585,6 +38519,12 @@
                                     }
                                   ]
                                 },
+                                "defaultModelRevision": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
                                 "model": {
                                   "anyOf": [
                                     {
@@ -34771,6 +38711,12 @@
                               {
                                 "type": "null"
                               }
+                            ]
+                          },
+                          "defaultModelRevision": {
+                            "type": [
+                              "string",
+                              "null"
                             ]
                           },
                           "model": {
@@ -35255,6 +39201,12 @@
                                   {
                                     "type": "null"
                                   }
+                                ]
+                              },
+                              "defaultModelRevision": {
+                                "type": [
+                                  "string",
+                                  "null"
                                 ]
                               },
                               "model": {
@@ -35905,6 +39857,12 @@
                                   {
                                     "type": "null"
                                   }
+                                ]
+                              },
+                              "defaultModelRevision": {
+                                "type": [
+                                  "string",
+                                  "null"
                                 ]
                               },
                               "model": {
@@ -36579,6 +40537,12 @@
                                   }
                                 ]
                               },
+                              "defaultModelRevision": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
                               "model": {
                                 "anyOf": [
                                   {
@@ -37108,6 +41072,12 @@
                                   {
                                     "type": "null"
                                   }
+                                ]
+                              },
+                              "defaultModelRevision": {
+                                "type": [
+                                  "string",
+                                  "null"
                                 ]
                               },
                               "model": {
@@ -37641,6 +41611,12 @@
                                   }
                                 ]
                               },
+                              "defaultModelRevision": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
                               "model": {
                                 "anyOf": [
                                   {
@@ -38172,6 +42148,12 @@
                                   }
                                 ]
                               },
+                              "defaultModelRevision": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
                               "model": {
                                 "anyOf": [
                                   {
@@ -38546,6 +42528,13 @@
                       "configuration": {
                         "additionalProperties": false,
                         "properties": {
+                          "defaultModelRevision": {
+                            "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "instructions": {
                             "default": "",
                             "type": "string"
@@ -38586,6 +42575,14 @@
                                   "type": "string"
                                 },
                                 "type": "array"
+                              },
+                              "interactionMode": {
+                                "enum": [
+                                  "interactive",
+                                  "asynchronous",
+                                  "headless"
+                                ],
+                                "type": "string"
                               },
                               "maxModelRounds": {
                                 "format": "uint",
@@ -39028,6 +43025,28 @@
                         },
                         "type": "object"
                       },
+                      "permissionGrants": {
+                        "default": [],
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "arguments": true,
+                            "key": {
+                              "type": "string"
+                            },
+                            "tool": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "key",
+                            "tool",
+                            "arguments"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
                       "plan": {
                         "additionalProperties": false,
                         "properties": {
@@ -39212,6 +43231,13 @@
                                 "configuration": {
                                   "additionalProperties": false,
                                   "properties": {
+                                    "defaultModelRevision": {
+                                      "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                                      "type": [
+                                        "string",
+                                        "null"
+                                      ]
+                                    },
                                     "instructions": {
                                       "default": "",
                                       "type": "string"
@@ -39252,6 +43278,14 @@
                                             "type": "string"
                                           },
                                           "type": "array"
+                                        },
+                                        "interactionMode": {
+                                          "enum": [
+                                            "interactive",
+                                            "asynchronous",
+                                            "headless"
+                                          ],
+                                          "type": "string"
                                         },
                                         "maxModelRounds": {
                                           "format": "uint",
@@ -39941,6 +43975,14 @@
                           "id": {
                             "type": "string"
                           },
+                          "interactionMode": {
+                            "enum": [
+                              "interactive",
+                              "asynchronous",
+                              "headless"
+                            ],
+                            "type": "string"
+                          },
                           "maxActiveSeconds": {
                             "format": "uint64",
                             "minimum": 0,
@@ -40109,6 +44151,10 @@
                             ],
                             "type": "object"
                           },
+                          "waitingForAgents": {
+                            "default": false,
+                            "type": "boolean"
+                          },
                           "waitingForCapacity": {
                             "type": "boolean"
                           },
@@ -40224,6 +44270,13 @@
                         {
                           "additionalProperties": false,
                           "properties": {
+                            "defaultModelRevision": {
+                              "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
                             "instructions": {
                               "default": "",
                               "type": "string"
@@ -40264,6 +44317,14 @@
                                     "type": "string"
                                   },
                                   "type": "array"
+                                },
+                                "interactionMode": {
+                                  "enum": [
+                                    "interactive",
+                                    "asynchronous",
+                                    "headless"
+                                  ],
+                                  "type": "string"
                                 },
                                 "maxModelRounds": {
                                   "format": "uint",
@@ -41371,6 +45432,13 @@
                     "configuration": {
                       "additionalProperties": false,
                       "properties": {
+                        "defaultModelRevision": {
+                          "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
                         "instructions": {
                           "default": "",
                           "type": "string"
@@ -41411,6 +45479,14 @@
                                 "type": "string"
                               },
                               "type": "array"
+                            },
+                            "interactionMode": {
+                              "enum": [
+                                "interactive",
+                                "asynchronous",
+                                "headless"
+                              ],
+                              "type": "string"
                             },
                             "maxModelRounds": {
                               "format": "uint",
@@ -41853,6 +45929,28 @@
                       },
                       "type": "object"
                     },
+                    "permissionGrants": {
+                      "default": [],
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "arguments": true,
+                          "key": {
+                            "type": "string"
+                          },
+                          "tool": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "tool",
+                          "arguments"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
                     "plan": {
                       "additionalProperties": false,
                       "properties": {
@@ -42037,6 +46135,13 @@
                               "configuration": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "defaultModelRevision": {
+                                    "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
                                   "instructions": {
                                     "default": "",
                                     "type": "string"
@@ -42077,6 +46182,14 @@
                                           "type": "string"
                                         },
                                         "type": "array"
+                                      },
+                                      "interactionMode": {
+                                        "enum": [
+                                          "interactive",
+                                          "asynchronous",
+                                          "headless"
+                                        ],
+                                        "type": "string"
                                       },
                                       "maxModelRounds": {
                                         "format": "uint",
@@ -42766,6 +46879,14 @@
                         "id": {
                           "type": "string"
                         },
+                        "interactionMode": {
+                          "enum": [
+                            "interactive",
+                            "asynchronous",
+                            "headless"
+                          ],
+                          "type": "string"
+                        },
                         "maxActiveSeconds": {
                           "format": "uint64",
                           "minimum": 0,
@@ -42934,6 +47055,10 @@
                           ],
                           "type": "object"
                         },
+                        "waitingForAgents": {
+                          "default": false,
+                          "type": "boolean"
+                        },
                         "waitingForCapacity": {
                           "type": "boolean"
                         },
@@ -43049,6 +47174,13 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "defaultModelRevision": {
+                            "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "instructions": {
                             "default": "",
                             "type": "string"
@@ -43089,6 +47221,14 @@
                                   "type": "string"
                                 },
                                 "type": "array"
+                              },
+                              "interactionMode": {
+                                "enum": [
+                                  "interactive",
+                                  "asynchronous",
+                                  "headless"
+                                ],
+                                "type": "string"
                               },
                               "maxModelRounds": {
                                 "format": "uint",
@@ -44114,6 +48254,12 @@
         "modelProvider": {
           "type": "string"
         },
+        "permissionMode": {
+          "enum": [
+            "YOLO",
+            "ASK_PERMISSIONS"
+          ]
+        },
         "reasoningEffort": {
           "anyOf": [
             {
@@ -44211,6 +48357,13 @@
                     "configuration": {
                       "additionalProperties": false,
                       "properties": {
+                        "defaultModelRevision": {
+                          "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
                         "instructions": {
                           "default": "",
                           "type": "string"
@@ -44251,6 +48404,14 @@
                                 "type": "string"
                               },
                               "type": "array"
+                            },
+                            "interactionMode": {
+                              "enum": [
+                                "interactive",
+                                "asynchronous",
+                                "headless"
+                              ],
+                              "type": "string"
                             },
                             "maxModelRounds": {
                               "format": "uint",
@@ -44693,6 +48854,28 @@
                       },
                       "type": "object"
                     },
+                    "permissionGrants": {
+                      "default": [],
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "arguments": true,
+                          "key": {
+                            "type": "string"
+                          },
+                          "tool": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "tool",
+                          "arguments"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
                     "plan": {
                       "additionalProperties": false,
                       "properties": {
@@ -44877,6 +49060,13 @@
                               "configuration": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "defaultModelRevision": {
+                                    "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
                                   "instructions": {
                                     "default": "",
                                     "type": "string"
@@ -44917,6 +49107,14 @@
                                           "type": "string"
                                         },
                                         "type": "array"
+                                      },
+                                      "interactionMode": {
+                                        "enum": [
+                                          "interactive",
+                                          "asynchronous",
+                                          "headless"
+                                        ],
+                                        "type": "string"
                                       },
                                       "maxModelRounds": {
                                         "format": "uint",
@@ -45606,6 +49804,14 @@
                         "id": {
                           "type": "string"
                         },
+                        "interactionMode": {
+                          "enum": [
+                            "interactive",
+                            "asynchronous",
+                            "headless"
+                          ],
+                          "type": "string"
+                        },
                         "maxActiveSeconds": {
                           "format": "uint64",
                           "minimum": 0,
@@ -45774,6 +49980,10 @@
                           ],
                           "type": "object"
                         },
+                        "waitingForAgents": {
+                          "default": false,
+                          "type": "boolean"
+                        },
                         "waitingForCapacity": {
                           "type": "boolean"
                         },
@@ -45889,6 +50099,13 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "defaultModelRevision": {
+                            "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "instructions": {
                             "default": "",
                             "type": "string"
@@ -45929,6 +50146,14 @@
                                   "type": "string"
                                 },
                                 "type": "array"
+                              },
+                              "interactionMode": {
+                                "enum": [
+                                  "interactive",
+                                  "asynchronous",
+                                  "headless"
+                                ],
+                                "type": "string"
                               },
                               "maxModelRounds": {
                                 "format": "uint",
@@ -46937,6 +51162,7 @@
         "cwd",
         "model",
         "modelProvider",
+        "permissionMode",
         "reasoningEffort",
         "sandbox",
         "thread"
@@ -46961,6 +51187,12 @@
         "modelProvider": {
           "type": "string"
         },
+        "permissionMode": {
+          "enum": [
+            "YOLO",
+            "ASK_PERMISSIONS"
+          ]
+        },
         "reasoningEffort": {
           "anyOf": [
             {
@@ -47058,6 +51290,13 @@
                     "configuration": {
                       "additionalProperties": false,
                       "properties": {
+                        "defaultModelRevision": {
+                          "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
                         "instructions": {
                           "default": "",
                           "type": "string"
@@ -47098,6 +51337,14 @@
                                 "type": "string"
                               },
                               "type": "array"
+                            },
+                            "interactionMode": {
+                              "enum": [
+                                "interactive",
+                                "asynchronous",
+                                "headless"
+                              ],
+                              "type": "string"
                             },
                             "maxModelRounds": {
                               "format": "uint",
@@ -47540,6 +51787,28 @@
                       },
                       "type": "object"
                     },
+                    "permissionGrants": {
+                      "default": [],
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "arguments": true,
+                          "key": {
+                            "type": "string"
+                          },
+                          "tool": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "tool",
+                          "arguments"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
                     "plan": {
                       "additionalProperties": false,
                       "properties": {
@@ -47724,6 +51993,13 @@
                               "configuration": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "defaultModelRevision": {
+                                    "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
                                   "instructions": {
                                     "default": "",
                                     "type": "string"
@@ -47764,6 +52040,14 @@
                                           "type": "string"
                                         },
                                         "type": "array"
+                                      },
+                                      "interactionMode": {
+                                        "enum": [
+                                          "interactive",
+                                          "asynchronous",
+                                          "headless"
+                                        ],
+                                        "type": "string"
                                       },
                                       "maxModelRounds": {
                                         "format": "uint",
@@ -48453,6 +52737,14 @@
                         "id": {
                           "type": "string"
                         },
+                        "interactionMode": {
+                          "enum": [
+                            "interactive",
+                            "asynchronous",
+                            "headless"
+                          ],
+                          "type": "string"
+                        },
                         "maxActiveSeconds": {
                           "format": "uint64",
                           "minimum": 0,
@@ -48621,6 +52913,10 @@
                           ],
                           "type": "object"
                         },
+                        "waitingForAgents": {
+                          "default": false,
+                          "type": "boolean"
+                        },
                         "waitingForCapacity": {
                           "type": "boolean"
                         },
@@ -48736,6 +53032,13 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "defaultModelRevision": {
+                            "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "instructions": {
                             "default": "",
                             "type": "string"
@@ -48776,6 +53079,14 @@
                                   "type": "string"
                                 },
                                 "type": "array"
+                              },
+                              "interactionMode": {
+                                "enum": [
+                                  "interactive",
+                                  "asynchronous",
+                                  "headless"
+                                ],
+                                "type": "string"
                               },
                               "maxModelRounds": {
                                 "format": "uint",
@@ -49784,6 +54095,7 @@
         "cwd",
         "model",
         "modelProvider",
+        "permissionMode",
         "reasoningEffort",
         "sandbox",
         "thread"
@@ -49806,6 +54118,13 @@
                 {
                   "additionalProperties": false,
                   "properties": {
+                    "defaultModelRevision": {
+                      "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "instructions": {
                       "default": "",
                       "type": "string"
@@ -49846,6 +54165,14 @@
                             "type": "string"
                           },
                           "type": "array"
+                        },
+                        "interactionMode": {
+                          "enum": [
+                            "interactive",
+                            "asynchronous",
+                            "headless"
+                          ],
+                          "type": "string"
                         },
                         "maxModelRounds": {
                           "format": "uint",
@@ -51046,6 +55373,13 @@
               "configuration": {
                 "additionalProperties": false,
                 "properties": {
+                  "defaultModelRevision": {
+                    "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "instructions": {
                     "default": "",
                     "type": "string"
@@ -51086,6 +55420,14 @@
                           "type": "string"
                         },
                         "type": "array"
+                      },
+                      "interactionMode": {
+                        "enum": [
+                          "interactive",
+                          "asynchronous",
+                          "headless"
+                        ],
+                        "type": "string"
                       },
                       "maxModelRounds": {
                         "format": "uint",
@@ -51528,6 +55870,28 @@
                 },
                 "type": "object"
               },
+              "permissionGrants": {
+                "default": [],
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "arguments": true,
+                    "key": {
+                      "type": "string"
+                    },
+                    "tool": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "tool",
+                    "arguments"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
               "plan": {
                 "additionalProperties": false,
                 "properties": {
@@ -51712,6 +56076,13 @@
                         "configuration": {
                           "additionalProperties": false,
                           "properties": {
+                            "defaultModelRevision": {
+                              "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
                             "instructions": {
                               "default": "",
                               "type": "string"
@@ -51752,6 +56123,14 @@
                                     "type": "string"
                                   },
                                   "type": "array"
+                                },
+                                "interactionMode": {
+                                  "enum": [
+                                    "interactive",
+                                    "asynchronous",
+                                    "headless"
+                                  ],
+                                  "type": "string"
                                 },
                                 "maxModelRounds": {
                                   "format": "uint",
@@ -52441,6 +56820,14 @@
                   "id": {
                     "type": "string"
                   },
+                  "interactionMode": {
+                    "enum": [
+                      "interactive",
+                      "asynchronous",
+                      "headless"
+                    ],
+                    "type": "string"
+                  },
                   "maxActiveSeconds": {
                     "format": "uint64",
                     "minimum": 0,
@@ -52609,6 +56996,10 @@
                     ],
                     "type": "object"
                   },
+                  "waitingForAgents": {
+                    "default": false,
+                    "type": "boolean"
+                  },
                   "waitingForCapacity": {
                     "type": "boolean"
                   },
@@ -52724,6 +57115,13 @@
                 {
                   "additionalProperties": false,
                   "properties": {
+                    "defaultModelRevision": {
+                      "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "instructions": {
                       "default": "",
                       "type": "string"
@@ -52764,6 +57162,14 @@
                             "type": "string"
                           },
                           "type": "array"
+                        },
+                        "interactionMode": {
+                          "enum": [
+                            "interactive",
+                            "asynchronous",
+                            "headless"
+                          ],
+                          "type": "string"
                         },
                         "maxModelRounds": {
                           "format": "uint",
@@ -53772,6 +58178,13 @@
           {
             "additionalProperties": false,
             "properties": {
+              "defaultModelRevision": {
+                "description": "服务默认模型在提交时固定；不包含端点或凭据。",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "instructions": {
                 "default": "",
                 "type": "string"
@@ -53812,6 +58225,14 @@
                       "type": "string"
                     },
                     "type": "array"
+                  },
+                  "interactionMode": {
+                    "enum": [
+                      "interactive",
+                      "asynchronous",
+                      "headless"
+                    ],
+                    "type": "string"
                   },
                   "maxModelRounds": {
                     "format": "uint",
@@ -54845,6 +59266,12 @@
                             {
                               "type": "null"
                             }
+                          ]
+                        },
+                        "defaultModelRevision": {
+                          "type": [
+                            "string",
+                            "null"
                           ]
                         },
                         "model": {

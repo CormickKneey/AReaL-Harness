@@ -25,7 +25,7 @@ See [client controls](../guides/clients.en.md) and [testing](../development/test
 | Failed or UNKNOWN tools | Issue count and at most three bounded diagnostics in the group | Available full diagnostics; cancellation is counted separately |
 | Failed, interrupted or completed Turns without an answer | Persistent result after the Turn | Error details and Turn ID |
 | Stopped current Goal, unconfirmed usage | Reason and usage independent of the sidebar | Goal ID and reason code |
-| Pending approval or question | Always-visible action notice | Existing Web response entry point |
+| Pending approval or question | Approval dialog; pending notice for questions | Approve/deny in TUI; answer questions in Web |
 
 Groups do not cross user input, visible answers, media or Turn boundaries. Summaries use Item types, tool names and result states without another model call. Unknown tools retain their names and counts; call counts are not described as file counts. Successful output previews, commands, JSON arguments, diffs, reasoning and commentary are hidden by default.
 
@@ -40,6 +40,8 @@ The active Turn status shows model waiting, tool execution, pending interactions
 Connection, current Turn and Goal are separate dimensions. Disconnected or unsubscribed sessions await synchronization. A stopped Goal contradicting its active Turn outside settlement triggers at most one `thread/resume` per Turn/Goal sequence, awaiting the authoritative snapshot. A blocked Goal does not override a later independent user Turn; stale list responses cannot regress a newer Goal projection.
 
 `usageUnknown` explains unconfirmed request usage. The display distinguishes confirmed tokens and unknown requests; incomplete accounting with zero unknown requests shows `accounting incomplete`. Missing Turn usage is unknown, not zero consumption. `/goal-resume` remains subject to Core budget and UNKNOWN checks, without client tool replay. See [Core recovery](../api/core.en.md#recovery).
+
+The editor tracks its cursor at grapheme boundaries, applying typing, paste and deletion at that position. Its single-line viewport follows the cursor using terminal display widths, with visible representations of newlines and tabs. Ctrl-A / Ctrl-E move to the current logical line start / end in pasted text. Slash completion and failed-input restoration place the cursor at the end; submission resets it. Popups and other focus targets preserve the background draft. See [client controls](../guides/clients.en.md#tui-controls).
 
 Failed submission RPCs retain a bounded input-area notice. Original input returns automatically to an empty editor, preserving newer drafts; `/restore-input` restores it explicitly. Disconnect during submission marks the outcome unconfirmed without resending. This is client feedback, not fabricated business history.
 

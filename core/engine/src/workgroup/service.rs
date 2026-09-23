@@ -125,8 +125,13 @@ impl Factory for NativeFactory {
             .load()
             .map_or(policy.workers, |m| m.capacity.min(policy.workers))
             .max(1);
+        let selected = self
+            .catalog
+            .as_ref()
+            .and_then(std::sync::Weak::upgrade)
+            .map_or_else(|| self.model.clone(), |engine| engine.default_model());
         let model = native::SharedModel::new(
-            budget.map_or_else(|| self.model.clone(), |b| b.wrap(self.model.clone())),
+            budget.map_or_else(|| selected.clone(), |b| b.wrap(selected.clone())),
             capacity,
             policy.max_model_requests,
         )?;

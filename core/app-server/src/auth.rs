@@ -129,6 +129,7 @@ fn equal_token(expected: &[u8], supplied: &[u8]) -> bool {
 
 pub(crate) fn permission(method: &str) -> Permission {
     if method == "areal/process/acknowledgeCleanup"
+        || method.starts_with("areal/permissions/")
         || method.starts_with("areal/provider/")
         || method.starts_with("areal/account/")
         || method.starts_with("areal/mcp/")
@@ -146,6 +147,8 @@ pub(crate) fn permission(method: &str) -> Permission {
             | "thread/read"
             | "thread/resume"
             | "areal/subscription/remove"
+            | "areal/task/subscribe"
+            | "areal/task/unsubscribe"
     ) || method.ends_with("/list")
         || method.ends_with("/read")
         || method.ends_with("/inspect")

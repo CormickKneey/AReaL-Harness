@@ -22,7 +22,8 @@ Use initialize → initialized → areal/capabilities (optional apiVersion). Req
 | profile/list/read, skill/list/read | observe | Versioned definitions and on-demand resources |
 | thread/start/configure | interact; tools for dynamic tools | Durable acceptance and idle configuration CAS |
 | plan/read/update | observe / interact | Up to 64 steps, conditional expectedRevision update |
-| interaction/list/respond | observe / interact | Questions/approvals bound to Thread/Turn/requestId |
+| permissions/read/forget | manage (unrestricted threadIds) | Read mode, sources, remembered grants; revoke memory |
+| interaction/list/respond | observe / interact (allowProject also needs unrestricted manage) | Questions/approvals bound to Thread/Turn/requestId |
 | provider/list/read/upsert/remove/probe | manage | Credential references, CAS writes and explicit probes |
 | model/list | observe | providerId/modelId, capabilities and availability |
 | turn/start/enqueue, queue/list/update/remove/reorder/pause/resume | observe / interact | Durable submissions, frozen configuration and queue management |
@@ -43,7 +44,9 @@ Use initialize → initialized → areal/capabilities (optional apiVersion). Req
 
 requestId is a durable business key; RPC id only correlates responses. Identical identity, method, key and normalized parameters return the original result; changed parameters conflict. Each Thread permits 1024 receipts; management logs permit 4096. Exhaustion rejects instead of forgetting keys. Accepted management records without results become UNKNOWN after restart and are not reexecuted.
 
-turn/start/enqueue take `{requestId,threadId,input,expectedConfigRevision?}`. Queues retain at most 128 historical items with frozen configuration. Only success advances automatically. Stop/failure/UNKNOWN/restart/drain pauses the queue until explicit resume. After timeout, query request/read or authoritative state rather than assuming no side effects.
+turn/start/enqueue take `{requestId,threadId,input,expectedConfigRevision?,interactionMode?}`. Queues retain at most 128 historical items with frozen configuration. Only success advances automatically. Stop/failure/UNKNOWN/restart/drain pauses the queue until explicit resume. After timeout, query request/read or authoritative state rather than assuming no side effects.
+
+`EffectiveConfig.defaultModelRevision` is an optional opaque reference to a default-model snapshot, fixed when a Turn or queue item is submitted. Session defaults omit it; explicit Provider selections retain their semantics. The model archive belongs to the data directory and contains no environment credential values.
 
 thread/configure requires expectedRevision and an idle, non-compacting Thread. resetModel=true clears the session model override to Profile/service defaults and cannot accompany a nonempty model. Omitted parameters retain values; `{}` selects target Provider defaults. features.modelReset advertises support.
 
@@ -64,7 +67,9 @@ Compatibility: Skill revision no longer guarantees immutable content, and legacy
 
 ## Interactions and media
 
-Approvals bind Thread/Turn/callId, Host generation, effective argument digest and permissions. Only allowOnce/deny are supported, without expanding grants. Questions allow 8 questions/8 options each, 4096-byte answers and 256 historical interactions. Waiting holds no model permit; Stop wins, and late/cross-Turn responses fail.
+Approvals bind Thread/Turn/callId, Host generation, effective argument digest and permissions. allowOnce/deny are supported; effectivePermissions.rememberAllowed=true additionally permits allowSession/allowProject without expanding Runtime Scopes. Questions allow 8 questions/8 options each, 4096-byte answers and 256 historical interactions. Waiting holds no model permit; Stop wins, and late/cross-Turn responses fail.
+
+`permissions/read {threadId}` returns configuration (mode/allow/ask/deny), source, sandbox, workspace, session/project grants and projectFile. `permissions/forget {threadId,project}` clears session or project memory and requires an idle target Thread. Project approval requires manage without a threadIds restriction. See [permission configuration](../guides/configuration.en.md#permissions) for memory and rule precedence. Old snapshots without permissionGrants read as empty. thread/start/resume add permissionMode; full-access Runtime projects as dangerFullAccess.
 
 POST `/areal/blobs?threadId=...` uploads raw bytes with Content-Type matching signatures. Tool uploads also supply callId/hostGeneration and require tools permission. Limits are 16 MiB/file, 128 uploads/64 MiB per Thread, and 16384 Blobs/512 MiB globally. Supported types are PNG/JPEG/GIF/WebP, WAV/MP3, PDF and UTF-8 text. GET requires authentication, threadId and reference ownership; a digest is not an access token.
 
@@ -81,3 +86,9 @@ Events use areal/ prefixes, including thread/configured/archived, plan/updated, 
 features.goals=true advertises Goal support without a separate configuration toggle. Goal events follow the same authorization and atomic subscription boundaries. drain closes automatic continuation admission and pauses Goals; archiving and explicit compaction require stopping the Goal and awaiting resource settlement.
 
 Local service discovery, window-independent lifecycle and Desktop Main integration use the [local service contract](local-service.en.md). `server/status` and `server/drain` additionally return `activeGoals` (Thread IDs) and `pendingQueueItems` (pending/running queue count). These are additive response fields; restartSafe still describes execution cleanup rather than absence of scheduled work.
+
+Shared services expose `server/status.configuration` as `{modelRevision,restartRequired,error}`; other deployments return null. `areal/server/configurationChanged` publishes `{threadId,configuration}` to subscribed threads. `server/drain` also accepts `strategy="ifIdle"`: check idle state and close admission under one gate; busy rejection keeps work running. See [configuration reload](../guides/configuration.en.md).
+
+## Task Mode integration
+
+`task/create/list/read/pause/resume/cancel/subscribe/unsubscribe`, `channel/read/reply` and `inbox/list` form task control and communication APIs independent of Threads; see the [Task contract](tasks.en.md). task/updated carries a Task projection and channelSequence; clients retrieve Channel messages through pagination. server/status and drain add activeTasks, including future schedules. GUI/TUI/WebUI can share this Inbox; existing conversation interaction panels still handle synchronous questions and approvals.

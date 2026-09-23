@@ -637,3 +637,58 @@ fn management_diagnostic_without_model_is_valid_json() {
     let config = load_management_config(&input).unwrap();
     assert_eq!(config.diagnostic(false)["model"]["endpoint"], "");
 }
+
+#[test]
+fn permission_mode_defaults_to_yolo_and_respects_all_sources() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut i = inputs(temp.path());
+    assert_eq!(
+        load_config(&i).unwrap().permissions.mode,
+        PermissionMode::Yolo
+    );
+    write(
+        &mut i,
+        "schema_version=1\n[permissions]\nmode='ASK_PERMISSIONS'\nallow=['read_file']\nask=['mcp__*']\ndeny=['fs_write']\n",
+    );
+    let config = load_config(&i).unwrap();
+    assert_eq!(config.permissions.mode, PermissionMode::AskPermissions);
+    assert_eq!(config.permissions.deny, ["fs_write"]);
+    set(&mut i, "ASK_PERMISSIONS", "0");
+    assert_eq!(
+        load_config(&i).unwrap().permissions.mode,
+        PermissionMode::Yolo
+    );
+    set(&mut i, "AREAL_HARNESS_PERMISSION_MODE", "ask_permissions");
+    assert_eq!(
+        load_config(&i).unwrap().permissions.mode,
+        PermissionMode::AskPermissions
+    );
+    i.overrides.permissions = Some("YOLO".into());
+    let config = load_config(&i).unwrap();
+    assert_eq!(config.permissions.mode, PermissionMode::Yolo);
+    assert!(matches!(
+        config.sources["permissions.mode"],
+        ConfigSource::Cli { .. }
+    ));
+    set(&mut i, "ASK_PERMISSIONS", "maybe");
+    assert_eq!(failure(&i).kind, ConfigErrorKind::InvalidValue);
+}
+
+#[test]
+fn invalid_permission_rules_and_modes_are_not_silently_ignored() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut i = inputs(temp.path());
+    for permissions in [
+        "mode='unknown'",
+        "mode=true",
+        "ask='run_command'",
+        "deny=[5]",
+        "allow=['run_command(git *)']",
+    ] {
+        write(
+            &mut i,
+            &format!("schema_version=1\n[permissions]\n{permissions}\n"),
+        );
+        assert_eq!(failure(&i).kind, ConfigErrorKind::InvalidValue);
+    }
+}

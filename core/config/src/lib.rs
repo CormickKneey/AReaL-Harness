@@ -3,13 +3,13 @@ mod file;
 mod resolve;
 pub mod skills;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, ffi::OsString, fmt, net::SocketAddr, path::PathBuf};
 
 pub use resolve::{load_config, load_management_config};
 
 /// Contains secrets: deliberately does not implement Debug or Serialize.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct ConfigInputs {
     pub cwd: PathBuf,
     pub homedir: Option<PathBuf>,
@@ -19,8 +19,9 @@ pub struct ConfigInputs {
 }
 
 /// Only explicit CLI values belong here. Text is validated without echoing it.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct ConfigOverrides {
+    pub permissions: Option<String>,
     pub listen: Option<String>,
     pub data_dir: Option<PathBuf>,
     pub model: Option<String>,
@@ -34,6 +35,33 @@ pub struct ConfigOverrides {
     pub max_children_per_turn: Option<String>,
     pub max_agent_depth: Option<String>,
     pub log_filter: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PermissionMode {
+    #[default]
+    #[serde(rename = "YOLO", alias = "yolo")]
+    Yolo,
+    #[serde(rename = "ASK_PERMISSIONS", alias = "ask_permissions")]
+    AskPermissions,
+}
+
+impl PermissionMode {
+    pub const fn requires_approval(self) -> bool {
+        matches!(self, Self::AskPermissions)
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PermissionConfig {
+    pub mode: PermissionMode,
+    #[serde(default)]
+    pub allow: Vec<String>,
+    #[serde(default)]
+    pub ask: Vec<String>,
+    #[serde(default)]
+    pub deny: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -95,7 +123,7 @@ impl fmt::Display for ConfigError {
 impl std::error::Error for ConfigError {}
 pub type Result<T> = std::result::Result<T, ConfigError>;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ModelProtocolConfig {
     ChatCompletions,
@@ -103,6 +131,8 @@ pub enum ModelProtocolConfig {
 }
 
 // Raw endpoint/filter values may contain private query data: use diagnostic().
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SelectedModelConfig {
     pub provider: String,
     pub name: String,
@@ -121,6 +151,39 @@ pub struct SelectedModelConfig {
     pub max_retries: usize,
 }
 
+impl SelectedModelConfig {
+    /// 只比较配置和凭据引用；密钥值不进入登记或历史。
+    pub fn fingerprint(&self) -> String {
+        use sha2::{Digest, Sha256};
+        format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(self).expect("model config"))
+        )
+    }
+
+    pub fn credential(&self, inputs: &ConfigInputs) -> Result<Option<String>> {
+        self.api_key_env
+            .as_ref()
+            .map(|name| {
+                inputs
+                    .env
+                    .get(std::ffi::OsStr::new(name))
+                    .and_then(|v| v.to_str())
+                    .filter(|v| {
+                        !v.trim().is_empty() && v.bytes().all(|b| (0x20..=0x7e).contains(&b))
+                    })
+                    .map(str::to_owned)
+                    .ok_or_else(|| ConfigError {
+                        kind: ConfigErrorKind::MissingValue,
+                        field: format!("model.providers.{}.api_key_env", self.provider),
+                        source: ConfigSource::Env { name: name.clone() },
+                        message: "credential must be set to a nonempty HTTP header value",
+                    })
+            })
+            .transpose()
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct GoalConfig {
     pub max_turns: u64,
@@ -130,6 +193,7 @@ pub struct GoalConfig {
 }
 
 pub struct ResolvedCoreConfig {
+    pub permissions: PermissionConfig,
     pub goals: GoalConfig,
     pub home: PathBuf,
     pub config_file: Option<PathBuf>,
@@ -162,26 +226,7 @@ pub struct ResolvedCoreConfig {
 impl ResolvedCoreConfig {
     /// Resolve the credential separately, from the same environment snapshot.
     pub fn credential(&self, inputs: &ConfigInputs) -> Result<Option<String>> {
-        self.model
-            .api_key_env
-            .as_ref()
-            .map(|name| {
-                inputs
-                    .env
-                    .get(std::ffi::OsStr::new(name))
-                    .and_then(|v| v.to_str())
-                    .filter(|v| {
-                        !v.trim().is_empty() && v.bytes().all(|b| (0x20..=0x7e).contains(&b))
-                    })
-                    .map(str::to_owned)
-                    .ok_or_else(|| ConfigError {
-                        kind: ConfigErrorKind::MissingValue,
-                        field: format!("model.providers.{}.api_key_env", self.model.provider),
-                        source: ConfigSource::Env { name: name.clone() },
-                        message: "credential must be set to a nonempty HTTP header value",
-                    })
-            })
-            .transpose()
+        self.model.credential(inputs)
     }
 
     /// Redacted, stable JSON shared by local diagnostics and the launcher.
@@ -196,6 +241,7 @@ impl ResolvedCoreConfig {
             endpoint.to_string()
         };
         let mut result = serde_json::json!({
+            "permissions": self.permissions,
             "goals": self.goals,
             "home": self.home, "config_file": self.config_file,
             "server": { "listen": self.listen, "data_dir": self.data_dir },

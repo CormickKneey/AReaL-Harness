@@ -8,6 +8,7 @@ use std::{
 };
 
 const ENV: &[(&str, &str, &str)] = &[
+    ("AREAL_HARNESS_PERMISSION_MODE", "", "permissions.mode"),
     ("AREAL_HARNESS_LISTEN", "", "server.listen"),
     ("AREAL_HARNESS_DATA_DIR", "", "server.data_dir"),
     ("AREAL_HARNESS_TOOL_EXTENSIONS", "", "tools.extensions_file"),
@@ -190,6 +191,36 @@ fn valid(field: &str, entry: &Entry) -> Result<()> {
     let reject = |message| error(ConfigErrorKind::InvalidValue, field, &entry.source, message);
     if value.trim().is_empty() || value.chars().any(char::is_control) {
         return Err(reject("expected nonempty text without control characters"));
+    }
+    if field == "permissions.mode" {
+        if !matches!(
+            value.to_ascii_uppercase().as_str(),
+            "YOLO" | "ASK_PERMISSIONS"
+        ) {
+            return Err(reject("expected YOLO or ASK_PERMISSIONS"));
+        }
+        return Ok(());
+    }
+    if matches!(
+        field,
+        "permissions.allow" | "permissions.ask" | "permissions.deny"
+    ) {
+        let rules: Vec<String> =
+            serde_json::from_str(value).map_err(|_| reject("expected tool rules"))?;
+        if rules.len() > 128
+            || rules.iter().any(|r| {
+                r.is_empty()
+                    || r.len() > 128
+                    || !r
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-' | b'*'))
+            })
+        {
+            return Err(reject(
+                "at most 128 tool patterns using letters, digits, underscore, hyphen and *",
+            ));
+        }
+        return Ok(());
     }
     let leaf = field.rsplit('.').next().unwrap_or(field);
     match leaf {
@@ -455,6 +486,10 @@ fn load_mode(inputs: &ConfigInputs, management: bool) -> Result<ResolvedCoreConf
     let file = file::read(&selected, explicit)?;
     let mut values = BTreeMap::new();
     for (field, value) in [
+        ("permissions.mode", "YOLO"),
+        ("permissions.allow", "[]"),
+        ("permissions.ask", "[]"),
+        ("permissions.deny", "[]"),
         ("server.listen", "127.0.0.1:4500"),
         ("model.provider", "default"),
         ("limits.model_concurrency", "32"),
@@ -503,6 +538,22 @@ fn load_mode(inputs: &ConfigInputs, management: bool) -> Result<ResolvedCoreConf
     for (field, entry) in file.values {
         insert(&mut values, &field, entry, &inputs.cwd)?;
     }
+    if let Some(mut entry) = env(inputs, "ASK_PERMISSIONS")? {
+        entry.value = match entry.value.as_str() {
+            "1" | "true" => "ASK_PERMISSIONS",
+            "0" | "false" => "YOLO",
+            _ => {
+                return Err(error(
+                    ConfigErrorKind::InvalidValue,
+                    "permissions.mode",
+                    &entry.source,
+                    "ASK_PERMISSIONS must be 1, 0, true or false",
+                ));
+            }
+        }
+        .into();
+        insert(&mut values, "permissions.mode", entry, &inputs.cwd)?;
+    }
     let mut provider_overrides = BTreeMap::new();
     let mut warnings = Vec::new();
     for (name, alias, field) in ENV {
@@ -538,6 +589,7 @@ fn load_mode(inputs: &ConfigInputs, management: bool) -> Result<ResolvedCoreConf
         })
         .transpose()?;
     for (field, flag, value) in [
+        ("permissions.mode", "--permissions", &o.permissions),
         ("server.listen", "--listen", &o.listen),
         ("server.data_dir", "--data-dir", &data_dir),
         ("model.name", "--model", &o.model),
@@ -655,6 +707,19 @@ fn load_mode(inputs: &ConfigInputs, management: bool) -> Result<ResolvedCoreConf
     sources.insert("home".into(), home_source);
     sources.insert("config_file".into(), selected_source);
     let result = ResolvedCoreConfig {
+        permissions: PermissionConfig {
+            mode: if values["permissions.mode"]
+                .value
+                .eq_ignore_ascii_case("YOLO")
+            {
+                PermissionMode::Yolo
+            } else {
+                PermissionMode::AskPermissions
+            },
+            allow: serde_json::from_str(&values["permissions.allow"].value).unwrap(),
+            ask: serde_json::from_str(&values["permissions.ask"].value).unwrap(),
+            deny: serde_json::from_str(&values["permissions.deny"].value).unwrap(),
+        },
         goals: GoalConfig {
             max_turns: values["goals.max_turns"].value.parse().unwrap(),
             max_active_seconds: values["goals.max_active_seconds"].value.parse().unwrap(),

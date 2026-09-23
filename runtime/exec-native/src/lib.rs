@@ -76,6 +76,7 @@ impl NativeBackend {
         sandbox::supported(profile)?;
         let program = match profile {
             SandboxProfile::Native => "/usr/bin/sandbox-exec",
+            SandboxProfile::FullAccess => "/bin/sh",
             SandboxProfile::OuterContainerPerf => "/usr/bin/bwrap",
         };
         if !std::path::Path::new(program).is_file() {

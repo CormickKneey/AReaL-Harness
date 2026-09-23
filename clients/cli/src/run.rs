@@ -280,7 +280,7 @@ async fn execute_connected(args: &Cli, local: &local::Local) -> Result<(i32, Vec
     }
     visible.retain(|n| !denied.contains(n));
     let bypass = args.dangerously_skip_permissions || args.permission_mode == "bypassPermissions";
-    let approvals = if bypass || args.permission_mode == "plan" {
+    let approvals = if bypass || matches!(args.permission_mode.as_str(), "plan" | "inherit") {
         vec![]
     } else {
         vec!["*".to_owned()]
@@ -349,7 +349,7 @@ async fn execute_connected(args: &Cli, local: &local::Local) -> Result<(i32, Vec
     };
     if args.output_format == "stream-json" {
         emit(
-            &json!({"type":"system","subtype":"init","session_id":session,"uuid":key(),"cwd":thread["thread"]["cwd"],"model":model,"tools":visible,"permissionMode":if args.dangerously_skip_permissions{"bypassPermissions"}else{args.permission_mode.as_str()}}),
+            &json!({"type":"system","subtype":"init","session_id":session,"uuid":key(),"cwd":thread["thread"]["cwd"],"model":model,"tools":visible,"permissionMode":if args.dangerously_skip_permissions{"bypassPermissions"}else if args.permission_mode=="inherit" {thread["permissionMode"].as_str().unwrap_or("YOLO")} else{args.permission_mode.as_str()}}),
         )?;
     }
     let mut input_rx = stdin(args);
@@ -384,7 +384,7 @@ async fn execute_connected(args: &Cli, local: &local::Local) -> Result<(i32, Vec
                   if value["type"]=="control_request"&&value["request"]["subtype"]=="interrupt" {ensure!(value["request_id"].as_str().is_some_and(|id|!id.is_empty()),"control request_id required");if let Some(turn)=&active{rpc.call("turn/interrupt",json!({"threadId":session,"turnId":turn})).await?;}
         if args.output_format=="stream-json"{emit(&json!({"type":"control_response","response":{"subtype":"success","request_id":value["request_id"],"response":{}}}))?;}continue;}
                   ensure!(outstanding<32,"CLI input queue capacity reached");let content=input(&value,&session)?;let request=value.get("uuid").and_then(Value::as_str).map(str::to_owned).unwrap_or_else(key);
-                  let method=if outstanding>0{"areal/turn/enqueue"}else{"areal/turn/start"};let result=rpc.call(method,json!({"requestId":request,"threadId":session,"input":content,"expectedConfigRevision":effective["revision"]})).await?;
+                  let method=if outstanding>0{"areal/turn/enqueue"}else{"areal/turn/start"};let result=rpc.call(method,json!({"requestId":request,"threadId":session,"input":content,"expectedConfigRevision":effective["revision"],"interactionMode":if !eof && args.input_format=="stream-json" && args.output_format=="stream-json" && args.permission_mode!="dontAsk" {"interactive"} else {"headless"}})).await?;
                   if let Some(turn)=result["turn"]["id"].as_str(){if accepted.insert(turn.into()){outstanding+=1;started.insert(turn.to_owned(),std::time::Instant::now());}active=Some(turn.into());}else{let id=result["queueItemId"].as_str().context("missing queue receipt")?;if queued.insert(id.into()){outstanding+=1;}}
                  }
                  event=rpc.events.recv()=>{

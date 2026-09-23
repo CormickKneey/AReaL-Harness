@@ -37,10 +37,12 @@ pub const NOTIFICATIONS: &[&str] = &[
     "areal/thread/archived",
     "areal/plan/updated",
     "areal/queue/updated",
+    "areal/task/updated",
     "areal/interaction/requested",
     "areal/interaction/resolved",
     "areal/process/updated",
     "areal/server/draining",
+    "areal/server/configurationChanged",
 ];
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
@@ -126,6 +128,8 @@ pub struct AgentProfile {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ClientOptions {
     #[serde(default)]
+    pub interaction_mode: crate::tasks::InteractionMode,
+    #[serde(default)]
     pub read_only: bool,
     pub system_prompt: Option<String>,
     #[serde(default)]
@@ -141,6 +145,9 @@ pub struct ClientOptions {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EffectiveConfig {
+    /// 服务默认模型在提交时固定；不包含端点或凭据。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_model_revision: Option<String>,
     #[serde(default)]
     pub options: ClientOptions,
     #[serde(default)]
@@ -161,6 +168,7 @@ pub struct EffectiveConfig {
 impl Default for EffectiveConfig {
     fn default() -> Self {
         Self {
+            default_model_revision: None,
             revision: 1,
             options: ClientOptions::default(),
             selected_skills: None,
@@ -253,9 +261,19 @@ pub struct Queue {
     pub items: Vec<QueueItem>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PermissionGrant {
+    pub key: String,
+    pub tool: String,
+    pub arguments: Value,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DesktopState {
+    #[serde(default)]
+    pub permission_grants: Vec<PermissionGrant>,
     #[serde(default)]
     pub archived: bool,
     pub configuration: EffectiveConfig,
@@ -285,6 +303,8 @@ pub struct ThreadStart {
 #[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TurnStart {
+    #[serde(default)]
+    pub interaction_mode: Option<crate::tasks::InteractionMode>,
     pub request_id: String,
     pub thread_id: String,
     pub input: Vec<Input>,

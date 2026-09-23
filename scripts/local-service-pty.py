@@ -4,6 +4,8 @@ import errno
 import fcntl
 import json
 import os
+import re
+import runpy
 import struct
 import subprocess
 import sys
@@ -11,6 +13,10 @@ import termios
 import threading
 import time
 from pathlib import Path
+
+TerminalScreen = runpy.run_path(str(Path(__file__).with_name("terminal_screen.py")))[
+    "TerminalScreen"
+]
 
 windows = []
 
@@ -29,7 +35,8 @@ def window():
     os.close(slave)
     output = bytearray()
     ready = threading.Condition()
-    item = (master, child, output, ready)
+    screen = TerminalScreen()
+    item = (master, child, output, ready, screen)
     windows.append(item)
 
     def read_output():
@@ -39,6 +46,7 @@ def window():
                 with ready:
                     output.extend(chunk)
                     del output[:-262144]
+                    screen.feed(chunk)
                     ready.notify_all()
         except OSError as error:
             if error.errno != errno.EIO:
@@ -49,11 +57,12 @@ def window():
 
 
 def expect(item, text):
-    _, child, output, ready = item
+    _, child, _, ready, screen = item
+
     with ready:
-        if ready.wait_for(lambda: text in output, timeout=20):
+        if ready.wait_for(lambda: text in screen.text(), timeout=20):
             return
-        raise AssertionError(f"missing {text!r}, exit={child.poll()}, output={output!r}")
+        raise AssertionError(f"missing {text!r}, exit={child.poll()}, screen={screen.text()!r}")
 
 
 try:
@@ -66,6 +75,56 @@ try:
     first[1].wait(timeout=5)
     os.write(second[0], b"window-survives\r")
     expect(second, b"reply:window-survives")
+    if config_path := os.environ.get("TEST_RELOAD_CONFIG"):
+        binary = str(Path(sys.argv[1]).with_name("areal"))
+        before = json.loads(
+            subprocess.check_output([binary, "service", "ensure", *sys.argv[2:]], text=True)
+        )
+        config = Path(config_path)
+        changed = re.sub(
+            r'^name = "[^"\n]*"$',
+            'name = "fixture-pty"',
+            config.read_text(),
+            count=1,
+            flags=re.MULTILINE,
+        )
+        pending = config.with_suffix(".pending")
+        pending.write_text(changed)
+        pending.replace(config)
+        # 状态通知可在绘制前被后续响应覆盖；标题中的模型名称会持续反映热更新结果。
+        expect(second, b"fixture-pty")
+        after = json.loads(
+            subprocess.check_output([binary, "service", "ensure", *sys.argv[2:]], text=True)
+        )
+        assert after["generation"] == before["generation"]
+        # 文件限额变化由仍打开的 TUI 等待空闲后重启，并重建已有会话快照。
+        changed, count = re.subn(
+            r"^max_threads = \d+$", "max_threads = 1235", changed, count=1, flags=re.MULTILINE
+        )
+        assert count == 1
+        with second[3]:
+            second[2].clear()
+            second[4].clear()
+        pending.write_text(changed)
+        pending.replace(config)
+        # 重连提示可能在绘制前被会话快照覆盖；检查只读状态及恢复后的实际请求。
+        end = time.monotonic() + 30
+        while True:
+            result = subprocess.run(
+                [binary, "service", "status", "--instance", before["serviceId"]],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                after = json.loads(result.stdout)
+                if after["state"] == "ready" and after["generation"] != before["generation"]:
+                    break
+            assert time.monotonic() < end, result.stderr
+            time.sleep(0.1)
+        expect(second, b"live")
+        os.write(second[0], b"after-config-restart\r")
+        expect(second, b"reply:after-config-restart")
     if os.environ.get("TEST_EXPLICIT_STOP"):
         binary = str(Path(sys.argv[1]).with_name("areal"))
         descriptor = json.loads(
@@ -90,7 +149,7 @@ try:
     os.write(second[0], b"\x11")
     assert second[1].wait(timeout=5) == 0
 finally:
-    for master, child, _, _ in windows:
+    for master, child, _, _, _ in windows:
         if child.poll() is None:
             child.kill()
             child.wait(timeout=5)

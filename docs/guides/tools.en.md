@@ -4,6 +4,10 @@
 
 Core's registry binds names and JSON Schemas to built-in, command, client, MCP or plugin backends. Core validates inputs and outputs; Runtime handles local execution. Full model-tool schemas are in [tools.rs](../../core/engine/src/tools.rs).
 
+The Local launch defaults to YOLO. File tools and command cwd accept outside-workspace absolute paths normalized to `workspace://host`, requiring Runtime full-access. Relative paths remain workspace-relative; argv uses ordinary filesystem paths. ASK_PERMISSIONS gates effective arguments before execution; see [permissions](configuration.en.md#permissions). The launcher supplies per-Thread scratch; isolated Workgroups use private `.scratch/agent-<threadId>` within their workspace and retain their Scope boundaries.
+
+`run_command` `oneOf` uses two complete object branches, each defining either `command` or `argv` and the common options, for compatibility with model endpoints that require complete branches. Both branches include the Runtime deadline ceiling. Call parameters are unchanged; Core still rejects supplying both entry points or neither.
+
 | Tool | Key parameters and boundaries |
 |---|---|
 | `read_file` | `path,offset?=1,limit?=120`; UTF-8 lines, line numbers, nextLine/eof, whole-file digest and fileVersion; at most 1000 lines/about 14 KiB |
@@ -78,3 +82,7 @@ Dispatch returns requested/started/allAccepted, reports[], rejected[], asynchron
 The parent is the sole source writer. Workers share model settings but have independent context and built-in tools, writing only `workspace://scratch/agent-<thread-id>`. TMPDIR and verification receipts use that directory; Runtime Scope/OS sandbox enforce read-only source access. Workers inherit no command extensions, hooks, client callbacks, MCP or plugins. Full history lives in a separate Thread; source=nativeResearchAgent restores the same permissions. There is no source snapshot isolation or multiwriter merge, so the parent must verify reports and final results.
 
 The model chooses delegation timing, count and content without fixed phases or case-ID branches. Empty scratch for rejected Workers is rolled back using remove_dir only. Admitted scratch retains evidence for caller collection/cleanup; cancellation reclaims execution resources only. See [general](../../core/engine/src/instructions.md), [delegation](../../core/engine/src/agent-instructions.md) and [compaction](../../core/engine/src/summary-instructions.md) instructions.
+
+## Task communication and background workers
+
+Inside Goals/Tasks, ask_user_question supports mode=async: it persists a question in the independent Channel and returns immediately so the model can continue other work. task_channel_read reads messages; task_wait releases the coordinator Turn when no independent work remains; task_spawn creates a worker that survives coordinator Turns and shares the Goal budget. Ordinary agent_spawn remains parent-Turn-owned. Headless never awaits users or human approval, but may wait for workers. See the [Task contract](../api/tasks.en.md) for parameters, permissions and lifecycle.

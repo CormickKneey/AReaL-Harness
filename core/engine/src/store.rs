@@ -12,7 +12,7 @@ use std::{
 use tokio::sync::Semaphore;
 
 // 持久化版本与服务状态必须一致，避免客户端误判可恢复的数据格式。
-pub(crate) const STATE_VERSION: u32 = 8;
+pub(crate) const STATE_VERSION: u32 = 10;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Record {
@@ -93,6 +93,7 @@ impl Store {
                 goal.active_turn_id = None;
                 goal.settling = false;
                 goal.waiting_for_input = false;
+                goal.waiting_for_agents = false;
                 goal.waiting_for_capacity = false;
             }
             for turn in &mut record.thread.turns {

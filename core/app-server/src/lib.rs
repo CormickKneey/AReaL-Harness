@@ -4,6 +4,7 @@ mod dynamic_tools;
 mod processes;
 mod workgroups;
 use areal_engine::{Engine, Error};
+mod task_mode;
 use areal_protocol::{Input, MAX_FRAME_BYTES, RpcError, response};
 use axum::{
     Router,
@@ -41,6 +42,7 @@ fn configured_router(
     authentication: Option<auth::Authentication>,
     service: Option<areal_protocol::service::Identity>,
 ) -> Router {
+    engine.start_task_scheduler();
     Router::new()
         .route("/", get(upgrade))
         .route("/ui", get(|| async {
@@ -421,7 +423,13 @@ async fn connection(socket: WebSocket, engine: Arc<Engine>, principal: Arc<auth:
             conn.send(response(id.unwrap(),Err(RpcError::invalid("authenticated clients must upload media; host filesystem paths are not accepted"))));
             continue;
         }
-        if !conn.principal.allows(auth::permission(method))
+        let project_permission = (method == "areal/interaction/respond"
+            && params["decision"] == "allowProject")
+            || method.starts_with("areal/permissions/");
+        if (project_permission
+            && (!conn.principal.allows(auth::Permission::Manage)
+                || conn.principal.thread_ids.is_some()))
+            || !conn.principal.allows(auth::permission(method))
             || ["threadId", "parentThreadId"].iter().any(|key| {
                 params
                     .get(key)
@@ -544,6 +552,7 @@ impl Connection {
         Ok(())
     }
     fn forward(&mut self, id: &str, mut events: broadcast::Receiver<Value>) {
+        let task_filter = id.strip_prefix("task:").map(str::to_owned);
         let subscription = self.stop.child_token();
         if let Some(old) = self
             .subscriptions
@@ -560,6 +569,7 @@ impl Connection {
                 let event = tokio::select! { biased; _ = subscription.cancelled() => break, event = events.recv() => event };
                 match event {
                     Ok(event) => {
+                        if task_filter.as_ref().is_some_and(|id| event["params"]["taskId"].as_str()!=Some(id)) { continue; }
                         if event["method"].as_str().is_some_and(|m| suppressed.contains(m)) { continue; }
                         let _delivery = delivery.lock().await;
                         if subscription.is_cancelled() { break; }
@@ -599,6 +609,29 @@ impl Connection {
         }
         if !self.ready {
             return Err(RpcError::invalid("Not initialized"));
+        }
+        if task_mode::METHODS.contains(&method) {
+            if matches!(method, "areal/task/subscribe" | "areal/task/unsubscribe") {
+                let p: areal_protocol::tasks::TaskTarget = parse(params)?;
+                task_mode::authorize(engine, &self.principal, &p.task_id).await?;
+                let key = format!("task:{}", p.task_id);
+                if method == "areal/task/unsubscribe" {
+                    if let Some(token) = self.subscriptions.remove(&key) {
+                        token.cancel();
+                    }
+                    return Ok(json!({"removed":true}));
+                }
+                if !self.subscriptions.contains_key(&key) && self.subscriptions.len() >= 128 {
+                    return Err(RpcError::invalid("subscription limit reached"));
+                }
+                let (snapshot, events) = engine
+                    .task_snapshot_and_subscribe(&p.task_id)
+                    .await
+                    .map_err(map_error)?;
+                self.forward(&key, events);
+                return Ok(snapshot);
+            }
+            return task_mode::dispatch(engine, &self.principal, method, params).await;
         }
         if desktop::METHODS.contains(&method) && method != "areal/thread/start" {
             if matches!(method, "areal/turn/start" | "areal/turn/enqueue") {
@@ -646,6 +679,7 @@ impl Connection {
                 }
                 let mut methods = METHODS.to_vec();
                 methods.extend_from_slice(desktop::METHODS);
+                methods.extend_from_slice(task_mode::METHODS);
                 if !engine.runtime_capabilities().is_null() {
                     methods.extend_from_slice(processes::METHODS);
                 }
@@ -664,7 +698,7 @@ impl Connection {
                 Ok(json!({"apiVersion": API_VERSION, "methods": methods,
                     "notifications": NOTIFICATIONS, "serverRequests":["item/tool/call"],
                     "features":{"subscriptionRemoval":true,"atomicResume":true,
-                        "goals":true,"dynamicTools":true,"mediaOutput":true,"durableSubmissionDeduplication":true,"profiles":true,"skills":true,"plans":true,"interactions":true,"queue":true,"providerConfiguration":true,"modelReset":true,"toolMedia":true,"blobUpload":true},
+                        "taskModes":true,"taskChannels":true,"asyncQuestions":true,"headlessInteractions":true,"goals":true,"dynamicTools":true,"mediaOutput":true,"durableSubmissionDeduplication":true,"profiles":true,"skills":true,"plans":true,"interactions":true,"queue":true,"providerConfiguration":true,"modelReset":true,"toolMedia":true,"blobUpload":true},
                     "limits":{"frameBytes":MAX_FRAME_BYTES,"subscriptions":128,"sendQueue":256,"threadEventWindow":128},
                     "runtime":engine.runtime_capabilities()}))
             }
@@ -816,7 +850,7 @@ fn validate_model(engine: &Engine, model: Option<&str>) -> Result<(), RpcError> 
 }
 fn thread_result(engine: &Engine, thread: areal_protocol::Thread) -> Value {
     json!({"cwd":thread.cwd,"thread":thread,"model":engine.model_name(),"modelProvider":engine.model_provider(),
-        "approvalPolicy":"never","approvalsReviewer":"user","sandbox":engine.sandbox(),"reasoningEffort":null})
+        "approvalPolicy":if engine.permission_config().mode.requires_approval() { "on-request" } else { "never" },"permissionMode":engine.permission_config().mode,"approvalsReviewer":"user","sandbox":engine.sandbox(),"reasoningEffort":null})
 }
 fn parse<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, RpcError> {
     serde_json::from_value(value).map_err(|e| RpcError::invalid(e.to_string()))

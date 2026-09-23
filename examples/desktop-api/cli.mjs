@@ -211,6 +211,8 @@ try {
       "--input-format",
       "stream-json",
       "--verbose",
+      "--permissions",
+      "ASK_PERMISSIONS",
       "--allow-write",
     ],
     JSON.stringify({

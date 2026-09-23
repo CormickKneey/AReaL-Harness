@@ -60,6 +60,8 @@ pub enum GoalReportStatus {
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Goal {
+    #[serde(default)]
+    pub interaction_mode: crate::tasks::InteractionMode,
     pub id: String,
     pub thread_id: String,
     pub objective: String,
@@ -72,6 +74,8 @@ pub struct Goal {
     pub active_turn_id: Option<String>,
     pub settling: bool,
     pub waiting_for_input: bool,
+    #[serde(default)]
+    pub waiting_for_agents: bool,
     pub waiting_for_capacity: bool,
     pub report: Option<GoalReport>,
     pub report_turn_id: Option<String>,
@@ -95,6 +99,8 @@ pub struct GoalTurn {
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GoalCreate {
+    #[serde(default)]
+    pub interaction_mode: Option<crate::tasks::InteractionMode>,
     pub request_id: String,
     pub thread_id: String,
     pub expected_revision: u64,

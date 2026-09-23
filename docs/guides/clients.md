@@ -9,19 +9,21 @@
 ```sh
 make tui
 make tui ARGS='--resume THREAD_ID'
-make tui ARGS='--workspace /absolute/task --allow-write --prompt "Describe the task"'
+make tui ARGS='--workspace /absolute/task --prompt "Describe the task"'
 # 连接已有服务；使用它的数据目录中的认证文件
 make tui ARGS='--endpoint ws://127.0.0.1:4500 --auth-file /absolute/core-data/security/auth.json'
 ```
 
 省略 endpoint 时，交互式 TUI 连接共享 Core/Runtime，监听随机 loopback 端口。同一工作区多个窗口复用服务，关闭窗口保留后台服务和任务。`--prompt`、`--goal`、`--input-file` 默认使用 owned 模式，退出后清理所拥有的服务；`--local-mode shared|owned` 可覆盖默认选择。显式 endpoint（别名 `--remote`）只连接已有服务，不能与本地部署参数混用。
 
-共享模式默认在 `~/.areal-harness/instances/` 下按工作区保存数据；显式数据目录配置保持优先级。旧 `~/.areal-harness/state` 历史须使用 `--data-dir`，或停止旧 Core 后绑定。部署权限/配置不一致会明确报冲突。发现、迁移、日志和 Desktop 接入见[本地服务契约](../api/local-service.md)。
+共享模式默认在 `~/.areal-harness/instances/` 下按工作区保存数据；显式数据目录配置保持优先级。旧 `~/.areal-harness/state` 历史须使用 `--data-dir`，或停止旧 Core 后绑定。模型 TOML 配置自动热更新；其他 TOML 变化等待后台工作结算后重启，权限/部署参数变化需显式 restart。发现、迁移、日志和 Desktop 接入见[本地服务契约](../api/local-service.md)。
 
 ```sh
 target/debug/areal web --workspace /absolute/task
 target/debug/areal service list --json
-target/debug/areal service stop --instance INSTANCE_ID --json
+target/debug/areal service status --json
+target/debug/areal service restart --json
+target/debug/areal service stop --json
 ```
 
 `areal -p 'prompt' --output-format stream-json --verbose` 提供非交互 CLI，`areal serve` 启动持续服务；参数、认证、恢复与退出码见 [CLI 契约](../api/claude-cli.md)。Web 位于服务的 `/ui`，使用服务数据目录 `security/auth.json` 中的本地 token 登录。
@@ -40,11 +42,15 @@ Web 采用中性灰工作台布局：240px 可收起侧栏、任务标题与视�
 
 外观与导航由 Web 客户端维护，任务、权限和执行状态以 Core 返回的数据为准。
 
+TUI 顶部和 Web 显示 YOLO/ASK_PERMISSIONS，以 Core 状态为准。TUI 审批展示有效参数，↑/↓ 选择拒绝/允许一次/记住会话/项目，Enter 回答，Esc 拒绝，PgUp/PgDn 阅读参数；初始选中拒绝。Web 提供对应按钮。强制审批只提供单次回答。`/permissions` 查看模式、来源和记忆；`/permissions clear-session` 或 `clear-project` 撤销记忆。详见[配置](configuration.md#permissions)。`--prompt`/`--input-file` 无交互应答通道，遇到请求会中断并提示使用交互式 TUI/Web。
+
 ## TUI 操作
 
 | 操作 | 行为 |
 |---|---|
 | Enter | 空闲时开始 Turn；运行中追加指令 |
+| ←/→、Ctrl-A / Ctrl-E | 输入框内按完整字素移动光标、跳到当前行首 / 行尾 |
+| Ctrl-D / Delete、Backspace | 删除光标处 / 光标前的完整字素；空输入或相应边界不操作，不退出 |
 | `/`、Tab、Esc | Slash 候选、补全和关闭候选 |
 | Ctrl-C / Ctrl-Q | 暂停当前 Goal 并取消 Turn（无 Goal 时中断 Turn）/ 退出 |
 | Ctrl-R | 重连并恢复快照，不重放请求 |
@@ -102,3 +108,11 @@ target/debug/areal-tui --endpoint ws://127.0.0.1:4500 --goal '检查代码并整
 `--goal` 与 `--prompt` / `--input-file` 互斥，可用 `--resume THREAD_ID` 在已有空闲 Thread 中创建新 Goal。headless 跨 Turn 等待目标终态，仅 completed 返回成功；其他停止状态返回非零并输出目标 JSON 和原因。远端 headless 退出或断连不取消服务器上的 Goal；owned 本地 launcher 退出会关闭所拥有的 Core，shared 模式仅断开连接。通过交互式 `/open` 和 `/goal-resume` 恢复已停止目标。普通 `--prompt`、Claude CLI 入口保持单次执行语义。
 
 Core 重启后 active 目标恢复为 paused/serverRestarted，`thread/resume` 只恢复订阅，不自动运行。未知模型消费不会补零；显式 Goal resume 确认保守预留并继续保留该消费。工具 UNKNOWN 仍须检查和 acknowledge。预算、活动时间、轮次或历史容量耗尽时停止，不自动重试。预算配置见 [执行策略](configuration.md#goals)，接口字段见 [Core API](../api/core.md#goals)。
+
+## 后台任务与 Inbox
+
+Core 提供统一的 [Task Mode API](../api/tasks.md)，可创建前台、定时和后台任务。前台 Goal 的模型也可异步提问，任务频道与执行会话分开；通过 inbox/list 找到问题，用 channel/reply 回答。Web 的「后台与定时」提供任务创建、进度、频道、暂停、恢复和取消；侧栏「收件箱」是独立入口，无需打开执行会话即可回复。TUI 的专用 Inbox 面板仍待接入；API 客户端应使用 channel/reply，不把异步问题提交给 interaction/respond。
+
+后台任务可选择异步提问或无人值守。定时任务绑定当前选中的会话，使用本地日期时间创建一次性触发，或填写固定重复间隔；默认无人值守。无人值守只是交互策略，普通 headless 对话与 Goal 不会自动创建定时调度。任务控制受理后等待状态结算；暂停期间回复不会解除暂停。刷新收件箱保留当前表单草稿，页面重载后可重新查询持久问题。
+
+TUI headless 与无双向应答通道的 Claude CLI 使用 headless 交互策略；明确启用双向 stream-json 的 CLI 保留宿主应答，dontAsk 仍禁止等待。headless 中：问题立即返回不可用，必须人工批准的工具立即拒绝，模型继续其他工作或报告 blocker。要让任务在窗口关闭后运行，连接持续存活的共享或外部 Core 服务；owned launcher 退出仍会关闭其服务。

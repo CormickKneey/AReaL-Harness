@@ -78,7 +78,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 }),
             ),
             Span::styled(
-                format!("  · {}", safe_text(&app.model_label())),
+                format!(
+                    "  · {} · {}",
+                    safe_text(&app.model_label()),
+                    safe_text(&app.permission_mode)
+                ),
                 palette.style(Role::Muted),
             ),
         ]))
@@ -118,6 +122,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let read_progress = if app.view == View::Welcome {
         welcome(frame, body, app, palette);
         String::new()
+    } else if app.view == View::Permissions {
+        frame.render_widget(Paragraph::new(format!("/permissions clear-session | clear-project\nGlobal mode: config [permissions].mode or AREAL_HARNESS_PERMISSION_MODE; restart the service to apply.\n\n{}", serde_json::to_string_pretty(&app.permission_info).unwrap_or_default())).block(panel(" Permissions ", true, palette)).wrap(Wrap { trim:false }).scroll((app.permission_scroll,0)), body);
+        String::new()
     } else if app.view == View::Help {
         help_page(frame, body, palette);
         String::new()
@@ -140,7 +147,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     );
     input_view(frame, input, app, palette);
     frame.render_widget(
-        Paragraph::new(safe_text(&app.status)).style(palette.style(if app.connected {
+        Paragraph::new(safe_text(
+            app.configuration_notice.as_deref().unwrap_or(&app.status),
+        ))
+        .style(palette.style(if app.connected {
             Role::Muted
         } else {
             Role::Warning
@@ -165,6 +175,67 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
     if app.picker.is_some() {
         picker_popup(frame, area, app, palette);
+    }
+    if let Some(interaction) = app.pending_approval() {
+        let popup = area.inner(ratatui::layout::Margin {
+            horizontal: 2,
+            vertical: 1,
+        });
+        frame.render_widget(Clear, popup);
+        let block = panel(
+            " Permission required · ↑↓ choose · Enter confirm · PgUp/PgDn details ",
+            true,
+            palette,
+        );
+        let inner = block.inner(popup);
+        frame.render_widget(block, popup);
+        let choices = app.approval_choices();
+        let [details, buttons] =
+            Layout::vertical([Constraint::Min(1), Constraint::Length(choices.len() as u16)])
+                .areas(inner);
+        let permissions = interaction.effective_permissions.as_ref();
+        let scope = if permissions.is_some_and(|p| p["readOnly"] == true) {
+            "Read-only task · network blocked"
+        } else if permissions.is_some_and(|p| p["runtime"]["capabilities"]["fullAccess"] == true) {
+            "Full filesystem access · network allowed"
+        } else {
+            "Restricted deployment · inspect /permissions for its boundaries"
+        };
+        let text = format!(
+            "Session {} · {}\n{scope}.\nRemembering applies only to this exact tool and arguments.\n\n{}",
+            short(&interaction.thread_id),
+            interaction.tool.as_deref().unwrap_or("tool"),
+            serde_json::to_string_pretty(&interaction.effective_arguments).unwrap_or_default()
+        );
+        frame.render_widget(
+            Paragraph::new(safe_text(&text))
+                .wrap(Wrap { trim: false })
+                .scroll((app.interaction_scroll, 0)),
+            details,
+        );
+        let lines: Vec<Line> = choices
+            .iter()
+            .enumerate()
+            .map(|(index, (_, label))| {
+                Line::styled(
+                    format!(
+                        "{} {}",
+                        if index == app.approval_selection() {
+                            ">"
+                        } else {
+                            " "
+                        },
+                        label
+                    ),
+                    palette.style(if index == app.approval_selection() {
+                        Role::Accent
+                    } else {
+                        Role::Muted
+                    }),
+                )
+            })
+            .collect();
+        frame.render_widget(Paragraph::new(lines), buttons);
     }
 }
 
@@ -397,9 +468,12 @@ fn navigation_view(frame: &mut Frame, area: Rect, app: &mut App, p: Palette) {
         .position(|r| Some(&r.target) == app.nav_selected.as_ref())
         .unwrap_or(0);
     let title = match app.view {
-        View::Agents | View::Conversation | View::Welcome | View::Help | View::Tasks => {
-            " Agents · session tree "
-        }
+        View::Agents
+        | View::Conversation
+        | View::Welcome
+        | View::Help
+        | View::Tasks
+        | View::Permissions => " Agents · session tree ",
         View::Groups => " Workgroups ",
     };
     let items: Vec<_> = rows
@@ -631,7 +705,7 @@ fn execution_status(app: &App) -> String {
             .count();
         if pending > 0 {
             parts.push(format!(
-                "{pending} pending interaction(s) · use Web client to respond"
+                "{pending} pending interaction(s) · approvals open in this terminal"
             ));
         }
     }
@@ -735,30 +809,46 @@ fn input_view(frame: &mut Frame, area: Rect, app: &App, p: Palette) {
         p,
     );
     let inner = block.inner(area);
-    let text = safe_text(&app.input)
-        .replace('\n', "↵")
-        .replace('\t', "    ");
-    let capacity = usize::from(inner.width.saturating_sub(1));
-    let mut width = 0;
-    let mut tail = Vec::new();
-    for g in text.graphemes(true).rev() {
-        if width + g.width() > capacity {
-            break;
-        }
-        width += g.width();
-        tail.push(g);
-    }
-    tail.reverse();
-    let text = tail.concat();
+    let (text, cursor_column) = input_window(&app.input, app.input_cursor, inner.width);
     frame.render_widget(Paragraph::new(text).block(block), area);
     if app.focus == Focus::Input
         && app.theme_original.is_none()
         && app.picker.is_none()
+        && app.pending_approval().is_none()
         && inner.width > 0
         && inner.height > 0
     {
-        frame.set_cursor_position((inner.x + width as u16, inner.y));
+        frame.set_cursor_position((inner.x + cursor_column, inner.y));
     }
+}
+
+fn input_window(input: &str, cursor: usize, width: u16) -> (String, u16) {
+    let display = |text: &str| safe_text(text).replace('\n', "↵").replace('\t', "    ");
+    let before = display(&input[..cursor]);
+    let after = display(&input[cursor..]);
+    let width = usize::from(width);
+    // 为光标处的完整字素留出空间，窄窗口也不把双宽字符切成两半。
+    let reserved = after.graphemes(true).next().map_or(1, |g| g.width().max(1));
+    let capacity = width.saturating_sub(reserved);
+    let mut cursor_column = 0;
+    let mut visible = Vec::new();
+    for g in before.graphemes(true).rev() {
+        if cursor_column + g.width() > capacity {
+            break;
+        }
+        cursor_column += g.width();
+        visible.push(g);
+    }
+    visible.reverse();
+    let mut used = cursor_column;
+    for g in after.graphemes(true) {
+        if used + g.width() > width {
+            break;
+        }
+        used += g.width();
+        visible.push(g);
+    }
+    (visible.concat(), cursor_column as u16)
 }
 
 fn completion_popup(frame: &mut Frame, input: Rect, body: Rect, app: &App, p: Palette) {
@@ -889,9 +979,11 @@ Idle Turns only · configured models; availability is not a connection probe",
     };
     frame.render_widget(Paragraph::new(note_text).style(p.style(Role::Muted)), note);
     frame.render_widget(
-        Paragraph::new(safe_text(&app.status))
-            .wrap(Wrap { trim: false })
-            .style(p.style(Role::Warning)),
+        Paragraph::new(safe_text(
+            app.configuration_notice.as_deref().unwrap_or(&app.status),
+        ))
+        .wrap(Wrap { trim: false })
+        .style(p.style(Role::Warning)),
         status,
     );
 }
@@ -935,7 +1027,7 @@ fn theme_picker(frame: &mut Frame, area: Rect, app: &App, p: Palette) {
     );
 }
 fn help_page(frame: &mut Frame, area: Rect, p: Palette) {
-    let text = "F1 /help: help · F2 /theme: theme picker\nF3 /topology: agents · F4 /groups: workgroups\nF5 /sessions: switch session · F6 /model: switch model\n/goal OBJECTIVE · /goal-pause · /goal-resume · /goal-clear\n/goal-edit OBJECTIVE · /goal-budget TOKENS|none\n/new · /tasks · /sessions · /open ID · /spawn PROMPT · /agents\n/group ID · /group-start JSON_FILE · /group-revise JSON_FILE\n/group-cancel ID · /welcome · /quit\n\n/: command suggestions · ↑↓ select · Tab complete\nTab / Shift-Tab: input, right panel, history focus\nNavigation: arrows select/expand, Enter open, r refresh\nHistory: ↑↓ select, Enter/Space expand, ←→ collapse/expand\nPgUp/PgDn scroll, Home/End, click a summary to expand\nCtrl-O /details: compact or detailed records\n/restore-input: restore failed submission; --mouse=false: native selection\nCtrl-C: interrupt the input target's active Turn\nCtrl-R: reconnect · Ctrl-Q: quit\n\nRead % describes loaded history; session plan counts are separate.\nTask trees include historical child sessions. Snapshot nodes can lag.\nPending questions/approvals are shown here; respond in the Web client.\nEsc: return to input";
+    let text = "F1 /help: help · F2 /theme: theme picker\nF3 /topology: agents · F4 /groups: workgroups\nF5 /sessions: switch session · F6 /model: switch model\n/goal OBJECTIVE · /goal-pause · /goal-resume · /goal-clear\n/goal-edit OBJECTIVE · /goal-budget TOKENS|none\n/new · /tasks · /sessions · /open ID · /spawn PROMPT · /agents\n/group ID · /group-start JSON_FILE · /group-revise JSON_FILE\n/group-cancel ID · /welcome · /quit\n\n/: command suggestions · ↑↓ select · Tab complete\nTab / Shift-Tab: input, right panel, history focus\nInput: ←→ move · Ctrl-A/E line start/end\nCtrl-D/Delete: delete next · Backspace: delete previous\nNavigation: arrows select/expand, Enter open, r refresh\nHistory: ↑↓ select, Enter/Space expand, ←→ collapse/expand\nPgUp/PgDn scroll, Home/End, click a summary to expand\nCtrl-O /details: compact or detailed records\n/restore-input: restore failed submission; --mouse=false: native selection\nCtrl-C: interrupt the input target's active Turn\nCtrl-R: reconnect · Ctrl-Q: quit\n\nRead % describes loaded history; session plan counts are separate.\nTask trees include historical child sessions. Snapshot nodes can lag.\nApprovals: use the terminal dialog. /permissions: inspect rules. Questions: respond in Web.\nEsc: return to input";
     frame.render_widget(
         Paragraph::new(text)
             .wrap(Wrap { trim: false })
@@ -959,6 +1051,54 @@ mod tests {
     use super::*;
     use crate::{app::tests::thread, theme::Preferences};
     use ratatui::{Terminal, backend::TestBackend};
+    #[test]
+    fn input_window_tracks_cursor_and_keeps_wide_graphemes_visible() {
+        for (text, cursor, width, visible, column) in [
+            ("abcdef", 0, 4, "abcd", 0),
+            ("abcdef", 3, 4, "abcd", 3),
+            ("abcdef", 4, 4, "bcde", 3),
+            ("abcdef", 6, 4, "def", 3),
+            ("ab中文z", 2, 4, "ab中", 2),
+            ("ab中文z", 5, 4, "中文", 2),
+            ("e\u{301}👩‍💻x", 3, 4, "e\u{301}👩‍💻x", 1),
+            ("a\t中\nz", 5, 10, "a    中↵z", 7),
+            ("中", 0, 1, "", 0),
+            ("中", 3, 0, "", 0),
+        ] {
+            assert_eq!(input_window(text, cursor, width), (visible.into(), column));
+        }
+    }
+    #[test]
+    fn input_renders_cursor_at_display_column_after_moving_and_resizing() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        use ratatui::backend::Backend;
+        let mut app = App::new(Preferences::default());
+        app.paste("ab中文z");
+        app.key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))
+            .unwrap();
+        app.key(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE))
+            .unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(12, 3)).unwrap();
+        let palette = app.prefs.palette();
+        terminal
+            .draw(|f| input_view(f, f.area(), &app, palette))
+            .unwrap();
+        assert_eq!(terminal.backend_mut().get_cursor_position().unwrap().x, 5);
+        terminal.backend_mut().resize(6, 3);
+        terminal
+            .draw(|f| input_view(f, f.area(), &app, palette))
+            .unwrap();
+        assert_eq!(terminal.backend_mut().get_cursor_position().unwrap().x, 3);
+        assert_eq!(terminal.backend().buffer()[(1, 1)].symbol(), "中");
+        assert_eq!(terminal.backend().buffer()[(3, 1)].symbol(), "文");
+        app.key(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL))
+            .unwrap();
+        terminal
+            .draw(|f| input_view(f, f.area(), &app, palette))
+            .unwrap();
+        assert_eq!(terminal.backend_mut().get_cursor_position().unwrap().x, 1);
+        assert!(screen(&terminal).contains("ab中"));
+    }
     fn screen(terminal: &Terminal<TestBackend>) -> String {
         terminal
             .backend()
@@ -977,6 +1117,29 @@ mod tests {
             modifiers: crossterm::event::KeyModifiers::NONE,
         });
     }
+    #[test]
+    fn approval_dialog_keeps_decisions_visible_at_small_sizes() {
+        let mut app = App::new(Preferences::default());
+        app.connected = true;
+        app.selected = Some("root".into());
+        let mut t = thread("root", None);
+        t.desktop.get_or_insert_with(Default::default).interactions.push(serde_json::from_value(serde_json::json!({
+            "requestId":"approval","threadId":"root","turnId":"turn","callId":"call","kind":"approval","status":"pending","expiresAt":9999999999_i64,
+            "questions":[],"tool":"run_command","argumentsDigest":"digest","generation":null,
+            "effectiveArguments":{"command":"echo fixture"},"effectivePermissions":{"rememberAllowed":true,"runtime":{"capabilities":{"fullAccess":true}}},"response":null
+        })).unwrap());
+        app.threads.insert("root".into(), t);
+        for (width, height) in [(60, 18), (120, 36)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+            let text = screen(&terminal);
+            assert!(text.contains("run_command"));
+            assert!(text.contains("> Deny"));
+            assert!(text.contains("Allow once"));
+            assert!(text.contains("Remember exact request for this project"));
+        }
+    }
+
     #[test]
     fn mouse_and_keyboard_target_individual_records_after_resize() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEventKind};

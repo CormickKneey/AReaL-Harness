@@ -19,6 +19,22 @@ fn main() {
     }
     add!("areal/capabilities", CapabilitiesRequest);
     add!("areal/goal/create", areal_protocol::goals::GoalCreate);
+    add!("areal/task/create", areal_protocol::tasks::TaskCreate);
+    for action in ["areal/task/pause", "areal/task/resume", "areal/task/cancel"] {
+        add!(action, areal_protocol::tasks::TaskControl);
+    }
+    for action in [
+        "areal/task/read",
+        "areal/task/subscribe",
+        "areal/task/unsubscribe",
+    ] {
+        add!(action, areal_protocol::tasks::TaskTarget);
+    }
+    for action in ["areal/task/list", "areal/inbox/list"] {
+        add!(action, areal_protocol::tasks::TaskList);
+    }
+    add!("areal/channel/read", areal_protocol::tasks::ChannelRead);
+    add!("areal/channel/reply", areal_protocol::tasks::ChannelReply);
     add!("areal/goal/update", areal_protocol::goals::GoalUpdate);
     for action in ["areal/goal/pause", "areal/goal/resume", "areal/goal/clear"] {
         add!(action, areal_protocol::goals::GoalControl);
@@ -61,6 +77,7 @@ fn main() {
         "areal/skill/list",
         "areal/plan/read",
         "areal/interaction/list",
+        "areal/permissions/read",
         "areal/queue/list",
         "areal/process/list",
         "areal/context/compact",
@@ -70,6 +87,13 @@ fn main() {
             object(json!({"threadId":string}), vec!["threadId"]),
         );
     }
+    methods.insert(
+        "areal/permissions/forget".into(),
+        object(
+            json!({"threadId":string,"project":{"type":"boolean"}}),
+            vec!["threadId"],
+        ),
+    );
     for method in ["areal/provider/read", "areal/mcp/read"] {
         methods.insert(method.into(), object(json!({"id":string}), vec!["id"]));
     }
@@ -101,7 +125,7 @@ fn main() {
             vec!["requestId"],
         ),
     );
-    methods.insert("areal/server/drain".into(),object(json!({"strategy":{"enum":["wait","cancel"]},"timeoutMs":{"type":"integer","minimum":0,"maximum":60000}}),vec!["strategy","timeoutMs"]));
+    methods.insert("areal/server/drain".into(),object(json!({"strategy":{"enum":["wait","cancel","ifIdle"]},"timeoutMs":{"type":"integer","minimum":0,"maximum":60000}}),vec!["strategy","timeoutMs"]));
     methods.insert(
         "areal/blob/release".into(),
         object(

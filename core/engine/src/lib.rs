@@ -1,13 +1,16 @@
 mod agents;
 pub mod concurrency;
 mod context;
+mod default_model;
 pub mod desktop;
 mod generation;
 pub mod goals;
 mod history;
 pub mod model;
+mod permissions;
 mod sessions;
 mod store;
+mod task_mode;
 pub mod tools;
 mod turns;
 mod watchdog;
@@ -177,7 +180,11 @@ impl Cell {
 }
 
 pub struct Engine {
+    permissions: permissions::Permissions,
+    default_models: std::sync::RwLock<default_model::DefaultModels>,
+    configuration_status: std::sync::RwLock<Value>,
     goals: goals::Goals,
+    task_modes: task_mode::Tasks,
     threads: RwLock<BTreeMap<String, Arc<Cell>>>,
     store: store::Store,
     model: Arc<dyn Model>,
@@ -434,8 +441,28 @@ impl Engine {
         )?;
         let desktop = desktop::Desktop::open(root)?;
         let goals = goals::Goals::open(root, &threads)?;
+        let permission_file = root.join("desktop/permissions.json");
+        let project_permissions = if permission_file.exists() {
+            let metadata = std::fs::symlink_metadata(&permission_file)?;
+            anyhow::ensure!(
+                metadata.is_file() && metadata.len() <= 256 * 1024,
+                "permission memory must be a regular file of at most 256 KiB"
+            );
+            let bytes = std::fs::read(&permission_file)?;
+            serde_json::from_slice(&bytes)?
+        } else {
+            permissions::ProjectGrants::default()
+        };
+        let task_modes = task_mode::Tasks::open(root)?;
         Ok(Arc::new(Self {
+            permissions: permissions::Permissions {
+                config: Default::default(),
+                project: Mutex::new(project_permissions),
+            },
+            default_models: Default::default(),
+            configuration_status: Default::default(),
             goals,
+            task_modes,
             desktop,
             threads: RwLock::new(threads),
             store,
@@ -454,14 +481,14 @@ impl Engine {
             workgroups: std::sync::OnceLock::new(),
         }))
     }
-    pub fn model_name(&self) -> &str {
-        self.model.name()
+    pub fn model_name(&self) -> String {
+        self.default_model().name().into()
     }
-    pub fn model_provider(&self) -> &str {
-        self.model.provider()
+    pub fn model_provider(&self) -> String {
+        self.default_model().provider().into()
     }
     pub fn model_capabilities(&self) -> ModelCapabilities {
-        self.model.capabilities()
+        self.default_model().capabilities()
     }
     pub fn data_dir(&self) -> &Path {
         self.store.root()
@@ -487,6 +514,9 @@ impl Engine {
             .as_ref()
             .is_some_and(|runtime| runtime.client.info().capabilities["rootNetwork"] == "inherit");
         match &self.runtime {
+            Some(runtime) if runtime.client.info().capabilities["fullAccess"] == true => {
+                json!({"type":"dangerFullAccess","networkAccess":network_access})
+            }
             Some(runtime) if runtime.writable => {
                 json!({"type":"workspaceWrite","writableRoots":[runtime.workspace],"networkAccess":network_access,"excludeTmpdirEnvVar":true,"excludeSlashTmp":true})
             }

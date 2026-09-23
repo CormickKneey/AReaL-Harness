@@ -3,6 +3,7 @@ use std::path::{Component, Path, PathBuf};
 
 pub(crate) struct Workspace {
     pub root: PathBuf,
+    pub full_access: bool,
     identity: Directory,
     scratch: Option<(PathBuf, Directory)>,
 }
@@ -62,6 +63,7 @@ impl Workspace {
         let identity = Directory::bind(&root)?;
         Ok(Self {
             root,
+            full_access: false,
             identity,
             scratch: None,
         })
@@ -108,13 +110,17 @@ impl Workspace {
         Ok(root.join(relative))
     }
     fn relative<'a>(&self, uri: &'a str) -> Result<(&Path, &'a Path)> {
-        let (root, namespace) =
+        let (root, namespace): (&Path, &str) =
             if uri == "workspace://scratch" || uri.starts_with("workspace://scratch/") {
                 (
                     self.scratch_root()
                         .ok_or_else(|| denied("scratch is not configured"))?,
                     "workspace://scratch",
                 )
+            } else if self.full_access
+                && (uri == "workspace://host" || uri.starts_with("workspace://host/"))
+            {
+                (Path::new("/"), "workspace://host")
             } else {
                 (&self.root, "workspace://repo")
             };
@@ -146,6 +152,13 @@ impl Workspace {
                 "workspace://scratch".into()
             } else {
                 format!("workspace://scratch/{}", relative.display())
+            };
+        }
+        if self.full_access && !path.starts_with(&self.root) {
+            return if path == Path::new("/") {
+                "workspace://host".into()
+            } else {
+                format!("workspace://host{}", path.display())
             };
         }
         let relative = path

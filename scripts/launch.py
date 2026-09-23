@@ -13,6 +13,7 @@ import threading
 from pathlib import Path
 
 CORE_OPTIONS = (
+    "permissions",
     "config",
     "data_dir",
     "listen",
@@ -78,7 +79,11 @@ def main():
     parser.add_argument("--allow-concurrent-writes", action="store_true")
     parser.add_argument("--command-timeout-ms", type=int, default=300000)
     parser.add_argument("--command-output-bytes", type=int, default=8 * 1024 * 1024)
-    parser.add_argument("--sandbox-profile", choices=("native", "outer-container-perf"))
+    parser.add_argument(
+        "--sandbox-profile",
+        choices=("native", "outer-container-perf", "full-access"),
+        default="full-access",
+    )
     for name in CORE_OPTIONS:
         parser.add_argument("--" + name.replace("_", "-"))
     parser.add_argument("--tui", action="store_true")
@@ -111,6 +116,9 @@ def main():
     for ready_path in (args.ready_file, args.ready_metadata_file):
         if ready_path is not None and ready_path.exists():
             parser.error(f"ready output already exists: {ready_path}")
+    if args.sandbox_profile == "full-access":
+        args.allow_write = True
+        args.allow_network = True
     if args.workgroup_policy and not args.allow_write:
         parser.error("--workgroup-policy requires --allow-write")
     if args.workgroup_toolchain and not args.workgroup_policy:
@@ -152,11 +160,6 @@ def main():
             parser.error(
                 f"executable missing: {path}; run make build or install all Harness binaries together"
             )
-        if args.allow_write and (
-            path.resolve().is_relative_to(workspace)
-            or (scratch and path.resolve().is_relative_to(scratch))
-        ):
-            parser.error("trusted binaries must exist outside the writable workspace and scratch")
     # A locally owned session uses an ephemeral listener; standalone mode retains
     # the Core configuration. All other defaults/precedence belong to Rust.
     if (args.tui or args.desktop) and args.listen is None:
@@ -181,6 +184,25 @@ def main():
     data = Path(config["server"]["data_dir"]).resolve()
     if data.is_relative_to(workspace):
         parser.error("Core data must be outside the execution workspace")
+    if scratch is None:
+        scratch = data.parent / "scratch"
+        scratch.mkdir(parents=True, exist_ok=True, mode=0o700)
+        scratch = scratch.resolve()
+    if (
+        scratch.is_relative_to(workspace)
+        or workspace.is_relative_to(scratch)
+        or data.is_relative_to(scratch)
+        or scratch.is_relative_to(data)
+    ):
+        parser.error("scratch must be disjoint from workspace and Core data")
+    if args.sandbox_profile != "full-access":
+        for path in paths:
+            if (
+                args.allow_write and path.resolve().is_relative_to(workspace)
+            ) or path.resolve().is_relative_to(scratch):
+                parser.error(
+                    "trusted binaries must exist outside the writable workspace and scratch"
+                )
     children = []
     stopping = False
 
@@ -294,7 +316,11 @@ def main():
                 stdout=response_write,
                 stderr=diagnostics,
                 env={
-                    "PATH": "/usr/bin:/bin",
+                    **{
+                        name: os.environ[name]
+                        for name in ("PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TERM")
+                        if name in os.environ
+                    },
                     **{
                         name: os.environ[name]
                         for name in (

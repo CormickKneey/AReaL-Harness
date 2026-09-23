@@ -18,6 +18,7 @@ impl Engine {
         !self.is_closed() && !self.desktop.lifecycle.draining.load(Ordering::Acquire)
     }
     pub async fn server_status(&self) -> Value {
+        let active_tasks = self.task_active_count().await;
         let cells: Vec<_> = self.threads.read().await.values().cloned().collect();
         let mut active = Vec::new();
         let mut resources = Vec::new();
@@ -85,23 +86,36 @@ impl Engine {
             g.iter()
                 .any(|g| g["status"] == "running" || g["cleanupConfirmed"] != true)
         });
-        json!({"activeGoals":active_goals,"pendingQueueItems":pending_queue_items,"compactions":compacting,"workgroups":groups,"apiVersion":API_VERSION,"stateVersion":crate::store::STATE_VERSION,"productVersion":env!("CARGO_PKG_VERSION"),"draining":self.desktop.lifecycle.draining.load(Ordering::Acquire),"closed":self.is_closed(),"acceptingWork":self.accepting_work(),"activeTurns":active,"resources":resources,"unresolvedTools":unknown,"runtime":runtime,"capacity":{"threads":cells.len(),"maxThreads":self.limits.max_threads,"activeTurns":self.limits.max_active_turns-self.active_turns.available_permits(),"maxActiveTurns":self.limits.max_active_turns,"historyBytesPerThread":self.limits.max_history_bytes,"blobBytes":512*1024*1024u64},"restartSafe":active.is_empty()&&resources.is_empty()&&unknown.is_empty()&&compacting.is_empty()&&!unsettled})
+        json!({"configuration":self.configuration_status.read().unwrap().clone(),"activeTasks":active_tasks,"activeGoals":active_goals,"pendingQueueItems":pending_queue_items,"compactions":compacting,"workgroups":groups,"apiVersion":API_VERSION,"stateVersion":crate::store::STATE_VERSION,"productVersion":env!("CARGO_PKG_VERSION"),"draining":self.desktop.lifecycle.draining.load(Ordering::Acquire),"closed":self.is_closed(),"acceptingWork":self.accepting_work(),"activeTurns":active,"resources":resources,"unresolvedTools":unknown,"runtime":runtime,"capacity":{"threads":cells.len(),"maxThreads":self.limits.max_threads,"activeTurns":self.limits.max_active_turns-self.active_turns.available_permits(),"maxActiveTurns":self.limits.max_active_turns,"historyBytesPerThread":self.limits.max_history_bytes,"blobBytes":512*1024*1024u64},"restartSafe":active.is_empty()&&resources.is_empty()&&unknown.is_empty()&&compacting.is_empty()&&!unsettled})
     }
     pub async fn drain(self: &Arc<Self>, strategy: String, timeout_ms: u64) -> Result<Value> {
-        if !matches!(strategy.as_str(), "wait" | "cancel") || timeout_ms > 60000 {
+        if !matches!(strategy.as_str(), "wait" | "cancel" | "ifIdle") || timeout_ms > 60000 {
             return Err(invalid(
-                "strategy must be wait or cancel and timeoutMs <= 60000",
+                "strategy must be wait, cancel or ifIdle and timeoutMs <= 60000",
             ));
         }
         let engine = self.clone();
         // 断线只放弃响应；已开始的结算仍由进程持有。
         tokio::spawn(async move {
             let _guard = engine.desktop.lifecycle.gate.lock().await;
+            if strategy == "ifIdle" {
+                let status = engine.server_status().await;
+                if status["restartSafe"] != true
+                    || status["activeGoals"] != json!([])
+                    || status["pendingQueueItems"] != 0
+                    || status["activeTasks"] != 0
+                {
+                    return Err(invalid(
+                        "service is busy; wait for work to settle or stop with --cancel",
+                    ));
+                }
+            }
             engine
                 .desktop
                 .lifecycle
                 .draining
                 .store(true, Ordering::Release);
+            engine.drain_task_modes().await?;
             let cells: Vec<_> = engine.threads.read().await.values().cloned().collect();
             for cell in &cells {
                 let mut state = cell.state.lock().await;
@@ -166,8 +180,9 @@ impl Engine {
     }
     pub fn model_catalog(&self) -> Value {
         let mut data = Vec::new();
-        if !self.model.name().is_empty() {
-            data.push(json!({"providerId":null,"providerRevision":null,"modelId":self.model.name(),"transport":self.model.provider(),"input":self.model.capabilities().input,"output":self.model.capabilities().output}));
+        let model = self.default_model();
+        if !model.name().is_empty() {
+            data.push(json!({"providerId":null,"providerRevision":null,"modelId":model.name(),"transport":model.provider(),"input":model.capabilities().input,"output":model.capabilities().output}));
         }
         for p in self.desktop.catalog.read().unwrap().providers.values() {
             for name in &p.models {

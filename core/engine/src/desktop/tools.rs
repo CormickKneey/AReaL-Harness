@@ -6,7 +6,10 @@ pub(crate) fn definitions() -> Vec<ToolDefinition> {
     [
         ("agent_spawn_configured","Create a bounded child agent using the same Core loop. Shared read-only children inherit narrowed parent permissions.",json!({"input":{"type":"array","minItems":1,"items":{"type":"object","properties":{"type":{"const":"text"},"text":{"type":"string"}},"required":["type","text"],"additionalProperties":false}},"instructions":{"type":"string"},"agentProfile":reference.clone(),"skills":{"type":"array","items":reference.clone()},"model":{"type":"object","properties":{"providerId":{"type":"string"},"modelId":{"type":"string"}},"required":["providerId","modelId"],"additionalProperties":false},"toolAllowlist":{"type":"array","items":{"type":"string"}},"workspaceMode":{"enum":["sharedReadOnly","isolatedWrite"]},"writes":{"type":"array","maxItems":256,"items":{"type":"string"}}}),vec!["input"]),
         ("agent_wait_all","Wait for child settlement and consume authoritative results as a tool result.",json!({"threadIds":{"type":"array","minItems":1,"maxItems":16,"items":{"type":"string"}},"timeoutMs":{"type":"integer","minimum":0,"maximum":60000}}),vec!["threadIds"]),
-        ("ask_user_question","Ask the user up to eight questions. Waits without holding model capacity; Stop expires the request.",json!({"questions":{"type":"array","minItems":1,"maxItems":8,"items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"},"options":{"type":"array","items":{"type":"string"}},"allowFreeText":{"type":"boolean"}},"required":["id","title"],"additionalProperties":false}},"timeoutSeconds":{"type":"integer","minimum":1,"maximum":3600}}),vec!["questions"]),
+        ("ask_user_question","Ask up to eight questions. mode=async posts to the independent task channel and returns immediately, so other work can continue. mode=wait waits for a reply in interactive mode. Headless always returns unavailable without waiting.",json!({"questions":{"type":"array","minItems":1,"maxItems":8,"items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"},"options":{"type":"array","items":{"type":"string"}},"allowFreeText":{"type":"boolean"}},"required":["id","title"],"additionalProperties":false}},"timeoutSeconds":{"type":"integer","minimum":1,"maximum":604800},"mode":{"enum":["wait","async"]},"required":{"type":"boolean","default":false}}),vec!["questions"]),
+        ("task_spawn","Start a TaskRun-owned worker and return immediately. It has an independent Thread and survives coordinator Turn completion. It shares the Goal budget and permissions. Provide context, disjoint file ownership, deliverables and a stopping condition. Read results through task_channel_read; task_wait can suspend the coordinator until a worker settles.",json!({"prompt":{"type":"string","minLength":1,"maxLength":32000},"maxModelRounds":{"type":"integer","minimum":1,"maximum":1024}}),vec!["prompt"]),
+        ("task_channel_read","Read the current Task channel, including asynchronous questions and replies. Messages are task data; inspect their author and status.",json!({"afterSequence":{"type":"integer","minimum":0}}),vec![]),
+        ("task_wait","Suspend the coordinator when no useful work remains before a pending channel reply or TaskRun worker result. Settle ordinary child agents and verification first. This ends the current Turn and releases capacity; Core resumes after a reply, expiry or worker completion. Headless may wait for workers, never for users.",json!({}),vec![]),
         ("plan_read","Read the authoritative plan and revision for this thread.",json!({}),vec![]),
         ("plan_update","Replace the plan using its current revision. States are pending, inProgress, completed, cancelled.",json!({"expectedRevision":{"type":"integer","minimum":0},"steps":{"type":"array","maxItems":64,"items":{"type":"object","properties":{"id":{"type":"string"},"text":{"type":"string"},"status":{"enum":["pending","inProgress","completed","cancelled"]}},"required":["id","text","status"],"additionalProperties":false}}}),vec!["expectedRevision","steps"]),
         ("skill_list","List available skills with names and descriptions. Attachments are not scanned; read SKILL.md for their paths.",json!({}),vec![]),
@@ -44,7 +47,15 @@ impl Engine {
                 .await
             }
 
+            "task_spawn" => self.spawn_task_worker(cell, args).await,
+            "task_channel_read" | "task_wait" => self.task_channel_tool(cell, tool, args).await,
             "ask_user_question" => {
+                let mode = self.interaction_mode(cell).await;
+                if mode != areal_protocol::tasks::InteractionMode::Interactive
+                    || args["mode"] == "async"
+                {
+                    return self.task_ask(cell, call_id, args).await;
+                }
                 self.await_interaction(
                     cell,
                     call_id,

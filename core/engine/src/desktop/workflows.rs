@@ -34,19 +34,17 @@ impl Engine {
             return Err(Error::Closed);
         }
         let workflow = self.workflow(&reference)?;
-        self.workgroups()
-            .map_err(invalid)?
-            .start(
-                format!("client:{identity}"),
-                crate::workgroup::service::Start {
-                    request_id,
-                    plan: workflow.plan,
-                    workers,
-                    admission,
-                },
-                self.shutdown.child_token(),
-            )
-            .await
-            .map_err(invalid)
+        self.start_workgroup(
+            format!("client:{identity}"),
+            crate::workgroup::service::Start {
+                request_id,
+                plan: workflow.plan,
+                workers,
+                admission,
+            },
+            self.shutdown.child_token(),
+        )
+        .await
+        .map_err(invalid)
     }
 }

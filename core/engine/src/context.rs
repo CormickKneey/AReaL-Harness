@@ -100,6 +100,7 @@ impl Engine {
             .turns
             .last()
             .and_then(|t| t.configuration.clone());
+        let task_read_only = configuration.as_ref().is_some_and(|c| c.read_only);
         if let Some(config) = configuration {
             if let Some(prompt) = &config.options.system_prompt {
                 instructions = prompt.clone();
@@ -118,6 +119,7 @@ impl Engine {
             instructions.push_str("\nClient appended instructions:\n");
             instructions.push_str(&config.options.append_instructions);
         }
+        instructions.push_str(&format!("\nExecution settings supplied by Core: {}. Tool approvals use the product dialog; do not ask the user to repeat approval in chat.\n", json!({"permissionMode":self.permission_config().mode,"runtime":self.sandbox(),"taskReadOnly":task_read_only || cell.research,"temporaryDirectory":self.command_scratch(cell)})));
         if cell.research {
             instructions.push_str(&format!("\nYou are a bounded research worker. Your deliverable is an answer to the assigned subquestion, not a complete solution of the original issue. The repository is read-only. Write reproductions, logs and test output only under {} (also TMPDIR). Do not edit source or tests, install dependencies, delegate further, or leave background work. Inspect the assigned question and run focused checks when useful. Once you have enough evidence, report it instead of expanding into additional investigations or broad test suites. If a check needs repository writes, report that limitation or run a focused reproduction in your scratch. Return concise evidence within 2500 UTF-8 bytes with file paths/lines, observed commands/results, uncertainties and a recommended change. Reserve enough of your request budget to write this report; incomplete evidence with explicit limitations is useful. Parent performs integration and final verification; your conclusions are advisory.", self.command_scratch(cell).context("research scratch missing")?.display()));
         } else if self.extensions.agents.is_some() {
@@ -169,7 +171,7 @@ impl Engine {
                     task_id: task,
                     plugin_instance_id: None,
                 },
-                permissions: self.active_permissions(cell).await,
+                permissions: self.active_permissions(cell).await?,
                 limits: rt::LimitRequest::default(),
             })
             .await?;
@@ -334,15 +336,21 @@ impl Engine {
             usage.add_assign(&attempt_usage);
             self.store.save_audit(json!({"kind":"contextSummary","threadId":snapshot.id,"attempt":attempt+1,"networkRetries":network_retries,"beforeBytes":before_bytes,"estimatedInputTokens":estimated_tokens,"tokenWindow":self.limits.context_window_tokens,"outputReserveTokens":self.limits.context_output_reserve_tokens,"response":summary,"rejectedTools":rejected_tools,"usage":attempt_usage,"error":response.as_ref().err().map(|e|e.to_string()),"cancelled":cancel.is_cancelled()})).await?;
             anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
-            if response.is_ok() {
-                accepted = Some(summary);
-                break;
-            }
+            let error = match response {
+                Ok(()) => {
+                    accepted = Some(summary);
+                    break;
+                }
+                Err(error) => error,
+            };
             // Goal 计量失效时保留旧 checkpoint，不能重试或提交降级摘要。
-            model.check_work()?;
-            if let Some(delay) = response.as_ref().err().and_then(|error| {
-                watchdog::retry_delay(self.limits.watchdog_disable, error, network_retries)
-            }) {
+            if let Err(blocker) = model.check_work() {
+                let diagnostic = format!("{blocker}: {error}");
+                return Err(error.context(diagnostic));
+            }
+            if let Some(delay) =
+                watchdog::retry_delay(self.limits.watchdog_disable, &error, network_retries)
+            {
                 network_retries = network_retries.saturating_add(1);
                 cell.emit("areal/model/watchdogRetry", json!({"threadId":snapshot.id,"turnId":snapshot.turns.last().map(|t| &t.id),"purpose":"summary","retry":network_retries,"delayMs":delay.as_millis() as u64}));
                 tracing::warn!(

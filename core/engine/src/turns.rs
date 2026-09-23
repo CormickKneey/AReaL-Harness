@@ -6,19 +6,16 @@ impl Engine {
     pub async fn start(self: &Arc<Self>, thread_id: &str, input: Vec<Input>) -> Result<Turn> {
         let thread_id = thread_id.to_owned();
         self.mutate(move |engine| async move {
-            if engine
-                .cell(&thread_id)
-                .await?
-                .state
-                .lock()
-                .await
-                .thread
-                .parent_thread_id
-                .is_some()
+            let cell = engine.cell(&thread_id).await?;
             {
-                return Err(Error::Invalid(
-                    "child threads belong to one parent turn; spawn a new child instead".into(),
-                ));
+                let state = cell.state.lock().await;
+                if state.thread.parent_thread_id.is_some()
+                    || state.thread.source == "nativeTaskAgent"
+                {
+                    return Err(Error::Invalid(
+                        "managed workers cannot accept independent turns".into(),
+                    ));
+                }
             }
             engine
                 .start_inner(&thread_id, input, engine.shutdown.child_token())
@@ -79,11 +76,13 @@ impl Engine {
         input: Vec<Input>,
     ) -> Result<(Thread, Turn)> {
         self.validate_uploads(thread, &input)?;
-        let configuration = thread
-            .desktop
-            .as_ref()
-            .map(|d| d.configuration.clone())
-            .unwrap_or_default();
+        let configuration = self.freeze_configuration(
+            thread
+                .desktop
+                .as_ref()
+                .map(|d| d.configuration.clone())
+                .unwrap_or_default(),
+        );
         validate_input(
             &input,
             &self.configured_model(&configuration)?.capabilities(),
@@ -105,7 +104,9 @@ impl Engine {
         let mut turn = Turn {
             goal: None,
             instruction_snapshot: None,
-            configuration: thread.desktop.as_ref().map(|d| d.configuration.clone()),
+            configuration: (thread.desktop.is_some()
+                || configuration.default_model_revision.is_some())
+            .then_some(configuration),
             id: id(),
             status: TurnStatus::InProgress,
             error: None,
@@ -150,6 +151,7 @@ impl Engine {
         admission: OwnedSemaphorePermit,
     ) {
         self.spawn_goal_scheduler();
+        self.start_task_scheduler();
         let (tx, rx) = mpsc::channel(self.limits.mailbox_capacity);
         let mut model = self
             .configured_model(&turn.configuration.clone().unwrap_or_default())
@@ -158,6 +160,9 @@ impl Engine {
             if let Some(budget) = self.goals.budget(&state.thread) {
                 if let Some(goal) = &state.thread.goals.goal {
                     budget.configure(goal.token_budget, true);
+                    budget.begin();
+                }
+                if state.thread.source == "nativeTaskAgent" {
                     budget.begin();
                 }
                 model = budget.wrap(model);
@@ -388,16 +393,39 @@ impl Engine {
                     .turn_timeout
                     .min(Duration::from_secs(a.worker_timeout_seconds))
             });
-        let goal_seconds = {
+        let (goal, owner) = {
             let state = cell.state.lock().await;
-            state
-                .thread
-                .goals
-                .goal
-                .as_ref()
-                .filter(|_| state.thread.turns.last().is_some_and(|t| t.goal.is_some()))
-                .map(|g| (g.max_active_seconds as f64 - g.usage.time_used_seconds).max(0.0))
+            (
+                state.thread.goals.goal.clone().filter(|g| {
+                    state
+                        .thread
+                        .turns
+                        .last()
+                        .and_then(|t| t.goal.as_ref())
+                        .is_some_and(|t| t.goal_id == g.id)
+                }),
+                state.thread.goal_owner.clone(),
+            )
         };
+        let goal = if goal.is_none() {
+            if let Some(owner) = owner {
+                self.goal_get(&owner.thread_id)
+                    .await
+                    .ok()
+                    .and_then(|v| {
+                        serde_json::from_value::<areal_protocol::goals::Goal>(v["goal"].clone())
+                            .ok()
+                    })
+                    .filter(|g| g.id == owner.goal_id)
+            } else {
+                None
+            }
+        } else {
+            goal
+        };
+        let goal_seconds = goal
+            .as_ref()
+            .map(|g| (g.max_active_seconds as f64 - g.usage.time_used_seconds).max(0.0));
         let goal_deadline =
             goal_seconds.map(|v| tokio::time::Instant::now() + Duration::from_secs_f64(v));
         let deadline = (tokio::time::Instant::now() + timeout)
@@ -482,7 +510,9 @@ impl Engine {
         }
         let budget = {
             let state = cell.state.lock().await;
-            if state.thread.turns.last().is_some_and(|t| t.goal.is_some()) {
+            if state.thread.turns.last().is_some_and(|t| t.goal.is_some())
+                || state.thread.source == "nativeTaskAgent"
+            {
                 self.goals.budget(&state.thread)
             } else {
                 None
@@ -594,6 +624,11 @@ impl Engine {
                 data.queue.revision += 1;
             }
         }
+        let (input, agents) = self.task_wait_state(&state.thread).await;
+        if let Some(goal) = &mut state.thread.goals.goal {
+            goal.waiting_for_input = input;
+            goal.waiting_for_agents = agents;
+        }
         self.settle_goal(&mut state.thread);
         state.thread.updated_at = now();
         state.thread.status = if state.poisoned {
@@ -636,5 +671,6 @@ impl Engine {
         // 队列推进仍调用同一 Turn 准入与 activate，先持久化唯一的 item→Turn 关联。
         self.goals.request(&cell.id);
         self.goals.wake();
+        self.wake_tasks();
     }
 }

@@ -2,7 +2,7 @@
 
 # 配置
 
-`core/config` 统一解析启动配置，由 server 注入各组件；不通过用户配置扩大 Runtime 授权。完整示例见 [config.toml](../../core/config/examples/config.toml)，字段类型见[配置源码](../../core/config/src/lib.rs)。
+`core/config` 统一解析启动配置，由 server 注入各组件；本地产品默认 YOLO，审批策略和 Runtime 执行边界分别管理。完整示例见 [config.toml](../../core/config/examples/config.toml)，字段类型见[配置源码](../../core/config/src/lib.rs)。
 
 ## 文件与优先级
 
@@ -11,6 +11,41 @@
 共享 TUI/Web 入口使用按工作区隔离的默认数据目录；显式 dataDir 仍遵循上述优先级。历史迁移与配置兼容性见[本地服务契约](../api/local-service.md)。
 
 默认文件不存在可继续；显式文件不存在、未知字段、类型/版本错误或已设置为空的值均拒绝。文件限普通 UTF-8、1 MiB，必须声明 `schema_version=1`。TOML 相对路径以配置文件目录为基准，CLI/env 相对路径以启动 cwd 为基准，不展开 `~`、变量或 glob。即使字段被高层覆盖，低层格式错误仍拒绝。
+
+<a id="permissions"></a>
+## 权限模式
+
+本地 TUI、Web、CLI 和 `scripts/launch.py` 默认 **YOLO**：普通任务可读写当前用户有权访问的文件（含工作区外和 `/tmp`），命令可联网，不逐次询问。无需再传 `--allow-write` / `--allow-network`。操作系统自身权限仍有效；显式 Profile、只读 Turn、工具拒绝规则和受限 Runtime 不能被 YOLO 覆盖。
+
+全局配置 `~/.areal-harness/config.toml`：
+
+```toml
+schema_version = 1
+[permissions]
+mode = "ASK_PERMISSIONS"
+# 规则只匹配工具 ID，支持 *；不是 shell 命令模式。
+# deny = ["mcp__untrusted__*"]
+# ask = ["run_command"]
+# allow = ["read_file"]
+```
+
+已有文件只添加 `[permissions]`，不要重复 `schema_version`。省略此表或设置 `mode = "YOLO"` 恢复默认。也可使用环境变量或单次启动参数：
+
+```sh
+ASK_PERMISSIONS=1 make tui
+AREAL_HARNESS_PERMISSION_MODE=ASK_PERMISSIONS target/debug/areal web
+make tui ARGS='--permissions ASK_PERMISSIONS'
+```
+
+优先级：`--permissions` > `AREAL_HARNESS_PERMISSION_MODE` > `ASK_PERMISSIONS` > TOML > YOLO。`ASK_PERMISSIONS` 接受 `1/true`（询问）、`0/false`（YOLO）。权限模式在服务启动时固定；已有共享服务需显式执行 `ASK_PERMISSIONS=1 target/debug/areal service restart`，带回原有自定义部署参数。重启默认拒绝忙碌服务。`--endpoint` 使用远端服务的策略。
+
+ASK_PERMISSIONS 自动允许内置工作区/scratch 读取、搜索和内部状态操作；命令、文件修改、工作区外读取、外部工具进入审批。它是工具调用审批，不是 shell 静态分析；允许一次命令即允许该命令在当前 Scope 内执行其子操作。TUI 弹窗和 Web 面板提供拒绝、允许一次、记住本会话/当前项目相同请求；强制审批与无法核验代际的 MCP 工具仅单次回答。当前不提供命令前缀规则或按域名联网授权。
+
+规则优先级固定为 `deny > ask > allow > mode`，每组最多 128 个、每个最多 128 字节的工具 ID glob。显式 ask 与 Profile/客户端追加的审批不能被授权记忆覆盖；allow 不能覆盖只读 Scope。批准绑定实际参数摘要；取消、过期、重复或摘要不符的回答不执行工具。
+
+记忆绑定工具、规范化参数、Host 代际、工作区与权限边界；修改命令或策略会重新询问。会话记忆随 Thread 持久化；项目记忆位于该部署的 `dataDir/desktop/permissions.json`，同工作区不同 dataDir 不共享。每组最多 64 条、128 KiB；文件含获批参数，应与会话数据一起管理。TUI `/permissions` 显示模式来源、Runtime 权限与记忆，`/permissions clear-session`、`/permissions clear-project` 撤销后续复用，不撤销已经受理的副作用。撤销要求目标 Thread 空闲。
+
+launcher 自动创建与 dataDir 同级的 `scratch/`，为每个 Thread 设置独立 `TMPDIR`；可用 `--scratch` 指定现有目录。目录与工作区/dataDir 不重叠，保留至部署数据被人工清理。只读/研究任务仍可写自己的 scratch。直接嵌入 Core 或运行 Runtime daemon 的默认边界保持受限；部署显式 `--sandbox-profile native` 可继续使用原有 write/network 开关，见 [Runtime 部署](runtime.md)。
 
 ## 模型与限额
 
@@ -49,6 +84,8 @@ filter = "info"
 ```
 
 endpoint 是完整 HTTP(S) 请求 URL；Core 只支持 `chat-completions` / `responses`，不自动补路径。配置只写密钥变量名；显式引用必须非空且可用于 HTTP header，未选中 provider 不要求密钥。省略引用为匿名，不从其他应用读取凭据。
+
+例如 Chat Completions 通常填写 `https://model.example.com/v1/chat/completions`，Responses 填写 `https://model.example.com/v1/responses`，以供应商实际接口为准。仅填 `/v1` 可能得到 HTTP 200 的 HTML 网页，触发 `model response must use text/event-stream`；Goal 模式还会因未知用量显示 `GOAL_USAGE_UNKNOWN`，并保留原始错误。修改启动配置后须[停止并重新启动共享服务](../api/local-service.md#公共入口)，只重开客户端不会重新加载配置。
 
 `reasoning_effort` 可为 none/minimal/low/medium/high/xhigh，供应商需支持；可选 `max_output_tokens` 映射到协议对应字段。`max_retries` 为 0–8，控制接受流之前的有限 HTTP 重试，涵盖传输错误、HTTP 408/429 和全部 5xx。该额度耗尽后，默认启用的 Core watchdog 仍会继续网络恢复。
 
@@ -89,9 +126,17 @@ target/debug/areal-server config validate --config /absolute/config.toml
 target/debug/areal-server config show --sources --config /absolute/config.toml
 ```
 
-诊断不监听、不创建数据、不启动 Runtime/MCP/插件，也不探测模型；输出有效值和来源并脱敏。配置文件不热重载，启动凭据不进入 Runtime 环境。`OTEL_*` 由 server 的 telemetry 装配处理。
+诊断不监听、不创建数据、不启动 Runtime/MCP/插件，也不探测模型；输出有效值和来源并脱敏。共享本地服务支持下述模型配置热更新；启动凭据不进入 Runtime 环境。`OTEL_*` 由 server 的 telemetry 装配处理。
 
-桌面运行时 provider 目录使用 `areal/provider/*` 和 `AREAL_CREDENTIAL_<ref>`；只支持 chatCompletions/responses。`--desktop-config` 装配版本化 Profile/Skill/Workflow；会话配置可在空闲边界通过 CAS 更新并冻结到新 Turn/队列，见[桌面契约](../api/desktop.md)。这与启动 TOML 不热重载是不同机制。
+桌面运行时 provider 目录使用 `areal/provider/*` 和 `AREAL_CREDENTIAL_<ref>`；只支持 chatCompletions/responses。`--desktop-config` 装配版本化 Profile/Skill/Workflow；会话配置可在空闲边界通过 CAS 更新并冻结到新 Turn/队列，见[桌面契约](../api/desktop.md)。会话显式选择的 Provider 与 TOML 默认模型分别管理。
+
+## 模型配置热更新
+
+共享 TUI/Web 服务每秒读取选定 TOML，连续两次读到同一有效配置后应用。默认模型、端点、协议、凭据引用和采样/推理参数变更用于后续新提交；显式 CLI/环境覆盖仍有更高优先级。非法编辑保留旧配置，TUI/Web 显示错误。独占 launcher 和独立 Core 仍只读取启动配置。
+
+活动 Turn、其子任务、摘要和已入队请求保持原模型版本；会话显式选择的模型保持不变。Goal 自动续轮在下次提交边界使用当时的默认值。默认模型版本保存在私有 `dataDir/desktop/default-models.json` 中，供队列跨重启恢复，最多 128 个版本、1 MiB；不保存环境凭据值。退役凭据缺失时拒绝对应队列项执行，不替换成其他模型。迁移历史时需同时保留此文件。
+
+其他配置需要重启。TUI 等待 Turn、Goal、队列和资源结算后重启；`areal service ensure` 也会为空闲服务应用 TOML 或二进制更新。权限/部署变化和模型 CLI/环境覆盖变化需带目标参数执行 `areal service restart`。新终端环境变量不能更新现有进程，改变凭据值后应显式重启。默认重启拒绝忙碌服务；`--cancel` 才显式取消并结算工作。
 
 <a id="tui"></a>
 ## TUI 偏好

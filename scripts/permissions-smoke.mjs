@@ -79,6 +79,8 @@ try {
           join(repo, "scripts/launch.py"),
           "--bin-dir",
           join(repo, "target/debug"),
+          "--sandbox-profile",
+          "native",
           "--workspace",
           workspace,
           "--data-dir",

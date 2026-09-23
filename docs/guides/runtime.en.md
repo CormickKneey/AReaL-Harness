@@ -7,22 +7,24 @@
 | Deployment argument | Default and meaning |
 |---|---|
 | `--workspace` | Required; mapped to `workspace://repo` |
-| `--allow-write`, `--allow-network` | Disabled; child Scopes may only narrow grants |
+| `--allow-write`, `--allow-network` | Disabled for standalone native daemon; full-access enables both; children may only narrow |
 | `--allow-concurrent-writes` | Disabled; enabling bypasses command path coordination, while file helpers still coordinate |
 | `--file-helper` | Defaults to trusted `areal-runtime-fs` beside the daemon |
 | `--max-processes` | 4 registered commands across descendant Scopes, including startup/cleanup; not internal fork counts |
 | `--wall-time-ms` | 30000 per process, including queuing and startup |
 | `--output-bytes` | 8 MiB cumulative per connection, not refunded on process exit |
 | `--output-window-bytes` | 64 KiB/process, maximum 8 MiB, also bounded to 1024 chunks |
-| `--sandbox-profile` | native; explicit outer-container-perf for controlled Linux containers |
+| `--sandbox-profile` | Standalone daemon: native; product launcher: full-access; controlled Linux containers: outer-container-perf |
 
-The launcher's `--command-timeout-ms` defaults to 300000, unlike the standalone daemon. Root is read-only/network-denied by default. Models, owner strings and approvals cannot expand grants. Commands receive no model credentials and only accept PATH/LANG/LC_ALL/TERM/CI/RUST_BACKTRACE.
+The launcher's `--command-timeout-ms` defaults to 300000, unlike the standalone daemon. Local TUI/Web/CLI and launcher use full-access by default: host filesystem and networking are available with YOLO, while ASK_PERMISSIONS adds Core approvals. Full-access commands run as the current user without an OS sandbox; explicit read-only, research and plugin Scopes still use native isolation. Models and approvals cannot expand an explicitly restricted Runtime. See [permission modes](configuration.en.md#permissions).
 
-`--scratch <directory>` adds an existing task temporary directory that must not overlap workspace. `scripts/launch.py --scratch` configures both Runtime grants and Core TMPDIR. Keep trusted binaries and Core data outside every writable root.
+Commands do not inherit model credentials. Full-access inherits the host PATH/HOME/TMPDIR/LANG/LC_ALL/TERM, with Core replacing TMPDIR with Thread scratch. Explicit task credentials retain their designated-executable boundary. Narrowed commands keep the restricted environment. process.start.env accepts PATH/LANG/LC_ALL/TERM/CI/RUST_BACKTRACE/TMPDIR/PYTHONDONTWRITEBYTECODE; TMPDIR changes temporary-file placement without widening path grants.
+
+The launcher creates `scratch/` beside dataDir and one `agent-<threadId>/` per Thread. `--scratch <directory>` selects an existing directory disjoint from workspace and dataDir. Scratch is writable even with a read-only repository and persists until manually cleaned. Under explicit `--sandbox-profile native`, trusted binaries and Core data must remain outside writable workspace/scratch roots. Full-access permits binaries inside the workspace for development.
 
 ## Platforms and trust
 
-macOS uses fixed `/usr/bin/sandbox-exec` with default-deny Seatbelt policies and no unsandboxed fallback. Permissions cover path subtrees; device/inode revalidation detects stale bindings but is not directory-object isolation. See [sandbox.rs](../../runtime/exec-native/src/sandbox.rs) for system reads. Homebrew and shared temporary-directory writes are not granted by default.
+The native profile on macOS uses fixed `/usr/bin/sandbox-exec` with default-deny Seatbelt policies and no unsandboxed fallback. Permissions cover path subtrees; device/inode revalidation detects stale bindings but is not directory-object isolation. See [sandbox.rs](../../runtime/exec-native/src/sandbox.rs) for system reads. Native does not grant Homebrew and shared temporary-directory writes by default; full-access does.
 
 Linux outer-container-perf combines Bubblewrap, Runtime seccomp and an outer read-only container/cgroup. The container relaxes outer seccomp/systempaths/AppArmor to create inner namespaces; tools still receive Runtime filtering. This supports only the [fixed benchmark workflow](../benchmarks/README.en.md), not general Linux deployment.
 
@@ -30,9 +32,9 @@ Core, Node Hosts and stdio MCP are outside the Runtime sandbox. Process-group te
 
 The Linux profile establishes a session when spawning Bubblewrap and keeps namespace init in the managed process group, so cancellation covers init and its PID namespace. This does not set cross-platform processTreeCleanupVerified to true. There are no per-Scope cgroup pids/memory limits; deployment must bound internal forks and memory. A signaled inner command may make the launcher exit normally with `128 + signal`. Runtime reports the launcher's actual exitCode/signal without inferring inner signals or OOM. Cleanup still requires confirmation.
 
-On macOS, Python from the default Xcode, `/Applications/Xcode_<numeric version>.app` (for example `Xcode_16.4.app`), or Command Line Tools installation is discovered through shared `runtime/host-tools` by Core and Runtime: the trusted host runs `/usr/bin/xcrun --find python3`, resolves and validates the actual file before entering the existing sandbox; no `/var/select/developer_dir` link is required. Direct `/usr/bin/python3` and `python3` on the default PATH use the real interpreter, avoiding the xcode-select shim. Only the system Python framework gains read/execute access; out-of-workspace files and shared `/tmp` writes remain denied. Custom Xcode locations and Homebrew Node/Python do not gain permissions automatically and require explicit toolchain preparation.
+In the native macOS profile, Python from the default Xcode, `/Applications/Xcode_<numeric version>.app` (for example `Xcode_16.4.app`), or Command Line Tools installation is discovered through shared `runtime/host-tools` by Core and Runtime: the trusted host runs `/usr/bin/xcrun --find python3`, resolves and validates the actual file before entering the existing sandbox; no `/var/select/developer_dir` link is required. Direct `/usr/bin/python3` and `python3` on the default PATH use the real interpreter, avoiding the xcode-select shim. Only the system Python framework gains read/execute access; out-of-workspace files and shared `/tmp` writes remain denied. Custom Xcode locations and Homebrew Node/Python do not gain permissions automatically and require explicit toolchain preparation.
 
-Without command scratch, Core does not advertise `verify_command` to the model. Deployments requiring verification receipts must supply a separate directory through launcher `--scratch`. Shared `/tmp` is not a substitute for task scratch.
+The product launcher supplies scratch automatically and advertises `verify_command`. Direct embedded Core deployments without command scratch do not advertise it; they must explicitly configure Runtime scratch grants.
 
 ## Lifecycle
 

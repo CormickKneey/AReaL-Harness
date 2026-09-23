@@ -2,7 +2,7 @@
 
 # Configuration
 
-`core/config` resolves startup settings and server injects them into components. User configuration cannot expand Runtime grants. See the [complete example](../../core/config/examples/config.toml) and [configuration source](../../core/config/src/lib.rs).
+`core/config` resolves startup settings and server injects them into components. Approval policy and Runtime execution boundaries are separate; local product launch defaults to YOLO. See the [complete example](../../core/config/examples/config.toml) and [configuration source](../../core/config/src/lib.rs).
 
 ## Files and precedence
 
@@ -11,6 +11,41 @@
 Shared TUI/Web entry points use a workspace-specific default data directory; explicit dataDir configuration retains the precedence above. See [local services](../api/local-service.en.md) for migration and compatibility.
 
 A missing default file is allowed. A missing explicit file, unknown field, type/version error or explicitly empty value is rejected. Files must be regular UTF-8, at most 1 MiB, with `schema_version=1`. TOML paths resolve against its directory; CLI/env paths resolve against startup cwd. There is no tilde, variable or glob expansion. Malformed lower-priority inputs are rejected even when overridden.
+
+<a id="permissions"></a>
+## Permission modes
+
+Local TUI, Web, CLI and `scripts/launch.py` default to **YOLO**: ordinary tasks may read/write files accessible to the current OS user, including outside the workspace and `/tmp`, and commands may use networking without per-call approval. `--allow-write` / `--allow-network` are no longer required. OS permissions, explicit Profiles, read-only Turns, deny rules and restricted Runtime deployments still apply.
+
+Global `~/.areal-harness/config.toml`:
+
+```toml
+schema_version = 1
+[permissions]
+mode = "ASK_PERMISSIONS"
+# Match tool IDs with * wildcards, not shell command patterns.
+# deny = ["mcp__untrusted__*"]
+# ask = ["run_command"]
+# allow = ["read_file"]
+```
+
+For an existing file, add only `[permissions]` without duplicating `schema_version`. Omit the table or set `mode = "YOLO"` to restore the default. Environment and launch overrides:
+
+```sh
+ASK_PERMISSIONS=1 make tui
+AREAL_HARNESS_PERMISSION_MODE=ASK_PERMISSIONS target/debug/areal web
+make tui ARGS='--permissions ASK_PERMISSIONS'
+```
+
+Precedence: `--permissions` > `AREAL_HARNESS_PERMISSION_MODE` > `ASK_PERMISSIONS` > TOML > YOLO. `ASK_PERMISSIONS` accepts `1/true` for asking and `0/false` for YOLO. The service fixes permissions at startup. For an existing shared service, explicitly run `ASK_PERMISSIONS=1 target/debug/areal service restart`, retaining original custom deployment arguments. Restart refuses busy services by default. `--endpoint` uses the remote service policy.
+
+ASK_PERMISSIONS automatically allows built-in workspace/scratch reads, searches and internal state operations. Commands, file changes, outside-workspace reads and external tools request approval. This is tool-call approval, not shell static analysis: approving a command permits its child operations within the current Scope. TUI dialogs and Web panels offer deny, allow once, and remember the exact request for this session/project. Mandatory approvals and MCP tools without verifiable connection generations accept single-use answers only. Command-prefix rules and per-domain network approval are not provided.
+
+Precedence is `deny > ask > allow > mode`. Each array permits at most 128 tool-ID globs of 128 bytes each. Explicit ask and Profile/client mandatory approvals cannot be bypassed by remembered grants; allow cannot bypass a read-only Scope. Answers bind the effective-argument digest. Cancelled, expired, duplicate or mismatched answers do not execute tools.
+
+Memory binds the tool, normalized arguments, Host generation, workspace and permission boundaries; changed commands or policy ask again. Session memory persists with its Thread. Project memory lives in the deployment's `dataDir/desktop/permissions.json`; separate data directories do not share grants. Each set permits 64 entries/128 KiB. The file contains approved arguments and should be managed with session data. TUI `/permissions` shows mode, source, Runtime grants and memory. `/permissions clear-session` and `/permissions clear-project` prevent future reuse without revoking already accepted effects; the target Thread must be idle.
+
+The launcher creates `scratch/` beside dataDir and sets an individual Thread `TMPDIR`; `--scratch` can select an existing directory. It must not overlap workspace/dataDir and remains until deployment data is manually cleaned. Read-only/research tasks may still write their own scratch. Direct Core embedding and standalone Runtime daemon defaults remain restricted. An explicit launcher `--sandbox-profile native` retains the previous write/network switches; see [Runtime deployment](runtime.en.md).
 
 ## Models and limits
 
@@ -49,6 +84,8 @@ filter = "info"
 ```
 
 The endpoint is a complete HTTP(S) request URL. Core supports only `chat-completions` / `responses` and appends no path. Configuration stores credential variable names; explicit references must resolve to nonempty HTTP-header-compatible values. Unselected providers need no key. Omitted references mean anonymous access; other applications' credentials are not read.
+
+Typical endpoints are `https://model.example.com/v1/chat/completions` for Chat Completions and `https://model.example.com/v1/responses` for Responses; use the provider's actual API URL. A URL ending at `/v1` may return an HTML page with HTTP 200, triggering `model response must use text/event-stream`. Goal mode also reports `GOAL_USAGE_UNKNOWN` for the unconfirmed usage while preserving the original error. After changing startup configuration, [stop and restart the shared service](../api/local-service.en.md#public-entry-points); reopening only the client does not reload configuration.
 
 `reasoning_effort` accepts none/minimal/low/medium/high/xhigh when supported upstream. Optional `max_output_tokens` maps to the protocol-specific field. `max_retries` is 0–8 and controls bounded HTTP retries before stream acceptance for transport failures, HTTP 408/429 and all 5xx statuses. After that allowance is exhausted, the default Core watchdog continues network recovery.
 
@@ -89,9 +126,17 @@ target/debug/areal-server config validate --config /absolute/config.toml
 target/debug/areal-server config show --sources --config /absolute/config.toml
 ```
 
-Diagnostics do not listen, create data, start Runtime/MCP/plugins or probe models. They report redacted values and sources. Files are not hot-reloaded; startup credentials are not forwarded to Runtime. Server telemetry handles `OTEL_*` separately.
+Diagnostics do not listen, create data, start Runtime/MCP/plugins or probe models. They report redacted values and sources. Shared local services reload model configuration as described below; startup credentials are not forwarded to Runtime. Server telemetry handles `OTEL_*` separately.
 
-The desktop runtime provider catalog uses `areal/provider/*` and `AREAL_CREDENTIAL_<ref>`, supporting chatCompletions/responses only. `--desktop-config` installs versioned Profiles/Skills/Workflows. Session settings can change through CAS at idle boundaries and are frozen into new Turns/queue items; see the [desktop contract](../api/desktop.en.md). This is separate from startup TOML loading.
+The desktop runtime provider catalog uses `areal/provider/*` and `AREAL_CREDENTIAL_<ref>`, supporting chatCompletions/responses only. `--desktop-config` installs versioned Profiles/Skills/Workflows. Session settings can change through CAS at idle boundaries and are frozen into new Turns/queue items; see the [desktop contract](../api/desktop.en.md). Explicit session Providers are managed separately from the TOML default model.
+
+## Model configuration reload
+
+Shared TUI/Web services poll their selected TOML once per second and apply a valid configuration after two identical reads. Changes to the selected default model, endpoint, protocol, credential reference and sampling/reasoning parameters apply to subsequent submissions. Explicit CLI/environment overrides retain precedence. Invalid edits leave the previous configuration active; TUI/Web display the error. Owned launchers and standalone Core retain startup-only configuration.
+
+Active Turns, their children, summaries and queued requests retain their model version. Explicit session model selections are preserved. Goal continuation uses the default applicable at its next submission boundary. Default model revisions are retained in the private `dataDir/desktop/default-models.json` archive for queue recovery across restarts, with at most 128 revisions and 1 MiB; values of environment credentials are never stored. A missing retired credential prevents dispatch of the affected queue item instead of substituting another model. The archive must be kept with the history.
+
+Other configuration changes require restart. TUI waits for Turns, Goals, queues and resources to settle before restarting; `areal service ensure` also restarts idle services for changed TOML settings or binaries. Permission/deployment changes and model CLI/environment override changes require `areal service restart` with the desired options. New terminal environment variables cannot update an existing process: explicitly restart to inherit changed credentials. Default restart refuses busy services; `--cancel` explicitly cancels and settles work.
 
 <a id="tui"></a>
 ## TUI preferences

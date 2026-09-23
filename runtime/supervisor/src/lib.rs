@@ -28,6 +28,8 @@ pub struct Config {
     /// Explicit deployment-owned scratch, shared across commands, outside repo.
     pub scratch: Option<PathBuf>,
     pub writable: bool,
+    /// 可信部署允许宿主路径；受限子 Scope 仍必须通过 OS 沙箱执行。
+    pub full_access: bool,
     pub allow_network: bool,
     /// Allow commands to overlap; overlapping file-helper writes still coordinate by path.
     pub concurrent_writes: bool,
@@ -47,6 +49,7 @@ impl Config {
             workspace,
             scratch: None,
             writable: false,
+            full_access: false,
             allow_network: false,
             concurrent_writes: false,
             limits: Limits::default(),
@@ -114,19 +117,24 @@ impl Supervisor {
             return Err(invalid("invalid Runtime deployment limits"));
         }
         let mut workspace = Workspace::new(&config.workspace)?;
+        workspace.full_access = config.full_access;
         if let Some(path) = &config.scratch {
             workspace.set_scratch(path)?;
         }
         let epoch = uuid::Uuid::new_v4().to_string();
         let root = handle(&epoch, "scope");
-        let mut reads = vec![workspace.root.clone()];
+        let mut reads = if config.full_access {
+            vec![PathBuf::from("/")]
+        } else {
+            vec![workspace.root.clone()]
+        };
         if let Some(root) = workspace.scratch_root() {
             reads.push(root.clone());
         }
         let writes = if config.writable {
             reads.clone()
         } else {
-            Vec::new()
+            workspace.scratch_root().cloned().into_iter().collect()
         };
         let mut registry = Registry::default();
         registry.scopes.insert(
@@ -142,11 +150,7 @@ impl Supervisor {
                         plugin_instance_id: None,
                     },
                     read_roots: reads.iter().map(|p| workspace.uri(p)).collect(),
-                    write_roots: if config.writable {
-                        writes.iter().map(|p| workspace.uri(p)).collect()
-                    } else {
-                        Vec::new()
-                    },
+                    write_roots: writes.iter().map(|p| workspace.uri(p)).collect(),
                     network: if config.allow_network {
                         NetworkRequest::Inherit
                     } else {
@@ -187,7 +191,7 @@ impl Supervisor {
                 "processTreeCleanupVerified": false, "coreHostIsolated": false,
                 "directoryObjectIsolation": false, "sandboxDenialAttribution": false,
                 "processLimits": self.config.limits,
-                "rootNetwork": if self.config.allow_network { NetworkRequest::Inherit } else { NetworkRequest::Deny },
+                "fullAccess":self.config.full_access,"rootNetwork": if self.config.allow_network { NetworkRequest::Inherit } else { NetworkRequest::Deny },
                 "methods": ["runtime.status", "connection.open", "connection.close", "scope.create", "scope.get", "scope.revoke",
                     "scope.waitClosed", "owner.revoke", "process.start", "process.get", "process.terminate", "process.wait", "output.read", "operation.get"]
             }),
@@ -465,6 +469,20 @@ impl Supervisor {
                 }
                 if helper.as_ref().is_some_and(|(_, writes, _)| !writes) {
                     execution.write_roots.clear();
+                }
+                if self.config.full_access
+                    && execution
+                        .write_roots
+                        .iter()
+                        .any(|p| p == std::path::Path::new("/"))
+                    && execution.network == NetworkRequest::Inherit
+                {
+                    // 只继承工具链所需的宿主环境，模型凭据仍不自动传入。
+                    for name in ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TERM"] {
+                        if let Ok(value) = std::env::var(name) {
+                            execution.env.entry(name.into()).or_insert(value);
+                        }
+                    }
                 }
                 execution
                     .env
@@ -1085,7 +1103,18 @@ fn validate_process(request: &StartProcess) -> Result<()> {
         return Err(invalid("argv must contain 1..256 arguments without NUL"));
     }
     for (key, value) in &request.env {
-        if !["PATH", "LANG", "LC_ALL", "TERM", "CI", "RUST_BACKTRACE"].contains(&key.as_str()) {
+        if ![
+            "PATH",
+            "LANG",
+            "LC_ALL",
+            "TERM",
+            "CI",
+            "RUST_BACKTRACE",
+            "TMPDIR",
+            "PYTHONDONTWRITEBYTECODE",
+        ]
+        .contains(&key.as_str())
+        {
             return Err(denied(
                 "environment variable is not in the deployment allowlist",
             ));
