@@ -260,6 +260,7 @@ async fn command_with_policy(
         "scope",
         "operation",
         policy,
+        None,
     )
     .await
     .unwrap()
@@ -295,6 +296,8 @@ async fn silent_command_waits_past_old_poll_limit_in_one_tool_call() {
                 wait_ms: 30_000,
             },
             100,
+            None,
+            8192,
         )
         .await
         .unwrap();
@@ -351,6 +354,8 @@ async fn explicit_quiet_policy_preserves_legacy_return_and_cursor() {
             wait_ms: 120_000,
         },
         100,
+        None,
+        8192,
     )
     .await
     .unwrap();
@@ -384,6 +389,8 @@ async fn timeout_and_output_loss_are_returned_without_waiting_again() {
             wait_ms: 0,
         },
         100,
+        None,
+        8192,
     )
     .await
     .unwrap_err();
@@ -680,6 +687,8 @@ async fn default_wait_coalesces_early_output_and_resume_preserves_the_cursor() {
                 wait_ms: 10_000,
             },
             0,
+            None,
+            8192,
         )
         .await
         .unwrap();

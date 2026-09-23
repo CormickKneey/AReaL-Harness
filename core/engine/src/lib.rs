@@ -125,6 +125,9 @@ struct Active {
     tools: TaskTracker,
     process_cursors: BTreeMap<String, String>,
     handles: tools::Handles,
+    /// Monotonic start time used only for model guidance; Engine::run remains
+    /// the authoritative deadline and cancellation source.
+    started_at: tokio::time::Instant,
 }
 struct State {
     thread: Thread,

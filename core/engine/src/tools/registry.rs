@@ -13,6 +13,9 @@ pub struct ToolPolicy {
     /// Zero disables early return on output silence (the default). A positive
     /// value opts into legacy burst coalescing for run_command and read_process.
     pub output_quiet_ms: u64,
+    /// Maximum bytes collected into one model-visible output page. The cursor
+    /// remains available when a command produces more output.
+    pub output_page_bytes: usize,
 }
 
 impl Default for ToolPolicy {
@@ -22,6 +25,7 @@ impl Default for ToolPolicy {
             pty_wait_ms: 1000,
             read_wait_ms: 120_000,
             output_quiet_ms: 0,
+            output_page_bytes: 8192,
         }
     }
 }
@@ -202,6 +206,10 @@ impl Registry {
     }
 
     pub fn new(runtime: bool, extensions: &ToolExtensions) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            (1024..=MAX_ARGUMENT_BYTES / 2).contains(&extensions.policy.output_page_bytes),
+            "outputPageBytes must be between 1024 and 32768"
+        );
         anyhow::ensure!(
             runtime || (extensions.tools.is_empty() && extensions.hooks.is_empty()),
             "command tools and hooks require a Runtime"

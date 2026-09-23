@@ -17,6 +17,7 @@ Core 注册表将名称、JSON Schema 与内置/命令/客户端/MCP/插件后�
 | `fs_create` | `path,text`，只创建不存在的文件 |
 | `fs_write` | `path,text,fileVersion?/expectedSha256?`；省略版本使用本 Turn 最近观察，未观察时仅新建 |
 | `fs_apply_patch` | `path,oldText,newText,fileVersion?/expectedSha256?`；旧文本非空且唯一匹配 |
+| `fs_apply_patches` | `path,patches[1..32],fileVersion?/expectedSha256?`；一次 CAS 原子应用多个唯一文本替换，任一失败则不写入 |
 | `run_command` | `command` 或 `argv` 二选一；前者经 `/bin/bash -o pipefail -c`，后者直接执行；cwd 默认 `.` |
 | `verify_command` | `argv,cwd?,timeoutMs?,yieldMs?`；直接执行、拒绝 shell 入口，必须配置独立 scratch |
 | `read_process/write_process/terminate_process` | 本 Turn 进程句柄；续读、输入与终止 |
@@ -24,13 +25,19 @@ Core 注册表将名称、JSON Schema 与内置/命令/客户端/MCP/插件后�
 
 文件最大 8 MiB，单次写/patch 64 KiB，另受每个调用参数 64 KiB 预算限制。显式 fileVersion 和 expectedSha256 互斥；SHA 为 null 表示仅新建。成功编辑返回新版本与规范路径，shell/外部编辑不自动刷新观察，CAS 冲突后需重新读取。行过长时使用 fs_read。read/search 通过同一 Scope 中的 Python/rg 执行、最长 15 秒；需要 `/usr/bin/python3` 和 PATH 中的 rg，不自动扩大沙箱权限。
 
-每个完整模型响应的调用数量受当前 Turn 剩余 `max_tool_calls` 限制，依次执行；Chat 的 index 用于关联片段，允许稀疏非负整数编号，没有小于 16 的要求。两种协议均使用可配置的 `max_tool_buffer_bytes` 缓冲预算（默认 4 MiB），累计工具 id、name 和 arguments；编号非法或预算超限时，当前响应的所有调用均不执行。工具结果最多 16 KiB，参数错误和已知命令失败返回模型处理，UNKNOWN 停止。结果报告 remainingToolCalls，剩余 ≤32 时提示收尾。
+每个完整模型响应的调用数量受当前 Turn 剩余 `max_tool_calls` 限制，依次执行；Chat 的 index 用于关联片段，允许稀疏非负整数编号，没有小于 16 的要求。两种协议均使用可配置的 `max_tool_buffer_bytes` 缓冲预算（默认 4 MiB），累计工具 id、name 和 arguments；编号非法或预算超限时，当前响应的所有调用均不执行。工具结果最多 16 KiB，参数错误和已知命令失败返回模型处理，UNKNOWN 停止。结果报告 remainingToolCalls，剩余 ≤32 时提示收尾，并附带当前 Turn 基础墙钟预算的近似剩余值。
 
 `verify_command` 将完整输出（最多 64 MiB）及 receipt 写入 scratch/verification，记录退出状态、日志与执行前后源码指纹。指纹覆盖 Git 跟踪和未忽略文件，非 Git 目录使用排除依赖/构建/缓存的扫描；源码变化使验证过期。receipt 位于任务可写目录，不是对恶意任务的认证。收尾时未结束的验证进程需要续读终态或显式终止；普通后台 run_command 不受此约束，也不会唤醒已结束 Turn。
 
 ## 等待与状态
 
-命令 timeoutMs 默认 600000，受 Runtime 授权截断并返回 effectiveTimeoutMs。普通命令/续读默认等 120 秒，PTY 1 秒；`yieldMs` / `waitMs` 接受非负 u64，0 立即返回。等待不改变进程期限或持有模型许可，每次收集最多 2 KiB。无输出时继续等待；已收到输出后按 100 ms 静默合并，底层轮询每次最多 1 秒。
+## 设计取舍
+
+命令观察将执行、等待、显示和回读分开：`run_command`/`read_process` 只按 cursor 读取 Runtime 保留的事实，已完成的常见测试命令再生成有界的失败摘要，未知命令不猜格式。这个边界吸收了 Codex 的显式等待/输出上限和 Claude Code 的失败输出保留思路，同时避免把 RTK 的全局管道改写接入模型协议；RTK 的自动格式探测在 Karma 时间戳等普通日志上可能误判，因此解析器只接受命令 argv 的显式类型。
+
+编辑保持 CAS 约束。单个 `fs_apply_patch` 适合小范围精确替换；同一文件的多个独立替换使用 `fs_apply_patches`，Runtime 在一次条件写入中逐项验证，任一旧文本不唯一都不会产生部分写入。
+
+命令 timeoutMs 默认 600000，受 Runtime 授权截断并返回 effectiveTimeoutMs。普通命令/续读默认等 120 秒，PTY 1 秒；`yieldMs` / `waitMs` 接受非负 u64，0 立即返回。等待不改变进程期限或持有模型许可，每次收集最多 `tools.policy.outputPageBytes`（默认 8192）字节。Jest、Karma、Mocha、Cargo test、Pytest 和 Go test 的已完成输出会附带保留失败/汇总/栈信息的压缩视图，原始页仍可通过 read_process 游标回读；未知命令保持原样。无输出时继续等待；已收到输出后按 100 ms 静默合并，底层轮询每次最多 1 秒。
 
 `returnReason` 为 completed、waitBudget、outputLimit、outputLoss 或 outputQuiet。`commandStatus` 为 running/succeeded/failed/terminated；`outputReadComplete` / `outputClosed` 表示生产者关闭且保留输出读完，`outputIntegrity` 为 retained/incomplete，`nextAction` 提示后续操作。completed 不代替退出码检查，gap/truncated 即使读完仍表示丢失。
 

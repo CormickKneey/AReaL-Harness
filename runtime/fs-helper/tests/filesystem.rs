@@ -137,6 +137,30 @@ fn overlapping_matches_and_all_symlink_components_are_rejected() {
     fs::hard_link(f.0.path().join("file"), f.0.path().join("hard")).unwrap();
     assert!(f.read("file").is_err());
 }
+
+#[test]
+fn batch_patch_is_single_conditional_edit() {
+    let f = Fixture::new();
+    let written = f
+        .write("code", b"alpha\nbeta\n", ExpectedFile::Absent)
+        .unwrap();
+    f.run(FileCommand::ApplyPatches {
+        path: "code".into(),
+        patches: vec![
+            TextPatch {
+                old_text: "alpha".into(),
+                new_text: "one".into(),
+            },
+            TextPatch {
+                old_text: "beta".into(),
+                new_text: "two".into(),
+            },
+        ],
+        expected_sha256: written["sha256"].as_str().unwrap().into(),
+    })
+    .unwrap();
+    assert_eq!(fs::read(f.0.path().join("code")).unwrap(), b"one\ntwo\n");
+}
 #[test]
 fn bounded_ranges_directory_pagination_and_special_files() {
     let f = Fixture::new();

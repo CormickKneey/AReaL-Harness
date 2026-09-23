@@ -68,8 +68,9 @@ fs.execute 仅在配置可信 helper 时可用；command.kind：
 | list | `path,after?,limit` | `entries,nextCursor` |
 | write | `path,dataBase64,expected` | `sha256,size` |
 | applyPatch | `path,oldText,newText,expectedSha256` | `sha256,size` |
+| applyPatches | `path,patches[{oldText,newText}],expectedSha256` | `sha256,size` |
 
-expected 为 `{kind:"absent"}` 或 `{kind:"sha256",value:"digest"}`。read 的 sha256 总是完整文件摘要，offset 为字节；单文件最多 8 MiB，read/write 最多 64 KiB，patch 旧/新文本合计 64 KiB 且旧文本非空唯一匹配。陈旧摘要/已存在/歧义返回 CONFLICT。
+expected 为 `{kind:"absent"}` 或 `{kind:"sha256",value:"digest"}`。read 的 sha256 总是完整文件摘要，offset 为字节；单文件最多 8 MiB，read/write 最多 64 KiB，patch 旧/新文本合计 64 KiB 且旧文本非空唯一匹配。applyPatches 一次最多 32 个替换，所有替换均唯一匹配后才条件写入；陈旧摘要/已存在/歧义返回 CONFLICT。
 
 list 每页最多 256 项/约 32 KiB，扫描最多 4096 UTF-8 名称；目录变化时不是快照。helper 使用目录描述符与 NOFOLLOW，普通读写拒绝符号链接、硬链接和特殊文件，条件替换 fsync。
 

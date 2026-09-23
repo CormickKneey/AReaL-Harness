@@ -162,7 +162,17 @@ impl Engine {
                 if !tool_definitions.is_empty()
                     && tool_count >= self.limits.max_tool_calls.saturating_sub(32)
                 {
-                    messages.insert(0, Message::text("system", format!("Tool budget: {} of {} calls remain in this Turn. Prioritize the original failing assertion and final relevant check; preserve the last verified candidate. Do not start unrelated exploration or repeat unchanged successful checks without a concrete unresolved concern. Budget exhaustion does not mean success.", self.limits.max_tool_calls.saturating_sub(tool_count), self.limits.max_tool_calls)));
+                    let remaining_ms = state
+                        .active
+                        .as_ref()
+                        .map(|active| {
+                            self.limits
+                                .turn_timeout
+                                .saturating_sub(active.started_at.elapsed())
+                                .as_millis()
+                        })
+                        .unwrap_or_default();
+                    messages.insert(0, Message::text("system", format!("Tool budget: {} of {} calls remain in this Turn. Approximate base turn wall-clock budget remaining: {remaining_ms} ms; Engine cancellation is authoritative. Prioritize the original failing assertion and final relevant check; preserve the last verified candidate. Do not start unrelated exploration or repeat unchanged successful checks without a concrete unresolved concern. Budget exhaustion does not mean success.", self.limits.max_tool_calls.saturating_sub(tool_count), self.limits.max_tool_calls)));
                 }
                 if let Some(hint) = self.agent_budget_hint(cell) {
                     messages.insert(0, Message::text("system", hint));

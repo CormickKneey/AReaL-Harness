@@ -223,6 +223,46 @@ pub fn execute(request: FileHelperRequest) -> Result<Value> {
                 },
             )
         }
+        FileCommand::ApplyPatches {
+            patches,
+            expected_sha256,
+            ..
+        } => {
+            if patches.is_empty() || patches.len() > 32 {
+                return Err(invalid("patches must contain 1..32 replacements"));
+            }
+            let (bytes, _) = read(&parent, name)?;
+            if hash(&bytes) != expected_sha256 {
+                return Err(conflict());
+            }
+            let mut text = std::str::from_utf8(&bytes)
+                .map_err(|_| invalid("patch requires UTF-8"))?
+                .to_owned();
+            for patch in patches {
+                if patch.old_text.is_empty()
+                    || patch.old_text.len() + patch.new_text.len() > MAX_FILE_CHUNK
+                {
+                    return Err(invalid("each patch must be nonempty and at most 64 KiB"));
+                }
+                if text.find(&patch.old_text).is_none()
+                    || text.find(&patch.old_text) != text.rfind(&patch.old_text)
+                {
+                    return Err(conflict());
+                }
+                text = text.replacen(&patch.old_text, &patch.new_text, 1);
+            }
+            if text.len() > MAX_EDIT_FILE {
+                return Err(invalid("patched file exceeds 8 MiB"));
+            }
+            replace(
+                &parent,
+                name,
+                text.as_bytes(),
+                &ExpectedFile::Sha256 {
+                    value: expected_sha256,
+                },
+            )
+        }
     }
 }
 

@@ -11,6 +11,7 @@ const MAX_RESULT: usize = 16 * 1024;
 #[derive(Default)]
 pub(crate) struct Handles {
     processes: BTreeMap<String, String>,
+    process_commands: BTreeMap<String, Vec<String>>,
     cursors: BTreeMap<String, (String, String)>,
     versions: BTreeMap<String, (String, String)>,
     version_order: std::collections::VecDeque<String>,
@@ -56,7 +57,7 @@ impl Handles {
         }
         if let Some(handle) = args.get("fileVersion") {
             anyhow::ensure!(
-                matches!(name, "fs_write" | "fs_apply_patch")
+                matches!(name, "fs_write" | "fs_apply_patch" | "fs_apply_patches")
                     && args.get("expectedSha256").is_none(),
                 "supply fileVersion or expectedSha256, never both"
             );
@@ -70,7 +71,7 @@ impl Handles {
             );
             args.as_object_mut().unwrap().remove("fileVersion");
             args["expectedSha256"] = json!(hash);
-        } else if matches!(name, "fs_write" | "fs_apply_patch")
+        } else if matches!(name, "fs_write" | "fs_apply_patch" | "fs_apply_patches")
             && args.get("expectedSha256").is_none()
         {
             let path = args["path"].as_str().context("path required")?;
@@ -134,7 +135,12 @@ impl Handles {
         }
         if matches!(
             name,
-            "fs_read" | "read_file" | "fs_write" | "fs_create" | "fs_apply_patch"
+            "fs_read"
+                | "read_file"
+                | "fs_write"
+                | "fs_create"
+                | "fs_apply_patch"
+                | "fs_apply_patches"
         ) && let Some(hash) = value["sha256"].as_str().map(str::to_owned)
             && let Some(path) = args["path"]
                 .as_str()
@@ -180,6 +186,7 @@ mod agents;
 mod extensions;
 mod images;
 mod navigation;
+mod output;
 mod plugin_execution;
 pub mod plugins;
 pub(crate) mod registry;
@@ -277,6 +284,12 @@ fn definitions_with_policy(policy: &ToolPolicy) -> Vec<Value> {
             &["path", "oldText", "newText"],
         ),
         tool(
+            "fs_apply_patches",
+            "Apply 1..32 unique text replacements to one UTF-8 file in a single conditional filesystem operation. Read the file first; all replacements must match exactly once and the observed file version is checked before writing. If any replacement is ambiguous or stale, no edit is written.",
+            json!({"path":path,"patches":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"object","properties":{"oldText":{"type":"string","minLength":1},"newText":{"type":"string"}},"required":["oldText","newText"],"additionalProperties":false}},"fileVersion":{"type":"string"},"expectedSha256":{"type":"string","pattern":"^[0-9a-f]{64}$"}}),
+            &["path", "patches"],
+        ),
+        tool(
             "verify_command",
             "Run a test/build executable directly (no shell pipelines). Saves the complete output and a receipt in task scratch, with actual exit code and before/after source fingerprint. For example argv=[\"python\",\"-m\",\"pytest\",\"tests/test_feature.py\"]. Read the returned process until it exits; later source edits invalidate the receipt. Exit zero alone does not prove the task correct.",
             json!({"argv":{"type":"array","items":{"type":"string"},"minItems":1},"cwd":path,"timeoutMs":{"type":"integer","minimum":1},"yieldMs":{"type":"integer","minimum":0}}),
@@ -294,8 +307,8 @@ fn definitions_with_policy(policy: &ToolPolicy) -> Vec<Value> {
         tool(
             "read_process",
             &format!(
-                "Collect output until completion or waitMs (default {}; 0 returns immediately). Output pages may return earlier. No fixed wait ceiling; Turn deadline and cancellation still apply. Omit after to resume this Turn's last returned cursor. Explicit null starts at the earliest retained output. Check state, exitCode and stopReason; gap means older output was lost.",
-                policy.read_wait_ms
+                "Collect output until completion or waitMs (default {}; 0 returns immediately). Output pages are bounded to {} bytes and may return earlier. No fixed wait ceiling; Turn deadline and cancellation still apply. Omit after to resume this Turn's last returned cursor. Explicit null starts at the earliest retained output. Check state, exitCode and stopReason; gap means older output was lost.",
+                policy.read_wait_ms, policy.output_page_bytes
             ),
             json!({"processId":process_id,"after":{"type":["string","null"]},"waitMs":{"type":"integer","minimum":0,"default":policy.read_wait_ms}}),
             &["processId"],
@@ -507,8 +520,10 @@ fn request_with_policy(
             expected: rt::ExpectedFile::Absent,
         }));
     }
-    if matches!(call.name.as_str(), "fs_write" | "fs_apply_patch")
-        && let Some(Value::String(hash)) = args.get("expectedSha256")
+    if matches!(
+        call.name.as_str(),
+        "fs_write" | "fs_apply_patch" | "fs_apply_patches"
+    ) && let Some(Value::String(hash)) = args.get("expectedSha256")
     {
         anyhow::ensure!(
             hash.len() == 64
@@ -538,6 +553,7 @@ fn request_with_policy(
         "fs_list" => "list",
         "fs_stat" => "stat",
         "fs_apply_patch" => "applyPatch",
+        "fs_apply_patches" => "applyPatches",
         _ => anyhow::bail!("unknown tool: {}", call.name),
     };
     anyhow::ensure!(args.get("kind").is_none(), "unexpected kind argument");
@@ -836,7 +852,15 @@ impl Engine {
         let result = serde_json::to_string(&result)?;
         // Bound persisted and model-visible results including JSON escaping.
         let result = if result.len() > MAX_RESULT {
-            json!({"truncated":true,"prefix":prefix(&result, MAX_RESULT / 2)}).to_string()
+            let half = (MAX_RESULT.saturating_sub(256)) / 2;
+            json!({
+                "truncated":true,
+                "prefix":prefix(&result, half),
+                "suffix":suffix(&result, half),
+                "truncatedBytes":result.len().saturating_sub(half * 2),
+                "guidance":"This is a bounded journal view. For command output, continue with read_process using the returned cursor; for files, reread with an offset."
+            })
+            .to_string()
         } else {
             result
         };
@@ -906,12 +930,21 @@ pub(super) fn prefix(text: &str, bytes: usize) -> &str {
     }
     &text[..end]
 }
+
+fn suffix(text: &str, bytes: usize) -> &str {
+    let mut start = text.len().saturating_sub(bytes);
+    while start < text.len() && !text.is_char_boundary(start) {
+        start += 1;
+    }
+    &text[start..]
+}
 async fn execute(
     client: &Client,
     request: Request,
     scope: &str,
     operation: &str,
     policy: &ToolPolicy,
+    command_argv: Option<&[String]>,
 ) -> rt::Result<(bool, Value)> {
     match request {
         Request::File(command) => {
@@ -934,6 +967,7 @@ async fn execute(
         }
         Request::Command(command) => {
             let effective_timeout_ms = command.timeout_ms;
+            let command_argv = command.argv.clone();
             let started = client
                 .start(rt::StartProcess {
                     operation_id: operation.into(),
@@ -963,13 +997,23 @@ async fn execute(
                     }),
                 },
                 policy.output_quiet_ms,
+                Some(&command_argv),
+                policy.output_page_bytes,
             )
             .await?;
             result["effectiveTimeoutMs"] = json!(effective_timeout_ms);
             Ok((success, result))
         }
         Request::ReadProcess(read) => {
-            process_output(client, scope, read, policy.output_quiet_ms).await
+            process_output(
+                client,
+                scope,
+                read,
+                policy.output_quiet_ms,
+                command_argv,
+                policy.output_page_bytes,
+            )
+            .await
         }
         Request::WriteProcess(write) => {
             owned_process(client, scope, &write.process_id).await?;
@@ -1151,6 +1195,8 @@ async fn process_output(
     scope: &str,
     read: ReadProcess,
     output_quiet_ms: u64,
+    command_argv: Option<&[String]>,
+    output_page_bytes: usize,
 ) -> rt::Result<(bool, Value)> {
     owned_process(client, scope, &read.process_id).await?;
     let started = tokio::time::Instant::now();
@@ -1163,7 +1209,7 @@ async fn process_output(
     let mut truncated = false;
     let mut closed = false;
     // Bound bytes before JSON expansion; callers can read the next cursor.
-    let mut remaining = 2048usize;
+    let mut remaining = output_page_bytes;
     let return_reason = loop {
         let mut wait = budget.saturating_sub(started.elapsed());
         if output_quiet_ms > 0
@@ -1237,10 +1283,25 @@ async fn process_output(
     } else {
         "failed"
     };
-    let mut result = json!({"processId":read.process_id, "state":info.state, "returnReason":return_reason, "exitCode":info.exit_code, "stopReason":info.stop_reason, "stdout":String::from_utf8_lossy(&stdout), "stderr":String::from_utf8_lossy(&stderr), "nextCursor":after, "outputClosed":closed, "gap":gap, "truncated":truncated,
+    let stdout_text = String::from_utf8_lossy(&stdout).into_owned();
+    let stderr_text = String::from_utf8_lossy(&stderr).into_owned();
+    let mut result = json!({"processId":read.process_id, "state":info.state, "returnReason":return_reason, "exitCode":info.exit_code, "stopReason":info.stop_reason, "stdout":stdout_text, "stderr":stderr_text, "stdoutBytes":stdout.len(), "stderrBytes":stderr.len(), "outputPageBytes":output_page_bytes, "nextCursor":after, "outputClosed":closed, "gap":gap, "truncated":truncated,
         "commandStatus":command_status,"outputReadComplete":closed,
         "outputIntegrity":if gap || truncated { "incomplete" } else { "retained" },
         "nextAction":if !closed { "Read this process again to collect remaining/new output; omit after to continue." } else { "Retained output has been read to its end. Evaluate the actual checks; exit zero alone does not prove correctness." }});
+    if let Some(argv) = command_argv
+        && let Some(view) = output::project(
+            argv,
+            &stdout_text,
+            &stderr_text,
+            info.exit_code,
+            closed && !gap && !truncated,
+        )
+    {
+        result["outputView"] = json!({"kind":view.kind,"rawBytes":view.raw_bytes,"displayedBytes":view.displayed_bytes,"omittedLines":view.omitted_lines,"text":view.text,"rawAvailable":true,"rawReadback":"read_process with after=null or the returned nextCursor"});
+        result["stdout"] = json!(view.text);
+        result["outputViewActive"] = json!(true);
+    }
     if std::str::from_utf8(&stdout).is_err() {
         result["stdoutBase64"] = json!(STANDARD.encode(stdout));
     }
@@ -1344,5 +1405,24 @@ mod request_tests {
         );
         let patch=ToolCall { id:"patch".into(),name:"fs_apply_patch".into(),arguments:json!({"path":"workspace://repo/a.py","oldText":"x","newText":"y","expectedSha256":"null"}).to_string() };
         assert!(request(&patch).is_err());
+    }
+
+    #[test]
+    fn batch_patch_preserves_conditional_runtime_command() {
+        let call = ToolCall {
+            id: "batch".into(),
+            name: "fs_apply_patches".into(),
+            arguments: json!({
+                "path":"src/lib.rs",
+                "patches":[{"oldText":"old","newText":"new"}],
+                "expectedSha256":"a".repeat(64)
+            })
+            .to_string(),
+        };
+        assert!(matches!(
+            request(&call).unwrap(),
+            Request::File(rt::FileCommand::ApplyPatches { path, patches, .. })
+                if path == "workspace://repo/src/lib.rs" && patches.len() == 1
+        ));
     }
 }

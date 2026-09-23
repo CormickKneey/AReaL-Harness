@@ -199,7 +199,7 @@ impl Invocation<'_> {
         let mut value = json!({"error":error});
         if create_conflict {
             value["hint"] = json!(
-                "expectedSha256=null creates a new file. Read the existing file with fs_read, then use its full-file sha256 for fs_write or fs_apply_patch. Do not retry creation or overwrite without a fresh hash."
+                "expectedSha256=null creates a new file. Read the existing file with fs_read, then use its full-file sha256 for fs_write, fs_apply_patch or fs_apply_patches. Do not retry creation or overwrite without a fresh hash."
             );
         }
         value
@@ -373,18 +373,45 @@ impl Invocation<'_> {
                         .environment
                         .insert("PYTHONDONTWRITEBYTECODE".into(), "1".into());
                 }
+                let command_argv =
+                    if matches!(self.call.name.as_str(), "run_command" | "read_process") {
+                        match &request {
+                            Request::Command(command) => Some(command.argv.clone()),
+                            Request::ReadProcess(read) => {
+                                let state = self.cell.state.lock().await;
+                                state
+                                    .active
+                                    .as_ref()
+                                    .and_then(|active| {
+                                        active.handles.process_commands.get(&read.process_id)
+                                    })
+                                    .cloned()
+                            }
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
                 let (success, mut result) = execute(
                     &runtime.client,
                     request,
                     self.scope,
                     self.operation,
                     &self.engine.extensions.policy,
+                    command_argv.as_deref(),
                 )
                 .await?;
                 if let Some(process) = result["processId"].as_str().map(str::to_owned) {
                     let receipt = {
                         let mut state = self.cell.state.lock().await;
                         let handles = &mut state.active.as_mut().unwrap().handles;
+                        if self.call.name == "run_command"
+                            && let Some(argv) = &command_argv
+                        {
+                            handles
+                                .process_commands
+                                .insert(process.clone(), argv.clone());
+                        }
                         if let Some(receipt) = verification_receipt {
                             handles.verification.insert(process.clone(), receipt);
                         }
