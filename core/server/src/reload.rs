@@ -228,9 +228,11 @@ mod tests {
     #[test]
     fn missing_credential_on_reload_preserves_last_valid_revision() {
         let temp = tempfile::tempdir().unwrap();
-        let mut inputs = ConfigInputs::default();
-        inputs.cwd = temp.path().into();
-        inputs.homedir = Some(temp.path().into());
+        let mut inputs = ConfigInputs {
+            cwd: temp.path().into(),
+            homedir: Some(temp.path().into()),
+            ..Default::default()
+        };
         inputs.overrides.model = Some("valid".into());
         inputs.overrides.model_endpoint = Some("http://127.0.0.1:1/v1/chat/completions".into());
         let valid = areal_config::load_config(&inputs).unwrap();
