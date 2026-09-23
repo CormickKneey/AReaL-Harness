@@ -49,6 +49,9 @@ pub fn launch(args: &super::Args) -> Result<()> {
             command.arg(format!("{flag}={value}"));
         }
     }
+    if let Some(prompt) = &args.initial_prompt {
+        command.arg(format!("--initial-prompt={prompt}"));
+    }
     if let Some(budget) = args.goal_token_budget {
         command.arg(format!("--goal-token-budget={budget}"));
     }
@@ -68,14 +71,9 @@ mod tests {
 
     #[test]
     fn default_is_local_and_remote_alias_is_explicit() {
-        assert!(
-            Args::try_parse_from(["areal-tui"])
-                .unwrap()
-                .endpoint
-                .is_none()
-        );
+        assert!(Args::try_parse_from(["areal"]).unwrap().endpoint.is_none());
         let args = Args::try_parse_from([
-            "areal-tui",
+            "areal",
             "--remote",
             "ws://127.0.0.1:4500",
             "--resume",
@@ -98,7 +96,7 @@ mod tests {
             vec!["--api-key-env", "KEY"],
             vec!["--allow-write"],
         ] {
-            let mut args = vec!["areal-tui", "--endpoint", "ws://127.0.0.1:4500"];
+            let mut args = vec!["areal", "--endpoint", "ws://127.0.0.1:4500"];
             args.extend(local);
             assert!(Args::try_parse_from(args).is_err());
         }
@@ -106,7 +104,7 @@ mod tests {
     #[test]
     fn appearance_options_are_valid_for_both_launch_modes() {
         for endpoint in [vec![], vec!["--endpoint", "ws://127.0.0.1:4500"]] {
-            let mut args = vec!["areal-tui"];
+            let mut args = vec!["areal"];
             args.extend(endpoint);
             args.extend([
                 "--theme=light",

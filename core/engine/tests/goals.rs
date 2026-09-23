@@ -85,6 +85,7 @@ fn model(report: bool, usage: bool) -> Arc<Fixture> {
 }
 fn request(thread_id: &str) -> GoalCreate {
     GoalCreate {
+        interaction_mode: None,
         request_id: "create-1".into(),
         thread_id: thread_id.into(),
         expected_revision: 0,
@@ -385,6 +386,7 @@ async fn queued_input_invalidates_completion_and_precedes_automatic_continuation
         .start_durable(
             "test".into(),
             areal_protocol::desktop::TurnStart {
+                interaction_mode: None,
                 request_id: "followup".into(),
                 thread_id: t.id.clone(),
                 input: vec![Input::text("also verify the new condition")],

@@ -899,3 +899,89 @@ body.sidebar-collapsed .settings-button {
   display: block;
   margin: 0.5rem 0;
 }
+
+#task-center {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 28px max(24px, calc((100% - 840px) / 2));
+}
+#inbox-dialog {
+  width: min(640px, calc(100vw - 32px));
+}
+.task-card {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--surface-radius);
+  padding: 20px;
+  margin: 16px 0;
+  overflow-wrap: anywhere;
+}
+.task-card summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.task-card form,
+#inbox-list form {
+  display: grid;
+  gap: 10px;
+}
+.task-card form {
+  margin-top: 16px;
+}
+.task-card :is(input, select, textarea) {
+  width: 100%;
+  min-width: 0;
+}
+.task-card label {
+  margin-top: 6px;
+}
+#task-schedule-fields {
+  display: grid;
+  gap: 10px;
+}
+.task-row {
+  display: flex;
+  flex-direction: column;
+  align-items: start;
+  gap: 6px;
+  width: 100%;
+  margin: 10px 0;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.task-row[aria-pressed="true"] {
+  border-color: var(--text);
+}
+.task-card :is(h3, h4) {
+  margin-bottom: 12px;
+}
+.task-card p {
+  white-space: pre-wrap;
+  margin: 8px 0;
+}
+.channel-message {
+  border-top: 1px solid var(--border);
+  padding: 12px 0;
+}
+#task-detail .goal-actions {
+  flex-wrap: wrap;
+  margin: 16px 0;
+}
+#task-create-status:empty,
+#inbox-notice:empty {
+  display: none;
+}
+#task-center .panel-heading {
+  flex-wrap: wrap;
+}
+@media (max-width: 700px) {
+  #task-center {
+    padding: 18px 16px;
+  }
+  .view-tabs {
+    overflow-x: auto;
+  }
+  .view-tabs button {
+    white-space: nowrap;
+  }
+}

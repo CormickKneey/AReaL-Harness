@@ -10,6 +10,19 @@ const pending = new Map();
 let interactionDisplayed = null;
 let goalsSupported = false,
   displayedGoal = null;
+let tasksSupported = false,
+  taskListing = false,
+  taskCursor = null,
+  taskCreating = false,
+  taskCreateAttempt = null,
+  selectedTaskId = null,
+  taskObservation = 0,
+  channelObservation = 0,
+  inboxLoading = false,
+  inboxCursor = null;
+const taskRows = new Map(),
+  inboxRows = new Map(),
+  inboxDrafts = new Map();
 let waiting = null,
   stopping = null;
 const labels = {
@@ -80,24 +93,36 @@ document.addEventListener("keydown", (event) => {
 });
 $("settings-open").onclick = () => $("settings-dialog").showModal();
 $("settings-close").onclick = () => $("settings-dialog").close();
-function showView(groups) {
-  $("conversation").hidden = groups;
-  $("workgroups").hidden = !groups;
-  for (const id of ["history-tab", "groups-tab"]) {
-    const selected = (id === "groups-tab") === groups;
+function showView(view) {
+  const selectedView = typeof view === "boolean" ? (view ? "groups" : "history") : view;
+  $("conversation").hidden = selectedView !== "history";
+  $("workgroups").hidden = selectedView !== "groups";
+  $("task-center").hidden = selectedView !== "tasks";
+  for (const id of ["history-tab", "groups-tab", "tasks-tab"]) {
+    const selected = id === `${selectedView}-tab`;
     $(id).setAttribute("aria-selected", String(selected));
     $(id).tabIndex = selected ? 0 : -1;
   }
 }
 $("history-tab").onclick = () => showView(false);
 $("groups-tab").onclick = () => showView(true);
-for (const id of ["history-tab", "groups-tab"])
+$("tasks-tab").onclick = () => {
+  showView("tasks");
+  listTasks().catch(notice);
+};
+for (const id of ["history-tab", "groups-tab", "tasks-tab"])
   $(id).onkeydown = (event) => {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
     event.preventDefault();
-    const groups = event.key === "End" || (event.key !== "Home" && id === "history-tab");
-    showView(groups);
-    $(groups ? "groups-tab" : "history-tab").focus();
+    const tabs = ["history-tab", "groups-tab", "tasks-tab"].filter((id) => !$(id).hidden);
+    const index =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? tabs.length - 1
+          : (tabs.indexOf(id) + (event.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length;
+    $(tabs[index]).click();
+    $(tabs[index]).focus();
   };
 
 function notice(error) {
@@ -214,6 +239,7 @@ function render() {
   renderComposer();
   renderProgress();
   renderGoal();
+  renderTaskControls();
   renderInteractions();
   const history = $("history"),
     atBottom = history.scrollHeight - history.scrollTop - history.clientHeight < 100;
@@ -440,6 +466,10 @@ function scheduleRender() {
 }
 function event(message) {
   const p = message.params ?? {};
+  if (message.method === "areal/task/updated") {
+    receiveTask(p.task);
+    return;
+  }
   if (!thread || (p.threadId ?? p.interaction?.threadId) !== thread.id) return;
   if (
     message.method === "areal/interaction/requested" ||
@@ -604,7 +634,7 @@ function renderGoal() {
     failed: "执行失败",
   };
   $("goal-status").textContent = goal
-    ? `持续目标 · ${status[goal.status] ?? goal.status}`
+    ? `持续目标 · ${goal.status === "active" && goal.waitingForInput ? "等待收件箱回复" : goal.status === "active" && goal.waitingForAgents ? "等待协作任务" : (status[goal.status] ?? goal.status)}`
     : "持续目标";
   $("goal-progress").textContent = goal
     ? `${goal.objective} · ${goal.usage.tokensUsed} tokens${goal.tokenBudget ? ` / ${goal.tokenBudget}` : ""} · ${Math.round(goal.usage.timeUsedSeconds)} 秒 · ${goal.usage.turnsStarted}/${goal.maxTurns} 轮${goal.reason ? ` · ${goal.reason}` : ""}${goal.usage.accountingComplete ? "" : " · 用量不完整，预留额度保留"}`
@@ -689,7 +719,7 @@ async function connect() {
       const waiter = pending.get(data.id);
       if (!waiter) return;
       pending.delete(data.id);
-      if (data.error) waiter.reject(Error(data.error.message));
+      if (data.error) waiter.reject(Object.assign(Error(data.error.message), data.error));
       else waiter.resolve(data.result);
     } else event(data);
   };
@@ -706,11 +736,20 @@ async function connect() {
     clientInfo: { name: "areal-web", version: "0.1.0" },
   });
   socket.send(JSON.stringify({ method: "initialized", params: {} }));
-  goalsSupported = (await call("areal/capabilities", {})).features?.goals === true;
+  const capabilities = await call("areal/capabilities", {});
+  goalsSupported = capabilities.features?.goals === true;
+  tasksSupported = capabilities.features?.taskModes === true;
+  $("tasks-tab").hidden = !tasksSupported;
+  $("inbox-open").hidden = !tasksSupported;
   $("connection").textContent = "已连接本地 Core";
   $("connection").dataset.state = "connected";
   await list();
   await reload();
+  if (tasksSupported) {
+    await listTasks();
+    await loadInbox();
+    if (selectedTaskId) await selectTask(selectedTaskId);
+  }
   render();
 }
 $("login").onsubmit = async (event) => {
@@ -722,6 +761,10 @@ $("login").onsubmit = async (event) => {
     const response = await fetch("/areal/auth/session", {
       method: "POST",
       headers: { Authorization: `Bearer ${$("access-token").value}` },
+      credentials: "same-origin",
+      cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.timeout(10000),
     });
     $("access-token").value = "";
     if (!response.ok) throw Error("认证失败，请使用可信启动器提供的访问令牌。");
@@ -736,7 +779,32 @@ $("login").onsubmit = async (event) => {
     $("connect-button").disabled = false;
   }
 };
-connect().catch((error) => {
+async function startConnection() {
+  const url = new URL(location.href);
+  if (url.hash.startsWith("#bootstrap=")) {
+    const code = url.hash.slice("#bootstrap=".length);
+    // 在任何网络请求之前从当前历史记录清除一次性凭据，不写入浏览器存储。
+    url.hash = "";
+    history.replaceState(null, "", url);
+    try {
+      const response = await fetch("/areal/auth/bootstrap/exchange", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        cache: "no-store",
+        redirect: "error",
+        body: JSON.stringify({ code }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!response.ok) throw Error("bootstrap rejected");
+    } catch {
+      throw Error("自动登录失败或链接已过期，请重新运行 areal web，或输入本地访问令牌。");
+    }
+  }
+  await connect();
+}
+startConnection().catch((error) => {
+  $("login-error").textContent = error.message;
   notice(error);
   $("settings-dialog").showModal();
 });
@@ -916,3 +984,415 @@ function renderInteractions() {
     panel.append(button);
   }
 }
+
+// Task 与 Inbox 不依赖当前会话；只订阅选中的 Task，重连后重新取得权威快照。
+const taskStatusLabels = {
+  queued: "等待执行",
+  running: "执行中",
+  waitingForInput: "等待收件箱回复",
+  waitingForAgents: "等待协作任务",
+  paused: "已暂停",
+  blocked: "等待处理",
+  completed: "已完成",
+  failed: "执行失败",
+  cancelled: "已取消",
+};
+function taskStatus(task) {
+  const run = task.runs.at(-1);
+  if (task.cancelled)
+    return !run || run.status === "cancelled" || run.completedAt ? "已取消" : "正在取消…";
+  if (task.paused) return run?.status === "running" ? "正在暂停…" : "已暂停";
+  if ((!run || run.completedAt) && task.nextRunAt) return "等待下次执行";
+  return taskStatusLabels[run?.status] ?? "等待执行";
+}
+function renderTaskControls() {
+  const scheduled = $("task-mode").value === "scheduled";
+  $("task-schedule-fields").hidden = !scheduled;
+  $("task-at").required = scheduled;
+  $("task-binding").textContent = thread
+    ? `执行会话：${thread.preview || "当前新建会话"}`
+    : "请先选择或新建一个会话，再添加定时任务。";
+  $("task-create").disabled =
+    !connected || !tasksSupported || taskCreating || (scheduled && !thread);
+  $("task-create").textContent = taskCreating
+    ? "正在受理…"
+    : scheduled
+      ? "添加定时任务"
+      : "创建并运行";
+  $("tasks-refresh").disabled = !connected || taskListing;
+  $("tasks-more").disabled = !connected || taskListing;
+  $("inbox-open").disabled = !connected;
+  $("inbox-refresh").disabled = !connected || inboxLoading;
+  $("inbox-more").disabled = !connected || inboxLoading;
+  for (const button of $("task-detail").querySelectorAll("button")) button.disabled = !connected;
+  for (const form of $("inbox-list").children) {
+    const button = form.querySelector("button");
+    if (button) button.disabled = !connected || form.dataset.sending === "true";
+  }
+}
+$("task-mode").onchange = () => {
+  $("task-interaction").value = $("task-mode").value === "scheduled" ? "headless" : "asynchronous";
+  renderTaskControls();
+};
+async function listTasks(more = false) {
+  if (!tasksSupported || !connected || taskListing) return;
+  taskListing = true;
+  renderTaskControls();
+  try {
+    const page = await call("areal/task/list", {
+      limit: 30,
+      ...(more ? { after: taskCursor } : {}),
+    });
+    // 列表第一页可能不包含选中项；保留订阅带来的最新 revision，避免控制失效或回退。
+    const selected = taskRows.get(selectedTaskId);
+    if (!more) {
+      taskRows.clear();
+      if (selected) taskRows.set(selected.id, selected);
+    }
+    for (const task of page.data) receiveTask(task, false);
+    taskCursor = page.nextCursor;
+    $("tasks-more").hidden = !taskCursor;
+    renderTaskList();
+    const current = taskRows.get(selectedTaskId);
+    if (current) {
+      renderTaskDetail(current);
+      if (current.channelSequence !== selected?.channelSequence)
+        loadChannel(current.id).catch(notice);
+    }
+  } finally {
+    taskListing = false;
+    renderTaskControls();
+  }
+}
+function renderTaskList() {
+  $("task-list").replaceChildren();
+  for (const task of taskRows.values()) {
+    const button = node("button", undefined, "task-row secondary");
+    button.dataset.id = task.id;
+    button.setAttribute("aria-pressed", String(task.id === selectedTaskId));
+    button.append(
+      node("strong", task.objective),
+      node(
+        "span",
+        `${{ foreground: "前台目标", background: "后台任务", scheduled: "定时任务" }[task.mode]} · ${taskStatus(task)}`,
+        "muted",
+      ),
+    );
+    button.disabled = !connected;
+    button.onclick = () => selectTask(task.id).catch(notice);
+    $("task-list").append(button);
+  }
+  if (!taskRows.size)
+    $("task-list").append(node("p", "还没有任务。创建后可在这里查看进度。", "muted"));
+}
+function receiveTask(task, draw = true) {
+  if (!task) return;
+  if ((taskRows.get(task.id)?.revision ?? -1) > task.revision) return;
+  const previous = taskRows.get(task.id);
+  taskRows.set(task.id, task);
+  if (!draw) return;
+  renderTaskList();
+  if (task.id === selectedTaskId) {
+    renderTaskDetail(task);
+    if (!previous || previous.channelSequence !== task.channelSequence)
+      loadChannel(task.id).catch(notice);
+  }
+}
+async function selectTask(id) {
+  const previous = selectedTaskId,
+    observation = ++taskObservation;
+  selectedTaskId = id;
+  if (previous && previous !== id) await call("areal/task/unsubscribe", { taskId: previous });
+  const task = await call("areal/task/subscribe", { taskId: id });
+  if (observation !== taskObservation) {
+    if (selectedTaskId !== id) await call("areal/task/unsubscribe", { taskId: id });
+    return;
+  }
+  receiveTask(task);
+  await loadChannel(id);
+}
+function renderTaskDetail(task) {
+  const detail = $("task-detail"),
+    run = task.runs.at(-1);
+  detail.hidden = false;
+  // 保留频道 DOM，避免用量更新清掉正在阅读的消息。
+  const channel = document.getElementById("task-channel") ?? node("div");
+  channel.id = "task-channel";
+  detail.replaceChildren(node("h3", task.objective), node("p", taskStatus(task), "task-state"));
+  if (task.nextRunAt)
+    detail.append(
+      node("p", `下次执行：${new Date(task.nextRunAt * 1000).toLocaleString()}`, "muted"),
+    );
+  if (run) {
+    detail.append(
+      node(
+        "p",
+        `${task.runs.length} 次执行 · ${run.usage.turnsStarted} 轮 · ${run.usage.tokensUsed} tokens · ${run.workers.filter((w) => w.settled).length}/${run.workers.length} 个协作任务已结算`,
+        "muted",
+      ),
+    );
+    if (run.reason) detail.append(node("p", run.reason));
+  }
+  const actions = node("div", undefined, "goal-actions");
+  const canResume = task.paused || ["paused", "blocked"].includes(run?.status);
+  const terminal = !task.nextRunAt && run?.completedAt;
+  const choices =
+    task.cancelled || terminal
+      ? []
+      : canResume
+        ? [
+            ["resume", "恢复任务"],
+            ["cancel", "取消任务"],
+          ]
+        : [
+            ["pause", "暂停任务"],
+            ["cancel", "取消任务"],
+          ];
+  for (const [action, label] of choices) {
+    const button = node("button", label, "secondary");
+    button.disabled = !connected;
+    button.onclick = async () => {
+      button.disabled = true;
+      try {
+        const latest = taskRows.get(task.id);
+        receiveTask(
+          await call(`areal/task/${action}`, {
+            requestId: crypto.randomUUID(),
+            taskId: task.id,
+            expectedRevision: latest.revision,
+          }),
+        );
+      } catch (error) {
+        notice(error);
+        try {
+          receiveTask(await call("areal/task/read", { taskId: task.id }));
+        } catch {
+          /* 断线后由重连快照恢复。 */
+        }
+      }
+    };
+    actions.append(button);
+  }
+  if (run?.threadId) {
+    const open = node("button", "查看执行会话", "secondary");
+    open.disabled = !connected;
+    open.onclick = () => select(run.threadId).catch(notice);
+    actions.append(open);
+  }
+  detail.append(actions, node("h4", "任务频道"), channel);
+}
+async function loadChannel(id) {
+  const observation = ++channelObservation;
+  let afterSequence = 0,
+    more = true;
+  const messages = new Map();
+  while (more && connected && selectedTaskId === id && observation === channelObservation) {
+    const page = await call("areal/channel/read", { taskId: id, afterSequence, limit: 100 });
+    for (const message of page.data) messages.set(message.id, message);
+    afterSequence = page.nextSequence;
+    more = page.hasMore;
+  }
+  if (selectedTaskId !== id || observation !== channelObservation) return;
+  const channel = document.getElementById("task-channel");
+  if (!channel) return;
+  channel.replaceChildren();
+  for (const message of [...messages.values()].sort((a, b) => a.sequence - b.sequence)) {
+    const card = node("article", undefined, "channel-message");
+    card.append(
+      node(
+        "p",
+        `${{ question: "问题", reply: "回复", workerReport: "协作结果", report: "执行结果" }[message.kind] ?? message.kind} · ${{ pending: "待回复", answered: "已回答", expired: "已过期", cancelled: "已取消", published: "已发布" }[message.status]}`,
+        "muted",
+      ),
+    );
+    for (const question of message.questions) card.append(node("p", question.title));
+    if (message.text) card.append(node("p", message.text));
+    if (message.answers)
+      for (const answer of Object.values(message.answers)) card.append(node("p", answer));
+    if (message.status === "pending") {
+      const open = node("button", "前往收件箱回复", "secondary");
+      open.onclick = openInbox;
+      card.append(open);
+    }
+    channel.append(card);
+  }
+  if (!messages.size) channel.append(node("p", "执行结果、协作报告和回复会显示在这里。", "muted"));
+}
+$("tasks-refresh").onclick = () => listTasks().catch(notice);
+$("tasks-more").onclick = () => listTasks(true).catch(notice);
+$("task-create-form").onsubmit = async (event) => {
+  event.preventDefault();
+  if (taskCreating || !connected) return;
+  const params = {
+    mode: $("task-mode").value,
+    objective: $("task-objective").value.trim(),
+    interactionMode: $("task-interaction").value,
+  };
+  if (!params.objective) return;
+  if ($("task-budget").value) params.tokenBudget = Number($("task-budget").value);
+  if (params.mode === "scheduled") {
+    const at = Math.floor(new Date($("task-at").value).getTime() / 1000);
+    if (!thread || !Number.isFinite(at) || at < Math.floor(Date.now() / 1000)) {
+      $("task-create-status").textContent = "请选择执行会话，并填写未来的执行时间。";
+      return;
+    }
+    params.threadId = thread.id;
+    params.schedule = { at };
+    if ($("task-interval").value)
+      params.schedule.intervalSeconds = Number($("task-interval").value);
+  }
+  const fingerprint = JSON.stringify(params);
+  if (taskCreateAttempt?.fingerprint !== fingerprint)
+    taskCreateAttempt = { fingerprint, requestId: crypto.randomUUID() };
+  taskCreating = true;
+  renderTaskControls();
+  try {
+    const created = await call("areal/task/create", {
+      ...params,
+      requestId: taskCreateAttempt.requestId,
+    });
+    taskCreateAttempt = null;
+    $("task-create-status").textContent =
+      params.mode === "scheduled" ? "已添加，等待计划时间。" : "任务已受理。";
+    $("task-objective").value = "";
+    await listTasks();
+    await selectTask(created.id);
+  } catch (error) {
+    $("task-create-status").textContent = error.message;
+  } finally {
+    taskCreating = false;
+    renderTaskControls();
+  }
+};
+async function openInbox() {
+  $("inbox-dialog").showModal();
+  await loadInbox().catch((error) => {
+    $("inbox-notice").textContent = error.message;
+  });
+}
+$("inbox-open").onclick = openInbox;
+$("inbox-close").onclick = () => $("inbox-dialog").close();
+$("inbox-refresh").onclick = () =>
+  loadInbox().catch((error) => {
+    $("inbox-notice").textContent = error.message;
+  });
+$("inbox-more").onclick = () =>
+  loadInbox(true).catch((error) => {
+    $("inbox-notice").textContent = error.message;
+  });
+async function loadInbox(more = false) {
+  if (!tasksSupported || !connected || inboxLoading) return;
+  inboxLoading = true;
+  renderTaskControls();
+  try {
+    const page = await call("areal/inbox/list", {
+      limit: 30,
+      ...(more ? { after: inboxCursor } : {}),
+    });
+    if (!more) inboxRows.clear();
+    for (const row of page.data) inboxRows.set(`${row.taskId}/${row.message.id}`, row);
+    inboxCursor = page.nextCursor;
+    $("inbox-more").hidden = !inboxCursor;
+    $("inbox-open").querySelector("span").textContent =
+      `收件箱${inboxRows.size ? ` · ${inboxRows.size}${inboxCursor ? "+" : ""}` : ""}`;
+    renderInbox();
+  } finally {
+    inboxLoading = false;
+    renderTaskControls();
+  }
+}
+function renderInbox() {
+  const list = $("inbox-list");
+  // 按消息 ID 复用表单，刷新和任务更新不丢失用户正在填写的答案。
+  const existing = new Map([...list.children].map((form) => [form.dataset.key, form]));
+  const forms = [];
+  for (const [key, { taskId, objective, message }] of inboxRows) {
+    if (existing.has(key)) {
+      forms.push(existing.get(key));
+      continue;
+    }
+    const draft = inboxDrafts.get(key) ?? { answers: {}, attempt: null };
+    inboxDrafts.set(key, draft);
+    const form = node("form", undefined, "task-card");
+    form.dataset.key = key;
+    form.append(node("h3", objective));
+    if (message.expiresAt)
+      form.append(
+        node("p", `回复期限：${new Date(message.expiresAt * 1000).toLocaleString()}`, "muted"),
+      );
+    const fields = new Map();
+    for (const [index, question] of message.questions.entries()) {
+      const id = `inbox-${message.id}-${index}`;
+      const label = node("label", question.title);
+      label.setAttribute("for", id);
+      const input = node(question.allowFreeText ? "input" : "select");
+      input.id = id;
+      input.required = true;
+      if (question.allowFreeText) {
+        input.maxLength = 4096;
+        if (question.options.length) input.placeholder = question.options.join(" / ");
+      } else {
+        const placeholder = node("option", "请选择");
+        placeholder.value = "";
+        input.append(placeholder);
+        for (const value of question.options) {
+          const option = node("option", value);
+          option.value = value;
+          input.append(option);
+        }
+      }
+      input.value = draft.answers[question.id] ?? "";
+      input.oninput = () => {
+        draft.answers[question.id] = input.value;
+      };
+      fields.set(question.id, input);
+      form.append(label, input);
+    }
+    const submit = node("button", "发送回复"),
+      status = node("p");
+    submit.type = "submit";
+    status.setAttribute("role", "status");
+    form.append(submit, status);
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      if (!connected || form.dataset.sending === "true") return;
+      const answers = Object.fromEntries(
+        [...fields].map(([id, input]) => [id, input.value.trim()]),
+      );
+      const fingerprint = JSON.stringify(answers);
+      if (draft.attempt?.fingerprint !== fingerprint)
+        draft.attempt = { fingerprint, requestId: crypto.randomUUID() };
+      form.dataset.sending = "true";
+      submit.disabled = true;
+      try {
+        await call("areal/channel/reply", {
+          requestId: draft.attempt.requestId,
+          taskId,
+          runId: message.runId,
+          questionId: message.id,
+          answers,
+        });
+        inboxRows.delete(key);
+        inboxDrafts.delete(key);
+        $("inbox-notice").textContent = "回复已送达，任务会根据当前状态继续推进。";
+        renderInbox();
+        await loadInbox();
+      } catch (error) {
+        status.textContent =
+          error.code === -32009 ? "问题已回答、已过期或任务已结束，请刷新收件箱。" : error.message;
+      } finally {
+        form.dataset.sending = "false";
+        submit.disabled = !connected;
+      }
+    };
+    forms.push(form);
+  }
+  list.replaceChildren(...forms);
+  if (!forms.length) list.append(node("p", "没有待回答的问题。", "muted"));
+}
+setInterval(() => {
+  if (connected && tasksSupported) {
+    if (!$("inbox-dialog").open) loadInbox().catch(() => {});
+    if (!$("task-center").hidden) listTasks().catch(notice);
+  }
+}, 5000);

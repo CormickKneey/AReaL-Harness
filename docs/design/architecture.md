@@ -13,7 +13,7 @@ AReaL-Harness 采用 **Clients → Core → Runtime** 分层。Core 是会话、
 | 模块 | 职责 |
 |---|---|
 | `clients/cli`, `clients/tui`, `clients/web` | CLI、终端和本地 Web；初始化连接、显示投影与提交请求 |
-| `core/config` | 解析用户配置、来源、凭据引用和 Skill 目录；不依赖 Engine 或 Runtime |
+| `core/config` | 解析用户配置、来源、凭据引用和 Skill 目录，定义工具宿主的代理环境白名单；不依赖 Engine 或 Runtime |
 | `core/protocol` | 客户端协议投影和共享类型 |
 | `core/engine` | 模型、工具、历史、持久化、父子任务和 Workgroup |
 | `core/app-server` | WebSocket、认证、订阅、回调关联；不拥有另一份历史 |
@@ -36,6 +36,14 @@ Skill 发现由 `core/config` 根据可信启动参数执行，只返回元信�
 Goal 模式由 `core/engine/src/goals` 管理持久目标、请求账本与跨 Turn 续轮；用户队列与自动续轮共用准入入口。Clients 只维护投影，Runtime 沿用原执行边界。接口见 [Core API](../api/core.md#goals)。
 
 交互式 TUI 与 Web 启动入口连接到同一部署服务；宿主独立于窗口存活，Store 保持单写者锁。Desktop Main 可直接复用发现与控制入口，见[本地服务契约](../api/local-service.md)。
+
+Task Mode 由 `core/engine/src/task_mode` 管理 Task/TaskRun、定时触发、独立 Channel 和 worker。它复用 Goal 账本与 Thread 准入，通信状态由 Core 持有；Inbox 是授权问题的查询投影。TaskRun worker 可跨协调 Turn，在独立 Session 中执行，仍由 Core 负责取消和结算。接口见 [Task 契约](../api/tasks.md)。
+
+![Task Mode](diagrams/task-mode-mailbox-architecture.svg)
+
+[draw.io 源文件](diagrams/task-mode-mailbox-architecture.drawio) · [异步交互流程](diagrams/task-mode-mailbox-flow.svg) · [流程源文件](diagrams/task-mode-mailbox-flow.drawio)
+
+`clients/cli` 是唯一产品可执行入口 `areal`，分派到 TUI、非交互客户端、Core server 和服务宿主的库入口；Core 不依赖客户端。`scripts/launch.py` 仍拥有独立 Core/Runtime 进程与私有生命周期管道。发行目录 `bin` 只含 `areal`，Runtime daemon/file helper 放在 `libexec/areal`，不并入客户端进程。命令契约见[客户端指南](../guides/clients.md)。
 
 ## 状态与执行
 

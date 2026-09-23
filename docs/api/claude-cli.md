@@ -2,10 +2,10 @@
 
 # Claude Code 非交互 CLI 适配
 
-`areal` 实现选定 Claude Code 非交互参数和 stdio 消息，模型循环仍在 Core。它不依赖 Claude SDK 运行，不声明完整 Claude 产品/SDK 兼容。固定消费者与输入输出 fixture 见 [examples/desktop-api/fixtures](../../examples/desktop-api/fixtures/)。
+`areal exec` 与兼容入口 `areal -p/--print` 实现选定 Claude Code 非交互参数和 stdio 消息，模型循环仍在 Core。它不依赖 Claude SDK 运行，不声明完整 Claude 产品/SDK 兼容。固定消费者与输入输出 fixture 见 [examples/desktop-api/fixtures](../../examples/desktop-api/fixtures/)。
 
 ```sh
-target/debug/areal -p 'Describe this workspace' --output-format stream-json --verbose
+target/debug/areal exec 'Describe this workspace' --output-format stream-json --verbose
 target/debug/areal -p 'Continue' --resume SESSION_ID --output-format json
 ```
 
@@ -13,7 +13,7 @@ target/debug/areal -p 'Continue' --resume SESSION_ID --output-format json
 
 | 参数 | 行为 |
 |---|---|
-| -p/--print, prompt, stdin | 单次输入，prompt 与 text stdin 用换行连接 |
+| exec / -p/--print, prompt, stdin | 单次输入，prompt 与 text stdin 用换行连接 |
 | --input-format text/stream-json | JSONL user 支持文本/base64 图片，活动输入进入 Core 队列 |
 | --output-format text/json/stream-json | 文本、单结果或逐事件；日志只写 stderr |
 | --verbose / --include-partial-messages | 完整工具消息 / 流式 text block |
@@ -43,4 +43,8 @@ target/debug/areal -p 'Continue' --resume SESSION_ID --output-format json
 
 运行级 MCP 仅支持 stdio 或 HTTP Bearer。任务凭据只可经 `--task-credential-command` 注入工作区外的指定可信 executable；普通 shell/文件助手不继承 MULTICA_* 身份。真实第三方 daemon/GUI 联调仍需外部验收，见[示例](../examples/desktop-api.md)。
 
-`areal service ensure/list/status/stop/bind` 与 `areal web` 提供[共享本地服务入口](local-service.md)。非交互 `areal -p` 保持独占生命周期；`areal serve` 保持现有前台 launcher 行为。
+`areal service ensure/list/status/stop/bind` 与 `areal web` 提供[共享本地服务入口](local-service.md)。非交互 `areal exec` / `areal -p` 保持独占生命周期；`areal serve` 保持现有前台 launcher 行为。
+
+无双向应答通道的 CLI 提交使用 Core interactionMode=headless；问题立即返回 unavailable，需要人工审批的工具立即拒绝，模型可继续独立工作或报告 blocker。显式双向 stream-json 保留上述宿主控制协议；permission-mode=dontAsk 即使有双向通道也使用 headless。
+
+命令路由与旧命令迁移见[客户端指南](../guides/clients.md)。无子命令默认进入 TUI，非交互参数只属于 exec / -p；配置诊断使用 areal config，不依赖运行中的服务。

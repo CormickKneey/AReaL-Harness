@@ -19,4 +19,6 @@ Only `tools/fs/sandboxPolicy` are adapted; the real editor is validated for `vie
 
 Calls are serialized within each Host; different Hosts share Core tool limits. Cancellation, timeout, crash or protocol failure closes the generation. Successful nested writes survive outer failure; UNKNOWN stops automatic execution and requires inspection. Frozen SDK objects are not OS isolation: `trusted:true` must reflect actual trust.
 
+Hosts inherit PATH, LANG, LC_ALL, SYSTEMROOT and the eight configured [standard proxy variables](../guides/configuration.en.md#proxies). Credentials in proxy URLs are also passed to trusted Hosts; model credentials and other environment variables are not inherited automatically. HTTP libraries used by search or other plugins must consume these variables and support the selected proxy scheme. Core does not intercept custom plugin connections or automatically pass these variables to commands started through the Runtime broker.
+
 [SDK contract](../api/typescript-sdk.en.md) · [Editor example](../examples/dsh-editor-plugin.en.md) · [Native Host v2 without DSH](../api/native-host.en.md)

@@ -7,6 +7,7 @@ use std::{path::PathBuf, sync::Arc};
 mod reload;
 mod telemetry;
 mod tool_extensions;
+pub mod workgroup;
 
 #[derive(clap::Args, Default)]
 struct ConfigArgs {
@@ -48,15 +49,6 @@ struct ConfigArgs {
 }
 
 #[derive(Subcommand)]
-enum Command {
-    /// Inspect configuration without starting services or writing state.
-    Config {
-        #[command(subcommand)]
-        command: ConfigCommand,
-    },
-}
-
-#[derive(Subcommand)]
 enum ConfigCommand {
     Validate,
     Show {
@@ -65,14 +57,32 @@ enum ConfigCommand {
     },
 }
 
-#[derive(Parser)]
-#[command(version, about = "AReaL-Harness Core app-server")]
-#[command(group(clap::ArgGroup::new("execution").args(["runtime", "runtime_stdio"]).multiple(false)))]
-struct Args {
+/// 复用 Core 的诊断路径，避免 CLI 复制配置优先级和脱敏规则。
+#[derive(clap::Args)]
+pub struct ConfigCli {
     #[command(flatten)]
     config: ConfigArgs,
     #[command(subcommand)]
-    command: Option<Command>,
+    command: ConfigCommand,
+}
+
+pub async fn diagnose(args: ConfigCli) -> Result<()> {
+    run_configured(
+        Args {
+            config: args.config,
+            ..Args::default()
+        },
+        Some(args.command),
+    )
+    .await
+}
+
+#[derive(Parser, Default)]
+#[command(version, about = "AReaL-Harness Core app-server")]
+#[command(group(clap::ArgGroup::new("execution").args(["runtime", "runtime_stdio"]).multiple(false)))]
+pub struct Args {
+    #[command(flatten)]
+    config: ConfigArgs,
     /// Write the bound WebSocket endpoint for a supervising launcher.
     #[arg(long, hide = true)]
     ready_file: Option<PathBuf>,
@@ -115,9 +125,11 @@ struct Args {
     workgroup_toolchain: Option<PathBuf>,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let mut args = Args::parse();
+pub async fn run(args: Args) -> Result<()> {
+    run_configured(args, None).await
+}
+
+async fn run_configured(mut args: Args, diagnostic: Option<ConfigCommand>) -> Result<()> {
     let cli = std::mem::take(&mut args.config);
     let management = cli.management;
     let no_deployment_mcp = cli.no_deployment_mcp;
@@ -156,7 +168,7 @@ async fn main() -> Result<()> {
     for warning in &config.warnings {
         eprintln!("Warning: {warning}");
     }
-    if let Some(Command::Config { command }) = args.command.take() {
+    if let Some(command) = diagnostic {
         anyhow::ensure!(
             args.runtime.is_none()
                 && !args.runtime_stdio
@@ -228,7 +240,7 @@ async fn main() -> Result<()> {
         let _ = tokio::signal::ctrl_c().await;
         signal.cancel();
     });
-    let result = run(args, config, model, stopping, extensions, inputs).await;
+    let result = serve(args, config, model, stopping, extensions, inputs).await;
     signal_task.abort();
     let _ = signal_task.await;
     #[cfg(unix)]
@@ -259,7 +271,7 @@ fn canonicalize_pending(path: &std::path::Path) -> Result<PathBuf> {
     }
 }
 
-async fn run(
+async fn serve(
     args: Args,
     config: Arc<ResolvedCoreConfig>,
     model: Arc<dyn areal_engine::model::Model>,

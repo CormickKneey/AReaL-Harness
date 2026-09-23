@@ -8,7 +8,7 @@ WORKGROUP_ENV = AREAL_WORKGROUP_RUNTIME="$(CURDIR)/target/debug/areal-runtime" A
 
 # Make 将 -- 后的单词视为目标；附加参数统一通过 ARGS 传递。
 ifneq (,$(filter --%,$(MAKECMDGOALS)))
-$(error Make 不透传 -- 后的参数。请使用 make tui ARGS='--prompt hello' 或直接运行 target/debug/areal-tui --prompt hello)
+$(error Make 不透传 -- 后的参数。请使用 make tui ARGS='--prompt hello' 或直接运行 target/debug/areal --prompt hello)
 endif
 
 .PHONY: help fetch build release check fmt fmt-check lint test test-core \
@@ -145,11 +145,11 @@ smoke: build ## 构建后验证 TUI、HTTP/SSE、持久化与强杀恢复
 	node scripts/smoke.mjs
 
 server: ## 构建并启动 Core；读取用户 TOML、环境变量和显式 ARGS
-	cargo run --locked -p areal-server -- $(ARGS)
+	cargo run --locked -p areal-cli -- app-server $(ARGS)
 
 tui: ## 启动本地 Core + Runtime + TUI；--endpoint/--remote 连接已有服务
-	cargo build --locked -p areal-server -p areal-runtime -p areal-runtime-fs -p areal-service-host -p areal-cli
-	cargo run --locked -p areal-tui -- $(ARGS)
+	cargo build --locked -p areal-runtime -p areal-runtime-fs -p areal-cli
+	cargo run --locked -p areal-cli -- $(ARGS)
 
 schemas: ## 使用 codex-cli 0.145.0 重新生成协议 schema
 	node scripts/generate-schemas.mjs

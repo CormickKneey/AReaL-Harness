@@ -27,7 +27,7 @@ class MakeArgumentsTest(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("cargo run --locked -p areal-tui -- --prompt hello", result.stdout)
+        self.assertIn("cargo run --locked -p areal-cli -- --prompt hello", result.stdout)
 
 
 if __name__ == "__main__":

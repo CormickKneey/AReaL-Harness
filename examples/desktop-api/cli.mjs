@@ -31,11 +31,26 @@ const all = [];
 async function run(
   extra,
   input,
-  { open = false, control, signal, env = {}, cwd = workspace, brokenPipe = false } = {},
+  {
+    open = false,
+    control,
+    signal,
+    env = {},
+    cwd = workspace,
+    brokenPipe = false,
+    entry = "legacy",
+  } = {},
 ) {
   const child = spawnNative(
     binary,
-    [...consumer.fixedArgs, "-p", "--config", config, "--workspace", cwd, ...extra],
+    [
+      ...(entry === "exec" ? ["exec", ...consumer.fixedArgs] : [...consumer.fixedArgs, "-p"]),
+      "--config",
+      config,
+      "--workspace",
+      cwd,
+      ...extra,
+    ],
     {
       cwd,
       env: { ...process.env, HOME: join(root, "user"), AREAL_HARNESS_HOME: home, ...env },
@@ -169,6 +184,7 @@ try {
       "AskUserQuestion",
     ],
     "hello",
+    { entry: "exec" },
   );
   assert.equal(r.code, 0, r.stderr + r.stdout + JSON.stringify(model.failures));
   const session = r.frames.find((f) => f.type === "result").session_id;

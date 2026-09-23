@@ -119,11 +119,41 @@ Goal 的共享预算与未知用量约束优先于重试配置。Goal 请求禁�
 
 未知 `AREAL_HARNESS_*` 报错。旧 `AREAL_MODEL*` 与 `RUST_LOG` 为低优先级兼容别名。无 provider 文件记录的旧模型入口可使用可选 `AREAL_API_KEY`；显式文件 provider 不隐式继承它。
 
+<a id="proxies"></a>
+## 出站网络代理
+
+Core 的模型请求（含摘要、子 Agent 与 Workgroup）、Streamable HTTP MCP 和可选 OTLP HTTP 导出支持 `http://`、`https://`、`socks5://`、`socks5h://` 代理。代理协议与目标 URL 协议独立：例如 HTTPS 模型接口可通过 HTTP CONNECT 或 SOCKS 代理访问。HTTPS 代理和 HTTPS 目标都保持证书校验；私有 CA 须受对应 HTTP 客户端的信任库信任。
+
+使用启动 Core 时的标准环境变量；无需在 TOML 中重复配置：
+
+| 环境变量 | 用途 |
+|---|---|
+| `HTTP_PROXY` / `http_proxy` | HTTP 目标的代理 |
+| `HTTPS_PROXY` / `https_proxy` | HTTPS 目标的代理 |
+| `ALL_PROXY` / `all_proxy` | 未设置对应协议代理时的回退 |
+| `NO_PROXY` / `no_proxy` | 绕过代理的域名、IP 或 CIDR，逗号分隔；`*` 绕过全部 |
+
+Core HTTP 客户端优先读取大写变量，再读取小写变量；第三方工具的优先级由其 HTTP 库决定，建议大小写值保持一致。`socks5` 在本地解析目标域名，`socks5h` 交给代理解析。HTTP(S) Basic 和 SOCKS5 用户名/密码可通过代理 URL 的 userinfo 配置；该 URL 可能包含凭据，不应写入仓库或共享诊断。
+
+例如使用 SOCKS5 远端 DNS，并保留已有绕过条目：
+
+```sh
+export ALL_PROXY='socks5h://127.0.0.1:1080'
+export all_proxy="$ALL_PROXY"
+export NO_PROXY="${NO_PROXY:-${no_proxy:-}},127.0.0.1,localhost,::1"
+export no_proxy="$NO_PROXY"
+areal service restart --workspace /absolute/workspace --json
+```
+
+已有 `HTTP_PROXY` / `HTTPS_PROXY` 及其小写值会覆盖对应目标的 `ALL_PROXY`；统一走 SOCKS 时需同步调整这些变量。共享服务保留启动环境，修改变量后必须在新环境中显式 restart，只重开 TUI/Web 不会刷新后台进程环境。自定义配置或部署参数按[共享服务契约](../api/local-service.md)传给 restart。本地服务发现和登录 HTTP 请求固定直连，避免将 loopback 认证发送到外部代理。
+
+可信 stdio MCP 与插件 Host 自动继承上述八个代理变量，包括代理 URL 中的认证信息；其他环境仍按各自白名单处理。`web_search` 等外部工具须使用支持相应代理协议与环境变量的 HTTP 库；Core 不拦截其自建 socket，也不替远程 MCP 服务配置它到搜索供应商的网络。Runtime 命令环境及网络授权保持独立，代理不扩大 Scope 权限。具体边界见 [MCP](mcp.md) 和[插件](../design/plugins.md)。
+
 ## 诊断与运行时目录
 
 ```sh
-target/debug/areal-server config validate --config /absolute/config.toml
-target/debug/areal-server config show --sources --config /absolute/config.toml
+target/debug/areal config validate --config /absolute/config.toml
+target/debug/areal config show --sources --config /absolute/config.toml
 ```
 
 诊断不监听、不创建数据、不启动 Runtime/MCP/插件，也不探测模型；输出有效值和来源并脱敏。共享本地服务支持下述模型配置热更新；启动凭据不进入 Runtime 环境。`OTEL_*` 由 server 的 telemetry 装配处理。

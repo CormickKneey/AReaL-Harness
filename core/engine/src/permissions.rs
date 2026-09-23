@@ -217,6 +217,7 @@ pub(crate) fn forced(
     tool: &str,
     args: &Value,
 ) -> bool {
+    // Hook 可按父工具要求审批，但预批准只匹配当前操作，不能沿父工具传播。
     let parent_tool = args.get("tool").and_then(Value::as_str);
     let matches = |name: &str| name == "*" || name == tool || parent_tool == Some(name);
     config.is_some_and(|c| {
@@ -224,7 +225,11 @@ pub(crate) fn forced(
             .as_ref()
             .is_some_and(|p| p.approval_tools.iter().any(|n| matches(n)))
             || (c.options.approval_tools.iter().any(|n| matches(n))
-                && !c.options.preapproved_tools.iter().any(|n| matches(n)))
+                && !c
+                    .options
+                    .preapproved_tools
+                    .iter()
+                    .any(|n| n == "*" || n == tool))
     })
 }
 
@@ -288,6 +293,43 @@ pub(crate) fn matches_tool(pattern: &str, tool: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use areal_protocol::desktop::EffectiveConfig;
+    #[test]
+    fn readonly_preapproval_does_not_approve_hooks_or_external_tool_arguments() {
+        let mut config = EffectiveConfig::default();
+        config.options.approval_tools = vec!["*".into()];
+        config.options.preapproved_tools = vec!["fs_read".into()];
+        assert!(!forced(Some(&config), "fs_read", &json!({"path":"file"})));
+        assert!(forced(Some(&config), "fs_create", &json!({"path":"file"})));
+        assert!(forced(
+            Some(&config),
+            "hook:audit",
+            &json!({"tool":"fs_read"})
+        ));
+        assert!(forced(
+            Some(&config),
+            "external_tool",
+            &json!({"tool":"fs_read"})
+        ));
+        config.options.preapproved_tools.push("hook:audit".into());
+        assert!(!forced(
+            Some(&config),
+            "hook:audit",
+            &json!({"tool":"fs_read"})
+        ));
+    }
+    #[test]
+    fn profile_approval_remains_mandatory() {
+        let mut config = EffectiveConfig::default();
+        config.options.preapproved_tools = vec!["*".into()];
+        config.profile = Some(serde_json::from_value(json!({"id":"test","revision":"1","displayName":"test","instructions":"","approvalTools":["fs_read"]})).unwrap());
+        assert!(forced(Some(&config), "fs_read", &json!({})));
+        assert!(forced(
+            Some(&config),
+            "hook:audit",
+            &json!({"tool":"fs_read"})
+        ));
+    }
     #[test]
     fn legacy_and_explicit_defaults_share_grants_but_readonly_does_not() {
         let mut config = areal_protocol::desktop::EffectiveConfig::default();

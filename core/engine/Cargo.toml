@@ -36,3 +36,4 @@ image = { version = "=0.25.8", default-features = false, features = ["png", "jpe
 [dev-dependencies]
 axum.workspace = true
 libc.workspace = true
+tokio-rustls = { version = "0.26.4", default-features = false, features = ["ring", "tls12"] }

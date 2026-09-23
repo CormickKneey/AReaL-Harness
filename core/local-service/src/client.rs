@@ -115,7 +115,8 @@ async fn ensure_inner(
             "-c",
             "import subprocess,sys; sys.exit(subprocess.call(sys.argv[1:]))",
         ])
-        .arg(spec.bin_dir.join("areal-service-host"));
+        .arg(spec.bin_dir.join("areal"))
+        .arg("service-host");
     command
         .current_dir(&spec.launch_cwd)
         .stdin(Stdio::piped())
@@ -378,20 +379,29 @@ fn token(service: &Service) -> Result<String> {
         .into())
 }
 
-pub async fn probe(service: &Service) -> Result<()> {
+fn http_endpoint(service: &Service) -> Result<reqwest::Url> {
     let endpoint = reqwest::Url::parse(&service.endpoint)?;
     ensure!(
         endpoint.scheme() == "ws"
             && matches!(endpoint.host_str(), Some("127.0.0.1" | "[::1]" | "::1"))
             && endpoint.username().is_empty()
-            && endpoint.password().is_none(),
+            && endpoint.password().is_none()
+            && endpoint.path() == "/"
+            && endpoint.query().is_none()
+            && endpoint.fragment().is_none(),
         "service endpoint must be loopback"
     );
     let mut url = endpoint;
     url.set_scheme("http").unwrap();
+    Ok(url)
+}
+
+pub async fn probe(service: &Service) -> Result<()> {
+    let mut url = http_endpoint(service)?;
     url.set_path("/areal/service");
     let identity: Identity = reqwest::Client::builder()
         .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(2))
         .build()?
         .get(url)
@@ -406,6 +416,47 @@ pub async fn probe(service: &Service) -> Result<()> {
         "Core identity/generation does not match the service record"
     );
     Ok(())
+}
+
+/// 返回仅供打开浏览器的一次性 URL；调用方不得写入日志或发现描述。
+pub async fn browser_login_url(service: &Service) -> Result<String> {
+    probe(service).await?;
+    let mut url = http_endpoint(service)?;
+    url.set_path("/areal/auth/bootstrap");
+    let mut response = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(5))
+        .build()?
+        .post(url.clone())
+        .bearer_auth(token(service)?)
+        .send()
+        .await?;
+    ensure!(
+        response.status().is_success(),
+        "browser login could not be prepared; rerun areal web or sign in manually at {}",
+        service.web_url
+    );
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        ensure!(
+            bytes.len() + chunk.len() <= 4096,
+            "invalid browser login response"
+        );
+        bytes.extend_from_slice(&chunk);
+    }
+    let ticket: areal_protocol::service::BrowserBootstrap = serde_json::from_slice(&bytes)
+        .map_err(|_| anyhow::anyhow!("invalid browser login response"))?;
+    ensure!(
+        ticket.code.len() == 64
+            && ticket.code.bytes().all(|c| c.is_ascii_hexdigit())
+            && (1..=60).contains(&ticket.expires_in),
+        "invalid browser login response"
+    );
+    // 固定已校验的 loopback origin 和路径，不信任服务返回的跳转地址。
+    url.set_path("/ui");
+    url.set_fragment(Some(&format!("bootstrap={}", ticket.code)));
+    Ok(url.into())
 }
 
 pub async fn rpc(service: &Service, method: &str, params: Value) -> Result<Value> {

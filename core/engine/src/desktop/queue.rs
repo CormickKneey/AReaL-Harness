@@ -16,10 +16,11 @@ impl Engine {
             let hash = digest(&request)?;
             let mut data = desktop(&state.thread);
             if let Some(result) = receipt(&data,&identity,&request.request_id,method,&hash)? { return Ok(result); }
-            if state.poisoned || state.thread.parent_thread_id.is_some() { return Err(Error::Conflict); }
+            if state.poisoned || state.thread.parent_thread_id.is_some() || state.thread.source == "nativeTaskAgent" { return Err(Error::Conflict); }
             if request.expected_config_revision.is_some_and(|revision| revision != data.configuration.revision) { return Err(Error::Conflict); }
             engine.validate_uploads(&state.thread,&request.input)?;
-            let configuration = engine.freeze_configuration(data.configuration.clone());
+            let mut configuration = engine.freeze_configuration(data.configuration.clone());
+            if let Some(mode) = request.interaction_mode { configuration.options.interaction_mode = mode; }
             validate_input(&request.input,&engine.configured_model(&configuration)?.capabilities())?;
             if enqueue {
                 if data.queue.items.len()>=128 { return Err(Error::Exhausted("queue history capacity reached".into())); }
@@ -46,8 +47,12 @@ impl Engine {
             } else {
                 if state.active.is_some() || state.compacting { return Err(Error::Conflict); }
                 engine.check_turn_available(&cell,&state).await?;
+                let previous_mode = data.configuration.options.interaction_mode;
+                data.configuration.options.interaction_mode = configuration.options.interaction_mode;
                 let mut source=state.thread.clone();source.desktop=Some(data);
-                let (mut candidate,turn)=engine.prepare_turn(&source,request.input)?;
+                let (mut candidate,mut turn)=engine.prepare_turn(&source,request.input)?;
+                if let Some(mode) = request.interaction_mode { turn.configuration.get_or_insert_with(Default::default).options.interaction_mode = mode; *candidate.turns.last_mut().unwrap() = turn.clone(); }
+                candidate.desktop.as_mut().unwrap().configuration.options.interaction_mode = previous_mode;
                 let permit=engine.reserve_active_turn()?;
                 let result=json!({"turn":turn});
                 remember(candidate.desktop.as_mut().unwrap(),&identity,&request.request_id,method,hash,result.clone());
@@ -195,6 +200,9 @@ impl Engine {
                 .goal
                 .as_ref()
                 .is_some_and(|g| g.status == areal_protocol::goals::GoalStatus::Active);
+        if automatic && !self.task_allows_continuation(&state.thread).await {
+            return Ok(());
+        }
         if (index.is_some() && data.queue.paused) || (index.is_none() && !automatic) {
             return Ok(());
         }
@@ -209,6 +217,8 @@ impl Engine {
             let (mut candidate, mut turn) = self.prepare_turn(&source, input)?;
             if automatic { if let Some(goal) = &mut turn.goal { goal.origin = "continuation".into(); } *candidate.turns.last_mut().unwrap() = turn.clone(); }
             if let Some(index) = index {
+                turn.configuration.get_or_insert_with(Default::default).options.interaction_mode = data.queue.items[index].configuration.options.interaction_mode;
+                *candidate.turns.last_mut().unwrap() = turn.clone();
                 let next = candidate.desktop.as_mut().unwrap(); next.configuration = data.configuration.clone(); next.queue.items[index].status = "running".into(); next.queue.items[index].turn_id = Some(turn.id.clone()); next.queue.revision += 1;
             }
             let permit = self.reserve_active_turn()?;
