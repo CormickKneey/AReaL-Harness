@@ -1164,3 +1164,37 @@ impl Model for UnconfiguredModel {
         anyhow::bail!("MODEL_NOT_CONFIGURED")
     }
 }
+
+/// 管理入口可启动，但缺少启动凭据的模型不能执行请求。
+#[derive(Clone)]
+pub struct CredentialUnavailableModel {
+    pub name: String,
+    pub provider: String,
+    pub credential_env: String,
+}
+
+#[async_trait]
+impl Model for CredentialUnavailableModel {
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn provider(&self) -> &str {
+        &self.provider
+    }
+    fn check_work(&self) -> Result<()> {
+        bail!(
+            "MODEL_CREDENTIAL_UNAVAILABLE: {} must contain a nonempty HTTP header value",
+            self.credential_env
+        )
+    }
+    fn configure(
+        &self,
+        _: &areal_protocol::desktop::ModelParameters,
+    ) -> Result<std::sync::Arc<dyn Model>> {
+        Ok(std::sync::Arc::new(self.clone()))
+    }
+    async fn stream(&self, _: Vec<Message>) -> Result<ModelStream> {
+        self.check_work()?;
+        unreachable!()
+    }
+}

@@ -164,7 +164,6 @@ async fn run_configured(mut args: Args, diagnostic: Option<ConfigCommand>) -> Re
     if no_deployment_mcp {
         extensions.mcp_servers.clear();
     }
-    let credential = config.credential(&inputs)?;
     let telemetry_config = telemetry::TelemetryConfig::from_env(&inputs.env)?;
     for warning in &config.warnings {
         eprintln!("Warning: {warning}");
@@ -210,6 +209,7 @@ async fn run_configured(mut args: Args, diagnostic: Option<ConfigCommand>) -> Re
             "Core executable must be outside command scratch"
         );
     }
+    let model = reload::model(&config.model, &inputs, &config.data_dir, management)?;
     let telemetry = telemetry::TelemetryGuard::init(telemetry_config, &config.log_filter)?;
     let stopping = tokio_util::sync::CancellationToken::new();
     #[cfg(unix)]
@@ -240,7 +240,7 @@ async fn run_configured(mut args: Args, diagnostic: Option<ConfigCommand>) -> Re
         let _ = tokio::signal::ctrl_c().await;
         signal.cancel();
     });
-    let result = serve(args, config, credential, stopping, extensions, inputs).await;
+    let result = serve(args, config, model, stopping, extensions, inputs).await;
     signal_task.abort();
     let _ = signal_task.await;
     #[cfg(unix)]
@@ -274,14 +274,13 @@ fn canonicalize_pending(path: &std::path::Path) -> Result<PathBuf> {
 async fn serve(
     args: Args,
     config: Arc<ResolvedCoreConfig>,
-    credential: Option<String>,
+    model: Arc<dyn areal_engine::model::Model>,
     stopping: tokio_util::sync::CancellationToken,
     extensions: areal_engine::tools::ToolExtensions,
     inputs: ConfigInputs,
 ) -> Result<()> {
     let mcp_env = inputs.env.clone();
     let homedir = inputs.homedir.clone();
-    let model = reload::model(&config.model, credential, &config.data_dir)?;
     let model: Arc<dyn areal_engine::model::Model> =
         areal_engine::workgroup::native::SharedModel::pool(model, config.model_concurrency)?;
     let limits = Limits {
