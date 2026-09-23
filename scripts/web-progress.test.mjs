@@ -21,6 +21,12 @@ class Element {
     };
     this.scrollTop = this.scrollHeight = this.clientHeight = 0;
   }
+  showModal() {
+    this.open = true;
+  }
+  close() {
+    this.open = false;
+  }
   append(...children) {
     this.children.push(...children);
   }
@@ -43,7 +49,7 @@ class Element {
     ]);
   }
 }
-function client() {
+function client(options = {}) {
   let now = 1000;
   const elements = new Map(),
     requests = [];
@@ -55,6 +61,8 @@ function client() {
   get("group-start").append(new Element("button"));
   get("refresh").append(new Element("svg"));
   get("interrupt").append(new Element("span"));
+  const location = new URL(options.href ?? "http://localhost/ui");
+  const startup = [];
   const context = vm.createContext({
     document: {
       getElementById: get,
@@ -67,9 +75,23 @@ function client() {
     matchMedia: () => ({ matches: false, addEventListener: () => {} }),
     localStorage: { getItem: () => null },
     crypto: { randomUUID },
-    location: { href: "http://localhost/ui" },
+    location,
+    history: {
+      replaceState: (_, __, url) => {
+        location.href = String(url);
+        startup.push({ type: "history", url: location.href });
+      },
+    },
+    AbortSignal,
+    fetch: async (url, init) => {
+      startup.push({ type: "fetch", url, init, page: location.href });
+      return options.fetch ? options.fetch(url, init) : { ok: true };
+    },
     URL,
     WebSocket: class {
+      constructor(url) {
+        startup.push({ type: "socket", url: String(url) });
+      }
       send(request) {
         requests.push(JSON.parse(request));
       }
@@ -90,6 +112,8 @@ function client() {
     `connected = true; thread = {id:"thread",cwd:"/workspace",turns:[{id:"turn",status:"inProgress",items:[{id:"answer",type:"agentMessage",text:""}]}]}; render();`,
   );
   return {
+    startup,
+    location,
     get,
     run,
     requests,
@@ -396,4 +420,60 @@ test("Inbox survives refresh and retries the same reply without borrowing the cu
   c.run(`pending.get(${after.id}).resolve({data:[],nextCursor:null})`);
   await retrySend;
   assert.match(c.get("inbox-list").children[0].textContent, /没有待回答/);
+});
+
+test("automatic login clears the fragment before exchange and connects only after success", async () => {
+  let resolveExchange;
+  const exchange = new Promise((resolve) => {
+    resolveExchange = resolve;
+  });
+  const c = client({
+    href: "http://127.0.0.1:4500/ui#bootstrap=one-use-code",
+    fetch: () => exchange,
+  });
+  assert.deepEqual(
+    c.startup.map((event) => event.type),
+    ["history", "fetch"],
+  );
+  assert.equal(c.location.href, "http://127.0.0.1:4500/ui");
+  const request = c.startup[1];
+  assert.equal(request.url, "/areal/auth/bootstrap/exchange");
+  assert.equal(request.page, c.location.href);
+  assert.equal(request.init.method, "POST");
+  assert.deepEqual(JSON.parse(request.init.body), { code: "one-use-code" });
+  assert.equal(request.init.redirect, "error");
+  assert.equal(request.init.cache, "no-store");
+  assert.equal(request.init.credentials, "same-origin");
+  resolveExchange({ ok: true });
+  await new Promise(setImmediate);
+  assert.deepEqual(
+    c.startup.map((event) => event.type),
+    ["history", "fetch", "socket"],
+  );
+  assert.equal(c.get("settings-dialog").open, undefined);
+});
+
+test("rejected or unavailable automatic login exposes a manual fallback without retaining the code", async () => {
+  for (const fetch of [
+    async () => ({ ok: false }),
+    async () => {
+      throw Error("private response");
+    },
+  ]) {
+    const c = client({ href: "http://127.0.0.1:4500/ui#bootstrap=expired-secret", fetch });
+    await new Promise(setImmediate);
+    assert.equal(c.location.hash, "");
+    assert.equal(c.get("settings-dialog").open, true);
+    assert.match(c.get("login-error").textContent, /重新运行 areal web/);
+    assert.doesNotMatch(c.get("login-error").textContent, /expired-secret|private response/);
+    assert(!c.startup.some((event) => event.type === "socket"));
+  }
+});
+
+test("ordinary visits and reloads connect with the cookie without minting credentials", () => {
+  const c = client();
+  assert.deepEqual(
+    c.startup.map((event) => event.type),
+    ["socket"],
+  );
 });

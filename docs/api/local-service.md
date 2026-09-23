@@ -23,7 +23,7 @@ target/debug/areal web --workspace /absolute/workspace --json
 
 `status`、`stop` 默认定位当前工作区，可用 `--workspace`、`--data-dir` 或 `--instance` 消歧。`restart` 按当前工作区和与 `ensure` 相同的参数解析目标部署；使用自定义配置/权限时传入对应参数。重启保留历史，有未结算工作时拒绝，只有显式 `--cancel` 才取消任务。
 
-服务命令 stdout 始终是 JSON，`--json` 显式声明机器调用；`web` 默认另打开浏览器，`--json` 只发现。ensure/restart/status/stop 返回一个描述，list 返回数组，bind 返回 `{dataDir}`。操作失败退出 1，stderr 为 `{error:{code:"localServiceError",message}}`；参数解析错误遵循 CLI 行为。启动诊断写 stderr 或私有日志，不把 token 放入命令、URL 或描述。
+服务命令 stdout 始终是 JSON，`--json` 显式声明机器调用；`web` 默认另打开浏览器，`--json` 只发现。ensure/restart/status/stop 返回一个描述，list 返回数组，bind 返回 `{dataDir}`。操作失败退出 1，stderr 为 `{error:{code:"localServiceError",message}}`；参数解析错误遵循 CLI 行为。启动诊断写 stderr 或私有日志，不把长期 token 放入命令、URL 或描述；自动登录的一次性 URL 仅交给浏览器打开程序，不打印。
 
 描述字段见 [local-service-v1.json](../../schemas/local-service-v1.json)：
 
@@ -68,7 +68,7 @@ TUI 断线会重新发现服务，故障清理完成后可启动新 generation�
 
 ## Web 与 Desktop 接入
 
-- Web 通过 `areal web` 打开已有 `/ui`，沿用 token 登录换 HttpOnly cookie；浏览器不启动进程、不读 authFile，也不访问控制 socket。端口变化后重新运行 `areal web`。
+- `areal web` 在可信本地客户端读取 authFile，校验服务身份后申请一次性登录码，打开 `/ui` 自动换取独立 HttpOnly Cookie；长期 token 不交给网页。浏览器不启动进程、不读 authFile，也不访问控制 socket。链接过期、会话过期、重启或端口变化后重新运行 `areal web`；手工 token 登录保留为兜底。`--json` 只发现、不签发登录码。Rust 调用方可用 `browser_login_url(&Service)` 获取一次性 URL，不得记录或转发到不可信页面。接口与有效期见[浏览器登录](desktop.md#browser-auth)。
 - Desktop Main 用参数数组执行 `areal service ensure --json`，校验 `protocolVersion`，在 Main 读取 authFile 建立认证连接；只向 Renderer 暴露经过筛选的应用操作和状态。不要把完整服务描述或 token 交给 Renderer。
 - 重连重新发现并比较 generation，然后 initialize/initialized 和 thread/resume。先查 request/read 或权威状态再决定重试，不自动重放已提交操作。
 - 需要跨窗口的动态 ToolHost 应放在稳定 Main/独立宿主连接中。窗口上的动态工具不会自动转移；连接丢失仍按现有 Host generation 与 UNKNOWN 语义处理。

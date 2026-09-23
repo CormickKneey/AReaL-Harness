@@ -1,4 +1,5 @@
 pub mod auth;
+mod browser_auth;
 mod desktop;
 mod dynamic_tools;
 mod processes;
@@ -43,6 +44,9 @@ fn configured_router(
     service: Option<areal_protocol::service::Identity>,
 ) -> Router {
     engine.start_task_scheduler();
+    let authentication = authentication.map(|auth| {
+        browser_auth::BrowserAuth::new(auth, browser_origin.as_deref().unwrap_or_default())
+    });
     Router::new()
         .route("/", get(upgrade))
         .route("/ui", get(|| async {
@@ -50,7 +54,9 @@ fn configured_router(
         }))
         .route("/ui/app.js", get(|| async { ([("content-type", "text/javascript; charset=utf-8"), ("x-content-type-options", "nosniff")], include_str!("../../../clients/web/app.js")) }))
         .route("/ui/style.css", get(|| async { ([("content-type", "text/css; charset=utf-8"), ("x-content-type-options", "nosniff")], include_str!("../../../clients/web/style.css")) }))
-        .route("/areal/auth/session", axum::routing::post(auth_session))
+        .route("/areal/auth/session", axum::routing::post(browser_auth::session))
+        .route("/areal/auth/bootstrap", axum::routing::post(browser_auth::bootstrap))
+        .route("/areal/auth/bootstrap/exchange", axum::routing::post(browser_auth::exchange).layer(DefaultBodyLimit::max(1024)))
         .route("/healthz", get(|| async { "ok" }))
         .route("/areal/service", get(service_identity))
         .route("/areal/blobs/{id}", get(read_blob))
@@ -72,7 +78,7 @@ fn configured_router(
 }
 
 async fn service_identity(
-    Extension(authentication): Extension<Option<auth::Authentication>>,
+    Extension(authentication): Extension<Option<browser_auth::BrowserAuth>>,
     Extension(service): Extension<Option<areal_protocol::service::Identity>>,
     Extension(browser_origin): Extension<Option<String>>,
     headers: HeaderMap,
@@ -104,7 +110,7 @@ struct BlobQuery {
 }
 async fn read_blob(
     State(engine): State<Arc<Engine>>,
-    Extension(authentication): Extension<Option<auth::Authentication>>,
+    Extension(authentication): Extension<Option<browser_auth::BrowserAuth>>,
     headers: HeaderMap,
     Query(query): Query<BlobQuery>,
     Path(id): Path<String>,
@@ -135,7 +141,7 @@ async fn read_blob(
 }
 async fn upload_blob(
     State(engine): State<Arc<Engine>>,
-    Extension(authentication): Extension<Option<auth::Authentication>>,
+    Extension(authentication): Extension<Option<browser_auth::BrowserAuth>>,
     Extension(browser_origin): Extension<Option<String>>,
     headers: HeaderMap,
     Query(query): Query<BlobQuery>,
@@ -235,47 +241,10 @@ pub async fn serve_service(
     Ok(())
 }
 
-async fn auth_session(
-    Extension(authentication): Extension<Option<auth::Authentication>>,
-    Extension(browser_origin): Extension<Option<String>>,
-    headers: HeaderMap,
-) -> Response {
-    if headers
-        .get("origin")
-        .is_some_and(|o| o.to_str().ok() != browser_origin.as_deref())
-    {
-        return StatusCode::FORBIDDEN.into_response();
-    }
-    // 仅接受显式 Bearer 登录，不能利用现有 Cookie 重签会话。
-    if !headers.contains_key("authorization") {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
-    let Some(principal) = authentication
-        .as_ref()
-        .and_then(|auth| auth.authenticate(&headers))
-    else {
-        return StatusCode::UNAUTHORIZED.into_response();
-    };
-    (
-        [
-            (
-                header::SET_COOKIE,
-                format!(
-                    "areal_session={}; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600",
-                    principal.token
-                ),
-            ),
-            (header::CACHE_CONTROL, "no-store".into()),
-        ],
-        StatusCode::NO_CONTENT,
-    )
-        .into_response()
-}
-
 async fn upgrade(
     State(engine): State<Arc<Engine>>,
     Extension(browser_origin): Extension<Option<String>>,
-    Extension(authentication): Extension<Option<auth::Authentication>>,
+    Extension(authentication): Extension<Option<browser_auth::BrowserAuth>>,
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
@@ -284,16 +253,16 @@ async fn upgrade(
     {
         return StatusCode::FORBIDDEN.into_response();
     }
-    let principal = match authentication {
-        Some(authentication) => match authentication.authenticate(&headers) {
+    let (principal, expires) = match authentication {
+        Some(authentication) => match authentication.connection(&headers) {
             Some(principal) => principal,
             None => return StatusCode::UNAUTHORIZED.into_response(),
         },
-        None => auth::Principal::embedded(),
+        None => (auth::Principal::embedded(), None),
     };
     ws.max_message_size(MAX_FRAME_BYTES)
         .max_frame_size(MAX_FRAME_BYTES)
-        .on_upgrade(move |socket| connection(socket, engine, principal))
+        .on_upgrade(move |socket| connection(socket, engine, principal, expires))
         .into_response()
 }
 
@@ -311,7 +280,19 @@ struct Connection {
     rpc_permits: Arc<tokio::sync::Semaphore>,
 }
 
-async fn connection(socket: WebSocket, engine: Arc<Engine>, principal: Arc<auth::Principal>) {
+async fn connection(
+    socket: WebSocket,
+    engine: Arc<Engine>,
+    principal: Arc<auth::Principal>,
+    expires: Option<tokio::time::Instant>,
+) {
+    let expired = async move {
+        match expires {
+            Some(deadline) => tokio::time::sleep_until(deadline).await,
+            None => std::future::pending::<()>().await,
+        }
+    };
+    tokio::pin!(expired);
     let (mut sink, mut stream) = socket.split();
     let (tx, mut rx) = mpsc::channel::<Value>(256);
     let stop = CancellationToken::new();
@@ -355,7 +336,7 @@ async fn connection(socket: WebSocket, engine: Arc<Engine>, principal: Arc<auth:
         rpc_permits: Arc::new(tokio::sync::Semaphore::new(16)),
     };
     loop {
-        let message = tokio::select! { biased; _ = stop.cancelled() => break, message = stream.next() => message };
+        let message = tokio::select! { biased; _ = stop.cancelled() => break, _ = &mut expired => break, message = stream.next() => message };
         let Some(Ok(message)) = message else {
             break;
         };

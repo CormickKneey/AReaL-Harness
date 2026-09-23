@@ -51,6 +51,14 @@ make tui ARGS='--workspace ../areal-example-workspace'
 
 To request approvals, set `ASK_PERMISSIONS=1` before launch or configure `[permissions] mode = "ASK_PERMISSIONS"`; see [permissions](configuration.en.md#permissions). TUI `/permissions` shows the effective policy. Existing shared services require explicit restart after permission changes.
 
+Open Web through the shared service entry point to sign in automatically:
+
+```sh
+target/debug/areal web --workspace ../areal-example-workspace
+```
+
+Run the same command again if the one-time link or session expires. For a foreground owned service on a fixed port:
+
 ```sh
 python3 -I -S scripts/launch.py \
   --workspace ../areal-example-workspace \

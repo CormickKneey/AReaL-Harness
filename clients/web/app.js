@@ -761,6 +761,10 @@ $("login").onsubmit = async (event) => {
     const response = await fetch("/areal/auth/session", {
       method: "POST",
       headers: { Authorization: `Bearer ${$("access-token").value}` },
+      credentials: "same-origin",
+      cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.timeout(10000),
     });
     $("access-token").value = "";
     if (!response.ok) throw Error("认证失败，请使用可信启动器提供的访问令牌。");
@@ -775,7 +779,32 @@ $("login").onsubmit = async (event) => {
     $("connect-button").disabled = false;
   }
 };
-connect().catch((error) => {
+async function startConnection() {
+  const url = new URL(location.href);
+  if (url.hash.startsWith("#bootstrap=")) {
+    const code = url.hash.slice("#bootstrap=".length);
+    // 在任何网络请求之前从当前历史记录清除一次性凭据，不写入浏览器存储。
+    url.hash = "";
+    history.replaceState(null, "", url);
+    try {
+      const response = await fetch("/areal/auth/bootstrap/exchange", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        cache: "no-store",
+        redirect: "error",
+        body: JSON.stringify({ code }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!response.ok) throw Error("bootstrap rejected");
+    } catch {
+      throw Error("自动登录失败或链接已过期，请重新运行 areal web，或输入本地访问令牌。");
+    }
+  }
+  await connect();
+}
+startConnection().catch((error) => {
+  $("login-error").textContent = error.message;
   notice(error);
   $("settings-dialog").showModal();
 });

@@ -3,7 +3,9 @@ mod client;
 mod spec;
 pub mod storage;
 
-pub use client::{bind, ensure, list, probe, reconnect, restart, rpc, select, status, stop};
+pub use client::{
+    bind, browser_login_url, ensure, list, probe, reconnect, restart, rpc, select, status, stop,
+};
 pub use spec::{LaunchSpec, LocalArgs};
 
 pub fn home() -> anyhow::Result<std::path::PathBuf> {
