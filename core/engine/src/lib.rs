@@ -12,6 +12,7 @@ mod sessions;
 mod store;
 mod task_mode;
 pub mod tools;
+mod trajectory;
 mod turns;
 mod watchdog;
 pub mod workgroup;

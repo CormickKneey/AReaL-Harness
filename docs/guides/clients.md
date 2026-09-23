@@ -105,7 +105,7 @@ export OTEL_EXPORTER_OTLP_PROTOCOL='http/protobuf'
 make server
 ```
 
-OTLP 仅支持 HTTP/protobuf；未设置 endpoint 不启用，`OTEL_SDK_DISABLED=true` 可关闭。默认 span 记录 ID、usage、状态和时长，不采集提示正文或凭据。上报失败不改变 Turn 结果。
+OTLP 仅支持 HTTP/protobuf；未设置 endpoint 不启用，`OTEL_SDK_DISABLED=true` 可关闭。轨迹记录实际模型输入输出、工具参数与结果，以及 ID、usage、状态和时长，不执行脱敏。上报失败不改变 Turn 结果；完整配置见[轨迹上报](configuration.md#opentelemetry-轨迹上报)。
 
 <a id="goals"></a>
 ## Goal 模式

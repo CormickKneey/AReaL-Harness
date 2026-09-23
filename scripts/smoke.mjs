@@ -19,6 +19,7 @@ const fixtureEnv = {
       ([key]) =>
         !key.startsWith("AREAL_HARNESS_") &&
         !key.startsWith("AREAL_MODEL") &&
+        !key.startsWith("OTEL_") &&
         key !== "AREAL_API_KEY",
     ),
   ),
@@ -35,7 +36,8 @@ const collector = createServer(async (req, res) => {
   traces.push({
     url: req.url,
     type: req.headers["content-type"],
-    bytes: Buffer.concat(body).length,
+    body: Buffer.concat(body),
+    authorization: req.headers.authorization,
   });
   res.writeHead(200);
   res.end();
@@ -99,6 +101,8 @@ async function start() {
       OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf",
       OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: "http/protobuf",
       OTEL_SERVICE_NAME: "areal-smoke",
+      OTEL_RESOURCE_ATTRIBUTES: "service.namespace=trajectory-smoke",
+      OTEL_EXPORTER_OTLP_HEADERS: "authorization=Bearer%20collector-fixture",
     },
   );
   let stderr = "";
@@ -215,15 +219,23 @@ try {
   const finalStopped = once(server.child, "exit");
   server.child.kill("SIGTERM");
   await finalStopped;
-  assert.ok(
-    traces.some(
-      (trace) =>
-        trace.url === "/v1/traces" && trace.type === "application/x-protobuf" && trace.bytes > 0,
-    ),
-    JSON.stringify({ traces, stderr: server.stderr() }),
-  );
+  for (const signal of ["traces", "logs"]) {
+    const batches = traces.filter((batch) => batch.url === `/v1/${signal}`);
+    assert.ok(batches.length > 0, `${signal}: ${server.stderr()}`);
+    for (const batch of batches) {
+      assert.equal(batch.type, "application/x-protobuf");
+      assert.equal(batch.authorization, "Bearer collector-fixture");
+      assert.ok(batch.body.includes(Buffer.from("areal-smoke")));
+      assert.ok(batch.body.includes(Buffer.from("trajectory-smoke")));
+    }
+    // 验证真实模型流的输入和输出原文已进入线上的 protobuf 载荷。
+    assert.ok(batches.some((batch) => batch.body.includes(Buffer.from("after-restart"))));
+    assert.ok(batches.some((batch) => batch.body.includes(Buffer.from("reply:after-restart"))));
+    assert.ok(batches.some((batch) => batch.body.includes(Buffer.from("gen_ai.input.messages"))));
+    assert.ok(batches.some((batch) => batch.body.includes(Buffer.from("gen_ai.output.messages"))));
+  }
   console.log(
-    "PASS built TUI → WebSocket → Core → HTTP/SSE; multi-turn persistence; SIGKILL recovery; OTLP traces",
+    "PASS built TUI → WebSocket → Core → HTTP/SSE; multi-turn persistence; SIGKILL recovery; OTLP traces/logs with content, resources and authentication",
   );
 } finally {
   await Promise.all(
