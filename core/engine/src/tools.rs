@@ -8,6 +8,9 @@ use serde::Deserialize;
 use std::path::PathBuf;
 
 const MAX_RESULT: usize = 16 * 1024;
+// Leave room for process metadata and JSON framing after stdout/stderr are
+// escaped. Control-heavy output can expand several times in the model payload.
+const MODEL_OUTPUT_HEADROOM: usize = 4096;
 #[derive(Default)]
 pub(crate) struct Handles {
     processes: BTreeMap<String, String>,
@@ -1208,9 +1211,14 @@ async fn process_output(
     let mut gap = false;
     let mut truncated = false;
     let mut closed = false;
-    // Bound bytes before JSON expansion; callers can read the next cursor.
+    // Bound raw bytes and the escaped model payload independently. The latter
+    // keeps binary/control-heavy output from falling into the journal fallback.
     let mut remaining = output_page_bytes;
+    let mut request_bytes = remaining.min(1024);
     let return_reason = loop {
+        if remaining == 0 {
+            break "outputLimit";
+        }
         let mut wait = budget.saturating_sub(started.elapsed());
         if output_quiet_ms > 0
             && let Some(last) = last_output
@@ -1218,31 +1226,55 @@ async fn process_output(
             wait = wait.min(Duration::from_millis(output_quiet_ms).saturating_sub(last.elapsed()));
         }
         let wait_ms = wait.as_millis().min(1000) as u64;
+        let cursor_before = after.clone();
         let page = client
             .output(rt::ReadOutput {
                 process_id: read.process_id.clone(),
-                after,
-                max_bytes: remaining,
+                after: after.clone(),
+                max_bytes: request_bytes.min(remaining),
                 wait_ms: wait_ms.min(1000),
             })
             .await?;
-        gap |= page.gap;
-        truncated |= page.truncated;
-        if !page.chunks.is_empty() {
-            // Output arrival does not hand control back to the model by default.
-            // An explicit nonzero policy can restore legacy burst coalescing.
-            last_output = Some(tokio::time::Instant::now());
-        }
+        let mut page_stdout = Vec::new();
+        let mut page_stderr = Vec::new();
         for chunk in page.chunks {
             let bytes = STANDARD.decode(chunk.data_base64).map_err(|_| {
                 rt::Error::new(rt::ErrorCode::Unavailable, "invalid Runtime output")
             })?;
-            remaining = remaining.saturating_sub(bytes.len());
+            if bytes.len() > remaining {
+                return Err(rt::Error::new(
+                    rt::ErrorCode::Unavailable,
+                    "Runtime returned more output than requested",
+                ));
+            }
             match chunk.stream {
-                rt::OutputStream::Stdout | rt::OutputStream::Pty => stdout.extend(bytes),
-                rt::OutputStream::Stderr => stderr.extend(bytes),
+                rt::OutputStream::Stdout | rt::OutputStream::Pty => page_stdout.extend(bytes),
+                rt::OutputStream::Stderr => page_stderr.extend(bytes),
             }
         }
+        let fits = model_output_fits(&stdout, &stderr, &page_stdout, &page_stderr);
+        if !fits && (!page_stdout.is_empty() || !page_stderr.is_empty()) {
+            // Retry from the same cursor with a smaller request. Runtime output
+            // is retained, so no bytes are lost while finding a JSON-safe page.
+            if request_bytes == 1 {
+                break "outputLimit";
+            }
+            request_bytes = (request_bytes / 2).max(1);
+            if request_bytes < remaining {
+                after = cursor_before;
+                continue;
+            }
+        }
+        gap |= page.gap;
+        truncated |= page.truncated;
+        if !page_stdout.is_empty() || !page_stderr.is_empty() {
+            // Output arrival does not hand control back to the model by default.
+            // An explicit nonzero policy can restore legacy burst coalescing.
+            last_output = Some(tokio::time::Instant::now());
+        }
+        remaining = remaining.saturating_sub(page_stdout.len() + page_stderr.len());
+        stdout.extend(page_stdout);
+        stderr.extend(page_stderr);
         after = Some(page.next_cursor);
         closed |= page.closed;
         if gap || truncated {
@@ -1251,9 +1283,7 @@ async fn process_output(
         if closed {
             break "completed";
         }
-        if remaining == 0 {
-            break "outputLimit";
-        }
+        request_bytes = request_bytes.max(1024).min(remaining.max(1));
         if started.elapsed() >= budget {
             break "waitBudget";
         }
@@ -1309,6 +1339,25 @@ async fn process_output(
         result["stderrBase64"] = json!(STANDARD.encode(stderr));
     }
     Ok((success, result))
+}
+
+fn model_output_fits(stdout: &[u8], stderr: &[u8], page_stdout: &[u8], page_stderr: &[u8]) -> bool {
+    let mut stdout = stdout.to_vec();
+    stdout.extend_from_slice(page_stdout);
+    let mut stderr = stderr.to_vec();
+    stderr.extend_from_slice(page_stderr);
+    let mut value = json!({
+        "stdout": String::from_utf8_lossy(&stdout),
+        "stderr": String::from_utf8_lossy(&stderr),
+    });
+    if std::str::from_utf8(&stdout).is_err() {
+        value["stdoutBase64"] = json!(STANDARD.encode(&stdout));
+    }
+    if std::str::from_utf8(&stderr).is_err() {
+        value["stderrBase64"] = json!(STANDARD.encode(&stderr));
+    }
+    serde_json::to_vec(&value)
+        .is_ok_and(|encoded| encoded.len() <= MAX_RESULT.saturating_sub(MODEL_OUTPUT_HEADROOM))
 }
 
 #[cfg(test)]

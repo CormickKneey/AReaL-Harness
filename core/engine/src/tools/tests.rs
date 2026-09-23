@@ -73,6 +73,13 @@ fn every_builtin_enforces_required_fields_and_rejects_unknown_arguments() {
 }
 
 #[test]
+fn model_output_budget_accounts_for_json_escaping() {
+    assert!(model_output_fits(&[], &[], &vec![b'x'; 7000], &[]));
+    assert!(model_output_fits(&[], &[], &vec![0; 1000], &[]));
+    assert!(!model_output_fits(&[], &[], &vec![0; 3000], &[]));
+}
+
+#[test]
 fn invalid_values_are_rejected_without_coercion_or_clamping() {
     for (name, args) in [
         (
