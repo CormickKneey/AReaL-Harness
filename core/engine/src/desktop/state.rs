@@ -218,7 +218,7 @@ impl Engine {
                 // Explicit research-agent extensions own the child lifecycle;
                 // exposing the desktop facade as well creates two subtly
                 // different spawn/wait contracts for the same Turn.
-                && (!self.extensions.agents.is_some()
+                && (self.extensions.agents.is_none()
                     || !matches!(name, "agent_spawn_configured" | "agent_wait_all"))
                 && (name != "agent_report" || cell.depth > 0)
                 && (desktop_enabled || !core_names.iter().any(|n| n == name))

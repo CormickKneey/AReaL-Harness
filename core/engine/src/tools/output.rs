@@ -51,15 +51,15 @@ pub(crate) fn project(
     let mut previous = None;
     let mut omitted_lines = 0;
     for index in keep {
-        if let Some(last) = previous {
-            if index > last + 1 {
-                let omitted = index - last - 1;
-                omitted_lines += omitted;
-                let _ = writeln!(
-                    text,
-                    "… {omitted} lines omitted; call read_process to inspect raw output …"
-                );
-            }
+        if let Some(last) = previous
+            && index > last + 1
+        {
+            let omitted = index - last - 1;
+            omitted_lines += omitted;
+            let _ = writeln!(
+                text,
+                "… {omitted} lines omitted; call read_process to inspect raw output …"
+            );
         }
         let _ = writeln!(text, "{}", lines[index]);
         previous = Some(index);
