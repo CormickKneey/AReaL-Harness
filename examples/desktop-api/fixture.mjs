@@ -27,6 +27,98 @@ export async function fixture() {
       )?.content;
       const goalView = goalText && JSON.parse(goalText.split("Current authoritative goal: ")[1]);
       const goalWorker = typeof first === "string" && first.includes("GOAL_WORKER_FIXTURE");
+      if (
+        first === "headless-policy-fixture" ||
+        goalView?.goal.objective === "headless-policy-fixture"
+      ) {
+        if (result.length === 0)
+          tool = [
+            "ask_user_question",
+            {
+              questions: [{ id: "target", title: "Choose a target", allowFreeText: true }],
+              mode: "wait",
+            },
+          ];
+        else if (result.length === 1) {
+          assert.equal(JSON.parse(result[0].content).reason, "headless");
+          tool = ["fs_create", { path: "headless-forbidden.txt", text: "must not be written" }];
+        } else if (result.length === 2) {
+          assert.match(result[1].content, /NON_INTERACTIVE_APPROVAL_REQUIRED/);
+          tool = [
+            "run_command",
+            {
+              argv: [
+                "/bin/sh",
+                "-c",
+                goalView?.goal.usage.turnsStarted === 2
+                  ? 'test "$(cat headless-evidence.txt)" = verified'
+                  : "printf verified > headless-evidence.txt",
+              ],
+              cwd: ".",
+              timeoutMs: 3000,
+            },
+          ];
+        } else {
+          assert(!JSON.parse(result[2].content).isError, result[2].content);
+          if (goalView && result.length === 3) {
+            const complete = goalView.goal.usage.turnsStarted === 2;
+            tool = [
+              "goal_update",
+              {
+                expectedRevision: goalView.revision,
+                status: complete ? "complete" : "continue",
+                summary: "Headless evidence checked",
+                evidence: ["native command succeeded"],
+                remaining: complete ? [] : ["verify in next Turn"],
+              },
+            ];
+          } else reply = "HEADLESS_POLICY_VERIFIED";
+        }
+      }
+      if (goalView?.goal.objective === "task-workers-fixture") {
+        if (first === "task-native-worker") {
+          if (result.length === 0)
+            tool = [
+              "run_command",
+              {
+                argv: ["/bin/sh", "-c", "sleep 1; printf worker-evidence > task-worker.txt"],
+                cwd: ".",
+                timeoutMs: 5000,
+              },
+            ];
+          else {
+            assert(!JSON.parse(result[0].content).isError, result[0].content);
+            reply = "TASK_WORKER_VERIFIED";
+          }
+        } else if (goalView.goal.usage.turnsStarted === 1) {
+          tool =
+            result.length === 0
+              ? ["task_spawn", { prompt: "task-native-worker" }]
+              : ["task_wait", {}];
+        } else if (result.length === 0) {
+          assert(JSON.stringify(request.messages).includes("workerReport"));
+          tool = [
+            "run_command",
+            {
+              argv: ["/bin/sh", "-c", 'test "$(cat task-worker.txt)" = worker-evidence'],
+              cwd: ".",
+              timeoutMs: 3000,
+            },
+          ];
+        } else if (result.length === 1) {
+          assert(!JSON.parse(result[0].content).isError, result[0].content);
+          tool = [
+            "goal_update",
+            {
+              expectedRevision: goalView.revision,
+              status: "complete",
+              summary: "Worker artifact verified",
+              evidence: ["task-worker.txt"],
+              remaining: [],
+            },
+          ];
+        } else reply = "TASK_WORKERS_COMPLETE";
+      }
       if (goalView?.goal.objective === "task-channel-fixture") {
         if (goalView.goal.usage.turnsStarted === 1) {
           if (result.length === 0)

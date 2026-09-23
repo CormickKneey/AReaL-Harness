@@ -106,3 +106,5 @@ TUI 与共享服务 PTY 检查共用终端画面解析器，处理增量重绘�
 ## Task Mode 回归
 
 `cargo test --locked -p areal-engine --test task_modes` 覆盖异步提问期间继续工作、独立回复与同 Run 恢复、单个问题过期时仍有其他待答问题的唤醒、headless 提问和审批、定时持久恢复、前台 Goal 异步提问、跨协调 Turn 的 worker 与共享预算、取消清理及重启回复去重。app-server 单元回归校验 Task 请求/响应/通知符合生成 schema，并验证 Thread 授权过滤与独立订阅/退订。
+
+`node examples/desktop-api/run.mjs task-matrix` 使用真实二进制与 Runtime 检查 headless 普通对话/Goal 的提问与审批拒绝、允许的命令继续执行、无隐式定时调度、前台异步 Goal 断连后回复、定时触发与控制、独立 worker 文件产物及共享计量。`node --test scripts/web-progress.test.mjs` 检查等待状态、跨分页选中项、旧 revision 拒绝、Inbox 草稿保留和超时回复幂等重试。真实浏览器验收入口与操作见[桌面示例](../examples/desktop-api.md#web-validation)。

@@ -40,3 +40,22 @@ root 相对清单目录，必须含 SKILL.md；Renderer 只传 ID/revision，不
 Goal 用例 `node examples/desktop-api/run.mjs goal-mode` 覆盖无 Goal 配置时直接创建、CAS/幂等、两轮原生文件验证、隔离 Workgroup 共享计量、observe/interact 权限、重连恢复与 headless 跨 Turn 等待，纳入 `make examples-desktop-api`。契约见 [Core API](../api/core.md#goals)。
 
 Task 用例 `node examples/desktop-api/run.mjs task-mode` 验证提问后继续独立工作、释放协调 Turn、关闭原连接、从新连接的 Inbox 回答、observe 权限拒绝回复、幂等受理和同 Run 恢复；所有消息均通过生成 schema 验证。见 [Task 契约](../api/tasks.md)。
+
+`node examples/desktop-api/run.mjs task-matrix`（TASK-02）进一步覆盖真实 headless 普通对话和 Goal、提问/审批立即拒绝但允许的原生命令继续执行、无隐式调度、前台异步 Goal 断连后回复、一次性定时触发、周期调度控制，以及后台 worker 的文件产物、跨 Turn 生命周期和共享预算，纳入 `make examples-desktop-api`。
+
+<a id="web-validation"></a>
+## 浏览器验收
+
+运行 `make build` 后执行 `node examples/desktop-api/run.mjs --serve`，保持该进程运行。它输出临时 Web URL、认证文件路径和工作区路径；使用该文件中的本地测试 token 登录页面。Ctrl-C 停止服务并清理临时目录。模型在 HTTP/SSE 边界使用确定性 fixture；浏览器操作真实 WebUI、Core 和 Runtime，不验证供应商模型质量。
+
+| 操作 | 检查 |
+|---|---|
+| 新建会话，发送 `hello`，再发送 `native` | 正文完成，原生工具成功，工作区产生 native.txt |
+| 创建 Goal `goal-native-fixture` | 自动续轮，两轮后完成并产生 goal.txt |
+| 新会话创建 Goal `task-channel-fixture` | 异步提问后完成独立 plan；从侧栏 Inbox 选择 B，恢复同一 Run |
+| 后台创建 `task-workers-fixture`，选择无人值守 | worker 在独立会话生成 task-worker.txt；协调者跨 Turn 验证，频道报告已完成 |
+| 后台创建 `task-channel-fixture` | 暂停、页面重载、独立 Inbox 回复 B 后仍暂停；显式恢复后完成 |
+| 新会话定时创建 `goal-native-fixture` | 本地未来时间触发，两轮完成；重复任务可在触发前暂停、恢复和取消 |
+| 在 Inbox 填写答案后点击刷新 | 草稿保留；原页面断开后问题仍可从新连接回答 |
+
+同时检查窄屏导航、桌面布局和浏览器错误日志。协议 fixture、DOM 替身与实际浏览器验收分别记录，不能用任意一项代替其他层的结果。

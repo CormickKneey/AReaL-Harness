@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { once } from "node:events";
 import { connect } from "./client.mjs";
 import { fixture, png } from "./fixture.mjs";
+import { taskModeMatrix } from "./task-modes.mjs";
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const available = [
   "desktop-minimal",
@@ -27,13 +28,14 @@ const available = [
   "adaptive-workgroup",
   "goal-mode",
   "task-mode",
+  "task-matrix",
 ];
 const selection = (process.argv[2] ?? "all").replace(/^--all$/, "all");
 if (selection === "--list") {
   console.log(available.join("\n"));
   process.exit(0);
 }
-if (selection !== "all" && !available.includes(selection))
+if (selection !== "all" && selection !== "--serve" && !available.includes(selection))
   throw Error("unknown example; use --list");
 const directory = await mkdtemp(join(tmpdir(), "areal-desktop-"));
 const workspace = join(directory, "workspace"),
@@ -63,6 +65,7 @@ const exampleIds = {
   "adaptive-workgroup": "EX-13",
   "goal-mode": "GOAL-01",
   "task-mode": "TASK-01",
+  "task-matrix": "TASK-02",
 };
 async function startThread(client, prompt, extra = {}) {
   const created = await client.call("areal/thread/start", {
@@ -288,7 +291,21 @@ try {
       await new Promise((r) => setTimeout(r, 25));
     }
   }
-  for (const name of selection === "all" ? available : [selection]) {
+  if (selection === "--serve") {
+    console.log(
+      JSON.stringify({
+        endpoint,
+        authFile,
+        workspace,
+        url: endpoint.replace("ws:", "http:").replace(/\/$/, "") + "/ui",
+      }),
+    );
+    await new Promise((resolve) => {
+      process.once("SIGTERM", resolve);
+      process.once("SIGINT", resolve);
+    });
+  }
+  for (const name of selection === "--serve" ? [] : selection === "all" ? available : [selection]) {
     const c = await client();
     if (name === "desktop-minimal" || name === "desktop-launcher") {
       const cap = await c.call("areal/capabilities", { apiVersion: "areal.core.v1" });
@@ -760,6 +777,8 @@ try {
           ),
         );
       }
+    } else if (name === "task-matrix") {
+      await taskModeMatrix({ c, client, startThread, workspace, endpoint, authFile, repo, model });
     } else if (name === "task-mode") {
       assert.equal((await c.call("areal/capabilities")).features.taskChannels, true);
       const created = await c.call("areal/task/create", {

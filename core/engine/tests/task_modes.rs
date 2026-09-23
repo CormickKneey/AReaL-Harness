@@ -758,17 +758,32 @@ async fn recurring_schedule_keeps_channel_identity_and_uses_distinct_runs_and_go
     );
     assert_eq!(
         task.messages.iter().filter(|m| m.kind == "report").count(),
-        2
+        task.runs
+            .iter()
+            .filter(|r| r.status == RunStatus::Completed)
+            .count()
     );
-    let request = TaskControl {
-        request_id: "cancel-recurrence".into(),
-        task_id: task.id.clone(),
-        expected_revision: task.revision,
-    };
-    let receipt = e
-        .task_control("owner".into(), "cancel".into(), request.clone())
-        .await
-        .unwrap();
+    // 周期调度可能在读取后提交新版本；冲突未受理，须刷新版本后重试。
+    let (request, receipt) = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let task = e.task_read(id).await.unwrap();
+            let request = TaskControl {
+                request_id: "cancel-recurrence".into(),
+                task_id: task.id.clone(),
+                expected_revision: task.revision,
+            };
+            match e
+                .task_control("owner".into(), "cancel".into(), request.clone())
+                .await
+            {
+                Ok(receipt) => break (request, receipt),
+                Err(areal_engine::Error::Conflict) => tokio::task::yield_now().await,
+                Err(error) => panic!("cancel recurrence failed: {error}"),
+            }
+        }
+    })
+    .await
+    .unwrap();
     assert_eq!(
         e.task_control("owner".into(), "cancel".into(), request)
             .await

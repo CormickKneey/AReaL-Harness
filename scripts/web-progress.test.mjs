@@ -295,3 +295,105 @@ test("approval shows effective arguments, sends exact digest, and resolves acros
   });
   assert.equal(panel.children.filter((n) => n.tag === "button").length, 2);
 });
+
+test("Goal waiting states identify Inbox and worker waits", () => {
+  const c = client();
+  const goal = {
+    id: "goal",
+    status: "active",
+    objective: "Inspect",
+    maxTurns: 10,
+    waitingForInput: true,
+    usage: { tokensUsed: 1, timeUsedSeconds: 1, turnsStarted: 1, accountingComplete: true },
+  };
+  emit(c, "areal/goal/updated", { goal, revision: 1, eventSequence: 1 });
+  assert.match(c.get("goal-status").textContent, /等待收件箱回复/);
+  emit(c, "areal/goal/updated", {
+    goal: { ...goal, waitingForInput: false, waitingForAgents: true },
+    revision: 2,
+    eventSequence: 2,
+  });
+  assert.match(c.get("goal-status").textContent, /等待协作任务/);
+});
+
+test("Task list refresh retains a selected later-page task and ignores stale snapshots", async () => {
+  const c = client();
+  const selected = {
+    id: "selected",
+    revision: 5,
+    channelSequence: 0,
+    objective: "Inspect",
+    mode: "background",
+    paused: true,
+    cancelled: false,
+    runs: [],
+  };
+  c.run(
+    `tasksSupported = true; selectedTaskId = "selected"; taskRows.set("selected", ${JSON.stringify(selected)});`,
+  );
+  const refreshing = c.run("listTasks()");
+  const request = c.requests.at(-1);
+  assert.equal(request.method, "areal/task/list");
+  c.run(`pending.get(${request.id}).resolve({data:[],nextCursor:"later"})`);
+  await refreshing;
+  assert.equal(c.run('taskRows.get("selected").revision'), 5);
+  assert.equal(
+    c.get("task-detail").children.find((node) => node.tag === "div").children[0].textContent,
+    "恢复任务",
+  );
+  c.run(`receiveTask(${JSON.stringify({ ...selected, revision: 4, paused: false })})`);
+  assert.equal(c.run('taskRows.get("selected").paused'), true);
+  const refreshAgain = c.run("listTasks()");
+  const next = c.requests.at(-1);
+  c.run(
+    `pending.get(${next.id}).resolve({data:[${JSON.stringify({ ...selected, revision: 3, paused: false })}],nextCursor:null})`,
+  );
+  await refreshAgain;
+  assert.equal(c.run('taskRows.get("selected").revision'), 5);
+});
+
+test("Inbox survives refresh and retries the same reply without borrowing the current Thread", async () => {
+  const c = client();
+  c.get("inbox-open").append(new Element("span"));
+  const row = {
+    taskId: "other-task",
+    objective: "Inspect another session",
+    message: {
+      id: "question",
+      runId: "run",
+      questions: [{ id: "choice", title: "Choose", options: ["A", "B"], allowFreeText: false }],
+    },
+  };
+  c.run(
+    `tasksSupported = true; inboxRows.set("other-task/question", ${JSON.stringify(row)}); renderInbox();`,
+  );
+  const form = c.get("inbox-list").children[0];
+  const select = form.children.find((node) => node.tag === "select");
+  select.value = "B";
+  select.oninput();
+  const refresh = c.run("loadInbox()");
+  const listing = c.requests.at(-1);
+  c.run(`pending.get(${listing.id}).resolve({data:[${JSON.stringify(row)}],nextCursor:null})`);
+  await refresh;
+  assert.equal(c.get("inbox-list").children[0], form);
+  assert.equal(select.value, "B");
+  const firstSend = form.onsubmit({ preventDefault() {} });
+  const first = c.requests.at(-1);
+  assert.equal(first.method, "areal/channel/reply");
+  assert.equal(first.params.taskId, "other-task");
+  assert.equal(first.params.runId, "run");
+  assert.equal(first.params.threadId, undefined);
+  assert.equal(first.params.answers.choice, "B");
+  c.run(`pending.get(${first.id}).reject(Error("timeout; acceptance unknown"))`);
+  await firstSend;
+  const retrySend = form.onsubmit({ preventDefault() {} });
+  const retry = c.requests.at(-1);
+  assert.deepEqual(retry.params, first.params);
+  c.run(`pending.get(${retry.id}).resolve({accepted:true})`);
+  for (let i = 0; i < 4; i++) await Promise.resolve();
+  const after = c.requests.at(-1);
+  assert.equal(after.method, "areal/inbox/list");
+  c.run(`pending.get(${after.id}).resolve({data:[],nextCursor:null})`);
+  await retrySend;
+  assert.match(c.get("inbox-list").children[0].textContent, /没有待回答/);
+});
