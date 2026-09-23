@@ -97,6 +97,8 @@ Container behavior checks pass `--build-arg BUILD_PROFILE=ci`, selecting the Car
 
 `make local-service-smoke` uses temporary directories, real Core/Runtime, two PTYs and an HTTP model fixture. It verifies concurrent ensure, workspace/symlink identity, configuration conflicts, authentication, Web discovery, window exit, busy/cancel stop, persistent history, launcher/host SIGKILL cleanup and reattachment. It is included in `make harness-smoke`. `make desktop-schemas` also exports `schemas/local-service-v1.json`.
 
+`cargo test --locked -p areal-app-server --test browser_auth` verifies automatic login from the trusted client through real HTTP/WebSocket endpoints, concurrent single-use exchange, Origin validation, instance isolation, inherited permissions, manual login and connection closure at session expiry. Unit tests in that crate use virtual time for code/session expiry and capacity limits. `node --test scripts/web-progress.test.mjs` checks fragment removal before exchange, connection after success, manual fallback on failure and ordinary reloads.
+
 The PTY helper continuously drains terminal output while waiting for CLI commands, service shutdown and window exit, preventing terminal backpressure from blocking the TUI. `make script-test` includes a deterministic regression that writes more than the PTY capacity before exiting.
 
 TUI and shared-service PTY checks share a terminal screen parser that preserves unchanged characters during incremental redraws and handles split UTF-8/control sequences. Model reload checks wait for the new model name in the header, then verify that the service generation has not changed; they do not depend on raw output bytes or transient status notifications.

@@ -52,6 +52,14 @@ make tui ARGS='--workspace ../areal-example-workspace'
 
 需要审批时，启动前设置 `ASK_PERMISSIONS=1`，或配置 `[permissions] mode = "ASK_PERMISSIONS"`，见[权限配置](configuration.md#permissions)。TUI `/permissions` 可查看生效策略；已有共享服务在修改权限后需显式 restart。
 
+推荐通过共享服务入口打开 Web，自动登录后即可使用：
+
+```sh
+target/debug/areal web --workspace ../areal-example-workspace
+```
+
+一次性链接过期或会话失效时，重新运行同一命令。若需要前台独占服务和固定端口：
+
 ```sh
 python3 -I -S scripts/launch.py \
   --workspace ../areal-example-workspace \

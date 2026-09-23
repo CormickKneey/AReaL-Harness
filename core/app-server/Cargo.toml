@@ -15,11 +15,14 @@ axum.workspace = true
 futures-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
+areal-local-service.workspace = true
 tempfile.workspace = true
 tokio-tungstenite.workspace = true
 reqwest.workspace = true

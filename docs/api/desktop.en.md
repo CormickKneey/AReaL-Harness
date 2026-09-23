@@ -8,11 +8,24 @@ Thread snapshots and Item notifications accept the optional `agentMessage.phase`
 
 ## Authentication and connection
 
-Product servers listen on loopback and authenticate WebSocket/Blob requests. Trusted Main reads its Bearer token from authFile in ready metadata; Renderer receives neither that file nor model credentials. Built-in Web exchanges credentials at POST /areal/auth/session for an HttpOnly, SameSite=Strict cookie and validates Origin.
+Product servers listen on loopback and authenticate WebSocket/Blob requests. Trusted Main reads its Bearer token from authFile in ready metadata; Renderer receives neither that file nor model credentials. Built-in Web uses a separate HttpOnly, SameSite=Strict session cookie and validates Origin; see automatic local login below.
 
 The auth file `{version:1,principals:[{id,token,permissions,threadIds?}]}` requires mode 0600. Permissions are observe/interact/manage/tools; explicit threadIds limit observation and interaction. Client names and Thread IDs are not authentication.
 
 Use initialize → initialized → areal/capabilities (optional apiVersion). Request IDs are independent in each direction; item/tool/call is a server request requiring a response. Replace the baseline through thread/resume. See [Core](core.en.md) for subscriptions, queues and backpressure.
+
+<a id="browser-auth"></a>
+### Browser login
+
+- `POST /areal/auth/bootstrap`: a trusted local client supplies `Authorization: Bearer <local token>` without Origin; success returns `200 {code,expiresIn:60}`. Cookies cannot mint codes; requests with Origin receive 403.
+- `POST /areal/auth/bootstrap/exchange`: the page sends JSON `{code}` with an Origin exactly matching the service. Bodies are limited to 1 KiB and unknown fields are rejected. Success returns 204 with a session cookie. Invalid, expired, consumed or other-instance codes return 401; missing or mismatched Origin returns 403.
+- `POST /areal/auth/session`: manual Bearer login remains available, returning 204 with an independent session cookie. Existing cookies cannot renew a session. Any supplied Origin must match the service.
+
+Codes have 244 bits of random entropy, expire after 60 seconds and are consumed atomically once. The CLI opens `/ui#bootstrap=<code>`; fragments never enter HTTP request targets. The page uses `history.replaceState` to remove the fragment from the current history entry before exchanging it through POST, without localStorage/sessionStorage. Failed automatic login prompts another `areal web` invocation or manual login. Authentication responses use `Cache-Control: no-store`; clients disable proxies and redirects. Long-lived launcher tokens never enter URLs, service descriptors, logs or cookies.
+
+Cookies are named `areal_session_<origin digest>`, omit Domain and use `HttpOnly; SameSite=Strict; Path=/; Max-Age=3600`. Transport is restricted to HTTP loopback, so the HTTPS-dependent Secure attribute is omitted. Names distinguish local ports; cookies are not an isolation boundary against untrusted processes on the same host. Independent sessions inherit the original permissions and threadIds. The server stores SHA-256 digests of codes and session IDs and enforces a one-hour absolute lifetime: HTTP/new WebSocket authentication is rejected and existing browser connections close, without cancelling background tasks. Restart invalidates all codes and browser sessions. Each service retains at most 64 valid codes and 1024 valid sessions; capacity returns 429 without evicting existing sessions.
+
+Compatibility: Bearer clients and the authentication file format are unchanged. Legacy `areal_session=<long-lived token>` cookies are rejected; run `areal web` again or sign in manually after upgrading. `areal web --json` preserves its descriptor and neither opens a browser nor mints a code. Request/response types are browserBootstrap / browserBootstrapExchange in [local-service-v1.json](../../schemas/local-service-v1.json).
 
 ## Method catalog
 
