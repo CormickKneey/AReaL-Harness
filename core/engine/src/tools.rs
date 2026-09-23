@@ -1252,6 +1252,12 @@ async fn process_output(
                 rt::OutputStream::Stderr => page_stderr.extend(bytes),
             }
         }
+        if page_stdout.len() + page_stderr.len() > remaining {
+            return Err(rt::Error::new(
+                rt::ErrorCode::Unavailable,
+                "Runtime returned more output than requested",
+            ));
+        }
         let fits = model_output_fits(&stdout, &stderr, &page_stdout, &page_stderr);
         if !fits && (!page_stdout.is_empty() || !page_stderr.is_empty()) {
             // Retry from the same cursor with a smaller request. Runtime output

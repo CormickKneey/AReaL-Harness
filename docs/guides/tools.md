@@ -37,7 +37,7 @@ Core 注册表将名称、JSON Schema 与内置/命令/客户端/MCP/插件后�
 
 编辑保持 CAS 约束。单个 `fs_apply_patch` 适合小范围精确替换；同一文件的多个独立替换使用 `fs_apply_patches`，Runtime 在一次条件写入中逐项验证，任一旧文本不唯一都不会产生部分写入。
 
-命令 timeoutMs 默认 600000，受 Runtime 授权截断并返回 effectiveTimeoutMs。普通命令/续读默认等 120 秒，PTY 1 秒；`yieldMs` / `waitMs` 接受非负 u64，0 立即返回。等待不改变进程期限或持有模型许可，每次收集最多 `tools.policy.outputPageBytes`（默认 8192）字节。Jest、Karma、Mocha、Cargo test、Pytest 和 Go test 的已完成输出会附带保留失败/汇总/栈信息的压缩视图，原始页仍可通过 read_process 游标回读；未知命令保持原样。无输出时继续等待；已收到输出后按 100 ms 静默合并，底层轮询每次最多 1 秒。
+命令 timeoutMs 默认 600000，受 Runtime 授权截断并返回 effectiveTimeoutMs。普通命令/续读默认等 120 秒，PTY 1 秒；`yieldMs` / `waitMs` 接受非负 u64，0 立即返回。等待不改变进程期限或持有模型许可，每次收集最多 `tools.policy.outputPageBytes`（默认 8192）字节；JSON 转义会占用模型结果预算，控制字符较多时实际页会自动缩小并通过 cursor 续读。Jest、Karma、Mocha、Cargo test、Pytest 和 Go test 的已完成输出会附带保留失败/汇总/栈信息的压缩视图，原始页仍可通过 read_process 游标回读；未知命令保持原样。无输出时继续等待；已收到输出后按 100 ms 静默合并，底层轮询每次最多 1 秒。
 
 `returnReason` 为 completed、waitBudget、outputLimit、outputLoss 或 outputQuiet。`commandStatus` 为 running/succeeded/failed/terminated；`outputReadComplete` / `outputClosed` 表示生产者关闭且保留输出读完，`outputIntegrity` 为 retained/incomplete，`nextAction` 提示后续操作。completed 不代替退出码检查，gap/truncated 即使读完仍表示丢失。
 
