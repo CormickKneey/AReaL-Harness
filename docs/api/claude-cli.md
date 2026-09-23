@@ -44,3 +44,5 @@ target/debug/areal -p 'Continue' --resume SESSION_ID --output-format json
 运行级 MCP 仅支持 stdio 或 HTTP Bearer。任务凭据只可经 `--task-credential-command` 注入工作区外的指定可信 executable；普通 shell/文件助手不继承 MULTICA_* 身份。真实第三方 daemon/GUI 联调仍需外部验收，见[示例](../examples/desktop-api.md)。
 
 `areal service ensure/list/status/stop/bind` 与 `areal web` 提供[共享本地服务入口](local-service.md)。非交互 `areal -p` 保持独占生命周期；`areal serve` 保持现有前台 launcher 行为。
+
+无双向应答通道的 CLI 提交使用 Core interactionMode=headless；问题立即返回 unavailable，需要人工审批的工具立即拒绝，模型可继续独立工作或报告 blocker。显式双向 stream-json 保留上述宿主控制协议；permission-mode=dontAsk 即使有双向通道也使用 headless。

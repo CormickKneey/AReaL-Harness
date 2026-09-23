@@ -37,6 +37,7 @@ pub const NOTIFICATIONS: &[&str] = &[
     "areal/thread/archived",
     "areal/plan/updated",
     "areal/queue/updated",
+    "areal/task/updated",
     "areal/interaction/requested",
     "areal/interaction/resolved",
     "areal/process/updated",
@@ -126,6 +127,8 @@ pub struct AgentProfile {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ClientOptions {
+    #[serde(default)]
+    pub interaction_mode: crate::tasks::InteractionMode,
     #[serde(default)]
     pub read_only: bool,
     pub system_prompt: Option<String>,
@@ -300,6 +303,8 @@ pub struct ThreadStart {
 #[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TurnStart {
+    #[serde(default)]
+    pub interaction_mode: Option<crate::tasks::InteractionMode>,
     pub request_id: String,
     pub thread_id: String,
     pub input: Vec<Input>,

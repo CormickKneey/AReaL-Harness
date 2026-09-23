@@ -236,7 +236,8 @@ async fn control(
                     ensure!(
                         status["restartSafe"] == true
                             && status["activeGoals"] == json!([])
-                            && status["pendingQueueItems"] == 0,
+                            && status["pendingQueueItems"] == 0
+                            && status["activeTasks"].as_u64().unwrap_or(0) == 0,
                         "service is busy; wait for work to settle or stop with --cancel"
                     );
                 }

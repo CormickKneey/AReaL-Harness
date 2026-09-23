@@ -108,3 +108,11 @@ target/debug/areal-tui --endpoint ws://127.0.0.1:4500 --goal '检查代码并整
 `--goal` 与 `--prompt` / `--input-file` 互斥，可用 `--resume THREAD_ID` 在已有空闲 Thread 中创建新 Goal。headless 跨 Turn 等待目标终态，仅 completed 返回成功；其他停止状态返回非零并输出目标 JSON 和原因。远端 headless 退出或断连不取消服务器上的 Goal；owned 本地 launcher 退出会关闭所拥有的 Core，shared 模式仅断开连接。通过交互式 `/open` 和 `/goal-resume` 恢复已停止目标。普通 `--prompt`、Claude CLI 入口保持单次执行语义。
 
 Core 重启后 active 目标恢复为 paused/serverRestarted，`thread/resume` 只恢复订阅，不自动运行。未知模型消费不会补零；显式 Goal resume 确认保守预留并继续保留该消费。工具 UNKNOWN 仍须检查和 acknowledge。预算、活动时间、轮次或历史容量耗尽时停止，不自动重试。预算配置见 [执行策略](configuration.md#goals)，接口字段见 [Core API](../api/core.md#goals)。
+
+## 后台任务与 Inbox
+
+Core 提供统一的 [Task Mode API](../api/tasks.md)，可创建前台、定时和后台任务。前台 Goal 的模型也可异步提问，任务频道与执行会话分开；通过 inbox/list 找到问题，用 channel/reply 回答。Web 的「后台与定时」提供任务创建、进度、频道、暂停、恢复和取消；侧栏「收件箱」是独立入口，无需打开执行会话即可回复。TUI 的专用 Inbox 面板仍待接入；API 客户端应使用 channel/reply，不把异步问题提交给 interaction/respond。
+
+后台任务可选择异步提问或无人值守。定时任务绑定当前选中的会话，使用本地日期时间创建一次性触发，或填写固定重复间隔；默认无人值守。无人值守只是交互策略，普通 headless 对话与 Goal 不会自动创建定时调度。任务控制受理后等待状态结算；暂停期间回复不会解除暂停。刷新收件箱保留当前表单草稿，页面重载后可重新查询持久问题。
+
+TUI headless 与无双向应答通道的 Claude CLI 使用 headless 交互策略；明确启用双向 stream-json 的 CLI 保留宿主应答，dontAsk 仍禁止等待。headless 中：问题立即返回不可用，必须人工批准的工具立即拒绝，模型继续其他工作或报告 blocker。要让任务在窗口关闭后运行，连接持续存活的共享或外部 Core 服务；owned launcher 退出仍会关闭其服务。

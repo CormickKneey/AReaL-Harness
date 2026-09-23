@@ -19,6 +19,22 @@ fn main() {
     }
     add!("areal/capabilities", CapabilitiesRequest);
     add!("areal/goal/create", areal_protocol::goals::GoalCreate);
+    add!("areal/task/create", areal_protocol::tasks::TaskCreate);
+    for action in ["areal/task/pause", "areal/task/resume", "areal/task/cancel"] {
+        add!(action, areal_protocol::tasks::TaskControl);
+    }
+    for action in [
+        "areal/task/read",
+        "areal/task/subscribe",
+        "areal/task/unsubscribe",
+    ] {
+        add!(action, areal_protocol::tasks::TaskTarget);
+    }
+    for action in ["areal/task/list", "areal/inbox/list"] {
+        add!(action, areal_protocol::tasks::TaskList);
+    }
+    add!("areal/channel/read", areal_protocol::tasks::ChannelRead);
+    add!("areal/channel/reply", areal_protocol::tasks::ChannelReply);
     add!("areal/goal/update", areal_protocol::goals::GoalUpdate);
     for action in ["areal/goal/pause", "areal/goal/resume", "areal/goal/clear"] {
         add!(action, areal_protocol::goals::GoalControl);

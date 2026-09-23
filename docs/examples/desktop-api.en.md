@@ -38,3 +38,24 @@ root resolves against the manifest directory and must contain SKILL.md. Renderer
 Real GUIs, external-consumer task lifecycles, signing/notarization and other platforms require independent checks. Passing fixtures does not establish these integrations. The three contracts are [desktop API](../api/desktop.en.md), [Native Host](../api/native-host.en.md) and [CLI](../api/claude-cli.en.md).
 
 `node examples/desktop-api/run.mjs goal-mode` covers Goal creation without Goal configuration, CAS/idempotency, native file verification across two Turns, isolated Workgroup accounting, observe/interact permissions, reconnect recovery and headless waiting across Turns. It is included in `make examples-desktop-api`. See the [Core API](../api/core.en.md#goals).
+
+The Task scenario `node examples/desktop-api/run.mjs task-mode` verifies independent work after asking, coordinator Turn release, closure of the original connection, an Inbox reply from a new connection, rejection of observer replies, idempotency and same-Run resumption. Generated schemas validate all messages. See the [Task contract](../api/tasks.en.md).
+
+`node examples/desktop-api/run.mjs task-matrix` (TASK-02) additionally covers real headless ordinary conversations and Goals, immediate question/approval refusal while permitted native commands continue, no implicit scheduling, foreground asynchronous replies after disconnection, one-shot timers, recurring schedule controls, and background worker files, cross-Turn lifetimes and shared budgets. It is included in `make examples-desktop-api`.
+
+<a id="web-validation"></a>
+## Browser validation
+
+After `make build`, run `node examples/desktop-api/run.mjs --serve` and keep it running. It prints a temporary Web URL, authentication-file path and workspace path. Sign in with that file's local test token. Ctrl-C stops the service and removes temporary data. Deterministic fixtures replace only the HTTP/SSE model boundary; browser actions use the real WebUI, Core and Runtime without assessing provider-model quality.
+
+| Action | Check |
+|---|---|
+| Create a conversation; send `hello`, then `native` | Completed text and native tool execution; native.txt appears in the workspace |
+| Create Goal `goal-native-fixture` | Automatic continuation completes in two Turns and produces goal.txt |
+| Create Goal `task-channel-fixture` in a new conversation | Independent plan work follows the asynchronous question; answering B in the sidebar Inbox resumes the same Run |
+| Create headless background task `task-workers-fixture` | An independent worker creates task-worker.txt; the coordinator verifies it across Turns and publishes completion |
+| Create background task `task-channel-fixture` | Pause, reload the page and answer B from the independent Inbox; it stays paused until explicitly resumed |
+| Schedule `goal-native-fixture` in a new conversation | A future local timestamp triggers two-Turn completion; repeating schedules can be paused, resumed and cancelled before firing |
+| Fill an Inbox answer, then refresh the Inbox | The draft remains; a new connection can still answer after the original page disconnects |
+
+Also inspect narrow-screen navigation, desktop layout and browser errors. Record protocol fixtures, DOM substitutes and real browser validation separately; none substitutes for the other layers.
