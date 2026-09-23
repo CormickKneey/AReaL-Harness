@@ -97,6 +97,10 @@ def expect(pattern, offset=0, raw=False, absent=False):
 
 
 try:
+    if os.environ.get("AREAL_PTY_INITIAL_PROMPT"):
+        expect(rb"reply:pty-initial")
+        expect(rb"Completed")
+        os.write(master, b"/welcome\r")
     expect(rb"[a-f0-9]{8}-[a-f0-9]{4}-")
     root_id = re.search(rb"[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9-]+", screen.text())[0]
     expect(rb"Welcome")

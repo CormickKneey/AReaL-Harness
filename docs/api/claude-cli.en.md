@@ -2,10 +2,10 @@
 
 # Claude Code noninteractive CLI adaptation
 
-`areal` implements selected Claude Code noninteractive arguments and stdio messages while Core retains the model loop. It does not run through the Claude SDK or claim complete Claude product/SDK compatibility. Pinned consumer and input/output fixtures are in [examples/desktop-api/fixtures](../../examples/desktop-api/fixtures/).
+`areal exec` and the compatibility entry point `areal -p/--print` implement selected Claude Code noninteractive arguments and stdio messages while Core retains the model loop. It does not run through the Claude SDK or claim complete Claude product/SDK compatibility. Pinned consumer and input/output fixtures are in [examples/desktop-api/fixtures](../../examples/desktop-api/fixtures/).
 
 ```sh
-target/debug/areal -p 'Describe this workspace' --output-format stream-json --verbose
+target/debug/areal exec 'Describe this workspace' --output-format stream-json --verbose
 target/debug/areal -p 'Continue' --resume SESSION_ID --output-format json
 ```
 
@@ -13,7 +13,7 @@ Models use configured Chat Completions/Responses APIs. State defaults to `~/.are
 
 | Argument | Behavior |
 |---|---|
-| -p/--print, prompt, stdin | Single input; prompt and text stdin joined by a newline |
+| exec / -p/--print, prompt, stdin | Single input; prompt and text stdin joined by a newline |
 | --input-format text/stream-json | JSONL user text/base64 images; active input enters the Core queue |
 | --output-format text/json/stream-json | Text, single result or events; logs only on stderr |
 | --verbose / --include-partial-messages | Full tool messages / streaming text blocks |
@@ -43,6 +43,8 @@ Success exits 0; other outcomes are nonzero. SIGINT/SIGTERM await Core interrupt
 
 Per-run MCP supports stdio or HTTP Bearer only. `--task-credential-command` may inject task credentials solely into a designated trusted executable outside the workspace. Ordinary shells/file helpers do not inherit MULTICA_* identity. Real third-party daemon/GUI integration still needs external validation; see [examples](../examples/desktop-api.en.md).
 
-`areal service ensure/list/status/stop/bind` and `areal web` provide the [shared local service interface](local-service.en.md). Noninteractive `areal -p` retains its owned lifecycle; `areal serve` retains its existing foreground launcher behavior.
+`areal service ensure/list/status/stop/bind` and `areal web` provide the [shared local service interface](local-service.en.md). Noninteractive `areal exec` / `areal -p` retains its owned lifecycle; `areal serve` retains its existing foreground launcher behavior.
 
 CLI submissions without a bidirectional response channel use Core interactionMode=headless: questions immediately return unavailable and tools requiring human approval are denied, allowing independent work or a blocker report. Explicit bidirectional stream-json retains the host control protocol above; permission-mode=dontAsk selects headless even with that channel.
+
+See the [client guide](../guides/clients.en.md) for command routing and migration. With no subcommand, areal opens the TUI. Noninteractive options belong to exec / -p; areal config runs diagnostics without a running service.

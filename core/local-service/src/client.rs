@@ -115,7 +115,8 @@ async fn ensure_inner(
             "-c",
             "import subprocess,sys; sys.exit(subprocess.call(sys.argv[1:]))",
         ])
-        .arg(spec.bin_dir.join("areal-service-host"));
+        .arg(spec.bin_dir.join("areal"))
+        .arg("service-host");
     command
         .current_dir(&spec.launch_cwd)
         .stdin(Stdio::piped())

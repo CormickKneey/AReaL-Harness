@@ -21,14 +21,7 @@ def main():
         parser.error("output must not exist")
     if (platform.system(), platform.machine()) != ("Darwin", "arm64"):
         parser.error("the verified package target is macOS arm64")
-    names = (
-        "areal",
-        "areal-server",
-        "areal-runtime",
-        "areal-runtime-fs",
-        "areal-tui",
-        "areal-service-host",
-    )
+    names = ("areal", "areal-runtime", "areal-runtime-fs")
     source = root / "target" / args.profile
     for name in names:
         if not (source / name).is_file():
@@ -39,7 +32,9 @@ def main():
     shutil.copy2(root / "LICENSE", destination / "LICENSE")
     files["LICENSE"] = hashlib.sha256((destination / "LICENSE").read_bytes()).hexdigest()
     for name in names:
-        target = destination / "bin" / name
+        relative = Path("bin" if name == "areal" else "libexec/areal") / name
+        target = destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source / name, target)
         subprocess.run(
             ["/usr/bin/codesign", "--force", "--sign", "-", str(target)],
@@ -51,7 +46,7 @@ def main():
             check=True,
             capture_output=True,
         )
-        files[f"bin/{name}"] = hashlib.sha256(target.read_bytes()).hexdigest()
+        files[str(relative)] = hashlib.sha256(target.read_bytes()).hexdigest()
     version = subprocess.check_output([str(source / "areal"), "--version"], text=True).strip()
     manifest = {
         "manifestVersion": 1,

@@ -914,7 +914,7 @@ try {
           .some((r) => JSON.stringify(r.messages).includes("GOAL_WORKER_FIXTURE")),
       );
       const headless = spawnNative(
-        join(repo, "target/debug/areal-tui"),
+        join(repo, "target/debug/areal"),
         [
           "--endpoint",
           endpoint,

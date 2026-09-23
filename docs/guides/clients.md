@@ -6,12 +6,26 @@
 
 ## 启动
 
+产品命令统一为 `areal`。源码构建后使用 `target/debug/areal`；发行包只把 `bin/areal` 加入 PATH。子命令的选项放在子命令之后。
+
+| 命令 | 行为 |
+|---|---|
+| `areal [PROMPT]` | 打开 TUI；可选首条消息在会话就绪后提交一次 |
+| `areal exec [PROMPT]` | 非交互执行，支持文本、JSON 和 stream-json |
+| `areal serve` | 前台启动 Core + Runtime，由同一 launcher 负责清理 |
+| `areal app-server` | 直接启动 Core 服务，Runtime 连接需显式部署 |
+| `areal config show/validate` | 查看脱敏配置或校验配置，不启动服务 |
+| `areal service` / `areal web` | 共享服务管理与 Web 启动 |
+| `areal workgroup run/inspect` | 隔离任务组执行与状态检查 |
+
+迁移：`areal-tui …` 改为 `areal …`；`areal-server …` 改为 `areal app-server …`；其 `config` 命令改为 `areal config …`；`areal-workgroup …` 改为 `areal workgroup …`。旧独立可执行文件不再构建或发布。`areal -p/--print …` 保留原非交互协议，等价于 `areal exec …`。无参数 `areal` 现在打开 TUI；自动化应显式使用 `exec` 或 `-p`。`--prompt`、`--goal`、`--input-file` 保留原 TUI headless 行为，与位置参数 PROMPT 互斥。
+
 ```sh
-make tui
-make tui ARGS='--resume THREAD_ID'
-make tui ARGS='--workspace /absolute/task --prompt "Describe the task"'
+target/debug/areal
+target/debug/areal --resume THREAD_ID
+target/debug/areal exec --workspace /absolute/task 'Describe the task'
 # 连接已有服务；使用它的数据目录中的认证文件
-make tui ARGS='--endpoint ws://127.0.0.1:4500 --auth-file /absolute/core-data/security/auth.json'
+target/debug/areal --endpoint ws://127.0.0.1:4500 --auth-file /absolute/core-data/security/auth.json
 ```
 
 省略 endpoint 时，交互式 TUI 连接共享 Core/Runtime，监听随机 loopback 端口。同一工作区多个窗口复用服务，关闭窗口保留后台服务和任务。`--prompt`、`--goal`、`--input-file` 默认使用 owned 模式，退出后清理所拥有的服务；`--local-mode shared|owned` 可覆盖默认选择。显式 endpoint（别名 `--remote`）只连接已有服务，不能与本地部署参数混用。
@@ -26,7 +40,7 @@ target/debug/areal service restart --json
 target/debug/areal service stop --json
 ```
 
-`areal -p 'prompt' --output-format stream-json --verbose` 提供非交互 CLI，`areal serve` 启动持续服务；参数、认证、恢复与退出码见 [CLI 契约](../api/claude-cli.md)。Web 位于服务的 `/ui`；通过 `areal web` 打开会自动登录，无需复制 token。直接打开地址且没有有效会话时，可在设置中填写服务数据目录 `security/auth.json` 中的本地 token。
+`areal exec 'prompt' --output-format stream-json --verbose` 提供非交互 CLI，`areal serve` 启动持续服务；参数、认证、恢复与退出码见 [CLI 契约](../api/claude-cli.md)。Web 位于服务的 `/ui`；通过 `areal web` 打开会自动登录，无需复制 token。直接打开地址且没有有效会话时，可在设置中填写服务数据目录 `security/auth.json` 中的本地 token。
 
 TUI 的 `--input-file /absolute/input.json` 与 `--prompt` 互斥，接受最多 2 MiB 的 Core Input 数组，如 `[{"type":"text","text":"Inspect the image"},{"type":"localImage","path":"/absolute/image.png"}]`。本地模式和显式 endpoint 均支持，可信 launcher 可用 `--tui --input-file` 透传；媒体路径与字段仍按 [Core API](../api/core.md) 验证。
 
@@ -102,7 +116,7 @@ OTLP 仅支持 HTTP/protobuf；未设置 endpoint 不启用，`OTEL_SDK_DISABLED
 
 ```sh
 make tui ARGS='--goal "完成模块迁移并通过相关测试" --goal-token-budget 200000'
-target/debug/areal-tui --endpoint ws://127.0.0.1:4500 --goal '检查代码并整理迁移建议'
+target/debug/areal --endpoint ws://127.0.0.1:4500 --goal '检查代码并整理迁移建议'
 ```
 
 `--goal` 与 `--prompt` / `--input-file` 互斥，可用 `--resume THREAD_ID` 在已有空闲 Thread 中创建新 Goal。headless 跨 Turn 等待目标终态，仅 completed 返回成功；其他停止状态返回非零并输出目标 JSON 和原因。远端 headless 退出或断连不取消服务器上的 Goal；owned 本地 launcher 退出会关闭所拥有的 Core，shared 模式仅断开连接。通过交互式 `/open` 和 `/goal-resume` 恢复已停止目标。普通 `--prompt`、Claude CLI 入口保持单次执行语义。

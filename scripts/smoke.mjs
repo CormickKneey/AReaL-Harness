@@ -88,8 +88,8 @@ async function start() {
     `schema_version = 1\n[model]\nname = "test"\n[model.providers.default]\nendpoint = "http://127.0.0.1:${model.address().port}/v1/chat/completions"\napi_key_env = "SMOKE_MODEL_KEY"\n`,
   );
   const child = launch(
-    "areal-server",
-    ["--config", configPath, "--listen", "127.0.0.1:0", "--data-dir", directory],
+    "areal",
+    ["app-server", "--config", configPath, "--listen", "127.0.0.1:0", "--data-dir", directory],
     {
       SMOKE_MODEL_KEY: "fixture-key",
       RUST_LOG: "warn",
@@ -123,7 +123,7 @@ async function start() {
   return { child, endpoint, stderr: () => stderr };
 }
 function prompt(endpoint, text, resume) {
-  const child = launch("areal-tui", [
+  const child = launch("areal", [
     "--auth-file",
     join(directory, "security/auth.json"),
     "--endpoint",
@@ -175,13 +175,15 @@ try {
       "python3",
       [
         "scripts/tui-pty-smoke.py",
-        resolve("target/debug/areal-tui"),
+        resolve("target/debug/areal"),
         "--endpoint",
         server.endpoint,
         "--auth-file",
         join(directory, "security/auth.json"),
+        "--",
+        "pty-initial",
       ],
-      { env: { ...process.env, AREAL_PTY_MODEL_SWITCH: "1" } },
+      { env: { ...process.env, AREAL_PTY_MODEL_SWITCH: "1", AREAL_PTY_INITIAL_PROMPT: "1" } },
     ),
   );
   let ptyOutput = "";
@@ -190,6 +192,7 @@ try {
   const [ptyCode] = await once(pty, "close");
   assert.equal(ptyCode, 0, ptyOutput);
   process.stdout.write(ptyOutput);
+  assert.equal(requests.filter((r) => r.messages.at(-1).content === "pty-initial").length, 1);
   assert(
     requests.some((r) => r.model === "alternate" && r.messages.at(-1).content === "switched-model"),
   );

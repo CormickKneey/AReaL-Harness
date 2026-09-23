@@ -84,6 +84,7 @@ if sys.argv[1:3] == ['config', 'show']:
         sys.exit(2)
     print(json.dumps({'server': {'data_dir': str(root/'state')}, 'model': {'protocol': 'chat-completions'}}))
 else:
+    assert sys.argv[1] == 'app-server'
     (root/'core.json').write_text(json.dumps({'args': sys.argv[1:], 'key': os.environ.get('MODEL_KEY')}))
     Path(sys.argv[sys.argv.index('--ready-file')+1]).write_text('ws://127.0.0.1:12345')
     Path(sys.argv[sys.argv.index('--ready-metadata-file')+1]).write_text(json.dumps({'endpoint':'ws://127.0.0.1:12345','authFile':'/fixture/auth.json'}))
@@ -99,7 +100,7 @@ sys.stdin.buffer.read()
 """
         )
         for name, body in [
-            ("areal-server", server),
+            ("areal", server),
             ("areal-runtime", runtime),
             ("areal-runtime-fs", prefix),
         ]:

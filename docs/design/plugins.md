@@ -19,4 +19,6 @@
 
 同 Host 串行，不同 Host 受 Core 工具限额控制。取消、超时、崩溃或协议错误终止 generation；成功的嵌套写入不会因外层失败而回滚，UNKNOWN 停止自动执行并要求检查。SDK 冻结对象不是 OS 安全隔离，`trusted:true` 必须对应真实信任。
 
+Host 默认继承 PATH、LANG、LC_ALL、SYSTEMROOT，以及已设置的八个[标准代理变量](../guides/configuration.md#proxies)。代理 URL 中的认证信息也会传入可信 Host；模型凭据和其他环境不会自动透传。搜索等插件的 HTTP 库须自行支持这些变量及选定代理协议；Core 不拦截插件自建连接，也不将这些变量自动注入经 Runtime broker 启动的命令。
+
 [SDK 契约](../api/typescript-sdk.md) · [编辑器示例](../examples/dsh-editor-plugin.md) · [无需 DSH 的 Native Host v2](../api/native-host.md)

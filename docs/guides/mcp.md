@@ -12,7 +12,9 @@
 {"mcpServers":{"project":{"transport":{"type":"streamableHttp","url":"https://mcp.example.com/mcp","bearerTokenEnv":"PROJECT_MCP_TOKEN"},"enabledTools":["search"],"startupTimeoutMs":30000,"callTimeoutMs":120000}}}
 ```
 
-stdio transport 使用 `{type:"stdio",command:"python3",args:["server.py"],cwd:".",envVars:[]}`；需要自行安装服务。cwd 相对 JSON 目录，argv 不经 shell。除 PATH 外只传 envVars 中明确列出的变量，缺少时报错。stdio 是可信宿主进程，**不受 Runtime 沙箱或 allow-write 限制**。
+stdio transport 使用 `{type:"stdio",command:"python3",args:["server.py"],cwd:".",envVars:[]}`；需要自行安装服务。cwd 相对 JSON 目录，argv 不经 shell。默认传入 PATH 和已设置的标准代理变量，其余只传 envVars 中明确列出的变量，缺少时报错。stdio 是可信宿主进程，**不受 Runtime 沙箱或 allow-write 限制**。
+
+Streamable HTTP 使用 Core 启动环境中的 HTTP、HTTPS 或 SOCKS 代理；stdio 搜索等工具也继承代理环境，但须由工具自身的 HTTP 库使用。变量、远端 DNS、认证、绕过规则与重启要求见[网络代理](configuration.md#proxies)。兼容性变化：stdio 不再需要将代理变量逐个列入 envVars；代理 URL 中的凭据也会传入可信服务。
 
 最多 16 个服务。enabledTools 省略表示全部，空数组不开放工具，名称不存在时报错。启动期限默认 30 秒，调用默认 120 秒，null 取消 MCP 自身调用期限但仍受 Turn 取消/期限限制。HTTP 禁止跳转；Bearer 仅引用环境变量。`config validate` 不联网、不启动服务、不验证远端工具。
 

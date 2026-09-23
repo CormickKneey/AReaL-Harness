@@ -4,20 +4,20 @@
 
 Workgroups give writing tasks and verifiers private workspaces/Runtimes through the production Engine. Completion requires final combined checks. They target trusted macOS hosts; see [agents](../design/multi-agent.en.md) for shared-workspace delegation.
 
-## Standalone CLI
+## Workgroup subcommand
 
 Configure a [model](configuration.en.md) first. This Python example needs a materialized trusted toolchain without symlinks, including `bin/python3`, and input source containing the referenced tests.
 
 ```sh
 cargo build --locked --workspace
-target/debug/areal-workgroup run \
+target/debug/areal workgroup run \
   --workspace /absolute/source --state-dir /absolute/runs/new-run \
   --plan /absolute/plan.json --checks /absolute/checks.json \
-  --runtime "$PWD/target/debug/areal-runtime" \
-  --file-helper "$PWD/target/debug/areal-runtime-fs" \
   --toolchain /absolute/materialized-python \
   --strategy balanced --workers 2 --seconds 600
 ```
+
+Runtime and file helpers default to the current build or bundle internal directory; trusted deployments may still override them with `--runtime` / `--file-helper`.
 
 state-dir must be a new, nonexistent directory outside the source tree. Toolchain and attempt storage cannot overlap as equal or ancestor paths. Input is a snapshot source; output goes to `<state-dir>/candidate/` without overwriting the original checkout. Avoid external edits while snapshotting.
 
@@ -58,7 +58,7 @@ Limits are 64 tasks, 16 MiB/10000 source files, 2 MiB per file and 128 MiB artif
 
 ## Results and service
 
-`run.json` records status, head, verification and cleanup; `usage.json` retains known tokens and missing statistics. `candidate/` contains accepted source only. Partial delivery is not completed. `areal-workgroup inspect /absolute/runs/new-run` takes the owner lock and verifies hashes; crashed runs become UNKNOWN without replay. SIGINT/SIGTERM cancellation still awaits cleanup.
+`run.json` records status, head, verification and cleanup; `usage.json` retains known tokens and missing statistics. `candidate/` contains accepted source only. Partial delivery is not completed. `areal workgroup inspect /absolute/runs/new-run` takes the owner lock and verifies hashes; crashed runs become UNKNOWN without replay. SIGINT/SIGTERM cancellation still awaits cleanup.
 
 TUI/server/launcher accept `--workgroup-policy /absolute/policy.json --workgroup-toolchain /absolute/toolchain` with explicit write grants. Policy includes allowedWrites (or allowedDirectories), nonempty checks, shared workers/verifiers/activeGroups and budgets. Models cannot modify deployment policy.
 

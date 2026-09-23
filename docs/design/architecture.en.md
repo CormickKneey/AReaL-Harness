@@ -13,7 +13,7 @@ AReaL-Harness follows **Clients → Core → Runtime**. Core exclusively owns se
 | Module | Responsibility |
 |---|---|
 | `clients/cli`, `clients/tui`, `clients/web` | CLI, terminal and local Web; connection setup, projections and requests |
-| `core/config` | User configuration, sources, credential references and Skill discovery; independent of Engine and Runtime |
+| `core/config` | User configuration, provenance, credential references, Skill directories and the tool-host proxy environment allowlist; no Engine/Runtime dependency |
 | `core/protocol` | Client protocol projections and shared types |
 | `core/engine` | Models, tools, history, persistence, child tasks and Workgroups |
 | `core/app-server` | WebSocket, authentication, subscriptions and callback correlation; no separate history |
@@ -42,6 +42,8 @@ Interactive TUI and Web launchers attach to one service per deployment. The host
 ![Task Mode](diagrams/task-mode-mailbox-architecture.svg)
 
 [draw.io source](diagrams/task-mode-mailbox-architecture.drawio) · [Asynchronous interaction flow](diagrams/task-mode-mailbox-flow.svg) · [Flow source](diagrams/task-mode-mailbox-flow.drawio)
+
+`clients/cli` provides the sole product executable, `areal`, dispatching to library entry points for TUI, noninteractive execution, Core server and the service host. Core never depends on clients. `scripts/launch.py` still owns separate Core/Runtime processes and private lifetime pipes. The bundle exposes only `areal` in `bin`; Runtime daemon/file helpers live in `libexec/areal` and are not linked into the client process. See the [client guide](../guides/clients.en.md) for commands.
 
 ## State and execution
 

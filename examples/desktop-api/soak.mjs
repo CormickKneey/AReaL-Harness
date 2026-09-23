@@ -2,13 +2,13 @@
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, mkdir, writeFile, readFile, rm, rename } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdtemp, mkdir, writeFile, readFile, rm, rename, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { fixture, png } from "./fixture.mjs";
 import { connect } from "./client.mjs";
-const root = await mkdtemp(join(tmpdir(), "areal-package-soak-"));
+// macOS Unix socket 路径有长度上限；共享服务夹具使用较短的临时根目录。
+const root = await mkdtemp("/tmp/ap-");
 const workspace = join(root, "workspace with spaces"),
   data = join(root, "state"),
   home = join(root, "home");
@@ -65,6 +65,11 @@ try {
     /^areal /,
   );
   const manifest = JSON.parse(await readFile(join(bundle, "manifest.json"), "utf8"));
+  assert.deepEqual(await readdir(join(bundle, "bin")), ["areal"]);
+  assert.deepEqual((await readdir(join(bundle, "libexec/areal"))).sort(), [
+    "areal-runtime",
+    "areal-runtime-fs",
+  ]);
   for (const [file, sha] of Object.entries(manifest.files))
     assert.equal(
       createHash("sha256")
@@ -264,6 +269,55 @@ try {
     assert(gc.retainedBytes >= png.length);
     previous = { threadId, process: { threadId, id: handle }, turns: threadTurns + 1 };
     await close();
+  }
+  // 搬迁后也必须能通过统一入口派生后台宿主并解析 libexec 组件。
+  const serviceCommand = (args) =>
+    JSON.parse(
+      execFileSync(
+        "/usr/bin/python3",
+        [
+          "-I",
+          "-S",
+          "-c",
+          "import subprocess,sys; sys.exit(subprocess.call(sys.argv[1:]))",
+          join(bundle, "bin/areal"),
+          ...args,
+        ],
+        {
+          cwd: workspace,
+          env: {
+            PATH: "/usr/bin:/bin",
+            HOME: home,
+            AREAL_HARNESS_HOME: home,
+            NO_PROXY: "127.0.0.1,localhost",
+            OTEL_SDK_DISABLED: "true",
+          },
+          encoding: "utf8",
+          timeout: 60000,
+        },
+      ),
+    );
+  const sharedArgs = [
+    "--workspace",
+    workspace,
+    "--config",
+    config,
+    "--data-dir",
+    join(root, "shared-state"),
+    "--model",
+    "fixture",
+    "--model-endpoint",
+    model.endpoint,
+    "--json",
+  ];
+  const shared = serviceCommand(["service", "ensure", ...sharedArgs]);
+  try {
+    assert.equal(serviceCommand(["web", ...sharedArgs]).generation, shared.generation);
+  } finally {
+    assert.equal(
+      serviceCommand(["service", "stop", "--instance", shared.serviceId, "--json"]).state,
+      "stopped",
+    );
   }
   assert.equal(epochs.size, 3);
   assert.deepEqual(model.failures, []);

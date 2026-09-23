@@ -85,6 +85,16 @@ Container behavior checks pass `--build-arg BUILD_PROFILE=ci`, selecting the Car
 
 `make schemas` updates the pinned Codex schema; `make desktop-schemas` updates desktop schemas. Update types, callers and contracts together. Local fixtures do not validate real models, GUIs, third-party daemons, signing/notarization or other platforms. See the [benchmark guide](../benchmarks/README.en.md) for performance runs.
 
+## Network proxy regression
+
+```sh
+cargo test --locked -p areal-engine --test model_proxy
+cargo test --locked -p areal-mcp --test proxy --test client
+cargo test --locked -p areal-engine --lib plugin_host_inherits_proxies_without_other_credentials
+```
+
+Proxy fixtures use dynamic loopback ports and isolated subprocess environments. They cover streaming text/usage for Chat Completions and Responses, HTTP/HTTPS proxies, HTTPS CONNECT, SOCKS5 local/remote DNS, authentication, uppercase/lowercase variables and NO_PROXY bypass. Real MCP initialization, discovery and search calls traverse proxies. MCP HTTP library TLS tests explicitly trust the fixture certificate; public test keys in `tests/fixtures/proxy` are not deployment credentials and are never installed in the system trust store. Stdio MCP and plugin processes verify proxy inheritance while excluding unrelated credentials. Third-party search providers, arbitrary plugin HTTP libraries and deployment proxies require separate validation.
+
 ## Goal regression
 
 `cargo test --locked -p areal-engine --test watchdog` checks ordinary network retries alongside Goal unknown-usage constraints, including transport failures, rate limits, service unavailability, interrupted streams, request/stream timeouts and summary failures. Goals avoid retry backoff, retain reservations and the previous checkpoint, and release model permits.
@@ -110,3 +120,5 @@ TUI and shared-service PTY checks share a terminal screen parser that preserves 
 `cargo test --locked -p areal-engine --test task_modes` covers independent work during asynchronous questions, Channel replies and same-Run resumption, wakeup when one question expires while another remains pending, headless questions/approvals, durable scheduling, asynchronous foreground Goal questions, workers surviving coordinator Turns with shared budgets, cancellation cleanup and reply deduplication across restart. app-server unit coverage validates Task requests/responses/notifications against generated schemas, Thread authorization filtering and independent subscriptions/unsubscriptions.
 
 `node examples/desktop-api/run.mjs task-matrix` uses real binaries and Runtime to verify headless ordinary conversations/Goals reject questions and approvals while continuing permitted commands, create no implicit schedules, resume asynchronous foreground Goals after disconnection, trigger/control schedules, and account for independent worker file artifacts. `node --test scripts/web-progress.test.mjs` checks wait states, selected later-page tasks, rejection of stale revisions, Inbox drafts and idempotent reply retries after timeouts. See the [desktop examples](../examples/desktop-api.en.md#web-validation) for actual browser validation.
+
+Unified CLI parsing and configuration process regressions live in `clients/cli`, covering default TUI, exec, legacy -p, argument conflicts and side-effect-free diagnostics. Launcher tests dispatch Core and TUI through one areal fixture. Desktop CLI checks exercise both exec and legacy arguments; relocated bundle checks require areal as the only bin entry and verify the internal Runtime paths.

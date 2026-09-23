@@ -13,7 +13,7 @@ AReaL-Harness 采用 **Clients → Core → Runtime** 分层。Core 是会话、
 | 模块 | 职责 |
 |---|---|
 | `clients/cli`, `clients/tui`, `clients/web` | CLI、终端和本地 Web；初始化连接、显示投影与提交请求 |
-| `core/config` | 解析用户配置、来源、凭据引用和 Skill 目录；不依赖 Engine 或 Runtime |
+| `core/config` | 解析用户配置、来源、凭据引用和 Skill 目录，定义工具宿主的代理环境白名单；不依赖 Engine 或 Runtime |
 | `core/protocol` | 客户端协议投影和共享类型 |
 | `core/engine` | 模型、工具、历史、持久化、父子任务和 Workgroup |
 | `core/app-server` | WebSocket、认证、订阅、回调关联；不拥有另一份历史 |
@@ -42,6 +42,8 @@ Task Mode 由 `core/engine/src/task_mode` 管理 Task/TaskRun、定时触发、�
 ![Task Mode](diagrams/task-mode-mailbox-architecture.svg)
 
 [draw.io 源文件](diagrams/task-mode-mailbox-architecture.drawio) · [异步交互流程](diagrams/task-mode-mailbox-flow.svg) · [流程源文件](diagrams/task-mode-mailbox-flow.drawio)
+
+`clients/cli` 是唯一产品可执行入口 `areal`，分派到 TUI、非交互客户端、Core server 和服务宿主的库入口；Core 不依赖客户端。`scripts/launch.py` 仍拥有独立 Core/Runtime 进程与私有生命周期管道。发行目录 `bin` 只含 `areal`，Runtime daemon/file helper 放在 `libexec/areal`，不并入客户端进程。命令契约见[客户端指南](../guides/clients.md)。
 
 ## 状态与执行
 

@@ -9,7 +9,7 @@ use areal_engine::{
         tree,
     },
 };
-use clap::{Parser, Subcommand};
+use clap::Subcommand;
 use std::{
     path::PathBuf,
     sync::Arc,
@@ -17,15 +17,8 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
-#[derive(Parser)]
-#[command(about = "Run isolated coding agents with Core-owned verified integration")]
-struct Cli {
-    #[command(subcommand)]
-    command: Command,
-}
-
 #[derive(Subcommand)]
-enum Command {
+pub enum Command {
     Run(Box<Args>),
     /// Inspect settled/crashed state and verify persisted source integrity.
     Inspect {
@@ -34,7 +27,7 @@ enum Command {
 }
 
 #[derive(clap::Args)]
-struct Args {
+pub struct Args {
     #[arg(long)]
     workspace: PathBuf,
     #[arg(long)]
@@ -60,9 +53,9 @@ struct Args {
     #[arg(long)]
     checks: PathBuf,
     #[arg(long)]
-    runtime: PathBuf,
+    runtime: Option<PathBuf>,
     #[arg(long)]
-    file_helper: PathBuf,
+    file_helper: Option<PathBuf>,
     /// Materialized trusted toolchain, copied fresh into each private workspace.
     #[arg(long)]
     toolchain: Option<PathBuf>,
@@ -108,9 +101,8 @@ struct Args {
     api_key_env: Option<String>,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let args = match Cli::parse().command {
+pub async fn run(command: Command, runtime_bin: PathBuf) -> Result<()> {
+    let args = match command {
         Command::Run(args) => *args,
         Command::Inspect { state_dir } => {
             println!(
@@ -245,8 +237,8 @@ async fn main() -> Result<()> {
             "integrationRepair":args.integration_repair,"maxModelRequests":args.max_model_requests,"modelConcurrency":config.model_concurrency.min(32),
             "model":config.model.name,"writeScope":allowed,"workerContextBytes":args.worker_context_bytes,"workerStallRounds":args.worker_stall_rounds,"workerTools":args.worker_tools
         }))?)?;
-        let mut executor = NativeExecutor::new(model.clone(), args.state_dir.join("bindings"), args.runtime.canonicalize()?,
-            args.file_helper.canonicalize()?, args.toolchain.map(|p| p.canonicalize()).transpose()?)?;
+        let mut executor = NativeExecutor::new(model.clone(), args.state_dir.join("bindings"), args.runtime.unwrap_or_else(|| runtime_bin.join("areal-runtime")).canonicalize()?,
+            args.file_helper.unwrap_or_else(|| runtime_bin.join("areal-runtime-fs")).canonicalize()?, args.toolchain.map(|p| p.canonicalize()).transpose()?)?;
         executor.watchdog_disable = config.watchdog_disable;
         executor.tool_call_limits = areal_engine::model::ToolCallLimits { max_calls: config.max_tool_calls, max_buffer_bytes: config.max_tool_buffer_bytes };
         executor.context_bytes = args.worker_context_bytes;

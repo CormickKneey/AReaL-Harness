@@ -11,6 +11,9 @@ name = "areal"
 path = "src/main.rs"
 
 [dependencies]
+areal-tui.workspace = true
+areal-server.workspace = true
+areal-service-host.workspace = true
 areal-local-service.workspace = true
 areal-config.workspace = true
 anyhow.workspace = true

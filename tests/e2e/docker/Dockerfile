@@ -13,7 +13,7 @@ COPY core ./core
 COPY clients ./clients
 COPY runtime ./runtime
 COPY scripts/launch.py ./scripts/launch.py
-RUN cargo build --locked --profile "${BUILD_PROFILE}" -p areal-runtime -p areal-runtime-fs -p areal-server -p areal-tui -p areal-service-host -p areal-cli
+RUN cargo build --locked --profile "${BUILD_PROFILE}" -p areal-runtime -p areal-runtime-fs -p areal-cli
 
 FROM runtime-builder AS runtime-tests
 
@@ -65,11 +65,8 @@ RUN if [ "${INSTALL_CLAUDE_CODE}" = "1" ]; then \
       && test "$(claude --version)" = "${CLAUDE_CODE_VERSION} (Claude Code)"; \
     fi
 
-COPY --from=runtime-builder /src/target/${BUILD_PROFILE}/areal-runtime /usr/local/bin/areal-runtime
-COPY --from=runtime-builder /src/target/${BUILD_PROFILE}/areal-runtime-fs /usr/local/bin/areal-runtime-fs
-COPY --from=runtime-builder /src/target/${BUILD_PROFILE}/areal-server /usr/local/bin/areal-server
-COPY --from=runtime-builder /src/target/${BUILD_PROFILE}/areal-tui /usr/local/bin/areal-tui
-COPY --from=runtime-builder /src/target/${BUILD_PROFILE}/areal-service-host /usr/local/bin/areal-service-host
+COPY --from=runtime-builder /src/target/${BUILD_PROFILE}/areal-runtime /usr/local/libexec/areal/areal-runtime
+COPY --from=runtime-builder /src/target/${BUILD_PROFILE}/areal-runtime-fs /usr/local/libexec/areal/areal-runtime-fs
 COPY --from=runtime-builder /src/target/${BUILD_PROFILE}/areal /usr/local/bin/areal
 COPY tests/perf/runner /opt/areal-perf
 COPY tests/perf/trace_metrics.py /opt/areal-perf/trace_metrics.py

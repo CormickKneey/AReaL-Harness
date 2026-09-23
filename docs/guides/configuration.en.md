@@ -119,11 +119,41 @@ Byte and capacity limits are positive integers; fan-out and depth may be 0 to di
 
 Unknown `AREAL_HARNESS_*` names are errors. Legacy `AREAL_MODEL*` and `RUST_LOG` are lower-priority aliases. Legacy model entry points without a provider file record may use optional `AREAL_API_KEY`; explicit file providers do not inherit it implicitly.
 
+<a id="proxies"></a>
+## Outbound network proxies
+
+Core model requests (including summaries, child Agents and Workgroups), Streamable HTTP MCP and optional OTLP HTTP export support `http://`, `https://`, `socks5://` and `socks5h://` proxies. The proxy scheme is independent of the destination scheme: an HTTPS model endpoint can use HTTP CONNECT or SOCKS. Both HTTPS proxies and HTTPS destinations retain certificate verification; private CAs must be trusted by the corresponding HTTP client's trust store.
+
+Use standard environment variables when starting Core; no duplicate TOML configuration is needed:
+
+| Environment variable | Purpose |
+|---|---|
+| `HTTP_PROXY` / `http_proxy` | Proxy for HTTP destinations |
+| `HTTPS_PROXY` / `https_proxy` | Proxy for HTTPS destinations |
+| `ALL_PROXY` / `all_proxy` | Fallback when the destination's protocol has no proxy configured |
+| `NO_PROXY` / `no_proxy` | Comma-separated domains, IPs or CIDRs that bypass proxies; `*` bypasses all |
+
+Core HTTP clients prefer uppercase variables, then lowercase. Third-party tools follow their own HTTP libraries; keep both forms consistent. `socks5` resolves destination names locally; `socks5h` resolves through the proxy. HTTP(S) Basic and SOCKS5 username/password authentication can use proxy URL userinfo; these URLs may contain credentials and should not be committed or included in shared diagnostics.
+
+For example, use SOCKS5 with remote DNS while preserving existing bypass entries:
+
+```sh
+export ALL_PROXY='socks5h://127.0.0.1:1080'
+export all_proxy="$ALL_PROXY"
+export NO_PROXY="${NO_PROXY:-${no_proxy:-}},127.0.0.1,localhost,::1"
+export no_proxy="$NO_PROXY"
+areal service restart --workspace /absolute/workspace --json
+```
+
+Existing `HTTP_PROXY` / `HTTPS_PROXY` and lowercase equivalents override `ALL_PROXY` for their destinations; adjust them too when switching all traffic to SOCKS. Shared services retain their startup environment. Restart explicitly from the updated environment after changing variables; reopening TUI/Web does not update the background process. Pass custom configuration and deployment arguments to restart as described in the [local service contract](../api/local-service.en.md). Local service discovery and login HTTP requests always connect directly to keep loopback authentication out of external proxies.
+
+Trusted stdio MCP servers and plugin Hosts automatically inherit these eight variables, including credentials in proxy URLs; other variables retain their respective allowlists. External tools such as `web_search` must use HTTP libraries that support the selected proxy scheme and environment variables. Core does not intercept their custom sockets or configure a remote MCP server's connection to its search provider. Runtime command environments and network authorization remain separate; proxies do not expand Scope permissions. See [MCP](mcp.en.md) and [plugin boundaries](../design/plugins.en.md).
+
 ## Diagnostics and runtime catalogs
 
 ```sh
-target/debug/areal-server config validate --config /absolute/config.toml
-target/debug/areal-server config show --sources --config /absolute/config.toml
+target/debug/areal config validate --config /absolute/config.toml
+target/debug/areal config show --sources --config /absolute/config.toml
 ```
 
 Diagnostics do not listen, create data, start Runtime/MCP/plugins or probe models. They report redacted values and sources. Shared local services reload model configuration as described below; startup credentials are not forwarded to Runtime. Server telemetry handles `OTEL_*` separately.

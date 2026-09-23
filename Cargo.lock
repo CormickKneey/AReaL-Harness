@@ -142,6 +142,9 @@ dependencies = [
  "anyhow",
  "areal-config",
  "areal-local-service",
+ "areal-server",
+ "areal-service-host",
+ "areal-tui",
  "clap",
  "fs2",
  "futures-util",
@@ -199,6 +202,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "tokio-rustls",
  "tokio-util",
  "tracing",
  "uuid",
@@ -229,6 +233,7 @@ name = "areal-mcp"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "areal-config",
  "areal-protocol",
  "axum",
  "reqwest 0.13.5",
@@ -239,6 +244,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokio",
+ "tokio-rustls",
  "tokio-util",
  "url",
 ]

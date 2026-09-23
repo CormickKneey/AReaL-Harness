@@ -12,7 +12,9 @@ Set `[tools] extensions_file="tools.json"` in user TOML. Example JSON:
 {"mcpServers":{"project":{"transport":{"type":"streamableHttp","url":"https://mcp.example.com/mcp","bearerTokenEnv":"PROJECT_MCP_TOKEN"},"enabledTools":["search"],"startupTimeoutMs":30000,"callTimeoutMs":120000}}}
 ```
 
-A stdio transport uses `{type:"stdio",command:"python3",args:["server.py"],cwd:".",envVars:[]}`; install the server separately. cwd resolves against the JSON directory; argv does not use a shell. Apart from PATH, only listed envVars are inherited, and missing variables fail. stdio servers are trusted host processes **outside the Runtime sandbox and allow-write restrictions**.
+A stdio transport uses `{type:"stdio",command:"python3",args:["server.py"],cwd:".",envVars:[]}`; install the server separately. cwd resolves against the JSON directory; argv does not use a shell. PATH and configured standard proxy variables are inherited automatically; other variables require an explicit envVars entry, and missing entries fail. stdio servers are trusted host processes **outside the Runtime sandbox and allow-write restrictions**.
+
+Streamable HTTP uses HTTP, HTTPS or SOCKS proxies from Core's startup environment. Stdio tools such as search servers also inherit proxy variables, which their own HTTP libraries must consume. See [network proxies](configuration.en.md#proxies) for variables, remote DNS, authentication, bypass rules and restart requirements. Compatibility change: stdio proxy variables no longer require individual envVars entries, and credentials in proxy URLs are also passed to these trusted servers.
 
 Up to 16 servers are allowed. Omitted enabledTools exposes all, an empty array none, and missing named tools fail. Startup defaults to 30 seconds and calls to 120 seconds. null removes the MCP-specific call deadline while Turn cancellation/deadlines still apply. HTTP redirects are disabled; Bearer credentials use environment references. `config validate` does not connect, launch servers or validate remote tools.
 

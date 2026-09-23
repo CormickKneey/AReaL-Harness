@@ -89,8 +89,10 @@ async function start(mode, state) {
     ready,
   ];
   child = spawnNative(
-    join(bin, mode === "serve" ? "areal" : "areal-server"),
-    mode === "serve" ? ["serve", "--desktop", "--workspace", workspace, ...args] : args,
+    join(bin, "areal"),
+    mode === "serve"
+      ? ["serve", "--desktop", "--workspace", workspace, ...args]
+      : ["app-server", ...args],
     { cwd: workspace, env, stdio: ["ignore", "ignore", "pipe"] },
   );
   let stderr = "";
@@ -267,7 +269,7 @@ try {
     "bypassPermissions",
   ]);
   console.log(JSON.stringify({ entry: "cli", status: "passed", resume: true }));
-  await run("areal-tui", [
+  await run("areal", [
     "--prompt",
     "skill-discovery",
     "--config",
