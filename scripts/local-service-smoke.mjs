@@ -184,13 +184,7 @@ try {
   assert.equal(completed.turn.status, "completed");
   await exec(
     "/usr/bin/python3",
-    [
-      "-I",
-      "-S",
-      resolve("scripts/local-service-pty.py"),
-      resolve("target/debug/areal-tui"),
-      ...local,
-    ],
+    ["-I", "-S", resolve("scripts/local-service-pty.py"), resolve("target/debug/areal"), ...local],
     { env, timeout: 45000 },
   );
   assert.equal(
@@ -261,13 +255,7 @@ try {
   }
   await exec(
     "/usr/bin/python3",
-    [
-      "-I",
-      "-S",
-      resolve("scripts/local-service-pty.py"),
-      resolve("target/debug/areal-tui"),
-      ...local,
-    ],
+    ["-I", "-S", resolve("scripts/local-service-pty.py"), resolve("target/debug/areal"), ...local],
     { env: { ...env, TEST_EXPLICIT_STOP: "1" }, timeout: 45000 },
   );
   assert.equal(
@@ -371,13 +359,7 @@ try {
   );
   await exec(
     "/usr/bin/python3",
-    [
-      "-I",
-      "-S",
-      resolve("scripts/local-service-pty.py"),
-      resolve("target/debug/areal-tui"),
-      ...local,
-    ],
+    ["-I", "-S", resolve("scripts/local-service-pty.py"), resolve("target/debug/areal"), ...local],
     { env: { ...env, TEST_RELOAD_CONFIG: config }, timeout: 60000 },
   );
   await cli(["service", "stop", "--workspace", workspace]);

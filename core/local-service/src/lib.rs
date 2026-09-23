@@ -17,3 +17,13 @@ pub fn home() -> anyhow::Result<std::path::PathBuf> {
     };
     storage::canonical_pending(&path)
 }
+
+/// 发行包将隔离执行组件放在 libexec；源码构建仍使用同目录的 Cargo 产物。
+pub fn runtime_bin_dir(bin_dir: &std::path::Path) -> std::path::PathBuf {
+    let internal = bin_dir.join("../libexec/areal");
+    if internal.is_dir() {
+        internal
+    } else {
+        bin_dir.to_owned()
+    }
+}

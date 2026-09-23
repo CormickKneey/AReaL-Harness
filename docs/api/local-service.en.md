@@ -2,7 +2,7 @@
 
 # Shared local services
 
-TUI, the Web launcher and trusted Desktop Main use `areal service`. An independent `areal-service-host` owns one Core/Runtime pair; windows own connections. Platform support follows the [Runtime boundary](../guides/runtime.en.md). This is not a system-wide, multi-user or remote daemon.
+TUI, the Web launcher and trusted Desktop Main use `areal service`. An independent `areal service-host` owns one Core/Runtime pair; windows own connections. Platform support follows the [Runtime boundary](../guides/runtime.en.md). This is not a system-wide, multi-user or remote daemon.
 
 ## Public entry points
 

@@ -85,6 +85,16 @@ PR、`main` 推送和手动触发运行完整检查，避免同一功能分支�
 
 `make schemas` 更新固定 Codex schema，`make desktop-schemas` 更新桌面 schema；同时维护类型、调用方与契约。真实模型、GUI、第三方 daemon、签名/公证和其他平台不由本地 fixture 代替验收。性能测试见[基准指南](../benchmarks/README.md)。
 
+## 网络代理回归
+
+```sh
+cargo test --locked -p areal-engine --test model_proxy
+cargo test --locked -p areal-mcp --test proxy --test client
+cargo test --locked -p areal-engine --lib plugin_host_inherits_proxies_without_other_credentials
+```
+
+代理 fixture 使用动态 loopback 端口和独立子进程环境，覆盖 Chat Completions/Responses 流式正文与用量、HTTP/HTTPS 代理、HTTPS CONNECT、SOCKS5 本地/远端 DNS、认证、大小写变量和 NO_PROXY 绕过；真实 MCP 初始化、发现和搜索调用经过代理。MCP HTTP 库的 TLS 测试显式信任 fixture 证书；`tests/fixtures/proxy` 中的公开测试密钥不用于部署，也不安装到系统信任库。stdio MCP 与插件进程验证代理变量继承及其他凭据隔离。第三方搜索供应商、任意插件 HTTP 库和实际部署代理需另行验证。
+
 ## Goal 回归
 
 `cargo test --locked -p areal-engine --test watchdog` 同时验证普通请求的网络重试与 Goal 的未知用量约束，覆盖传输失败、限流、服务不可用、断流、请求/流超时和摘要失败；Goal 不进入重试退避，保留预算预留及旧 checkpoint，并释放模型许可。
@@ -110,3 +120,5 @@ TUI 与共享服务 PTY 检查共用终端画面解析器，处理增量重绘�
 `cargo test --locked -p areal-engine --test task_modes` 覆盖异步提问期间继续工作、独立回复与同 Run 恢复、单个问题过期时仍有其他待答问题的唤醒、headless 提问和审批、定时持久恢复、前台 Goal 异步提问、跨协调 Turn 的 worker 与共享预算、取消清理及重启回复去重。app-server 单元回归校验 Task 请求/响应/通知符合生成 schema，并验证 Thread 授权过滤与独立订阅/退订。
 
 `node examples/desktop-api/run.mjs task-matrix` 使用真实二进制与 Runtime 检查 headless 普通对话/Goal 的提问与审批拒绝、允许的命令继续执行、无隐式定时调度、前台异步 Goal 断连后回复、定时触发与控制、独立 worker 文件产物及共享计量。`node --test scripts/web-progress.test.mjs` 检查等待状态、跨分页选中项、旧 revision 拒绝、Inbox 草稿保留和超时回复幂等重试。真实浏览器验收入口与操作见[桌面示例](../examples/desktop-api.md#web-validation)。
+
+统一 CLI 的解析与配置进程回归位于 `clients/cli`，覆盖默认 TUI、exec、旧 -p、参数冲突和无副作用诊断。launcher 回归使用一个 areal fixture 分派 Core 与 TUI；桌面 CLI 验收同时运行 exec 和旧参数协议，发行搬迁验收检查 bin 只含 areal 且内部 Runtime 路径可用。

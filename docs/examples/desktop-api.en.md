@@ -59,3 +59,5 @@ After `make build`, run `node examples/desktop-api/run.mjs --serve` and keep it 
 | Fill an Inbox answer, then refresh the Inbox | The draft remains; a new connection can still answer after the original page disconnects |
 
 Also inspect narrow-screen navigation, desktop layout and browser errors. Record protocol fixtures, DOM substitutes and real browser validation separately; none substitutes for the other layers.
+
+The bundle exposes `bin/areal`. `libexec/areal/areal-runtime` and `libexec/areal/areal-runtime-fs` are isolated execution components and do not belong on PATH. Move the complete bundle: launch and shared-service identity checks resolve components relative to it. Copying areal alone omits required Runtime components.

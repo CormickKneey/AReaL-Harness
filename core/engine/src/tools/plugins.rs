@@ -190,7 +190,10 @@ impl PluginHost {
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .kill_on_drop(true);
-        for key in ["PATH", "LANG", "LC_ALL", "SYSTEMROOT"] {
+        for key in ["PATH", "LANG", "LC_ALL", "SYSTEMROOT"]
+            .into_iter()
+            .chain(areal_config::PROXY_ENV_VARS)
+        {
             if let Some(value) = env.get(std::ffi::OsStr::new(key)) {
                 command.env(key, value);
             }
@@ -410,6 +413,34 @@ mod tests {
             read_roots: vec!["workspace://repo/src".into()],
             write_roots: vec!["workspace://repo/src/generated".into()],
             timeout_ms: 1000,
+        }
+    }
+
+    #[tokio::test]
+    async fn plugin_host_inherits_proxies_without_other_credentials() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut policy = config();
+        policy.argv = vec![
+            "/usr/bin/python3".into(), "-I".into(), "-S".into(), "-c".into(),
+            "import json,os,sys; open('environment.json','w').write(json.dumps(dict(os.environ))); print(json.dumps({'protocolVersion':1,'tools':[{'name':'fixture','description':'fixture','inputSchema':{'type':'object'}}]}),flush=True); sys.stdin.read()".into(),
+        ];
+        let mut env = BTreeMap::from([(
+            OsString::from("MODEL_API_KEY"),
+            OsString::from("must-not-inherit"),
+        )]);
+        for key in areal_config::PROXY_ENV_VARS {
+            env.insert(key.into(), format!("fixture-{key}").into());
+        }
+        let host = PluginHost::launch("fixture", &policy, temp.path(), &env)
+            .await
+            .unwrap();
+        let observed: Value =
+            serde_json::from_slice(&std::fs::read(temp.path().join("environment.json")).unwrap())
+                .unwrap();
+        host.shutdown().await.unwrap();
+        assert!(observed.get("MODEL_API_KEY").is_none());
+        for key in areal_config::PROXY_ENV_VARS {
+            assert_eq!(observed[key], format!("fixture-{key}"));
         }
     }
 

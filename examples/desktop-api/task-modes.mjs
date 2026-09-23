@@ -37,7 +37,7 @@ export async function taskModeMatrix({
       agentProfile: { id: "approval", revision: "v1" },
     });
     const child = spawnNative(
-      join(repo, "target/debug/areal-tui"),
+      join(repo, "target/debug/areal"),
       [
         "--endpoint",
         endpoint,

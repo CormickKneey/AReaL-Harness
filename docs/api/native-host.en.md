@@ -8,6 +8,8 @@ An explicitly trusted independent process can connect to Core using UTF-8 JSONL 
 
 Configure plugins in tools.extensions_file with trusted=true, argv, readRoots/writeRoots and timeoutMs. Process brokering additionally requires allowProcess=true. The first line is `{protocolVersion:2,tools:[{name,description,inputSchema,outputSchema?}]}` with up to 32 tools and a 10-second handshake; v1 supports files only. Diagnostics go to stderr; each Host is serial.
 
+Both v1 and v2 Hosts automatically inherit standard proxy variables, including credentials in proxy URLs; other variables retain the allowlist. This changes neither the message protocol nor broker command environments. See [plugin boundaries](../design/plugins.en.md) and [proxy configuration](../guides/configuration.en.md#proxies) for HTTP library requirements and inheritance details.
+
 | Direction | Message |
 |---|---|
 | Core → Host | `{type:"call",callId,params:{tool,arguments,...}}` |

@@ -8,6 +8,8 @@
 
 配置位于 tools.extensions_file 的 plugins：trusted=true、argv、readRoots/writeRoots、timeoutMs；进程 broker 另需 allowProcess=true。首行握手 `{protocolVersion:2,tools:[{name,description,inputSchema,outputSchema?}]}`，最多 32 工具、10 秒；v1 仅文件服务。日志写 stderr，同 Host 串行。
 
+v1/v2 Host 均自动继承标准代理环境，包含代理 URL 的认证信息；其他环境仍受白名单限制。此变更不改变消息协议，也不为 broker 命令增加环境变量。HTTP 库要求及完整继承边界见[插件边界](../design/plugins.md)与[代理配置](../guides/configuration.md#proxies)。
+
 | 方向 | 消息 |
 |---|---|
 | Core → Host | `{type:"call",callId,params:{tool,arguments,...}}` |

@@ -14,8 +14,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+pub async fn run() -> Result<()> {
     let mut bytes = Vec::new();
     timeout(
         Duration::from_secs(10),

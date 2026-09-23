@@ -6,12 +6,26 @@ Complete the [quickstart](quickstart.en.md) first. Clients share Core history; R
 
 ## Launch
 
+The product command is `areal`. Use `target/debug/areal` after a source build; add only the bundle's `bin` directory to PATH. Place subcommand options after the subcommand.
+
+| Command | Behavior |
+|---|---|
+| `areal [PROMPT]` | Open the TUI; submit an optional initial message once the session is ready |
+| `areal exec [PROMPT]` | Run noninteractively with text, JSON or stream-json output |
+| `areal serve` | Start foreground Core + Runtime with cleanup owned by the launcher |
+| `areal app-server` | Start Core directly; Runtime connections require explicit deployment |
+| `areal config show/validate` | Inspect redacted configuration or validate it without starting services |
+| `areal service` / `areal web` | Manage shared services or open Web |
+| `areal workgroup run/inspect` | Run isolated workgroups or inspect their state |
+
+Migration: replace `areal-tui …` with `areal …`, `areal-server …` with `areal app-server …`, its `config` command with `areal config …`, and `areal-workgroup …` with `areal workgroup …`. The old standalone executables are no longer built or distributed. `areal -p/--print …` retains the existing noninteractive protocol and is equivalent to `areal exec …`. Bare `areal` now opens the TUI; automation must select `exec` or `-p`. `--prompt`, `--goal` and `--input-file` retain the original TUI headless behavior and conflict with positional PROMPT.
+
 ```sh
-make tui
-make tui ARGS='--resume THREAD_ID'
-make tui ARGS='--workspace /absolute/task --prompt "Describe the task"'
+target/debug/areal
+target/debug/areal --resume THREAD_ID
+target/debug/areal exec --workspace /absolute/task 'Describe the task'
 # Connect using the authentication file in the existing Core data directory
-make tui ARGS='--endpoint ws://127.0.0.1:4500 --auth-file /absolute/core-data/security/auth.json'
+target/debug/areal --endpoint ws://127.0.0.1:4500 --auth-file /absolute/core-data/security/auth.json
 ```
 
 Without an endpoint, interactive TUI attaches to a shared Core/Runtime on a random loopback port. Multiple windows in the same workspace reuse it; closing a window leaves service and tasks running. `--prompt`, `--goal` and `--input-file` default to owned mode and clean up on exit. `--local-mode shared|owned` overrides this choice. Explicit endpoint (alias `--remote`) only connects and cannot be combined with local deployment arguments.
@@ -26,7 +40,7 @@ target/debug/areal service restart --json
 target/debug/areal service stop --json
 ```
 
-`areal -p 'prompt' --output-format stream-json --verbose` provides noninteractive CLI operation; `areal serve` starts a persistent service. See the [CLI contract](../api/claude-cli.en.md) for arguments, authentication, resume and exit codes. Web is served at `/ui`; `areal web` opens it and signs in automatically without copying a token. Direct visits without a valid session can use the local token from `security/auth.json` in the service data directory.
+`areal exec 'prompt' --output-format stream-json --verbose` provides noninteractive CLI operation; `areal serve` starts a persistent service. See the [CLI contract](../api/claude-cli.en.md) for arguments, authentication, resume and exit codes. Web is served at `/ui`; `areal web` opens it and signs in automatically without copying a token. Direct visits without a valid session can use the local token from `security/auth.json` in the service data directory.
 
 TUI `--input-file /absolute/input.json` is mutually exclusive with `--prompt` and accepts a Core Input array up to 2 MiB, for example `[{"type":"text","text":"Inspect the image"},{"type":"localImage","path":"/absolute/image.png"}]`. Both local and explicit-endpoint modes support it; the trusted launcher forwards `--tui --input-file`. Media paths and fields remain subject to [Core API](../api/core.en.md) validation.
 
@@ -102,7 +116,7 @@ Clients display status, token usage, active time, Turn count and stop reasons, a
 
 ```sh
 make tui ARGS='--goal "Complete the module migration and pass its tests" --goal-token-budget 200000'
-target/debug/areal-tui --endpoint ws://127.0.0.1:4500 --goal 'Inspect the code and prepare migration recommendations'
+target/debug/areal --endpoint ws://127.0.0.1:4500 --goal 'Inspect the code and prepare migration recommendations'
 ```
 
 `--goal` conflicts with `--prompt`/`--input-file`. `--resume THREAD_ID` can create a new Goal in an existing idle Thread. Headless mode waits across Turns, exits successfully only for completed, and prints Goal JSON/reasons with a nonzero exit for other stopped states. Remote headless exit/disconnection does not cancel server execution; owned local launcher exit shuts down its Core; shared mode only disconnects. Use interactive `/open` and `/goal-resume` for stopped Goals. Ordinary `--prompt` and Claude CLI retain single-execution semantics.

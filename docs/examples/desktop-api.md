@@ -59,3 +59,5 @@ Task 用例 `node examples/desktop-api/run.mjs task-mode` 验证提问后继续�
 | 在 Inbox 填写答案后点击刷新 | 草稿保留；原页面断开后问题仍可从新连接回答 |
 
 同时检查窄屏导航、桌面布局和浏览器错误日志。协议 fixture、DOM 替身与实际浏览器验收分别记录，不能用任意一项代替其他层的结果。
+
+发行包的公开入口为 `bin/areal`；`libexec/areal/areal-runtime` 与 `libexec/areal/areal-runtime-fs` 是隔离执行组件，不加入 PATH。完整目录可以搬迁，启动与共享服务身份检查按相对路径找到组件；不要单独复制 areal 后丢弃 libexec。

@@ -2,7 +2,7 @@
 
 # 共享本地服务
 
-TUI、Web 启动入口和可信 Desktop Main 共用 `areal service`，由独立 `areal-service-host` 托管一组 Core/Runtime。窗口只拥有连接。运行平台沿用[Runtime 边界](../guides/runtime.md)，不是系统级、多用户或远程 daemon。
+TUI、Web 启动入口和可信 Desktop Main 共用 `areal service`，由独立 `areal service-host` 托管一组 Core/Runtime。窗口只拥有连接。运行平台沿用[Runtime 边界](../guides/runtime.md)，不是系统级、多用户或远程 daemon。
 
 ## 公共入口
 
