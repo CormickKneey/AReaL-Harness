@@ -6,6 +6,7 @@
 
 | 报告 | 证据范围 |
 |---|---|
+| [原生工具优化 A/B](tool-optimization.md) | 当前配置模型的 56 次定向尝试，含迭代退化与最终 12 对结果；不代表 MM480 成功率 |
 | [五题 Harness 比较](perf-pro-five-report.md) | 保留 23 次尝试的 JSON 与可校验统计；受选题偏差、缺失用量和私有镜像限制 |
 | [多 Agent 研究归档说明](multi-agent-history.md) | 研究结论的范围；旧控制器与原始数据不随当前源码提供 |
 

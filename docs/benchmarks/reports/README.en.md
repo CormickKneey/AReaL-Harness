@@ -6,6 +6,7 @@ Historical records do not define current capabilities. Use the [run guide](../RE
 
 | Report | Evidence scope |
 |---|---|
+| [Native tool optimization A/B](tool-optimization.en.md) | 56 targeted attempts with the configured model, including regressions and 12 final pairs; not an MM480 success-rate claim |
 | [Five-task Harness comparison](perf-pro-five-report.en.md) | JSON and checkable aggregates for 23 attempts, limited by selection bias, missing usage and private images |
 | [Multi-agent research archive notes](multi-agent-history.en.md) | Scope of research observations; old controllers and raw data are not shipped with current source |
 
