@@ -18,9 +18,9 @@ Install dependencies using the [development guide](README.en.md). Regular tests 
 
 Snapshot format changes require `make verify-harness`: Harness and plugin smoke check the written version, and desktop relocation tests compare the release manifest, `areal/server/status.stateVersion`, and actual snapshot versions.
 
-Native smoke tests require macOS Seatbelt; never substitute unsandboxed execution for a failure. Linux CI uses controlled containers. Default `cargo test` excludes explicitly ignored native Workgroup and capacity cases.
+macOS native smoke tests require Seatbelt; Linux native smoke tests require `/usr/bin/bwrap` and user namespaces. Neither platform may substitute unsandboxed execution when the capability is missing. `outer-container-perf` remains validated in controlled containers. Default `cargo test` excludes explicitly ignored native Workgroup and capacity cases.
 
-Linux host checks use `make verify CARGO_TEST_ARGS='--exclude areal-runtime-exec-native'`. Native backend tests require a container boundary; a separate CI job builds the Dockerfile's `runtime-tests` target and runs every backend test inside the controlled Bubblewrap container. Excluding the backend alone does not complete validation.
+Linux host checks use `make verify CARGO_TEST_ARGS='--exclude areal-runtime-exec-native'`. Native backend tests require `/usr/bin/bwrap` and user namespaces; a separate CI job builds the Dockerfile's `runtime-tests` target and runs every backend test, including `outer-container-perf`, inside the controlled Bubblewrap container. Excluding the backend alone does not complete validation.
 
 ## Python and scratch
 

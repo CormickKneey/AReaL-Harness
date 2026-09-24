@@ -25,7 +25,7 @@
 
 ## 支持边界
 
-- 完整本地工具执行使用 macOS Seatbelt；Linux 仅有受控 Docker `outer-container-perf` profile。通用生产 Linux 和 Windows native Runtime 未提供。
+- macOS 的收窄工具执行使用 Seatbelt；Linux native 使用 Bubblewrap namespace 与 Runtime seccomp，要求部署提供 `/usr/bin/bwrap` 和 user namespace；Linux launcher 的 full-access 支持宿主执行，受控 Docker `outer-container-perf` 仍用于固定评测流程。Windows native Runtime 未提供。
 - Core、stdio MCP 和插件 Host 是可信宿主，未受 Runtime OS 沙箱隔离；远程工具权限由服务负责。审批不能扩大部署授权。
 - `UNKNOWN` 需要人工检查，不自动重放。没有跨 Runtime epoch 恢复、外部写入者 CAS、跨文件事务或完整逃逸后代树清理保证。
 - Codex app-server 固定子集和 Claude CLI 消息适配不代表官方完整客户端兼容。DSH 仅适配选定工具/文件服务；不支持替换 Core loop。

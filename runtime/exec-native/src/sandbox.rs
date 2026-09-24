@@ -1,10 +1,16 @@
-//! Runtime-owned macOS path policy. Parameters are regular expressions over
-//! kernel-resolved paths; they must never be canonicalized by the executor.
+//! Runtime-owned path policy. macOS uses Seatbelt; Linux uses Bubblewrap.
+//! macOS policy parameters are regular expressions over kernel-resolved paths;
+//! they must never be canonicalized by the executor.
 use areal_runtime_protocol::{Error, ErrorCode, Result};
-use areal_runtime_supervisor::backend::Execution;
+use areal_runtime_supervisor::backend::{Execution, ScopeAccess};
+#[cfg(target_os = "linux")]
+use std::sync::OnceLock;
 use std::{collections::BTreeSet, path::Path};
 
+#[cfg(not(target_os = "linux"))]
 pub const SEATBELT_PROFILE: &str = "runtimeSeatbeltPathV1";
+#[cfg(target_os = "linux")]
+pub const BUBBLEWRAP_PROFILE: &str = "runtimeBubblewrapPathV1";
 pub const OUTER_CONTAINER_PERF_PROFILE: &str = "outerContainerPerfV1";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -18,7 +24,16 @@ pub enum Profile {
 impl Profile {
     pub fn name(self) -> &'static str {
         match self {
-            Self::Native => SEATBELT_PROFILE,
+            Self::Native => {
+                #[cfg(target_os = "linux")]
+                {
+                    BUBBLEWRAP_PROFILE
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    SEATBELT_PROFILE
+                }
+            }
             Self::FullAccess => "fullAccess",
             Self::OuterContainerPerf => OUTER_CONTAINER_PERF_PROFILE,
         }
@@ -63,9 +78,16 @@ pub fn supported(profile: Profile) -> Result<()> {
     match profile {
         Profile::FullAccess => Ok(()),
         Profile::Native if cfg!(target_os = "macos") => Ok(()),
+        Profile::Native if cfg!(target_os = "linux") && Path::new("/usr/bin/bwrap").is_file() => {
+            Ok(())
+        }
         Profile::Native => Err(Error::new(
             ErrorCode::Unsupported,
-            "the Runtime-owned path sandbox currently requires macOS Seatbelt",
+            if cfg!(target_os = "linux") {
+                "the Linux Runtime-owned path sandbox requires /usr/bin/bwrap"
+            } else {
+                "the Runtime-owned path sandbox currently requires macOS Seatbelt"
+            },
         )),
         Profile::OuterContainerPerf if !cfg!(target_os = "linux") => Err(Error::new(
             ErrorCode::Unsupported,
@@ -83,6 +105,58 @@ pub fn supported(profile: Profile) -> Result<()> {
     }
 }
 
+#[cfg(target_os = "linux")]
+pub fn preflight(profile: Profile) -> Result<()> {
+    if profile != Profile::Native {
+        return Ok(());
+    }
+    static PREFLIGHT: OnceLock<Result<()>> = OnceLock::new();
+    PREFLIGHT.get_or_init(run_linux_preflight).clone()
+}
+
+#[cfg(target_os = "linux")]
+fn run_linux_preflight() -> Result<()> {
+    let mut command = std::process::Command::new("/usr/bin/bwrap");
+    command.args([
+        "--unshare-all",
+        "--die-with-parent",
+        "--new-session",
+        "--cap-drop",
+        "ALL",
+        "--dev",
+        "/dev",
+        "--proc",
+        "/proc",
+    ]);
+    for path in ["/usr", "/lib", "/lib64"] {
+        if Path::new(path).exists() {
+            command.args(["--ro-bind", path, path]);
+        }
+    }
+    command.args(["--", "/usr/bin/true"]);
+    command.stdout(std::process::Stdio::null());
+    command.stderr(std::process::Stdio::null());
+    let status = command.status().map_err(|error| {
+        Error::new(
+            ErrorCode::Unsupported,
+            format!("cannot run Linux Bubblewrap preflight: {error}"),
+        )
+    })?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(Error::new(
+            ErrorCode::Unsupported,
+            "Linux Bubblewrap cannot create the required user/mount/PID namespaces",
+        ))
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn preflight(_: Profile) -> Result<()> {
+    Ok(())
+}
+
 pub fn command(execution: &Execution, profile: Profile) -> Result<Vec<String>> {
     supported(profile)?;
     if execution.argv.is_empty() {
@@ -91,11 +165,15 @@ pub fn command(execution: &Execution, profile: Profile) -> Result<Vec<String>> {
     if profile == Profile::OuterContainerPerf {
         return linux_command(execution);
     }
+    #[cfg(target_os = "linux")]
+    if matches!(profile, Profile::Native | Profile::FullAccess) {
+        if profile == Profile::FullAccess && execution.scope_access == ScopeAccess::Unrestricted {
+            return Ok(execution.argv.clone());
+        }
+        return linux_command(execution);
+    }
     if profile == Profile::FullAccess {
-        if execution.read_roots.iter().any(|p| p == Path::new("/"))
-            && execution.write_roots.iter().any(|p| p == Path::new("/"))
-            && execution.network == areal_runtime_protocol::NetworkRequest::Inherit
-        {
+        if execution.scope_access == ScopeAccess::Unrestricted {
             return Ok(execution.argv.clone());
         }
         // 只读、研究 Agent 和插件的收窄授权不能借部署模式跳过隔离。
@@ -187,6 +265,7 @@ fn linux_command(execution: &Execution) -> Result<Vec<String>> {
         "/usr/bin/bwrap",
         "--unshare-all",
         "--die-with-parent",
+        "--new-session",
         "--cap-drop",
         "ALL",
         "--dev",
@@ -312,7 +391,7 @@ pub fn seccomp(
         io::Write,
         os::fd::{AsRawFd, FromRawFd},
     };
-    if profile != Profile::OuterContainerPerf {
+    if !matches!(profile, Profile::Native | Profile::OuterContainerPerf) {
         return Ok(None);
     }
     let architecture = match std::env::consts::ARCH {
@@ -391,4 +470,40 @@ pub fn seccomp(
     _: areal_runtime_protocol::NetworkRequest,
 ) -> Result<Option<std::fs::File>> {
     Ok(None)
+}
+
+#[cfg(test)]
+mod policy_tests {
+    use super::*;
+    use std::{collections::BTreeMap, path::PathBuf};
+
+    #[test]
+    fn full_access_unrestricted_scope_does_not_require_native_sandbox() {
+        let execution = Execution {
+            process_id: "test-process".into(),
+            argv: vec!["/bin/true".into()],
+            cwd: PathBuf::from("/"),
+            env: BTreeMap::new(),
+            read_roots: vec![PathBuf::from("/")],
+            write_roots: Vec::new(),
+            scope_access: ScopeAccess::Unrestricted,
+            trusted_executable: None,
+            builtin_executables: Vec::new(),
+            tty: false,
+            pipe_stdin: false,
+            network: areal_runtime_protocol::NetworkRequest::Inherit,
+        };
+
+        assert_eq!(
+            command(&execution, Profile::FullAccess).unwrap(),
+            execution.argv
+        );
+
+        let mut ordinary_process = execution;
+        ordinary_process.scope_access = ScopeAccess::Restricted;
+        assert!(
+            command(&ordinary_process, Profile::FullAccess)
+                .map_or(true, |argv| argv != ordinary_process.argv)
+        );
+    }
 }

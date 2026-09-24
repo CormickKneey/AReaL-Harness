@@ -1,4 +1,5 @@
 use super::*;
+use areal_runtime_supervisor::backend::ScopeAccess;
 use std::{collections::BTreeMap, path::Path};
 
 fn test_profile() -> SandboxProfile {
@@ -17,6 +18,7 @@ fn execution(root: &Path, code: &str) -> Execution {
         env: BTreeMap::from([("PATH".into(), "/usr/bin:/bin".into())]),
         read_roots: vec![root.into()],
         write_roots: vec![root.into()],
+        scope_access: ScopeAccess::Restricted,
         trusted_executable: None,
         builtin_executables: Vec::new(),
         tty: false,
@@ -212,6 +214,40 @@ async fn termination_racing_natural_exit_still_confirms_completion() {
         backend.terminate(&id).await.unwrap();
         collect(&mut rx, &backend).await;
     }
+    backend.shutdown().await.unwrap();
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn native_profile_enforces_path_roots_without_outer_container() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().canonicalize().unwrap();
+    let allowed = root.join("allowed");
+    let outside = root.join("outside");
+    std::fs::create_dir(&allowed).unwrap();
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(allowed.join("visible"), "visible").unwrap();
+    std::fs::write(outside.join("secret"), "secret").unwrap();
+
+    let backend = match NativeBackend::launch_with_profile(SandboxProfile::Native).await {
+        Ok(backend) => backend,
+        Err(error) if error.code == areal_runtime_protocol::ErrorCode::Unsupported => {
+            eprintln!("skipping Linux native profile test: {error}");
+            return;
+        }
+        Err(error) => panic!("cannot initialize Linux native profile: {error}"),
+    };
+    let mut exec = execution(
+        &allowed,
+        &format!(
+            "test \"$(cat visible)\" = visible && test ! -e '{}'",
+            outside.join("secret").display()
+        ),
+    );
+    exec.process_id = "native-path-policy".into();
+    let mut rx = backend.start(exec).await.unwrap();
+    let (output, code) = collect(&mut rx, &backend).await;
+    assert_eq!(code, Some(0), "{}", String::from_utf8_lossy(&output));
     backend.shutdown().await.unwrap();
 }
 

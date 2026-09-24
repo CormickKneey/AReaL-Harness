@@ -7,7 +7,7 @@ mod policy;
 mod writes;
 
 use areal_runtime_protocol::*;
-use backend::{Backend, Event, Execution};
+use backend::{Backend, Event, Execution, ScopeAccess};
 use futures_util::FutureExt;
 use output::Output;
 use policy::{Directory, Workspace, denied, invalid, narrow, within};
@@ -456,6 +456,15 @@ impl Supervisor {
                     .as_ref()
                     .map(|(path, _, _)| path.clone())
                     .or_else(|| task_program.clone());
+                let scope_access = if self.config.full_access
+                    && scope.reads.iter().any(|p| p == std::path::Path::new("/"))
+                    && scope.writes.iter().any(|p| p == std::path::Path::new("/"))
+                    && scope.info.network == NetworkRequest::Inherit
+                {
+                    ScopeAccess::Unrestricted
+                } else {
+                    ScopeAccess::Restricted
+                };
                 let mut execution = Execution {
                     process_id: handle(&self.epoch, "process"),
                     argv: request.argv,
@@ -463,6 +472,7 @@ impl Supervisor {
                     env: request.env,
                     read_roots: scope.reads.clone(),
                     write_roots: scope.writes.clone(),
+                    scope_access,
                     trusted_executable,
                     builtin_executables: self.config.builtin_rg.iter().cloned().collect(),
                     tty: request.tty,

@@ -74,8 +74,18 @@ pub struct NativeBackend {
 impl NativeBackend {
     pub async fn launch_with_profile(profile: SandboxProfile) -> Result<Self> {
         sandbox::supported(profile)?;
+        sandbox::preflight(profile)?;
         let program = match profile {
-            SandboxProfile::Native => "/usr/bin/sandbox-exec",
+            SandboxProfile::Native => {
+                #[cfg(target_os = "linux")]
+                {
+                    "/usr/bin/bwrap"
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    "/usr/bin/sandbox-exec"
+                }
+            }
             SandboxProfile::FullAccess => "/bin/sh",
             SandboxProfile::OuterContainerPerf => "/usr/bin/bwrap",
         };
