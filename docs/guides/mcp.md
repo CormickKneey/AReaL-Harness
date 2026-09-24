@@ -20,7 +20,7 @@ stdio transport 使用 `{type:"stdio",command:"python3",args:["server.py"],cwd:"
 
 工具经 tools/list 分页发现，通常映射为 `mcp__server__tool`；非法或过长名称使用稳定摘要。Core 总工具预算仍为 128，schema 与 hooks 规则同[普通工具](tools.md)。
 
-文本与 structuredContent 保留；图片、音频和内嵌二进制资源经 Blob 校验后按原顺序提供实际字节。资源链接不自动抓取，不支持模态明确失败。文本/结构化结果上限 16 KiB；该限制不代表 SDK 底层传输的总内存上限。
+文本与 structuredContent 保留；图片、音频和内嵌二进制资源经 Blob 校验后按原顺序提供实际字节。资源链接不自动抓取，不支持模态明确失败。纯文本/结构化结果在 Core 快照投影前最多接收 8 MiB，模型可见页仍限 16 KiB，并通过 read_tool_result 回取原文。混合媒体引用封套仍限 16 KiB。这些限制不代表 SDK 底层传输的总内存上限，见[结果回取](tools.md)。
 
 isError=true 是确定失败。断连、超时、取消、协议或结果错误记 UNKNOWN 并停止；取消通知不证明外部副作用回滚。调用不自动重试，过期 HTTP session 不自动重初始化重放。tools/list_changed 后停止使用旧目录，桌面 disconnect/connect 在安全边界重新发现，不替换活动 Turn schema。
 

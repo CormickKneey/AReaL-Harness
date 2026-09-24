@@ -83,7 +83,9 @@ try:
                 "isError": value == "failure",
             }
             if value == "large":
-                result["content"][0]["text"] = "x" * 17000
+                result["content"][0]["text"] = "x" * 17000 + "关键值:violet\n" + "z" * 17000
+            if value == "too-large":
+                result["content"][0]["text"] = "x" * (8 * 1024 * 1024 + 1)
             if value == "image":
                 result["content"] = [{"type": "image", "data": "AA==", "mimeType": "image/png"}]
         if result is not None:

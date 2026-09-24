@@ -55,6 +55,6 @@ await servePlugin({
 
 PluginOptions 接收 plugin、可选 config/commands/input/output；默认 stdio 为专用协议流，日志写 stderr。与 @areal/runtime 不共享连接。
 
-tools.register 仅初始化时最多 32 项；execute context 只有 signal，结果限 16 KiB。fs.resolve/stat/readText/writeText 支持 `/repo` 下普通 UTF-8 文件，限 32 KiB；写入必须 createIfAbsent 或 replaceIfVersion。观察版本按 Thread 隔离，重启/淘汰后重新读取。仅接受 tools/fs/sandboxPolicy 注入，未知 DSH 服务拒绝。
+tools.register 仅初始化时最多 32 项；execute context 只有 signal，结果限 96 KiB，仍受原有 128 KiB 传输帧约束。Core 保存较大原文，发送 16 KiB 有界文本投影并提供 read_tool_result 回取。fs.resolve/stat/readText/writeText 支持 `/repo` 下普通 UTF-8 文件，限 32 KiB；写入必须 createIfAbsent 或 replaceIfVersion。观察版本按 Thread 隔离，重启/淘汰后重新读取。仅接受 tools/fs/sandboxPolicy 注入，未知 DSH 服务拒绝。
 
 Host 使用 v1 JSONL，128 KiB 帧，10 秒握手；每调用最多 32 文件请求、16 同时在途，journal 8 KiB。同 Host 串行，Core 绑定 callId/Scope/operationId，超时/取消关闭 generation。冻结对象不是隔离，Node 代码必须可信。Native Host v2 的进程 broker 是[另一契约](native-host.md)。

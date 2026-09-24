@@ -317,8 +317,9 @@ export async function servePlugin(options: PluginOptions): Promise<void> {
           structuredContent: value,
           contentItems: rendered.map((part) => ({ type: "inputText", text: part.text })),
         };
-        if (Buffer.byteLength(JSON.stringify(response)) > 16 * 1024)
-          throw new Error("plugin result exceeds 16 KiB");
+        // 为 128 KiB 传输帧中的调用标识和协议封套保留空间。
+        if (Buffer.byteLength(JSON.stringify(response)) > 96 * 1024)
+          throw new Error("plugin result exceeds 96 KiB");
         const saved = observations.get(current.threadId) ?? new Map<string, FsObservation>();
         for (const [path, value] of current.observed) {
           if (saved.size >= 128) saved.delete(saved.keys().next().value!);

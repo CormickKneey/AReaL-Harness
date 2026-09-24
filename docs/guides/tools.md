@@ -20,11 +20,12 @@ Core 注册表将名称、JSON Schema 与内置/命令/客户端/MCP/插件后�
 | `run_command` | `command` 或 `argv` 二选一；前者经 `/bin/bash -o pipefail -c`，后者直接执行；cwd 默认 `.` |
 | `verify_command` | `argv,cwd?,timeoutMs?,yieldMs?`；直接执行、拒绝 shell 入口，必须配置独立 scratch |
 | `read_process/write_process/terminate_process` | 本 Turn 进程句柄；续读、输入与终止 |
+| `read_tool_result` | `resultId,after?=null,maxBytes?=8192`；读取本 Thread 历史调用的原始 JSON，按 nextCursor 续页，不执行原工具 |
 | `task_state` | `{}`；返回有界的已观察文件/进程/子任务/scratch 与 summaryThroughItemId，不进行实时探测 |
 
-文件最大 8 MiB，单次写/patch 64 KiB，另受每个调用参数 64 KiB 预算限制。显式 fileVersion 和 expectedSha256 互斥；SHA 为 null 表示仅新建。成功编辑返回新版本与规范路径，shell/外部编辑不自动刷新观察，CAS 冲突后需重新读取。行过长时使用 fs_read。read/search 通过同一 Scope 中的 Python/rg 执行、最长 15 秒；需要 `/usr/bin/python3` 和 PATH 中的 rg，不自动扩大沙箱权限。
+文件最大 8 MiB，单次写/patch 64 KiB，另受每个调用参数 64 KiB 预算限制。显式 fileVersion 和 expectedSha256 互斥；SHA 为 null 表示仅新建。成功编辑返回新版本与规范路径，shell/外部编辑不自动刷新观察，CAS 冲突后需重新读取。行过长时使用 fs_read。read/search 通过同一 Scope 中的 Python/rg 执行、最长 15 秒；需要可信系统 Python；rg 15.2.0 随包交付，使用 Runtime 验证后的绝对路径，不读取宿主 rg 配置或工作区外 ignore，不自动扩大沙箱权限。
 
-每个完整模型响应的调用数量受当前 Turn 剩余 `max_tool_calls` 限制，依次执行；Chat 的 index 用于关联片段，允许稀疏非负整数编号，没有小于 16 的要求。两种协议均使用可配置的 `max_tool_buffer_bytes` 缓冲预算（默认 4 MiB），累计工具 id、name 和 arguments；编号非法或预算超限时，当前响应的所有调用均不执行。工具结果最多 16 KiB，参数错误和已知命令失败返回模型处理，UNKNOWN 停止。结果报告 remainingToolCalls，剩余 ≤32 时提示收尾，并附带当前 Turn 基础墙钟预算的近似剩余值。
+每个完整模型响应的调用数量受当前 Turn 剩余 `max_tool_calls` 限制，依次执行；Chat 的 index 用于关联片段，允许稀疏非负整数编号，没有小于 16 的要求。两种协议均使用可配置的 `max_tool_buffer_bytes` 缓冲预算（默认 4 MiB），累计工具 id、name 和 arguments；编号非法或预算超限时，当前响应的所有调用均不执行。模型可见的文本结果页最多 16 KiB，参数错误和已知命令失败返回模型处理，UNKNOWN 停止。结果报告 remainingToolCalls，剩余 ≤32 时提示收尾，并附带当前 Turn 基础墙钟预算的近似剩余值。
 
 `verify_command` 将完整输出（最多 64 MiB）及 receipt 写入 scratch/verification，记录退出状态、日志与执行前后源码指纹。指纹覆盖 Git 跟踪和未忽略文件，非 Git 目录使用排除依赖/构建/缓存的扫描；源码变化使验证过期。receipt 位于任务可写目录，不是对恶意任务的认证。收尾时未结束的验证进程需要续读终态或显式终止；普通后台 run_command 不受此约束，也不会唤醒已结束 Turn。
 
@@ -40,7 +41,25 @@ Core 注册表将名称、JSON Schema 与内置/命令/客户端/MCP/插件后�
 
 `returnReason` 为 completed、waitBudget、outputLimit、outputLoss 或 outputQuiet。`commandStatus` 为 running/succeeded/failed/terminated；`outputReadComplete` / `outputClosed` 表示生产者关闭且保留输出读完，`outputIntegrity` 为 retained/incomplete，`nextAction` 提示后续操作。completed 不代替退出码检查，gap/truncated 即使读完仍表示丢失。
 
-read_process 省略 after 接续本 Turn 最近返回的游标，显式 null 从最早保留输出开始。`view="auto"` 默认折叠成功进度；`view="raw"` 返回原始页，续读时也须指定 raw。回看被折叠的内容应使用 `after=null,view="raw"`；结束游标之后没有旧内容。短进程/游标/fileVersion 句柄绑定 Turn 和目标，Core 展开后仍执行 Runtime 权限检查；格式错误返回可恢复错误，不猜测句柄。最多缓存 128 个文件版本和每进程一个当前游标别名，旧显式游标会过期。`task_state` 的 observedOnly=true 表示历史观察，不能证明当前状态；压缩保留这些缓存，Turn 结束或重启即失效。
+read_process 省略 after 接续本 Turn 最近返回的游标，显式 null 从最早保留输出开始。`view="auto"` 默认折叠成功进度；`view="raw"` 返回原始页，续读时也须指定 raw。回看已提供 rawResult 的历史页使用 `read_tool_result`；仍在 Runtime 保留的进程输出可用 `after=null,view="raw"`；结束游标之后没有旧内容。短进程/游标/fileVersion 句柄绑定 Turn 和目标，Core 展开后仍执行 Runtime 权限检查；格式错误返回可恢复错误，不猜测句柄。最多缓存 128 个文件版本和每进程一个当前游标别名，旧显式游标会过期。`task_state` 的 observedOnly=true 表示历史观察，不能证明当前状态；压缩保留这些缓存，Turn 结束或重启即失效。
+
+## 原文回取与结构视图
+
+大文本/结构化结果和需要折叠的结果在模型投影前保存为 Blob。`rawResult.resultId` 对应本 Thread 的真实调用 item，`read_tool_result` 校验归属和摘要后分页返回原始 JSON；直接传 Blob hash 或其他 Thread 的 item 无效。跨任务共享应显式导出制品。若 Turn 使用工具 allowlist，需包含 read_tool_result；缺少时禁用依赖回取的投影，并明确原文不可用。回取不刷新当前文件版本、不重跑原工具及其 hooks；回取调用自身仍经过审批和匹配的 hooks，并消耗正常工具预算。
+
+单次快照最多 8 MiB，每 Thread 最多 32 MiB，并共享 Store 的全局配额。活跃/可恢复历史引用跨重启保留，GC 按引用回收；旧记录无原文时返回 unavailable。存储失败或超限回退为有界结果，明确 `rawAvailable=false`，不会建议自动重跑有副作用的工具。进程快照只包含 Core 实际收到的页，不能恢复未读或已丢失字节；原来的 gap/truncated 状态仍有效。多模态沿用媒体引用及 16 KiB 混合结果封套上限。纯文本/结构化 MCP、命令结果最多接收 8 MiB；插件 SDK 结果限 96 KiB，仍受 128 KiB 传输帧约束。
+
+回取 `maxBytes` 为 4–8192，默认 8192 原始 UTF-8 字节；转义和元数据可能使实际页更小。使用返回的 nextCursor 续页直到 eof。它读取历史快照；`read_process` 继续观察进程，受 Runtime 缓冲保留期约束。
+
+扩展 JSON 的 `policy.resultViews` 支持 `mode: off|observe|on`，默认 observe，以及 `searchGroups`、`repeatLines` 两个独立开关（默认 true）。off 停用新增结构转换；observe 只计算候选；on 才发送通过门槛的候选。既有成功进度折叠和大结果回取不依赖这个开关。
+
+```json
+{"policy":{"resultViews":{"mode":"on","searchGroups":true,"repeatLines":true}}}
+```
+
+搜索视图 `search-groups-v1` 返回连续的 matchGroups，每组共享 path，rows 按 `[line,kind,text]` 保留全部已返回行和顺序；limited 仍要求缩小搜索。`repeat-lines-v1` 只处理已识别命令的完整输出，stdoutRuns/stderrRuns 的每项为 `[repeat,text]`，按顺序重复拼接即可还原；没有改写的流保留原字段。两者都做还原校验，完整表示至少减少 15% 且 256 字节、估算 token 不增加才启用。未知格式和无收益结果透传；不做抽样、源码删减或跨任务记忆学习。
+
+已发送的视图随历史固定，配置变化不追溯重写。`execution.outputProjection` 记录字节、token 估算、转换原因及预处理耗时；`execution.resultSnapshot` 保存 Blob 引用。observe 指标不是实际 token 节省。compaction 保留原引用，并附最近 16 个快照的回取索引；更早引用仍可读取，但不保证摘要包含它们。
 
 ## 扩展配置
 
@@ -48,7 +67,7 @@ read_process 省略 after 接续本 Turn 最近返回的游标，显式 null 从
 
 命令工具项为 `{definition:{name,description,inputSchema,outputSchema?},argv,timeoutMs}`；最多 128 个总工具，名称 1–64 ASCII 字母/数字/下划线/连字符，不能重名。schema 使用 Draft 2020-12，禁止外部 `$ref`，输入根为 object，不自动填 schema default。
 
-命令在工作区根执行，从 stdin 读取一行参数 JSON，不等待 EOF；stdout 仅输出一个 [DynamicToolResponse](../api/core.md#dynamic-tools)，stderr 写诊断。退出 0 且 success=false 表示确定业务失败；非零、超时、截断或无效结果可能已有副作用，记 UNKNOWN 并停止。stdout/stderr 各最多 16 KiB。argv 不隐式经 shell 或展开变量。
+命令在工作区根执行，从 stdin 读取一行参数 JSON，不等待 EOF；stdout 仅输出一个 [DynamicToolResponse](../api/core.md#dynamic-tools)，stderr 写诊断。退出 0 且 success=false 表示确定业务失败；非零、超时、截断或无效结果可能已有副作用，记 UNKNOWN 并停止。命令工具 stdout 最多 8 MiB、stderr 最多 16 KiB；hook stdout 仍最多 16 KiB。较大的文本/结构化结果使用上文快照投影。argv 不隐式经 shell 或展开变量。
 
 ## Hooks
 

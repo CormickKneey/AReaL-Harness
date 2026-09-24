@@ -811,7 +811,7 @@ async fn compressed_pages_can_be_replayed_raw_without_rerunning_command() {
     );
     let client = process_fixture_output(0, Some(0), None, false, raw.clone()).await;
     let argv = vec!["pytest".to_owned()];
-    let (_, compact) = process_output(
+    let (_, mut compact) = process_output(
         &client,
         "scope",
         ReadProcess {
@@ -841,6 +841,10 @@ async fn compressed_pages_can_be_replayed_raw_without_rerunning_command() {
     )
     .await
     .unwrap();
+    assert_eq!(compact["stdout"], raw);
+    assert!(compact.get("outputViewActive").is_none());
+    // 原始观察先交给持久化，模型投影不能在 Runtime 读页时丢掉原文。
+    apply_output_view(&mut compact, &argv);
     assert_eq!(compact["outputViewActive"], true);
     assert!(
         compact["stdout"]

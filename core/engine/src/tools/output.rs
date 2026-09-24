@@ -66,7 +66,7 @@ fn project_stream(kind: &str, raw: &str) -> (String, usize) {
     (text, omitted)
 }
 
-fn classify(argv: &[String]) -> Option<&'static str> {
+pub(super) fn classify(argv: &[String]) -> Option<&'static str> {
     let executable = argv.first()?.rsplit('/').next()?;
     if matches!(executable, "bash" | "sh" | "zsh") {
         let command = argv.get(argv.iter().position(|s| s == "-c")? + 1)?;

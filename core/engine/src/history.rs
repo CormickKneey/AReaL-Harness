@@ -78,6 +78,26 @@ pub(super) fn history(thread: &Thread, store: &store::Store) -> anyhow::Result<V
             });
         }
         messages.push(Message::text("assistant", format!("Work summary through item {} (only this prefix, not the latest workspace; task_state supplies current Turn handles):\n{}", checkpoint.through_item_id, checkpoint.summary)));
+        let retained: Vec<_> = items[..=index]
+            .iter()
+            .filter_map(|item| match item {
+                Item::DynamicToolCall {
+                    id,
+                    tool,
+                    execution,
+                    ..
+                } => execution
+                    .result_snapshot
+                    .as_ref()
+                    .map(|s| json!({"resultId":id,"tool":tool,"bytes":s.size_bytes})),
+                _ => None,
+            })
+            .rev()
+            .take(16)
+            .collect();
+        if !retained.is_empty() {
+            messages.push(Message::text("assistant", format!("Recent retained historical results (not current workspace state; read_tool_result reads pages without rerunning tools): {}",json!(retained))));
+        }
         index + 1
     } else {
         0

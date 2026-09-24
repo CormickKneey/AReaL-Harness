@@ -7,6 +7,7 @@ pub const MAX_ARGUMENT_BYTES: usize = crate::model::MAX_TOOL_ARGUMENT_BYTES;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields, default)]
 pub struct ToolPolicy {
+    pub result_views: ResultViewPolicy,
     pub command_wait_ms: u64,
     pub pty_wait_ms: u64,
     pub read_wait_ms: u64,
@@ -21,11 +22,39 @@ pub struct ToolPolicy {
 impl Default for ToolPolicy {
     fn default() -> Self {
         Self {
+            result_views: ResultViewPolicy::default(),
             command_wait_ms: 120_000,
             pty_wait_ms: 1000,
             read_wait_ms: 120_000,
             output_quiet_ms: 0,
             output_page_bytes: 8192,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ResultViewMode {
+    Off,
+    #[default]
+    Observe,
+    On,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields, default)]
+pub struct ResultViewPolicy {
+    pub mode: ResultViewMode,
+    pub search_groups: bool,
+    pub repeat_lines: bool,
+}
+
+impl Default for ResultViewPolicy {
+    fn default() -> Self {
+        Self {
+            mode: ResultViewMode::Observe,
+            search_groups: true,
+            repeat_lines: true,
         }
     }
 }
@@ -359,8 +388,10 @@ impl Registry {
         Ok(())
     }
     pub fn research_only(mut self) -> Self {
-        self.tools
-            .retain(|_, tool| matches!(tool.backend, Backend::Builtin));
+        self.tools.retain(|name, tool| {
+            matches!(tool.backend, Backend::Builtin)
+                || (name == "read_tool_result" && matches!(tool.backend, Backend::Core))
+        });
         self.order.retain(|name| self.tools.contains_key(name));
         self
     }
@@ -397,6 +428,19 @@ impl ToolExtensions {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn research_can_retrieve_its_own_results_without_other_desktop_tools() {
+        let registry = Registry::new(true, &ToolExtensions::default())
+            .unwrap()
+            .research_only();
+        let names: Vec<_> = registry
+            .definitions()
+            .into_iter()
+            .map(|d| d["function"]["name"].as_str().unwrap().to_owned())
+            .collect();
+        assert!(names.iter().any(|n| n == "read_tool_result"));
+        assert!(!names.iter().any(|n| n == "plan_read"));
+    }
     #[test]
     fn verification_tool_requires_deployment_scratch() {
         for available in [false, true] {

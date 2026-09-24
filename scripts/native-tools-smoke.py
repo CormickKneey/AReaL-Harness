@@ -29,6 +29,7 @@ def main():
     root = Path(__file__).resolve().parents[1]
     errors = []
     requests = []
+    recovered = {}
     with tempfile.TemporaryDirectory(prefix="areal-native-tools-") as temp:
         base = Path(temp)
         repo = base / "repo"
@@ -70,6 +71,8 @@ def main():
                     names = {tool["function"]["name"] for tool in request["tools"]}
                     assert "fs_apply_patch" not in names
                     assert "fs_apply_patches" in names
+                    assert "mcp__inventory__snapshot" in names
+                    assert "read_tool_result" in names
                     results = [
                         json.loads(m["content"]) for m in request["messages"] if m["role"] == "tool"
                     ]
@@ -102,8 +105,11 @@ def main():
                     elif n == 3:
                         assert results[2]["fileVersion"] != results[0]["fileVersion"]
                         name = "run_command"
-                        arguments = {"command": 'printf "value = 3\\n" > code.py'}
+                        arguments = {"command": 'rg --version && printf "value = 3\\n" > code.py'}
                     elif n == 4:
+                        assert (
+                            results[3]["exitCode"] == 0 and "ripgrep 15.2.0" in results[3]["stdout"]
+                        ), results[3]
                         name = "fs_apply_patches"
                         arguments = {
                             "path": "code.py",
@@ -138,8 +144,32 @@ def main():
                         assert receipt["status"] == "complete" and receipt["exitCode"] == 0, receipt
                         assert receipt["sourceUnchanged"] and receipt["logBytes"] > 16000
                         assert "outputTail" not in receipt and results[-1]["state"] == "exited"
-                        name = "image_read"
-                        arguments = {"path": "noise.png"}
+                        name = "large_fixture"
+                        arguments = {}
+                    elif results[-1].get("rawAvailable"):
+                        name = "read_tool_result"
+                        arguments = {"resultId": results[-1]["rawResult"]["resultId"]}
+                    elif results[-1].get("historicalSnapshot"):
+                        page = results[-1]
+                        pages = recovered.setdefault(page["resultId"], [])
+                        pages.append(page["text"])
+                        if not page["eof"]:
+                            name = "read_tool_result"
+                            arguments = {"resultId": page["resultId"], "after": page["nextCursor"]}
+                        else:
+                            original = json.loads("".join(pages))
+                            text = original["contentItems"][0]["text"]
+                            if text == "x" * 40000:
+                                name = "mcp__inventory__snapshot"
+                                arguments = {}
+                            else:
+                                rows = json.loads(text)
+                                assert len(rows) == 700 and rows[347] == {
+                                    "state": "active",
+                                    "value": "quartz-river-846",
+                                }
+                                name = "image_read"
+                                arguments = {"path": "noise.png"}
                     else:
                         metadata = results[-1]
                         assert metadata["sourceSha256"] == hashlib.sha256(png).hexdigest()
@@ -189,6 +219,8 @@ def main():
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         config = f"""schema_version = 1
+[tools]
+extensions_file = "tools.json"
 [model]
 name = "fixture"
 max_retries = 0
@@ -198,8 +230,36 @@ endpoint = "http://127.0.0.1:{server.server_port}/v1/chat/completions"
 api_key_env = "AREAL_API_KEY"
 [limits]
 turn_timeout_seconds = 60
-max_tool_calls = 20
+max_tool_calls = 32
 """
+        # 申请上限高于默认父 Scope，Core 应收窄额度；不能在执行前 PermissionDenied。
+        awk = 'BEGIN { printf "{\\"success\\":true,\\"contentItems\\":[{\\"type\\":\\"inputText\\",\\"text\\":\\""; for(i=0;i<40000;i++) printf "x"; print "\\"}]}"; exit }'
+        (base / "tools.json").write_text(
+            json.dumps(
+                {
+                    "tools": [
+                        {
+                            "definition": {
+                                "name": "large_fixture",
+                                "description": "Return a large immutable fixture",
+                                "inputSchema": {"type": "object", "properties": {}},
+                            },
+                            "argv": ["/usr/bin/awk", awk],
+                            "timeoutMs": 10000,
+                        }
+                    ],
+                    "mcpServers": {
+                        "inventory": {
+                            "transport": {
+                                "type": "stdio",
+                                "command": sys.executable,
+                                "args": [str(root / "tests/fixtures/inventory-mcp.py")],
+                            }
+                        }
+                    },
+                }
+            )
+        )
         (base / "config.toml").write_text(config)
         environment = {
             k: v
@@ -210,6 +270,12 @@ max_tool_calls = 20
         environment["HOME"] = str(base / "user")
         environment["AREAL_API_KEY"] = "fixture-only"
         environment["AREAL_HARNESS_HOME"] = str(base / "home")
+        # 即使宿主 PATH 的首个 rg 是坏的，任务也必须使用随包版本。
+        host_tools = base / "host-tools"
+        host_tools.mkdir()
+        (host_tools / "rg").write_text("#!/bin/sh\nexit 99\n")
+        (host_tools / "rg").chmod(0o755)
+        environment["PATH"] = str(host_tools) + os.pathsep + environment.get("PATH", "")
         try:
             done = subprocess.run(
                 [

@@ -1608,6 +1608,9 @@
                       ],
                       "type": "string"
                     },
+                    "outputProjection": {
+                      "description": "只记录转换度量，不持有另一份权威历史。"
+                    },
                     "plugin": {
                       "anyOf": [
                         {
@@ -1672,6 +1675,36 @@
                           "type": "null"
                         }
                       ]
+                    },
+                    "resultSnapshot": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "mimeType": {
+                              "type": "string"
+                            },
+                            "sizeBytes": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "uri": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "uri",
+                            "mimeType",
+                            "sizeBytes"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "当前调用准许暴露的原始结果，引用保留在权威历史中以支持恢复与 GC。"
                     },
                     "runtimeEpoch": {
                       "type": "string"
@@ -3474,6 +3507,9 @@
                       ],
                       "type": "string"
                     },
+                    "outputProjection": {
+                      "description": "只记录转换度量，不持有另一份权威历史。"
+                    },
                     "plugin": {
                       "anyOf": [
                         {
@@ -3538,6 +3574,36 @@
                           "type": "null"
                         }
                       ]
+                    },
+                    "resultSnapshot": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "mimeType": {
+                              "type": "string"
+                            },
+                            "sizeBytes": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "uri": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "uri",
+                            "mimeType",
+                            "sizeBytes"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "当前调用准许暴露的原始结果，引用保留在权威历史中以支持恢复与 GC。"
                     },
                     "runtimeEpoch": {
                       "type": "string"
@@ -4071,6 +4137,9 @@
                       ],
                       "type": "string"
                     },
+                    "outputProjection": {
+                      "description": "只记录转换度量，不持有另一份权威历史。"
+                    },
                     "plugin": {
                       "anyOf": [
                         {
@@ -4135,6 +4204,36 @@
                           "type": "null"
                         }
                       ]
+                    },
+                    "resultSnapshot": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "mimeType": {
+                              "type": "string"
+                            },
+                            "sizeBytes": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "uri": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "uri",
+                            "mimeType",
+                            "sizeBytes"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "当前调用准许暴露的原始结果，引用保留在权威历史中以支持恢复与 GC。"
                     },
                     "runtimeEpoch": {
                       "type": "string"
@@ -6859,6 +6958,9 @@
                                   ],
                                   "type": "string"
                                 },
+                                "outputProjection": {
+                                  "description": "只记录转换度量，不持有另一份权威历史。"
+                                },
                                 "plugin": {
                                   "anyOf": [
                                     {
@@ -6923,6 +7025,36 @@
                                       "type": "null"
                                     }
                                   ]
+                                },
+                                "resultSnapshot": {
+                                  "anyOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "mimeType": {
+                                          "type": "string"
+                                        },
+                                        "sizeBytes": {
+                                          "format": "uint64",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "uri": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "uri",
+                                        "mimeType",
+                                        "sizeBytes"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ],
+                                  "description": "当前调用准许暴露的原始结果，引用保留在权威历史中以支持恢复与 GC。"
                                 },
                                 "runtimeEpoch": {
                                   "type": "string"
@@ -7926,6 +8058,9 @@
                             ],
                             "type": "string"
                           },
+                          "outputProjection": {
+                            "description": "只记录转换度量，不持有另一份权威历史。"
+                          },
                           "plugin": {
                             "anyOf": [
                               {
@@ -7990,6 +8125,36 @@
                                 "type": "null"
                               }
                             ]
+                          },
+                          "resultSnapshot": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "mimeType": {
+                                    "type": "string"
+                                  },
+                                  "sizeBytes": {
+                                    "format": "uint64",
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "uri": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "uri",
+                                  "mimeType",
+                                  "sizeBytes"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "当前调用准许暴露的原始结果，引用保留在权威历史中以支持恢复与 GC。"
                           },
                           "runtimeEpoch": {
                             "type": "string"
@@ -8971,6 +9136,9 @@
                             ],
                             "type": "string"
                           },
+                          "outputProjection": {
+                            "description": "只记录转换度量，不持有另一份权威历史。"
+                          },
                           "plugin": {
                             "anyOf": [
                               {
@@ -9035,6 +9203,36 @@
                                 "type": "null"
                               }
                             ]
+                          },
+                          "resultSnapshot": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "mimeType": {
+                                    "type": "string"
+                                  },
+                                  "sizeBytes": {
+                                    "format": "uint64",
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "uri": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "uri",
+                                  "mimeType",
+                                  "sizeBytes"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "当前调用准许暴露的原始结果，引用保留在权威历史中以支持恢复与 GC。"
                           },
                           "runtimeEpoch": {
                             "type": "string"
@@ -16985,6 +17183,9 @@
                                     ],
                                     "type": "string"
                                   },
+                                  "outputProjection": {
+                                    "description": "只记录转换度量，不持有另一份权威历史。"
+                                  },
                                   "plugin": {
                                     "anyOf": [
                                       {
@@ -17049,6 +17250,36 @@
                                         "type": "null"
                                       }
                                     ]
+                                  },
+                                  "resultSnapshot": {
+                                    "anyOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "mimeType": {
+                                            "type": "string"
+                                          },
+                                          "sizeBytes": {
+                                            "format": "uint64",
+                                            "minimum": 0,
+                                            "type": "integer"
+                                          },
+                                          "uri": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "uri",
+                                          "mimeType",
+                                          "sizeBytes"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "description": "当前调用准许暴露的原始结果，引用保留在权威历史中以支持恢复与 GC。"
                                   },
                                   "runtimeEpoch": {
                                     "type": "string"
@@ -19865,6 +20096,9 @@
                                       ],
                                       "type": "string"
                                     },
+                                    "outputProjection": {
+                                      "description": "只记录转换度量，不持有另一份权威历史。"
+                                    },
                                     "plugin": {
                                       "anyOf": [
                                         {
@@ -19929,6 +20163,36 @@
                                           "type": "null"
                                         }
                                       ]
+                                    },
+                                    "resultSnapshot": {
+                                      "anyOf": [
+                                        {
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "mimeType": {
+                                              "type": "string"
+                                            },
+                                            "sizeBytes": {
+                                              "format": "uint64",
+                                              "minimum": 0,
+                                              "type": "integer"
+                                            },
+                                            "uri": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "uri",
+                                            "mimeType",
+                                            "sizeBytes"
+                                          ],
+                                          "type": "object"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ],
+                                      "description": "当前调用准许暴露的原始结果，引用保留在权威历史中以支持恢复与 GC。"
                                     },
                                     "runtimeEpoch": {
                                       "type": "string"
@@ -20923,6 +21187,9 @@
                                 ],
                                 "type": "string"
                               },
+                              "outputProjection": {
+                                "description": "只记录转换度量，不持有另一份权威历史。"
+                              },
                               "plugin": {
                                 "anyOf": [
                                   {
@@ -20987,6 +21254,36 @@
                                     "type": "null"
                                   }
                                 ]
+                              },
+                              "resultSnapshot": {
+                                "anyOf": [
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "mimeType": {
+                                        "type": "string"
+                                      },
+                                      "sizeBytes": {
+                                        "format": "uint64",
+                                        "minimum": 0,
+                                        "type": "integer"
+                                      },
+                                      "uri": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "uri",
+                                      "mimeType",
+                                      "sizeBytes"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ],
+                                "description": "当前调用准许暴露的原始结果，引用保留在权威历史中以支持恢复与 GC。"
                               },
                               "runtimeEpoch": {
                                 "type": "string"
@@ -33757,6 +34054,9 @@
                                   ],
                                   "type": "string"
                                 },
+                                "outputProjection": {
+                                  "description": "只记录转换度量，不持有另一份权威历史。"
+                                },
                                 "plugin": {
                                   "anyOf": [
                                     {
@@ -33821,6 +34121,36 @@
                                       "type": "null"
                                     }
                                   ]
+                                },
+                                "resultSnapshot": {
+                                  "anyOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "mimeType": {
+                                          "type": "string"
+                                        },
+                                        "sizeBytes": {
+                                          "format": "uint64",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "uri": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "uri",
+                                        "mimeType",
+                                        "sizeBytes"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ],
+                                  "description": "当前调用准许暴露的原始结果，引用保留在权威历史中以支持恢复与 GC。"
                                 },
                                 "runtimeEpoch": {
                                   "type": "string"
@@ -34849,6 +35179,9 @@
                             ],
                             "type": "string"
                           },
+                          "outputProjection": {
+                            "description": "只记录转换度量，不持有另一份权威历史。"
+                          },
                           "plugin": {
                             "anyOf": [
                               {
@@ -34913,6 +35246,36 @@
                                 "type": "null"
                               }
                             ]
+                          },
+                          "resultSnapshot": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "mimeType": {
+                                    "type": "string"
+                                  },
+                                  "sizeBytes": {
+                                    "format": "uint64",
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "uri": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "uri",
+                                  "mimeType",
+                                  "sizeBytes"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "当前调用准许暴露的原始结果，引用保留在权威历史中以支持恢复与 GC。"
                           },
                           "runtimeEpoch": {
                             "type": "string"
@@ -41664,6 +42027,9 @@
                                     ],
                                     "type": "string"
                                   },
+                                  "outputProjection": {
+                                    "description": "只记录转换度量，不持有另一份权威历史。"
+                                  },
                                   "plugin": {
                                     "anyOf": [
                                       {
@@ -41728,6 +42094,36 @@
                                         "type": "null"
                                       }
                                     ]
+                                  },
+                                  "resultSnapshot": {
+                                    "anyOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "mimeType": {
+                                            "type": "string"
+                                          },
+                                          "sizeBytes": {
+                                            "format": "uint64",
+                                            "minimum": 0,
+                                            "type": "integer"
+                                          },
+                                          "uri": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "uri",
+                                          "mimeType",
+                                          "sizeBytes"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "description": "当前调用准许暴露的原始结果，引用保留在权威历史中以支持恢复与 GC。"
                                   },
                                   "runtimeEpoch": {
                                     "type": "string"
@@ -44532,6 +44928,9 @@
                                   ],
                                   "type": "string"
                                 },
+                                "outputProjection": {
+                                  "description": "只记录转换度量，不持有另一份权威历史。"
+                                },
                                 "plugin": {
                                   "anyOf": [
                                     {
@@ -44596,6 +44995,36 @@
                                       "type": "null"
                                     }
                                   ]
+                                },
+                                "resultSnapshot": {
+                                  "anyOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "mimeType": {
+                                          "type": "string"
+                                        },
+                                        "sizeBytes": {
+                                          "format": "uint64",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "uri": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "uri",
+                                        "mimeType",
+                                        "sizeBytes"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ],
+                                  "description": "当前调用准许暴露的原始结果，引用保留在权威历史中以支持恢复与 GC。"
                                 },
                                 "runtimeEpoch": {
                                   "type": "string"
@@ -47421,6 +47850,9 @@
                                   ],
                                   "type": "string"
                                 },
+                                "outputProjection": {
+                                  "description": "只记录转换度量，不持有另一份权威历史。"
+                                },
                                 "plugin": {
                                   "anyOf": [
                                     {
@@ -47485,6 +47917,36 @@
                                       "type": "null"
                                     }
                                   ]
+                                },
+                                "resultSnapshot": {
+                                  "anyOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "mimeType": {
+                                          "type": "string"
+                                        },
+                                        "sizeBytes": {
+                                          "format": "uint64",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "uri": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "uri",
+                                        "mimeType",
+                                        "sizeBytes"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ],
+                                  "description": "当前调用准许暴露的原始结果，引用保留在权威历史中以支持恢复与 GC。"
                                 },
                                 "runtimeEpoch": {
                                   "type": "string"
@@ -50318,6 +50780,9 @@
                                   ],
                                   "type": "string"
                                 },
+                                "outputProjection": {
+                                  "description": "只记录转换度量，不持有另一份权威历史。"
+                                },
                                 "plugin": {
                                   "anyOf": [
                                     {
@@ -50382,6 +50847,36 @@
                                       "type": "null"
                                     }
                                   ]
+                                },
+                                "resultSnapshot": {
+                                  "anyOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "mimeType": {
+                                          "type": "string"
+                                        },
+                                        "sizeBytes": {
+                                          "format": "uint64",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "uri": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "uri",
+                                        "mimeType",
+                                        "sizeBytes"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ],
+                                  "description": "当前调用准许暴露的原始结果，引用保留在权威历史中以支持恢复与 GC。"
                                 },
                                 "runtimeEpoch": {
                                   "type": "string"
@@ -51396,6 +51891,9 @@
                             ],
                             "type": "string"
                           },
+                          "outputProjection": {
+                            "description": "只记录转换度量，不持有另一份权威历史。"
+                          },
                           "plugin": {
                             "anyOf": [
                               {
@@ -51460,6 +51958,36 @@
                                 "type": "null"
                               }
                             ]
+                          },
+                          "resultSnapshot": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "mimeType": {
+                                    "type": "string"
+                                  },
+                                  "sizeBytes": {
+                                    "format": "uint64",
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "uri": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "uri",
+                                  "mimeType",
+                                  "sizeBytes"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "当前调用准许暴露的原始结果，引用保留在权威历史中以支持恢复与 GC。"
                           },
                           "runtimeEpoch": {
                             "type": "string"
@@ -54357,6 +54885,9 @@
                             ],
                             "type": "string"
                           },
+                          "outputProjection": {
+                            "description": "只记录转换度量，不持有另一份权威历史。"
+                          },
                           "plugin": {
                             "anyOf": [
                               {
@@ -54421,6 +54952,36 @@
                                 "type": "null"
                               }
                             ]
+                          },
+                          "resultSnapshot": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "mimeType": {
+                                    "type": "string"
+                                  },
+                                  "sizeBytes": {
+                                    "format": "uint64",
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "uri": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "uri",
+                                  "mimeType",
+                                  "sizeBytes"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "当前调用准许暴露的原始结果，引用保留在权威历史中以支持恢复与 GC。"
                           },
                           "runtimeEpoch": {
                             "type": "string"
@@ -55412,6 +55973,9 @@
                       ],
                       "type": "string"
                     },
+                    "outputProjection": {
+                      "description": "只记录转换度量，不持有另一份权威历史。"
+                    },
                     "plugin": {
                       "anyOf": [
                         {
@@ -55476,6 +56040,36 @@
                           "type": "null"
                         }
                       ]
+                    },
+                    "resultSnapshot": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "mimeType": {
+                              "type": "string"
+                            },
+                            "sizeBytes": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "uri": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "uri",
+                            "mimeType",
+                            "sizeBytes"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "当前调用准许暴露的原始结果，引用保留在权威历史中以支持恢复与 GC。"
                     },
                     "runtimeEpoch": {
                       "type": "string"

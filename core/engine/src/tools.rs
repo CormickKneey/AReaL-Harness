@@ -188,12 +188,13 @@ mod output;
 mod plugin_execution;
 pub mod plugins;
 pub(crate) mod registry;
+mod results;
 pub(crate) use registry::Backend;
 mod verification;
 pub(crate) use registry::Registry;
 pub use registry::{
-    AgentToolsConfig, CommandTool, DynamicToolHost, HookDefinition, HookEvent, ToolExtensions,
-    ToolPolicy,
+    AgentToolsConfig, CommandTool, DynamicToolHost, HookDefinition, HookEvent, ResultViewMode,
+    ResultViewPolicy, ToolExtensions, ToolPolicy,
 };
 
 #[derive(Clone)]
@@ -703,6 +704,8 @@ impl Engine {
             content_items: None,
             call_id: call.id.clone(),
             execution: Box::new(ToolExecution {
+                result_snapshot: None,
+                output_projection: None,
                 backend: entry.as_ref().ok().map(|tool| {
                     match tool.backend {
                         Backend::Builtin => "runtime",
@@ -803,6 +806,15 @@ impl Engine {
             .as_str()
             .zip(result["nextCursor"].as_str())
             .map(|(process, cursor)| (process.to_owned(), cursor.to_owned()));
+        let output_argv = if result["requestedOutputView"] == "auto" {
+            let state = cell.state.lock().await;
+            result["processId"]
+                .as_str()
+                .and_then(|id| state.active.as_ref()?.handles.process_commands.get(id))
+                .cloned()
+        } else {
+            None
+        };
         if let Some(runtime) = runtime {
             cell.state
                 .lock()
@@ -844,10 +856,20 @@ impl Engine {
                 }
             }
         }
-        let custom_content = result
+        let mut custom_content = result
             .get("contentItems")
             .map(|_| extensions::content_items(&result));
-        let result = bounded_result(serde_json::to_string(&result)?);
+        let prepared = self
+            .prepare_tool_result(cell, &item_id, &call.name, &result, output_argv.as_deref())
+            .await?;
+        if prepared.value != result
+            && custom_content
+                .as_ref()
+                .is_some_and(|items| items.iter().all(|v| v["type"] == "inputText"))
+        {
+            custom_content = None;
+        }
+        let result = bounded_result(serde_json::to_string(&prepared.value)?);
         let mut state = cell.state.lock().await;
         let mut candidate = state.thread.clone();
         let item = candidate
@@ -876,6 +898,8 @@ impl Engine {
                 custom_content.unwrap_or_else(|| vec![json!({"type":"inputText","text":result})]),
             );
             execution.outcome = outcome;
+            execution.result_snapshot = prepared.snapshot;
+            execution.output_projection = Some(prepared.metrics);
             execution.duration_ms = Some(started.elapsed().as_millis() as u64);
         }
         let bytes = serde_json::to_vec(item)?.len();
@@ -1210,7 +1234,7 @@ async fn process_output(
     scope: &str,
     read: ReadProcess,
     output_quiet_ms: u64,
-    command_argv: Option<&[String]>,
+    _command_argv: Option<&[String]>,
     output_page_bytes: usize,
 ) -> rt::Result<(bool, Value)> {
     owned_process(client, scope, &read.process_id).await?;
@@ -1342,9 +1366,10 @@ async fn process_output(
     if read.view == OutputView::Auto
         && std::str::from_utf8(&stdout).is_ok()
         && std::str::from_utf8(&stderr).is_ok()
-        && let Some(argv) = command_argv
     {
-        apply_output_view(&mut result, argv);
+        result["requestedOutputView"] = json!("auto");
+    } else {
+        result["requestedOutputView"] = json!("raw");
     }
     if std::str::from_utf8(&stdout).is_err() {
         result["stdoutBase64"] = json!(STANDARD.encode(stdout));
