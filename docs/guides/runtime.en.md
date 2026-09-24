@@ -43,3 +43,5 @@ EOF, SIGINT/SIGTERM or explicit close shuts admission and awaits resources. Drop
 Each epoch retains at most 256 Scopes and 4096 operations until shutdown. Exhaustion requires normal drain/restart; deleting records cannot reuse the epoch. Helpers coordinate target files and commands coordinate write roots by default. Other Runtimes/host editors do not participate, so external CAS is not guaranteed.
 
 Validate with `make verify-runtime`; see [Cordis](../development/cordis.en.md) for component shutdown.
+
+On cancellation or startup failure, the launcher reaps Core/Runtime children before removing its internal readiness directory, preventing late child writes from racing directory cleanup.
