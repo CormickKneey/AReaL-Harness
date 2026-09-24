@@ -25,7 +25,7 @@ This page describes implemented behavior. Compilation, mechanism tests and real-
 
 ## Limitations
 
-- Full local tool execution uses macOS Seatbelt. Linux only has the controlled Docker `outer-container-perf` profile. General production Linux and Windows native Runtime support is unavailable.
+- Narrowed tool execution on macOS uses Seatbelt. Linux native uses Bubblewrap namespaces with Runtime seccomp and requires `/usr/bin/bwrap` plus user namespaces. Linux launchers support host execution in full-access mode, while the controlled Docker `outer-container-perf` profile remains the fixed benchmark workflow. Windows native Runtime support is unavailable.
 - Core, stdio MCP servers and plugin Hosts are trusted processes outside the Runtime OS sandbox. Remote services own their permissions. Approvals cannot expand deployment grants.
 - `UNKNOWN` requires inspection and is never automatically replayed. There is no cross-epoch Runtime recovery, external-writer CAS, cross-file transaction or verified cleanup of all escaped descendants.
 - A pinned Codex app-server subset and Claude CLI message adaptation do not establish full official-client compatibility. DSH support covers selected tools/filesystem services, not Core loop replacement.

@@ -3,6 +3,12 @@ use async_trait::async_trait;
 use std::{collections::BTreeMap, path::PathBuf};
 use tokio::sync::mpsc;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScopeAccess {
+    Restricted,
+    Unrestricted,
+}
+
 /// 只由已通过准入的 Supervisor 构造，执行后端不能接收公开请求中的 sandbox 对象。
 #[derive(Clone, Debug)]
 pub struct Execution {
@@ -12,6 +18,8 @@ pub struct Execution {
     pub env: BTreeMap<String, String>,
     pub read_roots: Vec<PathBuf>,
     pub write_roots: Vec<PathBuf>,
+    /// Scope 的部署授权；操作级只读不能覆盖这里记录的未收窄授权。
+    pub scope_access: ScopeAccess,
     /// Fixed deployment helper, never supplied through the public process API.
     pub trusted_executable: Option<PathBuf>,
     /// 允许命令的子进程执行这些精确文件，不授予其目录内容读取权。

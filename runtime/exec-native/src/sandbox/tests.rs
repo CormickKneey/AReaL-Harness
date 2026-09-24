@@ -44,6 +44,7 @@ impl Fixture {
             env: BTreeMap::from([("PATH".into(), "/usr/bin:/bin".into())]),
             read_roots: vec![self.allowed.clone(), self.cwd.clone()],
             write_roots: vec![self.allowed.clone()],
+            scope_access: ScopeAccess::Restricted,
             trusted_executable: None,
             builtin_executables: Vec::new(),
             tty: false,
@@ -277,6 +278,7 @@ fn full_access_executes_host_commands_but_narrowed_scopes_stay_sandboxed() {
     );
     execution.read_roots = vec![PathBuf::from("/")];
     execution.write_roots = vec![PathBuf::from("/")];
+    execution.scope_access = ScopeAccess::Unrestricted;
     execution.network = areal_runtime_protocol::NetworkRequest::Inherit;
     let argv = command(&execution, Profile::FullAccess).unwrap();
     assert_eq!(argv, execution.argv);
@@ -285,6 +287,7 @@ fn full_access_executes_host_commands_but_narrowed_scopes_stay_sandboxed() {
     assert_eq!(output.stdout, b"host");
     fs::remove_file(fixture.outside.join("new")).unwrap();
     execution.write_roots = vec![fixture.allowed.clone()];
+    execution.scope_access = ScopeAccess::Restricted;
     let argv = command(&execution, Profile::FullAccess).unwrap();
     assert_eq!(argv[0], "/usr/bin/sandbox-exec");
     assert!(!run(&argv, &execution).status.success());
