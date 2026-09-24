@@ -6,8 +6,11 @@ FROM ${RUST_IMAGE} AS runtime-builder
 
 ARG BUILD_PROFILE
 
-RUN apk add --no-cache git build-base cmake
+RUN apk add --no-cache git build-base cmake python3 curl
 WORKDIR /src
+COPY scripts/builtin-tools.py ./scripts/builtin-tools.py
+COPY upstream/pins.json ./upstream/pins.json
+RUN python3 scripts/builtin-tools.py --profile "${BUILD_PROFILE}"
 COPY Cargo.toml Cargo.lock ./
 COPY core ./core
 COPY clients ./clients
@@ -39,12 +42,12 @@ ENV PATH="/opt/areal-node/node_modules/node/bin:/opt/areal-perf-tools/bin:${PATH
 
 RUN if command -v apt-get >/dev/null; then \
       apt-get update \
-      && apt-get install -y --no-install-recommends bash ca-certificates git nodejs npm python3 ripgrep zstd bubblewrap \
+      && apt-get install -y --no-install-recommends bash ca-certificates git nodejs npm python3 zstd bubblewrap \
       && rm -rf /var/lib/apt/lists/*; \
     elif command -v apk >/dev/null; then \
-      apk add --no-cache bash ca-certificates git nodejs npm python3 ripgrep zstd bubblewrap; \
+      apk add --no-cache bash ca-certificates git nodejs npm python3 zstd bubblewrap; \
     elif command -v dnf >/dev/null; then \
-      dnf install -y bash python3.11 git ripgrep zstd bubblewrap \
+      dnf install -y bash python3.11 git zstd bubblewrap \
       && dnf clean all \
       && command -v node && command -v npm; \
     else \
@@ -66,6 +69,7 @@ RUN if [ "${INSTALL_CLAUDE_CODE}" = "1" ]; then \
     fi
 
 COPY --from=runtime-builder /src/target/${BUILD_PROFILE}/areal-runtime /usr/local/bin/areal-runtime
+COPY --from=runtime-builder /src/target/${BUILD_PROFILE}/tools /usr/local/bin/tools
 COPY --from=runtime-builder /src/target/${BUILD_PROFILE}/areal-runtime-fs /usr/local/bin/areal-runtime-fs
 COPY --from=runtime-builder /src/target/${BUILD_PROFILE}/areal-server /usr/local/bin/areal-server
 COPY --from=runtime-builder /src/target/${BUILD_PROFILE}/areal-tui /usr/local/bin/areal-tui

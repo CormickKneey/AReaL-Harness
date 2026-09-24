@@ -30,6 +30,9 @@ def main():
         "areal-service-host",
     )
     source = root / "target" / args.profile
+    subprocess.run(
+        ["python3", str(root / "scripts/builtin-tools.py"), "--profile", args.profile], check=True
+    )
     for name in names:
         if not (source / name).is_file():
             parser.error(f"missing {name}; build the selected Cargo profile first")
@@ -52,6 +55,12 @@ def main():
             capture_output=True,
         )
         files[f"bin/{name}"] = hashlib.sha256(target.read_bytes()).hexdigest()
+    shutil.copytree(source / "tools", destination / "bin/tools")
+    for path in (destination / "bin/tools").rglob("*"):
+        if path.is_file():
+            files[str(path.relative_to(destination))] = hashlib.sha256(
+                path.read_bytes()
+            ).hexdigest()
     version = subprocess.check_output([str(source / "areal"), "--version"], text=True).strip()
     manifest = {
         "manifestVersion": 1,

@@ -47,7 +47,6 @@ jobs:
         run: |
           rustup show
           if ! command -v cmake; then brew install cmake; fi
-          if ! command -v rg; then brew install ripgrep; fi
           python3 -m pip install uv==0.12.2
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Install locked dependencies
@@ -88,7 +87,6 @@ jobs:
         run: |
           rustup show
           cmake --version
-          if ! command -v rg; then sudo apt-get update && sudo apt-get install -y ripgrep; fi
           python3 -m pip install uv==0.12.2
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Install locked dependencies
@@ -174,6 +172,15 @@ jobs:
           from perf import smoke_runtime_profile
           raise SystemExit(smoke_runtime_profile('areal-ci:runtime'))
           PY
+      - name: Verify bundled search and durable result retrieval
+        run: |
+          docker run --rm --network none -e IS_SANDBOX=1 \
+            --security-opt seccomp=unconfined --security-opt systempaths=unconfined \
+            --security-opt apparmor=unconfined \
+            --mount "type=bind,source=$PWD,target=/repo,readonly" -w /repo \
+            --entrypoint python3 areal-ci:runtime scripts/native-tools-smoke.py \
+            --bin-dir /usr/local/bin --sandbox-profile outer-container-perf \
+            2>&1 | tee target/ci/native-tools.log
       - name: Verify root-only container ownership cases
         run: >-
           docker run --rm --network none --entrypoint python3

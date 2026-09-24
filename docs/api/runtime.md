@@ -16,6 +16,8 @@ UTF-8 JSONL 请求 `{id,method,params}`，响应回显 id 和 result/error，诊
 
 capabilities 描述实际 sandbox、fullAccess、rootNetwork、方法和 processLimits；不授予新权限。coreHostIsolated/processTreeCleanupVerified/directoryObjectIsolation/sandboxDenialAttribution 为 false。旧 Runtime 缺少 rootNetwork 时 Core 保守视为无网络。
 
+标准部署的 capabilities.builtinTools.rg 返回可信绝对路径与固定版本 15.2.0。daemon 启动时校验 tools/rg.json 的平台、版本和内容摘要；缺失或损坏拒绝启动，不查找宿主 rg。Supervisor 将内置工具目录置于任务 PATH 前端，并为子进程开放精确工具文件，Scope 读写边界不扩大。Core search_files 只用该能力路径；旧外部 Runtime 未提供它时返回 UNSUPPORTED 并要求升级。
+
 ## 方法
 
 | 方法 | params |

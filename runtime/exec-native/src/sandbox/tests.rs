@@ -45,6 +45,7 @@ impl Fixture {
             read_roots: vec![self.allowed.clone(), self.cwd.clone()],
             write_roots: vec![self.allowed.clone()],
             trusted_executable: None,
+            builtin_executables: Vec::new(),
             tty: false,
             pipe_stdin: false,
             network: areal_runtime_protocol::NetworkRequest::Deny,

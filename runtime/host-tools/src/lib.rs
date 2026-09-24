@@ -4,6 +4,40 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// 只读取可信部署目录；不搜索 PATH，也不在运行时下载或回落宿主工具。
+pub fn bundled_rg(bin_dir: &Path) -> io::Result<PathBuf> {
+    use sha2::{Digest, Sha256};
+    use std::os::unix::fs::PermissionsExt;
+    let invalid = || {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid builtin rg; run make build or reinstall the complete Harness bundle",
+        )
+    };
+    let directory = bin_dir.canonicalize()?.join("tools");
+    let path = directory.join("rg");
+    if path.canonicalize().map_err(|_| invalid())? != path
+        || !path.is_file()
+        || std::fs::metadata(&path)?.permissions().mode() & 0o111 == 0
+    {
+        return Err(invalid());
+    }
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.join("rg.json")).map_err(|_| invalid())?)
+            .map_err(|_| invalid())?;
+    let digest = format!("{:x}", Sha256::digest(std::fs::read(&path)?));
+    if manifest["manifestVersion"] != 1
+        || manifest["version"] != "15.2.0"
+        || manifest["sourceSha256"]
+            != "7605249d3eb0d5f170e3414498e3344e26b1e7a147aec518b57090b80036a562"
+        || manifest["platform"] != format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
+        || manifest["sha256"] != digest
+    {
+        return Err(invalid());
+    }
+    Ok(path)
+}
+
 /// Core 工具与 Runtime 命令使用同一解释器和路径校验规则。
 pub fn system_python() -> io::Result<PathBuf> {
     #[cfg(target_os = "macos")]
@@ -109,6 +143,49 @@ pub fn is_macos_system_python(python: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bundled_rg_rejects_missing_tampered_and_foreign_deployments() {
+        use sha2::{Digest, Sha256};
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        assert!(bundled_rg(&root).is_err());
+        let directory = root.join("tools");
+        std::fs::create_dir(&directory).unwrap();
+        let executable = directory.join("rg");
+        std::fs::write(&executable, b"fixture executable").unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let manifest = serde_json::json!({"manifestVersion":1,"version":"15.2.0",
+            "sourceSha256":"7605249d3eb0d5f170e3414498e3344e26b1e7a147aec518b57090b80036a562",
+            "platform":format!("{}-{}",std::env::consts::OS,std::env::consts::ARCH),
+            "sha256":format!("{:x}",Sha256::digest(b"fixture executable"))});
+        let metadata = directory.join("rg.json");
+        std::fs::write(&metadata, manifest.to_string()).unwrap();
+        assert_eq!(bundled_rg(&root).unwrap(), executable);
+        for (field, value) in [
+            ("version", "old"),
+            ("platform", "foreign"),
+            ("sha256", "wrong"),
+            ("sourceSha256", "wrong"),
+        ] {
+            let mut changed = manifest.clone();
+            changed[field] = serde_json::json!(value);
+            std::fs::write(&metadata, changed.to_string()).unwrap();
+            assert!(bundled_rg(&root).is_err(), "{field}");
+        }
+        std::fs::write(&metadata, manifest.to_string()).unwrap();
+        std::fs::write(&executable, b"tampered executable").unwrap();
+        assert!(bundled_rg(&root).is_err());
+        std::fs::write(&executable, b"fixture executable").unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(bundled_rg(&root).is_err());
+        let elsewhere = root.join("external-rg");
+        std::fs::rename(&executable, &elsewhere).unwrap();
+        std::fs::set_permissions(&elsewhere, std::fs::Permissions::from_mode(0o755)).unwrap();
+        symlink(&elsewhere, &executable).unwrap();
+        assert!(bundled_rg(&root).is_err());
+    }
 
     #[test]
     fn clt_discovery_does_not_require_developer_dir_link() {
