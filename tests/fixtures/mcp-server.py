@@ -72,6 +72,19 @@ try:
                         "visible": os.getenv("MCP_VISIBLE"),
                         "hidden": os.getenv("MCP_HIDDEN"),
                         "cwd": os.getcwd(),
+                        "proxy": {
+                            key: os.getenv(key)
+                            for key in (
+                                "HTTP_PROXY",
+                                "HTTPS_PROXY",
+                                "ALL_PROXY",
+                                "NO_PROXY",
+                                "http_proxy",
+                                "https_proxy",
+                                "all_proxy",
+                                "no_proxy",
+                            )
+                        },
                     }
                 )
                 if value == "environment"

@@ -6,12 +6,26 @@
 
 ## 启动
 
+产品命令统一为 `areal`。源码构建后使用 `target/debug/areal`；发行包只把 `bin/areal` 加入 PATH。子命令的选项放在子命令之后。
+
+| 命令 | 行为 |
+|---|---|
+| `areal [PROMPT]` | 打开 TUI；可选首条消息在会话就绪后提交一次 |
+| `areal exec [PROMPT]` | 非交互执行，支持文本、JSON 和 stream-json |
+| `areal serve` | 前台启动 Core + Runtime，由同一 launcher 负责清理 |
+| `areal app-server` | 直接启动 Core 服务，Runtime 连接需显式部署 |
+| `areal config show/validate` | 查看脱敏配置或校验配置，不启动服务 |
+| `areal service` / `areal web` | 共享服务管理与 Web 启动 |
+| `areal workgroup run/inspect` | 隔离任务组执行与状态检查 |
+
+迁移：`areal-tui …` 改为 `areal …`；`areal-server …` 改为 `areal app-server …`；其 `config` 命令改为 `areal config …`；`areal-workgroup …` 改为 `areal workgroup …`。旧独立可执行文件不再构建或发布。`areal -p/--print …` 保留原非交互协议，等价于 `areal exec …`。无参数 `areal` 现在打开 TUI；自动化应显式使用 `exec` 或 `-p`。`--prompt`、`--goal`、`--input-file` 保留原 TUI headless 行为，与位置参数 PROMPT 互斥。
+
 ```sh
-make tui
-make tui ARGS='--resume THREAD_ID'
-make tui ARGS='--workspace /absolute/task --prompt "Describe the task"'
+target/debug/areal
+target/debug/areal --resume THREAD_ID
+target/debug/areal exec --workspace /absolute/task 'Describe the task'
 # 连接已有服务；使用它的数据目录中的认证文件
-make tui ARGS='--endpoint ws://127.0.0.1:4500 --auth-file /absolute/core-data/security/auth.json'
+target/debug/areal --endpoint ws://127.0.0.1:4500 --auth-file /absolute/core-data/security/auth.json
 ```
 
 省略 endpoint 时，交互式 TUI 连接共享 Core/Runtime，监听随机 loopback 端口。同一工作区多个窗口复用服务，关闭窗口保留后台服务和任务。`--prompt`、`--goal`、`--input-file` 默认使用 owned 模式，退出后清理所拥有的服务；`--local-mode shared|owned` 可覆盖默认选择。显式 endpoint（别名 `--remote`）只连接已有服务，不能与本地部署参数混用。
@@ -26,7 +40,7 @@ target/debug/areal service restart --json
 target/debug/areal service stop --json
 ```
 
-`areal -p 'prompt' --output-format stream-json --verbose` 提供非交互 CLI，`areal serve` 启动持续服务；参数、认证、恢复与退出码见 [CLI 契约](../api/claude-cli.md)。Web 位于服务的 `/ui`，使用服务数据目录 `security/auth.json` 中的本地 token 登录。
+`areal exec 'prompt' --output-format stream-json --verbose` 提供非交互 CLI，`areal serve` 启动持续服务；参数、认证、恢复与退出码见 [CLI 契约](../api/claude-cli.md)。Web 位于服务的 `/ui`；通过 `areal web` 打开会自动登录，无需复制 token。直接打开地址且没有有效会话时，可在设置中填写服务数据目录 `security/auth.json` 中的本地 token。
 
 TUI 的 `--input-file /absolute/input.json` 与 `--prompt` 互斥，接受最多 2 MiB 的 Core Input 数组，如 `[{"type":"text","text":"Inspect the image"},{"type":"localImage","path":"/absolute/image.png"}]`。本地模式和显式 endpoint 均支持，可信 launcher 可用 `--tui --input-file` 透传；媒体路径与字段仍按 [Core API](../api/core.md) 验证。
 
@@ -35,7 +49,7 @@ TUI 的 `--input-file /absolute/input.json` 与 `--prompt` 互斥，接受最多
 Web 采用中性灰工作台布局：240px 可收起侧栏、任务标题与视图标签、居中会话内容，以及圆角输入框。浅色和深色外观对齐 AReaLGameAgent 的工作台；默认跟随系统，也可在侧栏底部「设置 → 外观」切换，偏好保存在当前浏览器。窄屏使用可关闭的任务导航抽屉。
 
 - 通过侧栏新建、切换、刷新或分页加载任务；新任务显示居中的输入区域，产生记录后输入框固定在底部。
-- 在「设置 → 本地连接」输入访问令牌；认证失败时在设置内显示错误。连接断开后可重新认证连接并恢复当前任务快照。
+- `areal web` 自动登录；一次性链接 60 秒有效，会话 1 小时有效。失效或服务重启后重新运行该命令，也可在「设置 → 本地连接」输入访问令牌；错误在设置内显示。有效会话可刷新页面恢复连接和任务快照。
 - Enter 发送，Shift + Enter 换行；输入法确认候选字不发送。运行中可以追加说明或停止执行。
 - 输入框上方的「持续目标」可展开查看预算与进度、创建或编辑目标、暂停、恢复和清除；有活动 Goal 时停止按钮暂停目标，自动续轮保留来源标记。
 - 「任务记录」展示消息和可展开的工具结果；UNKNOWN 工具结果仍需记录检查说明。「协同任务与验收」保留计划提交、进度查询、取消和调整入口。
@@ -91,7 +105,7 @@ export OTEL_EXPORTER_OTLP_PROTOCOL='http/protobuf'
 make server
 ```
 
-OTLP 仅支持 HTTP/protobuf；未设置 endpoint 不启用，`OTEL_SDK_DISABLED=true` 可关闭。默认 span 记录 ID、usage、状态和时长，不采集提示正文或凭据。上报失败不改变 Turn 结果。
+OTLP 仅支持 HTTP/protobuf；未设置 endpoint 不启用，`OTEL_SDK_DISABLED=true` 可关闭。轨迹记录实际模型输入输出、工具参数与结果，以及 ID、usage、状态和时长，不执行脱敏。上报失败不改变 Turn 结果；完整配置见[轨迹上报](configuration.md#opentelemetry-轨迹上报)。
 
 <a id="goals"></a>
 ## Goal 模式
@@ -102,9 +116,17 @@ OTLP 仅支持 HTTP/protobuf；未设置 endpoint 不启用，`OTEL_SDK_DISABLED
 
 ```sh
 make tui ARGS='--goal "完成模块迁移并通过相关测试" --goal-token-budget 200000'
-target/debug/areal-tui --endpoint ws://127.0.0.1:4500 --goal '检查代码并整理迁移建议'
+target/debug/areal --endpoint ws://127.0.0.1:4500 --goal '检查代码并整理迁移建议'
 ```
 
 `--goal` 与 `--prompt` / `--input-file` 互斥，可用 `--resume THREAD_ID` 在已有空闲 Thread 中创建新 Goal。headless 跨 Turn 等待目标终态，仅 completed 返回成功；其他停止状态返回非零并输出目标 JSON 和原因。远端 headless 退出或断连不取消服务器上的 Goal；owned 本地 launcher 退出会关闭所拥有的 Core，shared 模式仅断开连接。通过交互式 `/open` 和 `/goal-resume` 恢复已停止目标。普通 `--prompt`、Claude CLI 入口保持单次执行语义。
 
 Core 重启后 active 目标恢复为 paused/serverRestarted，`thread/resume` 只恢复订阅，不自动运行。未知模型消费不会补零；显式 Goal resume 确认保守预留并继续保留该消费。工具 UNKNOWN 仍须检查和 acknowledge。预算、活动时间、轮次或历史容量耗尽时停止，不自动重试。预算配置见 [执行策略](configuration.md#goals)，接口字段见 [Core API](../api/core.md#goals)。
+
+## 后台任务与 Inbox
+
+Core 提供统一的 [Task Mode API](../api/tasks.md)，可创建前台、定时和后台任务。前台 Goal 的模型也可异步提问，任务频道与执行会话分开；通过 inbox/list 找到问题，用 channel/reply 回答。Web 的「后台与定时」提供任务创建、进度、频道、暂停、恢复和取消；侧栏「收件箱」是独立入口，无需打开执行会话即可回复。TUI 的专用 Inbox 面板仍待接入；API 客户端应使用 channel/reply，不把异步问题提交给 interaction/respond。
+
+后台任务可选择异步提问或无人值守。定时任务绑定当前选中的会话，使用本地日期时间创建一次性触发，或填写固定重复间隔；默认无人值守。无人值守只是交互策略，普通 headless 对话与 Goal 不会自动创建定时调度。任务控制受理后等待状态结算；暂停期间回复不会解除暂停。刷新收件箱保留当前表单草稿，页面重载后可重新查询持久问题。
+
+TUI headless 与无双向应答通道的 Claude CLI 使用 headless 交互策略；明确启用双向 stream-json 的 CLI 保留宿主应答，dontAsk 仍禁止等待。headless 中：问题立即返回不可用，必须人工批准的工具立即拒绝，模型继续其他工作或报告 blocker。要让任务在窗口关闭后运行，连接持续存活的共享或外部 Core 服务；owned launcher 退出仍会关闭其服务。

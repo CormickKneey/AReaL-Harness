@@ -155,6 +155,9 @@
         <button id="more" class="secondary" type="button" hidden>加载更多任务</button>
       </div>
       <div class="sidebar-footer">
+        <button id="inbox-open" class="settings-button" type="button" hidden>
+          <svg aria-hidden="true"><use href="#icon-folder"></use></svg><span>收件箱</span>
+        </button>
         <p id="connection" role="status" data-state="connecting">正在连接…</p>
         <button id="settings-open" class="settings-button" type="button" title="设置">
           <svg aria-hidden="true"><use href="#icon-settings"></use></svg><span>设置</span>
@@ -203,6 +206,17 @@
             tabindex="-1"
           >
             协同任务与验收
+          </button>
+          <button
+            id="tasks-tab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="task-center"
+            tabindex="-1"
+            hidden
+          >
+            后台与定时
           </button>
         </div>
       </header>
@@ -288,7 +302,59 @@
         </form>
         <section id="groups" aria-label="协同任务列表"></section>
       </section>
+      <section id="task-center" role="tabpanel" aria-labelledby="tasks-tab" hidden>
+        <div class="panel-heading">
+          <div>
+            <h2>后台与定时任务</h2>
+            <p class="muted">关闭页面后继续执行，问题与回复保存在独立收件箱。</p>
+          </div>
+          <button id="tasks-refresh" type="button" class="secondary">刷新任务列表</button>
+        </div>
+        <details id="task-create-panel" class="task-card" open>
+          <summary>创建任务</summary>
+          <form id="task-create-form">
+            <label for="task-mode">执行方式</label>
+            <select id="task-mode">
+              <option value="background">立即在后台执行</option>
+              <option value="scheduled">定时执行</option>
+            </select>
+            <label for="task-objective">任务与验收条件</label>
+            <textarea id="task-objective" rows="3" maxlength="4000" required></textarea>
+            <label for="task-interaction">需要你提供信息时</label>
+            <select id="task-interaction">
+              <option value="asynchronous">发送到收件箱，先继续其他工作</option>
+              <option value="headless">无人值守，不等待回复</option>
+            </select>
+            <div id="task-schedule-fields" hidden>
+              <p id="task-binding" class="muted"></p>
+              <label for="task-at">首次执行时间（本地时间）</label>
+              <input id="task-at" type="datetime-local" step="1" />
+              <label for="task-interval">重复间隔（秒，留空只执行一次）</label>
+              <input id="task-interval" type="number" min="1" max="31536000" step="1" />
+              <p class="muted">到达时间时 Core 服务须保持运行。</p>
+            </div>
+            <label for="task-budget">总 Token 预算（留空不设置）</label>
+            <input id="task-budget" type="number" min="1" step="1" />
+            <button id="task-create" type="submit">创建并运行</button>
+            <p id="task-create-status" role="status"></p>
+          </form>
+        </details>
+        <section id="task-list" aria-label="后台与定时任务列表"></section>
+        <button id="tasks-more" type="button" class="secondary" hidden>加载更多后台任务</button>
+        <section id="task-detail" class="task-card" aria-label="任务详情" hidden></section>
+      </section>
     </main>
+    <dialog id="inbox-dialog" aria-labelledby="inbox-title">
+      <div class="dialog-heading">
+        <h2 id="inbox-title">收件箱</h2>
+        <button id="inbox-close" type="button" class="secondary">关闭收件箱</button>
+      </div>
+      <p class="muted">直接回复任务提出的问题，无需打开它的执行会话。</p>
+      <button id="inbox-refresh" type="button" class="secondary">刷新收件箱</button>
+      <p id="inbox-notice" role="status"></p>
+      <section id="inbox-list" aria-label="待回答的问题"></section>
+      <button id="inbox-more" type="button" class="secondary" hidden>加载更多问题</button>
+    </dialog>
     <dialog id="settings-dialog" aria-labelledby="settings-title">
       <div class="dialog-heading">
         <h2 id="settings-title">设置</h2>
@@ -312,7 +378,7 @@
       </div>
       <form id="login">
         <h3>本地连接</h3>
-        <p class="muted">使用服务提供的本地访问令牌连接工作区。</p>
+        <p class="muted">通过 areal web 启动可自动连接；也可输入本地访问令牌。</p>
         <label for="access-token">本地访问令牌</label>
         <input id="access-token" type="password" autocomplete="off" required />
         <p id="login-error" role="alert"></p>

@@ -107,13 +107,18 @@ pub async fn execute(command: ServiceCommand) -> Result<()> {
 pub async fn web(local: LocalArgs, json: bool) -> Result<()> {
     let service = areal_local_service::ensure(&LaunchSpec::resolve(&local)?).await?;
     if !json {
+        let login_url = areal_local_service::browser_login_url(&service).await?;
         let opener = if cfg!(target_os = "macos") {
             "/usr/bin/open"
         } else {
             "/usr/bin/xdg-open"
         };
         let result = tokio::process::Command::new(opener)
-            .arg(&service.web_url)
+            .arg(&login_url)
+            // 打开失败时系统工具可能回显完整 URL，不能将登录码写入终端或日志。
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .status()
             .await?;
         ensure!(

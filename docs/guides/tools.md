@@ -107,3 +107,7 @@ read_process 省略 after 接续本 Turn 最近返回的游标，显式 null 从
 父 Agent 是唯一源码写入者。Worker 使用同一模型配置、独立上下文与内置工具，只能写 `workspace://scratch/agent-<thread-id>`；命令 TMPDIR 与验证 receipt 使用该目录，Runtime Scope/OS 沙箱强制源码只读。不继承命令扩展、hooks、动态客户端工具、MCP 或插件。完整历史在独立 Thread，source=nativeResearchAgent 恢复相同权限；没有源码快照隔离或多写入者合并，父任务须核实报告及最终检查。
 
 委派时机、数量和内容由模型决定，无固定阶段或 case ID 分支。未准入 Worker 的空 scratch 仅用 remove_dir 回滚；成功准入后的证据保留，由调用方采集/清理，取消只回收执行资源。通用、委派与压缩指令分别见 [instructions](../../core/engine/src/instructions.md)、[agent-instructions](../../core/engine/src/agent-instructions.md) 和 [summary-instructions](../../core/engine/src/summary-instructions.md)。
+
+## Task 通信与后台 worker
+
+Goal/Task 中 ask_user_question 支持 mode=async；提问持久写入独立频道并立即返回，模型可继续其他工作。task_channel_read 查看消息，task_wait 在无其他工作时释放协调 Turn，task_spawn 创建跨协调 Turn 存活、共享 Goal 预算的 worker。普通 agent_spawn 仍属于父 Turn。headless 不等待用户或人工审批，但可等待 worker。参数、权限和生命周期见 [Task 契约](../api/tasks.md)。

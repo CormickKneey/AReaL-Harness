@@ -29,7 +29,10 @@ mod ui;
 
 #[derive(Parser)]
 #[command(version, about = "AReaL-Harness terminal workspace")]
-struct Args {
+pub struct Args {
+    /// 启动交互界面后提交的首条消息。
+    #[arg(value_name = "PROMPT", conflicts_with_all = ["prompt", "goal", "input_file"])]
+    initial_prompt: Option<String>,
     /// Connect to an existing Core instead of starting a local Harness.
     #[arg(long, visible_alias = "remote", conflicts_with = "LocalArgs")]
     endpoint: Option<String>,
@@ -78,15 +81,13 @@ impl Drop for TerminalGuard {
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let mut args = Args::parse();
+pub async fn run(mut args: Args) -> Result<()> {
     anyhow::ensure!(
         args.prompt.is_some()
             || args.goal.is_some()
             || args.input_file.is_some()
             || std::io::stdin().is_terminal(),
-        "interactive TUI requires a terminal; use --prompt or --input-file for scripts"
+        "interactive TUI requires a terminal; use areal exec, --prompt or --input-file for scripts"
     );
     let prefs = if args.prompt.is_none() && args.goal.is_none() && args.input_file.is_none() {
         Some(Preferences::load(&args.ui)?)
@@ -151,6 +152,7 @@ async fn interactive(
     terminal: &mut ratatui::DefaultTerminal,
     args: &Args,
 ) -> Result<()> {
+    let mut initial_prompt = args.initial_prompt.clone();
     let mut events = EventStream::new();
     let mut redraw = tokio::time::interval(Duration::from_millis(50));
     redraw.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -162,6 +164,16 @@ async fn interactive(
     let mut next_retry = Instant::now();
     let mut retry_seconds = 1;
     loop {
+        // 只在首个会话快照就绪后提交一次；断线恢复不重放已经发送的消息。
+        if app.connected
+            && app.current().is_some()
+            && let Some(prompt) = initial_prompt.take()
+        {
+            app.input = prompt;
+            if app.submit()? {
+                return Ok(());
+            }
+        }
         if app.connected
             && app.restart_ready
             && updating.is_none()

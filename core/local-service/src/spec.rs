@@ -184,16 +184,16 @@ impl LaunchSpec {
         );
         let bin_dir = bin_dir.canonicalize()?;
         let mut binaries = BTreeMap::new();
-        let rg = areal_runtime_host_tools::bundled_rg(&bin_dir)
+        let rg = areal_runtime_host_tools::bundled_rg(&crate::runtime_bin_dir(&bin_dir))
             .context("builtin rg deployment check failed")?;
         binaries.insert("builtin-rg", storage::file_digest(&rg)?);
-        for name in [
-            "areal-server",
-            "areal-runtime",
-            "areal-runtime-fs",
-            "areal-service-host",
-        ] {
-            let path = bin_dir
+        for name in ["areal", "areal-runtime", "areal-runtime-fs"] {
+            let directory = if name == "areal" {
+                bin_dir.clone()
+            } else {
+                crate::runtime_bin_dir(&bin_dir)
+            };
+            let path = directory
                 .join(name)
                 .canonicalize()
                 .with_context(|| format!("missing {name}; run make build"))?;

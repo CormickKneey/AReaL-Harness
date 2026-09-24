@@ -23,7 +23,7 @@ fs2 = "0.4.3"
 futures-util = "0.3.32"
 jsonschema = { version = "0.33.0", default-features = false }
 ratatui = { version = "0.30.0", default-features = false, features = ["crossterm"] }
-reqwest = { version = "0.12.28", default-features = false, features = ["json", "stream", "rustls-tls", "rustls-tls-native-roots"] }
+reqwest = { version = "0.12.28", default-features = false, features = ["json", "stream", "rustls-tls", "rustls-tls-native-roots", "socks"] }
 rustix = { version = "1.1.4", features = ["fs"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
@@ -37,13 +37,16 @@ tokio-util = { version = "0.7.18", features = ["rt", "codec"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "json"] }
 tracing-opentelemetry = { version = "0.33.0", default-features = false }
-opentelemetry = { version = "0.32.0", default-features = false, features = ["trace"] }
-opentelemetry_sdk = { version = "0.32.1", default-features = false, features = ["trace"] }
-opentelemetry-otlp = { version = "0.32.0", default-features = false, features = ["http-proto", "reqwest-blocking-client", "trace"] }
+opentelemetry = { version = "0.32.0", default-features = false, features = ["trace", "logs"] }
+opentelemetry_sdk = { version = "0.32.1", default-features = false, features = ["trace", "logs"] }
+opentelemetry-otlp = { version = "0.32.0", default-features = false, features = ["http-proto", "reqwest-blocking-client", "trace", "logs"] }
 url = "2.5.8"
 uuid = { version = "1.22.0", features = ["v4"] }
 unicode-segmentation = "1.12.0"
 unicode-width = "0.2.2"
+areal-tui = { path = "clients/tui" }
+areal-server = { path = "core/server" }
+areal-service-host = { path = "core/service-host" }
 areal-mcp = { path = "core/mcp" }
 areal-protocol = { path = "core/protocol" }
 areal-config = { path = "core/config" }

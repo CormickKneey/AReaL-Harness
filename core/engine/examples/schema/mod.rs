@@ -56,7 +56,7 @@ pub fn projections() -> (Value, Value) {
         json!({"id":string,"revision":number,"directoryRevision":number,"config":schema::<areal_mcp::ServerConfig>(),"state":{"enum":["disconnected","connecting","connected","failed","stale","cleanupFailed"]},"error":nullable(string.clone()),"tools":nullable(array(schema::<ToolDefinition>()))}),
     );
     let status = object(
-        json!({"configuration":nullable(object(json!({"modelRevision":string,"restartRequired":boolean,"error":nullable(string.clone())}))),"apiVersion":{"const":API_VERSION},"stateVersion":number,"productVersion":string,"draining":boolean,"closed":boolean,"acceptingWork":boolean,"activeGoals":array(string.clone()),"pendingQueueItems":number,"activeTurns":array(object(json!({"threadId":string,"turnId":string}))),"resources":array(object(json!({"threadId":string,"id":string,"state":string,"epoch":string}))),"unresolvedTools":array(object(json!({"threadId":string,"itemId":string}))),"compactions":array(string.clone()),"workgroups":array(group_entry.clone()),"runtime":nullable(any_object.clone()),"capacity":object(json!({"threads":number,"maxThreads":number,"activeTurns":number,"maxActiveTurns":number,"historyBytesPerThread":number,"blobBytes":number})),"restartSafe":boolean}),
+        json!({"configuration":nullable(object(json!({"modelRevision":string,"restartRequired":boolean,"error":nullable(string.clone())}))),"apiVersion":{"const":API_VERSION},"stateVersion":number,"productVersion":string,"draining":boolean,"closed":boolean,"acceptingWork":boolean,"activeTasks":number,"activeGoals":array(string.clone()),"pendingQueueItems":number,"activeTurns":array(object(json!({"threadId":string,"turnId":string}))),"resources":array(object(json!({"threadId":string,"id":string,"state":string,"epoch":string}))),"unresolvedTools":array(object(json!({"threadId":string,"itemId":string}))),"compactions":array(string.clone()),"workgroups":array(group_entry.clone()),"runtime":nullable(any_object.clone()),"capacity":object(json!({"threads":number,"maxThreads":number,"activeTurns":number,"maxActiveTurns":number,"historyBytesPerThread":number,"blobBytes":number})),"restartSafe":boolean}),
     );
     let context = object(
         json!({"threadId":string,"view":{"const":"historyProjectionForNextRequest"},"systemInstructionsIncluded":boolean,"instructionSnapshot":nullable(string.clone()),"checkpoint":nullable(schema::<ContextCheckpoint>()),"offset":number,"nextOffset":nullable(number.clone()),"data":array(object(json!({"role":string,"text":string,"toolCalls":array(any_object.clone()),"toolCallId":nullable(string.clone()),"opaqueProviderContextOmitted":boolean,"media":array(string.clone())})))}),
@@ -67,6 +67,57 @@ pub fn projections() -> (Value, Value) {
             responses.insert(format!("areal/{name}"), value.clone());
         }
     };
+    let mut task_view = schema::<areal_protocol::tasks::Task>();
+    task_view["properties"]
+        .as_object_mut()
+        .unwrap()
+        .remove("messages");
+    task_view["required"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|v| v != "messages");
+    task_view["properties"]["pendingQuestions"] = number.clone();
+    task_view["required"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("pendingQuestions"));
+    let task_event = object(
+        json!({"taskId":string,"revision":number,"channelSequence":number,"runId":nullable(string.clone()),"task":task_view}),
+    );
+    insert(
+        &[
+            "task/create",
+            "task/read",
+            "task/subscribe",
+            "task/pause",
+            "task/resume",
+            "task/cancel",
+        ],
+        task_view.clone(),
+    );
+    insert(&["task/unsubscribe"], object(json!({"removed":boolean})));
+    insert(
+        &["task/list"],
+        object(json!({"data":array(task_view),"nextCursor":nullable(string.clone())})),
+    );
+    insert(
+        &["inbox/list"],
+        object(
+            json!({"data":array(object(json!({"taskId":string,"objective":string,"message":schema::<areal_protocol::tasks::ChannelMessage>()}))),"nextCursor":nullable(string.clone())}),
+        ),
+    );
+    insert(
+        &["channel/read"],
+        object(
+            json!({"taskId":string,"channelSequence":number,"data":array(schema::<areal_protocol::tasks::ChannelMessage>()),"nextSequence":number,"hasMore":boolean}),
+        ),
+    );
+    insert(
+        &["channel/reply"],
+        object(
+            json!({"accepted":boolean,"messageId":string,"taskId":string,"runId":string,"channelSequence":number}),
+        ),
+    );
     let goal_view = object(
         json!({"threadId":string,"revision":number,"eventSequence":number,"goal":nullable(schema::<areal_protocol::goals::Goal>())}),
     );
@@ -83,7 +134,7 @@ pub fn projections() -> (Value, Value) {
     insert(
         &["goal/create"],
         object(
-            json!({"threadId":string,"revision":number,"eventSequence":number,"goal":schema::<areal_protocol::goals::Goal>(),"turnId":string}),
+            json!({"threadId":string,"revision":number,"eventSequence":number,"goal":schema::<areal_protocol::goals::Goal>(),"turnId":string,"taskId":string,"runId":string}),
         ),
     );
     insert(
@@ -286,6 +337,7 @@ pub fn projections() -> (Value, Value) {
     responses.insert("model/list".into(),object(json!({"data":array(object(json!({"id":string,"model":string,"displayName":string,"description":string,"hidden":boolean,"isDefault":boolean,"defaultReasoningEffort":string,"supportedReasoningEfforts":array(any_object.clone()),"inputModalities":array(string.clone()),"arealCapabilities":object(json!({"inputModalities":array(string.clone()),"outputModalities":array(string.clone())}))}))),"nextCursor":nullable(string.clone())})));
     let mut notifications = serde_json::Map::new();
     notifications.insert("areal/server/configurationChanged".into(), object(json!({"threadId":string,"configuration":object(json!({"modelRevision":string,"restartRequired":boolean,"error":nullable(string.clone())}))})));
+    notifications.insert("areal/task/updated".into(), task_event);
     notifications.insert("areal/goal/updated".into(), goal_view);
     notifications.insert("areal/goal/cleared".into(),object(json!({"threadId":string,"revision":number,"eventSequence":number,"goal":nullable(schema::<areal_protocol::goals::Goal>()),"goalId":string})));
     notifications.insert("thread/started".into(), object(json!({"thread":thread})));

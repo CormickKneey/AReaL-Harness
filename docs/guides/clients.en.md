@@ -6,12 +6,26 @@ Complete the [quickstart](quickstart.en.md) first. Clients share Core history; R
 
 ## Launch
 
+The product command is `areal`. Use `target/debug/areal` after a source build; add only the bundle's `bin` directory to PATH. Place subcommand options after the subcommand.
+
+| Command | Behavior |
+|---|---|
+| `areal [PROMPT]` | Open the TUI; submit an optional initial message once the session is ready |
+| `areal exec [PROMPT]` | Run noninteractively with text, JSON or stream-json output |
+| `areal serve` | Start foreground Core + Runtime with cleanup owned by the launcher |
+| `areal app-server` | Start Core directly; Runtime connections require explicit deployment |
+| `areal config show/validate` | Inspect redacted configuration or validate it without starting services |
+| `areal service` / `areal web` | Manage shared services or open Web |
+| `areal workgroup run/inspect` | Run isolated workgroups or inspect their state |
+
+Migration: replace `areal-tui …` with `areal …`, `areal-server …` with `areal app-server …`, its `config` command with `areal config …`, and `areal-workgroup …` with `areal workgroup …`. The old standalone executables are no longer built or distributed. `areal -p/--print …` retains the existing noninteractive protocol and is equivalent to `areal exec …`. Bare `areal` now opens the TUI; automation must select `exec` or `-p`. `--prompt`, `--goal` and `--input-file` retain the original TUI headless behavior and conflict with positional PROMPT.
+
 ```sh
-make tui
-make tui ARGS='--resume THREAD_ID'
-make tui ARGS='--workspace /absolute/task --prompt "Describe the task"'
+target/debug/areal
+target/debug/areal --resume THREAD_ID
+target/debug/areal exec --workspace /absolute/task 'Describe the task'
 # Connect using the authentication file in the existing Core data directory
-make tui ARGS='--endpoint ws://127.0.0.1:4500 --auth-file /absolute/core-data/security/auth.json'
+target/debug/areal --endpoint ws://127.0.0.1:4500 --auth-file /absolute/core-data/security/auth.json
 ```
 
 Without an endpoint, interactive TUI attaches to a shared Core/Runtime on a random loopback port. Multiple windows in the same workspace reuse it; closing a window leaves service and tasks running. `--prompt`, `--goal` and `--input-file` default to owned mode and clean up on exit. `--local-mode shared|owned` overrides this choice. Explicit endpoint (alias `--remote`) only connects and cannot be combined with local deployment arguments.
@@ -26,7 +40,7 @@ target/debug/areal service restart --json
 target/debug/areal service stop --json
 ```
 
-`areal -p 'prompt' --output-format stream-json --verbose` provides noninteractive CLI operation; `areal serve` starts a persistent service. See the [CLI contract](../api/claude-cli.en.md) for arguments, authentication, resume and exit codes. Web is served at `/ui`; log in with the local token from `security/auth.json` in the service data directory.
+`areal exec 'prompt' --output-format stream-json --verbose` provides noninteractive CLI operation; `areal serve` starts a persistent service. See the [CLI contract](../api/claude-cli.en.md) for arguments, authentication, resume and exit codes. Web is served at `/ui`; `areal web` opens it and signs in automatically without copying a token. Direct visits without a valid session can use the local token from `security/auth.json` in the service data directory.
 
 TUI `--input-file /absolute/input.json` is mutually exclusive with `--prompt` and accepts a Core Input array up to 2 MiB, for example `[{"type":"text","text":"Inspect the image"},{"type":"localImage","path":"/absolute/image.png"}]`. Both local and explicit-endpoint modes support it; the trusted launcher forwards `--tui --input-file`. Media paths and fields remain subject to [Core API](../api/core.en.md) validation.
 
@@ -35,7 +49,7 @@ TUI `--input-file /absolute/input.json` is mutually exclusive with `--prompt` an
 Web uses a neutral workbench layout: a collapsible 240px sidebar, a task heading with view tabs, centered conversation content, and a rounded composer. Its light and dark appearance follows the AReaLGameAgent workbench. It follows the system by default; use “Settings → Appearance” at the bottom of the sidebar to override it. The preference is stored in the current browser. Narrow screens use a dismissible navigation drawer.
 
 - Create, select, refresh, or paginate tasks from the sidebar. New tasks center the composer; once history exists, the composer stays at the bottom.
-- Enter the access token in “Settings → Local connection”. Authentication errors appear inside settings. After a disconnect, authenticate again to reconnect and restore the current task snapshot.
+- `areal web` signs in automatically. One-time links last 60 seconds and sessions last one hour. After expiry or service restart, run the command again or enter a token in “Settings → Local connection”; errors appear in settings. With a valid session, reload to reconnect and restore the task snapshot.
 - Enter sends; Shift + Enter inserts a newline. Confirming an input-method candidate does not send. While a task runs, send additional instructions or stop execution.
 - Expand “Persistent goal” above the composer to inspect budget and progress, create or edit a goal, pause, resume, or clear it. The stop button pauses an active Goal; automatic continuation Turns retain their source label.
 - “Task history” displays messages and expandable tool results; UNKNOWN tool results still require an inspection record. “Collaborative tasks and acceptance” retains plan submission, progress queries, cancellation, and revision controls.
@@ -91,7 +105,7 @@ export OTEL_EXPORTER_OTLP_PROTOCOL='http/protobuf'
 make server
 ```
 
-OTLP supports HTTP/protobuf only. It is disabled without an endpoint and can be disabled with `OTEL_SDK_DISABLED=true`. Default spans contain IDs, usage, status and timing rather than prompt bodies or credentials. Export failure does not change Turn outcomes.
+OTLP supports HTTP/protobuf only. It is disabled without an endpoint and can be disabled with `OTEL_SDK_DISABLED=true`. Trajectories contain actual model inputs/outputs and tool arguments/results, together with IDs, usage, status and timing, without redaction. Export failure does not change Turn outcomes; see [reporting configuration](configuration.en.md#opentelemetry-trajectory-reporting).
 
 <a id="goals"></a>
 ## Goal mode
@@ -102,9 +116,17 @@ Clients display status, token usage, active time, Turn count and stop reasons, a
 
 ```sh
 make tui ARGS='--goal "Complete the module migration and pass its tests" --goal-token-budget 200000'
-target/debug/areal-tui --endpoint ws://127.0.0.1:4500 --goal 'Inspect the code and prepare migration recommendations'
+target/debug/areal --endpoint ws://127.0.0.1:4500 --goal 'Inspect the code and prepare migration recommendations'
 ```
 
 `--goal` conflicts with `--prompt`/`--input-file`. `--resume THREAD_ID` can create a new Goal in an existing idle Thread. Headless mode waits across Turns, exits successfully only for completed, and prints Goal JSON/reasons with a nonzero exit for other stopped states. Remote headless exit/disconnection does not cancel server execution; owned local launcher exit shuts down its Core; shared mode only disconnects. Use interactive `/open` and `/goal-resume` for stopped Goals. Ordinary `--prompt` and Claude CLI retain single-execution semantics.
 
 Core restart restores active Goals as paused/serverRestarted; `thread/resume` does not restart them. Unknown model usage retains its reservation; explicit Goal resume acknowledges it without erasing consumption. Tool UNKNOWN still needs inspection and acknowledgement. Budget, active-time, Turn or history exhaustion stops execution without automatic retry. See [configuration](configuration.en.md#goals) and [Core API](../api/core.en.md#goals).
+
+## Background tasks and Inbox
+
+Core exposes a unified [Task Mode API](../api/tasks.en.md) for foreground, scheduled and background work. Models may ask asynchronously even inside foreground Goals; the Task Channel is separate from execution conversations. Find questions with inbox/list and answer with channel/reply. The Web Background and schedules tab provides creation, progress, channels, pause, resume and cancellation. The sidebar Inbox is independent of the selected execution conversation. A dedicated TUI Inbox panel remains to be integrated; API clients use channel/reply rather than interaction/respond for asynchronous answers.
+
+Background tasks can use asynchronous questions or headless execution. Schedules bind to the selected conversation, accept a local date/time and an optional fixed repeat interval, and default to headless. Headless is an interaction policy; ordinary headless conversations and Goals do not automatically create schedules. Accepted controls still need execution to settle; replying while paused does not resume a task. Refreshing the Inbox retains current form drafts, while a full page reload can retrieve durable questions again.
+
+TUI headless and Claude CLI without a bidirectional response channel use headless interaction policy. Explicit bidirectional stream-json retains host responses; dontAsk still forbids waiting. In headless mode, questions immediately return unavailable and tools requiring human approval are denied, allowing other work or a blocker report. To continue after closing a window, use a persistent shared or external Core service; an owned launcher still shuts down its service on exit.

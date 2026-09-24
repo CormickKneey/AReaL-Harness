@@ -18,6 +18,7 @@ impl Engine {
         !self.is_closed() && !self.desktop.lifecycle.draining.load(Ordering::Acquire)
     }
     pub async fn server_status(&self) -> Value {
+        let active_tasks = self.task_active_count().await;
         let cells: Vec<_> = self.threads.read().await.values().cloned().collect();
         let mut active = Vec::new();
         let mut resources = Vec::new();
@@ -85,7 +86,7 @@ impl Engine {
             g.iter()
                 .any(|g| g["status"] == "running" || g["cleanupConfirmed"] != true)
         });
-        json!({"configuration":self.configuration_status.read().unwrap().clone(),"activeGoals":active_goals,"pendingQueueItems":pending_queue_items,"compactions":compacting,"workgroups":groups,"apiVersion":API_VERSION,"stateVersion":crate::store::STATE_VERSION,"productVersion":env!("CARGO_PKG_VERSION"),"draining":self.desktop.lifecycle.draining.load(Ordering::Acquire),"closed":self.is_closed(),"acceptingWork":self.accepting_work(),"activeTurns":active,"resources":resources,"unresolvedTools":unknown,"runtime":runtime,"capacity":{"threads":cells.len(),"maxThreads":self.limits.max_threads,"activeTurns":self.limits.max_active_turns-self.active_turns.available_permits(),"maxActiveTurns":self.limits.max_active_turns,"historyBytesPerThread":self.limits.max_history_bytes,"blobBytes":512*1024*1024u64},"restartSafe":active.is_empty()&&resources.is_empty()&&unknown.is_empty()&&compacting.is_empty()&&!unsettled})
+        json!({"configuration":self.configuration_status.read().unwrap().clone(),"activeTasks":active_tasks,"activeGoals":active_goals,"pendingQueueItems":pending_queue_items,"compactions":compacting,"workgroups":groups,"apiVersion":API_VERSION,"stateVersion":crate::store::STATE_VERSION,"productVersion":env!("CARGO_PKG_VERSION"),"draining":self.desktop.lifecycle.draining.load(Ordering::Acquire),"closed":self.is_closed(),"acceptingWork":self.accepting_work(),"activeTurns":active,"resources":resources,"unresolvedTools":unknown,"runtime":runtime,"capacity":{"threads":cells.len(),"maxThreads":self.limits.max_threads,"activeTurns":self.limits.max_active_turns-self.active_turns.available_permits(),"maxActiveTurns":self.limits.max_active_turns,"historyBytesPerThread":self.limits.max_history_bytes,"blobBytes":512*1024*1024u64},"restartSafe":active.is_empty()&&resources.is_empty()&&unknown.is_empty()&&compacting.is_empty()&&!unsettled})
     }
     pub async fn drain(self: &Arc<Self>, strategy: String, timeout_ms: u64) -> Result<Value> {
         if !matches!(strategy.as_str(), "wait" | "cancel" | "ifIdle") || timeout_ms > 60000 {
@@ -102,6 +103,7 @@ impl Engine {
                 if status["restartSafe"] != true
                     || status["activeGoals"] != json!([])
                     || status["pendingQueueItems"] != 0
+                    || status["activeTasks"] != 0
                 {
                     return Err(invalid(
                         "service is busy; wait for work to settle or stop with --cancel",
@@ -113,6 +115,7 @@ impl Engine {
                 .lifecycle
                 .draining
                 .store(true, Ordering::Release);
+            engine.drain_task_modes().await?;
             let cells: Vec<_> = engine.threads.read().await.values().cloned().collect();
             for cell in &cells {
                 let mut state = cell.state.lock().await;

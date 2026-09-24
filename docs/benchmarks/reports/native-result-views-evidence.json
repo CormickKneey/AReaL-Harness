@@ -10,7 +10,7 @@
     "credentials_and_endpoint": "omitted"
   },
   "limitations": [
-    "139 attempts retained including invalid fixtures and earlier defects; use the final 42 attempts for final conclusions.",
+    "146 attempts retained: 139 during development plus seven post-merge correctness regressions. Paired performance conclusions still use the frozen 42 final pre-merge attempts.",
     "No MM480 task reruns are included.",
     "Complete private model traces are not public. Digests and per-attempt measurements support auditing, not complete independent reproduction.",
     "Elapsed tests overlapped local verification/build work. Latencies are descriptive, not isolated CPU benchmarks.",
@@ -7079,6 +7079,413 @@
           "prompt_sha256": "b2af482f24b22f66dbf6b5293775c95780d9125262bcaf4431b8207df81acf5a"
         }
       ]
+    },
+    {
+      "name": "merged-regression",
+      "interpretation": "Post-merge correctness regression after integrating main 3bf7613 and unified areal CLI. Seven single-variant attempts, all completed and correct. Not a new paired performance comparison.",
+      "plan": {
+        "suite": "native-tool-mechanism-probes-v2",
+        "view_modes": {
+          "native": "on"
+        },
+        "seed": 163,
+        "repeat": 1,
+        "jobs": 2,
+        "timeout": 180,
+        "direct": true,
+        "model": "grok-4.7",
+        "model_settings": {
+          "name": "grok-4.7",
+          "provider": "grok",
+          "protocol": "chat-completions"
+        },
+        "model_settings_sha256": "d376d51501f6374dc65c759e31467efbc05465d9afa941e58abef5e93c691c47",
+        "runner_sha256": "541d123f5d0d3264fe19eab427ec0f07d807240a9c2c4d7d6607272b2f28261e",
+        "platform": "macOS-26.3.2-arm64-arm-64bit-Mach-O",
+        "python": "3.14.2",
+        "pytest": "pytest 8.4.2",
+        "schedule": [
+          {
+            "variant": "native",
+            "case": "pricing",
+            "repeat": 0
+          },
+          {
+            "variant": "native",
+            "case": "failure-context",
+            "repeat": 0
+          },
+          {
+            "variant": "native",
+            "case": "repeat-log",
+            "repeat": 0
+          },
+          {
+            "variant": "native",
+            "case": "output-tail",
+            "repeat": 0
+          },
+          {
+            "variant": "native",
+            "case": "batch-edit",
+            "repeat": 0
+          },
+          {
+            "variant": "native",
+            "case": "snapshot",
+            "repeat": 0
+          },
+          {
+            "variant": "native",
+            "case": "search-groups",
+            "repeat": 0
+          }
+        ],
+        "binaries": {
+          "native": {
+            "areal": "4804b950d859de9110bbcf20c45044398ce4a1663fde87e39a9d8c5e88033ede",
+            "areal-runtime": "cf124481946b419d158665196301e5555e7456e653977bb875d42fa07cf2f0d2",
+            "areal-runtime-fs": "3532cfef66ef072dc9a388f93738b84903e76d8df0c4919424ae6ac46e3215e4",
+            "launch.py": "9139753c4ef6a2944be356702d3d6f591178eb15995fe949c93369bb976ed95b",
+            "tools/rg": "9dc8299506bf8e6e29ce00405291fd13abb993ebd259987325c459b0f8d61729",
+            "tools/rg.json": "a08bfe3b18d00dff0b61161bba66f41ac58bd5e708a0fd8117a61aaa667e12c9"
+          }
+        },
+        "fixtures": {
+          "pricing": "e9a0a7d46ce96991815f59959a83267f71f09ae2e64bef7a85ed417d67237522",
+          "output-tail": "6f44291f136491860fb6e93b39d12d81786980bcd33e6ea34b80ab4c71a397d4",
+          "failure-context": "ce406695ef7a538b8250739564fcbbafc1c7d36c53ba46a6a8bffe17eaf1b223",
+          "batch-edit": "4308ad1c6ff792a5ec265ad41d5bda102870f9c167e62d679d24953b13e8b92c",
+          "search-groups": "324eff1311cdc108bb05e8925fa54006330025659d4274cd0019743092336d8a",
+          "repeat-log": "7c6d85ca0781d2fa897ee09949ebd0c9c794a6d81a68c38d7e63e6e911629080",
+          "snapshot": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+        },
+        "mcp_fixture_sha256": "d80383d0114cfb9256110960bac8a7d3967f2f49ec1ba73fbbdc2a61c3fb7842"
+      },
+      "results": [
+        {
+          "trial_id": "pricing-0-native",
+          "variant": "native",
+          "case": "pricing",
+          "repeat": 0,
+          "elapsed_s": 25.684,
+          "exit_code": 0,
+          "timed_out": false,
+          "completed": true,
+          "grade": {
+            "correct": true,
+            "tests_unchanged": true,
+            "exit_code": 0,
+            "stderr": ""
+          },
+          "usage": {
+            "inputTokens": 57228,
+            "cachedInputTokens": 32128,
+            "outputTokens": 370,
+            "reasoningTokens": null
+          },
+          "observed_partial_usage": {
+            "inputTokens": 57228,
+            "cachedInputTokens": 32128,
+            "outputTokens": 370,
+            "reasoningTokens": 43
+          },
+          "unknown_usage_requests": 0,
+          "model_requests": 6,
+          "model_ms": 14502,
+          "tool_calls": 7,
+          "tool_counts": {
+            "fs_list": 1,
+            "search_files": 1,
+            "read_file": 2,
+            "fs_apply_patches": 1,
+            "verify_command": 1,
+            "run_command": 1
+          },
+          "tool_errors": 0,
+          "result_bytes": 6443,
+          "output_views": 0,
+          "request_bytes": 207234,
+          "usage_complete": true,
+          "fixture_sha256": "e9a0a7d46ce96991815f59959a83267f71f09ae2e64bef7a85ed417d67237522",
+          "prompt_sha256": "3743167d107084d2d1517ae3c2794faf6006ed55e1df3bc3509c1b61e2261b39"
+        },
+        {
+          "trial_id": "failure-context-0-native",
+          "variant": "native",
+          "case": "failure-context",
+          "repeat": 0,
+          "elapsed_s": 30.365,
+          "exit_code": 0,
+          "timed_out": false,
+          "completed": true,
+          "grade": {
+            "correct": true,
+            "tests_unchanged": true,
+            "exit_code": 0,
+            "stderr": ""
+          },
+          "usage": {
+            "inputTokens": 68205,
+            "cachedInputTokens": 46848,
+            "outputTokens": 821,
+            "reasoningTokens": null
+          },
+          "observed_partial_usage": {
+            "inputTokens": 68205,
+            "cachedInputTokens": 46848,
+            "outputTokens": 821,
+            "reasoningTokens": 250
+          },
+          "unknown_usage_requests": 0,
+          "model_requests": 6,
+          "model_ms": 20055,
+          "tool_calls": 8,
+          "tool_counts": {
+            "run_command": 2,
+            "fs_list": 1,
+            "read_tool_result": 2,
+            "read_file": 2,
+            "fs_apply_patches": 1
+          },
+          "tool_errors": 1,
+          "result_bytes": 18024,
+          "output_views": 2,
+          "request_bytes": 251966,
+          "usage_complete": true,
+          "fixture_sha256": "ce406695ef7a538b8250739564fcbbafc1c7d36c53ba46a6a8bffe17eaf1b223",
+          "prompt_sha256": "df010a363ca96a97956e9ff8031408a1cea63895e2b842566b90d11d983a409d"
+        },
+        {
+          "trial_id": "repeat-log-0-native",
+          "variant": "native",
+          "case": "repeat-log",
+          "repeat": 0,
+          "elapsed_s": 13.175,
+          "exit_code": 0,
+          "timed_out": false,
+          "completed": true,
+          "grade": {
+            "correct": true,
+            "tests_unchanged": true,
+            "exit_code": 0,
+            "stderr": ""
+          },
+          "usage": {
+            "inputTokens": 45341,
+            "cachedInputTokens": 30720,
+            "outputTokens": 387,
+            "reasoningTokens": null
+          },
+          "observed_partial_usage": {
+            "inputTokens": 45341,
+            "cachedInputTokens": 30720,
+            "outputTokens": 387,
+            "reasoningTokens": 57
+          },
+          "unknown_usage_requests": 0,
+          "model_requests": 5,
+          "model_ms": 11283,
+          "tool_calls": 6,
+          "tool_counts": {
+            "run_command": 2,
+            "fs_list": 1,
+            "read_file": 2,
+            "fs_apply_patches": 1
+          },
+          "tool_errors": 1,
+          "result_bytes": 4013,
+          "output_views": 0,
+          "request_bytes": 164966,
+          "usage_complete": true,
+          "fixture_sha256": "7c6d85ca0781d2fa897ee09949ebd0c9c794a6d81a68c38d7e63e6e911629080",
+          "prompt_sha256": "b2af482f24b22f66dbf6b5293775c95780d9125262bcaf4431b8207df81acf5a"
+        },
+        {
+          "trial_id": "output-tail-0-native",
+          "variant": "native",
+          "case": "output-tail",
+          "repeat": 0,
+          "elapsed_s": 32.23,
+          "exit_code": 0,
+          "timed_out": false,
+          "completed": true,
+          "grade": {
+            "correct": true,
+            "tests_unchanged": true,
+            "exit_code": 0,
+            "stderr": ""
+          },
+          "usage": {
+            "inputTokens": 77926,
+            "cachedInputTokens": 27008,
+            "outputTokens": 1341,
+            "reasoningTokens": null
+          },
+          "observed_partial_usage": {
+            "inputTokens": 77926,
+            "cachedInputTokens": 27008,
+            "outputTokens": 1341,
+            "reasoningTokens": 900
+          },
+          "unknown_usage_requests": 0,
+          "model_requests": 8,
+          "model_ms": 29703,
+          "tool_calls": 9,
+          "tool_counts": {
+            "run_command": 2,
+            "read_process": 2,
+            "search_files": 1,
+            "fs_list": 1,
+            "read_file": 2,
+            "fs_apply_patches": 1
+          },
+          "tool_errors": 1,
+          "result_bytes": 8008,
+          "output_views": 4,
+          "request_bytes": 286511,
+          "usage_complete": true,
+          "fixture_sha256": "6f44291f136491860fb6e93b39d12d81786980bcd33e6ea34b80ab4c71a397d4",
+          "prompt_sha256": "87ff2e417384acf6d87190b7490332a60bc30e2cc9c81145f47f27fa1d2350fb"
+        },
+        {
+          "trial_id": "batch-edit-0-native",
+          "variant": "native",
+          "case": "batch-edit",
+          "repeat": 0,
+          "elapsed_s": 28.529,
+          "exit_code": 0,
+          "timed_out": false,
+          "completed": true,
+          "grade": {
+            "correct": true,
+            "tests_unchanged": true,
+            "exit_code": 0,
+            "stderr": ""
+          },
+          "usage": {
+            "inputTokens": 74547,
+            "cachedInputTokens": 55680,
+            "outputTokens": 1451,
+            "reasoningTokens": null
+          },
+          "observed_partial_usage": {
+            "inputTokens": 74547,
+            "cachedInputTokens": 55680,
+            "outputTokens": 1451,
+            "reasoningTokens": 71
+          },
+          "unknown_usage_requests": 0,
+          "model_requests": 7,
+          "model_ms": 25589,
+          "tool_calls": 8,
+          "tool_counts": {
+            "search_files": 1,
+            "fs_list": 1,
+            "read_file": 2,
+            "fs_apply_patches": 2,
+            "verify_command": 1,
+            "fs_read": 1
+          },
+          "tool_errors": 1,
+          "result_bytes": 8705,
+          "output_views": 0,
+          "request_bytes": 265868,
+          "usage_complete": true,
+          "fixture_sha256": "4308ad1c6ff792a5ec265ad41d5bda102870f9c167e62d679d24953b13e8b92c",
+          "prompt_sha256": "1aeedf0d358e859b798671584341f22345f48952ec5a0b5cb924b510528ede57"
+        },
+        {
+          "trial_id": "search-groups-0-native",
+          "variant": "native",
+          "case": "search-groups",
+          "repeat": 0,
+          "elapsed_s": 16.172,
+          "exit_code": 0,
+          "timed_out": false,
+          "completed": true,
+          "grade": {
+            "correct": true,
+            "tests_unchanged": true,
+            "exit_code": 0,
+            "stderr": ""
+          },
+          "usage": {
+            "inputTokens": 55573,
+            "cachedInputTokens": 24320,
+            "outputTokens": 568,
+            "reasoningTokens": null
+          },
+          "observed_partial_usage": {
+            "inputTokens": 55573,
+            "cachedInputTokens": 24320,
+            "outputTokens": 568,
+            "reasoningTokens": 303
+          },
+          "unknown_usage_requests": 0,
+          "model_requests": 5,
+          "model_ms": 14258,
+          "tool_calls": 5,
+          "tool_counts": {
+            "search_files": 3,
+            "read_tool_result": 1,
+            "fs_write": 1
+          },
+          "tool_errors": 0,
+          "result_bytes": 15977,
+          "output_views": 0,
+          "request_bytes": 206077,
+          "usage_complete": true,
+          "fixture_sha256": "324eff1311cdc108bb05e8925fa54006330025659d4274cd0019743092336d8a",
+          "prompt_sha256": "b7edd17651d32cd1c38882b3acd19714300c9587f37c1875ffe4f06775ed6c42"
+        },
+        {
+          "trial_id": "snapshot-0-native",
+          "variant": "native",
+          "case": "snapshot",
+          "repeat": 0,
+          "elapsed_s": 34.459,
+          "exit_code": 0,
+          "timed_out": false,
+          "completed": true,
+          "grade": {
+            "correct": true,
+            "tests_unchanged": true,
+            "exit_code": 0,
+            "stderr": "",
+            "answer_correct": true,
+            "retrieval_protocol_correct": true
+          },
+          "usage": {
+            "inputTokens": 224777,
+            "cachedInputTokens": 104576,
+            "outputTokens": 1000,
+            "reasoningTokens": null
+          },
+          "observed_partial_usage": {
+            "inputTokens": 224777,
+            "cachedInputTokens": 104576,
+            "outputTokens": 1000,
+            "reasoningTokens": 363
+          },
+          "unknown_usage_requests": 0,
+          "model_requests": 10,
+          "model_ms": 31489,
+          "tool_calls": 9,
+          "tool_counts": {
+            "mcp__inventory__snapshot": 1,
+            "read_tool_result": 7,
+            "fs_create": 1
+          },
+          "tool_errors": 0,
+          "result_bytes": 76991,
+          "output_views": 0,
+          "request_bytes": 947821,
+          "usage_complete": true,
+          "fixture_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+          "prompt_sha256": "e6c5122ec316da993200b082edea003e9a95b1f438ede7346307cf2e439305b2"
+        }
+      ]
     }
   ],
   "final_native_telemetry": [
@@ -8592,5 +8999,6 @@
         "original_score": 1
       }
     ]
-  }
+  },
+  "integrated_main_revision": "3bf7613"
 }

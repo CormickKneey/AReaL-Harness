@@ -6,20 +6,22 @@ This page describes implemented behavior. Compilation, mechanism tests and real-
 
 | Capability | Implementation and entry point |
 |---|---|
+| Task Mode and channels | foreground/scheduled/background, durable TaskRuns, independent Inbox replies, headless without human waits, and task_spawn workers surviving coordinator Turns under shared budgets. Web includes task controls, schedule creation and an independent Inbox. [API](api/tasks.en.md) |
 | Sessions and models | Persistent Threads/Turns, streaming text, Chat Completions reasoning and Responses reasoning summary/text events, steering, cancellation and resume; Chat Completions / Responses, with modalities constrained by adapter and model. [Clients](guides/clients.en.md) |
 | Files and processes | Conditional writes, commands, stdin, PTYs, bounded output, narrowing Scopes and cleanup. [Runtime](api/runtime.en.md) |
 | Tool results | Bundled pinned rg, paged original historical results, and configurable search grouping/exact repeated-line views, defaulting to observe. [Tools](guides/tools.en.md) |
 | Tool extensions | Command tools, hooks, client callbacks, MCP stdio/Streamable HTTP and trusted Node plugin Hosts. [Tools](guides/tools.en.md) |
+| Network proxies | HTTP/HTTPS/SOCKS5 proxies, authentication and NO_PROXY for models, HTTP MCP and OTLP; trusted stdio MCP/plugin Hosts inherit proxy variables. [Configuration](guides/configuration.en.md#proxies) |
 | Multiple agents | Model delegation, independent histories, shared workspace, checkpoints and result aggregation. [Agent design](design/multi-agent.en.md) |
 | Workgroups | DAGs, isolated writable workspaces, artifact verification and integration; fixed/auto/adaptive admission through CLI and service. [Guide](guides/workgroups.en.md) |
 | Permissions | Default local YOLO; configurable ASK_PERMISSIONS; TUI/Web approvals, exact session/project grants, automatic Thread scratch. [Configuration](guides/configuration.en.md#permissions) |
 | Desktop interface | Authentication, Profiles/Skills/Plans, approvals/questions, submission receipts and queues, shared terminals, configuration CAS, model switching, media Blobs, archiving and GC. [Desktop API](api/desktop.en.md) |
-| Clients | CLI, TUI and local Web; TUI has Unicode cursor editing and common input shortcuts, persistent errors, grouped traces collapsed by default, mouse/keyboard expansion and commentary/final phases; selected Claude Code noninteractive arguments and messages. [CLI contract](api/claude-cli.en.md) |
+| Clients | Unified `areal` command (default TUI, exec, app-server, config, workgroup, service, web) and local Web; TUI has Unicode cursor editing and common input shortcuts, persistent errors, grouped traces collapsed by default, mouse/keyboard expansion and commentary/final phases; selected Claude Code noninteractive arguments and messages. [CLI contract](api/claude-cli.en.md) |
 | Skills | Discovery and explicit Profiles share metadata registration and on-demand body/attachment reads; invalid individual global Skills are isolated with warnings, without content snapshots. [Skill guide](guides/skills.en.md) |
 | Persistent Goals | Explicit creation through `/goal` or other clients, with no configuration toggle; automatic continuation across Turns, pause/resume/edit/clear and user-input priority; root/child Agents, Workgroups and summaries share accounting. [Client guide](guides/clients.en.md#goals) · [API](api/core.en.md#goals) |
-| Shared local services | Multiple TUI windows and Web reuse one Core/Runtime; public JSON discovery/control for Desktop Main, workspace isolation, model configuration reload, safe idle restart, explicit stop and crash cleanup. [Contract](api/local-service.en.md) |
+| Shared local services | Multiple TUI windows and Web reuse one Core/Runtime; local Web launches sign in automatically with one-time codes; public JSON discovery/control for Desktop Main, workspace isolation, model configuration reload, safe idle restart, explicit stop and crash cleanup. [Contract](api/local-service.en.md) |
 | SDKs | Private in-repository `@areal/runtime` and `@areal/plugins` packages; Node.js 22.19.0+. [SDK contracts](api/typescript-sdk.en.md) |
-| Observability and validation | tracing and optional OTLP; deterministic regression tests, native smoke tests and Docker lite/pro benchmarks. [Testing](development/testing.en.md) |
+| Observability and validation | Standard OpenTelemetry Traces and Events/Logs, full trajectory export through standard OTEL configuration (OTLP HTTP/protobuf); deterministic regression tests, native smoke tests and Docker lite/pro benchmarks. [Configuration](guides/configuration.en.md) · [Testing](development/testing.en.md) |
 
 ## Limitations
 

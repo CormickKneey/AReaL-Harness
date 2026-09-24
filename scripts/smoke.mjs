@@ -19,6 +19,7 @@ const fixtureEnv = {
       ([key]) =>
         !key.startsWith("AREAL_HARNESS_") &&
         !key.startsWith("AREAL_MODEL") &&
+        !key.startsWith("OTEL_") &&
         key !== "AREAL_API_KEY",
     ),
   ),
@@ -35,7 +36,8 @@ const collector = createServer(async (req, res) => {
   traces.push({
     url: req.url,
     type: req.headers["content-type"],
-    bytes: Buffer.concat(body).length,
+    body: Buffer.concat(body),
+    authorization: req.headers.authorization,
   });
   res.writeHead(200);
   res.end();
@@ -88,8 +90,8 @@ async function start() {
     `schema_version = 1\n[model]\nname = "test"\n[model.providers.default]\nendpoint = "http://127.0.0.1:${model.address().port}/v1/chat/completions"\napi_key_env = "SMOKE_MODEL_KEY"\n`,
   );
   const child = launch(
-    "areal-server",
-    ["--config", configPath, "--listen", "127.0.0.1:0", "--data-dir", directory],
+    "areal",
+    ["app-server", "--config", configPath, "--listen", "127.0.0.1:0", "--data-dir", directory],
     {
       SMOKE_MODEL_KEY: "fixture-key",
       RUST_LOG: "warn",
@@ -99,6 +101,8 @@ async function start() {
       OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf",
       OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: "http/protobuf",
       OTEL_SERVICE_NAME: "areal-smoke",
+      OTEL_RESOURCE_ATTRIBUTES: "service.namespace=trajectory-smoke",
+      OTEL_EXPORTER_OTLP_HEADERS: "authorization=Bearer%20collector-fixture",
     },
   );
   let stderr = "";
@@ -123,7 +127,7 @@ async function start() {
   return { child, endpoint, stderr: () => stderr };
 }
 function prompt(endpoint, text, resume) {
-  const child = launch("areal-tui", [
+  const child = launch("areal", [
     "--auth-file",
     join(directory, "security/auth.json"),
     "--endpoint",
@@ -175,13 +179,15 @@ try {
       "python3",
       [
         "scripts/tui-pty-smoke.py",
-        resolve("target/debug/areal-tui"),
+        resolve("target/debug/areal"),
         "--endpoint",
         server.endpoint,
         "--auth-file",
         join(directory, "security/auth.json"),
+        "--",
+        "pty-initial",
       ],
-      { env: { ...process.env, AREAL_PTY_MODEL_SWITCH: "1" } },
+      { env: { ...process.env, AREAL_PTY_MODEL_SWITCH: "1", AREAL_PTY_INITIAL_PROMPT: "1" } },
     ),
   );
   let ptyOutput = "";
@@ -190,6 +196,7 @@ try {
   const [ptyCode] = await once(pty, "close");
   assert.equal(ptyCode, 0, ptyOutput);
   process.stdout.write(ptyOutput);
+  assert.equal(requests.filter((r) => r.messages.at(-1).content === "pty-initial").length, 1);
   assert(
     requests.some((r) => r.model === "alternate" && r.messages.at(-1).content === "switched-model"),
   );
@@ -212,15 +219,23 @@ try {
   const finalStopped = once(server.child, "exit");
   server.child.kill("SIGTERM");
   await finalStopped;
-  assert.ok(
-    traces.some(
-      (trace) =>
-        trace.url === "/v1/traces" && trace.type === "application/x-protobuf" && trace.bytes > 0,
-    ),
-    JSON.stringify({ traces, stderr: server.stderr() }),
-  );
+  for (const signal of ["traces", "logs"]) {
+    const batches = traces.filter((batch) => batch.url === `/v1/${signal}`);
+    assert.ok(batches.length > 0, `${signal}: ${server.stderr()}`);
+    for (const batch of batches) {
+      assert.equal(batch.type, "application/x-protobuf");
+      assert.equal(batch.authorization, "Bearer collector-fixture");
+      assert.ok(batch.body.includes(Buffer.from("areal-smoke")));
+      assert.ok(batch.body.includes(Buffer.from("trajectory-smoke")));
+    }
+    // 验证真实模型流的输入和输出原文已进入线上的 protobuf 载荷。
+    assert.ok(batches.some((batch) => batch.body.includes(Buffer.from("after-restart"))));
+    assert.ok(batches.some((batch) => batch.body.includes(Buffer.from("reply:after-restart"))));
+    assert.ok(batches.some((batch) => batch.body.includes(Buffer.from("gen_ai.input.messages"))));
+    assert.ok(batches.some((batch) => batch.body.includes(Buffer.from("gen_ai.output.messages"))));
+  }
   console.log(
-    "PASS built TUI → WebSocket → Core → HTTP/SSE; multi-turn persistence; SIGKILL recovery; OTLP traces",
+    "PASS built TUI → WebSocket → Core → HTTP/SSE; multi-turn persistence; SIGKILL recovery; OTLP traces/logs with content, resources and authentication",
   );
 } finally {
   await Promise.all(

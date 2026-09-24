@@ -117,6 +117,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "areal-engine",
+ "areal-local-service",
  "areal-protocol",
  "async-trait",
  "axum",
@@ -125,11 +126,13 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "tokio",
  "tokio-tungstenite",
  "tokio-util",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -139,6 +142,9 @@ dependencies = [
  "anyhow",
  "areal-config",
  "areal-local-service",
+ "areal-server",
+ "areal-service-host",
+ "areal-tui",
  "clap",
  "fs2",
  "futures-util",
@@ -196,8 +202,10 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+ "tokio-rustls",
  "tokio-util",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -227,6 +235,7 @@ name = "areal-mcp"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "areal-config",
  "areal-protocol",
  "axum",
  "reqwest 0.13.5",
@@ -237,6 +246,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "tokio",
+ "tokio-rustls",
  "tokio-util",
  "url",
 ]
@@ -2036,6 +2046,7 @@ dependencies = [
  "portable-atomic",
  "rand",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]

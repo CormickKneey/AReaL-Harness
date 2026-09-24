@@ -171,7 +171,7 @@ protocol = "chat-completions"
 endpoint = "http://127.0.0.1:{model.server_port}"
 """)
         args = [
-            str(ROOT / "target/debug/areal-tui"),
+            str(ROOT / "target/debug/areal"),
             "--workspace",
             str(workspace),
             "--config",

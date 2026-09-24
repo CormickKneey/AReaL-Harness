@@ -11,13 +11,17 @@ use std::{
 use tokio_util::sync::CancellationToken;
 
 fn env() -> BTreeMap<OsString, OsString> {
-    [
+    let mut env: BTreeMap<OsString, OsString> = [
         ("PATH".into(), std::env::var_os("PATH").unwrap_or_default()),
         ("MCP_VISIBLE".into(), "visible".into()),
         ("MCP_HIDDEN".into(), "hidden".into()),
         ("MCP_TEST_TOKEN".into(), "fixture-token".into()),
     ]
-    .into()
+    .into();
+    for key in areal_config::PROXY_ENV_VARS {
+        env.insert(key.into(), format!("fixture-{key}").into());
+    }
+    env
 }
 fn stdio(log: &Path, mode: &str) -> ServerConfig {
     serde_json::from_value(json!({"transport":{"type":"stdio", "command":"python3", "args":[concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/fixtures/mcp-server.py"), log, mode], "envVars":["MCP_VISIBLE"]}, "callTimeoutMs":2000})).unwrap()
@@ -76,6 +80,9 @@ async fn stdio_discovers_pages_maps_results_and_closes_child() {
     let exposed: Value = serde_json::from_str(text(&result)).unwrap();
     assert_eq!(exposed["visible"], "visible");
     assert!(exposed["hidden"].is_null());
+    for key in areal_config::PROXY_ENV_VARS {
+        assert_eq!(exposed["proxy"][key], format!("fixture-{key}"));
+    }
     assert_eq!(
         std::fs::canonicalize(exposed["cwd"].as_str().unwrap()).unwrap(),
         std::fs::canonicalize(temp.path()).unwrap()

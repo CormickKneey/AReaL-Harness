@@ -461,7 +461,7 @@ async fn goal_unknown_usage_stops_before_network_backoff_and_keeps_reservations(
             data.path(),
             pool.clone(),
             Limits {
-                stream_idle_timeout: Duration::from_millis(40),
+                stream_idle_timeout: Duration::from_millis(500),
                 max_completion_retries: 2,
                 ..Limits::default()
             },

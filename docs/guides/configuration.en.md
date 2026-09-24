@@ -83,7 +83,7 @@ watchdog_disable = false
 filter = "info"
 ```
 
-The endpoint is a complete HTTP(S) request URL. Core supports only `chat-completions` / `responses` and appends no path. Configuration stores credential variable names; explicit references must resolve to nonempty HTTP-header-compatible values. Unselected providers need no key. Omitted references mean anonymous access; other applications' credentials are not read.
+The endpoint is a complete HTTP(S) request URL. Core supports only `chat-completions` / `responses` and appends no path. Configuration stores credential variable names; for normal startup, explicit references must resolve to nonempty HTTP-header-compatible values. Unselected providers need no key. Omitted references mean anonymous access; other applications' credentials are not read. `--management` permits a temporarily unavailable credential for the selected model so management and Workspace can start. Requests to that model fail explicitly with `MODEL_CREDENTIAL_UNAVAILABLE`; Core does not send them anonymously or select another model. The model name, endpoint and protocol must still be valid. Restart the service after setting the credential.
 
 Typical endpoints are `https://model.example.com/v1/chat/completions` for Chat Completions and `https://model.example.com/v1/responses` for Responses; use the provider's actual API URL. A URL ending at `/v1` may return an HTML page with HTTP 200, triggering `model response must use text/event-stream`. Goal mode also reports `GOAL_USAGE_UNKNOWN` for the unconfirmed usage while preserving the original error. After changing startup configuration, [stop and restart the shared service](../api/local-service.en.md#public-entry-points); reopening only the client does not reload configuration.
 
@@ -119,11 +119,41 @@ Byte and capacity limits are positive integers; fan-out and depth may be 0 to di
 
 Unknown `AREAL_HARNESS_*` names are errors. Legacy `AREAL_MODEL*` and `RUST_LOG` are lower-priority aliases. Legacy model entry points without a provider file record may use optional `AREAL_API_KEY`; explicit file providers do not inherit it implicitly.
 
+<a id="proxies"></a>
+## Outbound network proxies
+
+Core model requests (including summaries, child Agents and Workgroups), Streamable HTTP MCP and optional OTLP HTTP export support `http://`, `https://`, `socks5://` and `socks5h://` proxies. The proxy scheme is independent of the destination scheme: an HTTPS model endpoint can use HTTP CONNECT or SOCKS. Both HTTPS proxies and HTTPS destinations retain certificate verification; private CAs must be trusted by the corresponding HTTP client's trust store.
+
+Use standard environment variables when starting Core; no duplicate TOML configuration is needed:
+
+| Environment variable | Purpose |
+|---|---|
+| `HTTP_PROXY` / `http_proxy` | Proxy for HTTP destinations |
+| `HTTPS_PROXY` / `https_proxy` | Proxy for HTTPS destinations |
+| `ALL_PROXY` / `all_proxy` | Fallback when the destination's protocol has no proxy configured |
+| `NO_PROXY` / `no_proxy` | Comma-separated domains, IPs or CIDRs that bypass proxies; `*` bypasses all |
+
+Core HTTP clients prefer uppercase variables, then lowercase. Third-party tools follow their own HTTP libraries; keep both forms consistent. `socks5` resolves destination names locally; `socks5h` resolves through the proxy. HTTP(S) Basic and SOCKS5 username/password authentication can use proxy URL userinfo; these URLs may contain credentials and should not be committed or included in shared diagnostics.
+
+For example, use SOCKS5 with remote DNS while preserving existing bypass entries:
+
+```sh
+export ALL_PROXY='socks5h://127.0.0.1:1080'
+export all_proxy="$ALL_PROXY"
+export NO_PROXY="${NO_PROXY:-${no_proxy:-}},127.0.0.1,localhost,::1"
+export no_proxy="$NO_PROXY"
+areal service restart --workspace /absolute/workspace --json
+```
+
+Existing `HTTP_PROXY` / `HTTPS_PROXY` and lowercase equivalents override `ALL_PROXY` for their destinations; adjust them too when switching all traffic to SOCKS. Shared services retain their startup environment. Restart explicitly from the updated environment after changing variables; reopening TUI/Web does not update the background process. Pass custom configuration and deployment arguments to restart as described in the [local service contract](../api/local-service.en.md). Local service discovery and login HTTP requests always connect directly to keep loopback authentication out of external proxies.
+
+Trusted stdio MCP servers and plugin Hosts automatically inherit these eight variables, including credentials in proxy URLs; other variables retain their respective allowlists. External tools such as `web_search` must use HTTP libraries that support the selected proxy scheme and environment variables. Core does not intercept their custom sockets or configure a remote MCP server's connection to its search provider. Runtime command environments and network authorization remain separate; proxies do not expand Scope permissions. See [MCP](mcp.en.md) and [plugin boundaries](../design/plugins.en.md).
+
 ## Diagnostics and runtime catalogs
 
 ```sh
-target/debug/areal-server config validate --config /absolute/config.toml
-target/debug/areal-server config show --sources --config /absolute/config.toml
+target/debug/areal config validate --config /absolute/config.toml
+target/debug/areal config show --sources --config /absolute/config.toml
 ```
 
 Diagnostics do not listen, create data, start Runtime/MCP/plugins or probe models. They report redacted values and sources. Shared local services reload model configuration as described below; startup credentials are not forwarded to Runtime. Server telemetry handles `OTEL_*` separately.
@@ -165,3 +195,39 @@ Active time includes root-Turn model queuing, execution, tools, interactions and
 See [Skills](skills.en.md) for discovery, [tools](tools.en.md) for extensions and [Runtime](runtime.en.md) for deployment permissions.
 
 Tool result views are configured in the JSON file named by `[tools] extensions_file`, under `policy.resultViews`: `mode` is `off`, `observe` (default) or `on`, with `searchGroups` and `repeatLines` switches. Large-result snapshots and bundled rg work independently of this switch. See [tools](tools.en.md) for quotas and retrieval.
+
+## OpenTelemetry trajectory reporting
+
+Core uses the open-source OpenTelemetry SDK to export Traces and Events/Logs over standard OTLP HTTP/protobuf. Reporting is disabled without an endpoint, and export failures do not change Turn outcomes. Core reads configuration at startup; restart the service after changes.
+
+```bash
+export OTEL_SERVICE_NAME=areal-core
+export OTEL_RESOURCE_ATTRIBUTES='service.namespace=research,deployment.environment.name=development'
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+```
+
+The common endpoint gets `/v1/traces` and `/v1/logs` appended automatically. Alternatively, configure full signal endpoints; signal-specific settings take precedence:
+
+```bash
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces
+export OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://127.0.0.1:4318/v1/logs
+export OTEL_EXPORTER_OTLP_HEADERS='authorization=Bearer%20your-token'
+export OTEL_EXPORTER_OTLP_TIMEOUT=10000
+```
+
+| Standard configuration | Behavior |
+|---|---|
+| `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES` | Service name and custom Resource attributes; the default name is `areal-core`, and the explicit service name overrides Resource `service.name` |
+| `OTEL_EXPORTER_OTLP_{TRACES,LOGS}_ENDPOINT` | Full endpoint for each signal; configuring just one signal endpoint exports only that signal |
+| `OTEL_EXPORTER_OTLP_{TRACES,LOGS}_PROTOCOL` | Overrides the common protocol; currently only `http/protobuf` is supported |
+| `OTEL_EXPORTER_OTLP_{TRACES,LOGS}_HEADERS` | Overrides common authentication headers, parsed by the SDK in standard format |
+| `OTEL_EXPORTER_OTLP_{TRACES,LOGS}_TIMEOUT` | Overrides the common timeout in milliseconds; defaults to 10000 |
+| `OTEL_TRACES_EXPORTER`, `OTEL_LOGS_EXPORTER` | `otlp` or `none`; disable each signal independently |
+| `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` | Standard SDK Trace sampling configuration |
+| `OTEL_BSP_*`, `OTEL_BLRP_*` | Standard SDK Trace/Log batch queue and scheduling configuration |
+| `OTEL_SDK_DISABLED=true` | Disables all telemetry |
+
+Trajectories cover Turns, individual model requests, tool calls, and context compaction. Model requests use `gen_ai.*` attributes and the `gen_ai.client.inference.operation.details` event; messages use the OpenTelemetry GenAI `role` / `parts` structure, encoded as JSON strings on spans and structured attributes on logs. Model inputs (including system instructions), outputs, reasoning text, tool arguments, and results retain their actual content. There is no redaction logic or redaction switch; media retains the references or inline data received by Engine. Retries are separate requests; cancellation preserves received output and marks the operation incomplete.
+
+Project-specific attributes and events use the `areal.*` namespace. Logs correlate through standard Trace ID and Span ID, and graceful shutdown flushes batch exports. Logs-only configuration still generates local correlation IDs; Trace and Log export switches are independent. Metrics are not exported. GenAI semantic conventions remain in development; see the [official conventions](https://github.com/open-telemetry/semantic-conventions-genai).

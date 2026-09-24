@@ -83,7 +83,7 @@ watchdog_disable = false
 filter = "info"
 ```
 
-endpoint 是完整 HTTP(S) 请求 URL；Core 只支持 `chat-completions` / `responses`，不自动补路径。配置只写密钥变量名；显式引用必须非空且可用于 HTTP header，未选中 provider 不要求密钥。省略引用为匿名，不从其他应用读取凭据。
+endpoint 是完整 HTTP(S) 请求 URL；Core 只支持 `chat-completions` / `responses`，不自动补路径。配置只写密钥变量名；普通启动时，显式引用必须解析为非空且可用于 HTTP header 的值；未选中 provider 不要求密钥。省略引用为匿名，不从其他应用读取凭据。`--management` 允许选中模型的凭据暂不可用，以便启动管理和 Workspace 入口；该模型的请求会明确报 `MODEL_CREDENTIAL_UNAVAILABLE`，不会匿名发送或改用其他模型。模型名称、端点和协议仍须有效；设置凭据后需重启服务。
 
 例如 Chat Completions 通常填写 `https://model.example.com/v1/chat/completions`，Responses 填写 `https://model.example.com/v1/responses`，以供应商实际接口为准。仅填 `/v1` 可能得到 HTTP 200 的 HTML 网页，触发 `model response must use text/event-stream`；Goal 模式还会因未知用量显示 `GOAL_USAGE_UNKNOWN`，并保留原始错误。修改启动配置后须[停止并重新启动共享服务](../api/local-service.md#公共入口)，只重开客户端不会重新加载配置。
 
@@ -119,11 +119,41 @@ Goal 的共享预算与未知用量约束优先于重试配置。Goal 请求禁�
 
 未知 `AREAL_HARNESS_*` 报错。旧 `AREAL_MODEL*` 与 `RUST_LOG` 为低优先级兼容别名。无 provider 文件记录的旧模型入口可使用可选 `AREAL_API_KEY`；显式文件 provider 不隐式继承它。
 
+<a id="proxies"></a>
+## 出站网络代理
+
+Core 的模型请求（含摘要、子 Agent 与 Workgroup）、Streamable HTTP MCP 和可选 OTLP HTTP 导出支持 `http://`、`https://`、`socks5://`、`socks5h://` 代理。代理协议与目标 URL 协议独立：例如 HTTPS 模型接口可通过 HTTP CONNECT 或 SOCKS 代理访问。HTTPS 代理和 HTTPS 目标都保持证书校验；私有 CA 须受对应 HTTP 客户端的信任库信任。
+
+使用启动 Core 时的标准环境变量；无需在 TOML 中重复配置：
+
+| 环境变量 | 用途 |
+|---|---|
+| `HTTP_PROXY` / `http_proxy` | HTTP 目标的代理 |
+| `HTTPS_PROXY` / `https_proxy` | HTTPS 目标的代理 |
+| `ALL_PROXY` / `all_proxy` | 未设置对应协议代理时的回退 |
+| `NO_PROXY` / `no_proxy` | 绕过代理的域名、IP 或 CIDR，逗号分隔；`*` 绕过全部 |
+
+Core HTTP 客户端优先读取大写变量，再读取小写变量；第三方工具的优先级由其 HTTP 库决定，建议大小写值保持一致。`socks5` 在本地解析目标域名，`socks5h` 交给代理解析。HTTP(S) Basic 和 SOCKS5 用户名/密码可通过代理 URL 的 userinfo 配置；该 URL 可能包含凭据，不应写入仓库或共享诊断。
+
+例如使用 SOCKS5 远端 DNS，并保留已有绕过条目：
+
+```sh
+export ALL_PROXY='socks5h://127.0.0.1:1080'
+export all_proxy="$ALL_PROXY"
+export NO_PROXY="${NO_PROXY:-${no_proxy:-}},127.0.0.1,localhost,::1"
+export no_proxy="$NO_PROXY"
+areal service restart --workspace /absolute/workspace --json
+```
+
+已有 `HTTP_PROXY` / `HTTPS_PROXY` 及其小写值会覆盖对应目标的 `ALL_PROXY`；统一走 SOCKS 时需同步调整这些变量。共享服务保留启动环境，修改变量后必须在新环境中显式 restart，只重开 TUI/Web 不会刷新后台进程环境。自定义配置或部署参数按[共享服务契约](../api/local-service.md)传给 restart。本地服务发现和登录 HTTP 请求固定直连，避免将 loopback 认证发送到外部代理。
+
+可信 stdio MCP 与插件 Host 自动继承上述八个代理变量，包括代理 URL 中的认证信息；其他环境仍按各自白名单处理。`web_search` 等外部工具须使用支持相应代理协议与环境变量的 HTTP 库；Core 不拦截其自建 socket，也不替远程 MCP 服务配置它到搜索供应商的网络。Runtime 命令环境及网络授权保持独立，代理不扩大 Scope 权限。具体边界见 [MCP](mcp.md) 和[插件](../design/plugins.md)。
+
 ## 诊断与运行时目录
 
 ```sh
-target/debug/areal-server config validate --config /absolute/config.toml
-target/debug/areal-server config show --sources --config /absolute/config.toml
+target/debug/areal config validate --config /absolute/config.toml
+target/debug/areal config show --sources --config /absolute/config.toml
 ```
 
 诊断不监听、不创建数据、不启动 Runtime/MCP/插件，也不探测模型；输出有效值和来源并脱敏。共享本地服务支持下述模型配置热更新；启动凭据不进入 Runtime 环境。`OTEL_*` 由 server 的 telemetry 装配处理。
@@ -165,3 +195,39 @@ turn_model_rounds = 32
 活动时间包括根 Turn 的模型排队、执行、工具、交互等待和清理，子任务时间不叠加，轮次间容量等待、暂停和离线时间不计入。既有单 Turn 期限和 Runtime 硬限额继续生效。Goal 请求禁用 HTTP 层隐式重试，以保留逐次消费的归因；未知消费会停止自动推进。使用与恢复见 [Goal 模式](clients.md#goals)。
 
 工具结果视图通过 `[tools] extensions_file` 指向的 JSON 配置，在 `policy.resultViews` 下设置 `mode: off|observe|on`（默认 observe）及 `searchGroups`、`repeatLines` 开关。大结果快照与内置 rg 不依赖该开关；额度和回取行为见[工具指南](tools.md)。
+
+## OpenTelemetry 轨迹上报
+
+Core 使用开源 OpenTelemetry SDK，通过标准 OTLP HTTP/protobuf 导出 Traces 和 Events/Logs。未配置 endpoint 时不启用，上报失败不改变 Turn 结果。配置在 Core 启动时读取，修改后需重启服务。
+
+```bash
+export OTEL_SERVICE_NAME=areal-core
+export OTEL_RESOURCE_ATTRIBUTES='service.namespace=research,deployment.environment.name=development'
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+```
+
+通用 endpoint 自动追加 `/v1/traces` 和 `/v1/logs`。也可以分别设置完整地址；信号专用配置优先于通用配置：
+
+```bash
+export OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces
+export OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://127.0.0.1:4318/v1/logs
+export OTEL_EXPORTER_OTLP_HEADERS='authorization=Bearer%20your-token'
+export OTEL_EXPORTER_OTLP_TIMEOUT=10000
+```
+
+| 标准配置 | 行为 |
+|---|---|
+| `OTEL_SERVICE_NAME`、`OTEL_RESOURCE_ATTRIBUTES` | 服务名和自定义 Resource 属性；服务名默认 `areal-core`，显式服务名优先于 Resource 中的 `service.name` |
+| `OTEL_EXPORTER_OTLP_{TRACES,LOGS}_ENDPOINT` | 对应信号的完整接收地址；只设置一个信号的地址时只导出该信号 |
+| `OTEL_EXPORTER_OTLP_{TRACES,LOGS}_PROTOCOL` | 覆盖通用协议；当前仅支持 `http/protobuf` |
+| `OTEL_EXPORTER_OTLP_{TRACES,LOGS}_HEADERS` | 覆盖通用认证头，由 SDK 按标准格式解析 |
+| `OTEL_EXPORTER_OTLP_{TRACES,LOGS}_TIMEOUT` | 覆盖通用超时，单位为毫秒，默认 10000 |
+| `OTEL_TRACES_EXPORTER`、`OTEL_LOGS_EXPORTER` | `otlp` 或 `none`；可分别关闭信号 |
+| `OTEL_TRACES_SAMPLER`、`OTEL_TRACES_SAMPLER_ARG` | 使用 SDK 的标准 Trace 采样配置 |
+| `OTEL_BSP_*`、`OTEL_BLRP_*` | 使用 SDK 的标准 Trace/Log 批量队列和调度配置 |
+| `OTEL_SDK_DISABLED=true` | 关闭全部遥测 |
+
+轨迹记录 Turn、每次模型请求、工具调用和上下文压缩。模型请求使用 `gen_ai.*` 属性与 `gen_ai.client.inference.operation.details` 事件，消息按 OpenTelemetry GenAI 的 `role` / `parts` 结构记录，Span 中为 JSON 字符串，Logs 中为结构化属性。模型输入（含系统指令）、输出、推理文本、工具参数与结果均保留实际内容，没有脱敏逻辑或脱敏开关；媒体保留 Engine 收到的引用或内联数据。重试按独立请求记录，取消时保留已收到的输出并标记未完成。
+
+本项目扩展字段和事件使用 `areal.*` 命名空间。Logs 通过标准 Trace ID 和 Span ID 关联调用，优雅关闭时刷新批量导出。只有 Logs 时也生成本地关联 ID；Traces 和 Logs 的导出开关相互独立。当前不导出 Metrics。GenAI 语义约定仍处于开发状态，参见[官方约定](https://github.com/open-telemetry/semantic-conventions-genai)。

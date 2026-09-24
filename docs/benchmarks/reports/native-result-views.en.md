@@ -4,7 +4,7 @@
 
 Baseline `3c64f4f` and the frozen `native-v4` binaries in the evidence used the same `grok-4.7` configuration. All 18 final pairs across six ordinary probes completed and passed independent checks. Input tokens fell 16.2%, uncached input fell 2.5%, output tokens rose 9.2%, and latency did not improve. Separate large MCP result probes passed 3/3 on the candidate and 0/3 on baseline. This establishes retrieval functionality, not a cost comparison at equal correctness.
 
-New result views remain `observe` by default; this experiment explicitly enabled `on`. Bundled rg and durable snapshots/retrieval are independent of that switch. [Sanitized evidence](native-result-views-evidence.json) retains all 139 attempts; final conclusions use the 36 `paired-v4` and six `snapshot-v4` attempts. Earlier failures and invalid fixtures are retained instead of selecting successful retries. Complete private model traces are not published, so aggregates are auditable but complete public reproduction materials are not provided. The [previous tool experiment](tool-optimization.en.md) used a different baseline; its gains cannot be added to these results.
+New result views remain `observe` by default; this experiment explicitly enabled `on`. Bundled rg and durable snapshots/retrieval are independent of that switch. [Sanitized evidence](native-result-views-evidence.json) retains all 146 attempts (including seven post-merge regressions); paired performance conclusions use the 36 `paired-v4` and six `snapshot-v4` attempts. Earlier failures and invalid fixtures are retained instead of selecting successful retries. Complete private model traces are not published, so aggregates are auditable but complete public reproduction materials are not provided. The [previous tool experiment](tool-optimization.en.md) used a different baseline; its gains cannot be added to these results.
 
 ## Conditions
 
@@ -52,8 +52,11 @@ Each final candidate MCP attempt called the source once, read seven pages and wr
 | snapshot-v3 | 6 | MCP worked, but normal TUI advertisements hid retrieval; candidate 0/3, prompting visibility fixes and advertisement assertions |
 | snapshot-v4 | 6 | Final isolated MCP probe: baseline 0/3, candidate 3/3 |
 | paired-v4 | 36 | Final ordinary probes: both 18/18 |
+| merged-regression | 7 | Unified CLI after merging main `3bf7613`: one attempt for each probe, all completed and correct |
 
 Fixes narrow custom-command limits to the parent Scope, accept up to 8 MiB of plain text/structured MCP data, increase plugin output to 96 KiB within existing frames, and advertise retrieval in ordinary and research sessions. Explicit allowlists that disable retrieval receive no unusable references. Deterministic coverage includes UTF-8/escaped paging, exact byte reconstruction, cross-Thread rejection, restart/GC/quotas/storage failure, fixed historical projections, unique middle evidence and actual MCP execution.
+
+The seven post-merge regressions also retain binary/configuration/fixture fingerprints. They have no new baseline runs and establish no new paired performance result.
 
 After the frozen model runs, script checks exposed an existing startup-cancellation race that removed the readiness directory before reaping children. The final change fixes the ordering and passes deterministic lifecycle tests; this shutdown fix is not included in the model measurements.
 
@@ -61,7 +64,7 @@ An MM480 selection of 24 cases was frozen from the original results (16 zero/fai
 
 ## Reproduction and replay
 
-Build separate revisions using the [development guide](../../development/README.en.md). Each binary directory needs the four server/TUI/Runtime binaries and `launch.py`; the candidate also needs the complete `tools/` directory. Do not rebuild frozen directories during measurement. Set the credential environment variables required by your configuration, then run:
+Build separate revisions using the [development guide](../../development/README.en.md). The measured legacy layout needs four server/TUI/Runtime binaries and `launch.py`, plus the candidate's complete `tools/` directory. After merging main, the runner also supports the unified CLI layout: `areal`, two Runtime binaries, `launch.py` and `tools/`. Installed bundles place Runtime and tools under `libexec/areal/`. Do not rebuild frozen directories during measurement. Set the credential environment variables required by your configuration, then run:
 
 ```sh
 python3 tests/perf/native_tool_ab.py \

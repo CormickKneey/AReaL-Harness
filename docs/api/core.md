@@ -162,7 +162,7 @@ Goal 无需部署开关；`areal/capabilities.features.goals` 固定为 true，�
 | 方法 | 专有参数 | 语义 |
 |---|---|---|
 | `areal/goal/get` | `threadId` | 返回目标投影；没有目标时 goal=null，仍返回控制 revision |
-| `areal/goal/create` | `objective, tokenBudget?, maxTurns?, maxActiveSeconds?` | 根 Thread 空闲且无待处理用户队列时创建目标并原子受理首轮；已有未清除目标时冲突 |
+| `areal/goal/create` | `objective, tokenBudget?, maxTurns?, maxActiveSeconds?, interactionMode?` | 根 Thread 空闲且无待处理用户队列时创建目标并原子受理首轮；已有未清除目标时冲突 |
 | `areal/goal/update` | `goalId, objective?, tokenBudget?, maxTurns?, maxActiveSeconds?` | 在目标停止且清理完毕后编辑；保留目标 ID 和全部用量，不隐式启动 |
 | `areal/goal/pause` | `goalId` | 持久化 paused、暂停用户队列并请求活动 Turn 取消；响应不保证清理已经完成 |
 | `areal/goal/resume` | `goalId` | 校验预算、UNKNOWN 和宿主后恢复；活动容量不足时等待；队列因 Goal pause/Stop 暂停时一并恢复，其他原因的队列暂停需单独处理 |
@@ -172,7 +172,7 @@ objective 为 1–4000 个 Unicode 字符且不能全空白。预算为正整数
 
 resume 保留计量，不能使已经达到的限额失效；completed 不可恢复。resume 同时确认此前未知模型消费的保守预留，但不删除该预留，不将 accountingComplete 改回 true；工具 UNKNOWN 仍需独立检查与 acknowledge。普通 `thread/resume` 仍只恢复订阅和快照，不恢复 Goal 执行。暂停时保存原因，只有属于该次 Goal 暂停的队列暂停才可被 Goal resume 自动撤销。
 
-投影包含 `threadId`、`revision`、`eventSequence` 和 `goal`。goal 包括 `id`、`threadId`、`objective`、`status`、`reason`、预算及计量、`activeTurnId`、`settling`、`waitingForInput`、`waitingForCapacity` 和最近报告 `report`、`reportTurnId` 和连续未报告计数 `unreportedTurns`。status 使用 `active / paused / blocked / completed / budgetLimited / failed`。`revision` 只随控制状态变化，eventSequence 随持久投影变化；get 和原子 resume 返回当前计量，流式用量不逐 token 发布 Goal 事件。持久状态和受理结果保存后发布；保存失败时仅发布内存中的 failed/SystemError，重启以保守恢复为准。
+投影包含 `threadId`、`revision`、`eventSequence` 和 `goal`。goal 包括 `id`、`threadId`、`objective`、`status`、`reason`、预算及计量、`activeTurnId`、`settling`、`waitingForInput`、`waitingForAgents`、`waitingForCapacity` 和最近报告 `report`、`reportTurnId` 和连续未报告计数 `unreportedTurns`。status 使用 `active / paused / blocked / completed / budgetLimited / failed`。`revision` 只随控制状态变化，eventSequence 随持久投影变化；get 和原子 resume 返回当前计量，流式用量不逐 token 发布 Goal 事件。持久状态和受理结果保存后发布；保存失败时仅发布内存中的 failed/SystemError，重启以保守恢复为准。
 
 goal.usage 包含 `inputTokens`、`cachedInputTokens`、`outputTokens`、`tokensUsed`、`reservedTokens`、`unknownRequests`、`timeUsedSeconds`、`turnsStarted` 和 `accountingComplete`。tokensUsed 仅包含已确认输入与输出，reservedTokens 单独展示且参与准入；未知统计不补零。timeUsedSeconds 包含根 Turn 内的执行和等待，不叠加子任务时长；崩溃窗口或缺失 usage 时 accountingComplete=false。该口径不保证 provider 计费绝对不超过 tokenBudget。
 
@@ -211,4 +211,6 @@ goalId 和根线程身份由 Core 绑定，模型不能自报其他目标。summ
 
 Rust 嵌入式调用使用 `Limits.goals: goals::Policy` 及 `Engine::goal_get/goal_create/goal_control`。自定义 Model 的 `chat_limited` 必须显式接受逐请求输出上限，`share_context` 保留预算归因；内置 HTTP adapter 已支持。自定义 Workgroup Factory 需实现 `executor_for_goal` 并保留传入 Budget；默认实现对有 Goal 的调用明确报错。普通 Turn 和独立 Workgroup 沿用原行为。
 
-Goal 请求账本位于 `goals/<goal-id>.json`，发送前持久预留；主/子 Agent、原生 Workgroup 和活动 Turn 的摘要共享计量，cachedInputTokens 是 inputTokens 的子集、不重复累加。每账本最多 4096 请求/4 MiB；clear 保留账本且不回收历史。快照格式 8 保存 Goal、Turn 归因与思考 Item，旧二进制不能读取；API 版本仍为 areal.core.v1。
+Goal 请求账本位于 `goals/<goal-id>.json`，发送前持久预留；主/子 Agent、原生 Workgroup 和活动 Turn 的摘要共享计量，cachedInputTokens 是 inputTokens 的子集、不重复累加。每账本最多 4096 请求/4 MiB；clear 保留账本且不回收历史。快照格式 10 保存 Goal、Turn 归因、思考 Item 与 Task 交互策略，旧二进制不能读取；API 版本仍为 areal.core.v1。
+
+Task Mode 在 Goal 之上提供 foreground/scheduled/background 任务、TaskRun、独立 Channel 与 Inbox。Goal create 同时返回 taskId/runId；Goal 内的 ask_user_question 可选 mode=async，headless 不等待用户。接口、预算与恢复语义见 [Task 契约](tasks.md)。timeUsedSeconds 包含协调 Turn 与 TaskRun worker 活动时间的并集，纯异步用户等待不计入。

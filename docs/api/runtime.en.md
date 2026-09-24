@@ -79,3 +79,5 @@ list pages have at most 256 entries/about 32 KiB, scanning at most 4096 UTF-8 na
 By default helpers coordinate by file and commands by write root (writeSerialization=conflictingPaths). Explicit command bypass uses filePaths. External processes do not participate; external CAS/cross-file transactions are not guaranteed. Lost helper results or cleanup failure after commit become UNKNOWN without replay.
 
 Errors include INVALID_REQUEST, INVALID_ARGUMENT, UNAUTHENTICATED, PERMISSION_DENIED, SCOPE_CLOSED, STALE_HANDLE, NOT_FOUND, CONFLICT, RESOURCE_EXHAUSTED, UNSUPPORTED, UNAVAILABLE and CLEANUP_FAILED. signal is a POSIX number string. sandboxDenied=false does not prove no sandbox denial occurred.
+
+Built-in tools are resolved beside the Runtime executable: `target/<profile>/tools/` in development and `libexec/areal/tools/` in installed bundles, separate from public `bin/areal`.

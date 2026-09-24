@@ -317,7 +317,7 @@ def main():
         "--variant",
         action="append",
         required=True,
-        help="NAME=directory containing four binaries and launch.py",
+        help="NAME=directory containing areal, Runtime binaries, tools and launch.py (legacy four-binary bundles also supported)",
     )
     parser.add_argument("--model-config", type=Path, required=True)
     parser.add_argument("--pytest", type=Path, default=Path(shutil.which("pytest") or "pytest"))
@@ -387,6 +387,7 @@ def main():
             label: {
                 name: digest((binary / name).read_bytes())
                 for name in [
+                    "areal",
                     "areal-server",
                     "areal-tui",
                     "areal-runtime",

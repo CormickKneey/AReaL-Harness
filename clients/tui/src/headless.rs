@@ -29,7 +29,7 @@ pub(crate) async fn run(
                 .to_owned();
             eprintln!("Thread: {thread_id}");
             start_id =
-                Some(client.send("turn/start", json!({"threadId":thread_id,"input":input}))?);
+                Some(client.send("areal/turn/start", json!({"requestId":crate::goal_request_id(),"threadId":thread_id,"input":input,"interactionMode":"headless"}))?);
             target_thread = Some(thread_id);
         }
         if start_id.is_some() && event["id"].as_u64() == start_id {
@@ -121,7 +121,7 @@ pub(crate) async fn goal(
                 .context("missing thread id")?
                 .to_owned();
             eprintln!("Thread: {id}");
-            create = Some(client.send("areal/goal/create",json!({"threadId":id,"requestId":crate::goal_request_id(),"expectedRevision":thread["goals"]["revision"].as_u64().unwrap_or(0),"objective":objective,"tokenBudget":token_budget}))?);
+            create = Some(client.send("areal/goal/create",json!({"threadId":id,"requestId":crate::goal_request_id(),"expectedRevision":thread["goals"]["revision"].as_u64().unwrap_or(0),"objective":objective,"tokenBudget":token_budget,"interactionMode":"headless"}))?);
             thread_id = Some(id);
         }
         if create.is_some() && event["id"].as_u64() == create {
@@ -291,7 +291,7 @@ mod tests {
             .await
             .unwrap();
         let start = requests.recv().await.unwrap();
-        assert_eq!(start["method"], "turn/start");
+        assert_eq!(start["method"], "areal/turn/start");
         // 恢复基线之后的旧 Turn 事件可以先于本次 turn/start 响应到达。
         events
             .send(notification(

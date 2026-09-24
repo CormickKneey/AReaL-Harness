@@ -10,11 +10,11 @@ fn invoke(dir: &std::path::Path, args: &[&str], env: &[(&str, &str)]) -> Output 
     #[cfg(target_os = "macos")]
     let mut command = {
         let mut command = Command::new("/usr/bin/python3");
-        command.args(["-c", "import subprocess,sys; r=subprocess.run(sys.argv[1:]); sys.exit(r.returncode if r.returncode >= 0 else 128-r.returncode)", env!("CARGO_BIN_EXE_areal-server")]);
+        command.args(["-c", "import subprocess,sys; r=subprocess.run(sys.argv[1:]); sys.exit(r.returncode if r.returncode >= 0 else 128-r.returncode)", env!("CARGO_BIN_EXE_areal")]);
         command
     };
     #[cfg(not(target_os = "macos"))]
-    let mut command = Command::new(env!("CARGO_BIN_EXE_areal-server"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_areal"));
     let output = command
         .current_dir(dir)
         .env_clear()
@@ -111,7 +111,7 @@ fn diagnostics_use_file_and_env_and_cli_without_creating_state_or_leaking_secret
     assert!(!temp.path().join("home").exists());
     let out = invoke(
         temp.path(),
-        &["--config", "file.toml", "config", "validate"],
+        &["config", "--config", "file.toml", "validate"],
         &env,
     );
     assert!(out.status.success());
@@ -131,6 +131,7 @@ fn invalid_configuration_fails_before_runtime_or_storage_side_effects() {
     let out = invoke(
         temp.path(),
         &[
+            "app-server",
             "--runtime",
             "missing-runtime",
             "--workspace",
@@ -157,6 +158,7 @@ fn invalid_configuration_fails_before_runtime_or_storage_side_effects() {
     let out = invoke(
         temp.path(),
         &[
+            "app-server",
             "--config",
             "config.toml",
             "--runtime-stdio",
@@ -207,13 +209,13 @@ fn extensions_are_validated_without_executing_commands_or_creating_state() {
     )
     .unwrap();
     let args = [
+        "config",
         "--config",
         "config.toml",
         "--model",
         "fixture",
         "--model-endpoint",
         "http://127.0.0.1:9/",
-        "config",
         "validate",
     ];
     let mut extensions = serde_json::json!({"policy":{"commandWaitMs":600000},"tools":[{"definition":{"name":"fixture","description":"Fixture","inputSchema":{"type":"object"}},"argv":["/bin/sh","-c","touch should-not-exist"],"timeoutMs":1000}]});

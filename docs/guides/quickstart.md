@@ -35,10 +35,10 @@ export AREAL_HARNESS_API_KEY_ENV='AREAL_API_KEY'
 # 输入密钥后回车；Bash 和 Zsh 均可使用。
 read -r -s AREAL_API_KEY
 export AREAL_API_KEY
-make tui ARGS='--prompt Describe the workspace files'
+target/debug/areal exec 'Describe the workspace files'
 ```
 
-无认证的本地服务可省略凭据变量和读取命令。省略 `--prompt` 进入全屏 TUI；`Ctrl-C` 取消任务，`Ctrl-Q` 关闭窗口并保留共享服务。模型配置与 Responses 示例见[配置](configuration.md)。
+无认证的本地服务可省略凭据变量和读取命令。运行 `target/debug/areal` 进入全屏 TUI；`Ctrl-C` 取消任务，`Ctrl-Q` 关闭窗口并保留共享服务。模型配置与 Responses 示例见[配置](configuration.md)。
 
 ## 可写工作区与 Web
 
@@ -47,13 +47,21 @@ make tui ARGS='--prompt Describe the workspace files'
 ```sh
 mkdir -p ../areal-example-workspace
 printf 'hello\n' > ../areal-example-workspace/hello.txt
-make tui ARGS='--workspace ../areal-example-workspace'
+target/debug/areal --workspace ../areal-example-workspace
 ```
 
 需要审批时，启动前设置 `ASK_PERMISSIONS=1`，或配置 `[permissions] mode = "ASK_PERMISSIONS"`，见[权限配置](configuration.md#permissions)。TUI `/permissions` 可查看生效策略；已有共享服务在修改权限后需显式 restart。
 
+推荐通过共享服务入口打开 Web，自动登录后即可使用：
+
 ```sh
-python3 -I -S scripts/launch.py \
+target/debug/areal web --workspace ../areal-example-workspace
+```
+
+一次性链接过期或会话失效时，重新运行同一命令。若需要前台独占服务和固定端口：
+
+```sh
+target/debug/areal serve \
   --workspace ../areal-example-workspace \
   --data-dir ../areal-example-state --listen 127.0.0.1:4500
 ```

@@ -416,7 +416,7 @@ pub fn load_config(inputs: &ConfigInputs) -> Result<ResolvedCoreConfig> {
     load_mode(inputs, false)
 }
 
-/// 管理启动允许完全缺失模型；部分配置和无效配置仍必须拒绝。
+/// 管理启动允许缺失模型或选中模型的凭据；配置结构仍必须有效。
 pub fn load_management_config(inputs: &ConfigInputs) -> Result<ResolvedCoreConfig> {
     load_mode(inputs, true)
 }
@@ -859,6 +859,8 @@ fn load_mode(inputs: &ConfigInputs, management: bool) -> Result<ResolvedCoreConf
             "output reserve must be smaller than context token window",
         ));
     }
-    result.credential(inputs)?;
+    if !management {
+        result.credential(inputs)?;
+    }
     Ok(result)
 }

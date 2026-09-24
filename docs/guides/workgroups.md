@@ -4,20 +4,20 @@
 
 Workgroup 为写任务和验证器创建独立工作区/Runtime，使用生产 Engine，最终组合检查通过才算完成。适用于 macOS 可信宿主；共享工作区委派见 [Agent](../design/multi-agent.md)。
 
-## 独立 CLI
+## Workgroup 子命令
 
 先配置[模型](configuration.md)。以下 Python 示例需要一个已展开、无符号链接的可信工具链，含 `bin/python3`；输入源码须包含对应测试。
 
 ```sh
 cargo build --locked --workspace
-target/debug/areal-workgroup run \
+target/debug/areal workgroup run \
   --workspace /absolute/source --state-dir /absolute/runs/new-run \
   --plan /absolute/plan.json --checks /absolute/checks.json \
-  --runtime "$PWD/target/debug/areal-runtime" \
-  --file-helper "$PWD/target/debug/areal-runtime-fs" \
   --toolchain /absolute/materialized-python \
   --strategy balanced --workers 2 --seconds 600
 ```
+
+Runtime 和文件助手默认从当前构建或发行包内部目录发现；可信部署仍可用 `--runtime` / `--file-helper` 显式覆盖。
 
 state-dir 必须是不存在的新目录，位于源码外；toolchain 与 attempt 存储不得相同或互为祖先。输入是快照来源，产物在 `<state-dir>/candidate/`，不会覆盖原 checkout。运行期间避免外部编辑初始源码。
 
@@ -58,7 +58,7 @@ writes 为精确相对文件名，不接受目录/glob/逃逸。depends 要求�
 
 ## 结果与服务
 
-`run.json` 保存状态、head、验收与清理；`usage.json` 保留已知 token 和缺失统计。`candidate/` 只含接纳的源码，失败部分交付不算 completed。`areal-workgroup inspect /absolute/runs/new-run` 获取 owner 锁、校验摘要；崩溃运行变 UNKNOWN，不重放。SIGINT/SIGTERM 取消后仍等待清理。
+`run.json` 保存状态、head、验收与清理；`usage.json` 保留已知 token 和缺失统计。`candidate/` 只含接纳的源码，失败部分交付不算 completed。`areal workgroup inspect /absolute/runs/new-run` 获取 owner 锁、校验摘要；崩溃运行变 UNKNOWN，不重放。SIGINT/SIGTERM 取消后仍等待清理。
 
 TUI/server/launcher 可配置 `--workgroup-policy /absolute/policy.json --workgroup-toolchain /absolute/toolchain`，同时授权写入。策略包含 allowedWrites（或目录授权 allowedDirectories）、非空 checks，以及共享 workers/verifiers/activeGroups 和预算。模型不能修改该部署策略。
 

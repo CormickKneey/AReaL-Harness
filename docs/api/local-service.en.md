@@ -2,7 +2,7 @@
 
 # Shared local services
 
-TUI, the Web launcher and trusted Desktop Main use `areal service`. An independent `areal-service-host` owns one Core/Runtime pair; windows own connections. Platform support follows the [Runtime boundary](../guides/runtime.en.md). This is not a system-wide, multi-user or remote daemon.
+TUI, the Web launcher and trusted Desktop Main use `areal service`. An independent `areal service-host` owns one Core/Runtime pair; windows own connections. Platform support follows the [Runtime boundary](../guides/runtime.en.md). This is not a system-wide, multi-user or remote daemon.
 
 ## Public entry points
 
@@ -23,7 +23,7 @@ target/debug/areal web --workspace /absolute/workspace --json
 
 `status` and `stop` select the current workspace by default; use `--workspace`, `--data-dir`, or `--instance` to disambiguate. `restart` resolves the desired deployment from the current workspace and the same local options as `ensure`; pass the original custom configuration/permission options when needed. It preserves history and refuses outstanding work unless `--cancel` is explicit.
 
-Service commands always emit JSON on stdout; `--json` explicitly selects machine use. `web` also opens a browser unless `--json` is set. ensure/restart/status/stop return a descriptor, list returns an array, and bind returns `{dataDir}`. Operation failures exit 1 with `{error:{code:"localServiceError",message}}` on stderr; argument errors follow CLI behavior. Startup diagnostics go to stderr or private logs. Tokens never appear in commands, URLs or descriptors.
+Service commands always emit JSON on stdout; `--json` explicitly selects machine use. `web` also opens a browser unless `--json` is set. ensure/restart/status/stop return a descriptor, list returns an array, and bind returns `{dataDir}`. Operation failures exit 1 with `{error:{code:"localServiceError",message}}` on stderr; argument errors follow CLI behavior. Startup diagnostics go to stderr or private logs. Long-lived tokens never appear in commands, URLs or descriptors. The one-time login URL is passed only to the browser opener and is never printed.
 
 Descriptor fields are defined in [local-service-v1.json](../../schemas/local-service-v1.json):
 
@@ -68,7 +68,7 @@ TUI rediscovers after disconnection and can start a new generation after crash c
 
 ## Web and Desktop integration
 
-- `areal web` opens `/ui` and uses the existing token-to-HttpOnly-cookie login. Browsers never launch processes, read authFile or access the control socket. Run `areal web` again after a port change.
+- `areal web` reads authFile in the trusted local client, verifies service identity, obtains a one-time code and opens `/ui` to exchange it automatically for an independent HttpOnly cookie. The page never receives the long-lived token. Browsers never launch processes, read authFile or access the control socket. Run `areal web` again after link/session expiry, restart or port changes; manual token login remains a fallback. `--json` only discovers the service and does not mint codes. Rust callers can use `browser_login_url(&Service)` to obtain the one-time URL; never log it or forward it to untrusted pages. See [browser login](desktop.en.md#browser-auth) for endpoints and lifetimes.
 - Desktop Main executes `areal service ensure --json` with an argument array, checks `protocolVersion`, reads authFile in Main and establishes the authenticated connection. Expose only filtered application operations/state to Renderer, never the full descriptor or token.
 - Rediscover and compare generation before initialize/initialized and thread/resume. Query request/read or authoritative state before deciding to retry; never replay accepted operations automatically.
 - Dynamic ToolHosts that must survive windows belong in a stable Main/independent host connection. Window tools do not transfer automatically; disconnect retains Host generation and UNKNOWN semantics.

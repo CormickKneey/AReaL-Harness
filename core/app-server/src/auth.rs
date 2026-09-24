@@ -95,19 +95,11 @@ impl Authentication {
         Ok(config)
     }
 
-    pub(crate) fn authenticate(&self, headers: &HeaderMap) -> Option<Arc<Principal>> {
-        let bearer = headers
+    pub(crate) fn authenticate_bearer(&self, headers: &HeaderMap) -> Option<Arc<Principal>> {
+        let supplied = headers
             .get("authorization")
             .and_then(|s| s.to_str().ok())
-            .and_then(|s| s.strip_prefix("Bearer "));
-        let cookie = headers
-            .get("cookie")
-            .and_then(|s| s.to_str().ok())
-            .and_then(|s| {
-                s.split(';')
-                    .find_map(|s| s.trim().strip_prefix("areal_session="))
-            });
-        let supplied = bearer.or(cookie)?;
+            .and_then(|s| s.strip_prefix("Bearer "))?;
         self.principals
             .iter()
             .find(|p| equal_token(p.token.as_bytes(), supplied.as_bytes()))
@@ -147,6 +139,8 @@ pub(crate) fn permission(method: &str) -> Permission {
             | "thread/read"
             | "thread/resume"
             | "areal/subscription/remove"
+            | "areal/task/subscribe"
+            | "areal/task/unsubscribe"
     ) || method.ends_with("/list")
         || method.ends_with("/read")
         || method.ends_with("/inspect")

@@ -23,12 +23,23 @@ class LauncherTests(unittest.TestCase):
         self.workspace = self.root / "workspace"
         self.workspace.mkdir()
         self.data = self.root / "data"
+        dispatcher = self.bin / "areal"
+        dispatcher.write_text(
+            f"#!{sys.executable}\nimport sys, json\nfrom pathlib import Path\n"
+            + "if sys.argv[1:3] == ['config', 'show']:\n"
+            + f"    print(json.dumps({{'server': {{'data_dir': {str(self.data)!r}}}, 'model': {{'protocol': 'chat-completions'}}}}))\n"
+            + "    sys.exit(0)\n"
+            + "mode = 'app-server' if sys.argv[1] == 'app-server' else 'interactive'\n"
+            + "if mode == 'app-server': del sys.argv[1]\n"
+            + f"exec((Path({str(self.root)!r}) / (mode + '.py')).read_text())\n"
+        )
+        dispatcher.chmod(0o755)
         self.children = []
         self.addCleanup(self.cleanup_children)
         self.fixture("areal-runtime", "sys.stdin.read()")
         self.fixture("areal-runtime-fs", "pass")
         self.fixture(
-            "areal-server",
+            "app-server",
             """
 args = sys.argv[1:]
 if '--ready-file' in args:
@@ -41,7 +52,7 @@ while True: time.sleep(0.02)
 """,
         )
         self.fixture(
-            "areal-tui",
+            "interactive",
             """
 assert sys.argv[1:3] == ['--endpoint', 'ws://127.0.0.1:12345']
 assert sys.argv[3:5] == ['--auth-file', '/fixture/auth.json']
@@ -69,18 +80,12 @@ print('fixture reply')
         ]
 
     def fixture(self, name, body):
-        path = self.bin / name
+        path = (
+            self.root / (name + ".py") if name in ("app-server", "interactive") else self.bin / name
+        )
         pid_file = self.root / (name + ".pid")
-        preflight = ""
-        if name == "areal-server":
-            preflight = (
-                "if sys.argv[1:3] == ['config', 'show']:\n"
-                f"    print(json.dumps({{'server': {{'data_dir': {str(self.data)!r}}}, 'model': {{'protocol': 'chat-completions'}}}}))\n"
-                "    sys.exit(0)\n"
-            )
         path.write_text(
             f"#!{sys.executable}\nimport os, sys, time, signal, json\nfrom pathlib import Path\n"
-            + preflight
             + f"Path({str(pid_file)!r}).write_text(str(os.getpid()))\n"
             + body
             + "\n"
@@ -131,46 +136,53 @@ print('fixture reply')
 
     def test_startup_failure_reports_diagnostics_and_reaps_runtime(self):
         self.fixture(
-            "areal-server",
+            "app-server",
             "print('fixture startup failure', file=sys.stderr); sys.exit(7)",
         )
         child = self.start()
         _, err = child.communicate(timeout=10)
         self.assertNotEqual(child.returncode, 0)
         self.assertIn("fixture startup failure", err)
-        self.assertFalse((self.root / "areal-tui.pid").exists())
+        self.assertFalse((self.root / "interactive.pid").exists())
+        self.assert_reaped()
+
+    def test_owned_interactive_prompt_is_forwarded_after_option_terminator(self):
+        self.fixture("interactive", "assert sys.argv[-2:] == ['--', '-initial with spaces']")
+        child = self.start([*self.command[:-1], "--initial-prompt=-initial with spaces"])
+        _, err = child.communicate(timeout=10)
+        self.assertEqual(child.returncode, 0, err)
         self.assert_reaped()
 
     def test_client_failure_reaps_services(self):
-        self.fixture("areal-tui", "sys.exit(3)")
+        self.fixture("interactive", "sys.exit(3)")
         child = self.start()
         child.communicate(timeout=10)
         self.assertNotEqual(child.returncode, 0)
         self.assert_reaped()
 
     def test_signal_reaps_client_and_services(self):
-        self.fixture("areal-tui", "while True: time.sleep(0.02)")
+        self.fixture("interactive", "while True: time.sleep(0.02)")
         child = self.start()
-        self.wait_for(self.root / "areal-tui.pid", child)
+        self.wait_for(self.root / "interactive.pid", child)
         child.terminate()
         child.communicate(timeout=10)
         self.assert_reaped()
 
     def test_signal_during_startup_reaps_services(self):
-        self.fixture("areal-server", "while True: time.sleep(0.02)")
+        self.fixture("app-server", "while True: time.sleep(0.02)")
         child = self.start()
-        self.wait_for(self.root / "areal-server.pid", child)
+        self.wait_for(self.root / "app-server.pid", child)
         child.terminate()
         child.communicate(timeout=10)
-        self.assertFalse((self.root / "areal-tui.pid").exists())
+        self.assertFalse((self.root / "interactive.pid").exists())
         self.assert_reaped()
 
     def test_explicit_server_mode_keeps_running_without_client(self):
         child = self.start(self.command[: self.command.index("--tui")])
-        self.wait_for(self.root / "areal-server.pid", child)
+        self.wait_for(self.root / "app-server.pid", child)
         time.sleep(0.1)
         self.assertIsNone(child.poll())
-        self.assertFalse((self.root / "areal-tui.pid").exists())
+        self.assertFalse((self.root / "interactive.pid").exists())
         child.terminate()
         _, err = child.communicate(timeout=10)
         self.assertEqual(child.returncode, 0, err)
@@ -180,7 +192,7 @@ print('fixture reply')
         marker = self.root / "handler-installed"
         witness = self.root / "ready-directory-survived"
         self.fixture(
-            "areal-server",
+            "app-server",
             f"""
 ready = Path(sys.argv[sys.argv.index('--ready-file') + 1])
 def stop(*_):

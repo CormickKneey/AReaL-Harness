@@ -28,7 +28,7 @@ class RuntimeClient:
     def __init__(
         self, workspace: Path, *, allow_network: bool = False, concurrent_writes: bool = False
     ) -> None:
-        binary = os.environ.get("AREAL_RUNTIME_BINARY", "/usr/local/bin/areal-runtime")
+        binary = os.environ.get("AREAL_RUNTIME_BINARY", "/usr/local/libexec/areal/areal-runtime")
         self.process = subprocess.Popen(
             [
                 binary,

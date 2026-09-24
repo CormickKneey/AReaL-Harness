@@ -21,14 +21,7 @@ def main():
         parser.error("output must not exist")
     if (platform.system(), platform.machine()) != ("Darwin", "arm64"):
         parser.error("the verified package target is macOS arm64")
-    names = (
-        "areal",
-        "areal-server",
-        "areal-runtime",
-        "areal-runtime-fs",
-        "areal-tui",
-        "areal-service-host",
-    )
+    names = ("areal", "areal-runtime", "areal-runtime-fs")
     source = root / "target" / args.profile
     subprocess.run(
         ["python3", str(root / "scripts/builtin-tools.py"), "--profile", args.profile], check=True
@@ -42,7 +35,9 @@ def main():
     shutil.copy2(root / "LICENSE", destination / "LICENSE")
     files["LICENSE"] = hashlib.sha256((destination / "LICENSE").read_bytes()).hexdigest()
     for name in names:
-        target = destination / "bin" / name
+        relative = Path("bin" if name == "areal" else "libexec/areal") / name
+        target = destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source / name, target)
         subprocess.run(
             ["/usr/bin/codesign", "--force", "--sign", "-", str(target)],
@@ -54,9 +49,9 @@ def main():
             check=True,
             capture_output=True,
         )
-        files[f"bin/{name}"] = hashlib.sha256(target.read_bytes()).hexdigest()
-    shutil.copytree(source / "tools", destination / "bin/tools")
-    for path in (destination / "bin/tools").rglob("*"):
+        files[str(relative)] = hashlib.sha256(target.read_bytes()).hexdigest()
+    shutil.copytree(source / "tools", destination / "libexec/areal/tools")
+    for path in (destination / "libexec/areal/tools").rglob("*"):
         if path.is_file():
             files[str(path.relative_to(destination))] = hashlib.sha256(
                 path.read_bytes()
@@ -71,7 +66,7 @@ def main():
         "workingTree": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=root)),
         "profile": args.profile,
         "apiVersion": "areal.core.v1",
-        "stateVersion": 9,
+        "stateVersion": 10,
         "platform": "darwin/arm64",
         "files": files,
         "prerequisites": [

@@ -209,8 +209,11 @@ impl Engine {
             .collect();
         definitions.retain(|d| {
             let name = d["function"]["name"].as_str().unwrap_or("");
-            (!name.starts_with("goal_")
-                || (goal_enabled && (name != "goal_update" || cell.depth == 0)))
+            (!matches!(name, "task_spawn" | "task_wait" | "task_channel_read") || goal_enabled)
+                && (!matches!(name, "task_spawn" | "task_wait")
+                    || cell.goal_role.load(Ordering::Acquire) == 1)
+                && (!name.starts_with("goal_")
+                    || (goal_enabled && (name != "goal_update" || cell.depth == 0)))
                 && (!name.starts_with("workgroup_") || self.workgroups.get().is_some())
                 && (!matches!(name, "agent_spawn" | "agent_spawn_configured")
                     || (cell.depth < self.limits.max_agent_depth

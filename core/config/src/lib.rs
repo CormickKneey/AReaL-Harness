@@ -8,6 +8,18 @@ use std::{collections::BTreeMap, ffi::OsString, fmt, net::SocketAddr, path::Path
 
 pub use resolve::{load_config, load_management_config};
 
+/// 可信工具宿主继承连接所需的代理变量；不借此透传模型凭据或其他宿主环境。
+pub const PROXY_ENV_VARS: [&str; 8] = [
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "no_proxy",
+];
+
 /// Contains secrets: deliberately does not implement Debug or Serialize.
 #[derive(Clone, Default)]
 pub struct ConfigInputs {

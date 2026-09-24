@@ -639,6 +639,33 @@ fn management_diagnostic_without_model_is_valid_json() {
 }
 
 #[test]
+fn management_accepts_missing_selected_credential_but_still_validates_model() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut input = inputs(temp.path());
+    input.overrides = ConfigOverrides::default();
+    write(
+        &mut input,
+        "schema_version=1\n[model]\nprovider='grok'\nname='test'\n[model.providers.grok]\nprotocol='chat-completions'\nendpoint='http://127.0.0.1:1/v1/chat/completions'\napi_key_env='GROK_API_KEY'\n",
+    );
+    let config = load_management_config(&input).unwrap();
+    assert_eq!(config.model.provider, "grok");
+    assert_eq!(config.model.api_key_env.as_deref(), Some("GROK_API_KEY"));
+    assert_eq!(failure(&input).kind, ConfigErrorKind::MissingValue);
+    set(&mut input, "GROK_API_KEY", "valid-key");
+    assert!(load_config(&input).is_ok());
+    set(&mut input, "GROK_API_KEY", "");
+    assert!(load_management_config(&input).is_ok());
+    write(
+        &mut input,
+        "schema_version=1\n[model]\nprovider='grok'\nname='test'\n[model.providers.grok]\nprotocol='invalid'\nendpoint='http://127.0.0.1:1/v1/chat/completions'\napi_key_env='GROK_API_KEY'\n",
+    );
+    assert_eq!(
+        load_management_config(&input).err().unwrap().kind,
+        ConfigErrorKind::InvalidValue
+    );
+}
+
+#[test]
 fn permission_mode_defaults_to_yolo_and_respects_all_sources() {
     let temp = tempfile::tempdir().unwrap();
     let mut i = inputs(temp.path());

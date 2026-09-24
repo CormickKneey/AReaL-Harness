@@ -71,7 +71,7 @@ def reap_children(children):
 
 def main():
     parser = argparse.ArgumentParser(
-        prog="areal-tui" if "--tui" in sys.argv[1:] else None, description=__doc__
+        prog="areal" if "--tui" in sys.argv[1:] else "areal serve", description=__doc__
     )
     parser.add_argument("--bin-dir", type=Path)
     parser.add_argument("--parent-pid", type=int)
@@ -106,6 +106,7 @@ def main():
     parser.add_argument("--startup-timeout", type=float, default=30)
     parser.add_argument("--resume")
     headless = parser.add_mutually_exclusive_group()
+    headless.add_argument("--initial-prompt")
     headless.add_argument("--prompt")
     headless.add_argument("--goal")
     parser.add_argument("--goal-token-budget", type=int)
@@ -140,11 +141,12 @@ def main():
         parser.error("--workspace is required without --tui")
     if not args.tui and (
         args.resume is not None
+        or args.initial_prompt is not None
         or args.prompt is not None
         or args.goal is not None
         or args.input_file is not None
     ):
-        parser.error("--resume, --prompt, --goal and --input-file require --tui")
+        parser.error("--resume, --initial-prompt, --prompt, --goal and --input-file require --tui")
     if args.goal_token_budget is not None and (args.goal is None or args.goal_token_budget <= 0):
         parser.error("--goal-token-budget requires --goal and a positive integer")
     if not args.tui and tui_arguments(args):
@@ -160,9 +162,11 @@ def main():
     ):
         parser.error("scratch must be an existing directory disjoint from the workspace")
     binary = (args.bin_dir or Path(__file__).resolve().parents[1] / "target/debug").resolve()
-    paths = [binary / name for name in ["areal-server", "areal-runtime", "areal-runtime-fs"]]
-    if args.tui:
-        paths.append(binary / "areal-tui")
+    # 安装包只暴露 areal；Runtime 仍以独立进程执行并沿用私有管道边界。
+    runtime_bin = binary.parent / "libexec/areal"
+    if not runtime_bin.is_dir():
+        runtime_bin = binary
+    paths = [binary / "areal", runtime_bin / "areal-runtime", runtime_bin / "areal-runtime-fs"]
     for path in paths:
         if not path.is_file() or not os.access(path, os.X_OK):
             parser.error(
@@ -354,6 +358,7 @@ def main():
             core = subprocess.Popen(
                 [
                     str(paths[0]),
+                    "app-server",
                     "--runtime-stdio",
                     "--supervisor-fd",
                     str(lifetime_read),
@@ -412,7 +417,7 @@ def main():
                     terminal_state = termios.tcgetattr(sys.stdin.fileno())
                 tui = subprocess.Popen(
                     [
-                        str(paths[3]),
+                        str(paths[0]),
                         "--endpoint",
                         ready.read_text(),
                         "--auth-file",
@@ -427,6 +432,7 @@ def main():
                         ),
                         *tui_arguments(args),
                         *(["--input-file", str(args.input_file)] if args.input_file else []),
+                        *(["--", args.initial_prompt] if args.initial_prompt is not None else []),
                     ]
                 )
                 children.append(tui)

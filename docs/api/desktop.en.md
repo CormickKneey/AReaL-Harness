@@ -8,11 +8,24 @@ Thread snapshots and Item notifications accept the optional `agentMessage.phase`
 
 ## Authentication and connection
 
-Product servers listen on loopback and authenticate WebSocket/Blob requests. Trusted Main reads its Bearer token from authFile in ready metadata; Renderer receives neither that file nor model credentials. Built-in Web exchanges credentials at POST /areal/auth/session for an HttpOnly, SameSite=Strict cookie and validates Origin.
+Product servers listen on loopback and authenticate WebSocket/Blob requests. Trusted Main reads its Bearer token from authFile in ready metadata; Renderer receives neither that file nor model credentials. Built-in Web uses a separate HttpOnly, SameSite=Strict session cookie and validates Origin; see automatic local login below.
 
 The auth file `{version:1,principals:[{id,token,permissions,threadIds?}]}` requires mode 0600. Permissions are observe/interact/manage/tools; explicit threadIds limit observation and interaction. Client names and Thread IDs are not authentication.
 
 Use initialize → initialized → areal/capabilities (optional apiVersion). Request IDs are independent in each direction; item/tool/call is a server request requiring a response. Replace the baseline through thread/resume. See [Core](core.en.md) for subscriptions, queues and backpressure.
+
+<a id="browser-auth"></a>
+### Browser login
+
+- `POST /areal/auth/bootstrap`: a trusted local client supplies `Authorization: Bearer <local token>` without Origin; success returns `200 {code,expiresIn:60}`. Cookies cannot mint codes; requests with Origin receive 403.
+- `POST /areal/auth/bootstrap/exchange`: the page sends JSON `{code}` with an Origin exactly matching the service. Bodies are limited to 1 KiB and unknown fields are rejected. Success returns 204 with a session cookie. Invalid, expired, consumed or other-instance codes return 401; missing or mismatched Origin returns 403.
+- `POST /areal/auth/session`: manual Bearer login remains available, returning 204 with an independent session cookie. Existing cookies cannot renew a session. Any supplied Origin must match the service.
+
+Codes have 244 bits of random entropy, expire after 60 seconds and are consumed atomically once. The CLI opens `/ui#bootstrap=<code>`; fragments never enter HTTP request targets. The page uses `history.replaceState` to remove the fragment from the current history entry before exchanging it through POST, without localStorage/sessionStorage. Failed automatic login prompts another `areal web` invocation or manual login. Authentication responses use `Cache-Control: no-store`; clients disable proxies and redirects. Long-lived launcher tokens never enter URLs, service descriptors, logs or cookies.
+
+Cookies are named `areal_session_<origin digest>`, omit Domain and use `HttpOnly; SameSite=Strict; Path=/; Max-Age=3600`. Transport is restricted to HTTP loopback, so the HTTPS-dependent Secure attribute is omitted. Names distinguish local ports; cookies are not an isolation boundary against untrusted processes on the same host. Independent sessions inherit the original permissions and threadIds. The server stores SHA-256 digests of codes and session IDs and enforces a one-hour absolute lifetime: HTTP/new WebSocket authentication is rejected and existing browser connections close, without cancelling background tasks. Restart invalidates all codes and browser sessions. Each service retains at most 64 valid codes and 1024 valid sessions; capacity returns 429 without evicting existing sessions.
+
+Compatibility: Bearer clients and the authentication file format are unchanged. Legacy `areal_session=<long-lived token>` cookies are rejected; run `areal web` again or sign in manually after upgrading. `areal web --json` preserves its descriptor and neither opens a browser nor mints a code. Request/response types are browserBootstrap / browserBootstrapExchange in [local-service-v1.json](../../schemas/local-service-v1.json).
 
 ## Method catalog
 
@@ -44,7 +57,7 @@ Use initialize → initialized → areal/capabilities (optional apiVersion). Req
 
 requestId is a durable business key; RPC id only correlates responses. Identical identity, method, key and normalized parameters return the original result; changed parameters conflict. Each Thread permits 1024 receipts; management logs permit 4096. Exhaustion rejects instead of forgetting keys. Accepted management records without results become UNKNOWN after restart and are not reexecuted.
 
-turn/start/enqueue take `{requestId,threadId,input,expectedConfigRevision?}`. Queues retain at most 128 historical items with frozen configuration. Only success advances automatically. Stop/failure/UNKNOWN/restart/drain pauses the queue until explicit resume. After timeout, query request/read or authoritative state rather than assuming no side effects.
+turn/start/enqueue take `{requestId,threadId,input,expectedConfigRevision?,interactionMode?}`. Queues retain at most 128 historical items with frozen configuration. Only success advances automatically. Stop/failure/UNKNOWN/restart/drain pauses the queue until explicit resume. After timeout, query request/read or authoritative state rather than assuming no side effects.
 
 `EffectiveConfig.defaultModelRevision` is an optional opaque reference to a default-model snapshot, fixed when a Turn or queue item is submitted. Session defaults omit it; explicit Provider selections retain their semantics. The model archive belongs to the data directory and contains no environment credential values.
 
@@ -52,7 +65,7 @@ thread/configure requires expectedRevision and an idle, non-compacting Thread. r
 
 Optional `parameters.reasoningSummary` accepts `auto` / `concise` / `detailed` for Responses only, merging Provider defaults with Thread overrides. Summary requests remain disabled when neither Provider/service defaults nor Thread overrides configure it. `areal/model/list.parameterCapabilities` includes `reasoningSummary` only for Responses providers; this advertises adapter support, not support for every upstream model or mode. See [Core reasoning progress](core.en.md#reasoning-progress) for events and parts.
 
-options.readOnly narrows Scope write roots and networking. toolAllowlist narrows the Profile; preapprovedTools cannot remove mandatory deployment approvals. maxModelRounds is 1–1024 with a handoff-only final round, not a team request budget. Profile/Workflow definitions use immutable id/revision pairs; Skill references do not freeze resource content, as described below.
+options.readOnly narrows Scope write roots and networking. toolAllowlist narrows the Profile; preapprovedTools cannot remove mandatory deployment approvals and matches only the current tool name; preapproving a read tool does not exempt its hooks. maxModelRounds is 1–1024 with a handoff-only final round, not a team request budget. Profile/Workflow definitions use immutable id/revision pairs; Skill references do not freeze resource content, as described below.
 
 <a id="skills"></a>
 ## Skill metadata and resources
@@ -88,3 +101,7 @@ features.goals=true advertises Goal support without a separate configuration tog
 Local service discovery, window-independent lifecycle and Desktop Main integration use the [local service contract](local-service.en.md). `server/status` and `server/drain` additionally return `activeGoals` (Thread IDs) and `pendingQueueItems` (pending/running queue count). These are additive response fields; restartSafe still describes execution cleanup rather than absence of scheduled work.
 
 Shared services expose `server/status.configuration` as `{modelRevision,restartRequired,error}`; other deployments return null. `areal/server/configurationChanged` publishes `{threadId,configuration}` to subscribed threads. `server/drain` also accepts `strategy="ifIdle"`: check idle state and close admission under one gate; busy rejection keeps work running. See [configuration reload](../guides/configuration.en.md).
+
+## Task Mode integration
+
+`task/create/list/read/pause/resume/cancel/subscribe/unsubscribe`, `channel/read/reply` and `inbox/list` form task control and communication APIs independent of Threads; see the [Task contract](tasks.en.md). task/updated carries a Task projection and channelSequence; clients retrieve Channel messages through pagination. server/status and drain add activeTasks, including future schedules. GUI/TUI/WebUI can share this Inbox; existing conversation interaction panels still handle synchronous questions and approvals.
