@@ -16,9 +16,18 @@ import sys
 import time
 import tomllib
 from collections import Counter
+from result_view_report import usage_counter
 
 ROOT = Path(__file__).resolve().parents[2]
-CASES = ("pricing", "output-tail", "failure-context", "batch-edit")
+CASES = (
+    "pricing",
+    "output-tail",
+    "failure-context",
+    "batch-edit",
+    "search-groups",
+    "repeat-log",
+    "snapshot",
+)
 FACTORS = dict(
     zip(
         ("mm", "cm", "m", "km", "inch", "foot", "yard", "mile", "us", "ms", "minute", "hour"),
@@ -41,6 +50,31 @@ def fixtures(case, pytest):
             for p in (base / "workspace").rglob("*.py")
         }
         return files, (base / "prompt.md").read_text() + common
+    if case == "search-groups":
+        path = "configuration/deployment/region_north/service_inventory/production/settings.txt"
+        lines = [f"setting_{i:03d} = inactive:default" for i in range(65)]
+        lines[32] = "setting_032 = active:violet-cedar-731"
+        return {path: "\n".join(lines) + "\n"}, (
+            "Use search_files with pattern '^setting_' and limit 100 to inspect the configuration. "
+            'Write answer.json containing only {"active": "<the active setting value after active:>"}. '
+            "There is one active setting among the matches. Preserve the configuration." + common
+        )
+    if case == "repeat-log":
+        return (
+            {
+                "scale.py": "def scale(value):\n    return value * 3\n",
+                "test_scale.py": "from scale import scale\ndef test_scale():\n    for _ in range(110): print('unchanged dependency check: OK')\n    print('diagnostic: multiplier must be seven')\n    for _ in range(110): print('unchanged dependency check: OK')\n    assert scale(2) == 14\n",
+            },
+            f"First run `{shlex.quote(str(pytest))} -s -q --tb=short --color=no -p no:cacheprovider` unchanged without redirection, inspect the diagnostics, then fix scale.py and run the same test again."
+            + common,
+        )
+    if case == "snapshot":
+        return {}, (
+            "Call mcp__inventory__snapshot exactly once to obtain the immutable inventory. Find the entry whose state is active. "
+            'Write answer.json containing only {"active":"<that entry\'s value>"}. '
+            "If the result is paged, use its advertised retrieval tool and cursors. Do not rerun the snapshot or inspect the tool implementation."
+            + common
+        )
     if case == "output-tail":
         files = {
             "ledger.py": "def balance(amounts, opening=0):\n    return sum(amounts) - opening\n"
@@ -103,11 +137,14 @@ def grade(case, workspace, files):
             f"assert math.isclose(units.convert_{name}(3.7), {3.7 * factor!r}, rel_tol=1e-9)"
             for name, factor in FACTORS.items()
         ),
+        "search-groups": "import json\nassert json.load(open('answer.json')) == {'active':'violet-cedar-731'}",
+        "repeat-log": "from scale import scale\nassert scale(3)==21\nassert scale(-4)==-28",
+        "snapshot": "import json\nassert json.load(open('answer.json')) == {'active':'quartz-river-846'}",
     }
     unchanged = all(
         (workspace / name).read_text() == content
         for name, content in files.items()
-        if "test" in name
+        if "test" in name or case == "search-groups"
     )
     r = subprocess.run(
         [sys.executable, "-c", checks[case]],
@@ -147,6 +184,22 @@ def trial(args, label, binary, case, repeat):
         f"{key}={json.dumps(value)}\n" for key, value in selected["providers"][provider].items()
     )
     conf += f"[limits]\nturn_timeout_seconds={args.timeout}\nstream_idle_timeout_seconds=60\nmax_tool_calls=80\n"
+    extensions = {}
+    if label in args.view_modes:
+        extensions["policy"] = {"resultViews": {"mode": args.view_modes[label]}}
+    if case == "snapshot":
+        # 数据源是部署侧工具夹具，不放入模型工作区；隐藏验收只检查结果文件。
+        script = target / "inventory.py"
+        shutil.copy2(ROOT / "tests/fixtures/inventory-mcp.py", script)
+        extensions["mcpServers"] = {
+            "inventory": {
+                "transport": {"type": "stdio", "command": sys.executable, "args": [str(script)]}
+            }
+        }
+    if extensions:
+        tools_path = target / "tools.json"
+        tools_path.write_text(json.dumps(extensions))
+        conf += f"[tools]\nextensions_file={json.dumps(str(tools_path))}\n"
     (target / "config.toml").write_text(conf)
     env = os.environ.copy()
     for key in list(env):
@@ -173,6 +226,11 @@ def trial(args, label, binary, case, repeat):
         "--prompt",
         prompt,
     ]
+    if case == "snapshot":
+        command.remove("--no-deployment-mcp")
+        command.extend(
+            ["--sandbox-profile", "native", "--allow-write", "--allow-concurrent-writes"]
+        )
     start = time.monotonic()
     timed_out = False
     with (target / "stdout.log").open("w") as out, (target / "stderr.log").open("w") as err:
@@ -204,10 +262,10 @@ def trial(args, label, binary, case, repeat):
         except ValueError:
             pass
     usage = {
-        key: sum(a["usage"][key] for a in audits)
-        if audits and all(isinstance((a.get("usage") or {}).get(key), int) for a in audits)
+        key: sum(usage_counter(a, key) for a in audits)
+        if audits and all(isinstance(usage_counter(a, key), int) for a in audits)
         else None
-        for key in ["inputTokens", "cachedInputTokens", "outputTokens"]
+        for key in ["inputTokens", "cachedInputTokens", "outputTokens", "reasoningTokens"]
     }
     result = dict(
         trial_id=trial_id,
@@ -220,6 +278,13 @@ def trial(args, label, binary, case, repeat):
         completed=bool(turns) and all(t["status"] == "completed" for t in turns),
         grade=grade(case, workspace, files),
         usage=usage,
+        observed_partial_usage={
+            key: sum(
+                usage_counter(a, key) for a in audits if isinstance(usage_counter(a, key), int)
+            )
+            for key in ("inputTokens", "cachedInputTokens", "outputTokens", "reasoningTokens")
+        },
+        unknown_usage_requests=sum(not a.get("usageObserved") for a in audits),
         model_requests=len(audits),
         model_ms=sum(a.get("durationMs", 0) for a in audits),
         tool_calls=len(tools),
@@ -233,6 +298,14 @@ def trial(args, label, binary, case, repeat):
         fixture_sha256=digest(json.dumps(files, sort_keys=True).encode()),
         prompt_sha256=digest(prompt.encode()),
     )
+    if case == "snapshot":
+        result["grade"]["answer_correct"] = result["grade"]["correct"]
+        protocol_correct = (
+            result["tool_counts"].get("mcp__inventory__snapshot") == 1
+            and result["tool_counts"].get("read_tool_result", 0) > 0
+        )
+        result["grade"]["retrieval_protocol_correct"] = protocol_correct
+        result["grade"]["correct"] &= protocol_correct
     (target / "result.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result), flush=True)
     return result
@@ -254,25 +327,57 @@ def main():
     parser.add_argument("--jobs", type=int, default=2)
     parser.add_argument("--timeout", type=int, default=180)
     parser.add_argument("--direct", action="store_true")
+    parser.add_argument("--case", action="append", choices=CASES, dest="cases")
+    parser.add_argument(
+        "--view-mode",
+        action="append",
+        default=[],
+        help="NAME=off|observe|on; omitted variants keep their own default",
+    )
     args = parser.parse_args()
     args.output = args.output.resolve()
     args.output.mkdir(parents=True, exist_ok=False)
     variants = {k: Path(v).resolve() for k, v in (s.split("=", 1) for s in args.variant)}
-    plan = [
-        (label, str(binary), case, repeat)
-        for case in CASES
-        for repeat in range(args.repeat)
-        for label, binary in variants.items()
-    ]
-    random.Random(args.seed).shuffle(plan)
+    args.view_modes = dict(s.split("=", 1) for s in args.view_mode)
+    if any(
+        k not in variants or v not in {"off", "observe", "on"} for k, v in args.view_modes.items()
+    ):
+        parser.error("view-mode requires a configured variant and off|observe|on")
+    cases = args.cases or list(CASES)
+    pairs = [(case, repeat) for case in cases for repeat in range(args.repeat)]
+    rng = random.Random(args.seed)
+    rng.shuffle(pairs)
+    plan = []
+    for case, repeat in pairs:
+        labels = list(variants)
+        rng.shuffle(labels)
+        plan.extend((label, str(variants[label]), case, repeat) for label in labels)
+    selected_model = tomllib.loads(args.model_config.read_text())["model"]
+    # 只记录白名单参数；不能把 endpoint、密钥或任意 provider 扩展写入报告。
+    model_settings = {
+        key: selected_model[key]
+        for key in (
+            "name",
+            "provider",
+            "temperature",
+            "top_p",
+            "max_output_tokens",
+            "reasoning_effort",
+        )
+        if key in selected_model
+    }
+    model_settings["protocol"] = selected_model["providers"][selected_model["provider"]]["protocol"]
     metadata = {
-        "suite": "native-tool-mechanism-probes-v1",
+        "suite": "native-tool-mechanism-probes-v2",
+        "view_modes": args.view_modes,
         "seed": args.seed,
         "repeat": args.repeat,
         "jobs": args.jobs,
         "timeout": args.timeout,
         "direct": args.direct,
         "model": tomllib.loads(args.model_config.read_text())["model"]["name"],
+        "model_settings": model_settings,
+        "model_settings_sha256": digest(json.dumps(model_settings, sort_keys=True).encode()),
         "runner_sha256": digest(Path(__file__).read_bytes()),
         "platform": platform.platform(),
         "python": platform.python_version(),
@@ -287,14 +392,18 @@ def main():
                     "areal-runtime",
                     "areal-runtime-fs",
                     "launch.py",
+                    "tools/rg",
+                    "tools/rg.json",
                 ]
+                if (binary / name).is_file()
             }
             for label, binary in variants.items()
         },
         "fixtures": {
             case: digest(json.dumps(fixtures(case, args.pytest)[0], sort_keys=True).encode())
-            for case in CASES
+            for case in cases
         },
+        "mcp_fixture_sha256": digest((ROOT / "tests/fixtures/inventory-mcp.py").read_bytes()),
     }
     (args.output / "plan.json").write_text(json.dumps(metadata, indent=2) + "\n")
     results = []

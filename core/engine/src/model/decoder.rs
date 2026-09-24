@@ -44,6 +44,13 @@ pub(super) enum Decoder {
 }
 
 impl Decoder {
+    pub(super) fn usage_details(&self) -> Value {
+        let details = match self {
+            Self::Chat(d) => &d.usage_details,
+            Self::Responses(d) => &d.usage_details,
+        };
+        json!({"cachedInputTokens":details.cached,"reasoningTokens":details.reasoning})
+    }
     pub(super) fn feed(&mut self, bytes: &[u8]) -> Result<Vec<ModelEvent>> {
         match self {
             Self::Chat(decoder) => decoder.feed(bytes),
@@ -87,6 +94,7 @@ impl Decoder {
 
 #[derive(Default)]
 pub(super) struct ChatDecoder {
+    usage_details: UsageDetails,
     pub(super) stop_reason: Option<String>,
     pub(super) truncated: bool,
     pub(super) content_bytes: usize,
@@ -171,6 +179,7 @@ impl ChatDecoder {
             return Err(StreamError::from_value(error, "error").into());
         }
         if let Some(usage) = parse_usage(event.get("usage")) {
+            self.usage_details.observe(&event["usage"]);
             output.push(ModelEvent::Usage(usage));
         }
         for (choice_position, choice) in event["choices"]
@@ -309,6 +318,7 @@ impl ChatDecoder {
 
 #[derive(Default)]
 pub(super) struct ResponsesDecoder {
+    usage_details: UsageDetails,
     frames: SseFrames,
     audio: String,
     finished: bool,
@@ -548,6 +558,7 @@ impl ResponsesDecoder {
                     bail!("Responses request did not complete successfully");
                 }
                 if let Some(usage) = parse_usage(event["response"].get("usage")) {
+                    self.usage_details.observe(&event["response"]["usage"]);
                     output.push(ModelEvent::Usage(usage));
                 }
                 if let Some(items) = event["response"]["output"].as_array() {
@@ -589,6 +600,38 @@ impl ResponsesDecoder {
     }
 }
 
+#[derive(Default)]
+struct UsageDetails {
+    seen: bool,
+    cached: Option<u64>,
+    reasoning: Option<u64>,
+}
+
+impl UsageDetails {
+    fn observe(&mut self, value: &Value) {
+        // 缺失的可选计数保留 unknown；不改变现有预算使用的 ModelUsage。
+        let cached = value
+            .get("input_tokens_details")
+            .or_else(|| value.get("prompt_tokens_details"))
+            .and_then(|v| v["cached_tokens"].as_u64());
+        let reasoning = value
+            .get("output_tokens_details")
+            .or_else(|| value.get("completion_tokens_details"))
+            .and_then(|v| v["reasoning_tokens"].as_u64());
+        if self.seen {
+            self.cached = self.cached.zip(cached).map(|(a, b)| a.saturating_add(b));
+            self.reasoning = self
+                .reasoning
+                .zip(reasoning)
+                .map(|(a, b)| a.saturating_add(b));
+        } else {
+            self.cached = cached;
+            self.reasoning = reasoning;
+        }
+        self.seen = true;
+    }
+}
+
 fn parse_usage(value: Option<&Value>) -> Option<ModelUsage> {
     let value = value?.as_object()?;
     Some(ModelUsage {
@@ -612,6 +655,17 @@ fn parse_usage(value: Option<&Value>) -> Option<ModelUsage> {
 #[cfg(test)]
 mod truncated_usage_tests {
     use super::*;
+
+    #[test]
+    fn optional_counters_preserve_unknown_and_both_wire_formats() {
+        let mut details = UsageDetails::default();
+        details.observe(&json!({"prompt_tokens_details":{"cached_tokens":12},"completion_tokens_details":{"reasoning_tokens":3}}));
+        assert_eq!((details.cached, details.reasoning), (Some(12), Some(3)));
+        details.observe(&json!({"input_tokens_details":{"cached_tokens":8},"output_tokens_details":{"reasoning_tokens":2}}));
+        assert_eq!((details.cached, details.reasoning), (Some(20), Some(5)));
+        details.observe(&json!({}));
+        assert_eq!((details.cached, details.reasoning), (None, None));
+    }
 
     #[test]
     fn malformed_or_partial_usage_tail_preserves_truncated_reason_and_known_usage() {

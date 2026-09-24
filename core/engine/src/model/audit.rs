@@ -49,6 +49,20 @@ impl Audit {
                 .as_array()
                 .map(|messages| messages.iter().filter(|m| m["role"] == "system").count())
         );
+        // 只保存块摘要，离线比较相邻请求的稳定前缀；不持久化提示词正文。
+        value["messageBlocks"] = json!(body.get("messages").or_else(|| body.get("input"))
+            .and_then(Value::as_array).into_iter().flatten().map(|message| {
+                let encoded = message.to_string();
+                json!({"sha256":format!("{:x}",Sha256::digest(encoded.as_bytes())),"bytes":encoded.len()})
+            }).collect::<Vec<_>>());
+        value["toolSchemaSha256"] = json!(format!(
+            "{:x}",
+            Sha256::digest(body["tools"].to_string().as_bytes())
+        ));
+        value["instructionsSha256"] = json!(format!(
+            "{:x}",
+            Sha256::digest(body["instructions"].to_string().as_bytes())
+        ));
         if let Ok((thread, turn)) = REQUEST_OWNER.try_with(Clone::clone) {
             value["threadId"] = json!(thread);
             value["turnId"] = json!(turn);

@@ -69,6 +69,7 @@ Follow the [development guide](../../development/README.en.md) to build `85f4a27
 python3 tests/perf/native_tool_ab.py \
   --variant "baseline=$BASELINE_BIN" --variant "final=$FINAL_BIN" \
   --model-config "$HOME/.areal-harness/config.toml" \
+  --case pricing --case output-tail --case failure-context --case batch-edit \
   --output target/perf/native-tool-ab --repeat 3 --seed 163 --jobs 2 --direct
 ```
 

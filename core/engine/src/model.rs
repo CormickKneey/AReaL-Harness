@@ -883,6 +883,7 @@ impl Model for HttpModel {
                         match stream.next().await {
                             Some(Ok(bytes)) => {
                                 let parts = decoder.feed(&bytes);
+                                audit.value["usageDetails"] = decoder.usage_details();
                                 if let Decoder::Chat(chat) = &decoder {
                                     audit.value["stopReason"] = json!(chat.stop_reason);
                                     audit.value["responseShape"] = json!({
