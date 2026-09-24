@@ -43,7 +43,7 @@ Descriptor fields are defined in [local-service-v1.json](../../schemas/local-ser
 
 One dataDir allows one Core. `ensure` serializes concurrent launches and checks the running identity/configuration. Model file edits reload without restarting. Other TOML changes and rebuilt binaries restart automatically when the service is idle; active work prevents automatic restart. Permission, Runtime, deployment-file or model CLI/environment override changes require `areal service restart`. It never silently expands write/network permissions or kills an unmanaged Core. Symlinks resolve to canonical identity.
 
-Without an explicitly configured dataDir, shared entry points use `$AREAL_HARNESS_HOME/instances/<first24-workspace-hash>/state`; home defaults to `~/.areal-harness`. CLI/environment/TOML dataDir overrides retain their precedence. Owned launchers and noninteractive CLI retain their existing default directories.
+Without an explicitly configured dataDir, shared entry points use `$AREAL_HARNESS_HOME/instances/<first24-workspace-hash>/state`; home defaults to `~/.areal`. CLI/environment/TOML dataDir overrides retain their precedence. Owned launchers and noninteractive CLI retain their existing default directories.
 
 Existing `~/.areal-harness/state` history is not moved or merged automatically. Pass `--data-dir`, or stop the old Core and bind the workspace default:
 

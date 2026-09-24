@@ -13768,6 +13768,30 @@
           "description": "清除会话模型覆盖，重新采用 Profile 或服务端默认模型。",
           "type": "boolean"
         },
+        "selectedSkills": {
+          "default": null,
+          "description": "会话允许使用的 Skill；省略时沿用当前选择，空数组表示清空覆盖。",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "revision": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "revision"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "threadId": {
           "type": "string"
         }

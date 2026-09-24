@@ -34,6 +34,8 @@ commands![
     ("/goal-clear", "", "Clear a settled goal"),
     ("/sessions", "", "Find and switch sessions"),
     ("/model", "", "Choose a model for this session"),
+    ("/skills", "", "Choose a skill for this session"),
+    ("/skill", "NAME", "Choose a skill by name"),
     ("/new", "", "Start a new session"),
     ("/agents", "", "Inspect this session's child agents"),
     ("/topology", "", "Inspect the full parent/child tree"),
@@ -84,6 +86,7 @@ pub fn candidates(input: &str) -> Vec<&'static Command> {
 pub enum PickerKind {
     Sessions,
     Models,
+    Skills,
 }
 
 pub struct Picker {
@@ -106,5 +109,14 @@ impl Picker {
 pub struct ModelChoice {
     pub label: String,
     pub model: Option<ModelRef>,
+    pub available: bool,
+}
+
+#[derive(Clone)]
+pub struct SkillChoice {
+    pub id: String,
+    pub revision: String,
+    pub label: String,
+    pub description: String,
     pub available: bool,
 }

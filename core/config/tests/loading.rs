@@ -33,6 +33,7 @@ fn goals_have_default_limits_and_validate_overrides() {
     let temp = tempfile::tempdir().unwrap();
     let mut i = inputs(temp.path());
     let defaults = load_config(&i).unwrap();
+    assert_eq!(defaults.home, temp.path().join(".areal"));
     assert_eq!(defaults.goals.max_turns, 100);
     assert_eq!(defaults.goals.max_active_seconds, 3600);
     assert_eq!(defaults.goals.max_unreported_turns, 3);
@@ -405,7 +406,7 @@ fn file_symlink_base_and_non_utf8_environment_are_explicit() {
 fn default_file_is_loaded_and_shipped_example_resolves() {
     let temp = tempfile::tempdir().unwrap();
     let mut i = inputs(temp.path());
-    let home = temp.path().join(".areal-harness");
+    let home = temp.path().join(".areal");
     fs::create_dir(&home).unwrap();
     fs::write(
         home.join("config.toml"),
@@ -431,7 +432,7 @@ fn unreadable_default_file_is_not_treated_as_missing() {
     use std::os::unix::fs::PermissionsExt;
     let temp = tempfile::tempdir().unwrap();
     let i = inputs(temp.path());
-    let home = temp.path().join(".areal-harness");
+    let home = temp.path().join(".areal");
     fs::create_dir(&home).unwrap();
     let path = home.join("config.toml");
     fs::write(&path, "schema_version=1").unwrap();

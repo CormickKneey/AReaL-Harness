@@ -8,8 +8,10 @@ CLI, TUI, serve and direct Core share discovery rules. Connections to an existin
 |---|---|
 | 1 | `<workspace>/.agents/skills/<name>/SKILL.md` |
 | 2 | `<workspace>/.claude/skills/<name>/SKILL.md` |
-| 3 | `~/.agents/skills/<name>/SKILL.md` |
-| 4 | `~/.claude/skills/<name>/SKILL.md` |
+| 3 | `<workspace>/.codex/skills/<name>/SKILL.md` |
+| 4 | `~/.agents/skills/<name>/SKILL.md` |
+| 5 | `~/.claude/skills/<name>/SKILL.md` |
+| 6 | `~/.codex/skills/<name>/SKILL.md` |
 
 Exact directory names override whole Skills without merging resources or taking identity from frontmatter name. Discovery examines direct children only, not parent projects. Trusted launch parameters determine workspace; RPC cwd cannot change it. User home is separate from AREAL_HARNESS_HOME.
 
@@ -32,5 +34,7 @@ Reads resolve each path component from the registered root directory descriptor,
 Auto-discovered revisions use `metadata-<SHA-256>` and identify parsed metadata only; explicit deployments use their manifest revision. Skill id/revision pairs identify references without guaranteeing immutable bytes, so the same reference can read updated files. Profiles, Turns and queues fix selected Skill references without freezing attachments. Profile and Workflow definitions themselves remain immutable.
 
 Default root sessions use the `areal-discovered-skills` Profile; CLI uses `claude-cli` and loads CLAUDE.md. Explicit Profiles expose only declared skills. Legacy CLI `claude-<name>` IDs changed to directory names while historical references remain. Unregistered historical Skill references are explicitly unavailable; to restore them, register their original ID/revision and directory in an explicit deployment manifest. Reads still return current files.
+
+Web and TUI provide a Skill picker through `/skills`, with `/skill NAME` for direct selection. A selection is persisted as `selectedSkills` in the thread configuration and applies to later Turns; when no override is set, the Profile's complete Skill set remains active.
 
 Legacy persisted skillHashes are ignored and are omitted on subsequent saves. Existing `{id,revision,root}` manifests remain valid without a loading-mode setting. See [desktop examples](../examples/desktop-api.en.md) for configuration and end-to-end checks.

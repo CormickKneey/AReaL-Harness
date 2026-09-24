@@ -11,7 +11,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
     client::Client,
-    commands::{self, ModelChoice, Picker, PickerKind},
+    commands::{self, ModelChoice, Picker, PickerKind, SkillChoice},
     history::History,
     safe_text,
     theme::{Preferences, Theme},
@@ -71,6 +71,7 @@ enum Purpose {
     Release(Vec<String>),
     Group(u64),
     Models,
+    Skills,
     Configure(String),
 }
 #[derive(Clone, Debug)]
@@ -116,6 +117,7 @@ pub struct App {
     pub theme_original: Option<Theme>,
     pub picker: Option<Picker>,
     pub models: Vec<ModelChoice>,
+    pub skills: Vec<SkillChoice>,
     pub default_model: String,
     pub model_reset_supported: bool,
     pub completion_index: usize,
@@ -181,6 +183,7 @@ impl App {
             theme_original: None,
             picker: None,
             models: Vec::new(),
+            skills: Vec::new(),
             default_model: "Server default".into(),
             model_reset_supported: false,
             completion_index: 0,
@@ -716,6 +719,11 @@ impl App {
                 self.picker = Some(Picker::new(PickerKind::Models));
                 self.queue("areal/model/list", json!({}), Purpose::Models)?;
             }
+            "/skills" => {
+                let id = self.selected.clone().context("Create a thread first")?;
+                self.picker = Some(Picker::new(PickerKind::Skills));
+                self.queue("areal/skill/list", json!({"threadId":id}), Purpose::Skills)?;
+            }
             "/tasks" => {
                 self.view = View::Tasks;
                 self.focus = Focus::Navigation;
@@ -761,6 +769,16 @@ impl App {
                         json!(value.parse::<u64>()?)
                     };
                     self.goal_control("update", Some(json!({"tokenBudget":budget})))?;
+                } else if let Some(name) = input.strip_prefix("/skill ") {
+                    let query = name.trim().to_lowercase();
+                    let index = self
+                        .skills
+                        .iter()
+                        .position(|skill| {
+                            skill.id.to_lowercase() == query || skill.label.to_lowercase() == query
+                        })
+                        .context("Skill not found; use /skills to choose one")?;
+                    self.choose_skill(index)?;
                 } else if let Some(prefix) = input.strip_prefix("/open ") {
                     let matches: Vec<_> = self
                         .threads
@@ -895,6 +913,23 @@ impl App {
             .filter_map(|(i, m)| m.label.to_lowercase().contains(&query).then_some(i))
             .collect()
     }
+    pub fn skill_choices(&self) -> Vec<usize> {
+        let query = self
+            .picker
+            .as_ref()
+            .map_or("", |p| p.query.as_str())
+            .to_lowercase();
+        self.skills
+            .iter()
+            .enumerate()
+            .filter_map(|(i, skill)| {
+                (skill.id.to_lowercase().contains(&query)
+                    || skill.label.to_lowercase().contains(&query)
+                    || skill.description.to_lowercase().contains(&query))
+                .then_some(i)
+            })
+            .collect()
+    }
     pub fn model_label(&self) -> String {
         self.current()
             .and_then(|t| t.desktop.as_ref())
@@ -948,12 +983,46 @@ impl App {
         self.status = "Changing model…".into();
         Ok(())
     }
+    fn choose_skill(&mut self, index: usize) -> Result<()> {
+        let choice = self.skills.get(index).context("Choose a skill")?.clone();
+        ensure!(
+            choice.available,
+            "Skill unavailable; refresh the skill list"
+        );
+        let thread = self.current().context("Create or open a session first")?;
+        ensure!(
+            self.connected && self.subscriptions.contains(&thread.id),
+            "Wait for the session snapshot before changing skills"
+        );
+        ensure!(
+            self.active().is_none() && !matches!(thread.status, ThreadStatus::Active { .. }),
+            "Wait for this Turn to finish before changing skills"
+        );
+        ensure!(
+            !self.in_flight("areal/thread/configure", "threadId", &thread.id),
+            "A session change is already pending"
+        );
+        let config = thread.desktop.as_ref().map(|d| &d.configuration);
+        let id = thread.id.clone();
+        self.queue(
+            "areal/thread/configure",
+            json!({
+                "threadId": id,
+                "expectedRevision": config.map_or(1, |c| c.revision),
+                "selectedSkills": [{"id": choice.id, "revision": choice.revision}],
+            }),
+            Purpose::Configure(thread.id.clone()),
+        )?;
+        self.status = format!("Selecting skill: {}…", choice.label);
+        Ok(())
+    }
     fn picker_key(&mut self, code: KeyCode) -> Result<()> {
         let picker = self.picker.as_ref().unwrap();
         let (kind, selected) = (picker.kind, picker.selected);
         let count = match kind {
             PickerKind::Sessions => self.session_choices().len(),
             PickerKind::Models => self.model_choices().len(),
+            PickerKind::Skills => self.skill_choices().len(),
         };
         match code {
             KeyCode::Esc => self.picker = None,
@@ -982,6 +1051,11 @@ impl App {
                 PickerKind::Models => {
                     if let Some(index) = self.model_choices().get(selected) {
                         self.choose_model(*index)?;
+                    }
+                }
+                PickerKind::Skills => {
+                    if let Some(index) = self.skill_choices().get(selected) {
+                        self.choose_skill(*index)?;
                     }
                 }
             },
@@ -1789,15 +1863,35 @@ impl App {
                         }
                     }
                 }
+                Purpose::Skills => {
+                    let data = result["data"].as_array().context("Invalid skill catalog")?;
+                    self.skills = data
+                        .iter()
+                        .map(|entry| SkillChoice {
+                            id: entry["id"].as_str().unwrap_or_default().into(),
+                            revision: entry["revision"].as_str().unwrap_or_default().into(),
+                            label: entry["name"].as_str().unwrap_or_default().into(),
+                            description: entry["description"].as_str().unwrap_or_default().into(),
+                            available: entry["available"].as_bool().unwrap_or(false),
+                        })
+                        .collect();
+                }
                 Purpose::Configure(id) => {
                     self.update_configuration(&id, result)?;
                     if self.selected.as_ref() == Some(&id) {
-                        self.status = format!("Model changed: {}", self.model_label());
-                        if self
+                        let skill_change = self
                             .picker
                             .as_ref()
-                            .is_some_and(|p| p.kind == PickerKind::Models)
-                        {
+                            .is_some_and(|p| p.kind == PickerKind::Skills)
+                            || request.params.get("selectedSkills").is_some();
+                        self.status = if skill_change {
+                            "Skill changed for later Turns".into()
+                        } else {
+                            format!("Model changed: {}", self.model_label())
+                        };
+                        if self.picker.as_ref().is_some_and(|p| {
+                            matches!(p.kind, PickerKind::Models | PickerKind::Skills)
+                        }) {
                             self.picker = None;
                         }
                     }

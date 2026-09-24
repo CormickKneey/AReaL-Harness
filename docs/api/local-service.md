@@ -43,7 +43,7 @@ target/debug/areal web --workspace /absolute/workspace --json
 
 同一 dataDir 只允许一个 Core。`ensure` 串行化并发启动，发现运行实例后校验身份和配置；模型文件变更原地热更新；其他 TOML 配置和二进制更新在空闲时自动重启，有后台工作时拒绝自动重启。权限、Runtime、部署文件或模型 CLI/环境覆盖变化需执行 `areal service restart`。不会静默扩大写/网络权限，也不会杀掉未被托管的旧 Core。符号链接按规范路径识别。
 
-未显式配置 dataDir 时，共享入口使用 `$AREAL_HARNESS_HOME/instances/<workspace-hash前24位>/state`；home 默认 `~/.areal-harness`。显式 CLI、环境变量或 TOML 中的 dataDir 保持配置优先级。独占 launcher、非交互 CLI 的默认目录保持原有规则。
+未显式配置 dataDir 时，共享入口使用 `$AREAL_HARNESS_HOME/instances/<workspace-hash前24位>/state`；home 默认 `~/.areal`。显式 CLI、环境变量或 TOML 中的 dataDir 保持配置优先级。独占 launcher、非交互 CLI 的默认目录保持原有规则。
 
 旧 `~/.areal-harness/state` 不自动搬迁或混入新工作区。可显式指定 `--data-dir`，或停止旧 Core 后绑定默认目录：
 

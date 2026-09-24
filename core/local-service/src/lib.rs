@@ -13,7 +13,7 @@ pub fn home() -> anyhow::Result<std::path::PathBuf> {
         Some(path) => path.into(),
         None => std::env::home_dir()
             .ok_or_else(|| anyhow::anyhow!("home unavailable"))?
-            .join(".areal-harness"),
+            .join(".areal"),
     };
     storage::canonical_pending(&path)
 }

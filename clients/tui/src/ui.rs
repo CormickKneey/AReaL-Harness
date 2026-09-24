@@ -900,6 +900,7 @@ fn picker_popup(frame: &mut Frame, area: Rect, app: &App, p: Palette) {
     let title = match picker.kind {
         PickerKind::Sessions => " Sessions · Enter switch · Esc close ",
         PickerKind::Models => " Models · Enter apply · Esc close ",
+        PickerKind::Skills => " Skills · Enter apply · Esc close ",
     };
     let block = panel(title, true, p);
     let inner = block.inner(popup);
@@ -949,6 +950,23 @@ fn picker_popup(frame: &mut Frame, area: Rect, app: &App, p: Palette) {
                 ))
             })
             .collect(),
+        PickerKind::Skills => app
+            .skill_choices()
+            .iter()
+            .map(|i| {
+                let skill = &app.skills[*i];
+                ListItem::new(format!(
+                    "{}{} · {}",
+                    if skill.available {
+                        ""
+                    } else {
+                        "(unavailable) "
+                    },
+                    safe_text(&skill.label),
+                    safe_text(&skill.description)
+                ))
+            })
+            .collect(),
     };
     let mut state = ListState::default().with_selected(
         (!items.is_empty()).then_some(picker.selected.min(items.len().saturating_sub(1))),
@@ -976,6 +994,9 @@ Load more fetches the next page; Esc preserves your draft"
 Idle Turns only · configured models; availability is not a connection probe",
             safe_text(&app.model_label())
         ),
+        PickerKind::Skills => {
+            "↑↓ select · type to filter · Enter applies the selected skill".into()
+        }
     };
     frame.render_widget(Paragraph::new(note_text).style(p.style(Role::Muted)), note);
     frame.render_widget(
@@ -1027,7 +1048,7 @@ fn theme_picker(frame: &mut Frame, area: Rect, app: &App, p: Palette) {
     );
 }
 fn help_page(frame: &mut Frame, area: Rect, p: Palette) {
-    let text = "F1 /help: help · F2 /theme: theme picker\nF3 /topology: agents · F4 /groups: workgroups\nF5 /sessions: switch session · F6 /model: switch model\n/goal OBJECTIVE · /goal-pause · /goal-resume · /goal-clear\n/goal-edit OBJECTIVE · /goal-budget TOKENS|none\n/new · /tasks · /sessions · /open ID · /spawn PROMPT · /agents\n/group ID · /group-start JSON_FILE · /group-revise JSON_FILE\n/group-cancel ID · /welcome · /quit\n\n/: command suggestions · ↑↓ select · Tab complete\nTab / Shift-Tab: input, right panel, history focus\nInput: ←→ move · Ctrl-A/E line start/end\nCtrl-D/Delete: delete next · Backspace: delete previous\nNavigation: arrows select/expand, Enter open, r refresh\nHistory: ↑↓ select, Enter/Space expand, ←→ collapse/expand\nPgUp/PgDn scroll, Home/End, click a summary to expand\nCtrl-O /details: compact or detailed records\n/restore-input: restore failed submission; --mouse=false: native selection\nCtrl-C: interrupt the input target's active Turn\nCtrl-R: reconnect · Ctrl-Q: quit\n\nRead % describes loaded history; session plan counts are separate.\nTask trees include historical child sessions. Snapshot nodes can lag.\nApprovals: use the terminal dialog. /permissions: inspect rules. Questions: respond in Web.\nEsc: return to input";
+    let text = "F1 /help: help · F2 /theme: theme picker\nF3 /topology: agents · F4 /groups: workgroups\nF5 /sessions: switch session · F6 /model: switch model\n/skills: choose skill · /skill NAME: apply by name\n/goal OBJECTIVE · /goal-pause · /goal-resume · /goal-clear\n/goal-edit OBJECTIVE · /goal-budget TOKENS|none\n/new · /tasks · /sessions · /open ID · /spawn PROMPT · /agents\n/group ID · /group-start JSON_FILE · /group-revise JSON_FILE\n/group-cancel ID · /welcome · /quit\n\n/: command suggestions · ↑↓ select · Tab complete\nTab / Shift-Tab: input, right panel, history focus\nInput: ←→ move · Ctrl-A/E line start/end\nCtrl-D/Delete: delete next · Backspace: delete previous\nNavigation: arrows select/expand, Enter open, r refresh\nHistory: ↑↓ select, Enter/Space expand, ←→ collapse/expand\nPgUp/PgDn scroll, Home/End, click a summary to expand\nCtrl-O /details: compact or detailed records\n/restore-input: restore failed submission; --mouse=false: native selection\nCtrl-C: interrupt the input target's active Turn\nCtrl-R: reconnect · Ctrl-Q: quit\n\nRead % describes loaded history; session plan counts are separate.\nTask trees include historical child sessions. Snapshot nodes can lag.\nApprovals: use the terminal dialog. /permissions: inspect rules. Questions: respond in Web.\nEsc: return to input";
     frame.render_widget(
         Paragraph::new(text)
             .wrap(Wrap { trim: false })

@@ -26,6 +26,45 @@ async fn profile_references_survive_restart_while_resources_are_read_from_curren
         Engine::open(state.path(), Arc::new(UnconfiguredModel), Limits::default()).unwrap();
     engine.install_default_skills(vec![location("v1")]).unwrap();
     let original = engine.create("/workspace".into()).await.unwrap();
+    let configuration = original.desktop.as_ref().unwrap().configuration.clone();
+    engine
+        .configure_thread(
+            serde_json::from_value(serde_json::json!({
+                "threadId": original.id,
+                "expectedRevision": configuration.revision,
+                "selectedSkills": [{"id":"review","revision":"v1"}]
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        engine.skills(&original.id).await.unwrap()["data"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let updated = engine.read(&original.id, true).await.unwrap();
+    let revision = updated.desktop.as_ref().unwrap().configuration.revision;
+    engine
+        .configure_thread(
+            serde_json::from_value(serde_json::json!({
+                "threadId": original.id,
+                "expectedRevision": revision,
+                "selectedSkills": []
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        engine.skills(&original.id).await.unwrap()["data"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
     assert_eq!(
         engine.skills(&original.id).await.unwrap()["loaded"],
         serde_json::json!({})

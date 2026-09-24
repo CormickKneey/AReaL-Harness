@@ -6,7 +6,7 @@
 
 ## Files and precedence
 
-`Explicit CLI > registered environment > selected TOML > defaults`. Default configuration is `~/.areal-harness/config.toml`, with data in its sibling `state/`. `AREAL_HARNESS_HOME` selects a nonempty absolute home. `--config` takes precedence over `AREAL_HARNESS_CONFIG` and replaces, rather than overlays, the default file. Project TOML and `.env` are not discovered automatically.
+`Explicit CLI > registered environment > selected TOML > defaults`. Default configuration is `~/.areal/config.toml`, with data in its sibling `state/`. `AREAL_HARNESS_HOME` selects a nonempty absolute home. `--config` takes precedence over `AREAL_HARNESS_CONFIG` and replaces, rather than overlays, the default file. Project TOML and `.env` are not discovered automatically.
 
 Shared TUI/Web entry points use a workspace-specific default data directory; explicit dataDir configuration retains the precedence above. See [local services](../api/local-service.en.md) for migration and compatibility.
 
@@ -17,7 +17,7 @@ A missing default file is allowed. A missing explicit file, unknown field, type/
 
 Local TUI, Web, CLI and `scripts/launch.py` default to **YOLO**: ordinary tasks may read/write files accessible to the current OS user, including outside the workspace and `/tmp`, and commands may use networking without per-call approval. `--allow-write` / `--allow-network` are no longer required. OS permissions, explicit Profiles, read-only Turns, deny rules and restricted Runtime deployments still apply.
 
-Global `~/.areal-harness/config.toml`:
+Global `~/.areal/config.toml`:
 
 ```toml
 schema_version = 1

@@ -47,6 +47,25 @@ fn project_overrides_global_and_agents_overrides_claude_by_directory_name() {
 }
 
 #[test]
+fn codex_is_the_lowest_global_skill_precedence() {
+    let user = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    skill(user.path(), ".codex/skills", "review", "codex");
+    skill(user.path(), ".claude/skills", "review", "claude");
+    skill(user.path(), ".agents/skills", "review", "agents");
+    skill(project.path(), ".codex/skills", "project-codex", "project");
+    let found = discover(Some(project.path()), Some(user.path()))
+        .unwrap()
+        .skills;
+    let review = found.iter().find(|s| s.id == "review").unwrap();
+    assert_eq!(
+        fs::read_to_string(review.root.join("SKILL.md")).unwrap(),
+        "agents"
+    );
+    assert!(found.iter().any(|s| s.id == "project-codex"));
+}
+
+#[test]
 fn metadata_versions_are_stable_and_do_not_hash_supporting_resources() {
     let first = tempfile::tempdir().unwrap();
     let second = tempfile::tempdir().unwrap();

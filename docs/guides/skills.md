@@ -8,8 +8,10 @@ CLI、TUI、serve 和直接 Core 共用发现规则；连接既有服务时使�
 |---|---|
 | 1 | `<workspace>/.agents/skills/<name>/SKILL.md` |
 | 2 | `<workspace>/.claude/skills/<name>/SKILL.md` |
-| 3 | `~/.agents/skills/<name>/SKILL.md` |
-| 4 | `~/.claude/skills/<name>/SKILL.md` |
+| 3 | `<workspace>/.codex/skills/<name>/SKILL.md` |
+| 4 | `~/.agents/skills/<name>/SKILL.md` |
+| 5 | `~/.claude/skills/<name>/SKILL.md` |
+| 6 | `~/.codex/skills/<name>/SKILL.md` |
 
 同名按目录名精确覆盖整个 Skill，不合并资源、不用 frontmatter name 改身份。只发现直接子目录，不向父项目递归搜索；workspace 由可信启动参数决定，不随 RPC cwd 改变。主目录与 AREAL_HARNESS_HOME 分开。
 
@@ -32,5 +34,7 @@ Skill 根目录软链接可解析到授权的项目或全局 Skill 根；SKILL.m
 自动发现的 revision 为 `metadata-<SHA-256>`，只标识解析后的元信息；显式部署使用清单指定的 revision。Skill 的 id/revision 是引用标识，不保证资源字节不变，同一引用允许读取更新后的文件。Profile/Turn/队列固定所选 Skill 引用，不冻结附件。Profile 和 Workflow 定义自身仍不可变。
 
 默认根会话使用 `areal-discovered-skills` Profile，CLI 使用 `claude-cli` 并加载 CLAUDE.md；显式 Profile 只开放其 skills。旧 CLI `claude-<name>` ID 已改为目录名，历史引用保留。历史 Skill 引用未登记时明确不可用；需要恢复这些引用时，在显式部署清单登记其原 ID/revision 和目录，读取的仍是当前文件。
+
+Web 和 TUI 可通过 `/skills` 打开当前会话的 Skill 选择器，也可用 `/skill NAME` 直接选择。选择会以 `selectedSkills` 写入会话配置，只影响后续 Turn；空配置仍沿用 Profile 的全部 Skill。
 
 旧持久目录中的 skillHashes 会被忽略，后续保存不再写入内容摘要。旧清单 `{id,revision,root}` 继续有效，无需指定加载模式。配置与端到端验证见[桌面示例](../examples/desktop-api.md)。
