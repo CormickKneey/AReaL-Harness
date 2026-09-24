@@ -71,8 +71,13 @@ def read_file(request):
 
 def search_files(request):
     path = project_path(request)
+    root_name = request["path"].removeprefix("workspace://").split("/", 1)[0]
+    root = Path(request["roots"][root_name])
     command = [
-        "rg",
+        request["rg"],
+        "--no-config",
+        "--no-ignore-global",
+        "--no-ignore-parent",
         "--json",
         "--no-follow",
         "--line-number",
@@ -81,13 +86,27 @@ def search_files(request):
     ]
     if request.get("glob"):
         command.extend(["--glob", request["glob"]])
-    command.extend(["--", request["pattern"], str(path)])
+    # 从工作区根遍历，保留内部祖先 ignore，排除根以外的宿主规则。
+    # 只增加负 glob，避免正 glob 强行包含原本被 .gitignore 排除的文件。
+    current = root
+    for part in path.relative_to(root).parts:
+        with os.scandir(current) as children:
+            for child in children:
+                if child.name == part:
+                    continue
+                relative = str(Path(child.path).relative_to(root))
+                escaped = "".join("\\" + c if c in "\\*?[]{}!" else c for c in relative)
+                command.extend(["--glob", "!/" + escaped])
+                if sum(len(arg) for arg in command) > 60000:
+                    raise ValueError("search path selection exceeds argument budget")
+        current = current / part
+    command.extend(["--", request["pattern"], "."])
     rows, matches, scanned = [], 0, 0
     limited = False
     # An unread stderr pipe can deadlock when rg visits many unreadable paths.
     with (
         tempfile.TemporaryFile() as errors,
-        subprocess.Popen(command, stdout=subprocess.PIPE, stderr=errors) as process,
+        subprocess.Popen(command, cwd=root, stdout=subprocess.PIPE, stderr=errors) as process,
     ):
         try:
             while True:
@@ -105,7 +124,7 @@ def search_files(request):
                 if event["type"] == "match":
                     matches += 1
                 row = {
-                    "path": data["path"].get("text"),
+                    "path": str(root / data["path"]["text"]) if "text" in data["path"] else None,
                     "line": data.get("line_number"),
                     "text": data["lines"].get("text"),
                     "kind": event["type"],

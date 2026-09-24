@@ -117,9 +117,18 @@ async fn main() -> Result<()> {
         }
     };
     config.file_helper = helper.map(|path| path.canonicalize()).transpose()?;
+    config.builtin_rg = Some(
+        areal_runtime_host_tools::bundled_rg(
+            std::env::current_exe()?
+                .parent()
+                .context("Runtime binary directory")?,
+        )
+        .context("builtin rg deployment check failed")?,
+    );
     if !config.full_access {
         let mut trusted = vec![std::env::current_exe()?.canonicalize()?];
         trusted.extend(config.file_helper.clone());
+        trusted.extend(config.builtin_rg.clone());
         let scratch = config
             .scratch
             .as_ref()

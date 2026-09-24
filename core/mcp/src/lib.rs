@@ -182,8 +182,8 @@ fn convert_result(value: Value) -> Result<DynamicToolResponse> {
             + value
                 .get("structuredContent")
                 .map_or(0, |v| v.to_string().len())
-            <= 16 * 1024,
-        "MCP text result exceeds 16 KiB; outcome is UNKNOWN"
+            <= areal_protocol::MAX_TOOL_RESULT_BYTES,
+        "MCP text result exceeds 8 MiB; outcome is UNKNOWN"
     );
     Ok(DynamicToolResponse {
         success: !value["isError"].as_bool().unwrap_or(false),

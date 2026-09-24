@@ -188,6 +188,31 @@ print('fixture reply')
         self.assertEqual(child.returncode, 0, err)
         self.assert_reaped()
 
+    def test_startup_cancellation_reaps_writer_before_removing_ready_directory(self):
+        marker = self.root / "handler-installed"
+        witness = self.root / "ready-directory-survived"
+        self.fixture(
+            "app-server",
+            f"""
+ready = Path(sys.argv[sys.argv.index('--ready-file') + 1])
+def stop(*_):
+    time.sleep(0.05)
+    ready.write_text('late startup result')
+    Path({str(witness)!r}).write_text('writer stopped before cleanup')
+    sys.exit(0)
+signal.signal(signal.SIGTERM, stop)
+Path({str(marker)!r}).touch()
+while True: time.sleep(0.02)
+""",
+        )
+        child = self.start()
+        self.wait_for(marker, child)
+        child.terminate()
+        _, err = child.communicate(timeout=10)
+        self.assertEqual(child.returncode, 0, err)
+        self.assertTrue(witness.exists(), err)
+        self.assert_reaped()
+
 
 if __name__ == "__main__":
     unittest.main()

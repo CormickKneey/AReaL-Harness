@@ -218,8 +218,14 @@ impl Engine {
                 && (!matches!(name, "agent_spawn" | "agent_spawn_configured")
                     || (cell.depth < self.limits.max_agent_depth
                         && self.limits.max_children_per_turn > 0))
+                // Explicit research-agent extensions own the child lifecycle;
+                // exposing the desktop facade as well creates two subtly
+                // different spawn/wait contracts for the same Turn.
+                && (self.extensions.agents.is_none()
+                    || !matches!(name, "agent_spawn_configured" | "agent_wait_all"))
                 && (name != "agent_report" || cell.depth > 0)
-                && (desktop_enabled || !core_names.iter().any(|n| n == name))
+                // 原文回取属于所有 Core 会话，不依赖桌面扩展状态。
+                && (desktop_enabled || name == "read_tool_result" || !core_names.iter().any(|n| n == name))
                 && config
                     .tool_allowlist
                     .as_ref()

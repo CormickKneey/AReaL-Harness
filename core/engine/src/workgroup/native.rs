@@ -381,7 +381,7 @@ fn successful_tool(messages: &[Message], result: &Message) -> Option<Value> {
         // each conditional write succeeds. Treat only confirmed writes with
         // identical arguments, receipts and observed source as a checkpoint.
         // Read-only tools are excluded: repeated inspection is not a write loop.
-        "fs_create" | "fs_write" | "fs_apply_patch" => {
+        "fs_create" | "fs_write" | "fs_apply_patch" | "fs_apply_patches" => {
             let hash = output.get("sha256")?.as_str()?;
             if hash.len() != 64
                 || !hash

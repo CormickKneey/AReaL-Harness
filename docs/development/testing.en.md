@@ -46,7 +46,7 @@ Native tools/agent smoke tests use a local fixed-response HTTP model, the standa
 
 Request-budget tests cover `MAX_MODEL_ROUNDS` classification when Chat Completions or Responses returns tools in the final round, with no tool execution or retries and the original budget audit preserved. Ordinary tool-call budget exhaustion and invalid indices must retain their own classifications. Desktop CLI acceptance also checks the corresponding `error_max_turns` result. Goal HTTP regressions verify that output-token caps and tool count/buffer budgets survive shared pools, while unknown usage from failed requests prevents retries and tool execution.
 
-Linux requires Bubblewrap user/PID namespaces, seccomp, Python, Bash and rg. The public Dockerfile provides the toolchain:
+Linux requires Bubblewrap user/PID namespaces, seccomp, Python and Bash. The public Dockerfile builds the pinned bundled rg and provides the remaining toolchain; no host rg installation is required:
 
 ```sh
 docker build -f tests/e2e/docker/Dockerfile \

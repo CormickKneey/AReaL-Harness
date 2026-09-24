@@ -19,6 +19,13 @@ pub enum ExpectedFile {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TextPatch {
+    pub old_text: String,
+    pub new_text: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(
     tag = "kind",
     rename_all = "camelCase",
@@ -51,6 +58,11 @@ pub enum FileCommand {
         new_text: String,
         expected_sha256: String,
     },
+    ApplyPatches {
+        path: String,
+        patches: Vec<TextPatch>,
+        expected_sha256: String,
+    },
 }
 
 impl FileCommand {
@@ -60,7 +72,8 @@ impl FileCommand {
             | Self::Stat { path }
             | Self::List { path, .. }
             | Self::Write { path, .. }
-            | Self::ApplyPatch { path, .. } => path,
+            | Self::ApplyPatch { path, .. }
+            | Self::ApplyPatches { path, .. } => path,
         }
     }
     pub fn path_mut(&mut self) -> &mut String {
@@ -69,11 +82,15 @@ impl FileCommand {
             | Self::Stat { path }
             | Self::List { path, .. }
             | Self::Write { path, .. }
-            | Self::ApplyPatch { path, .. } => path,
+            | Self::ApplyPatch { path, .. }
+            | Self::ApplyPatches { path, .. } => path,
         }
     }
     pub fn writes(&self) -> bool {
-        matches!(self, Self::Write { .. } | Self::ApplyPatch { .. })
+        matches!(
+            self,
+            Self::Write { .. } | Self::ApplyPatch { .. } | Self::ApplyPatches { .. }
+        )
     }
 }
 

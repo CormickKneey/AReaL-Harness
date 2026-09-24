@@ -168,13 +168,24 @@ impl Invocation<'_> {
         if !hooks.is_empty() {
             // Commit the actual tool outcome before invoking potentially effectful hooks.
             // A hook failure must never turn a successful write into a retryable failure.
+            let prepared = self
+                .engine
+                .prepare_tool_result(self.cell, self.item_id, &self.call.name, &value, None)
+                .await
+                .map_err(unknown)?;
             self.edit(|execution, content| {
                 execution.outcome = if success {
                     ToolOutcome::Succeeded
                 } else {
                     ToolOutcome::Failed
                 };
-                *content = Some(content_items(&value));
+                *content = Some(if prepared.value == value {
+                    content_items(&value)
+                } else {
+                    vec![json!({"type":"inputText","text":prepared.value.to_string()})]
+                });
+                execution.result_snapshot = prepared.snapshot;
+                execution.output_projection = Some(prepared.metrics);
             })
             .await?;
         }
@@ -199,7 +210,7 @@ impl Invocation<'_> {
         let mut value = json!({"error":error});
         if create_conflict {
             value["hint"] = json!(
-                "expectedSha256=null creates a new file. Read the existing file with fs_read, then use its full-file sha256 for fs_write or fs_apply_patch. Do not retry creation or overwrite without a fresh hash."
+                "expectedSha256=null creates a new file. Read the existing file with fs_read, then use its full-file sha256 for fs_write or fs_apply_patches. Do not retry creation or overwrite without a fresh hash."
             );
         }
         value
@@ -373,18 +384,45 @@ impl Invocation<'_> {
                         .environment
                         .insert("PYTHONDONTWRITEBYTECODE".into(), "1".into());
                 }
+                let command_argv =
+                    if matches!(self.call.name.as_str(), "run_command" | "read_process") {
+                        match &request {
+                            Request::Command(command) => Some(command.argv.clone()),
+                            Request::ReadProcess(read) => {
+                                let state = self.cell.state.lock().await;
+                                state
+                                    .active
+                                    .as_ref()
+                                    .and_then(|active| {
+                                        active.handles.process_commands.get(&read.process_id)
+                                    })
+                                    .cloned()
+                            }
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
                 let (success, mut result) = execute(
                     &runtime.client,
                     request,
                     self.scope,
                     self.operation,
                     &self.engine.extensions.policy,
+                    command_argv.as_deref(),
                 )
                 .await?;
                 if let Some(process) = result["processId"].as_str().map(str::to_owned) {
                     let receipt = {
                         let mut state = self.cell.state.lock().await;
                         let handles = &mut state.active.as_mut().unwrap().handles;
+                        if self.call.name == "run_command"
+                            && let Some(argv) = &command_argv
+                        {
+                            handles
+                                .process_commands
+                                .insert(process.clone(), argv.clone());
+                        }
                         if let Some(receipt) = verification_receipt {
                             handles.verification.insert(process.clone(), receipt);
                         }
@@ -406,7 +444,13 @@ impl Invocation<'_> {
             }
             Backend::Command(tool) => {
                 let value = self
-                    .command(&tool.argv, tool.timeout_ms, self.operation, args)
+                    .command(
+                        &tool.argv,
+                        tool.timeout_ms,
+                        self.operation,
+                        args,
+                        areal_protocol::MAX_TOOL_RESULT_BYTES,
+                    )
                     .await?;
                 serde_json::from_value::<DynamicToolResponse>(value).map_err(unknown)?
             }
@@ -428,14 +472,24 @@ impl Invocation<'_> {
             .await
             .map_err(unknown)?;
         let value = serde_json::to_value(&response).map_err(unknown)?;
-        if serde_json::to_vec(&value).map_err(unknown)?.len() > MAX_RESULT
+        // 混合媒体沿用已有有界投影；仅纯文本/结构化结果进入本次持久回取路径。
+        let limit = if response
+            .content_items
+            .iter()
+            .all(|item| matches!(item, areal_protocol::ToolContent::InputText { .. }))
+        {
+            areal_protocol::MAX_TOOL_RESULT_BYTES
+        } else {
+            MAX_RESULT
+        };
+        if serde_json::to_vec(&value).map_err(unknown)?.len() > limit
             || serde_json::to_vec(&content_items(&value))
                 .map_err(unknown)?
                 .len()
-                > MAX_RESULT
+                > limit
         {
             return Err(unknown(
-                "custom tool result exceeds 16 KiB; inspect before retrying",
+                "custom tool result exceeds its receive limit (8 MiB text/structured, 16 KiB mixed media references); inspect before retrying",
             ));
         }
         if response.success {
@@ -469,7 +523,7 @@ impl Invocation<'_> {
         let result = tokio::select! {
             biased;
             _ = self.cancel.cancelled() => Err(unknown("interrupted hook; outcome is UNKNOWN")),
-            result = self.command(&hook.argv, hook.timeout_ms, &operation, &payload) => result,
+            result = self.command(&hook.argv, hook.timeout_ms, &operation, &payload, MAX_RESULT) => result,
         };
         let parsed = result.and_then(|value| {
             let response: HookResponse = serde_json::from_value(value.clone()).map_err(unknown)?;
@@ -556,6 +610,7 @@ impl Invocation<'_> {
         timeout_ms: u64,
         operation: &str,
         input: &Value,
+        output_limit: usize,
     ) -> rt::Result<Value> {
         let client = &self
             .engine
@@ -563,6 +618,9 @@ impl Invocation<'_> {
             .as_ref()
             .expect("command requires Runtime")
             .client;
+        let scope: rt::ScopeInfo = client
+            .call("scope.get", json!({"scopeId":self.scope}))
+            .await?;
         let started = client
             .start(rt::StartProcess {
                 operation_id: operation.into(),
@@ -573,8 +631,10 @@ impl Invocation<'_> {
                 tty: false,
                 pipe_stdin: true,
                 limits: rt::LimitRequest {
-                    wall_time_ms: Some(timeout_ms),
-                    output_bytes: Some((MAX_RESULT * 2) as u64),
+                    wall_time_ms: Some(timeout_ms.min(scope.limits.wall_time_ms)),
+                    output_bytes: Some(
+                        ((output_limit + MAX_RESULT) as u64).min(scope.limits.output_bytes),
+                    ),
                     max_processes: None,
                 },
             })
@@ -612,7 +672,10 @@ impl Invocation<'_> {
                     _ => stdout.extend(bytes),
                 }
             }
-            if page.gap || page.truncated || stdout.len() > MAX_RESULT || stderr.len() > MAX_RESULT
+            if page.gap
+                || page.truncated
+                || stdout.len() > output_limit
+                || stderr.len() > MAX_RESULT
             {
                 client
                     .terminate(&started.process_id)

@@ -132,7 +132,7 @@ def harness_round_metrics(thread: dict) -> dict:
                 args = tool.get("arguments")
             args = args if isinstance(args, dict) else {}
             if (
-                tool["tool"] in {"fs_write", "fs_apply_patch", "fs_create"}
+                tool["tool"] in {"fs_write", "fs_apply_patch", "fs_apply_patches", "fs_create"}
                 and error.get("code") == "CONFLICT"
             ):
                 creation = tool["tool"] == "fs_create" or (

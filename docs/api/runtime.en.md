@@ -16,6 +16,8 @@ Handshake returns protocolVersion, connectionId, runtimeEpoch, rootScopeId and c
 
 capabilities reports actual sandbox, fullAccess, rootNetwork, methods and processLimits, without granting permissions. coreHostIsolated/processTreeCleanupVerified/directoryObjectIsolation/sandboxDenialAttribution are false. Core treats missing legacy rootNetwork as network-denied.
 
+Standard deployments expose capabilities.builtinTools.rg with a trusted absolute path and pinned version 15.2.0. At startup the daemon checks platform, version and content digest from tools/rg.json; missing/corrupt tools reject startup without host rg discovery. Supervisor prepends the builtin tool directory to task PATH and exposes exact executable files to child processes without expanding Scope file access. Core search_files uses this capability path; older external Runtimes without it receive UNSUPPORTED with upgrade guidance.
+
 ## Methods
 
 | Method | params |
@@ -68,11 +70,14 @@ fs.execute is available only with a trusted helper. command.kind selects:
 | list | `path,after?,limit` | `entries,nextCursor` |
 | write | `path,dataBase64,expected` | `sha256,size` |
 | applyPatch | `path,oldText,newText,expectedSha256` | `sha256,size` |
+| applyPatches | `path,patches[{oldText,newText}],expectedSha256` | `sha256,size` |
 
-expected is `{kind:"absent"}` or `{kind:"sha256",value:"digest"}`. read sha256 always covers the complete file; offsets are bytes. Files are limited to 8 MiB, reads/writes to 64 KiB, and combined patch old/new text to 64 KiB with a nonempty unique match. Stale digests, existing create targets and ambiguous patches return CONFLICT.
+expected is `{kind:"absent"}` or `{kind:"sha256",value:"digest"}`. read sha256 always covers the complete file; offsets are bytes. Files are limited to 8 MiB, reads/writes to 64 KiB, and combined patch old/new text to 64 KiB with a nonempty unique match. applyPatch remains a compatibility entry point sharing the one-element applyPatches implementation. applyPatches accepts at most 32 replacements and writes only after every replacement matches uniquely against the conditional version. Stale digests, existing create targets and ambiguous patches return CONFLICT.
 
 list pages have at most 256 entries/about 32 KiB, scanning at most 4096 UTF-8 names. Directory pagination is not a snapshot. Helpers use directory descriptors and NOFOLLOW; ordinary reads/writes reject symlinks, hardlinks and special files, with fsync for conditional replacement.
 
 By default helpers coordinate by file and commands by write root (writeSerialization=conflictingPaths). Explicit command bypass uses filePaths. External processes do not participate; external CAS/cross-file transactions are not guaranteed. Lost helper results or cleanup failure after commit become UNKNOWN without replay.
 
 Errors include INVALID_REQUEST, INVALID_ARGUMENT, UNAUTHENTICATED, PERMISSION_DENIED, SCOPE_CLOSED, STALE_HANDLE, NOT_FOUND, CONFLICT, RESOURCE_EXHAUSTED, UNSUPPORTED, UNAVAILABLE and CLEANUP_FAILED. signal is a POSIX number string. sandboxDenied=false does not prove no sandbox denial occurred.
+
+Built-in tools are resolved beside the Runtime executable: `target/<profile>/tools/` in development and `libexec/areal/tools/` in installed bundles, separate from public `bin/areal`.

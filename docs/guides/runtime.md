@@ -43,3 +43,5 @@ EOF、SIGINT/SIGTERM 或显式 close 关闭准入并等待资源。丢弃 RPC �
 每 epoch 最多 256 Scope、4096 operation，保留去重记录至实例关闭；耗尽后需正常 drain/重启，不能删除记录复用 epoch。默认 helper 按目标文件、命令按写根协调冲突；其他 Runtime/宿主编辑器不参与，不能承诺外部 CAS。
 
 验证使用 `make verify-runtime`；组件关闭见 [Cordis](../development/cordis.md)。
+
+启动器取消或启动失败时先回收 Core/Runtime 子进程，再删除内部就绪文件目录，避免子进程晚到的写入与目录清理竞争。

@@ -146,6 +146,7 @@ impl Engine {
                 if matches!(
                     tool,
                     "ask_user_question"
+                        | "read_tool_result"
                         | "plan_update"
                         | "plan_read"
                         | "task_state"

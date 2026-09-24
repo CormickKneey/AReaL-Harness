@@ -9,6 +9,15 @@ pub(super) async fn invoke(
 ) -> rt::Result<(bool, Value)> {
     let mut request = args.clone();
     request["operation"] = json!(name);
+    if name == "search_files" {
+        request["rg"] = runtime.client.info().capabilities["builtinTools"]["rg"]["path"].clone();
+        if !request["rg"].as_str().is_some_and(|p| p.starts_with('/')) {
+            return Err(rt::Error::new(
+                rt::ErrorCode::Unsupported,
+                "Runtime has no builtin rg; upgrade the complete Harness deployment",
+            ));
+        }
+    }
     request["roots"] = json!({"repo":runtime.workspace,"scratch":runtime.command_scratch,"host":if runtime.client.info().capabilities["fullAccess"] == true { Some("/") } else { None }});
     let started = runtime
         .client

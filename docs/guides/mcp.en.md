@@ -22,7 +22,7 @@ Up to 16 servers are allowed. Omitted enabledTools exposes all, an empty array n
 
 Tools are discovered through paginated tools/list, normally named `mcp__server__tool`; invalid/long names use stable hashes. Core's total tool budget remains 128, with the same schema/hook rules as [other tools](tools.en.md).
 
-Text and structuredContent are retained. Images, audio and embedded binary resources pass through Blob validation and provide actual bytes in original order. Resource links are not fetched automatically; unsupported modalities fail explicitly. Text/structured results are limited to 16 KiB; this is not a bound on SDK transport memory.
+Text and structuredContent are retained. Images, audio and embedded binary resources pass through Blob validation and provide actual bytes in original order. Resource links are not fetched automatically; unsupported modalities fail explicitly. Pure text/structured results accept at most 8 MiB before Core snapshot projection, with model-visible pages bounded to 16 KiB and originals available through read_tool_result. Mixed media reference envelopes retain the 16 KiB limit. These are not bounds on SDK transport memory; see [result retrieval](tools.en.md).
 
 isError=true is confirmed failure. Disconnects, timeouts, cancellation and protocol/result errors become UNKNOWN and stop execution. Cancellation notification does not prove rollback. Calls are never automatically retried; expired HTTP sessions are not reinitialized to replay them. tools/list_changed invalidates the old catalog; desktop disconnect/connect rediscovers at a safe boundary without replacing active Turn schemas.
 

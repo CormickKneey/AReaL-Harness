@@ -51,7 +51,7 @@ Task Mode 由 `core/engine/src/task_mode` 管理 Task/TaskRun、定时触发、�
 
 同一 Thread 的变更串行，不同 Thread 可并发。模型请求、工具等待及子任务等待不跨等待持有会话锁。模型许可不跨工具执行持有，活动 Turn、模型请求和 OS 进程是独立限额。
 
-工具先持久化意图，再提交 Runtime 或外部宿主，确认后记录结果。快照保存权威历史，媒体存入按 SHA-256 寻址的 Blob。重启将未完成执行标为 UNKNOWN；不自动重放。归档释放热历史，drain 后 GC 按引用回收 Blob。
+工具先持久化意图，再提交 Runtime 或外部宿主，确认后记录结果。快照保存权威历史，媒体和大工具结果原文存入按 SHA-256 寻址的 Blob；工具结果引用由所属 Thread 的调用记录授权，模型投影只生成一次并随历史持久化。重启将未完成执行标为 UNKNOWN；不自动重放。归档释放热历史，drain 后 GC 按引用回收 Blob。
 
 普通[Agent 委派](multi-agent.md)共享工作区、独立上下文；[Workgroup](workgroups.md)使用隔离写工作区并验证制品。Core 管调度，Runtime 不选择并行宽度。插件、stdio MCP 与 Core 仍是可信宿主；broker 权限不等于 Host OS 隔离，见[插件边界](plugins.md)。
 

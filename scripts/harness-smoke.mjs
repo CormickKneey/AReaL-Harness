@@ -389,11 +389,10 @@ const model = createServer(async (req, res) => {
       name = "fs_read";
       args = { path: "workspace://repo/check.sh" };
     } else if (results.length === 1) {
-      name = "fs_apply_patch";
+      name = "fs_apply_patches";
       args = {
         path: "workspace://repo/check.sh",
-        oldText: "1 -eq 2",
-        newText: "1 -eq 1",
+        patches: [{ oldText: "1 -eq 2", newText: "1 -eq 1" }],
         expectedSha256: JSON.parse(results[0].content).sha256,
       };
     } else if (results.length === 2) {
@@ -579,7 +578,7 @@ try {
   const tools = done.turns[0].items.filter((item) => item.type === "dynamicToolCall");
   assert.deepEqual(
     tools.map((item) => item.tool),
-    ["fs_read", "fs_apply_patch", "run_command"],
+    ["fs_read", "fs_apply_patches", "run_command"],
   );
   assert(tools.every((item) => item.execution.outcome === "succeeded" && item.success));
   assert.equal(new Set(tools.map((item) => item.execution.operationId)).size, 3);

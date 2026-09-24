@@ -10,6 +10,57 @@ import { servePlugin } from "../dist/index.js";
 
 const hash = (text) => createHash("sha256").update(text).digest("hex");
 
+test("large text reaches Core below the plugin frame limit", async () => {
+  const input = new PassThrough(),
+    output = new PassThrough();
+  const lines = createInterface({ input: output })[Symbol.asyncIterator]();
+  const serving = servePlugin({
+    input,
+    output,
+    plugin: {
+      inject: ["tools"],
+      apply(ctx) {
+        ctx.tools.register({
+          name: "large",
+          description: "snapshot fixture",
+          parameters: { type: "object" },
+          output: { schema: { type: "string" }, render: (_, text) => [{ type: "text", text }] },
+          async execute(args) {
+            return "字".repeat(args.count);
+          },
+        });
+      },
+    },
+  });
+  try {
+    assert.equal(JSON.parse((await lines.next()).value).protocolVersion, 1);
+    for (const [count, success] of [
+      [7000, true],
+      [20000, false],
+    ]) {
+      input.write(
+        JSON.stringify({
+          type: "call",
+          callId: String(count),
+          params: { threadId: "t", tool: "large", arguments: { count } },
+        }) + "\n",
+      );
+      const raw = (await lines.next()).value;
+      const response = JSON.parse(raw).response;
+      assert.equal(response.success, success);
+      assert(Buffer.byteLength(raw) < 128 * 1024);
+      if (success) {
+        assert(Buffer.byteLength(response.contentItems[0].text) > 16 * 1024);
+        assert.equal(response.contentItems[0].text, "字".repeat(count));
+      } else assert.match(response.contentItems[0].text, /96 KiB/);
+    }
+  } finally {
+    input.end();
+    await serving;
+    output.end();
+  }
+});
+
 async function fixture(t) {
   const child = spawn(
     process.execPath,

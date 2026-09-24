@@ -489,6 +489,47 @@
                   "expectedSha256"
                 ],
                 "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "expectedSha256": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "applyPatches",
+                    "type": "string"
+                  },
+                  "patches": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "newText": {
+                          "type": "string"
+                        },
+                        "oldText": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "oldText",
+                        "newText"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "path": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "path",
+                  "patches",
+                  "expectedSha256"
+                ],
+                "type": "object"
               }
             ]
           },

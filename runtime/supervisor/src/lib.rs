@@ -39,6 +39,8 @@ pub struct Config {
     pub output_window_bytes: usize,
     pub cleanup_timeout: Duration,
     pub file_helper: Option<PathBuf>,
+    /// 可信部署验证过的内置搜索工具；不接受模型请求配置。
+    pub builtin_rg: Option<PathBuf>,
     /// 仅注入显式授权的任务客户端，不加入请求、诊断或操作摘要。
     pub task_credential_commands: Vec<PathBuf>,
     pub task_environment: BTreeMap<String, String>,
@@ -58,6 +60,7 @@ impl Config {
             output_window_bytes: MAX_READ_BYTES,
             cleanup_timeout: Duration::from_secs(3),
             file_helper: None,
+            builtin_rg: None,
             task_credential_commands: Vec::new(),
             task_environment: BTreeMap::new(),
         }
@@ -202,6 +205,9 @@ impl Supervisor {
                 .unwrap()
                 .push(json!("fs.execute"));
             info.capabilities["filesystem"] = json!({"maxChunkBytes":MAX_FILE_CHUNK,"maxEditFileBytes":MAX_EDIT_FILE,"symlinks":"reject","writeSerialization":if self.config.concurrent_writes { "filePaths" } else { "conflictingPaths" },"externalConcurrentCAS":false});
+        }
+        if let Some(rg) = &self.config.builtin_rg {
+            info.capabilities["builtinTools"] = json!({"rg":{"path":rg,"version":"15.2.0"}});
         }
         if self.backend.supports_input() {
             info.capabilities["methods"]
@@ -458,6 +464,7 @@ impl Supervisor {
                     read_roots: scope.reads.clone(),
                     write_roots: scope.writes.clone(),
                     trusted_executable,
+                    builtin_executables: self.config.builtin_rg.iter().cloned().collect(),
                     tty: request.tty,
                     pipe_stdin: request.pipe_stdin,
                     network: scope.info.network,
@@ -488,6 +495,16 @@ impl Supervisor {
                     .env
                     .entry("PATH".into())
                     .or_insert_with(|| "/usr/local/bin:/usr/bin:/bin".into());
+                if let Some(rg) = &self.config.builtin_rg {
+                    let directory = rg
+                        .parent()
+                        .ok_or_else(|| invalid("invalid builtin rg path"))?;
+                    let path = format!("{}:{}", directory.display(), execution.env["PATH"]);
+                    execution.env.insert("PATH".into(), path);
+                    if execution.argv[0] == "rg" {
+                        execution.argv[0] = rg.to_string_lossy().into_owned();
+                    }
+                }
                 let write_paths = if execution.write_roots.is_empty()
                     || (self.config.concurrent_writes && helper.is_none())
                 {

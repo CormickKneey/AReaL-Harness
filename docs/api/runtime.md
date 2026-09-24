@@ -16,6 +16,8 @@ UTF-8 JSONL 请求 `{id,method,params}`，响应回显 id 和 result/error，诊
 
 capabilities 描述实际 sandbox、fullAccess、rootNetwork、方法和 processLimits；不授予新权限。coreHostIsolated/processTreeCleanupVerified/directoryObjectIsolation/sandboxDenialAttribution 为 false。旧 Runtime 缺少 rootNetwork 时 Core 保守视为无网络。
 
+标准部署的 capabilities.builtinTools.rg 返回可信绝对路径与固定版本 15.2.0。daemon 启动时校验 tools/rg.json 的平台、版本和内容摘要；缺失或损坏拒绝启动，不查找宿主 rg。Supervisor 将内置工具目录置于任务 PATH 前端，并为子进程开放精确工具文件，Scope 读写边界不扩大。Core search_files 只用该能力路径；旧外部 Runtime 未提供它时返回 UNSUPPORTED 并要求升级。
+
 ## 方法
 
 | 方法 | params |
@@ -68,11 +70,14 @@ fs.execute 仅在配置可信 helper 时可用；command.kind：
 | list | `path,after?,limit` | `entries,nextCursor` |
 | write | `path,dataBase64,expected` | `sha256,size` |
 | applyPatch | `path,oldText,newText,expectedSha256` | `sha256,size` |
+| applyPatches | `path,patches[{oldText,newText}],expectedSha256` | `sha256,size` |
 
-expected 为 `{kind:"absent"}` 或 `{kind:"sha256",value:"digest"}`。read 的 sha256 总是完整文件摘要，offset 为字节；单文件最多 8 MiB，read/write 最多 64 KiB，patch 旧/新文本合计 64 KiB 且旧文本非空唯一匹配。陈旧摘要/已存在/歧义返回 CONFLICT。
+expected 为 `{kind:"absent"}` 或 `{kind:"sha256",value:"digest"}`。read 的 sha256 总是完整文件摘要，offset 为字节；单文件最多 8 MiB，read/write 最多 64 KiB，patch 旧/新文本合计 64 KiB 且旧文本非空唯一匹配。applyPatch 是保留的单条兼容入口，与单元素 applyPatches 共用实现。applyPatches 一次最多 32 个替换，所有替换均唯一匹配后才条件写入；陈旧摘要/已存在/歧义返回 CONFLICT。
 
 list 每页最多 256 项/约 32 KiB，扫描最多 4096 UTF-8 名称；目录变化时不是快照。helper 使用目录描述符与 NOFOLLOW，普通读写拒绝符号链接、硬链接和特殊文件，条件替换 fsync。
 
 默认 helper 按文件、命令按写根协调冲突（writeSerialization=conflictingPaths）；显式绕过命令协调为 filePaths。外部进程不参与，不保证外部 CAS/跨文件事务。helper 结果丢失或提交后清理失败为 UNKNOWN，不能重放。
 
 错误包括 INVALID_REQUEST、INVALID_ARGUMENT、UNAUTHENTICATED、PERMISSION_DENIED、SCOPE_CLOSED、STALE_HANDLE、NOT_FOUND、CONFLICT、RESOURCE_EXHAUSTED、UNSUPPORTED、UNAVAILABLE、CLEANUP_FAILED。signal 为 POSIX 数字字符串；sandboxDenied=false 不能证明无沙箱拒绝。
+
+内置工具相对 Runtime 可执行文件定位：开发构建在 `target/<profile>/tools/`，发行包在 `libexec/areal/tools/`；与公开的 `bin/areal` 分开。

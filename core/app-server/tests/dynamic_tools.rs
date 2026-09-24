@@ -245,9 +245,21 @@ async fn disconnect_malformed_reply_and_invalid_output_are_unknown_without_repla
                 if failure == "schema" {
                     reply["structuredContent"] = json!("7");
                 } else {
-                    reply["contentItems"][0]["text"] = json!("x".repeat(16384));
+                    reply["contentItems"][0]["text"] =
+                        json!("x".repeat(areal_protocol::MAX_FRAME_BYTES));
                 }
-                send(&mut owner, json!({"id":request["id"],"result":reply})).await;
+                if failure == "oversized" {
+                    // 传输帧上限仍为 4 MiB；服务端可以在客户端写完前关闭连接。
+                    let _ = owner
+                        .send(Wire::Text(
+                            json!({"id":request["id"],"result":reply})
+                                .to_string()
+                                .into(),
+                        ))
+                        .await;
+                } else {
+                    send(&mut owner, json!({"id":request["id"],"result":reply})).await;
+                }
             }
         }
         let done = settled(&engine, &id).await;

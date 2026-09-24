@@ -75,12 +75,16 @@ impl Engine {
             config.tool_allowlist = previous.tool_allowlist;
         }
         if let Some(skills) = &request.skills {
-            let profile = config
-                .profile
-                .as_mut()
-                .ok_or_else(|| invalid("skills require a profile"))?;
-            if skills.iter().any(|s| !profile.skills.contains(s)) {
-                return Err(invalid("child skills exceed selected profile"));
+            // An explicit empty list means "use no additional skills". It is
+            // valid for model-only child configurations that have no profile.
+            if !skills.is_empty() {
+                let profile = config
+                    .profile
+                    .as_mut()
+                    .ok_or_else(|| invalid("non-empty skills require a profile"))?;
+                if skills.iter().any(|s| !profile.skills.contains(s)) {
+                    return Err(invalid("child skills exceed selected profile"));
+                }
             }
             config.selected_skills = Some(skills.clone());
         }

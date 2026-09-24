@@ -187,6 +187,7 @@ impl Engine {
             tools: TaskTracker::new(),
             process_cursors: BTreeMap::new(),
             handles: tools::Handles::default(),
+            started_at: tokio::time::Instant::now(),
         });
         cell.settled.send_replace(false);
         let thread_id = &state.thread.id;

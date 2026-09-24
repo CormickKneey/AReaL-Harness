@@ -111,11 +111,19 @@ pub fn command(execution: &Execution, profile: Profile) -> Result<Vec<String>> {
         policy.push_str("(allow network*)\n");
     }
     let mut ancestors = BTreeSet::new();
-    if let Some(helper) = &execution.trusted_executable {
-        command.push(format!("-DHELPER=^{}$", escape(absolute_utf8(helper)?)));
-        policy.push_str(
-            "(allow process-exec file-read* file-map-executable (regex (param \"HELPER\")))\n",
-        );
+    for (index, helper) in execution
+        .trusted_executable
+        .iter()
+        .chain(&execution.builtin_executables)
+        .enumerate()
+    {
+        command.push(format!(
+            "-DHELPER{index}=^{}$",
+            escape(absolute_utf8(helper)?)
+        ));
+        policy.push_str(&format!(
+            "(allow process-exec file-read* file-map-executable (regex (param \"HELPER{index}\")))\n",
+        ));
         for ancestor in helper.ancestors().skip(1) {
             ancestors.insert(escape(absolute_utf8(ancestor)?));
         }
@@ -246,7 +254,11 @@ fn linux_command(execution: &Execution) -> Result<Vec<String>> {
             argv.extend([option.into(), path.into(), path.into()]);
         }
     }
-    if let Some(helper) = &execution.trusted_executable {
+    for helper in execution
+        .trusted_executable
+        .iter()
+        .chain(&execution.builtin_executables)
+    {
         let path = absolute_utf8(helper)?;
         argv.extend(["--ro-bind".into(), path.into(), path.into()]);
     }

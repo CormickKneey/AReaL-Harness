@@ -164,6 +164,7 @@ impl Engine {
                 | "workgroup_wait"
                 | "workgroup_cancel"
                 | "read_process"
+                | "read_tool_result"
                 | "terminate_process"
         ) {
             return Ok(());

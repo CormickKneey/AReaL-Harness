@@ -78,10 +78,10 @@ async fn model_history_keeps_short_references_and_preserves_runtime_audit() {
             json!({"processId":"runtime:process:long-id","after":"runtime:process:long-id/42"}),
         ),
         (
-            "fs_apply_patch",
-            json!({"path":"code.py","fileVersion":"v1111111111111111","oldText":"old","newText":"new"}),
-            json!({"path":"code.py","fileVersion":"v1111111111111111","oldText":"old","newText":"new"}),
-            json!({"path":"workspace://repo/code.py","expectedSha256":"a".repeat(64),"oldText":"old","newText":"new"}),
+            "fs_apply_patches",
+            json!({"path":"code.py","fileVersion":"v1111111111111111","patches":[{"oldText":"old","newText":"new"}]}),
+            json!({"path":"code.py","fileVersion":"v1111111111111111","patches":[{"oldText":"old","newText":"new"}]}),
+            json!({"path":"workspace://repo/code.py","expectedSha256":"a".repeat(64),"patches":[{"oldText":"old","newText":"new"}]}),
         ),
     ] {
         items.push(

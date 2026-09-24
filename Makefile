@@ -30,11 +30,14 @@ setup: fetch ## 安装锁定的格式工具和两套 SDK 开发依赖
 
 fetch: ## 下载 Cargo.lock 中的依赖
 	cargo fetch --locked
+	python3 scripts/builtin-tools.py --fetch-only
 
 build: ## 构建整个 workspace（debug）
+	python3 scripts/builtin-tools.py
 	cargo build --locked --workspace
 
 release: ## 构建整个 workspace（release）
+	python3 scripts/builtin-tools.py --profile release
 	cargo build --locked --workspace --release
 
 check: ## 类型检查整个 workspace 和测试目标
@@ -56,6 +59,7 @@ lint: ## Rust / Python 静态检查和 Web 语法检查
 	node --check clients/web/app.js
 
 test: ## 运行 workspace 测试（不含显式容量测试）
+	python3 scripts/builtin-tools.py
 	cargo test --locked --workspace $(CARGO_TEST_ARGS)
 
 test-core: ## 运行 Core 模型、会话和并发测试
@@ -78,9 +82,11 @@ test-runtime: cordis-pin ## Runtime 组件、权限、去重、撤销竞态与�
 	cargo test --locked -p areal-runtime-protocol -p areal-runtime-client -p areal-runtime-fs -p areal-runtime-supervisor -p areal-runtime-exec-native -p areal-runtime
 
 runtime: ## 启动私有 stdio Runtime；ARGS 指定 --workspace
+	python3 scripts/builtin-tools.py
 	cargo run --locked -p areal-runtime -- $(ARGS)
 
 runtime-smoke: cordis-pin ## 构建 Runtime 并验证原生执行后端
+	python3 scripts/builtin-tools.py
 	cargo build --locked -p areal-runtime -p areal-runtime-fs
 	python3 scripts/runtime-smoke.py $(ARGS)
 	python3 scripts/runtime-fs-smoke.py $(ARGS)
@@ -116,6 +122,7 @@ harness: ## 通过可信独立启动器启动工具 Harness；ARGS 指定工作�
 	python3 scripts/launch.py $(ARGS)
 
 harness-smoke: build sdk-build ## 原生 SDK 与完整读改测试/强杀恢复
+	python3 scripts/native-tools-smoke.py --bin-dir target/debug
 	python3 scripts/native-python-smoke.py --bin-dir target/debug
 	python3 scripts/runtime-sdk-smoke.py
 	node scripts/harness-smoke.mjs
@@ -148,6 +155,7 @@ server: ## 构建并启动 Core；读取用户 TOML、环境变量和显式 ARGS
 	cargo run --locked -p areal-cli -- app-server $(ARGS)
 
 tui: ## 启动本地 Core + Runtime + TUI；--endpoint/--remote 连接已有服务
+	python3 scripts/builtin-tools.py
 	cargo build --locked -p areal-runtime -p areal-runtime-fs -p areal-cli
 	cargo run --locked -p areal-cli -- $(ARGS)
 

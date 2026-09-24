@@ -137,6 +137,129 @@ fn overlapping_matches_and_all_symlink_components_are_rejected() {
     fs::hard_link(f.0.path().join("file"), f.0.path().join("hard")).unwrap();
     assert!(f.read("file").is_err());
 }
+
+#[test]
+fn batch_patch_is_single_conditional_edit() {
+    let f = Fixture::new();
+    let written = f
+        .write("code", b"alpha\nbeta\n", ExpectedFile::Absent)
+        .unwrap();
+    f.run(FileCommand::ApplyPatches {
+        path: "code".into(),
+        patches: vec![
+            TextPatch {
+                old_text: "alpha".into(),
+                new_text: "one".into(),
+            },
+            TextPatch {
+                old_text: "beta".into(),
+                new_text: "two".into(),
+            },
+        ],
+        expected_sha256: written["sha256"].as_str().unwrap().into(),
+    })
+    .unwrap();
+    assert_eq!(fs::read(f.0.path().join("code")).unwrap(), b"one\ntwo\n");
+}
+
+#[test]
+fn legacy_single_patch_matches_one_element_batch() {
+    for (old_text, stale, expected) in [
+        ("alpha", false, None),
+        ("missing", false, Some(ErrorCode::Conflict)),
+        ("beta", false, Some(ErrorCode::Conflict)),
+        ("alpha", true, Some(ErrorCode::Conflict)),
+        ("", false, Some(ErrorCode::InvalidArgument)),
+    ] {
+        let f = Fixture::new();
+        let original = b"alpha\nbeta beta\n";
+        let written = f.write("single", original, ExpectedFile::Absent).unwrap();
+        f.write("batch", original, ExpectedFile::Absent).unwrap();
+        let digest = if stale {
+            "0".repeat(64)
+        } else {
+            written["sha256"].as_str().unwrap().into()
+        };
+        let single = f.run(FileCommand::ApplyPatch {
+            path: "single".into(),
+            old_text: old_text.into(),
+            new_text: "one".into(),
+            expected_sha256: digest.clone(),
+        });
+        let batch = f.run(FileCommand::ApplyPatches {
+            path: "batch".into(),
+            patches: vec![TextPatch {
+                old_text: old_text.into(),
+                new_text: "one".into(),
+            }],
+            expected_sha256: digest,
+        });
+        match expected {
+            Some(code) => {
+                let single = single.unwrap_err();
+                let batch = batch.unwrap_err();
+                assert_eq!(single.code, code);
+                assert_eq!(batch.code, code);
+                assert_eq!(single.message, batch.message);
+                assert_eq!(fs::read(f.0.path().join("single")).unwrap(), original);
+            }
+            None => {
+                assert_eq!(single.unwrap(), batch.unwrap());
+                assert_eq!(
+                    fs::read(f.0.path().join("single")).unwrap(),
+                    b"one\nbeta beta\n"
+                );
+            }
+        }
+        assert_eq!(
+            fs::read(f.0.path().join("single")).unwrap(),
+            fs::read(f.0.path().join("batch")).unwrap()
+        );
+    }
+}
+
+#[test]
+fn batch_patch_conflict_never_commits_earlier_replacements() {
+    let f = Fixture::new();
+    let original = b"alpha\nbeta beta\n";
+    let written = f.write("code", original, ExpectedFile::Absent).unwrap();
+    for (second, expected) in [
+        ("missing", written["sha256"].as_str().unwrap()),
+        ("beta", written["sha256"].as_str().unwrap()),
+        (
+            "alpha",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        ),
+    ] {
+        let result = f.run(FileCommand::ApplyPatches {
+            path: "code".into(),
+            patches: vec![
+                TextPatch {
+                    old_text: "alpha".into(),
+                    new_text: "one".into(),
+                },
+                TextPatch {
+                    old_text: second.into(),
+                    new_text: "two".into(),
+                },
+            ],
+            expected_sha256: expected.into(),
+        });
+        let error = result.unwrap_err();
+        assert_eq!(error.code, ErrorCode::Conflict);
+        if second != "alpha" {
+            assert!(error.message.starts_with("patch 2:"));
+            assert!(error.message.contains("no changes written"));
+            assert!(error.message.contains(if second == "missing" {
+                "was not found"
+            } else {
+                "matched more than once"
+            }));
+        }
+        assert_eq!(fs::read(f.0.path().join("code")).unwrap(), original);
+    }
+}
+
 #[test]
 fn bounded_ranges_directory_pagination_and_special_files() {
     let f = Fixture::new();

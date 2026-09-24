@@ -37,6 +37,8 @@ Each RPC accepts signal/timeoutMs. AbortSignal cancels only the waiter, not the 
 
 There are at most 128 in-flight requests, with 16 reserved for control, and 128 KiB frames. Malformed/unknown IDs, EOF and timeout close transport and may leave UNKNOWN outcomes. pages preserves gap/truncated/closed; bytes/text throw OutputGapError on loss and incrementally decode stdout/stderr/pty separately. close awaits cleanup; disconnect does not establish it.
 
+The `applyPatches` branch of `FileCommand` accepts `patches: TextPatch[]` and `expectedSha256`; 1–32 replacements match sequentially within one CAS operation. Any failure writes nothing; success returns `FileWrite`. `applyPatch` remains only as a Runtime/SDK compatibility entry point sharing the one-element `applyPatches` implementation; the model surface uses only `fs_apply_patches`.
+
 ## @areal/plugins
 
 [Exported types](../../core/sdk-typescript/src/index.ts) · [Editor example](../examples/dsh-editor-plugin.en.md)
@@ -53,6 +55,6 @@ await servePlugin({
 
 PluginOptions accepts plugin and optional config/commands/input/output. Default stdio is a dedicated protocol stream; log to stderr. It shares no connection with @areal/runtime.
 
-tools.register allows 32 definitions during initialization only. execute context contains signal only; results are limited to 16 KiB. fs.resolve/stat/readText/writeText supports regular UTF-8 files below `/repo`, up to 32 KiB. Writes require createIfAbsent or replaceIfVersion. Observed versions are isolated by Thread and must be read again after restart/eviction. Injection accepts only tools/fs/sandboxPolicy; unknown DSH services fail.
+tools.register allows 32 definitions during initialization only. execute context contains signal only; results are limited to 96 KiB within the unchanged 128 KiB transport frame. Core stores large originals and sends a bounded 16 KiB text projection with read_tool_result retrieval. fs.resolve/stat/readText/writeText supports regular UTF-8 files below `/repo`, up to 32 KiB. Writes require createIfAbsent or replaceIfVersion. Observed versions are isolated by Thread and must be read again after restart/eviction. Injection accepts only tools/fs/sandboxPolicy; unknown DSH services fail.
 
 The Host uses v1 JSONL, 128 KiB frames and a 10-second handshake. Each call allows 32 file requests, 16 concurrent and an 8 KiB journal. Calls within a Host are serial; Core binds callId/Scope/operationId. Timeout/cancellation closes the generation. Frozen objects are not isolation and Node code must be trusted. Native Host v2 process brokering is a [separate contract](native-host.en.md).

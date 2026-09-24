@@ -18,6 +18,7 @@ fn execution(root: &Path, code: &str) -> Execution {
         read_roots: vec![root.into()],
         write_roots: vec![root.into()],
         trusted_executable: None,
+        builtin_executables: Vec::new(),
         tty: false,
         pipe_stdin: false,
         network: areal_runtime_protocol::NetworkRequest::Deny,

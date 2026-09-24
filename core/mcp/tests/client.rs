@@ -94,7 +94,13 @@ async fn stdio_discovers_pages_maps_results_and_closes_child() {
         .await
         .unwrap();
     assert!(!result.success);
-    for value in ["large"] {
+    let large = tools[0]
+        .call(json!({"value":"large"}), CancellationToken::new())
+        .await
+        .unwrap();
+    assert!(text(&large).len() > 16 * 1024);
+    assert!(text(&large).contains("关键值:violet"));
+    for value in ["too-large"] {
         let error = tools[0]
             .call(json!({"value":value}), CancellationToken::new())
             .await

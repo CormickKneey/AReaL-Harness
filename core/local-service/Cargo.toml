@@ -10,6 +10,7 @@ repository.workspace = true
 anyhow.workspace = true
 areal-config.workspace = true
 areal-protocol.workspace = true
+areal-runtime-host-tools.workspace = true
 clap.workspace = true
 fs2.workspace = true
 futures-util.workspace = true

@@ -194,6 +194,8 @@ Active time includes root-Turn model queuing, execution, tools, interactions and
 
 See [Skills](skills.en.md) for discovery, [tools](tools.en.md) for extensions and [Runtime](runtime.en.md) for deployment permissions.
 
+Tool result views are configured in the JSON file named by `[tools] extensions_file`, under `policy.resultViews`: `mode` is `off`, `observe` (default) or `on`, with `searchGroups` and `repeatLines` switches. Large-result snapshots and bundled rg work independently of this switch. See [tools](tools.en.md) for quotas and retrieval.
+
 ## OpenTelemetry trajectory reporting
 
 Core uses the open-source OpenTelemetry SDK to export Traces and Events/Logs over standard OTLP HTTP/protobuf. Reporting is disabled without an endpoint, and export failures do not change Turn outcomes. Core reads configuration at startup; restart the service after changes.

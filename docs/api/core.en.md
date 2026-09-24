@@ -91,6 +91,8 @@ Tool error audits add `errorCode` and `toolCallError`: `invalid_tool_call_index`
 
 Snapshots are written in format 9 and formats 1–9 can be read; older Core cannot read new snapshots. contextCheckpoint affects model input without deleting original history. modelContext retains opaque Responses context, not user content. Missing usage/duration is unknown, not zero.
 
+`ToolExecution` adds optional resultSnapshot: MediaRef and outputProjection metrics; older records omit them. Original retrieval is the Core model tool read_tool_result, not a new Runtime RPC; see the [tool guide](../guides/tools.en.md). Model request audits also record messageBlocks digests/byte counts, toolSchemaSha256 and instructionsSha256 for offline prefix comparison without prompt text. Identical prefixes do not establish provider cache hits. `usageDetails` records optional provider cached-input and reasoning token counters; missing counters are null, without changing budget accounting.
+
 <a id="dynamic-tools"></a>
 ## Dynamic tool callbacks
 

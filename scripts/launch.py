@@ -2,6 +2,7 @@
 """Trusted local launcher: owns Core/Runtime and optionally their terminal client."""
 
 import argparse
+import contextlib
 import json
 import os
 import signal
@@ -59,6 +60,13 @@ def finish(child, timeout=10):
     except subprocess.TimeoutExpired:
         child.kill()
         return child.wait()
+
+
+def reap_children(children):
+    for child in reversed(children):
+        if child.poll() is None:
+            child.terminate()
+            finish(child)
 
 
 def main():
@@ -285,7 +293,12 @@ def main():
             log_reader = threading.Thread(target=capture, daemon=True)
             log_reader.start()
             diagnostics = log_write
-        with tempfile.TemporaryDirectory(prefix="areal-launch-") as temporary:
+        with (
+            tempfile.TemporaryDirectory(prefix="areal-launch-") as temporary,
+            contextlib.ExitStack() as processes,
+        ):
+            # 启动中断时子进程仍可能写就绪文件；必须先回收进程，再删除临时目录。
+            processes.callback(reap_children, children)
             ready = args.ready_file or Path(temporary) / "ready"
             metadata = args.ready_metadata_file or Path(temporary) / "ready.json"
             runtime = subprocess.Popen(
@@ -467,10 +480,7 @@ def main():
                 ready_path.unlink(missing_ok=True)
         for fd in descriptors:
             os.close(fd)
-        for child in reversed(children):
-            if child.poll() is None:
-                child.terminate()
-                finish(child)
+        reap_children(children)
         restore_terminal()
         if log_pipe is not None:
             os.close(log_pipe)

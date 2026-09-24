@@ -91,6 +91,8 @@ Rust `Model::chat_with_limits(messages, tools, purpose, ToolCallLimits, cap)` �
 
 快照写入格式 9，可读取 1–9，旧 Core 不能读取新快照。contextCheckpoint 影响模型视图，不删原始历史；modelContext 保存不透明 Responses 上下文，不投影成用户内容。缺失 usage/duration 为未知，不是 0。
 
+`ToolExecution` 新增可选 `resultSnapshot: MediaRef` 与 `outputProjection` 度量对象，旧记录默认缺省。原文回取是模型 Core 工具 `read_tool_result`，不是新的 Runtime RPC；边界见[工具指南](../guides/tools.md)。模型请求审计另记 messageBlocks 的摘要/字节数、toolSchemaSha256 和 instructionsSha256，用于离线比较稳定前缀；不记录提示词正文，也不将前缀相同直接视为提供方缓存命中。`usageDetails` 记录提供方可选的缓存输入和推理 token；缺失时为 null，预算用量结构不变。
+
 <a id="dynamic-tools"></a>
 ## 动态工具回调
 

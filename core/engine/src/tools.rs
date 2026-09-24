@@ -8,9 +8,13 @@ use serde::Deserialize;
 use std::path::PathBuf;
 
 const MAX_RESULT: usize = 16 * 1024;
+// Leave room for process metadata and JSON framing after stdout/stderr are
+// escaped. Control-heavy output can expand several times in the model payload.
+const MODEL_OUTPUT_HEADROOM: usize = 4096;
 #[derive(Default)]
 pub(crate) struct Handles {
     processes: BTreeMap<String, String>,
+    process_commands: BTreeMap<String, Vec<String>>,
     cursors: BTreeMap<String, (String, String)>,
     versions: BTreeMap<String, (String, String)>,
     version_order: std::collections::VecDeque<String>,
@@ -56,7 +60,7 @@ impl Handles {
         }
         if let Some(handle) = args.get("fileVersion") {
             anyhow::ensure!(
-                matches!(name, "fs_write" | "fs_apply_patch")
+                matches!(name, "fs_write" | "fs_apply_patches")
                     && args.get("expectedSha256").is_none(),
                 "supply fileVersion or expectedSha256, never both"
             );
@@ -70,7 +74,7 @@ impl Handles {
             );
             args.as_object_mut().unwrap().remove("fileVersion");
             args["expectedSha256"] = json!(hash);
-        } else if matches!(name, "fs_write" | "fs_apply_patch")
+        } else if matches!(name, "fs_write" | "fs_apply_patches")
             && args.get("expectedSha256").is_none()
         {
             let path = args["path"].as_str().context("path required")?;
@@ -87,7 +91,7 @@ impl Handles {
                 args["expectedSha256"] = Value::Null;
             } else {
                 anyhow::bail!(
-                    "read_file this path before editing; its observed version is managed automatically. After a conflict, read again. Example: read_file({{\"path\":\"src/code.py\"}}), then fs_apply_patch({{\"path\":\"src/code.py\",\"oldText\":\"old\",\"newText\":\"new\"}})"
+                    "read_file this path before editing; its observed version is managed automatically. After a conflict, read again. Example: read_file({{\"path\":\"src/code.py\"}}), then fs_apply_patches({{\"path\":\"src/code.py\",\"patches\":[{{\"oldText\":\"old\",\"newText\":\"new\"}}]}})"
                 );
             }
         }
@@ -134,7 +138,7 @@ impl Handles {
         }
         if matches!(
             name,
-            "fs_read" | "read_file" | "fs_write" | "fs_create" | "fs_apply_patch"
+            "fs_read" | "read_file" | "fs_write" | "fs_create" | "fs_apply_patches"
         ) && let Some(hash) = value["sha256"].as_str().map(str::to_owned)
             && let Some(path) = args["path"]
                 .as_str()
@@ -180,15 +184,17 @@ mod agents;
 mod extensions;
 mod images;
 mod navigation;
+mod output;
 mod plugin_execution;
 pub mod plugins;
 pub(crate) mod registry;
+mod results;
 pub(crate) use registry::Backend;
 mod verification;
 pub(crate) use registry::Registry;
 pub use registry::{
-    AgentToolsConfig, CommandTool, DynamicToolHost, HookDefinition, HookEvent, ToolExtensions,
-    ToolPolicy,
+    AgentToolsConfig, CommandTool, DynamicToolHost, HookDefinition, HookEvent, ResultViewMode,
+    ResultViewPolicy, ToolExtensions, ToolPolicy,
 };
 
 #[derive(Clone)]
@@ -260,7 +266,7 @@ fn definitions_with_policy(policy: &ToolPolicy) -> Vec<Value> {
         ),
         tool(
             "fs_create",
-            "Create a new UTF-8 file up to 64 KiB (also subject to the total tool argument budget). Fails if the path already exists; never overwrites. Use fs_read then fs_apply_patch or fs_write to edit an existing file.",
+            "Create a new UTF-8 file up to 64 KiB (also subject to the total tool argument budget). Fails if the path already exists; never overwrites. Use fs_read then fs_apply_patches or fs_write to edit an existing file.",
             json!({"path":path,"text":{"type":"string"}}),
             &["path", "text"],
         ),
@@ -271,10 +277,10 @@ fn definitions_with_policy(policy: &ToolPolicy) -> Vec<Value> {
             &["path", "text"],
         ),
         tool(
-            "fs_apply_patch",
-            "Replace exactly one matching text region in a UTF-8 file after read_file/fs_read. Version checking is automatic; no token copying is needed. Ambiguous or stale content fails without overwriting; read again after a conflict. Explicit fileVersion/expectedSha256 remain supported.",
-            json!({"path":path,"oldText":{"type":"string"},"newText":{"type":"string"},"fileVersion":{"type":"string"},"expectedSha256":{"type":"string","pattern":"^[0-9a-f]{64}$"}}),
-            &["path", "oldText", "newText"],
+            "fs_apply_patches",
+            "Apply 1..32 text replacements to one UTF-8 file atomically after reading it. Each oldText must match exactly once; include surrounding function/context lines for repeated text. Replacements apply in order. The observed version is checked; any conflict writes nothing and reports the failed patch when applicable.",
+            json!({"path":path,"patches":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"object","properties":{"oldText":{"type":"string","minLength":1},"newText":{"type":"string"}},"required":["oldText","newText"],"additionalProperties":false}},"fileVersion":{"type":"string"},"expectedSha256":{"type":"string","pattern":"^[0-9a-f]{64}$"}}),
+            &["path", "patches"],
         ),
         tool(
             "verify_command",
@@ -294,10 +300,10 @@ fn definitions_with_policy(policy: &ToolPolicy) -> Vec<Value> {
         tool(
             "read_process",
             &format!(
-                "Collect output until completion or waitMs (default {}; 0 returns immediately). Output pages may return earlier. No fixed wait ceiling; Turn deadline and cancellation still apply. Omit after to resume this Turn's last returned cursor. Explicit null starts at the earliest retained output. Check state, exitCode and stopReason; gap means older output was lost.",
-                policy.read_wait_ms
+                "Collect output until completion or waitMs (default {}; 0 drains retained output without waiting). Output pages are bounded to {} bytes and may return earlier. No fixed wait ceiling; Turn deadline and cancellation still apply. Omit after to resume this Turn's last returned cursor. Explicit null starts at the earliest retained output. Set view=raw to disable folding and inspect original output, including on every continuation. Check state, exitCode and stopReason; gap means older output was lost.",
+                policy.read_wait_ms, policy.output_page_bytes
             ),
-            json!({"processId":process_id,"after":{"type":["string","null"]},"waitMs":{"type":"integer","minimum":0,"default":policy.read_wait_ms}}),
+            json!({"processId":process_id,"after":{"type":["string","null"]},"waitMs":{"type":"integer","minimum":0,"default":policy.read_wait_ms},"view":{"type":"string","enum":["auto","raw"],"default":"auto"}}),
             &["processId"],
         ),
         tool(
@@ -367,9 +373,18 @@ fn present_wait<'de, D: serde::Deserializer<'de>>(
 ) -> std::result::Result<Option<u64>, D::Error> {
     u64::deserialize(input).map(Some)
 }
+#[derive(Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum OutputView {
+    #[default]
+    Auto,
+    Raw,
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ReadProcess {
+    #[serde(default)]
+    view: OutputView,
     process_id: String,
     after: Option<String>,
     wait_ms: u64,
@@ -507,7 +522,7 @@ fn request_with_policy(
             expected: rt::ExpectedFile::Absent,
         }));
     }
-    if matches!(call.name.as_str(), "fs_write" | "fs_apply_patch")
+    if matches!(call.name.as_str(), "fs_write" | "fs_apply_patches")
         && let Some(Value::String(hash)) = args.get("expectedSha256")
     {
         anyhow::ensure!(
@@ -537,7 +552,7 @@ fn request_with_policy(
         "fs_read" => "read",
         "fs_list" => "list",
         "fs_stat" => "stat",
-        "fs_apply_patch" => "applyPatch",
+        "fs_apply_patches" => "applyPatches",
         _ => anyhow::bail!("unknown tool: {}", call.name),
     };
     anyhow::ensure!(args.get("kind").is_none(), "unexpected kind argument");
@@ -750,6 +765,8 @@ impl Engine {
             content_items: None,
             call_id: call.id.clone(),
             execution: Box::new(ToolExecution {
+                result_snapshot: None,
+                output_projection: None,
                 backend: entry.as_ref().ok().map(|tool| {
                     match tool.backend {
                         Backend::Builtin => "runtime",
@@ -861,6 +878,15 @@ impl Engine {
             .as_str()
             .zip(result["nextCursor"].as_str())
             .map(|(process, cursor)| (process.to_owned(), cursor.to_owned()));
+        let output_argv = if result["requestedOutputView"] == "auto" {
+            let state = cell.state.lock().await;
+            result["processId"]
+                .as_str()
+                .and_then(|id| state.active.as_ref()?.handles.process_commands.get(id))
+                .cloned()
+        } else {
+            None
+        };
         if let Some(runtime) = runtime {
             cell.state
                 .lock()
@@ -903,16 +929,20 @@ impl Engine {
             }
         }
         tracing::Span::current().record("gen_ai.tool.call.result", result.to_string());
-        let custom_content = result
+        let mut custom_content = result
             .get("contentItems")
             .map(|_| extensions::content_items(&result));
-        let result = serde_json::to_string(&result)?;
-        // Bound persisted and model-visible results including JSON escaping.
-        let result = if result.len() > MAX_RESULT {
-            json!({"truncated":true,"prefix":prefix(&result, MAX_RESULT / 2)}).to_string()
-        } else {
-            result
-        };
+        let prepared = self
+            .prepare_tool_result(cell, &item_id, &call.name, &result, output_argv.as_deref())
+            .await?;
+        if prepared.value != result
+            && custom_content
+                .as_ref()
+                .is_some_and(|items| items.iter().all(|v| v["type"] == "inputText"))
+        {
+            custom_content = None;
+        }
+        let result = bounded_result(serde_json::to_string(&prepared.value)?);
         let mut state = cell.state.lock().await;
         let mut candidate = state.thread.clone();
         let item = candidate
@@ -941,6 +971,8 @@ impl Engine {
                 custom_content.unwrap_or_else(|| vec![json!({"type":"inputText","text":result})]),
             );
             execution.outcome = outcome;
+            execution.result_snapshot = prepared.snapshot;
+            execution.output_projection = Some(prepared.metrics);
             execution.duration_ms = Some(started.elapsed().as_millis() as u64);
         }
         let bytes = serde_json::to_vec(item)?.len();
@@ -972,6 +1004,36 @@ impl Engine {
     }
 }
 
+fn bounded_result(result: String) -> String {
+    if result.len() <= MAX_RESULT {
+        return result;
+    }
+    let render = |half| {
+        let head = prefix(&result, half);
+        let tail = suffix(&result, half);
+        json!({
+            "truncated":true,
+            "prefix":head,
+            "suffix":tail,
+            "truncatedBytes":result.len() - head.len() - tail.len(),
+            "guidance":"This is a bounded journal view. For command output, continue with read_process using the returned cursor; for files, reread with an offset."
+        })
+        .to_string()
+    };
+    // 原 JSON 放进字符串后会再次转义，按最终序列化长度决定保留量。
+    let mut low = 0;
+    let mut high = MAX_RESULT / 2;
+    while low < high {
+        let half = low + (high - low).div_ceil(2);
+        if render(half).len() <= MAX_RESULT {
+            low = half;
+        } else {
+            high = half - 1;
+        }
+    }
+    render(low)
+}
+
 pub(super) fn prefix(text: &str, bytes: usize) -> &str {
     let mut end = text.len().min(bytes);
     while !text.is_char_boundary(end) {
@@ -979,12 +1041,21 @@ pub(super) fn prefix(text: &str, bytes: usize) -> &str {
     }
     &text[..end]
 }
+
+fn suffix(text: &str, bytes: usize) -> &str {
+    let mut start = text.len().saturating_sub(bytes);
+    while start < text.len() && !text.is_char_boundary(start) {
+        start += 1;
+    }
+    &text[start..]
+}
 async fn execute(
     client: &Client,
     request: Request,
     scope: &str,
     operation: &str,
     policy: &ToolPolicy,
+    command_argv: Option<&[String]>,
 ) -> rt::Result<(bool, Value)> {
     match request {
         Request::File(command) => {
@@ -1007,6 +1078,7 @@ async fn execute(
         }
         Request::Command(command) => {
             let effective_timeout_ms = command.timeout_ms;
+            let command_argv = command.argv.clone();
             let started = client
                 .start(rt::StartProcess {
                     operation_id: operation.into(),
@@ -1027,6 +1099,7 @@ async fn execute(
                 client,
                 scope,
                 ReadProcess {
+                    view: OutputView::Auto,
                     process_id: started.process_id,
                     after: None,
                     wait_ms: command.yield_ms.unwrap_or(if command.tty {
@@ -1036,13 +1109,23 @@ async fn execute(
                     }),
                 },
                 policy.output_quiet_ms,
+                Some(&command_argv),
+                policy.output_page_bytes,
             )
             .await?;
             result["effectiveTimeoutMs"] = json!(effective_timeout_ms);
             Ok((success, result))
         }
         Request::ReadProcess(read) => {
-            process_output(client, scope, read, policy.output_quiet_ms).await
+            process_output(
+                client,
+                scope,
+                read,
+                policy.output_quiet_ms,
+                command_argv,
+                policy.output_page_bytes,
+            )
+            .await
         }
         Request::WriteProcess(write) => {
             owned_process(client, scope, &write.process_id).await?;
@@ -1224,6 +1307,8 @@ async fn process_output(
     scope: &str,
     read: ReadProcess,
     output_quiet_ms: u64,
+    _command_argv: Option<&[String]>,
+    output_page_bytes: usize,
 ) -> rt::Result<(bool, Value)> {
     owned_process(client, scope, &read.process_id).await?;
     let started = tokio::time::Instant::now();
@@ -1235,9 +1320,14 @@ async fn process_output(
     let mut gap = false;
     let mut truncated = false;
     let mut closed = false;
-    // Bound bytes before JSON expansion; callers can read the next cursor.
-    let mut remaining = 2048usize;
+    // Bound raw bytes and the escaped model payload independently. The latter
+    // keeps binary/control-heavy output from falling into the journal fallback.
+    let mut remaining = output_page_bytes;
+    let mut request_bytes = remaining.min(1024);
     let return_reason = loop {
+        if remaining == 0 {
+            break "outputLimit";
+        }
         let mut wait = budget.saturating_sub(started.elapsed());
         if output_quiet_ms > 0
             && let Some(last) = last_output
@@ -1245,31 +1335,62 @@ async fn process_output(
             wait = wait.min(Duration::from_millis(output_quiet_ms).saturating_sub(last.elapsed()));
         }
         let wait_ms = wait.as_millis().min(1000) as u64;
+        let cursor_before = after.clone();
         let page = client
             .output(rt::ReadOutput {
                 process_id: read.process_id.clone(),
-                after,
-                max_bytes: remaining,
+                after: after.clone(),
+                max_bytes: request_bytes.min(remaining),
                 wait_ms: wait_ms.min(1000),
             })
             .await?;
-        gap |= page.gap;
-        truncated |= page.truncated;
-        if !page.chunks.is_empty() {
-            // Output arrival does not hand control back to the model by default.
-            // An explicit nonzero policy can restore legacy burst coalescing.
-            last_output = Some(tokio::time::Instant::now());
-        }
+        let mut page_stdout = Vec::new();
+        let mut page_stderr = Vec::new();
         for chunk in page.chunks {
             let bytes = STANDARD.decode(chunk.data_base64).map_err(|_| {
                 rt::Error::new(rt::ErrorCode::Unavailable, "invalid Runtime output")
             })?;
-            remaining = remaining.saturating_sub(bytes.len());
+            if bytes.len() > remaining {
+                return Err(rt::Error::new(
+                    rt::ErrorCode::Unavailable,
+                    "Runtime returned more output than requested",
+                ));
+            }
             match chunk.stream {
-                rt::OutputStream::Stdout | rt::OutputStream::Pty => stdout.extend(bytes),
-                rt::OutputStream::Stderr => stderr.extend(bytes),
+                rt::OutputStream::Stdout | rt::OutputStream::Pty => page_stdout.extend(bytes),
+                rt::OutputStream::Stderr => page_stderr.extend(bytes),
             }
         }
+        if page_stdout.len() + page_stderr.len() > remaining {
+            return Err(rt::Error::new(
+                rt::ErrorCode::Unavailable,
+                "Runtime returned more output than requested",
+            ));
+        }
+        let fits = model_output_fits(&stdout, &stderr, &page_stdout, &page_stderr);
+        if !fits && (!page_stdout.is_empty() || !page_stderr.is_empty()) {
+            // Retry from the same cursor with a smaller request. Runtime output
+            // is retained, so no bytes are lost while finding a JSON-safe page.
+            if request_bytes == 1 {
+                break "outputLimit";
+            }
+            request_bytes = (request_bytes / 2).max(1);
+            if request_bytes < remaining {
+                after = cursor_before;
+                continue;
+            }
+        }
+        gap |= page.gap;
+        truncated |= page.truncated;
+        let received_output = !page_stdout.is_empty() || !page_stderr.is_empty();
+        if received_output {
+            // Output arrival does not hand control back to the model by default.
+            // An explicit nonzero policy can restore legacy burst coalescing.
+            last_output = Some(tokio::time::Instant::now());
+        }
+        remaining = remaining.saturating_sub(page_stdout.len() + page_stderr.len());
+        stdout.extend(page_stdout);
+        stderr.extend(page_stderr);
         after = Some(page.next_cursor);
         closed |= page.closed;
         if gap || truncated {
@@ -1278,10 +1399,9 @@ async fn process_output(
         if closed {
             break "completed";
         }
-        if remaining == 0 {
-            break "outputLimit";
-        }
-        if started.elapsed() >= budget {
+        request_bytes = request_bytes.max(1024).min(remaining.max(1));
+        // waitMs=0 只禁止等待新输出，已保留的字节仍应填满当前安全页。
+        if started.elapsed() >= budget && !received_output {
             break "waitBudget";
         }
         if output_quiet_ms > 0
@@ -1310,10 +1430,20 @@ async fn process_output(
     } else {
         "failed"
     };
-    let mut result = json!({"processId":read.process_id, "state":info.state, "returnReason":return_reason, "exitCode":info.exit_code, "stopReason":info.stop_reason, "stdout":String::from_utf8_lossy(&stdout), "stderr":String::from_utf8_lossy(&stderr), "nextCursor":after, "outputClosed":closed, "gap":gap, "truncated":truncated,
+    let stdout_text = String::from_utf8_lossy(&stdout).into_owned();
+    let stderr_text = String::from_utf8_lossy(&stderr).into_owned();
+    let mut result = json!({"processId":read.process_id, "state":info.state, "returnReason":return_reason, "exitCode":info.exit_code, "stopReason":info.stop_reason, "stdout":stdout_text, "stderr":stderr_text, "stdoutBytes":stdout.len(), "stderrBytes":stderr.len(), "outputPageBytes":output_page_bytes, "nextCursor":after, "outputClosed":closed, "gap":gap, "truncated":truncated,
         "commandStatus":command_status,"outputReadComplete":closed,
         "outputIntegrity":if gap || truncated { "incomplete" } else { "retained" },
         "nextAction":if !closed { "Read this process again to collect remaining/new output; omit after to continue." } else { "Retained output has been read to its end. Evaluate the actual checks; exit zero alone does not prove correctness." }});
+    if read.view == OutputView::Auto
+        && std::str::from_utf8(&stdout).is_ok()
+        && std::str::from_utf8(&stderr).is_ok()
+    {
+        result["requestedOutputView"] = json!("auto");
+    } else {
+        result["requestedOutputView"] = json!("raw");
+    }
     if std::str::from_utf8(&stdout).is_err() {
         result["stdoutBase64"] = json!(STANDARD.encode(stdout));
     }
@@ -1321,6 +1451,48 @@ async fn process_output(
         result["stderrBase64"] = json!(STANDARD.encode(stderr));
     }
     Ok((success, result))
+}
+
+fn apply_output_view(result: &mut Value, argv: &[String]) {
+    if let Some(view) = output::project(
+        argv,
+        result["stdout"].as_str().unwrap_or(""),
+        result["stderr"].as_str().unwrap_or(""),
+        result["gap"] == false && result["truncated"] == false,
+    ) {
+        let mut projected = result.clone();
+        projected["stdout"] = json!(view.stdout);
+        projected["stderr"] = json!(view.stderr);
+        projected["outputViewActive"] = json!(true);
+        projected["outputView"] = json!({
+            "kind":view.kind,"rawBytes":view.raw_bytes,"displayedBytes":view.displayed_bytes,
+            "omittedLines":view.omitted_lines,"rawAvailable":true,
+            "rawReadback":"Call read_process with this processId, after=null and view=raw; continue with view=raw and omit after."
+        });
+        // 比较完整序列化结果，避免元数据或转义反而增加模型输入。
+        if projected.to_string().len() < result.to_string().len() {
+            *result = projected;
+        }
+    }
+}
+
+fn model_output_fits(stdout: &[u8], stderr: &[u8], page_stdout: &[u8], page_stderr: &[u8]) -> bool {
+    let mut stdout = stdout.to_vec();
+    stdout.extend_from_slice(page_stdout);
+    let mut stderr = stderr.to_vec();
+    stderr.extend_from_slice(page_stderr);
+    let mut value = json!({
+        "stdout": String::from_utf8_lossy(&stdout),
+        "stderr": String::from_utf8_lossy(&stderr),
+    });
+    if std::str::from_utf8(&stdout).is_err() {
+        value["stdoutBase64"] = json!(STANDARD.encode(&stdout));
+    }
+    if std::str::from_utf8(&stderr).is_err() {
+        value["stderrBase64"] = json!(STANDARD.encode(&stderr));
+    }
+    serde_json::to_vec(&value)
+        .is_ok_and(|encoded| encoded.len() <= MAX_RESULT.saturating_sub(MODEL_OUTPUT_HEADROOM))
 }
 
 #[cfg(test)]
@@ -1415,7 +1587,26 @@ mod request_tests {
                 .to_string()
                 .contains("requires an explicit")
         );
-        let patch=ToolCall { id:"patch".into(),name:"fs_apply_patch".into(),arguments:json!({"path":"workspace://repo/a.py","oldText":"x","newText":"y","expectedSha256":"null"}).to_string() };
+        let patch=ToolCall { id:"patch".into(),name:"fs_apply_patches".into(),arguments:json!({"path":"workspace://repo/a.py","patches":[{"oldText":"x","newText":"y"}],"expectedSha256":"null"}).to_string() };
         assert!(request(&patch).is_err());
+    }
+
+    #[test]
+    fn batch_patch_preserves_conditional_runtime_command() {
+        let call = ToolCall {
+            id: "batch".into(),
+            name: "fs_apply_patches".into(),
+            arguments: json!({
+                "path":"src/lib.rs",
+                "patches":[{"oldText":"old","newText":"new"}],
+                "expectedSha256":"a".repeat(64)
+            })
+            .to_string(),
+        };
+        assert!(matches!(
+            request(&call).unwrap(),
+            Request::File(rt::FileCommand::ApplyPatches { path, patches, .. })
+                if path == "workspace://repo/src/lib.rs" && patches.len() == 1
+        ));
     }
 }

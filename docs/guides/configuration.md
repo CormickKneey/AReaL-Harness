@@ -194,6 +194,8 @@ turn_model_rounds = 32
 
 活动时间包括根 Turn 的模型排队、执行、工具、交互等待和清理，子任务时间不叠加，轮次间容量等待、暂停和离线时间不计入。既有单 Turn 期限和 Runtime 硬限额继续生效。Goal 请求禁用 HTTP 层隐式重试，以保留逐次消费的归因；未知消费会停止自动推进。使用与恢复见 [Goal 模式](clients.md#goals)。
 
+工具结果视图通过 `[tools] extensions_file` 指向的 JSON 配置，在 `policy.resultViews` 下设置 `mode: off|observe|on`（默认 observe）及 `searchGroups`、`repeatLines` 开关。大结果快照与内置 rg 不依赖该开关；额度和回取行为见[工具指南](tools.md)。
+
 ## OpenTelemetry 轨迹上报
 
 Core 使用开源 OpenTelemetry SDK，通过标准 OTLP HTTP/protobuf 导出 Traces 和 Events/Logs。未配置 endpoint 时不启用，上报失败不改变 Turn 结果。配置在 Core 启动时读取，修改后需重启服务。
