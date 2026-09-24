@@ -3,7 +3,11 @@ use areal_runtime_supervisor::backend::ScopeAccess;
 use std::{collections::BTreeMap, path::Path};
 
 fn test_profile() -> SandboxProfile {
-    SandboxProfile::Native
+    if cfg!(target_os = "linux") {
+        SandboxProfile::OuterContainerPerf
+    } else {
+        SandboxProfile::Native
+    }
 }
 
 fn execution(root: &Path, code: &str) -> Execution {
