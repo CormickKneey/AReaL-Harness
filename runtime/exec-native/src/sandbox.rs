@@ -378,42 +378,6 @@ fn invalid(message: &str) -> Error {
 #[cfg(all(test, target_os = "macos"))]
 mod tests;
 
-#[cfg(test)]
-mod policy_tests {
-    use super::*;
-    use std::{collections::BTreeMap, path::PathBuf};
-
-    #[test]
-    fn full_access_unrestricted_scope_does_not_require_native_sandbox() {
-        let execution = Execution {
-            process_id: "test-process".into(),
-            argv: vec!["/bin/true".into()],
-            cwd: PathBuf::from("/"),
-            env: BTreeMap::new(),
-            read_roots: vec![PathBuf::from("/")],
-            write_roots: Vec::new(),
-            scope_access: ScopeAccess::Unrestricted,
-            trusted_executable: None,
-            builtin_executables: Vec::new(),
-            tty: false,
-            pipe_stdin: false,
-            network: areal_runtime_protocol::NetworkRequest::Inherit,
-        };
-
-        assert_eq!(
-            command(&execution, Profile::FullAccess).unwrap(),
-            execution.argv
-        );
-
-        let mut ordinary_process = execution;
-        ordinary_process.scope_access = ScopeAccess::Restricted;
-        assert!(
-            command(&ordinary_process, Profile::FullAccess)
-                .map_or(true, |argv| argv != ordinary_process.argv)
-        );
-    }
-}
-
 /// Bubblewrap loads this filter after creating its namespaces. The anonymous
 /// descriptor is inherited only by this child, then consumed by Bubblewrap.
 #[cfg(target_os = "linux")]
@@ -506,4 +470,40 @@ pub fn seccomp(
     _: areal_runtime_protocol::NetworkRequest,
 ) -> Result<Option<std::fs::File>> {
     Ok(None)
+}
+
+#[cfg(test)]
+mod policy_tests {
+    use super::*;
+    use std::{collections::BTreeMap, path::PathBuf};
+
+    #[test]
+    fn full_access_unrestricted_scope_does_not_require_native_sandbox() {
+        let execution = Execution {
+            process_id: "test-process".into(),
+            argv: vec!["/bin/true".into()],
+            cwd: PathBuf::from("/"),
+            env: BTreeMap::new(),
+            read_roots: vec![PathBuf::from("/")],
+            write_roots: Vec::new(),
+            scope_access: ScopeAccess::Unrestricted,
+            trusted_executable: None,
+            builtin_executables: Vec::new(),
+            tty: false,
+            pipe_stdin: false,
+            network: areal_runtime_protocol::NetworkRequest::Inherit,
+        };
+
+        assert_eq!(
+            command(&execution, Profile::FullAccess).unwrap(),
+            execution.argv
+        );
+
+        let mut ordinary_process = execution;
+        ordinary_process.scope_access = ScopeAccess::Restricted;
+        assert!(
+            command(&ordinary_process, Profile::FullAccess)
+                .map_or(true, |argv| argv != ordinary_process.argv)
+        );
+    }
 }
