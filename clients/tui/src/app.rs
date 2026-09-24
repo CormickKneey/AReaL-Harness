@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, bail, ensure};
+use areal_protocol::desktop::VersionRef;
 use areal_protocol::{Item, Thread, ThreadStatus, Turn, TurnStatus};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
@@ -95,6 +96,7 @@ pub struct RetryState {
 }
 
 pub struct App {
+    pub agent_profile: Option<VersionRef>,
     pub permission_info: Value,
     pub permission_mode: String,
     pub approval_choice: usize,
@@ -158,6 +160,7 @@ pub struct App {
 impl App {
     pub fn new(prefs: Preferences) -> Self {
         Self {
+            agent_profile: None,
             permission_info: Value::Null,
             permission_mode: "Unknown".into(),
             approval_choice: 0,
@@ -318,7 +321,15 @@ impl App {
         }
         self.tree_root = None;
         self.sync_subscriptions()?;
-        self.queue("thread/start", json!({}), Purpose::Create(self.generation))
+        let (method, params) = if let Some(profile) = &self.agent_profile {
+            (
+                "areal/thread/start",
+                json!({"requestId":crate::goal_request_id(),"agentProfile":profile}),
+            )
+        } else {
+            ("thread/start", json!({}))
+        };
+        self.queue(method, params, Purpose::Create(self.generation))
     }
     pub fn flush(&mut self, client: &mut Client) -> Result<()> {
         for _ in 0..8 {

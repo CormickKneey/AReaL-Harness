@@ -6,7 +6,7 @@ pub mod storage;
 pub use client::{
     bind, browser_login_url, ensure, list, probe, reconnect, restart, rpc, select, status, stop,
 };
-pub use spec::{LaunchSpec, LocalArgs};
+pub use spec::{LaunchSpec, LocalArgs, parse_agent_profile};
 
 pub fn home() -> anyhow::Result<std::path::PathBuf> {
     let path = match std::env::var_os("AREAL_HARNESS_HOME") {

@@ -1,4 +1,4 @@
-//! 版本化工作流只是已有 Workgroup Plan 的命名定义，不拥有独立调度状态。
+//! 版本化 Workflow 是可绑定到 Agent Profile 的 Workgroup Plan；运行记录归属 Thread。
 use super::*;
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

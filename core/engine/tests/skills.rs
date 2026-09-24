@@ -2,9 +2,168 @@ use areal_engine::{
     Engine, Limits,
     desktop::{SkillLocation, SkillMetadata},
     model::UnconfiguredModel,
+    tools::DynamicToolHost,
 };
-use areal_protocol::desktop::VersionRef;
+use areal_protocol::{DynamicToolResponse, desktop::VersionRef};
+use async_trait::async_trait;
+use serde_json::json;
 use std::{fs, sync::Arc};
+use tokio_util::sync::CancellationToken;
+
+struct ProfileHost;
+#[async_trait]
+impl DynamicToolHost for ProfileHost {
+    fn id(&self) -> &str {
+        "profile-host"
+    }
+    fn is_closed(&self) -> bool {
+        false
+    }
+    async fn call(
+        &self,
+        _: serde_json::Value,
+        _: CancellationToken,
+    ) -> anyhow::Result<DynamicToolResponse> {
+        Ok(DynamicToolResponse {
+            success: true,
+            content_items: vec![],
+            structured_content: Some(json!("profile-tool-ok")),
+        })
+    }
+}
+
+#[tokio::test]
+async fn profile_without_workflow_exposes_its_deployed_tool_allowlist() {
+    let state = tempfile::tempdir().unwrap();
+    let deployment_dir = tempfile::tempdir().unwrap();
+    let deployment = deployment_dir.path().join("deployment.json");
+    fs::write(
+        &deployment,
+        serde_json::to_vec(&json!({
+            "profiles": [{
+                "id": "tool-agent", "revision": "v1", "displayName": "Tool agent",
+                "instructions": "", "toolAllowlist": ["plan_read"]
+            }, {
+                "id": "workflow-agent", "revision": "v1", "displayName": "Workflow agent",
+                "instructions": "", "workflow": {"id": "fixture-flow", "revision": "v1"}
+            }],
+            "skills": [], "workflows": [{
+                "id": "fixture-flow", "revision": "v1", "displayName": "Fixture flow",
+                "plan": {"objective": "fixture", "tasks": [{"id": "one", "instruction": "run", "writes": []}]}
+            }]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let engine =
+        Engine::open(state.path(), Arc::new(UnconfiguredModel), Limits::default()).unwrap();
+    engine.install_deployment(&deployment).unwrap();
+    let thread = engine
+        .create_configured(
+            "test-client".into(),
+            areal_protocol::desktop::ThreadStart {
+                request_id: "start-1".into(),
+                cwd: Some("/workspace".into()),
+                agent_profile: Some(VersionRef {
+                    id: "tool-agent".into(),
+                    revision: "v1".into(),
+                }),
+                model: None,
+                parameters: Default::default(),
+                dynamic_tools: vec![],
+            },
+            Arc::new(ProfileHost),
+        )
+        .await
+        .unwrap();
+    let inspection = engine.inspect(&thread.id).await.unwrap();
+    assert_eq!(inspection["configuration"]["profile"]["id"], "tool-agent");
+    assert_eq!(inspection["configuration"]["profile"]["revision"], "v1");
+    assert!(
+        inspection["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["function"]["name"] == "plan_read")
+    );
+    assert!(thread.desktop.unwrap().workflow_run.is_none());
+    let same_profile = engine
+        .configure_thread(
+            serde_json::from_value(json!({
+                "threadId": thread.id, "expectedRevision": 1,
+                "agentProfile": {"id": "tool-agent", "revision": "v1"}
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(same_profile.revision, 2);
+    let switch_error = engine
+        .configure_thread(
+            serde_json::from_value(json!({
+                "threadId": thread.id, "expectedRevision": 2,
+                "agentProfile": {"id": "workflow-agent", "revision": "v1"}
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap_err();
+    assert!(switch_error.to_string().contains("creating a new thread"));
+    let workflow_error = engine
+        .create_configured(
+            "test-client".into(),
+            areal_protocol::desktop::ThreadStart {
+                request_id: "start-2".into(),
+                cwd: Some("/workspace".into()),
+                agent_profile: Some(VersionRef {
+                    id: "workflow-agent".into(),
+                    revision: "v1".into(),
+                }),
+                model: None,
+                parameters: Default::default(),
+                dynamic_tools: vec![],
+            },
+            Arc::new(ProfileHost),
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        workflow_error
+            .to_string()
+            .contains("trusted deployment policy")
+    );
+    assert_eq!(engine.list(None, 100, None).await.unwrap().0.len(), 1);
+    engine.shutdown().await;
+}
+
+#[tokio::test]
+async fn deployment_rejects_a_profile_with_an_unavailable_workflow() {
+    let state = tempfile::tempdir().unwrap();
+    let deployment_dir = tempfile::tempdir().unwrap();
+    let deployment = deployment_dir.path().join("deployment.json");
+    fs::write(
+        &deployment,
+        serde_json::to_vec(&json!({
+            "profiles": [{
+                "id": "workflow-agent", "revision": "v1", "displayName": "Workflow agent",
+                "instructions": "", "workflow": {"id": "missing-flow", "revision": "v1"}
+            }]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let engine =
+        Engine::open(state.path(), Arc::new(UnconfiguredModel), Limits::default()).unwrap();
+    assert!(
+        engine
+            .install_deployment(&deployment)
+            .unwrap_err()
+            .to_string()
+            .contains("unavailable workflow revision")
+    );
+    assert_eq!(engine.profiles()["data"].as_array().unwrap().len(), 0);
+    engine.shutdown().await;
+}
 
 #[tokio::test]
 async fn profile_references_survive_restart_while_resources_are_read_from_current_files() {

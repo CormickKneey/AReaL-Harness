@@ -64,6 +64,6 @@ TUI/server/launcher 可配置 `--workgroup-policy /absolute/policy.json --workgr
 
 服务开放 workgroup_start/read/wait/revise/cancel/artifact，TUI 使用 `/groups`、`/group ID`、`/group-start FILE`。requestId 去重，计划修改带 expectedRevision；重连不取消客户端组，重启不重跑旧组。artifact 最多返回 4096 字节文件块及基线/候选摘要，应用回原目录仍需条件检查。
 
-桌面 Workflow 是版本化计划，可按阶段配置 Profile、模型、Skill、工具和 readOnly；isolatedWrite 子 Agent 复用此服务。契约见 [Core API](../api/core.md#workgroups)，机制见[调度设计](../design/workgroups.md)。
+桌面 Workflow 是版本化计划，可按阶段配置 Profile、模型、Skill、工具和 readOnly；也可以作为 Agent Profile 的 `workflow` 属性，在 `areal/thread/start` 时自动启动一次并记录到 Thread；isolatedWrite 子 Agent 复用此服务。契约见 [Core API](../api/core.md#workgroups)，机制见[调度设计](../design/workgroups.md)。
 
 连续四个成功且输入、结果和源码均相同的工具边界会进入验证检查点；动态进程/游标标识与 remainingToolCalls 准入余量不参与重复结果比较。Goal 内的原生 Workgroup 与父 Turn 共享目标 token 预算，原有 Workgroup 限额继续生效。

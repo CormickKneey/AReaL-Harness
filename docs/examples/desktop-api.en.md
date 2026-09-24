@@ -23,6 +23,8 @@ make desktop-schemas
 | [soak.mjs](../../examples/desktop-api/soak.mjs) | Relocated packages, minimal PATH, system Python, budget exhaustion, archive and epoch rotation |
 | [native-host.mjs](../../examples/desktop-api/native-host.mjs) | Real file/process brokers and foreign-handle rejection |
 
+`run.mjs game-lite-profile` verifies actual Profile tool calls without a Workflow; `run.mjs profile-workflow` verifies automatic startup, completion, and no duplicate launch after resume. `cli.mjs` verifies that `exec --agent` exposes only the selected Profile's tools.
+
 `AREAL_SOAK_ROUNDS` sets rounds (default 12), `AREAL_SOAK_REPORT` selects a JSON report, and `AREAL_PACKAGE_PROFILE=release` tests prebuilt release artifacts. Reports record actual source, platform, resource curves and cleanup.
 
 ## Explicit deployment Profile

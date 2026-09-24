@@ -13,6 +13,7 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const available = [
   "desktop-minimal",
   "game-lite-profile",
+  "profile-workflow",
   "native-tool-host",
   "mcp-management",
   "adaptive-agents",
@@ -50,6 +51,7 @@ const results = [];
 const exampleIds = {
   "desktop-minimal": "EX-01",
   "game-lite-profile": "EX-02",
+  "profile-workflow": "EX-18",
   "native-tool-host": "EX-03",
   "mcp-management": "EX-14",
   "adaptive-agents": "EX-12",
@@ -137,6 +139,14 @@ try {
       skills: [{ id: "game", revision: "v1" }],
     },
     {
+      id: "profile-tool-agent",
+      revision: "v1",
+      displayName: "Profile tool agent fixture",
+      instructions: "DESKTOP_PROFILE_FIXTURE",
+      skills: [{ id: "game", revision: "v1" }],
+      toolAllowlist: ["skill_read", "plan_update", "run_command"],
+    },
+    {
       id: "approval",
       revision: "v1",
       displayName: "Approval",
@@ -156,6 +166,13 @@ try {
       displayName: "Terminal",
       instructions: "Use managed terminal",
       allowThreadProcesses: true,
+    },
+    {
+      id: "pgc-agent",
+      revision: "v1",
+      displayName: "PGC agent fixture",
+      instructions: "Run the bound PGC workflow.",
+      workflow: { id: "pgc", revision: "v1" },
     },
   ];
   const plan = {
@@ -362,14 +379,54 @@ try {
       );
     } else if (name === "game-lite-profile") {
       const target = await startThread(c, "profile", {
-        agentProfile: { id: "game-lite", revision: "v1" },
+        agentProfile: { id: "profile-tool-agent", revision: "v1" },
       });
       await done(c, target);
+      const inspection = await c.call("areal/thread/inspect", { threadId: target.threadId });
+      assert.equal(inspection.configuration.profile.id, "profile-tool-agent");
+      assert.equal(inspection.configuration.profile.revision, "v1");
+      const snapshot = await c.call("thread/read", { threadId: target.threadId });
+      assert.equal(snapshot.thread.desktop.workflowRun ?? null, null);
+      assert.deepEqual(inspection.tools.map((tool) => tool.function.name).sort(), [
+        "plan_update",
+        "run_command",
+        "skill_read",
+      ]);
       assert.equal(
         (await c.call("areal/plan/read", { threadId: target.threadId })).steps[0].status,
         "completed",
       );
       assert.match(await readFile(join(workspace, "index.html"), "utf8"), /button/);
+    } else if (name === "profile-workflow") {
+      const created = await c.call("areal/thread/start", {
+        requestId: crypto.randomUUID(),
+        cwd: workspace,
+        agentProfile: { id: "pgc-agent", revision: "v1" },
+      });
+      const run = created.thread.desktop.workflowRun;
+      assert.equal(run.workflow.id, "pgc");
+      assert.equal(run.workflow.revision, "v1");
+      assert.match(run.workgroupId, /^[0-9a-f]{64}$/);
+      let state = await c.call("areal/workgroup/read", { id: run.workgroupId });
+      const timeout = Date.now() + 30000;
+      while (state.record.status === "running" && Date.now() < timeout) {
+        state = await c.call("areal/workgroup/wait", {
+          id: run.workgroupId,
+          afterRevision: state.record.revision,
+          timeoutMs: 1000,
+        });
+      }
+      assert.equal(state.record.status, "completed", JSON.stringify(state));
+      const beforeResume = (await c.call("areal/workgroup/list", {})).data.filter(
+        (entry) => entry.id === run.workgroupId,
+      ).length;
+      assert.equal(beforeResume, 1);
+      const resumed = await c.call("thread/resume", { threadId: created.thread.id });
+      assert.equal(resumed.thread.desktop.workflowRun.workgroupId, run.workgroupId);
+      const afterResume = (await c.call("areal/workgroup/list", {})).data.filter(
+        (entry) => entry.id === run.workgroupId,
+      ).length;
+      assert.equal(afterResume, 1);
     } else if (name === "native-tool-host") {
       const target = await startThread(c, "native");
       await done(c, target);

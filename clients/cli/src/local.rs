@@ -60,7 +60,12 @@ impl Local {
                         .as_deref()
                         .context("--endpoint requires --auth-file")?,
                 )?,
-                profile: None,
+                profile: args
+                    .agent
+                    .as_deref()
+                    .map(areal_local_service::parse_agent_profile)
+                    .transpose()?
+                    .map(|profile| json!(profile)),
                 mcp: vec![],
                 child: None,
                 temporary: None,
@@ -285,6 +290,12 @@ impl Local {
         if let Some(path) = &args.config {
             command.arg("--config").arg(path);
         }
+        if let Some(path) = &args.workgroup_policy {
+            command.arg("--workgroup-policy").arg(path);
+        }
+        if let Some(path) = &args.workgroup_toolchain {
+            command.arg("--workgroup-toolchain").arg(path);
+        }
         for path in &args.task_credential_command {
             command
                 .arg("--task-credential-command")
@@ -306,7 +317,13 @@ impl Local {
         let mut result = Self {
             endpoint: String::new(),
             token: String::new(),
-            profile: Some(json!({"id":profile["id"],"revision":profile["revision"]})),
+            profile: args
+                .agent
+                .as_deref()
+                .map(areal_local_service::parse_agent_profile)
+                .transpose()?
+                .map(|profile| json!(profile))
+                .or_else(|| Some(json!({"id":profile["id"],"revision":profile["revision"]}))),
             mcp,
             child: Some(child),
             temporary: Some(temporary),

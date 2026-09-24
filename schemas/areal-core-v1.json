@@ -6178,6 +6178,48 @@
                         "type": "object"
                       },
                       "type": "array"
+                    },
+                    "workflowRun": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "status": {
+                              "type": "string"
+                            },
+                            "workflow": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "revision": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "revision"
+                              ],
+                              "type": "object"
+                            },
+                            "workgroupId": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "workflow",
+                            "workgroupId",
+                            "status"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "自动绑定的 Profile Workflow；线程恢复时不会再次启动。"
                     }
                   },
                   "required": [
@@ -16855,6 +16897,48 @@
                           "type": "object"
                         },
                         "type": "array"
+                      },
+                      "workflowRun": {
+                        "anyOf": [
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "status": {
+                                "type": "string"
+                              },
+                              "workflow": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "revision": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "revision"
+                                ],
+                                "type": "object"
+                              },
+                              "workgroupId": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "workflow",
+                              "workgroupId",
+                              "status"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null,
+                        "description": "自动绑定的 Profile Workflow；线程恢复时不会再次启动。"
                       }
                     },
                     "required": [
@@ -19804,6 +19888,48 @@
                             "type": "object"
                           },
                           "type": "array"
+                        },
+                        "workflowRun": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "status": {
+                                  "type": "string"
+                                },
+                                "workflow": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "id": {
+                                      "type": "string"
+                                    },
+                                    "revision": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "id",
+                                    "revision"
+                                  ],
+                                  "type": "object"
+                                },
+                                "workgroupId": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "workflow",
+                                "workgroupId",
+                                "status"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "default": null,
+                          "description": "自动绑定的 Profile Workflow；线程恢复时不会再次启动。"
                         }
                       },
                       "required": [
@@ -36256,6 +36382,48 @@
                         "type": "object"
                       },
                       "type": "array"
+                    },
+                    "workflowRun": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "status": {
+                              "type": "string"
+                            },
+                            "workflow": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "revision": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "revision"
+                              ],
+                              "type": "object"
+                            },
+                            "workgroupId": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "workflow",
+                            "workgroupId",
+                            "status"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "自动绑定的 Profile Workflow；线程恢复时不会再次启动。"
                     }
                   },
                   "required": [
@@ -44273,6 +44441,48 @@
                           "type": "object"
                         },
                         "type": "array"
+                      },
+                      "workflowRun": {
+                        "anyOf": [
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "status": {
+                                "type": "string"
+                              },
+                              "workflow": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "revision": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "revision"
+                                ],
+                                "type": "object"
+                              },
+                              "workgroupId": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "workflow",
+                              "workgroupId",
+                              "status"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ],
+                        "default": null,
+                        "description": "自动绑定的 Profile Workflow；线程恢复时不会再次启动。"
                       }
                     },
                     "required": [
@@ -47210,6 +47420,48 @@
                         "type": "object"
                       },
                       "type": "array"
+                    },
+                    "workflowRun": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "status": {
+                              "type": "string"
+                            },
+                            "workflow": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "revision": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "revision"
+                              ],
+                              "type": "object"
+                            },
+                            "workgroupId": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "workflow",
+                            "workgroupId",
+                            "status"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "自动绑定的 Profile Workflow；线程恢复时不会再次启动。"
                     }
                   },
                   "required": [
@@ -50168,6 +50420,48 @@
                         "type": "object"
                       },
                       "type": "array"
+                    },
+                    "workflowRun": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "status": {
+                              "type": "string"
+                            },
+                            "workflow": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "revision": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "revision"
+                              ],
+                              "type": "object"
+                            },
+                            "workgroupId": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "workflow",
+                            "workgroupId",
+                            "status"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "自动绑定的 Profile Workflow；线程恢复时不会再次启动。"
                     }
                   },
                   "required": [
@@ -53134,6 +53428,48 @@
                         "type": "object"
                       },
                       "type": "array"
+                    },
+                    "workflowRun": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "status": {
+                              "type": "string"
+                            },
+                            "workflow": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "revision": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "revision"
+                              ],
+                              "type": "object"
+                            },
+                            "workgroupId": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "workflow",
+                            "workgroupId",
+                            "status"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "default": null,
+                      "description": "自动绑定的 Profile Workflow；线程恢复时不会再次启动。"
                     }
                   },
                   "required": [
@@ -57283,6 +57619,48 @@
                   "type": "object"
                 },
                 "type": "array"
+              },
+              "workflowRun": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "status": {
+                        "type": "string"
+                      },
+                      "workflow": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "revision": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "revision"
+                        ],
+                        "type": "object"
+                      },
+                      "workgroupId": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "workflow",
+                      "workgroupId",
+                      "status"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "自动绑定的 Profile Workflow；线程恢复时不会再次启动。"
               }
             },
             "required": [

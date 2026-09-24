@@ -286,6 +286,17 @@ pub struct DesktopState {
     pub uploads: Vec<MediaRef>,
     #[serde(default)]
     pub processes: Vec<ManagedProcess>,
+    /// 自动绑定的 Profile Workflow；线程恢复时不会再次启动。
+    #[serde(default)]
+    pub workflow_run: Option<WorkflowRun>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkflowRun {
+    pub workflow: VersionRef,
+    pub workgroup_id: String,
+    pub status: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]

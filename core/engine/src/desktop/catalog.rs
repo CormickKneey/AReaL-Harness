@@ -169,6 +169,16 @@ impl Engine {
             );
             catalog.workflows.insert(identity, workflow);
         }
+        for profile in catalog.profiles.values() {
+            if let Some(workflow) = &profile.workflow {
+                anyhow::ensure!(
+                    catalog
+                        .workflows
+                        .contains_key(&key(&workflow.id, &workflow.revision)),
+                    "profile references an unavailable workflow revision"
+                );
+            }
+        }
         anyhow::ensure!(
             serde_json::to_vec(&catalog)?.len() <= 2 * 1024 * 1024,
             "desktop catalog exceeds 2 MiB; retain existing revisions and provision a new data directory"

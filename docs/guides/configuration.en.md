@@ -158,7 +158,29 @@ target/debug/areal config show --sources --config /absolute/config.toml
 
 Diagnostics do not listen, create data, start Runtime/MCP/plugins or probe models. They report redacted values and sources. Shared local services reload model configuration as described below; startup credentials are not forwarded to Runtime. Server telemetry handles `OTEL_*` separately.
 
-The desktop runtime provider catalog uses `areal/provider/*` and `AREAL_CREDENTIAL_<ref>`, supporting chatCompletions/responses only. `--desktop-config` installs versioned Profiles/Skills/Workflows. Session settings can change through CAS at idle boundaries and are frozen into new Turns/queue items; see the [desktop contract](../api/desktop.en.md). Explicit session Providers are managed separately from the TOML default model.
+The desktop runtime provider catalog uses `areal/provider/*` and `AREAL_CREDENTIAL_<ref>`, supporting chatCompletions/responses only. `--desktop-config` installs versioned Profiles/Skills/Workflows. Pass `--agent code-agent@v2` to TUI, headless or `exec` to select a Profile; a Profile-bound Workflow starts with the Thread, so no separate Workflow argument is needed. Session settings can change through CAS at idle boundaries and are frozen into new Turns/queue items; see the [desktop contract](../api/desktop.en.md). Explicit session Providers are managed separately from the TOML default model.
+
+```sh
+target/debug/areal --desktop-config deployment.json --agent code-agent@v2
+target/debug/areal --desktop-config deployment.json --agent code-agent@v2 --prompt "检查当前改动"
+target/debug/areal exec --desktop-config deployment.json --agent code-agent@v2 "运行测试"
+```
+
+In `deployment.json`, bind tools and a Workflow to a Profile. The same file can also keep an Agent without a Workflow:
+
+```json
+{
+  "profiles": [
+    {"id":"tool-agent","revision":"v1","displayName":"Tool agent","instructions":"Inspect and report results.","toolAllowlist":["fs_read","run_command"]},
+    {"id":"code-agent","revision":"v2","displayName":"Code agent","instructions":"Complete and verify the staged task.","toolAllowlist":["fs_read","run_command","fs_apply_patches"],"workflow":{"id":"code-flow","revision":"v1"}}
+  ],
+  "workflows": [
+    {"id":"code-flow","revision":"v1","displayName":"Code flow","plan":{"objective":"Change and verify code","tasks":[{"id":"implement","instruction":"Modify src/main.rs and run tests","writes":["src/main.rs"],"configuration":{"agentProfile":{"id":"code-agent","revision":"v2"}}}]}}
+  ]
+}
+```
+
+`tool-agent@v1` can use its permitted tools without a Workgroup. `code-agent@v2` needs a trusted `--workgroup-policy` and `--allow-write`; the policy must authorize `src/main.rs` and provide final checks (see the [Workgroup guide](workgroups.en.md)). The bound Profile starts the Workflow plan automatically. A regular Turn from `--prompt` or `exec` is a separate user interaction.
 
 ## Model configuration reload
 

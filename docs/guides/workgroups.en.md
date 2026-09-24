@@ -64,6 +64,6 @@ TUI/server/launcher accept `--workgroup-policy /absolute/policy.json --workgroup
 
 The service exposes workgroup_start/read/wait/revise/cancel/artifact. TUI uses `/groups`, `/group ID` and `/group-start FILE`. requestId deduplicates; revisions require expectedRevision. Reconnect does not cancel client groups; restart does not rerun old groups. artifact returns file chunks up to 4096 bytes with base/candidate digests; applying them to the original tree still requires conditional checks.
 
-Desktop Workflows are versioned plans with per-stage Profile, model, Skill, tool and readOnly settings. isolatedWrite child agents reuse this service. See [Core API](../api/core.en.md#workgroups) and [scheduling design](../design/workgroups.en.md).
+Desktop Workflows are versioned plans with per-stage Profile, model, Skill, tool and readOnly settings. A Workflow can also be the `workflow` property of an Agent Profile; `areal/thread/start` starts it once and records the run on the Thread. isolatedWrite child agents reuse this service. See [Core API](../api/core.en.md#workgroups) and [scheduling design](../design/workgroups.en.md).
 
 Four consecutive successful tool boundaries with identical input, results and source enter a verification checkpoint. Dynamic process/cursor identifiers and remainingToolCalls admission capacity are excluded from repeated-result comparison. Native Workgroups within a Goal share the parent Turn’s token budget while retaining existing Workgroup limits.

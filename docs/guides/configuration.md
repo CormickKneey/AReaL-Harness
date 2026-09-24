@@ -158,7 +158,29 @@ target/debug/areal config show --sources --config /absolute/config.toml
 
 诊断不监听、不创建数据、不启动 Runtime/MCP/插件，也不探测模型；输出有效值和来源并脱敏。共享本地服务支持下述模型配置热更新；启动凭据不进入 Runtime 环境。`OTEL_*` 由 server 的 telemetry 装配处理。
 
-桌面运行时 provider 目录使用 `areal/provider/*` 和 `AREAL_CREDENTIAL_<ref>`；只支持 chatCompletions/responses。`--desktop-config` 装配版本化 Profile/Skill/Workflow；会话配置可在空闲边界通过 CAS 更新并冻结到新 Turn/队列，见[桌面契约](../api/desktop.md)。会话显式选择的 Provider 与 TOML 默认模型分别管理。
+桌面运行时 provider 目录使用 `areal/provider/*` 和 `AREAL_CREDENTIAL_<ref>`；只支持 chatCompletions/responses。`--desktop-config` 装配版本化 Profile/Skill/Workflow；使用 `--agent code-agent@v2` 启动 TUI、headless 或 `exec` 时选择 Profile，Profile 绑定的 Workflow 会随 Thread 自动启动，不再额外传 Workflow 参数。会话配置可在空闲边界通过 CAS 更新并冻结到新 Turn/队列，见[桌面契约](../api/desktop.md)。会话显式选择的 Provider 与 TOML 默认模型分别管理。
+
+```sh
+target/debug/areal --desktop-config deployment.json --agent code-agent@v2
+target/debug/areal --desktop-config deployment.json --agent code-agent@v2 --prompt "检查当前改动"
+target/debug/areal exec --desktop-config deployment.json --agent code-agent@v2 "运行测试"
+```
+
+`deployment.json` 中让 Profile 绑定工具与 Workflow；同一文件可保留不带 Workflow 的 Agent：
+
+```json
+{
+  "profiles": [
+    {"id":"tool-agent","revision":"v1","displayName":"Tool agent","instructions":"检查并报告结果。","toolAllowlist":["fs_read","run_command"]},
+    {"id":"code-agent","revision":"v2","displayName":"Code agent","instructions":"按阶段完成并验证任务。","toolAllowlist":["fs_read","run_command","fs_apply_patches"],"workflow":{"id":"code-flow","revision":"v1"}}
+  ],
+  "workflows": [
+    {"id":"code-flow","revision":"v1","displayName":"Code flow","plan":{"objective":"修改并验证代码","tasks":[{"id":"implement","instruction":"修改 src/main.rs 并运行测试","writes":["src/main.rs"],"configuration":{"agentProfile":{"id":"code-agent","revision":"v2"}}}]}}
+  ]
+}
+```
+
+`tool-agent@v1` 可直接使用允许的工具，不需要 Workgroup；`code-agent@v2` 需要可信 `--workgroup-policy` 和 `--allow-write`，策略须授权 `src/main.rs` 并提供最终检查，详见 [Workgroup 指南](workgroups.md)。Workflow 计划由绑定 Profile 自动启动，`--prompt` 或 `exec` 的普通 Turn 是独立的用户交互。
 
 ## 模型配置热更新
 
