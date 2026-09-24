@@ -12,6 +12,7 @@ Install dependencies using the [development guide](README.en.md). Regular tests 
 | `make test-concurrency` | Concurrency primitives |
 | `make verify-runtime` | Runtime unit tests and real file, process, permission and shutdown smoke |
 | `make verify-harness` | verify followed by Runtime, complete Harness, desktop API and Workgroup smoke |
+| `make verify-native` | macOS native backend tests and Harness integration smoke; common checks are covered by `make verify` |
 | `make examples-desktop-api` | [Direct API, CLI, Skills and relocated packaged binaries](../examples/desktop-api.en.md) |
 | `make workgroup-smoke` | Private Runtime writes, combined verification, command deadlines and failure settlement |
 
@@ -29,7 +30,7 @@ Independent macOS Python/scratch regression (local model, no provider credential
 python3 scripts/native-python-smoke.py --bin-dir target/debug
 ```
 
-`make harness-smoke` (called by `make verify-harness` in macOS CI) includes this regression. It checks automatic scratch and a custom `--scratch` under both default YOLO and the explicit native sandbox: both expose `verify_command` and save verification receipts with exit codes 0 and 7 in a private per-thread directory. Shared resolver tests cover installed CLT without a `developer_dir` link and reject interpreters outside supported frameworks.
+`make harness-smoke` (called by `make verify-native` in macOS CI) includes this regression. It checks automatic scratch and a custom `--scratch` under both default YOLO and the explicit native sandbox: both expose `verify_command` and save verification receipts with exit codes 0 and 7 in a private per-thread directory. Shared resolver tests cover installed CLT without a `developer_dir` link and reject interpreters outside supported frameworks.
 
 `make workgroup-smoke` also verifies that Worker commands receive a writable `TMPDIR` at `.scratch/agent-<threadId>` inside their private workspace, with Python bytecode writes disabled.
 
@@ -77,9 +78,9 @@ Outer-container relaxations apply only to the explicitly selected controlled pro
 
 [CI](../../.github/workflows/ci.yml) runs native Harness checks on macOS, portable regression and Docker sandbox/file-ownership checks on Linux, and separate Rust/npm advisory checks. Actions are pinned by commit, repository permissions are read-only, and failures retain logs. Consult the run for the relevant commit for actual results.
 
-Pull requests, pushes to `main`, and manual dispatch run the full checks, avoiding duplicate push and PR runs for feature branches. Linux portable and container checks run in parallel. The existing `Linux checks and container Runtime` check remains as an aggregate gate that requires both jobs to succeed. macOS still runs all of `make verify-harness`.
+Pull requests, pushes to `main`, and manual dispatch run the full checks, avoiding duplicate push and PR runs for feature branches. Linux portable and container checks run in parallel, and formatting, static analysis, Rust/SDK/script checks inside the portable regression run in parallel as well. The existing `Linux checks and container Runtime` check remains as an aggregate gate that requires both jobs to succeed. macOS runs `make verify-native` for native backend and Harness integration coverage that Linux does not provide.
 
-Host jobs cache Cargo dependency artifacts and npm downloads; Docker uses BuildKit's GitHub Actions layer cache. Cache hits still execute tests. Rust caches are separated by platform, toolchain and dependency manifests. CI disables debug symbols and incremental compilation to reduce artifact size. Only the pinned `cargo-audit` binary is cached; every run still reads advisories and audits the lockfile.
+Host jobs cache Cargo dependency artifacts, npm downloads and uv packages; container tests also reuse the Runtime image build layers through BuildKit's GitHub Actions cache. Cache hits still execute tests. Rust caches are separated by platform, toolchain and dependency manifests. CI disables debug symbols and incremental compilation to reduce artifact size. Only the pinned `cargo-audit` binary is cached; every run still reads advisories and audits the lockfile.
 
 Container behavior checks pass `--build-arg BUILD_PROFILE=ci`, selecting the Cargo `ci` profile inherited from `dev`: debug assertions remain enabled, with debug symbols and incremental compilation disabled. `runtime-tests` uses the same profile to reuse dependency artifacts. The Dockerfile still defaults to `release` with thin LTO; use that default for performance tests. The image label `io.areal.perf.build-profile` records the selected profile. CI images must not be used as release performance measurements.
 

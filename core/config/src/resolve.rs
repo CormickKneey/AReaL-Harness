@@ -468,7 +468,7 @@ fn load_mode(inputs: &ConfigInputs, management: bool) -> Result<ResolvedCoreConf
                     "cannot locate user directory; set AREAL_HARNESS_HOME",
                 )
             })?;
-        (home.join(".areal-harness"), default.clone())
+        (home.join(".areal"), default.clone())
     };
     let env_file = env(inputs, "AREAL_HARNESS_CONFIG")?;
     let explicit = inputs.config_file.is_some() || env_file.is_some();

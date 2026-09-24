@@ -96,6 +96,60 @@ button.secondary {
 button.secondary:hover:enabled {
   background: var(--hover);
 }
+.slash-menu {
+  position: absolute;
+  z-index: 3;
+  left: 14px;
+  right: 14px;
+  bottom: calc(100% - 4px);
+  max-height: 220px;
+  overflow: auto;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 12%);
+}
+.slash-menu button {
+  width: 100%;
+  justify-content: flex-start;
+  background: transparent;
+  color: var(--text);
+  border: 0;
+  text-align: left;
+}
+.slash-menu button:hover,
+.slash-menu button[aria-selected="true"] {
+  background: var(--hover);
+}
+.slash-command-description {
+  margin-left: 8px;
+  color: var(--muted);
+}
+#skills-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 14px;
+}
+.skill-option {
+  display: grid;
+  justify-items: start;
+  gap: 2px;
+  width: 100%;
+  padding: 10px 12px;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  text-align: left;
+}
+.skill-option:hover:enabled,
+.skill-option.selected {
+  background: var(--hover);
+  border-color: var(--accent);
+}
+.skill-option small {
+  color: var(--muted);
+}
 button svg,
 svg {
   width: 16px;
@@ -544,6 +598,7 @@ main {
   gap: 8px;
 }
 #composer {
+  position: relative;
   border: 0.5px solid var(--border);
   border-radius: 22px;
   padding: 8px 0 0;

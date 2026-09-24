@@ -31,7 +31,7 @@ pub struct SkillDiscovery {
     pub warnings: Vec<String>,
 }
 
-/// 按目录名覆盖：项目优先于全局，同级 .agents 优先于 .claude。
+/// 按目录名覆盖：项目优先于全局，同级 .agents 优先于 .claude，最后是 .codex。
 /// 只解析安装器的目录链接，Skill 内部资源仍禁止符号链接。
 /// 单个 Skill 校验失败时返回告警，调用方负责展示；搜索目录本身的错误仍返回失败。
 pub fn discover(workspace: Option<&Path>, homedir: Option<&Path>) -> Result<SkillDiscovery> {
@@ -42,7 +42,8 @@ pub fn discover(workspace: Option<&Path>, homedir: Option<&Path>) -> Result<Skil
         allowed.push(workspace.clone());
     }
     for base in [homedir, workspace.as_deref()].into_iter().flatten() {
-        for directory in [".claude/skills", ".agents/skills"] {
+        // agents > claude > codex；反向选取时保持项目目录优先于用户目录。
+        for directory in [".codex/skills", ".claude/skills", ".agents/skills"] {
             let path = base.join(directory);
             match fs::symlink_metadata(&path) {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,

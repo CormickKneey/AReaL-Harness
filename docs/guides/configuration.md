@@ -6,7 +6,7 @@
 
 ## 文件与优先级
 
-`显式 CLI > 已登记环境变量 > 选定 TOML > 默认值`。默认配置为 `~/.areal-harness/config.toml`，数据为同目录 `state/`。`AREAL_HARNESS_HOME` 指定非空绝对 home；`--config` 优先于 `AREAL_HARNESS_CONFIG`，替代默认文件，不叠加。不自动读取项目 TOML 或 `.env`。
+`显式 CLI > 已登记环境变量 > 选定 TOML > 默认值`。默认配置为 `~/.areal/config.toml`，数据为同目录 `state/`。`AREAL_HARNESS_HOME` 指定非空绝对 home；`--config` 优先于 `AREAL_HARNESS_CONFIG`，替代默认文件，不叠加。不自动读取项目 TOML 或 `.env`。
 
 共享 TUI/Web 入口使用按工作区隔离的默认数据目录；显式 dataDir 仍遵循上述优先级。历史迁移与配置兼容性见[本地服务契约](../api/local-service.md)。
 
@@ -17,7 +17,7 @@
 
 本地 TUI、Web、CLI 和 `scripts/launch.py` 默认 **YOLO**：普通任务可读写当前用户有权访问的文件（含工作区外和 `/tmp`），命令可联网，不逐次询问。无需再传 `--allow-write` / `--allow-network`。操作系统自身权限仍有效；显式 Profile、只读 Turn、工具拒绝规则和受限 Runtime 不能被 YOLO 覆盖。
 
-全局配置 `~/.areal-harness/config.toml`：
+全局配置 `~/.areal/config.toml`：
 
 ```toml
 schema_version = 1

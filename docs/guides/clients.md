@@ -30,7 +30,7 @@ target/debug/areal --endpoint ws://127.0.0.1:4500 --auth-file /absolute/core-dat
 
 省略 endpoint 时，交互式 TUI 连接共享 Core/Runtime，监听随机 loopback 端口。同一工作区多个窗口复用服务，关闭窗口保留后台服务和任务。`--prompt`、`--goal`、`--input-file` 默认使用 owned 模式，退出后清理所拥有的服务；`--local-mode shared|owned` 可覆盖默认选择。显式 endpoint（别名 `--remote`）只连接已有服务，不能与本地部署参数混用。
 
-共享模式默认在 `~/.areal-harness/instances/` 下按工作区保存数据；显式数据目录配置保持优先级。旧 `~/.areal-harness/state` 历史须使用 `--data-dir`，或停止旧 Core 后绑定。模型 TOML 配置自动热更新；其他 TOML 变化等待后台工作结算后重启，权限/部署参数变化需显式 restart。发现、迁移、日志和 Desktop 接入见[本地服务契约](../api/local-service.md)。
+共享模式默认在 `~/.areal/instances/` 下按工作区保存数据；显式数据目录配置保持优先级。旧 `~/.areal-harness/state` 历史须使用 `--data-dir`，或停止旧 Core 后绑定。模型 TOML 配置自动热更新；其他 TOML 变化等待后台工作结算后重启，权限/部署参数变化需显式 restart。发现、迁移、日志和 Desktop 接入见[本地服务契约](../api/local-service.md)。
 
 ```sh
 target/debug/areal web --workspace /absolute/task
@@ -51,6 +51,7 @@ Web 采用中性灰工作台布局：240px 可收起侧栏、任务标题与视�
 - 通过侧栏新建、切换、刷新或分页加载任务；新任务显示居中的输入区域，产生记录后输入框固定在底部。
 - `areal web` 自动登录；一次性链接 60 秒有效，会话 1 小时有效。失效或服务重启后重新运行该命令，也可在「设置 → 本地连接」输入访问令牌；错误在设置内显示。有效会话可刷新页面恢复连接和任务快照。
 - Enter 发送，Shift + Enter 换行；输入法确认候选字不发送。运行中可以追加说明或停止执行。
+- Web 输入 `/` 会显示命令提示，支持 `/help`、`/new`、`/refresh`、`/goal`、`/skills` 和 `/skill NAME`；点击输入框下方的 `Skills` 或执行 `/skills` 可为当前任务选择 Skill。
 - 输入框上方的「持续目标」可展开查看预算与进度、创建或编辑目标、暂停、恢复和清除；有活动 Goal 时停止按钮暂停目标，自动续轮保留来源标记。
 - 「任务记录」展示消息和可展开的工具结果；UNKNOWN 工具结果仍需记录检查说明。「协同任务与验收」保留计划提交、进度查询、取消和调整入口。
 
@@ -70,6 +71,7 @@ TUI 顶部和 Web 显示 YOLO/ASK_PERMISSIONS，以 Core 状态为准。TUI 审�
 | Ctrl-R | 重连并恢复快照，不重放请求 |
 | F5、`/sessions`、`/new`、`/open ID` | 选择、创建或打开会话 |
 | F6、`/model` | 空闲时选择模型或恢复默认值 |
+| `/skills`、`/skill NAME` | 选择或按名称应用当前会话 Skill |
 | F2、`/theme` | 预览主题，Enter 保存，Esc 撤回 |
 | `/agents`、F3、`/topology` | 子任务树与根拓扑 |
 | `/spawn prompt` | 手工派发当前 Turn 的子任务 |

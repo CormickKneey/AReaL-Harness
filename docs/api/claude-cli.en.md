@@ -9,7 +9,7 @@ target/debug/areal exec 'Describe this workspace' --output-format stream-json --
 target/debug/areal -p 'Continue' --resume SESSION_ID --output-format json
 ```
 
-Models use configured Chat Completions/Responses APIs. State defaults to `~/.areal-harness/cli` (overridable with AREAL_HARNESS_HOME). session_id is the Core Thread UUID; history is not copied. Concurrent processes use private data/Runtimes and session locks. Missing or UNKNOWN sessions never trigger implicit new sessions.
+Models use configured Chat Completions/Responses APIs. State defaults to `~/.areal/cli` (overridable with AREAL_HARNESS_HOME). session_id is the Core Thread UUID; history is not copied. Concurrent processes use private data/Runtimes and session locks. Missing or UNKNOWN sessions never trigger implicit new sessions.
 
 | Argument | Behavior |
 |---|---|

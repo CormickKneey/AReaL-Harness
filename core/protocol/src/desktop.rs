@@ -322,6 +322,9 @@ pub struct ConfigureThread {
     #[serde(default)]
     pub reset_model: bool,
     pub parameters: Option<ModelParameters>,
+    /// 会话允许使用的 Skill；省略时沿用当前选择，空数组表示清空覆盖。
+    #[serde(default)]
+    pub selected_skills: Option<Vec<VersionRef>>,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

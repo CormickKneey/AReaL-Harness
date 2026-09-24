@@ -24,7 +24,7 @@ pub(super) struct Catalog {
     #[serde(default, rename = "skillHashes", skip_serializing)]
     _legacy_skill_hashes: serde::de::IgnoredAny,
     #[serde(skip)]
-    skills: BTreeMap<String, Skill>,
+    pub(crate) skills: BTreeMap<String, Skill>,
 }
 impl Catalog {
     pub fn load(root: &Path) -> anyhow::Result<Self> {

@@ -9,7 +9,7 @@ target/debug/areal exec 'Describe this workspace' --output-format stream-json --
 target/debug/areal -p 'Continue' --resume SESSION_ID --output-format json
 ```
 
-模型使用配置的 Chat Completions/Responses。状态默认 `~/.areal-harness/cli`（AREAL_HARNESS_HOME 可覆盖）；session_id 是 Core Thread UUID，历史不复制。并发进程使用独立数据/Runtime，同会话文件锁保护。恢复缺失或 UNKNOWN 不隐式新建。
+模型使用配置的 Chat Completions/Responses。状态默认 `~/.areal/cli`（AREAL_HARNESS_HOME 可覆盖）；session_id 是 Core Thread UUID，历史不复制。并发进程使用独立数据/Runtime，同会话文件锁保护。恢复缺失或 UNKNOWN 不隐式新建。
 
 | 参数 | 行为 |
 |---|---|

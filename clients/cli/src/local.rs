@@ -79,7 +79,7 @@ impl Local {
             .unwrap_or(
                 std::env::home_dir()
                     .context("home unavailable")?
-                    .join(".areal-harness"),
+                    .join(".areal"),
             )
             .join("cli");
         ensure!(

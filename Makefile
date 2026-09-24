@@ -15,7 +15,8 @@ endif
 	test-protocol test-concurrency verify smoke server tui schemas docs clean \
 	capacity capacity-primitives capacity-core perf runtime test-runtime runtime-smoke verify-runtime \
 	cordis-pin update-cordis sdk-test harness harness-smoke verify-harness \
-	setup sdk-build script-test workgroup-smoke capacity-workgroup local-service-smoke
+	setup sdk-build script-test workgroup-smoke capacity-workgroup local-service-smoke \
+	verify-native
 
 help: ## 显示常用操作（默认目标）
 	@printf '%s\n' '用法：make <target> [ARGS="..."]' ''
@@ -97,11 +98,9 @@ verify-runtime: ## 顺序运行 Runtime 行为测试和真实 sandbox 验收
 
 verify: ## 常规验收：格式、静态检查、Rust/SDK/Python 测试与 TUI 冒烟
 	$(MAKE) cordis-pin
-	$(MAKE) fmt-check
+	$(MAKE) -j2 fmt-check sdk-test script-test
 	$(MAKE) lint
 	$(MAKE) test
-	$(MAKE) sdk-test
-	$(MAKE) script-test
 	$(MAKE) smoke
 
 sdk-build: ## 编译两套 TypeScript SDK
@@ -113,6 +112,7 @@ sdk-test: ## 编译两套 SDK 并验证 Runtime 与插件行为
 	npm --prefix core/sdk-typescript test
 
 script-test: ## 启动器、Web 投影、perf 与文档的离线回归
+	python3 scripts/builtin-tools.py
 	python3 scripts/check-docs.py
 	node --test scripts/web-progress.test.mjs
 	python3 -m unittest discover -s scripts/tests
@@ -143,6 +143,13 @@ workgroup-smoke: build ## 真实 Runtime 的 Workgroup 写入、组合、期限�
 
 verify-harness: ## 全部常规与原生集成验收（容量测试单独运行）
 	$(MAKE) verify
+	$(MAKE) runtime-smoke
+	$(MAKE) harness-smoke
+	$(MAKE) examples-desktop-api
+	$(MAKE) workgroup-smoke
+
+verify-native: ## macOS 原生后端与 Harness 集成验收（通用回归由 Linux CI 执行）
+	cargo test --locked -p areal-runtime-exec-native
 	$(MAKE) runtime-smoke
 	$(MAKE) harness-smoke
 	$(MAKE) examples-desktop-api

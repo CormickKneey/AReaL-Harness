@@ -105,7 +105,35 @@ impl Engine {
                 previous.revision + 1,
             )?;
             configuration.options = request.options.unwrap_or(previous.options);
-            configuration.selected_skills = previous.selected_skills;
+            let selected_skills = match request.selected_skills {
+                Some(skills) if skills.is_empty() => None,
+                Some(skills) => Some(skills),
+                None => previous.selected_skills,
+            };
+            if let Some(skills) = &selected_skills {
+                if skills.len() > 128 {
+                    return Err(invalid("selected skills exceed budget"));
+                }
+                let mut unique = std::collections::BTreeSet::new();
+                let catalog = engine.desktop.catalog.read().unwrap();
+                for skill in skills {
+                    if !unique.insert((skill.id.clone(), skill.revision.clone())) {
+                        return Err(invalid("duplicate selected skill"));
+                    }
+                    if !catalog
+                        .skills
+                        .contains_key(&format!("{}/{}", skill.id, skill.revision))
+                    {
+                        return Err(invalid("selected skill is unavailable"));
+                    }
+                }
+                if let Some(profile) = &configuration.profile
+                    && !skills.iter().all(|skill| profile.skills.contains(skill))
+                {
+                    return Err(invalid("selected skill is outside the effective profile"));
+                }
+            }
+            configuration.selected_skills = selected_skills;
             let o = &configuration.options;
             configuration.read_only |= o.read_only;
             configuration.instructions = previous.instructions;

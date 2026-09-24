@@ -61,7 +61,7 @@ turn/start/enqueue take `{requestId,threadId,input,expectedConfigRevision?,inter
 
 `EffectiveConfig.defaultModelRevision` is an optional opaque reference to a default-model snapshot, fixed when a Turn or queue item is submitted. Session defaults omit it; explicit Provider selections retain their semantics. The model archive belongs to the data directory and contains no environment credential values.
 
-thread/configure requires expectedRevision and an idle, non-compacting Thread. resetModel=true clears the session model override to Profile/service defaults and cannot accompany a nonempty model. Omitted parameters retain values; `{}` selects target Provider defaults. features.modelReset advertises support.
+thread/configure requires expectedRevision and an idle, non-compacting Thread. resetModel=true clears the session model override to Profile/service defaults and cannot accompany a nonempty model. Omitted parameters retain values; `{}` selects target Provider defaults. `selectedSkills` accepts `{id,revision}` Skill references; an empty array clears the session override and restores the Profile, and every reference must belong to the active Profile. features.modelReset advertises support.
 
 Optional `parameters.reasoningSummary` accepts `auto` / `concise` / `detailed` for Responses only, merging Provider defaults with Thread overrides. Summary requests remain disabled when neither Provider/service defaults nor Thread overrides configure it. `areal/model/list.parameterCapabilities` includes `reasoningSummary` only for Responses providers; this advertises adapter support, not support for every upstream model or mode. See [Core reasoning progress](core.en.md#reasoning-progress) for events and parts.
 
