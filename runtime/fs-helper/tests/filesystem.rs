@@ -162,6 +162,48 @@ fn batch_patch_is_single_conditional_edit() {
     assert_eq!(fs::read(f.0.path().join("code")).unwrap(), b"one\ntwo\n");
 }
 #[test]
+fn batch_patch_conflict_never_commits_earlier_replacements() {
+    let f = Fixture::new();
+    let original = b"alpha\nbeta beta\n";
+    let written = f.write("code", original, ExpectedFile::Absent).unwrap();
+    for (second, expected) in [
+        ("missing", written["sha256"].as_str().unwrap()),
+        ("beta", written["sha256"].as_str().unwrap()),
+        (
+            "alpha",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        ),
+    ] {
+        let result = f.run(FileCommand::ApplyPatches {
+            path: "code".into(),
+            patches: vec![
+                TextPatch {
+                    old_text: "alpha".into(),
+                    new_text: "one".into(),
+                },
+                TextPatch {
+                    old_text: second.into(),
+                    new_text: "two".into(),
+                },
+            ],
+            expected_sha256: expected.into(),
+        });
+        let error = result.unwrap_err();
+        assert_eq!(error.code, ErrorCode::Conflict);
+        if second != "alpha" {
+            assert!(error.message.starts_with("patch 2:"));
+            assert!(error.message.contains("no changes written"));
+            assert!(error.message.contains(if second == "missing" {
+                "was not found"
+            } else {
+                "matched more than once"
+            }));
+        }
+        assert_eq!(fs::read(f.0.path().join("code")).unwrap(), original);
+    }
+}
+
+#[test]
 fn bounded_ranges_directory_pagination_and_special_files() {
     let f = Fixture::new();
     for name in ["c", "a", "b"] {

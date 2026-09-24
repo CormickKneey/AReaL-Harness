@@ -17,6 +17,7 @@ fn every_builtin_enforces_required_fields_and_rejects_unknown_arguments() {
         "fs_create":{"path":"a","text":"hello"},
         "fs_write":{"path":"a","text":"hello","expectedSha256":null},
         "fs_apply_patch":{"path":"a","oldText":"hello","newText":"world","expectedSha256":"a".repeat(64)},
+        "fs_apply_patches":{"path":"a","patches":[{"oldText":"hello","newText":"world"}],"expectedSha256":"a".repeat(64)},
         "run_command":{"argv":["/bin/true"],"cwd":".","timeoutMs":1000},
         "read_process":{"processId":process},
         "write_process":{"processId":process,"text":"hello"},
@@ -77,6 +78,22 @@ fn model_output_budget_accounts_for_json_escaping() {
     assert!(model_output_fits(&[], &[], &vec![b'x'; 7000], &[]));
     assert!(model_output_fits(&[], &[], &vec![0; 1000], &[]));
     assert!(!model_output_fits(&[], &[], &vec![0; 3000], &[]));
+}
+
+#[test]
+fn bounded_journal_preserves_both_ends_with_exact_escaped_budget() {
+    assert_eq!(bounded_result("small".into()), "small");
+    for unit in ["plain", "\"\\\n\0", "中文😀"] {
+        let raw = json!({"output": unit.repeat(MAX_RESULT)}).to_string();
+        let bounded = bounded_result(raw.clone());
+        assert!(bounded.len() <= MAX_RESULT);
+        let view: Value = serde_json::from_str(&bounded).unwrap();
+        let head = view["prefix"].as_str().unwrap();
+        let tail = view["suffix"].as_str().unwrap();
+        assert!(!head.is_empty() && !tail.is_empty());
+        assert!(raw.starts_with(head) && raw.ends_with(tail));
+        assert_eq!(view["truncatedBytes"], raw.len() - head.len() - tail.len());
+    }
 }
 
 #[test]
@@ -181,6 +198,16 @@ async fn process_fixture(
     stop_reason: Option<&'static str>,
     loss: bool,
 ) -> Arc<Client> {
+    process_fixture_output(finish_ms, output_ms, stop_reason, loss, "ready".into()).await
+}
+
+async fn process_fixture_output(
+    finish_ms: u64,
+    output_ms: Option<u64>,
+    stop_reason: Option<&'static str>,
+    loss: bool,
+    output: String,
+) -> Arc<Client> {
     let (pipe, peer) = tokio::io::duplex(64 * 1024);
     let (read, write) = tokio::io::split(pipe);
     let (peer_read, mut peer_write) = tokio::io::split(peer);
@@ -206,7 +233,12 @@ async fn process_fixture(
                     let params = &req["params"];
                     let wait = params["waitMs"].as_u64().unwrap();
                     assert!(wait <= 1000, "Core must respect Runtime's long-poll limit");
-                    let consumed = params["after"] == "process/5";
+                    let offset = params["after"]
+                        .as_str()
+                        .and_then(|s| s.rsplit('/').next())
+                        .and_then(|s| s.parse::<usize>().ok())
+                        .unwrap_or(0);
+                    let consumed = offset >= output.len();
                     let elapsed = started.elapsed().as_millis() as u64;
                     let event_ms = output_ms
                         .filter(|_| !consumed)
@@ -220,14 +252,19 @@ async fn process_fixture(
                     }
                     let elapsed = started.elapsed().as_millis() as u64;
                     let ready = output_ms.is_some_and(|at| elapsed >= at);
+                    let end = if ready {
+                        (offset + params["maxBytes"].as_u64().unwrap() as usize).min(output.len())
+                    } else {
+                        offset
+                    };
                     let chunks = if ready && !consumed {
                         vec![
-                            json!({"cursor":"process/5","stream":"stdout","dataBase64":STANDARD.encode("ready")}),
+                            json!({"cursor":format!("process/{end}"),"stream":"stdout","dataBase64":STANDARD.encode(&output.as_bytes()[offset..end])}),
                         ]
                     } else {
                         vec![]
                     };
-                    json!({"chunks":chunks,"nextCursor":if ready {"process/5"} else {"process/0"},"closed":elapsed >= finish_ms,"gap":loss,"truncated":loss})
+                    json!({"chunks":chunks,"nextCursor":format!("process/{end}"),"closed":elapsed >= finish_ms && (output_ms.is_none() || end == output.len()),"gap":loss,"truncated":loss})
                 }
                 "connection.close" => json!({"closed":true}),
                 _ => panic!("unexpected {method}"),
@@ -298,6 +335,7 @@ async fn silent_command_waits_past_old_poll_limit_in_one_tool_call() {
             &client,
             "scope",
             ReadProcess {
+                view: OutputView::Auto,
                 process_id: "process".into(),
                 after: Some(result["nextCursor"].as_str().unwrap().into()),
                 wait_ms: 30_000,
@@ -356,6 +394,7 @@ async fn explicit_quiet_policy_preserves_legacy_return_and_cursor() {
         &client,
         "scope",
         ReadProcess {
+            view: OutputView::Auto,
             process_id: "process".into(),
             after: Some(result["nextCursor"].as_str().unwrap().into()),
             wait_ms: 120_000,
@@ -391,6 +430,7 @@ async fn timeout_and_output_loss_are_returned_without_waiting_again() {
         &client,
         "another-turn",
         ReadProcess {
+            view: OutputView::Auto,
             process_id: "process".into(),
             after: None,
             wait_ms: 0,
@@ -689,6 +729,7 @@ async fn default_wait_coalesces_early_output_and_resume_preserves_the_cursor() {
             &client,
             "scope",
             ReadProcess {
+                view: OutputView::Auto,
                 process_id: "process".into(),
                 after: Some(first["nextCursor"].as_str().unwrap().into()),
                 wait_ms: 10_000,
@@ -736,4 +777,57 @@ async fn output_does_not_short_circuit_budgets_pty_deadlines_or_loss() {
         );
         client.shutdown().await.unwrap();
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn compressed_pages_can_be_replayed_raw_without_rerunning_command() {
+    let raw = format!(
+        "{}FAIL test_detail\n    - old value\n    + new value\n",
+        "test_x.py::test_ok PASSED [100%]\n".repeat(100)
+    );
+    let client = process_fixture_output(0, Some(0), None, false, raw.clone()).await;
+    let argv = vec!["pytest".to_owned()];
+    let (_, compact) = process_output(
+        &client,
+        "scope",
+        ReadProcess {
+            process_id: "process".into(),
+            after: None,
+            wait_ms: 0,
+            view: OutputView::Auto,
+        },
+        0,
+        Some(&argv),
+        8192,
+    )
+    .await
+    .unwrap();
+    let (_, replay) = process_output(
+        &client,
+        "scope",
+        ReadProcess {
+            process_id: "process".into(),
+            after: None,
+            wait_ms: 0,
+            view: OutputView::Raw,
+        },
+        0,
+        Some(&argv),
+        8192,
+    )
+    .await
+    .unwrap();
+    assert_eq!(compact["outputViewActive"], true);
+    assert!(
+        compact["stdout"]
+            .as_str()
+            .unwrap()
+            .contains("    - old value\n    + new value")
+    );
+    assert!(compact["outputView"].get("text").is_none());
+    assert_eq!(replay["stdout"], raw);
+    assert!(replay.get("outputView").is_none());
+    assert_eq!(compact["nextCursor"], replay["nextCursor"]);
+    assert!(compact.to_string().len() < replay.to_string().len());
+    client.shutdown().await.unwrap();
 }

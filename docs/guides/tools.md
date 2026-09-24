@@ -29,19 +29,19 @@ Core 注册表将名称、JSON Schema 与内置/命令/客户端/MCP/插件后�
 
 `verify_command` 将完整输出（最多 64 MiB）及 receipt 写入 scratch/verification，记录退出状态、日志与执行前后源码指纹。指纹覆盖 Git 跟踪和未忽略文件，非 Git 目录使用排除依赖/构建/缓存的扫描；源码变化使验证过期。receipt 位于任务可写目录，不是对恶意任务的认证。收尾时未结束的验证进程需要续读终态或显式终止；普通后台 run_command 不受此约束，也不会唤醒已结束 Turn。
 
-## 等待与状态
-
 ## 设计取舍
 
-命令观察将执行、等待、显示和回读分开：`run_command`/`read_process` 只按 cursor 读取 Runtime 保留的事实，已完成的常见测试命令再生成有界的失败摘要，未知命令不猜格式。这个边界吸收了 Codex 的显式等待/输出上限和 Claude Code 的失败输出保留思路，同时避免把 RTK 的全局管道改写接入模型协议；RTK 的自动格式探测在 Karma 时间戳等普通日志上可能误判，因此解析器只接受命令 argv 的显式类型。
+命令观察将执行、等待、显示和回读分开：`run_command`/`read_process` 只按 cursor 读取 Runtime 保留的事实，明确识别的测试命令仅折叠成功进度行，诊断和未知行原样保留，未知命令不猜格式。这个边界吸收了 Codex 的显式等待/输出上限和 Claude Code 的失败输出保留思路，同时避免把 RTK 的全局管道改写接入模型协议；RTK 的自动格式探测在 Karma 时间戳等普通日志上可能误判，因此解析器只接受命令 argv 的显式类型。
 
-编辑保持 CAS 约束。单个 `fs_apply_patch` 适合小范围精确替换；同一文件的多个独立替换使用 `fs_apply_patches`，Runtime 在一次条件写入中逐项验证，任一旧文本不唯一都不会产生部分写入。
+编辑保持 CAS 约束。单个 `fs_apply_patch` 适合小范围精确替换；同一文件的多个独立替换使用 `fs_apply_patches`，Runtime 在一次条件写入中按顺序逐项验证，任一旧文本不唯一都不会产生部分写入；匹配失败会报告从 1 开始的替换序号及缺失/歧义原因。重复文本应包含函数等周边上下文。
 
-命令 timeoutMs 默认 600000，受 Runtime 授权截断并返回 effectiveTimeoutMs。普通命令/续读默认等 120 秒，PTY 1 秒；`yieldMs` / `waitMs` 接受非负 u64，0 立即返回。等待不改变进程期限或持有模型许可，每次收集最多 `tools.policy.outputPageBytes`（默认 8192）字节；JSON 转义会占用模型结果预算，控制字符较多时实际页会自动缩小并通过 cursor 续读。Jest、Karma、Mocha、Cargo test、Pytest 和 Go test 的已完成输出会附带保留失败/汇总/栈信息的压缩视图，原始页仍可通过 read_process 游标回读；未知命令保持原样。无输出时继续等待；已收到输出后按 100 ms 静默合并，底层轮询每次最多 1 秒。
+## 等待与状态
+
+命令 timeoutMs 默认 600000，受 Runtime 授权截断并返回 effectiveTimeoutMs。普通命令/续读默认等 120 秒，PTY 1 秒；`yieldMs` / `waitMs` 接受非负 u64，0 不等待新输出，但会在页上限内读完已保留的字节。等待不改变进程期限或持有模型许可，每次收集最多 `tools.policy.outputPageBytes`（默认 8192）字节；JSON 转义会占用模型结果预算，控制字符较多时实际页会自动缩小并通过 cursor 续读。Jest、Karma、Mocha、Cargo test、Pytest 和 Go test 的成功进度行可折叠，完整保留其他行和 stdout/stderr 边界；只在包含元数据的序列化结果更小时启用视图。未知命令、复合 shell 命令和丢失输出保持原样。无输出或早期输出默认都继续等待；显式设置 outputQuietMs>0 才按静默窗口提前返回，底层轮询每次最多 1 秒。
 
 `returnReason` 为 completed、waitBudget、outputLimit、outputLoss 或 outputQuiet。`commandStatus` 为 running/succeeded/failed/terminated；`outputReadComplete` / `outputClosed` 表示生产者关闭且保留输出读完，`outputIntegrity` 为 retained/incomplete，`nextAction` 提示后续操作。completed 不代替退出码检查，gap/truncated 即使读完仍表示丢失。
 
-read_process 省略 after 接续本 Turn 最近返回的游标，显式 null 从最早保留输出开始。短进程/游标/fileVersion 句柄绑定 Turn 和目标，Core 展开后仍执行 Runtime 权限检查；格式错误返回可恢复错误，不猜测句柄。最多缓存 128 个文件版本和每进程一个当前游标别名，旧显式游标会过期。`task_state` 的 observedOnly=true 表示历史观察，不能证明当前状态；压缩保留这些缓存，Turn 结束或重启即失效。
+read_process 省略 after 接续本 Turn 最近返回的游标，显式 null 从最早保留输出开始。`view="auto"` 默认折叠成功进度；`view="raw"` 返回原始页，续读时也须指定 raw。回看被折叠的内容应使用 `after=null,view="raw"`；结束游标之后没有旧内容。短进程/游标/fileVersion 句柄绑定 Turn 和目标，Core 展开后仍执行 Runtime 权限检查；格式错误返回可恢复错误，不猜测句柄。最多缓存 128 个文件版本和每进程一个当前游标别名，旧显式游标会过期。`task_state` 的 observedOnly=true 表示历史观察，不能证明当前状态；压缩保留这些缓存，Turn 结束或重启即失效。
 
 ## 扩展配置
 

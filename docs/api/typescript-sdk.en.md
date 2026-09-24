@@ -37,6 +37,8 @@ Each RPC accepts signal/timeoutMs. AbortSignal cancels only the waiter, not the 
 
 There are at most 128 in-flight requests, with 16 reserved for control, and 128 KiB frames. Malformed/unknown IDs, EOF and timeout close transport and may leave UNKNOWN outcomes. pages preserves gap/truncated/closed; bytes/text throw OutputGapError on loss and incrementally decode stdout/stderr/pty separately. close awaits cleanup; disconnect does not establish it.
 
+The `applyPatches` branch of `FileCommand` accepts `patches: TextPatch[]` and `expectedSha256`; 1–32 replacements match sequentially within one CAS operation. Any failure writes nothing; success returns `FileWrite`.
+
 ## @areal/plugins
 
 [Exported types](../../core/sdk-typescript/src/index.ts) · [Editor example](../examples/dsh-editor-plugin.en.md)

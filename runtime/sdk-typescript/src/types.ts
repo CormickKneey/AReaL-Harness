@@ -120,6 +120,10 @@ export interface ConnectionInfo {
   capabilities: { methods: string[]; [key: string]: Json };
 }
 export type ExpectedFile = { kind: "absent" } | { kind: "sha256"; value: string };
+export interface TextPatch {
+  oldText: string;
+  newText: string;
+}
 export type FileCommand =
   | { kind: "read"; path: string; offset?: number; maxBytes: number }
   | { kind: "stat"; path: string }
@@ -131,7 +135,8 @@ export type FileCommand =
       oldText: string;
       newText: string;
       expectedSha256: string;
-    };
+    }
+  | { kind: "applyPatches"; path: string; patches: TextPatch[]; expectedSha256: string };
 export interface FileRequest<C extends FileCommand = FileCommand> {
   operationId: string;
   scopeId: string;

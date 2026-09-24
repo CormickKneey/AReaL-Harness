@@ -238,16 +238,24 @@ pub fn execute(request: FileHelperRequest) -> Result<Value> {
             let mut text = std::str::from_utf8(&bytes)
                 .map_err(|_| invalid("patch requires UTF-8"))?
                 .to_owned();
-            for patch in patches {
+            for (index, patch) in patches.into_iter().enumerate() {
                 if patch.old_text.is_empty()
                     || patch.old_text.len() + patch.new_text.len() > MAX_FILE_CHUNK
                 {
                     return Err(invalid("each patch must be nonempty and at most 64 KiB"));
                 }
-                if text.find(&patch.old_text).is_none()
-                    || text.find(&patch.old_text) != text.rfind(&patch.old_text)
-                {
-                    return Err(conflict());
+                let first = text.find(&patch.old_text);
+                if first.is_none() || first != text.rfind(&patch.old_text) {
+                    // 给出失败项和原因，避免模型把原子回滚误判为部分成功后重复编辑。
+                    let reason = if first.is_none() {
+                        "was not found"
+                    } else {
+                        "matched more than once; include surrounding context"
+                    };
+                    return Err(Error::new(
+                        ErrorCode::Conflict,
+                        format!("patch {}: oldText {reason}; no changes written", index + 1),
+                    ));
                 }
                 text = text.replacen(&patch.old_text, &patch.new_text, 1);
             }

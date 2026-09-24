@@ -1,15 +1,12 @@
-//! Command-aware output views.
-//!
-//! The Runtime remains the source of truth for command output.  This module
-//! only builds a bounded, lossless-enough view for the model after a command
-//! has completed.  Unknown commands are deliberately left untouched.
+//! 仅折叠已识别测试命令的成功进度行；未知行与失败上下文原样保留。
 
 use std::fmt::Write;
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Projection {
     pub kind: &'static str,
-    pub text: String,
+    pub stdout: String,
+    pub stderr: String,
     pub raw_bytes: usize,
     pub displayed_bytes: usize,
     pub omitted_lines: usize,
@@ -19,154 +16,105 @@ pub(crate) fn project(
     argv: &[String],
     stdout: &str,
     stderr: &str,
-    exit_code: Option<i32>,
-    complete: bool,
+    intact: bool,
 ) -> Option<Projection> {
-    if !complete || (stdout.is_empty() && stderr.is_empty()) {
+    if !intact {
         return None;
     }
     let kind = classify(argv)?;
-    let raw = if stderr.is_empty() {
-        stdout.to_owned()
-    } else if stdout.is_empty() {
-        stderr.to_owned()
-    } else {
-        format!("{stdout}\n{stderr}")
-    };
-    let lines: Vec<&str> = raw.lines().collect();
-    let keep = lines
-        .iter()
-        .enumerate()
-        .filter_map(|(index, line)| useful(kind, line).then_some(index))
-        .collect::<Vec<_>>();
-    if keep.len() == lines.len() || keep.is_empty() {
-        return None;
-    }
-    let mut text = String::new();
-    let _ = writeln!(
-        text,
-        "[AReaL output view: kind={kind}, exit={}]",
-        exit_code.map_or_else(|| "unknown".into(), |v| v.to_string())
-    );
-    let mut previous = None;
-    let mut omitted_lines = 0;
-    for index in keep {
-        if let Some(last) = previous
-            && index > last + 1
-        {
-            let omitted = index - last - 1;
-            omitted_lines += omitted;
-            let _ = writeln!(
-                text,
-                "… {omitted} lines omitted; call read_process to inspect raw output …"
-            );
-        }
-        let _ = writeln!(text, "{}", lines[index]);
-        previous = Some(index);
-    }
-    let raw_bytes = raw.len();
-    let displayed_bytes = text.len();
-    (displayed_bytes < raw_bytes).then_some(Projection {
+    let (out, out_omitted) = project_stream(kind, stdout);
+    let (err, err_omitted) = project_stream(kind, stderr);
+    let raw_bytes = stdout.len() + stderr.len();
+    let displayed_bytes = out.len() + err.len();
+    // 元数据也占上下文；微小节省不足以抵偿视图契约的成本。
+    (displayed_bytes + 512 < raw_bytes).then_some(Projection {
         kind,
-        text,
+        stdout: out,
+        stderr: err,
         raw_bytes,
         displayed_bytes,
-        omitted_lines,
+        omitted_lines: out_omitted + err_omitted,
     })
 }
 
+fn project_stream(kind: &str, raw: &str) -> (String, usize) {
+    let mut text = String::new();
+    let mut omitted = 0;
+    let mut pending = 0;
+    for line in raw.split_inclusive('\n') {
+        // 未闭合的末行可能是跨页诊断片段，不做推断。
+        if line.ends_with('\n') && successful_progress(kind, line.trim_end()) {
+            pending += 1;
+            omitted += 1;
+            continue;
+        }
+        if pending > 0 {
+            let _ = writeln!(
+                text,
+                "… {pending} passing test lines omitted (read_process view=raw) …"
+            );
+            pending = 0;
+        }
+        text.push_str(line);
+    }
+    if pending > 0 {
+        let _ = writeln!(
+            text,
+            "… {pending} passing test lines omitted (read_process view=raw) …"
+        );
+    }
+    (text, omitted)
+}
+
 fn classify(argv: &[String]) -> Option<&'static str> {
-    let text = argv.join(" ").to_ascii_lowercase();
-    let tokens = argv
-        .iter()
-        .map(|s| s.to_ascii_lowercase())
-        .collect::<Vec<_>>();
-    if tokens.iter().any(|s| s == "jest" || s.ends_with("/jest")) || word_present(&text, "jest") {
-        Some("jest")
-    } else if tokens.iter().any(|s| s == "karma" || s.ends_with("/karma"))
-        || word_present(&text, "karma")
-    {
-        Some("karma")
-    } else if tokens.iter().any(|s| s == "mocha" || s.ends_with("/mocha"))
-        || word_present(&text, "mocha")
-    {
-        Some("mocha")
-    } else if text.contains("cargo test") {
-        Some("cargo-test")
-    } else if tokens.iter().any(|s| s == "pytest") || word_present(&text, "pytest") {
-        Some("pytest")
-    } else if text.contains("go test") {
-        Some("go-test")
-    } else {
-        None
+    let executable = argv.first()?.rsplit('/').next()?;
+    if matches!(executable, "bash" | "sh" | "zsh") {
+        let command = argv.get(argv.iter().position(|s| s == "-c")? + 1)?;
+        // 复合命令、重定向和引用需要真正的 shell 解析；保守地保留原文。
+        if command.chars().any(|c| "|&;<>$`\\\"'()\n".contains(c)) {
+            return None;
+        }
+        return classify_direct(&command.split_whitespace().collect::<Vec<_>>());
+    }
+    classify_direct(&argv.iter().map(String::as_str).collect::<Vec<_>>())
+}
+
+fn classify_direct(argv: &[&str]) -> Option<&'static str> {
+    let executable = argv.first()?.rsplit('/').next()?;
+    match executable {
+        "jest" => Some("jest"),
+        "karma" => Some("karma"),
+        "mocha" => Some("mocha"),
+        "pytest" | "py.test" => Some("pytest"),
+        "cargo" if argv.get(1) == Some(&"test") => Some("cargo-test"),
+        "go" if argv.get(1) == Some(&"test") => Some("go-test"),
+        "python" | "python3" if argv.get(1..3) == Some(&["-m", "pytest"][..]) => Some("pytest"),
+        "npx"
+            if argv
+                .get(1)
+                .is_some_and(|arg| matches!(*arg, "jest" | "karma" | "mocha")) =>
+        {
+            classify_direct(&argv[1..])
+        }
+        _ => None,
     }
 }
 
-fn word_present(text: &str, word: &str) -> bool {
-    text.split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
-        .any(|token| token == word)
-}
-
-fn useful(kind: &str, line: &str) -> bool {
-    let lower = line.to_ascii_lowercase();
-    let common = lower.contains("assertionerror")
-        || lower.contains("error")
-        || lower.contains("expected")
-        || lower.contains("received")
-        || lower.contains("actual")
-        || lower.starts_with("at ")
-        || line.trim_start().starts_with("at ");
+fn successful_progress(kind: &str, line: &str) -> bool {
+    // 只丢弃明确成功的进度；不按 error/expected 等关键字筛选诊断。
     match kind {
-        "jest" => {
-            common
-                || [
-                    "test suites:",
-                    "tests:",
-                    "snapshots:",
-                    "time:",
-                    "pass ",
-                    "fail ",
-                    "●",
-                ]
-                .iter()
-                .any(|marker| lower.contains(marker))
-        }
-        "karma" => {
-            common
-                || ["executed", "total:", "failed", "karma", "browser:"]
-                    .iter()
-                    .any(|marker| lower.contains(marker))
-        }
-        "mocha" => {
-            common
-                || ["passing", "failing", "pending", "+ expected - actual"]
-                    .iter()
-                    .any(|marker| lower.contains(marker))
-        }
-        "cargo-test" => {
-            common
-                || ["test result:", "running ", "ok", "failed", "ignored"]
-                    .iter()
-                    .any(|marker| lower.contains(marker))
-        }
         "pytest" => {
-            common
-                || [
-                    "failed",
-                    "passed",
-                    "error",
-                    "short test summary info",
-                    "warnings summary",
-                ]
-                .iter()
-                .any(|marker| lower.contains(marker))
+            line.contains("::") && line.contains(" PASSED ") && line.trim_end().ends_with(']')
         }
-        "go-test" => {
-            common
-                || ["--- fail:", "--- pass:", "panic:", "ok ", "fail "]
-                    .iter()
-                    .any(|marker| lower.contains(marker))
+        "jest" => line.starts_with("PASS ") || line.starts_with(" PASS "),
+        "karma" => {
+            (line.starts_with("Chrome ") || line.starts_with("Firefox "))
+                && line.contains(": Executed ")
+                && line.contains(" SUCCESS ")
         }
+        "mocha" => line.trim_start().starts_with("✓ ") || line.trim_start().starts_with("✔ "),
+        "cargo-test" => line.starts_with("test ") && line.ends_with(" ... ok"),
+        "go-test" => line.trim_start().starts_with("--- PASS: "),
         _ => false,
     }
 }
@@ -180,55 +128,67 @@ mod tests {
     }
 
     #[test]
-    fn karma_timestamp_is_not_a_format_signal() {
-        let output = "noise noise noise noise noise noise noise noise noise noise\nExecuted 1 of 1 SUCCESS (0.004 secs)\n12:30:01.123 INFO [karma]: Karma v6\n";
-        let projection = project(&argv(&["npx", "karma", "start"]), output, "", Some(0), true);
-        assert!(projection.is_some());
-        assert!(projection.unwrap().text.contains("Executed"));
+    fn failure_context_streams_and_omission_counts_survive() {
+        let progress = "test_x.py::test_ok PASSED [ 10%]\n".repeat(60);
+        let diagnostic = "FAIL test_detail\n    - old nested value\n    + new nested value\nfile.py:42: in test_detail\n    assert actual == expected\nAssertionError\n";
+        let raw = format!("{progress}{diagnostic}{progress}");
+        let view = project(&argv(&["pytest"]), &raw, "stderr remains separate\n", true).unwrap();
+        assert!(view.stdout.contains(diagnostic));
+        assert_eq!(view.stderr, "stderr remains separate\n");
+        assert_eq!(view.omitted_lines, 120);
+        assert_eq!(view.raw_bytes, raw.len() + view.stderr.len());
+        assert!(view.displayed_bytes < view.raw_bytes);
     }
 
     #[test]
-    fn failures_and_assertions_survive_compaction() {
-        let output = format!(
-            "PASS src/a.test.js\n{}FAIL src/b.test.js\n  AssertionError: expected 1 to equal 2\n    at test (src/b.test.js:4:2)\nTests: 1 failed, 1 passed\n",
-            (0..60).map(|i| format!("noise {i}\n")).collect::<String>()
+    fn log_timestamps_and_unknown_lines_are_not_removed() {
+        let diagnostic = "12:30:01.123 INFO [karma]: log\n    + nested\n    - difference\nAssertionError\nTOTAL: 1 FAILED\n";
+        let raw = format!(
+            "{}{diagnostic}",
+            "Chrome 120: Executed 1 of 2 SUCCESS (0 secs)\n".repeat(60)
         );
-        let projection = project(&argv(&["npx", "jest"]), &output, "", Some(1), true).unwrap();
-        assert!(projection.text.contains("FAIL src/b.test.js"));
-        assert!(projection.text.contains("AssertionError"));
-        assert!(projection.text.contains("Tests: 1 failed"));
-        assert!(projection.omitted_lines > 0);
+        let view = project(&argv(&["npx", "karma", "start"]), &raw, "", true).unwrap();
+        assert!(view.stdout.contains(diagnostic));
     }
 
     #[test]
-    fn unknown_commands_are_passthrough() {
+    fn arbitrary_arguments_and_compound_commands_are_passthrough() {
+        for values in [
+            vec!["echo", "pytest"],
+            vec!["cat", "jest.log"],
+            vec!["bash", "-c", "pytest; echo other"],
+            vec!["bash", "-c", "cat pytest.log"],
+            vec!["python3", "script.py", "pytest"],
+        ] {
+            assert_eq!(classify(&argv(&values)), None);
+        }
+        assert_eq!(
+            classify(&argv(&[
+                "bash",
+                "-o",
+                "pipefail",
+                "-c",
+                "npx jest --runInBand"
+            ])),
+            Some("jest")
+        );
+        assert_eq!(
+            classify(&argv(&["python3", "-m", "pytest"])),
+            Some("pytest")
+        );
+    }
+
+    #[test]
+    fn tiny_views_and_output_loss_are_passthrough() {
+        assert!(project(&argv(&["pytest"]), "test_x.py::x PASSED [100%]\n", "", true).is_none());
         assert!(
             project(
-                &argv(&["bash", "-c", "printf hi"]),
-                "hi\nnoise",
+                &argv(&["pytest"]),
+                &"test_x.py::x PASSED [100%]\n".repeat(60),
                 "",
-                Some(0),
-                true
+                false
             )
             .is_none()
         );
-    }
-
-    #[test]
-    fn shell_wrapped_test_commands_are_classified_by_command_text() {
-        let output = format!(
-            "{}FAIL src/b.test.js\nTests: 1 failed\n",
-            (0..60).map(|i| format!("noise {i}\n")).collect::<String>()
-        );
-        let projection = project(
-            &argv(&["/bin/bash", "-c", "npx jest --runInBand"]),
-            &output,
-            "",
-            Some(1),
-            true,
-        )
-        .unwrap();
-        assert_eq!(projection.kind, "jest");
-        assert!(projection.text.contains("Tests: 1 failed"));
     }
 }
