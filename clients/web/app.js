@@ -207,7 +207,8 @@ function renderComposer() {
   $("interrupt").hidden = !running;
 }
 function renderSlashMenu() {
-  const menu = $("slash-menu"), text = $("prompt").value;
+  const menu = $("slash-menu"),
+    text = $("prompt").value;
   const query = text.startsWith("/") && !/[\s\n]/.test(text) ? text.toLowerCase() : "";
   const matches = query ? slashCommands.filter(([name]) => name.startsWith(query)) : [];
   menu.replaceChildren();
@@ -238,14 +239,14 @@ $("prompt").oninput = () => {
   renderSlashMenu();
 };
 $("prompt").onkeydown = (event) => {
-  if (!$('slash-menu').hidden && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+  if (!$("slash-menu").hidden && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
     event.preventDefault();
     const count = $("slash-menu").children.length;
     slashIndex = (slashIndex + (event.key === "ArrowDown" ? 1 : count - 1)) % count;
     renderSlashMenu();
     return;
   }
-  if (!$('slash-menu').hidden && event.key === "Tab") {
+  if (!$("slash-menu").hidden && event.key === "Tab") {
     event.preventDefault();
     $("slash-menu").children[slashIndex]?.click();
     return;
@@ -277,12 +278,21 @@ function renderSkills() {
     list.append(node("p", "当前任务没有可用 Skill。", "muted"));
     return;
   }
-  const selected = new Set((thread.desktop?.configuration?.selectedSkills ?? []).map((s) => `${s.id}/${s.revision}`));
+  const selected = new Set(
+    (thread.desktop?.configuration?.selectedSkills ?? []).map((s) => `${s.id}/${s.revision}`),
+  );
   for (const skill of skills) {
-    const button = node("button", undefined, `skill-option${selected.has(`${skill.id}/${skill.revision}`) ? " selected" : ""}`);
+    const button = node(
+      "button",
+      undefined,
+      `skill-option${selected.has(`${skill.id}/${skill.revision}`) ? " selected" : ""}`,
+    );
     button.type = "button";
     button.disabled = skill.available === false;
-    button.append(node("strong", skill.name || skill.id), node("small", skill.description || skill.id));
+    button.append(
+      node("strong", skill.name || skill.id),
+      node("small", skill.description || skill.id),
+    );
     button.onclick = () => configureSkill(skill).catch(notice);
     list.append(button);
   }
@@ -337,7 +347,9 @@ async function runSlash(text) {
       }
       await loadSkills();
       const query = argument.toLowerCase();
-      const skill = skills.find((s) => s.id.toLowerCase() === query || (s.name ?? "").toLowerCase() === query);
+      const skill = skills.find(
+        (s) => s.id.toLowerCase() === query || (s.name ?? "").toLowerCase() === query,
+      );
       if (!skill) throw Error("Skill 未找到，请使用 /skills 查看可选项。");
       await configureSkill(skill);
       return true;
@@ -352,7 +364,10 @@ async function runSlash(text) {
         renderGoal();
         return true;
       }
-      await goalControl(thread.goals?.goal ? "update" : "create", { objective: argument, tokenBudget: null });
+      await goalControl(thread.goals?.goal ? "update" : "create", {
+        objective: argument,
+        tokenBudget: null,
+      });
       return true;
     default:
       throw Error("未知命令，请使用 /help。");
