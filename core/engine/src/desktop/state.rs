@@ -127,10 +127,10 @@ impl Engine {
                         return Err(invalid("selected skill is unavailable"));
                     }
                 }
-                if let Some(profile) = &configuration.profile {
-                    if !skills.iter().all(|skill| profile.skills.contains(skill)) {
-                        return Err(invalid("selected skill is outside the effective profile"));
-                    }
+                if let Some(profile) = &configuration.profile
+                    && !skills.iter().all(|skill| profile.skills.contains(skill))
+                {
+                    return Err(invalid("selected skill is outside the effective profile"));
                 }
             }
             configuration.selected_skills = selected_skills;

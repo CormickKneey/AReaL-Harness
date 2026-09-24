@@ -32,6 +32,7 @@ make verify
 | Rust / SDK / 脚本 | `make test` / `make sdk-test` / `make script-test` |
 | 常规回归 | `make verify` |
 | 原生集成 | `make verify-harness`，包含常规回归 |
+| CI 原生增量 | `make verify-native`，仅运行原生后端与 Harness 集成 smoke |
 | 容量 | `make capacity`，独立运行 |
 | 仅文档 | `python3 scripts/check-docs.py`，同时核对命令与实现 |
 
