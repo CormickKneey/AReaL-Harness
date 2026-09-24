@@ -56,7 +56,11 @@ def main():
     if digest(archive) != pin["sourceSha256"]:
         raise ValueError("ripgrep source checksum mismatch")
     source = cache / f"ripgrep-{pin['version']}"
-    if not source.exists():
+    if not source.is_dir() or not (source / "Cargo.toml").is_file():
+        if source.is_symlink():
+            source.unlink()
+        elif source.exists():
+            shutil.rmtree(source)
         with tempfile.TemporaryDirectory(dir=cache) as directory:
             with tarfile.open(archive) as bundle:
                 # 固定摘要之外仍验证解包边界，不允许链接或特殊文件逃逸。
@@ -101,7 +105,16 @@ def main():
     build_env.pop("CARGO_BUILD_TARGET", None)
     build_env["CARGO_TARGET_DIR"] = str(source / "target")
     subprocess.run(
-        ["cargo", "build", "--locked", "--release", "--bin", "rg"],
+        [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--manifest-path",
+            str(source / "Cargo.toml"),
+            "--bin",
+            "rg",
+        ],
         cwd=source,
         env=build_env,
         check=True,
