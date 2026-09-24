@@ -60,7 +60,7 @@ impl Handles {
         }
         if let Some(handle) = args.get("fileVersion") {
             anyhow::ensure!(
-                matches!(name, "fs_write" | "fs_apply_patch" | "fs_apply_patches")
+                matches!(name, "fs_write" | "fs_apply_patches")
                     && args.get("expectedSha256").is_none(),
                 "supply fileVersion or expectedSha256, never both"
             );
@@ -74,7 +74,7 @@ impl Handles {
             );
             args.as_object_mut().unwrap().remove("fileVersion");
             args["expectedSha256"] = json!(hash);
-        } else if matches!(name, "fs_write" | "fs_apply_patch" | "fs_apply_patches")
+        } else if matches!(name, "fs_write" | "fs_apply_patches")
             && args.get("expectedSha256").is_none()
         {
             let path = args["path"].as_str().context("path required")?;
@@ -91,7 +91,7 @@ impl Handles {
                 args["expectedSha256"] = Value::Null;
             } else {
                 anyhow::bail!(
-                    "read_file this path before editing; its observed version is managed automatically. After a conflict, read again. Example: read_file({{\"path\":\"src/code.py\"}}), then fs_apply_patch({{\"path\":\"src/code.py\",\"oldText\":\"old\",\"newText\":\"new\"}})"
+                    "read_file this path before editing; its observed version is managed automatically. After a conflict, read again. Example: read_file({{\"path\":\"src/code.py\"}}), then fs_apply_patches({{\"path\":\"src/code.py\",\"patches\":[{{\"oldText\":\"old\",\"newText\":\"new\"}}]}})"
                 );
             }
         }
@@ -138,12 +138,7 @@ impl Handles {
         }
         if matches!(
             name,
-            "fs_read"
-                | "read_file"
-                | "fs_write"
-                | "fs_create"
-                | "fs_apply_patch"
-                | "fs_apply_patches"
+            "fs_read" | "read_file" | "fs_write" | "fs_create" | "fs_apply_patches"
         ) && let Some(hash) = value["sha256"].as_str().map(str::to_owned)
             && let Some(path) = args["path"]
                 .as_str()
@@ -270,7 +265,7 @@ fn definitions_with_policy(policy: &ToolPolicy) -> Vec<Value> {
         ),
         tool(
             "fs_create",
-            "Create a new UTF-8 file up to 64 KiB (also subject to the total tool argument budget). Fails if the path already exists; never overwrites. Use fs_read then fs_apply_patch or fs_write to edit an existing file.",
+            "Create a new UTF-8 file up to 64 KiB (also subject to the total tool argument budget). Fails if the path already exists; never overwrites. Use fs_read then fs_apply_patches or fs_write to edit an existing file.",
             json!({"path":path,"text":{"type":"string"}}),
             &["path", "text"],
         ),
@@ -279,12 +274,6 @@ fn definitions_with_policy(policy: &ToolPolicy) -> Vec<Value> {
             "Create or replace a UTF-8 file up to 64 KiB. The last version observed by read_file/fs_read or a successful edit is used automatically. Without a read, only creation is allowed. Read again after a conflict. Explicit fileVersion/expectedSha256 remain supported; never supply both. Parent directories must exist (run_command command=mkdir -p ...).",
             json!({"path":path,"text":{"type":"string"},"fileVersion":{"type":"string"},"expectedSha256":{"type":["string","null"],"pattern":"^[0-9a-f]{64}$"}}),
             &["path", "text"],
-        ),
-        tool(
-            "fs_apply_patch",
-            "Replace exactly one matching text region in a UTF-8 file after read_file/fs_read. Version checking is automatic; no token copying is needed. Ambiguous or stale content fails without overwriting; read again after a conflict. Explicit fileVersion/expectedSha256 remain supported.",
-            json!({"path":path,"oldText":{"type":"string"},"newText":{"type":"string"},"fileVersion":{"type":"string"},"expectedSha256":{"type":"string","pattern":"^[0-9a-f]{64}$"}}),
-            &["path", "oldText", "newText"],
         ),
         tool(
             "fs_apply_patches",
@@ -532,10 +521,8 @@ fn request_with_policy(
             expected: rt::ExpectedFile::Absent,
         }));
     }
-    if matches!(
-        call.name.as_str(),
-        "fs_write" | "fs_apply_patch" | "fs_apply_patches"
-    ) && let Some(Value::String(hash)) = args.get("expectedSha256")
+    if matches!(call.name.as_str(), "fs_write" | "fs_apply_patches")
+        && let Some(Value::String(hash)) = args.get("expectedSha256")
     {
         anyhow::ensure!(
             hash.len() == 64
@@ -564,7 +551,6 @@ fn request_with_policy(
         "fs_read" => "read",
         "fs_list" => "list",
         "fs_stat" => "stat",
-        "fs_apply_patch" => "applyPatch",
         "fs_apply_patches" => "applyPatches",
         _ => anyhow::bail!("unknown tool: {}", call.name),
     };
@@ -1503,7 +1489,7 @@ mod request_tests {
                 .to_string()
                 .contains("requires an explicit")
         );
-        let patch=ToolCall { id:"patch".into(),name:"fs_apply_patch".into(),arguments:json!({"path":"workspace://repo/a.py","oldText":"x","newText":"y","expectedSha256":"null"}).to_string() };
+        let patch=ToolCall { id:"patch".into(),name:"fs_apply_patches".into(),arguments:json!({"path":"workspace://repo/a.py","patches":[{"oldText":"x","newText":"y"}],"expectedSha256":"null"}).to_string() };
         assert!(request(&patch).is_err());
     }
 

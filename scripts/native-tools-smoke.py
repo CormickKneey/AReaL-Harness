@@ -21,7 +21,9 @@ def main():
     parser = argparse.ArgumentParser(__doc__)
     parser.add_argument("--bin-dir", type=Path, required=True)
     parser.add_argument(
-        "--sandbox-profile", choices=["native", "outer-container-perf"], default="native"
+        "--sandbox-profile",
+        choices=["native", "outer-container-perf", "full-access"],
+        default="native",
     )
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
@@ -65,6 +67,9 @@ def main():
                 try:
                     request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                     requests.append(request)
+                    names = {tool["function"]["name"] for tool in request["tools"]}
+                    assert "fs_apply_patch" not in names
+                    assert "fs_apply_patches" in names
                     results = [
                         json.loads(m["content"]) for m in request["messages"] if m["role"] == "tool"
                     ]
@@ -86,24 +91,35 @@ def main():
                         name = "search_files"
                         arguments = {"pattern": "^value", "context": 0}
                     elif n == 2:
-                        assert results[1]["matches"][0]["line"] == 1
-                        name = "fs_apply_patch"
-                        arguments = {"path": "code.py", "oldText": "1", "newText": "2"}
+                        assert (
+                            results[1].get("matches") and results[1]["matches"][0]["line"] == 1
+                        ), results[1]
+                        name = "fs_apply_patches"
+                        arguments = {
+                            "path": "code.py",
+                            "patches": [{"oldText": "1", "newText": "2"}],
+                        }
                     elif n == 3:
                         assert results[2]["fileVersion"] != results[0]["fileVersion"]
                         name = "run_command"
                         arguments = {"command": 'printf "value = 3\\n" > code.py'}
                     elif n == 4:
-                        name = "fs_apply_patch"
-                        arguments = {"path": "code.py", "oldText": "3", "newText": "4"}
+                        name = "fs_apply_patches"
+                        arguments = {
+                            "path": "code.py",
+                            "patches": [{"oldText": "3", "newText": "4"}],
+                        }
                     elif n == 5:
                         assert results[4]["error"]["code"] == "CONFLICT", results[4]
                         assert (repo / "code.py").read_text() == "value = 3\n"
                         name = "read_file"
                         arguments = {"path": "code.py"}
                     elif n == 6:
-                        name = "fs_apply_patch"
-                        arguments = {"path": "code.py", "oldText": "3", "newText": "4"}
+                        name = "fs_apply_patches"
+                        arguments = {
+                            "path": "code.py",
+                            "patches": [{"oldText": "3", "newText": "4"}],
+                        }
                     elif n == 7:
                         name = "verify_command"
                         arguments = {
@@ -225,14 +241,18 @@ max_tool_calls = 20
             assert not errors, errors
             assert done.returncode == 0, done.stdout[-5000:] + done.stderr[-5000:]
             assert (repo / "code.py").read_text() == "value = 4\n"
-            receipts = list((scratch / "verification").glob("*.json"))
-            assert len(receipts) == 1
+            task_scratch = list(scratch.glob("agent-*"))
+            assert len(task_scratch) == 1, task_scratch
+            receipts = list((task_scratch[0] / "verification").glob("*.json"))
+            assert len(receipts) == 1, receipts
+            assert json.loads(receipts[0].read_text())["exitCode"] == 0
             audits = [json.loads(p.read_text()) for p in (data / "model-requests").glob("*.json")]
             assert len(audits) == len(requests) and all(a["outcome"] == "completed" for a in audits)
             print(
                 json.dumps(
                     {
                         "native_tool_smoke": "passed",
+                        "sandbox_profile": args.sandbox_profile,
                         "model_requests": len(requests),
                         "verification_receipts": len(receipts),
                         "png_bytes": len(png),

@@ -26,7 +26,7 @@ fn names(values: &[String]) -> Vec<String> {
                 "Bash" => "run_command",
                 "Read" => "fs_read",
                 "Write" => "fs_create",
-                "Edit" => "fs_apply_patch",
+                "Edit" => "fs_apply_patches",
                 "TodoWrite" => "plan_update",
                 "Task" => "agent_spawn",
                 _ => s,
@@ -287,7 +287,7 @@ async fn execute_connected(args: &Cli, local: &local::Local) -> Result<(i32, Vec
     };
     let mut approved = allowed;
     if args.permission_mode == "acceptEdits" {
-        approved.extend(["fs_create".into(), "fs_apply_patch".into()]);
+        approved.extend(["fs_create".into(), "fs_apply_patches".into()]);
     }
     let system = if let Some(path) = &args.system_prompt_file {
         Some(read_text(path)?)

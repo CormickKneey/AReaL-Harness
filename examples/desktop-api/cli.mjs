@@ -192,6 +192,28 @@ try {
     );
     await writeFile(process.env.AREAL_CLI_TRANSCRIPT, transcript.join("\n") + "\n");
   }
+  // Edit 别名和 acceptEdits 必须指向同一工具，避免编辑被过滤或重复审批。
+  await writeFile(join(workspace, "edit.txt"), "before\n");
+  r = await run(
+    [
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--permissions",
+      "YOLO",
+      "--allow-write",
+      "--permission-mode",
+      "acceptEdits",
+      "--allowedTools",
+      "Read",
+      "--tools",
+      "Read,Edit",
+    ],
+    "edit-fixture",
+  );
+  assert.equal(r.code, 0, r.stderr + r.stdout + JSON.stringify(model.failures));
+  assert.equal(await readFile(join(workspace, "edit.txt"), "utf8"), "after\n");
+  assert(!r.frames.some((frame) => frame.type === "control_request"));
   r = await run(
     ["--output-format", "json", "-r", session, "--permission-mode", "bypassPermissions"],
     "resume",

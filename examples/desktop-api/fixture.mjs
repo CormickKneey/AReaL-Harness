@@ -235,6 +235,19 @@ export async function fixture() {
         );
       if (first === "approval" && result.length === 0)
         tool = ["fs_create", { path: "approved.txt", text: "approved once" }];
+      if (first === "edit-fixture") {
+        assert.deepEqual(request.tools.map((t) => t.function.name).sort(), [
+          "fs_apply_patches",
+          "fs_read",
+        ]);
+        if (result.length === 0) tool = ["fs_read", { path: "edit.txt" }];
+        else if (result.length === 1)
+          tool = [
+            "fs_apply_patches",
+            { path: "edit.txt", patches: [{ oldText: "before", newText: "after" }] },
+          ];
+        else assert(JSON.parse(result.at(-1).content).sha256);
+      }
       if (first === "profile") {
         assert.match(
           request.messages

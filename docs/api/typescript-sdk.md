@@ -37,7 +37,7 @@ runtimeRead/runtimeWrite 由宿主创建，示例导入路径相对仓库根。�
 
 最多 128 在途、16 保留控制；帧限 128 KiB。畸形/未知 ID/EOF/超时封闭传输，结果可能 UNKNOWN。pages 保留 gap/truncated/closed；bytes/text 遇输出丢失抛 OutputGapError，并按 stdout/stderr/pty 分别持续解码。close 等待清理，disconnect 不表示清理成功。
 
-`FileCommand` 的 `applyPatches` 分支接受 `patches: TextPatch[]` 和 `expectedSha256`；1–32 个替换在同一 CAS 操作中依次匹配，任一失败不写入，成功返回 `FileWrite`。
+`FileCommand` 的 `applyPatches` 分支接受 `patches: TextPatch[]` 和 `expectedSha256`；1–32 个替换在同一 CAS 操作中依次匹配，任一失败不写入，成功返回 `FileWrite`。`applyPatch` 仅作为 Runtime/SDK 兼容入口保留，与单元素 `applyPatches` 共用实现；模型侧统一使用 `fs_apply_patches`。
 
 ## @areal/plugins
 

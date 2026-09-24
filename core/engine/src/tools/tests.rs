@@ -3,6 +3,31 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::time::Instant;
 
 #[test]
+fn removed_single_patch_tool_is_not_registered_or_dispatched() {
+    let registry = Registry::new(true, &ToolExtensions::default()).unwrap();
+    assert!(registry.get("fs_apply_patch").is_err());
+    assert!(registry.get("fs_apply_patches").is_ok());
+    assert!(
+        registry
+            .definitions()
+            .iter()
+            .all(|tool| tool["function"]["name"] != "fs_apply_patch")
+    );
+    let legacy = ToolCall {
+        id: "legacy".into(),
+        name: "fs_apply_patch".into(),
+        arguments: json!({"path":"code.py","oldText":"old","newText":"new","expectedSha256":"a".repeat(64)}).to_string(),
+    };
+    assert!(
+        request(&legacy, Path::new("/app"), "epoch", &BTreeMap::new())
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("unknown tool")
+    );
+}
+
+#[test]
 fn every_builtin_enforces_required_fields_and_rejects_unknown_arguments() {
     let process = format!("epoch:process:{}", uuid::Uuid::new_v4());
     let examples = json!({
@@ -16,7 +41,6 @@ fn every_builtin_enforces_required_fields_and_rejects_unknown_arguments() {
         "fs_stat":{"path":"a"},
         "fs_create":{"path":"a","text":"hello"},
         "fs_write":{"path":"a","text":"hello","expectedSha256":null},
-        "fs_apply_patch":{"path":"a","oldText":"hello","newText":"world","expectedSha256":"a".repeat(64)},
         "fs_apply_patches":{"path":"a","patches":[{"oldText":"hello","newText":"world"}],"expectedSha256":"a".repeat(64)},
         "run_command":{"argv":["/bin/true"],"cwd":".","timeoutMs":1000},
         "read_process":{"processId":process},
@@ -557,7 +581,7 @@ async fn aliases_reject_cross_process_cursor_and_cross_file_version() {
     assert!(handles.resolve("fs_write", &mut wrong, &runtime).is_err());
     let mut patched = json!({"sha256":"b".repeat(64)});
     handles.expose(
-        "fs_apply_patch",
+        "fs_apply_patches",
         &json!({"path":"code.py"}),
         &mut patched,
         &runtime,
@@ -648,9 +672,9 @@ async fn observed_versions_and_cursors_are_bounded_and_expire_with_the_turn() {
         &mut first,
         &runtime,
     );
-    let mut edit = json!({"path":"code.py","oldText":"old","newText":"new"});
+    let mut edit = json!({"path":"code.py","patches":[{"oldText":"old","newText":"new"}]});
     handles
-        .resolve("fs_apply_patch", &mut edit, &runtime)
+        .resolve("fs_apply_patches", &mut edit, &runtime)
         .unwrap();
     assert_eq!(edit["expectedSha256"], "a".repeat(64));
     let mut new = json!({"path":"new.py","text":"new"});
@@ -681,16 +705,16 @@ async fn observed_versions_and_cursors_are_bounded_and_expire_with_the_turn() {
             .resolve("read_process", &mut stale, &runtime)
             .is_err()
     );
-    let mut patch = json!({"path":"code.py","oldText":"old","newText":"new"});
+    let mut patch = json!({"path":"code.py","patches":[{"oldText":"old","newText":"new"}]});
     handles
-        .resolve("fs_apply_patch", &mut patch, &runtime)
+        .resolve("fs_apply_patches", &mut patch, &runtime)
         .unwrap();
     assert_eq!(patch["expectedSha256"], format!("{:064x}", 999));
     assert!(
         Handles::default()
             .resolve(
-                "fs_apply_patch",
-                &mut json!({"path":"code.py","oldText":"old","newText":"new"}),
+                "fs_apply_patches",
+                &mut json!({"path":"code.py","patches":[{"oldText":"old","newText":"new"}]}),
                 &runtime
             )
             .is_err()

@@ -133,6 +133,7 @@ class TraceMetricsTests(unittest.TestCase):
             tool("custom_tool", {"error": "plugin diagnostic"}),
             tool("fs_write", conflict, {"expectedSha256": "a" * 64}, {"expectedSha256": None}),
             tool("fs_write", conflict, {"expectedSha256": None}, {"expectedSha256": "a" * 64}),
+            tool("fs_apply_patches", conflict, {"patches": [{"oldText": "a", "newText": "b"}]}),
             tool(
                 "read_process",
                 {
@@ -149,7 +150,7 @@ class TraceMetricsTests(unittest.TestCase):
             metrics["tool_failure_categories"],
             {
                 "file_create_conflict": 1,
-                "file_edit_conflict": 1,
+                "file_edit_conflict": 2,
                 "invalid_process_id": 1,
                 "other_confirmed_failure": 1,
             },

@@ -199,7 +199,7 @@ impl Invocation<'_> {
         let mut value = json!({"error":error});
         if create_conflict {
             value["hint"] = json!(
-                "expectedSha256=null creates a new file. Read the existing file with fs_read, then use its full-file sha256 for fs_write, fs_apply_patch or fs_apply_patches. Do not retry creation or overwrite without a fresh hash."
+                "expectedSha256=null creates a new file. Read the existing file with fs_read, then use its full-file sha256 for fs_write or fs_apply_patches. Do not retry creation or overwrite without a fresh hash."
             );
         }
         value

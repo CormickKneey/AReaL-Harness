@@ -27,7 +27,7 @@ target/debug/areal -p 'Continue' --resume SESSION_ID --output-format json
 | --allow-write / --allow-network / --allow-concurrent-writes | 可信部署授权 |
 | --endpoint / --auth-file | 连接外部服务，退出不关闭它 |
 
-工具别名 AskUserQuestion/Bash/Read/Write/Edit/TodoWrite/Task 对应 ask_user_question/run_command/fs_read/fs_create/fs_apply_patch/plan_update/agent_spawn。shell 模式规则、任意 Claude settings/hooks、插件市场和交互 Claude TUI 不支持，未知选项拒绝。
+工具别名 AskUserQuestion/Bash/Read/Write/Edit/TodoWrite/Task 对应 ask_user_question/run_command/fs_read/fs_create/fs_apply_patches/plan_update/agent_spawn。shell 模式规则、任意 Claude settings/hooks、插件市场和交互 Claude TUI 不支持，未知选项拒绝。
 
 `--permissions YOLO|ASK_PERMISSIONS` 与 `--scratch` 配置本地部署；`--permission-mode` 默认 inherit，继承全局策略。显式 default/acceptEdits/dontAsk/plan/bypassPermissions 保留客户端限制，不能削弱全局 ask/deny 或 Profile。默认本地启动 full-access，无需 --allow-write/--allow-network；已有远端 endpoint 使用自己的策略。
 

@@ -161,6 +161,63 @@ fn batch_patch_is_single_conditional_edit() {
     .unwrap();
     assert_eq!(fs::read(f.0.path().join("code")).unwrap(), b"one\ntwo\n");
 }
+
+#[test]
+fn legacy_single_patch_matches_one_element_batch() {
+    for (old_text, stale, expected) in [
+        ("alpha", false, None),
+        ("missing", false, Some(ErrorCode::Conflict)),
+        ("beta", false, Some(ErrorCode::Conflict)),
+        ("alpha", true, Some(ErrorCode::Conflict)),
+        ("", false, Some(ErrorCode::InvalidArgument)),
+    ] {
+        let f = Fixture::new();
+        let original = b"alpha\nbeta beta\n";
+        let written = f.write("single", original, ExpectedFile::Absent).unwrap();
+        f.write("batch", original, ExpectedFile::Absent).unwrap();
+        let digest = if stale {
+            "0".repeat(64)
+        } else {
+            written["sha256"].as_str().unwrap().into()
+        };
+        let single = f.run(FileCommand::ApplyPatch {
+            path: "single".into(),
+            old_text: old_text.into(),
+            new_text: "one".into(),
+            expected_sha256: digest.clone(),
+        });
+        let batch = f.run(FileCommand::ApplyPatches {
+            path: "batch".into(),
+            patches: vec![TextPatch {
+                old_text: old_text.into(),
+                new_text: "one".into(),
+            }],
+            expected_sha256: digest,
+        });
+        match expected {
+            Some(code) => {
+                let single = single.unwrap_err();
+                let batch = batch.unwrap_err();
+                assert_eq!(single.code, code);
+                assert_eq!(batch.code, code);
+                assert_eq!(single.message, batch.message);
+                assert_eq!(fs::read(f.0.path().join("single")).unwrap(), original);
+            }
+            None => {
+                assert_eq!(single.unwrap(), batch.unwrap());
+                assert_eq!(
+                    fs::read(f.0.path().join("single")).unwrap(),
+                    b"one\nbeta beta\n"
+                );
+            }
+        }
+        assert_eq!(
+            fs::read(f.0.path().join("single")).unwrap(),
+            fs::read(f.0.path().join("batch")).unwrap()
+        );
+    }
+}
+
 #[test]
 fn batch_patch_conflict_never_commits_earlier_replacements() {
     let f = Fixture::new();

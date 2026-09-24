@@ -16,7 +16,6 @@ The Local launch defaults to YOLO. File tools and command cwd accept outside-wor
 | `fs_read/list/stat` | Relative paths or workspace URIs; read offset defaults to 0, maxBytes defaults/caps at 8192, returning a whole-file digest/version; list defaults to 100, maximum 256 |
 | `fs_create` | `path,text`; create only if absent |
 | `fs_write` | `path,text,fileVersion?/expectedSha256?`; omitted version uses the current Turn's last observation, or create-only if unobserved |
-| `fs_apply_patch` | `path,oldText,newText,fileVersion?/expectedSha256?`; old text must be nonempty and match uniquely |
 | `fs_apply_patches` | `path,patches[1..32],fileVersion?/expectedSha256?`; apply multiple unique replacements in one conditional operation, with no write if any fails |
 | `run_command` | Exactly one of `command` or `argv`; command uses `/bin/bash -o pipefail -c`, argv runs directly; cwd defaults to `.` |
 | `verify_command` | `argv,cwd?,timeoutMs?,yieldMs?`; direct execution, rejects shell entry points and requires separate scratch |
@@ -33,7 +32,7 @@ Each complete model response uses the remaining Turn `max_tool_calls` allowance,
 
 Command observation separates execution, waiting, display and readback: `run_command`/`read_process` read Runtime facts through cursors, and explicitly recognized test commands fold only successful progress lines and preserve diagnostics and unknown lines. Unknown commands are never guessed. This takes the explicit wait/output limits seen in Codex and the retained failure output used by Claude Code, while avoiding a global RTK pipe rewrite in the model protocol; RTK's automatic format detection can misclassify ordinary Karma timestamps, so the native parser accepts only an explicit command type from argv.
 
-Edits keep the CAS boundary. Use `fs_apply_patch` for one precise replacement; use `fs_apply_patches` for multiple independent replacements in one file. Runtime validates replacements in order before one conditional write. A failed match reports the 1-based patch index and whether the text is missing or ambiguous; no partial edit is written. Include surrounding function or other context when text repeats.
+Use `fs_apply_patches` for all precise edits: one array element for a single replacement, multiple elements for changes to the same file, with the same CAS boundary. Runtime validates replacements in order before one conditional write. A failed match reports the 1-based patch index and whether the text is missing or ambiguous; no partial edit is written. Include surrounding function or other context when text repeats. The model tool `fs_apply_patch` is removed; update tool allowlists, approval rules and hook matchers to `fs_apply_patches`, and arguments to `patches: [{oldText,newText}]`. Runtime/SDK `applyPatch` remains a single-element compatibility entry point sharing the `applyPatches` implementation.
 
 ## Waiting and state
 

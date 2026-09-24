@@ -16,7 +16,6 @@ Core 注册表将名称、JSON Schema 与内置/命令/客户端/MCP/插件后�
 | `fs_read/list/stat` | 相对路径或 workspace URI；read offset 默认 0、maxBytes 默认/上限 8192，返回完整摘要与版本；list 默认 limit=100、最多 256 |
 | `fs_create` | `path,text`，只创建不存在的文件 |
 | `fs_write` | `path,text,fileVersion?/expectedSha256?`；省略版本使用本 Turn 最近观察，未观察时仅新建 |
-| `fs_apply_patch` | `path,oldText,newText,fileVersion?/expectedSha256?`；旧文本非空且唯一匹配 |
 | `fs_apply_patches` | `path,patches[1..32],fileVersion?/expectedSha256?`；一次 CAS 原子应用多个唯一文本替换，任一失败则不写入 |
 | `run_command` | `command` 或 `argv` 二选一；前者经 `/bin/bash -o pipefail -c`，后者直接执行；cwd 默认 `.` |
 | `verify_command` | `argv,cwd?,timeoutMs?,yieldMs?`；直接执行、拒绝 shell 入口，必须配置独立 scratch |
@@ -33,7 +32,7 @@ Core 注册表将名称、JSON Schema 与内置/命令/客户端/MCP/插件后�
 
 命令观察将执行、等待、显示和回读分开：`run_command`/`read_process` 只按 cursor 读取 Runtime 保留的事实，明确识别的测试命令仅折叠成功进度行，诊断和未知行原样保留，未知命令不猜格式。这个边界吸收了 Codex 的显式等待/输出上限和 Claude Code 的失败输出保留思路，同时避免把 RTK 的全局管道改写接入模型协议；RTK 的自动格式探测在 Karma 时间戳等普通日志上可能误判，因此解析器只接受命令 argv 的显式类型。
 
-编辑保持 CAS 约束。单个 `fs_apply_patch` 适合小范围精确替换；同一文件的多个独立替换使用 `fs_apply_patches`，Runtime 在一次条件写入中按顺序逐项验证，任一旧文本不唯一都不会产生部分写入；匹配失败会报告从 1 开始的替换序号及缺失/歧义原因。重复文本应包含函数等周边上下文。
+编辑统一使用 `fs_apply_patches`：单处替换传一个元素，多处替换传多个元素，保持 CAS 约束。Runtime 在一次条件写入中按顺序逐项验证，任一旧文本不唯一都不会产生部分写入；匹配失败会报告从 1 开始的替换序号及缺失/歧义原因。重复文本应包含函数等周边上下文。模型工具 `fs_apply_patch` 已移除；工具 allowlist、审批规则和 hook matcher 应改用 `fs_apply_patches`，参数改为 `patches: [{oldText,newText}]`。Runtime/SDK 的 `applyPatch` 保留为单元素兼容入口，复用 `applyPatches` 的实现。
 
 ## 等待与状态
 
