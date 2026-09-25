@@ -130,6 +130,13 @@ struct Cli {
     allow_concurrent_writes: bool,
     #[arg(long, conflicts_with = "endpoint")]
     desktop_config: Option<PathBuf>,
+    #[arg(long, conflicts_with = "endpoint")]
+    workgroup_policy: Option<PathBuf>,
+    #[arg(long, requires = "workgroup_policy", conflicts_with = "endpoint")]
+    workgroup_toolchain: Option<PathBuf>,
+    /// 选择已部署的 Agent Profile，格式为 id@revision。
+    #[arg(long)]
+    agent: Option<String>,
 }
 fn key() -> String {
     uuid::Uuid::new_v4().to_string()

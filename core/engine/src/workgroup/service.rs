@@ -319,6 +319,25 @@ impl Service {
         &self.policy
     }
 
+    pub fn validate_start(&self, request: &Start) -> Result<()> {
+        validate(&request.plan)?;
+        validate_directory_scope(
+            &request.plan,
+            &self.policy.allowed_writes,
+            &self.policy.allowed_directories,
+        )?;
+        let workers = request.workers.unwrap_or(2.min(self.policy.workers));
+        ensure!(
+            (1..=self.policy.workers).contains(&workers),
+            "workers exceed deployment policy"
+        );
+        ensure!(
+            serde_json::to_vec(request)?.len() <= 256 * 1024,
+            "workgroup request exceeds 256 KiB"
+        );
+        Ok(())
+    }
+
     pub async fn start(
         self: &Arc<Self>,
         owner: String,
@@ -341,22 +360,9 @@ impl Service {
                 && request.request_id.len() <= 128,
             "invalid owner/request ID"
         );
-        validate(&request.plan)?;
-        validate_directory_scope(
-            &request.plan,
-            &self.policy.allowed_writes,
-            &self.policy.allowed_directories,
-        )?;
+        self.validate_start(&request)?;
         let workers = request.workers.unwrap_or(2.min(self.policy.workers));
-        ensure!(
-            (1..=self.policy.workers).contains(&workers),
-            "workers exceed deployment policy"
-        );
         let bytes = serde_json::to_vec(&request)?;
-        ensure!(
-            bytes.len() <= 256 * 1024,
-            "workgroup request exceeds 256 KiB"
-        );
         let hash = format!("{:x}", Sha256::digest(&bytes));
         let id = format!(
             "{:x}",

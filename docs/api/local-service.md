@@ -19,7 +19,7 @@ target/debug/areal web --workspace /absolute/workspace
 target/debug/areal web --workspace /absolute/workspace --json
 ```
 
-`ensure`、`restart` 和 `web` 接受同一组本地参数：`--config`、`--workspace`、`--data-dir`、`--allow-write`、`--allow-network`、`--allow-concurrent-writes`、`--workgroup-policy`、`--workgroup-toolchain`、`--command-timeout-ms`、`--command-output-bytes`、`--model-endpoint`、`--model-protocol`、`--model`、`--model-provider`、`--api-key-env`、`--desktop-config`。默认工作区是当前目录；服务监听随机 loopback 端口。未配置模型时可启动管理服务，运行模型任务仍需有效配置。
+`ensure`、`restart` 和 `web` 接受同一组本地参数：`--config`、`--workspace`、`--data-dir`、`--allow-write`、`--allow-network`、`--allow-concurrent-writes`、`--workgroup-policy`、`--workgroup-toolchain`、`--command-timeout-ms`、`--command-output-bytes`、`--model-endpoint`、`--model-protocol`、`--model`、`--model-provider`、`--api-key-env`、`--desktop-config`。`--agent id@revision` 是 TUI/headless/exec 创建 Thread 时的客户端选择项，也可与远程 `--endpoint` 同用，不改变本地服务身份。默认工作区是当前目录；服务监听随机 loopback 端口。未配置模型时可启动管理服务，运行模型任务仍需有效配置。
 
 `status`、`stop` 默认定位当前工作区，可用 `--workspace`、`--data-dir` 或 `--instance` 消歧。`restart` 按当前工作区和与 `ensure` 相同的参数解析目标部署；使用自定义配置/权限时传入对应参数。重启保留历史，有未结算工作时拒绝，只有显式 `--cancel` 才取消任务。
 

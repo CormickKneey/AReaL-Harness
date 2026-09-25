@@ -102,6 +102,7 @@ def main():
     parser.add_argument("--ready-metadata-file", type=Path)
     parser.add_argument("--auth-file", type=Path)
     parser.add_argument("--desktop-config", type=Path)
+    parser.add_argument("--agent")
     parser.add_argument("--service-info", type=Path)
     parser.add_argument("--startup-timeout", type=float, default=30)
     parser.add_argument("--resume")
@@ -423,6 +424,7 @@ def main():
                         "--auth-file",
                         json.loads(metadata.read_text())["authFile"],
                         *([f"--resume={args.resume}"] if args.resume is not None else []),
+                        *([f"--agent={args.agent}"] if args.agent is not None else []),
                         *([f"--prompt={args.prompt}"] if args.prompt is not None else []),
                         *([f"--goal={args.goal}"] if args.goal is not None else []),
                         *(

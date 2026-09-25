@@ -1,16 +1,37 @@
 use crate::{client::Client, safe_text};
 use anyhow::{Context, Result, bail};
 use areal_protocol::Input;
+use areal_protocol::desktop::VersionRef;
 use serde_json::json;
 
+#[cfg(test)]
 pub(crate) async fn run(
     client: &mut Client,
     resume: Option<String>,
     input: Vec<Input>,
 ) -> Result<()> {
+    run_with_profile(client, resume, input, None).await
+}
+
+pub(crate) async fn run_with_profile(
+    client: &mut Client,
+    resume: Option<String>,
+    input: Vec<Input>,
+    agent_profile: Option<VersionRef>,
+) -> Result<()> {
+    anyhow::ensure!(
+        resume.is_none() || agent_profile.is_none(),
+        "--agent cannot be used when resuming a thread"
+    );
     let id = match resume {
         Some(id) => client.send("thread/resume", json!({"threadId":id}))?,
-        None => client.send("thread/start", json!({}))?,
+        None => match agent_profile {
+            Some(profile) => client.send(
+                "areal/thread/start",
+                json!({"requestId":crate::goal_request_id(),"agentProfile":profile}),
+            )?,
+            None => client.send("thread/start", json!({}))?,
+        },
     };
     let mut target_thread = None;
     let mut start_id = None;
@@ -91,15 +112,26 @@ pub(crate) async fn run(
     }
 }
 
-pub(crate) async fn goal(
+pub(crate) async fn goal_with_profile(
     client: &mut Client,
     resume: Option<String>,
     objective: String,
     token_budget: Option<u64>,
+    agent_profile: Option<VersionRef>,
 ) -> Result<()> {
+    anyhow::ensure!(
+        resume.is_none() || agent_profile.is_none(),
+        "--agent cannot be used when resuming a thread"
+    );
     let start = match resume {
         Some(id) => client.send("thread/resume", json!({"threadId":id}))?,
-        None => client.send("thread/start", json!({}))?,
+        None => match agent_profile {
+            Some(profile) => client.send(
+                "areal/thread/start",
+                json!({"requestId":crate::goal_request_id(),"agentProfile":profile}),
+            )?,
+            None => client.send("thread/start", json!({}))?,
+        },
     };
     let mut thread_id = None;
     let mut create = None;

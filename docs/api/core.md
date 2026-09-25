@@ -12,6 +12,7 @@ Core 提供固定 Codex app-server 0.145.0 的子集与 AReaL 扩展，不代表
 |---|---|
 | `model/list` | `{}` |
 | `thread/start` | `{cwd?,model?,dynamicTools?}` |
+| `areal/thread/start` | `{requestId,agentProfile:{id,revision},cwd?,model?,parameters?,dynamicTools?}`；自动启动 Profile 绑定的 Workflow |
 | `thread/list` | `{cursor?,limit?}`; 1–100, default 30 |
 | `thread/read` | `{threadId,includeTurns?}` |
 | `thread/resume` | `{threadId}` |

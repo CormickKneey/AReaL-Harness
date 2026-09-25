@@ -46,6 +46,9 @@ pub struct Args {
     shared_service: Option<areal_local_service::LaunchSpec>,
     #[command(flatten)]
     local: local::LocalArgs,
+    /// 选择已部署的 Agent Profile，格式为 id@revision。
+    #[arg(long)]
+    agent: Option<String>,
     #[command(flatten)]
     ui: UiArgs,
     #[arg(long)]
@@ -82,6 +85,15 @@ impl Drop for TerminalGuard {
 }
 
 pub async fn run(mut args: Args) -> Result<()> {
+    let agent_profile = args
+        .agent
+        .as_deref()
+        .map(areal_local_service::parse_agent_profile)
+        .transpose()?;
+    anyhow::ensure!(
+        args.resume.is_none() || agent_profile.is_none(),
+        "--agent cannot be used when resuming a thread"
+    );
     anyhow::ensure!(
         args.prompt.is_some()
             || args.goal.is_some()
@@ -119,10 +131,23 @@ pub async fn run(mut args: Args) -> Result<()> {
         format!("Cannot connect to Core at {endpoint}. Start the server first, or omit --endpoint to start a local Harness.")
     })?;
     if let Some(goal) = args.goal {
-        return headless::goal(&mut client, args.resume, goal, args.goal_token_budget).await;
+        return headless::goal_with_profile(
+            &mut client,
+            args.resume,
+            goal,
+            args.goal_token_budget,
+            agent_profile,
+        )
+        .await;
     }
     if let Some(prompt) = args.prompt {
-        return headless::run(&mut client, args.resume, vec![Input::text(prompt)]).await;
+        return headless::run_with_profile(
+            &mut client,
+            args.resume,
+            vec![Input::text(prompt)],
+            agent_profile,
+        )
+        .await;
     }
     if let Some(path) = args.input_file {
         let bytes = std::fs::read(path).context("read turn input file")?;
@@ -132,9 +157,10 @@ pub async fn run(mut args: Args) -> Result<()> {
         );
         let input: Vec<Input> = serde_json::from_slice(&bytes).context("parse turn input array")?;
         anyhow::ensure!(!input.is_empty(), "turn input must not be empty");
-        return headless::run(&mut client, args.resume, input).await;
+        return headless::run_with_profile(&mut client, args.resume, input, agent_profile).await;
     }
     let mut app = App::new(prefs.unwrap());
+    app.agent_profile = agent_profile;
     app.monitor_configuration = args.shared_service.is_some();
     app.bootstrap(args.resume.clone(), true)?;
     let mut terminal = ratatui::init();
