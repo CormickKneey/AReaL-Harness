@@ -14583,6 +14583,19 @@
       ],
       "type": "object"
     },
+    "areal/thread/observe": {
+      "additionalProperties": false,
+      "properties": {
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "title": "ObserveThread",
+      "type": "object"
+    },
     "areal/thread/start": {
       "additionalProperties": false,
       "properties": {

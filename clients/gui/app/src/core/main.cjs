@@ -176,8 +176,19 @@ app.whenReady().then(async () => {
     }
     if (request?.operation === 'claim') {
       const identity = await preview.claim(request.projectId, request.threadId, request.pageId);
-      try { await backend.browserClaim(identity); trusted(event); }
-      catch (error) { preview.takeover(request.projectId, request.threadId, request.pageId); throw error; }
+      const currentClaimPage = () => {
+        const page = preview.page(request.projectId, request.threadId, request.pageId);
+        return page && preview.pageStillOwned(page) && page.view && !page.view.webContents.isDestroyed()
+          && page.control === 'agent' && page.coreInstanceId === identity.coreInstanceId
+          && preview.browserHostId === identity.browserHostId && preview.hostGeneration === identity.hostGeneration
+          && page.pageGeneration === identity.pageGeneration && page.controlEpoch === identity.controlEpoch ? page : null;
+      };
+      try {
+        await backend.browserClaim(identity);
+        trusted(event);
+        if (!currentClaimPage()) throw new Error('浏览页面已换代，请重新认领');
+      }
+      catch (error) { if (currentClaimPage()) preview.takeover(request.projectId, request.threadId, request.pageId); throw error; }
       return preview.state(preview.page(request.projectId, request.threadId, request.pageId));
     }
     if (request?.operation === 'takeover') {

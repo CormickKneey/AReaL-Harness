@@ -34,7 +34,8 @@ class DesktopService {
     this.backgroundNotifications = backgroundNotifications; this.power = power;
     this.pendingNotificationTarget = null;
     this.token = randomBytes(32).toString('hex'); this.clients = new Set();
-    this.browserClaims = new Map(); this.browserPending = new Map(); this.nextBrowserId = 0;
+    this.browserClaims = new Map(); this.browserClaimAttempts = new Map();
+    this.browserPending = new Map(); this.nextBrowserId = 0;
     this.browserTestTrace = process.env.AREAL_BROWSER_READ_TEST_TRACE;
     backend.browserRead = request => this.browserRead(request);
     this.sequence = 0; this.inflight = 0; this.stopping = false;
@@ -106,6 +107,9 @@ class DesktopService {
       socket.on('message', bytes => { void this.receive(socket, bytes); });
       socket.on('close', () => {
         for (const [key, claim] of this.browserClaims) if (claim.socket === socket) this.browserClaims.delete(key);
+        for (const [key, attempt] of this.browserClaimAttempts) if (attempt.socket === socket) {
+          attempt.cancelled = true; this.browserClaimAttempts.delete(key);
+        }
         for (const [id, pending] of this.browserPending) if (pending.socket === socket) {
           this.browserPending.delete(id); clearTimeout(pending.timer);
           pending.reject(new Error('Browser host disconnected after dispatch'));
@@ -182,18 +186,38 @@ class DesktopService {
         const key = browserKey(projectId, threadId);
         const previous = this.browserClaims.get(key);
         if (previous && previous.socket !== socket && previous.socket.readyState === 1) throw new Error('浏览页面已由其他桌面窗口认领');
-        const claim = previous && previous.socket === socket && previous.coreInstanceId === coreInstanceId
-          && previous.coreGeneration === coreGeneration && previous.browserHostId === browserHostId
-          && previous.hostGeneration === hostGeneration ? previous
-          : { socket, coreInstanceId, coreGeneration, browserHostId, hostGeneration,
-            pages: new Map(), revokedPages: new Set() };
-        claim.revokedPages.delete(pageId);
-        claim.pages.set(pageId, { pageId, pageGeneration, controlEpoch });
-        this.browserClaims.set(key, claim);
-        this.send(socket, { id, result: { claimed: true } }); return;
+        if (this.browserClaimAttempts.has(key)) throw new Error('浏览页面正在认领，请稍后重试');
+        const attempt = { socket, pageId, cancelled: false };
+        this.browserClaimAttempts.set(key, attempt);
+        const coreClient = project.client;
+        try {
+          await this.backend.bindBrowserHostForClaim(project, threadId);
+          if (attempt.cancelled || this.browserClaimAttempts.get(key) !== attempt
+            || this.browserClaims.get(key) !== previous || !this.clients.has(socket) || this.closed
+            || this.backend.projects.get(projectId) !== project || !this.backend.currentConnection(project, coreClient)
+            || project.service?.serviceId !== coreInstanceId
+            || project.service?.generation !== coreGeneration || socket.readyState !== 1) {
+            throw new Error('认领期间页面、Core 或桌面连接已换代，请重新操作');
+          }
+          const claim = previous && previous.socket === socket && previous.coreInstanceId === coreInstanceId
+            && previous.coreGeneration === coreGeneration && previous.browserHostId === browserHostId
+            && previous.hostGeneration === hostGeneration ? previous
+            : { socket, coreInstanceId, coreGeneration, browserHostId, hostGeneration,
+              pages: new Map(), revokedPages: new Set() };
+          claim.revokedPages.delete(pageId);
+          claim.pages.set(pageId, { pageId, pageGeneration, controlEpoch });
+          this.browserClaims.set(key, claim);
+          this.send(socket, { id, result: { claimed: true } }); return;
+        } finally {
+          if (this.browserClaimAttempts.get(key) === attempt) this.browserClaimAttempts.delete(key);
+        }
       }
       if (method === 'browserRevoke') {
         const key = browserKey(params?.projectId, params?.threadId);
+        const attempt = this.browserClaimAttempts.get(key);
+        if (attempt?.socket === socket && (typeof params?.pageId !== 'string' || attempt.pageId === params.pageId)) {
+          attempt.cancelled = true; this.browserClaimAttempts.delete(key);
+        }
         const claim = this.browserClaims.get(key);
         if (claim?.socket === socket) {
           if (typeof params?.pageId === 'string') {
@@ -260,6 +284,8 @@ class DesktopService {
   }
   close() {
     this.closed = true;
+    for (const attempt of this.browserClaimAttempts.values()) attempt.cancelled = true;
+    this.browserClaimAttempts.clear();
     for (const pending of this.browserPending.values()) { clearTimeout(pending.timer); pending.reject(new Error('Browser service closed after dispatch')); }
     this.browserPending.clear(); this.browserClaims.clear();
     this.remote?.close();
