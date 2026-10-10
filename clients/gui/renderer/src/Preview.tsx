@@ -314,6 +314,8 @@ export function Preview({
         if (!mounted.current || current.current !== owner || styleTrialRef.current !== draft)
           throw new Error('试改所属聊天已变化');
         await services.preview({ operation: 'hide', projectId, threadId, pageId: draft.before.pageId });
+        if (!mounted.current || current.current !== owner || styleTrialRef.current !== draft)
+          throw new Error('试改所属聊天已变化');
         draft = { ...draft, after: { capture: after.capture, element: after.element } };
         updateStyleTrial(draft);
       }
