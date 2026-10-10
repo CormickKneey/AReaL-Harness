@@ -22,6 +22,11 @@ export interface RegionDraft {
   };
   comment: string;
   region: { x: number; y: number; width: number; height: number } | null;
+  mode?: 'region' | 'element';
+  element?: { elementId: string; evidenceRef: string; role: string; name: string;
+    bounds: { x: number; y: number; width: number; height: number };
+    pageGeneration: number; documentEpoch: number; controlEpoch: number; frameId: string; sourceMapping: string };
+  unavailableReason?: string;
 }
 
 export function BrowserRegionAnnotation({ draft, busy, onChange, onCancel, onStage }: {
@@ -60,7 +65,7 @@ export function BrowserRegionAnnotation({ draft, busy, onChange, onCancel, onSta
     next.y = Math.min(next.y, bitmapHeight - 1);
     next.width = Math.min(next.width, bitmapWidth - next.x);
     next.height = Math.min(next.height, bitmapHeight - next.y);
-    onChange({ ...draft, region: next });
+    onChange({ ...draft, region: next, mode: 'region', element: undefined });
   };
   return <div className="browser-region-annotation" role="region" aria-label="冻结截图区域标注"
     onKeyDown={event => {
@@ -70,6 +75,8 @@ export function BrowserRegionAnnotation({ draft, busy, onChange, onCancel, onSta
       }
     }}>
     <div role="status">冻结截图 · {draft.capture.url} · {new Date(draft.capture.capturedAt).toLocaleString()}。实时页面可能已变化。仅选中区域的裁图会加入聊天草稿。</div>
+    {draft.unavailableReason && <div role="status">{draft.unavailableReason}</div>}
+    {draft.element && <div role="status">所选元素：{draft.element.role} · {draft.element.name || '无名称'}。这是选择时的页面事实，发送前会再次检查。</div>}
     <div className="browser-region-image-wrap">
       <img ref={image} alt="用于选择区域的冻结页面截图" draggable={false}
         src={`data:image/png;base64,${draft.capture.imageBase64}`}
@@ -77,12 +84,13 @@ export function BrowserRegionAnnotation({ draft, busy, onChange, onCancel, onSta
           if (busy) return;
           const origin = point(event.clientX, event.clientY);
           if (!origin) return;
+          if (draft.mode === 'element') return;
           start.current = origin; setDragging(true);
           event.currentTarget.setPointerCapture(event.pointerId);
           onChange({ ...draft, region: null });
         }}
-        onPointerMove={event => { if (dragging) move(event.clientX, event.clientY); }}
-        onPointerUp={event => { move(event.clientX, event.clientY); start.current = null; setDragging(false); }}
+        onPointerMove={event => { if (dragging && draft.mode !== 'element') move(event.clientX, event.clientY); }}
+        onPointerUp={event => { if (draft.mode !== 'element') move(event.clientX, event.clientY); start.current = null; setDragging(false); }}
         onPointerCancel={() => { start.current = null; setDragging(false); }} />
       {region && <div className="browser-region-selection" aria-hidden="true" style={{
         left: `${100 * region.x / bitmapWidth}%`, top: `${100 * region.y / bitmapHeight}%`,
@@ -98,7 +106,8 @@ export function BrowserRegionAnnotation({ draft, busy, onChange, onCancel, onSta
     <label>标注意见<textarea value={draft.comment} onChange={event => onChange({ ...draft, comment: event.target.value })}
       placeholder="描述这一区域需要修改或检查的内容" /></label>
     <div className="browser-region-actions">
-      <Button type="button" size="sm" disabled={!region || busy} onClick={() => onChange({ ...draft, region: null })}>撤销区域</Button>
+      {draft.mode === 'element' && <Button type="button" size="sm" disabled={busy} onClick={() => onChange({ ...draft, mode: 'region', element: undefined, region: null })}>改用区域标注</Button>}
+      <Button type="button" size="sm" disabled={!region || busy} onClick={() => onChange({ ...draft, region: null, mode: 'region', element: undefined })}>撤销区域</Button>
       <Button type="button" size="sm" disabled={busy} onClick={onCancel}>取消</Button>
       <Button type="button" size="sm" disabled={busy || !region?.width || !region.height || !draft.comment.trim()}
         onClick={() => onStage(draft)}>加入聊天草稿</Button>

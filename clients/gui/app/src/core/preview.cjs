@@ -272,6 +272,7 @@ class CorePreview {
     if (!page) return;
     this.revoke(page);
     page.activeRead?.cancel();
+    page.activeSelection?.cancel();
     this.pages.delete(key);
     this.closeNative(page);
     if (this.owner === key) { this.owner = null; this.view = null; }
@@ -332,7 +333,7 @@ class CorePreview {
   }
   pinned(page) {
     return !page.view || page.crashed || page.control !== 'human' || page.requestedVisible || !!page.annotationCaptureId
-      || page.activeAction || page.activeRead || page.activePrepare || page.claiming || page.plans.size > 0
+      || page.activeAction || page.activeRead || page.activeSelection || page.activePrepare || page.claiming || page.plans.size > 0
       || page.inputPending.size > 0 || page.heldButtons.size > 0 || page.heldKeys.size > 0
       || page.dialogPending || page.fileHandoff || (page.downloads?.size ?? 0) > 0;
   }
@@ -383,6 +384,7 @@ class CorePreview {
     page.lastObservation = null; page.lastCapture = null; page.needsObservation = true;
     page.view?.setVisible(false);
     page.activeRead?.cancel();
+    page.activeSelection?.cancel();
     page.activeAction?.cancel();
     this.onRevoke?.({ projectId: page.projectId, threadId: page.threadId, pageId: page.id });
     this.changed(page, 'controlChanged');
@@ -459,7 +461,7 @@ class CorePreview {
     if (!page?.view || page.crashed || page.view.webContents.isDestroyed() || page.view.webContents.isDevToolsOpened()
       || !page.view.webContents.getURL()
       || !this.owns(projectId, threadId)) throw new Error('当前聊天没有可认领的页面');
-    if (page.control !== 'human' || page.claiming || page.annotationCaptureId
+    if (page.control !== 'human' || page.claiming || page.activeSelection || page.annotationCaptureId
       || page.activeRead || page.activePrepare || page.activeAction)
       throw new Error('浏览页面当前不可认领');
     const c = page.view.webContents;
@@ -509,8 +511,113 @@ class CorePreview {
   }
   takeover(projectId, threadId, pageId) {
     const page = this.page(projectId, threadId, pageId);
-    if (page) { page.claiming?.cancel(); this.revoke(page); }
+    if (page) { page.activeSelection?.cancel(); page.claiming?.cancel(); this.revoke(page); }
     return this.state(page);
+  }
+  async captureElement(projectId, threadId, pageId) {
+    const page = this.page(projectId, threadId, pageId);
+    if (page?.control === 'transferring') await this.convergeInput(page);
+    const c = page?.view?.webContents;
+    const key = page && pageKey(page.coreInstanceId, projectId, threadId, pageId);
+    if (!page || page.id !== pageId || !c || !this.pageStillOwned(page) || !this.owns(projectId, threadId)
+      || page.control !== 'human' || page.crashed || c.isDestroyed() || c.isDevToolsOpened()
+      || c.debugger.isAttached() || page.claiming || page.activeRead || page.activeSelection || page.activeAction || page.activePrepare
+      || page.annotationCaptureId || !page.view.getVisible() || this.owner !== key
+      || !this.window.isVisible() || this.window.isMinimized())
+      throw new Error('请先接管并显示当前页面，再选择元素');
+    const generation = page.pageGeneration, document = page.documentGeneration;
+    const control = page.controlEpoch, url = c.getURL(), view = page.view;
+    const valid = () => this.pageStillOwned(page) && this.owns(projectId, threadId)
+      && page.view === view && this.owner === key && page.control === 'human'
+      && page.pageGeneration === generation && page.documentGeneration === document
+      && page.controlEpoch === control && !c.isDestroyed() && c.getURL() === url
+      && page.activeSelection === selection && !selection.cancelled
+      && view.getVisible() && this.window.isVisible() && !this.window.isMinimized();
+    let resolvePick, rejectPick, rejectCancel;
+    const picked = new Promise((resolve, reject) => { resolvePick = resolve; rejectPick = reject; });
+    void picked.catch(() => {});
+    const cancelled = new Promise((_, reject) => { rejectCancel = reject; });
+    void cancelled.catch(() => {});
+    const selection = { cancelled: false, cancel: () => {
+      selection.cancelled = true;
+      rejectPick(new Error('元素选择已取消'));
+      rejectCancel(new Error('元素选择已取消'));
+      page.activeRead?.cancel();
+    } };
+    page.activeSelection = selection;
+    let attached = false, timer, domEnabled = false;
+    const onMessage = (_event, method, params) => {
+      if (method === 'Overlay.inspectNodeRequested') resolvePick(params?.backendNodeId);
+      if (method === 'Overlay.inspectModeCanceled') rejectPick(new Error('元素选择已取消'));
+    };
+    const onDetach = () => rejectPick(new Error('元素选择已中断'));
+    let commandDeadline = performance.now() + 5000;
+    const command = (method, params = {}) => Promise.race([
+      nativeWithin(c.debugger.sendCommand(method, params), commandDeadline), cancelled,
+    ]);
+    try {
+      c.debugger.attach('1.3'); attached = true;
+      c.debugger.on('message', onMessage);
+      c.debugger.on('detach', onDetach);
+      // Chromium's Overlay agent requires DOM to be enabled first.
+      await command('DOM.enable'); domEnabled = true;
+      await command('Overlay.enable');
+      await command('Overlay.setInspectMode', { mode: 'searchForNode', highlightConfig: {
+        showInfo: true, showRulers: false, showExtensionLines: false,
+        contentColor: { r: 44, g: 140, b: 255, a: 0.18 },
+        borderColor: { r: 44, g: 140, b: 255, a: 0.9 },
+      } });
+      if (!valid() || page.activeSelection !== selection) throw new Error('元素选择已过期');
+      timer = setTimeout(selection.cancel, 30000);
+      const backendNodeId = await picked;
+      if (!valid() || page.activeSelection !== selection || !Number.isSafeInteger(backendNodeId))
+        throw new Error('元素选择已过期');
+      commandDeadline = performance.now() + 3000;
+      const box = await command('DOM.getBoxModel', { backendNodeId }).catch(() => null);
+      if (!valid()) throw new Error('元素选择已过期');
+      const quad = box?.model?.border;
+      const centerX = Array.isArray(quad) ? (quad[0] + quad[4]) / 2 : null;
+      const centerY = Array.isArray(quad) ? (quad[1] + quad[5]) / 2 : null;
+      // The native inspect overlay is disabled before the guarded screenshot.
+      await command('Overlay.setInspectMode', { mode: 'none', highlightConfig: {} });
+      await command('Overlay.disable');
+      await command('DOM.disable'); domEnabled = false;
+      c.debugger.removeListener('message', onMessage);
+      c.debugger.removeListener('detach', onDetach);
+      c.debugger.detach(); attached = false;
+      if (!valid()) throw new Error('元素选择已过期');
+      const capture = await this.captureRegion(projectId, threadId, pageId);
+      const x = Number.isFinite(centerX) ? Math.max(0, Math.min(capture.viewport.bitmapWidth - 1,
+        Math.floor(centerX * capture.viewport.bitmapWidth / capture.viewport.width))) : null;
+      const y = Number.isFinite(centerY) ? Math.max(0, Math.min(capture.viewport.bitmapHeight - 1,
+        Math.floor(centerY * capture.viewport.bitmapHeight / capture.viewport.height))) : null;
+      let element;
+      try { element = x === null || y === null
+        ? { available: false, reason: '此元素没有可核查的页面边界，请改用区域标注' }
+        : await this.selectElement(projectId, threadId, pageId, capture.captureId, x, y, backendNodeId); }
+      catch (error) {
+        if (page.annotationCaptureId === capture.captureId) {
+          page.annotationCaptureId = null; page.annotationCapture = null; page.annotationElement = null;
+        }
+        throw error;
+      }
+      if (!valid() || page.annotationCaptureId !== capture.captureId) {
+        page.annotationCaptureId = null; page.annotationCapture = null; page.annotationElement = null;
+        throw new Error('元素选择已过期');
+      }
+      return { capture, element };
+    } finally {
+      clearTimeout(timer);
+      if (!c.isDestroyed() && attached && c.debugger.isAttached()) {
+        await nativeWithin(c.debugger.sendCommand('Overlay.setInspectMode', { mode: 'none', highlightConfig: {} }), performance.now() + 1000).catch(() => {});
+        await nativeWithin(c.debugger.sendCommand('Overlay.disable'), performance.now() + 1000).catch(() => {});
+        if (domEnabled) await nativeWithin(c.debugger.sendCommand('DOM.disable'), performance.now() + 1000).catch(() => {});
+        c.debugger.detach();
+      }
+      c.debugger.removeListener('message', onMessage);
+      c.debugger.removeListener('detach', onDetach);
+      if (page.activeSelection === selection) page.activeSelection = null;
+    }
   }
   async captureRegion(projectId, threadId, pageId) {
     const page = this.page(projectId, threadId, pageId);
@@ -567,6 +674,12 @@ class CorePreview {
       if (!valid()) throw new Error('页面截图条件已变化');
       const captureId = randomUUID();
       page.annotationCaptureId = captureId;
+      page.annotationCapture = { documentEpoch, controlEpoch: epoch, pageGeneration: page.pageGeneration,
+        nativeWebContentsId: c.id,
+        sourceUrl, viewport, zoom: facts.pageZoom, guiZoom: facts.guiZoom,
+        nativeBounds: facts.nativeBounds, viewportKey, viewportRevision: page.viewportRevision,
+        bitmapWidth: size.width, bitmapHeight: size.height };
+      page.annotationElement = null;
       return { captureId, projectId, threadId, pageId,
         coreInstanceId: page.coreInstanceId, pageGeneration: page.pageGeneration,
         documentEpoch, controlEpoch: epoch, viewportRevision: page.viewportRevision,
@@ -577,6 +690,156 @@ class CorePreview {
     } finally {
       clearTimeout(timer);
       if (changed !== false && valid()) await nativeWithin(readIsolated(c, clearCaptureGuardScript), performance.now() + 1000).catch(() => {});
+      if (page.activeRead === read) page.activeRead = null;
+    }
+  }
+  // Human-only inspection of a point on the frozen native bitmap. The returned
+  // evidence Ref deliberately never enters page.refs, which is Agent-owned.
+  async selectElement(projectId, threadId, pageId, captureId, x, y, expectedBackendNodeId = null) {
+    const page = this.page(projectId, threadId, pageId);
+    const frozen = page?.annotationCapture;
+    const c = page?.view?.webContents;
+    if (!page || page.id !== pageId || page.annotationCaptureId !== captureId || !frozen || !c
+      || !this.pageStillOwned(page) || !this.owns(projectId, threadId)) throw new Error('标注页面已变化');
+    if (page.claiming || page.activeRead || page.activeAction || page.activePrepare || page.control !== 'human'
+      || c.isDestroyed() || c.isDevToolsOpened() || c.debugger.isAttached()) throw new Error('元素选择当前不可用，请使用区域标注');
+    if (x >= frozen.bitmapWidth || y >= frozen.bitmapHeight) throw new Error('选择位置超出截图');
+    const same = () => page.annotationCaptureId === captureId && page.annotationCapture === frozen
+      && this.pageStillOwned(page) && this.owns(projectId, threadId)
+      && page.control === 'human' && page.controlEpoch === frozen.controlEpoch
+      && page.pageGeneration === frozen.pageGeneration && page.documentGeneration === frozen.documentEpoch
+      && page.view?.webContents === c && c.id === frozen.nativeWebContentsId
+      && !c.isDestroyed() && c.getURL() === frozen.sourceUrl && c.getZoomFactor() === frozen.zoom
+      && this.window.webContents.getZoomFactor() === frozen.guiZoom
+      && isDeepStrictEqual(page.view.getBounds(), frozen.nativeBounds)
+      && page.viewportRevision === frozen.viewportRevision;
+    if (!same()) throw new Error('元素选择已过期，请重新截图');
+    let cancel;
+    const cancelled = new Promise((_, reject) => { cancel = () => reject(new Error('元素选择已取消')); });
+    void cancelled.catch(() => {});
+    const read = { requestId: randomUUID(), cancel };
+    page.activeRead = read;
+    let attached = false;
+    const unavailable = reason => ({ available: false, reason });
+    const deadline = performance.now() + 3000;
+    const bounded = promise => Promise.race([nativeWithin(promise, deadline), cancelled]);
+    try {
+      const currentViewport = await bounded(readIsolated(c, viewportScript));
+      if (!same() || !isDeepStrictEqual(currentViewport, frozen.viewport)
+        || viewportFacts(this.window, page, currentViewport).key !== frozen.viewportKey)
+        throw new Error('元素选择已过期，请重新截图');
+      c.debugger.attach('1.3'); attached = true;
+      const command = (method, parameters = {}) => bounded(c.debugger.sendCommand(method, parameters));
+      const cssX = Math.floor(x * frozen.viewport.width / frozen.bitmapWidth);
+      const cssY = Math.floor(y * frozen.viewport.height / frozen.bitmapHeight);
+      const [hit, frames] = await Promise.all([
+        command('DOM.getNodeForLocation', { x: cssX, y: cssY, includeUserAgentShadowDOM: false }),
+        command('Page.getFrameTree'),
+      ]);
+      if (!same()) throw new Error('元素选择已过期，请重新截图');
+      if (!hit.backendNodeId || (hit.frameId && hit.frameId !== frames.frameTree?.frame?.id))
+        return unavailable('iframe 内容无法可靠识别，请改用区域标注');
+      if (expectedBackendNodeId && hit.backendNodeId !== expectedBackendNodeId)
+        return unavailable('页面元素在选择与截图之间变化，请改用区域标注');
+      const described = await command('DOM.describeNode', { backendNodeId: hit.backendNodeId, depth: 0 });
+      const node = described.node;
+      if (!same()) throw new Error('元素选择已过期，请重新截图');
+      if (!node || ['IFRAME', 'FRAME'].includes(node.nodeName)) return unavailable('iframe 内容无法可靠识别，请改用区域标注');
+      if (node.nodeName === 'CANVAS') return unavailable('Canvas 内部元素没有可核查的 DOM 身份，请改用区域标注');
+      if (node.nodeName === '#document-fragment' || node.shadowRootType)
+        return unavailable('Shadow DOM 内容无法可靠识别，请改用区域标注');
+      const [ax, box] = await Promise.all([
+        command('Accessibility.getPartialAXTree', { backendNodeId: hit.backendNodeId }),
+        command('DOM.getBoxModel', { backendNodeId: hit.backendNodeId }),
+      ]);
+      if (!same()) throw new Error('元素选择已过期，请重新截图');
+      const semantic = ax.nodes?.find(item => item.backendDOMNodeId === hit.backendNodeId && !item.ignored);
+      const quad = box.model?.border;
+      if (!semantic || !Array.isArray(quad) || quad.length !== 8)
+        return unavailable('此位置没有可核查的语义元素，请改用区域标注');
+      const xs = [quad[0], quad[2], quad[4], quad[6]], ys = [quad[1], quad[3], quad[5], quad[7]];
+      const left = Math.max(0, Math.floor(Math.min(...xs) * frozen.bitmapWidth / frozen.viewport.width));
+      const top = Math.max(0, Math.floor(Math.min(...ys) * frozen.bitmapHeight / frozen.viewport.height));
+      const right = Math.min(frozen.bitmapWidth, Math.ceil(Math.max(...xs) * frozen.bitmapWidth / frozen.viewport.width));
+      const bottom = Math.min(frozen.bitmapHeight, Math.ceil(Math.max(...ys) * frozen.bitmapHeight / frozen.viewport.height));
+      if (right <= left || bottom <= top) return unavailable('元素已离开截图视口，请改用区域标注');
+      const elementId = randomUUID();
+      const result = { available: true, elementId, evidenceRef: `human:${elementId}`,
+        role: safeText(semantic.role?.value ?? 'unknown', 80), name: safeText(semantic.name?.value ?? '', 200),
+        bounds: { x: left, y: top, width: right - left, height: bottom - top },
+        pageGeneration: frozen.pageGeneration, documentEpoch: frozen.documentEpoch,
+        controlEpoch: frozen.controlEpoch, frameId: hit.frameId ?? frames.frameTree?.frame?.id ?? 'main', sourceMapping: 'unavailable' };
+      page.annotationElement = { elementId, captureId, backendNodeId: hit.backendNodeId, result };
+      return result;
+    } catch (error) {
+      if (!same()) throw new Error('元素选择已过期，请重新截图');
+      throw error;
+    } finally {
+      if (attached && !c.isDestroyed() && c.debugger.isAttached()) c.debugger.detach();
+      if (page.activeRead === read) page.activeRead = null;
+    }
+  }
+  async checkElement(projectId, threadId, pageId, captureId, elementId) {
+    const page = this.page(projectId, threadId, pageId);
+    const selected = page?.annotationElement;
+    const frozen = page?.annotationCapture;
+    const c = page?.view?.webContents;
+    if (!selected || selected.elementId !== elementId || selected.captureId !== captureId || !frozen || !c)
+      return { stale: true };
+    if (page.control !== 'human' || page.controlEpoch !== frozen.controlEpoch
+      || page.pageGeneration !== frozen.pageGeneration || page.documentGeneration !== frozen.documentEpoch
+      || !this.pageStillOwned(page) || !this.owns(projectId, threadId) || c.isDestroyed()
+      || page.view?.webContents !== c || c.id !== frozen.nativeWebContentsId
+      || c.getURL() !== frozen.sourceUrl || c.isDevToolsOpened() || c.debugger.isAttached()
+      || page.viewportRevision !== frozen.viewportRevision
+      || this.window.webContents.getZoomFactor() !== frozen.guiZoom
+      || !isDeepStrictEqual(page.view.getBounds(), frozen.nativeBounds)) return { stale: true };
+    let cancel;
+    const cancelled = new Promise((_, reject) => { cancel = () => reject(new Error('元素检查已取消')); });
+    void cancelled.catch(() => {});
+    const read = { requestId: randomUUID(), cancel };
+    if (page.claiming || page.activeRead || page.activeAction || page.activePrepare) return { stale: true };
+    page.activeRead = read;
+    let attached = false;
+    const deadline = performance.now() + 3000;
+    const bounded = promise => Promise.race([nativeWithin(promise, deadline), cancelled]);
+    try {
+      const viewport = await bounded(readIsolated(c, viewportScript));
+      if (!isDeepStrictEqual(viewport, frozen.viewport)
+        || viewportFacts(this.window, page, viewport).key !== frozen.viewportKey) return { stale: true };
+      c.debugger.attach('1.3'); attached = true;
+      const box = await bounded(c.debugger.sendCommand('DOM.getBoxModel', { backendNodeId: selected.backendNodeId }));
+      const quad = box.model?.border;
+      const centerX = quad && (quad[0] + quad[4]) / 2, centerY = quad && (quad[1] + quad[5]) / 2;
+      const hit = Number.isFinite(centerX) && Number.isFinite(centerY)
+        ? await bounded(c.debugger.sendCommand('DOM.getNodeForLocation', { x: Math.round(centerX), y: Math.round(centerY), includeUserAgentShadowDOM: false })) : null;
+      const ax = await bounded(c.debugger.sendCommand('Accessibility.getPartialAXTree', { backendNodeId: selected.backendNodeId }));
+      const semantic = ax.nodes?.find(item => item.backendDOMNodeId === selected.backendNodeId && !item.ignored);
+      const xs = Array.isArray(quad) && quad.length === 8 ? [quad[0], quad[2], quad[4], quad[6]] : null;
+      const ys = Array.isArray(quad) && quad.length === 8 ? [quad[1], quad[3], quad[5], quad[7]] : null;
+      const bounds = xs && ys ? {
+        x: Math.max(0, Math.floor(Math.min(...xs) * frozen.bitmapWidth / frozen.viewport.width)),
+        y: Math.max(0, Math.floor(Math.min(...ys) * frozen.bitmapHeight / frozen.viewport.height)),
+        right: Math.min(frozen.bitmapWidth, Math.ceil(Math.max(...xs) * frozen.bitmapWidth / frozen.viewport.width)),
+        bottom: Math.min(frozen.bitmapHeight, Math.ceil(Math.max(...ys) * frozen.bitmapHeight / frozen.viewport.height)),
+      } : null;
+      const original = selected.result.bounds;
+      return { stale: page.annotationElement !== selected || page.annotationCapture !== frozen
+        || page.control !== 'human' || page.controlEpoch !== frozen.controlEpoch
+        || page.documentGeneration !== frozen.documentEpoch || page.viewportRevision !== frozen.viewportRevision
+        || !this.pageStillOwned(page)
+        || !this.owns(projectId, threadId) || c.isDestroyed() || c.getURL() !== frozen.sourceUrl
+        || this.window.webContents.getZoomFactor() !== frozen.guiZoom
+        || !isDeepStrictEqual(page.view.getBounds(), frozen.nativeBounds)
+        || hit?.backendNodeId !== selected.backendNodeId
+        || !bounds || Math.abs(bounds.x - original.x) > 1 || Math.abs(bounds.y - original.y) > 1
+        || Math.abs(bounds.right - (original.x + original.width)) > 1
+        || Math.abs(bounds.bottom - (original.y + original.height)) > 1
+        || safeText(semantic?.role?.value ?? 'unknown', 80) !== selected.result.role
+        || safeText(semantic?.name?.value ?? '', 200) !== selected.result.name };
+    } catch { return { stale: true }; }
+    finally {
+      if (attached && !c.isDestroyed() && c.debugger.isAttached()) c.debugger.detach();
       if (page.activeRead === read) page.activeRead = null;
     }
   }
@@ -1279,6 +1542,7 @@ class CorePreview {
     c.on("did-start-navigation", (_event, url, _inPlace, main) => {
       if (!this.pageStillOwned(page)) return;
       page.dialogPending = false;
+      page.activeSelection?.cancel();
       if (main) {
         page.activeRead?.cancel();
         if (page.approvedNavigation === url) page.approvedNavigation = null;
@@ -1367,15 +1631,28 @@ class CorePreview {
     }
     if (request.operation === 'captureRegion')
       return this.captureRegion(request.projectId, request.threadId, request.pageId);
+    if (request.operation === 'captureElement')
+      return this.captureElement(request.projectId, request.threadId, request.pageId);
+    if (request.operation === 'cancelElementSelection') {
+      page?.activeSelection?.cancel();
+      return this.state(page);
+    }
+    if (request.operation === 'checkElement')
+      return this.checkElement(request.projectId, request.threadId, request.pageId, request.captureId, request.elementId);
     if (request.operation === 'endRegion') {
       if (!page) return this.state(null);
       if (!this.owns(request.projectId, request.threadId) || page.annotationCaptureId !== request.captureId)
         throw new Error('标注页面已变化');
+      if (page.control === 'human') page.activeRead?.cancel();
       page.annotationCaptureId = null;
+      page.annotationCapture = null; page.annotationElement = null;
       return this.state(page);
     }
     if (request.operation === 'hide') {
-      if (page) page.requestedVisible = false;
+      if (page) {
+        page.requestedVisible = false; page.activeSelection?.cancel();
+        if (page.control === 'human' && page.annotationCaptureId) page.activeRead?.cancel();
+      }
       if (!request.projectId || this.owner === key) {
         if (!page) { const displayed = this.pages.get(this.owner); if (displayed) displayed.requestedVisible = false; }
         this.view?.setVisible(false);
