@@ -93,3 +93,67 @@ _Avoid_: persistent Profile; OS sandbox
 **Browser Profile**:
 A user browsing identity and login profile retained across Browser Workspaces or desktop restarts.
 _Avoid_: Agent Profile; transient context
+
+**Main Conversation**:
+A continuous conversation used to advance a user's primary task. A conversation created by a Fork is also a main conversation.
+_Avoid_: Every chat panel, an active task only
+
+**Turn**:
+An accepted user input and the resulting processing episode, including replies, tool interactions and its terminal outcome. A turn may contain multiple messages.
+_Avoid_: Message, single model request, display index
+
+**Source Conversation**:
+The conversation whose content a fork or side discussion draws from. This is a provenance relationship, not delegation.
+_Avoid_: Parent agent, coordinating task owner
+
+**Conversation Origin**:
+A traceable relationship between a derived conversation, its source and the selected source position.
+_Avoid_: Delegation relationship, inherited authorization
+
+**Fork**:
+An operation creating an independent main conversation from a selected turn boundary in a source conversation.
+_Avoid_: Undo, file rollback, tool replay, copying the visible screen
+
+**Before Turn**:
+The position immediately before a selected turn starts. Its input and subsequent content are outside the inherited range.
+_Avoid_: Rerun, retaining the selected input but dropping its answer
+
+**After Turn**:
+The position immediately after a selected turn ends. That turn and the preceding conversation belong to the inherited range.
+_Avoid_: The current streaming tail, an arbitrary position before a reply
+
+**Side Chat**:
+An independent, user-initiated discussion about a main conversation for understanding, reviewing and exploring its content. It does not direct execution of the primary task.
+_Avoid_: Subagent, main-conversation queue, second writable executor
+
+**Source Anchor**:
+The source position defining where a derived conversation's historical basis ends.
+_Avoid_: The latest content, a UI array index
+
+**Observation Snapshot**:
+A preserved view of conversation evidence at a defined observation point, unaffected by subsequent source changes.
+_Avoid_: Filesystem snapshot, live mutable state
+
+**Inherited History**:
+The existing conversation prefix used by a Fork to continue a discussion. It describes prior work rather than work newly executed by the fork.
+_Avoid_: New execution records, new samples, new tool results
+
+**Reference Evidence**:
+Source content and verifiable provenance used to inform a side discussion.
+_Avoid_: Pending commands, current permissions, live file versions
+
+**Current Workspace**:
+The project file environment being used now. Its time view is distinct from file observations recorded in conversation history.
+_Avoid_: Files at the fork anchor, automatically isolated workspace
+
+**Bring-back Draft**:
+The user action of placing selected side-chat conclusions into the source conversation's unsent content.
+_Avoid_: Automatic submission, automatic steering, branch merge
+
+**Archived Conversation**:
+A conversation removed from routine work views while its content remains retained and recoverable.
+_Avoid_: Deletion, erasing all copies, stopping an active task
+
+**Delegated Agent Task**:
+Work assigned by a primary executor to another agent with coordination and lifecycle constraints.
+_Avoid_: User-initiated side chat, fork

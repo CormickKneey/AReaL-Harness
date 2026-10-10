@@ -21,3 +21,5 @@
 - [安装与升级](guides/installation.md) · [发行流程](development/releasing.md)
 
 共享浏览器设计提案：[规格](design/browser.md) · [交互](design/browser-ux.md) · [API](api/browser.md) · [行为验收](development/browser-testing.md) · [原生方案](adr/0003-native-view-and-driver.md)。
+
+会话派生设计决策：[独立来源关系](adr/0008-conversation-origin.md) · [不可变快照](adr/0009-detached-history-snapshots.md) · [持久只读旁路](adr/0010-persistent-read-only-side.md) · [对话与文件](adr/0011-conversation-not-files.md) · [扩展协议](adr/0012-explicit-areal-contract.md)。
