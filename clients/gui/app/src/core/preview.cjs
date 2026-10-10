@@ -34,6 +34,10 @@ async function readIsolated(contents, code) {
   return result;
 }
 const viewportScript = `({width:innerWidth,height:innerHeight,scrollX,scrollY,deviceScaleFactor:devicePixelRatio})`;
+const interactiveRoles = new Set(['button', 'link', 'textbox', 'textfield', 'searchbox', 'combobox',
+  'checkbox', 'radiobutton', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'tab', 'switch',
+  'slider', 'spinbutton', 'option', 'listbox']);
+const MAX_REFS = 1000;
 const sensitiveCaptureScript = `(() => {
   const selector = 'input[type="password"],input[autocomplete="cc-number"],input[autocomplete="one-time-code"],input[name*="token" i],input[name*="secret" i],input[name*="key" i]';
   const scan = root => {
@@ -50,6 +54,34 @@ const sensitiveCaptureScript = `(() => {
     return false;
   };
   return scan(document);
+})()`;
+const captureGuardStartScript = token => `(() => {
+  const previous = globalThis.__arealCaptureGuard;
+  for (const observer of previous?.observers ?? []) observer.disconnect();
+  delete globalThis.__arealCaptureGuard;
+  const guard = { token: ${JSON.stringify(token)}, changed: false, observers: [] };
+  const watch = root => {
+    const observer = new MutationObserver(() => { guard.changed = true; });
+    observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true });
+    guard.observers.push(observer);
+    for (const element of root.querySelectorAll('*')) {
+      if (element.shadowRoot) watch(element.shadowRoot);
+      if (element.matches('iframe,frame')) {
+        if (!element.contentDocument) throw new Error('Frame unavailable');
+        watch(element.contentDocument);
+      }
+    }
+  };
+  try { watch(document); globalThis.__arealCaptureGuard = guard; return true; }
+  catch { for (const observer of guard.observers) observer.disconnect(); return false; }
+})()`;
+const captureGuardStopScript = token => `(() => {
+  const guard = globalThis.__arealCaptureGuard;
+  if (!guard || guard.token !== ${JSON.stringify(token)}) return true;
+  const changed = guard.changed || guard.observers.some(observer => observer.takeRecords().length > 0);
+  for (const observer of guard.observers) observer.disconnect();
+  delete globalThis.__arealCaptureGuard;
+  return changed;
 })()`;
 function safeText(value, limit = 500) {
   const text = String(value ?? '').slice(0, limit);
@@ -190,12 +222,26 @@ class CorePreview {
         controlEpoch: epoch, capturedAt: new Date().toISOString(), scope: operation === 'capture' ? 'viewport' : (parameters.scope ?? 'document'),
         viewport: { ...viewport, pageZoom: zoom, viewportRevision: page.viewportRevision } };
       if (operation === 'capture') {
-        // A known sensitive form cannot be safely represented in an unmasked image.
-        const hasSensitive = await Promise.race([readIsolated(c, sensitiveCaptureScript), cancelled]);
-        if (typeof hasSensitive !== 'boolean') throw new Error('Browser sensitive-field check unavailable');
-        if (hasSensitive) throw new Error('Sensitive field prevents automatic screenshot');
-        const image = await Promise.race([c.capturePage(), cancelled]);
-        if (page.control !== 'agent' || page.controlEpoch !== epoch || page.documentGeneration !== documentGeneration) throw new Error('Browser observation was revoked');
+        // A known sensitive form or a DOM change during capture cannot be safely represented unmasked.
+        const guardToken = randomUUID();
+        const watching = await Promise.race([readIsolated(c, captureGuardStartScript(guardToken)), cancelled]);
+        if (watching !== true) throw new Error('Browser capture guard unavailable');
+        let image, postSensitive, changed = true;
+        try {
+          const hasSensitive = await Promise.race([readIsolated(c, sensitiveCaptureScript), cancelled]);
+          if (typeof hasSensitive !== 'boolean') throw new Error('Browser sensitive-field check unavailable');
+          if (hasSensitive) throw new Error('Sensitive field prevents automatic screenshot');
+          image = await Promise.race([c.capturePage(), cancelled]);
+          if (page.control !== 'agent' || page.controlEpoch !== epoch || page.documentGeneration !== documentGeneration)
+            throw new Error('Browser observation was revoked');
+          postSensitive = await Promise.race([readIsolated(c, sensitiveCaptureScript), cancelled]);
+        } finally {
+          changed = await Promise.race([
+            readIsolated(c, captureGuardStopScript(guardToken)).catch(() => true),
+            new Promise(resolve => setTimeout(() => resolve(true), 1000)),
+          ]);
+        }
+        if (postSensitive !== false || changed !== false) throw new Error('Browser content changed during capture');
         const currentViewport = await Promise.race([readIsolated(c, viewportScript), cancelled]);
         if (JSON.stringify(currentViewport) !== JSON.stringify(viewport) || c.getZoomFactor() !== zoom)
           throw new Error('Browser viewport changed during capture');
@@ -220,7 +266,13 @@ class CorePreview {
         || (/textField|textbox|searchbox|comboBox/i.test(String(node.role?.value ?? ''))
           && (node.properties ?? []).some(property => sensitive.test(String(property.name)) || sensitive.test(String(property.value?.value)))))
         .map(node => node.nodeId));
+      const fieldNodes = new Set(nodes.filter(node => /^(textField|passwordField|textbox|searchbox|comboBox)$/i
+        .test(String(node.role?.value ?? ''))).map(node => node.nodeId));
+      const fieldValues = [...new Set(nodes.filter(node => fieldNodes.has(node.nodeId))
+        .map(node => String(node.value?.value ?? '')).filter(Boolean))];
+      const fieldEcho = text => fieldValues.some(value => text === value || (value.length >= 3 && text.includes(value)));
       const sensitiveChild = node => { for (let id = node.parentId; id; id = parent.get(id)) if (sensitiveNodes.has(id)) return true; return false; };
+      const fieldChild = node => { for (let id = node.parentId; id; id = parent.get(id)) if (fieldNodes.has(id)) return true; return false; };
       const limitNodes = parameters.budget?.nodes ?? 200;
       const limitBytes = parameters.budget?.textBytes ?? 32 * 1024;
       const nextRefs = new Map();
@@ -230,12 +282,16 @@ class CorePreview {
         if (node.ignored) continue;
         const role = String(node.role?.value ?? '').slice(0, 80);
         const rawName = String(node.name?.value ?? '');
-        const name = sensitiveNodes.has(node.nodeId) || sensitiveChild(node) ? '[redacted]' : safeText(rawName);
         const propertySensitive = (node.properties ?? []).some(property => sensitive.test(String(property.name)) || sensitive.test(String(property.value?.value)));
-        const value = sensitiveChild(node) || /textField|passwordField|textbox|searchbox|comboBox/i.test(role)
-          || sensitive.test(rawName) || propertySensitive ? '' : safeText(node.value?.value);
+        const sensitiveNode = sensitiveNodes.has(node.nodeId) || sensitiveChild(node) || propertySensitive;
+        const concealed = sensitiveNode || fieldChild(node) || fieldEcho(rawName);
+        const name = concealed ? '[redacted]' : safeText(rawName);
+        const value = concealed || /textField|passwordField|textbox|searchbox|comboBox/i.test(role)
+          || sensitive.test(rawName) || propertySensitive || fieldEcho(String(node.value?.value ?? ''))
+          ? '' : safeText(node.value?.value);
         const identity = node.backendDOMNodeId && JSON.stringify([page.pageGeneration, documentGeneration, epoch, node.frameId ?? 'main', node.backendDOMNodeId]);
-        const interactive = /button|link|textField|checkBox|radioButton|comboBox|menuItem|tab|switch/i.test(role);
+        const interactive = interactiveRoles.has(role.toLowerCase()) && !concealed
+          && (!fieldNodes.has(node.nodeId) || name.trim().length > 0);
         let ref;
         if (identity && interactive) {
           ref = page.refs.get(identity) ?? `r${++page.nextRef}`;
@@ -250,7 +306,7 @@ class CorePreview {
           ...(node.frameId ? { frameId: node.frameId } : {}),
           ...(ref ? { ref } : {}),
           ...(value ? { value } : {}),
-          ...(node.description?.value ? { description: sensitiveNodes.has(node.nodeId) || sensitiveChild(node)
+          ...(node.description?.value ? { description: concealed
             ? '[redacted]' : safeText(node.description.value) } : {}),
           state: Object.fromEntries((node.properties ?? [])
             .filter(property => ['checked', 'selected', 'disabled', 'expanded', 'required', 'invalid'].includes(property.name))
@@ -263,7 +319,17 @@ class CorePreview {
         entryByNodeId.set(node.nodeId, entry.id);
         textBytes += bytes;
       }
-      page.refs = new Map([...page.refs].filter(([identity]) => liveIdentities.has(identity)).concat([...nextRefs]));
+      const retainedRefs = new Map([...page.refs].filter(([identity]) => liveIdentities.has(identity)));
+      for (const [identity, ref] of nextRefs) {
+        retainedRefs.delete(identity);
+        retainedRefs.set(identity, ref);
+      }
+      let refsEvicted = 0;
+      while (retainedRefs.size > MAX_REFS) {
+        retainedRefs.delete(retainedRefs.keys().next().value);
+        refsEvicted++;
+      }
+      page.refs = retainedRefs;
       const seenFrames = new Set(nodes.map(node => node.frameId).filter(Boolean));
       const childFrames = [];
       const walkFrames = (branch, root = false) => {
@@ -275,6 +341,7 @@ class CorePreview {
       return { ...base, frameCoverage: { main: 'covered', childFrames },
         shadowCoverage: 'not-distinguished-by-accessibility-tree', dynamicCoverage: 'snapshot-at-capturedAt',
         truncated, truncationReason: truncated ? 'budget' : null,
+        refCache: { capacity: MAX_REFS, evicted: refsEvicted },
         budget: { nodes: limitNodes, textBytes: limitBytes }, nodes: entries, text: lines.join('\n') };
     } finally {
       clearTimeout(timer);

@@ -121,7 +121,7 @@ app.whenReady().then(async () => {
       pageGeneration: request.pageGeneration, controlEpoch: request.controlEpoch,
       error: /Human controls|revoked/.test(error.message) ? 'human_control'
         : error.message === 'stale_ref' ? 'stale_ref'
-        : /budget exceeded|Sensitive field|viewport changed/.test(error.message) ? 'evidence_unavailable' : 'page_unavailable' }; }
+        : /budget exceeded|Sensitive field|viewport changed|content changed during capture|capture guard unavailable/.test(error.message) ? 'evidence_unavailable' : 'page_unavailable' }; }
   };
   ipcMain.handle('areal-core:preview', async (event, request) => {
     trusted(event);
