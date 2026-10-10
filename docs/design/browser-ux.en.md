@@ -43,6 +43,8 @@ Missing semantics, Canvas internals, and unresolvable iframe/Shadow content prov
 
 **F. Temporary style experiment.** Human-only constrained text/color/font/spacing/size edits with undo/redo, always labeled “Page preview; source unchanged”. Track old values and document identity; remove only overlays owned by the experiment. Navigation/HMR replacing the target invalidates it rather than overwriting new app state. Send intent and before/after evidence for a subsequent source edit. Clear temporary overlays before final verification, so an unchanged source cannot appear fixed.
 
+The current source path starts with “Select element and preview style” on the visible native page and reuses human Overlay selection and a guarded before image. Its form retains the original chat owner and offers constrained values, undo/redo, Escape cancel, and Ctrl/Cmd+Enter draft staging; IME composition suppresses shortcuts. Before and after evidence crops only the rechecked same element; full images remain local. The trial is cleared before staging, and the verification card warns that an active trial cannot prove a source change. A replaced or application-edited target requires reload to remove uncertain remaining effects. Failed Composer send retains the existing draft and does not retry automatically.
+
 ## 4. Native-view constraints
 
 React z-index is not a WebContentsView overlay implementation. A trusted native overlay/local view must handle resizing, focus, IME, occlusion and display scale without granting remote pages a privileged preload. In agent mode it blocks human page input but retains takeover; in human mode it revokes agent admission. Capture web content without agent cursor/labels/toolbars by default.
@@ -62,6 +64,8 @@ Only genuine human-mode input goes directly to the page. IME confirmation Enter 
 Attribute popups to opener, Thread and transient context before accepting; no unowned windows. Recheck cross-origin login transitions. Deny camera/microphone/location by default initially and hand the flow to a person.
 
 Show download origin, name, size-or-unknown and state; save only after user confirmation and never execute. Uploads use a trusted user chooser, not model-specified host paths. Cancellation is a normal outcome. Files selected during human control are not automatically read by the agent.
+
+Current source path: the visible current human Page offers “Allow next download,” which permits one site-triggered item within 30 seconds. Electron's native Save dialog lets the user choose the destination; cancellation saves no file. Status shows the Page provenance, initiating origin (explicitly unknown when unavailable), filename, size or unknown, and completion/cancellation/interruption, with cancellation for active items. Files never open automatically, and a dispatched network request is never retried on cancellation. Uploads use the site's file control and the system chooser during human control; cancellation leaves the human Page usable. Explicit giveback lets the Agent freshly observe only visible site results, without receiving the chosen host path or file bytes. Native B-39/B-40 acceptance remains for M2.
 
 ## 7. Acceptance evidence
 

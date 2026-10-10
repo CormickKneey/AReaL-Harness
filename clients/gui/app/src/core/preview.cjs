@@ -6,8 +6,10 @@ const pageKey = (coreInstanceId, projectId, threadId, pageId) => JSON.stringify(
 const { randomUUID, randomBytes, createHash } = require('node:crypto');
 const { performance } = require('node:perf_hooks');
 const { isDeepStrictEqual } = require('node:util');
+const { basename } = require('node:path');
 const { validatePreview } = require('@areal/workbench/desktop-contract');
 const { WorkspaceNetworkPolicy, loopback } = require('./browser-network.cjs');
+const { validateEdit, mutate: mutateStyleTrial } = require('./browser-style-trial.cjs');
 
 function webUrl(value) {
   const text = String(value ?? "").trim();
@@ -50,6 +52,16 @@ async function nativeWithin(promise, deadline) {
     })]);
   } finally { clearTimeout(timer); }
 }
+async function batchWithin(promise, deadline) {
+  const remaining = deadline - performance.now();
+  if (remaining <= 0) throw new Error('not_sent');
+  let timer;
+  try {
+    return await Promise.race([promise, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('not_sent')), remaining);
+    })]);
+  } finally { clearTimeout(timer); }
+}
 const viewportScript = `({width:innerWidth,height:innerHeight,scrollX,scrollY,deviceScaleFactor:devicePixelRatio})`;
 const coordinateKinds = new Set(['clickAt', 'drag', 'pressAt']);
 function viewportFacts(window, page, viewport) {
@@ -83,6 +95,10 @@ const interactiveRoles = new Set(['button', 'link', 'textbox', 'textfield', 'sea
 const MAX_REFS = 1000;
 const MAX_DIAGNOSTICS = 200;
 const MAX_DIAGNOSTIC_BYTES = 256 * 1024;
+const MAX_FILE_BYTES = 64 * 1024 * 1024;
+const MAX_FILE_RECEIPTS = 8;
+const DOWNLOAD_INTENT_MS = 30000;
+const DOWNLOAD_TIMEOUT_MS = 120000;
 const sensitiveCaptureScript = `(() => {
   const selector = 'input[type="password"],input[name*="token" i],input[name*="secret" i],input[name*="key" i]';
   const sensitiveAutocomplete = new Set(['current-password', 'new-password', 'cc-number', 'cc-csc', 'one-time-code']);
@@ -196,10 +212,14 @@ class CorePreview {
     this.selected = new Map();
     this.eventSequences = new Map();
     this.listeners = new Set();
+    this.fileReceipts = new Map();
     this.owner = null;
     this.view = null;
     this.browserHostId = randomUUID();
     this.hostGeneration = randomBytes(4).readUInt32BE(0);
+    // A call identity is retained for this host lifetime. Losing a transport
+    // reply must never turn a repeated call into permission to replay a prefix.
+    this.batchCalls = new Map();
   }
   workspacePages(projectId, threadId) {
     return [...this.pages.values()].filter(page => page.coreInstanceId === this.coreIdentity(projectId)
@@ -241,13 +261,15 @@ class CorePreview {
       url: c && !c.isDestroyed() ? c.getURL() || page.url : page.url,
       title: c && !c.isDestroyed() ? safeText(c.getTitle(), 256) : safeText(page.title, 256),
       pageGeneration: page.pageGeneration, documentEpoch: page.documentGeneration,
-      controlEpoch: page.controlEpoch, viewportRevision: page.viewportRevision };
+      controlEpoch: page.controlEpoch, viewportRevision: page.viewportRevision,
+      operation: page.batchProgress ?? null };
   }
   snapshot(projectId, threadId) {
     const key = workspaceKey(this.coreIdentity(projectId), projectId, threadId);
     return { sequence: this.eventSequences.get(key) ?? 0, workspaceId: key,
       selectedPageId: this.selected.get(key) ?? null,
-      pages: this.workspacePages(projectId, threadId).map(page => this.metadata(page)) };
+      pages: this.workspacePages(projectId, threadId).map(page => this.metadata(page)),
+      fileReceipts: this.fileReceipts.get(key) ?? [] };
   }
   subscribe(projectId, threadId, listener) {
     const item = { key: workspaceKey(this.coreIdentity(projectId), projectId, threadId), listener };
@@ -266,6 +288,20 @@ class CorePreview {
   dispose() {
     for (const key of [...this.pages.keys()]) this.release(key);
     this.view = null; this.owner = null;
+    this.fileReceipts.clear();
+  }
+  fileReceipt(page, record) {
+    const key = workspaceKey(page.coreInstanceId, page.projectId, page.threadId);
+    const entries = this.fileReceipts.get(key) ?? [];
+    const index = entries.findIndex(value => value.id === record.id);
+    if (index >= 0) entries.splice(index, 1);
+    const { timer: _timer, ...publicRecord } = record;
+    entries.push(publicRecord);
+    while (entries.length > MAX_FILE_RECEIPTS) entries.shift();
+    this.fileReceipts.delete(key);
+    this.fileReceipts.set(key, entries);
+    while (this.fileReceipts.size > 32) this.fileReceipts.delete(this.fileReceipts.keys().next().value);
+    this.changed(page);
   }
   release(key, { preserveContext = false } = {}) {
     const page = this.pages.get(key);
@@ -282,6 +318,8 @@ class CorePreview {
       if (next) this.selected.set(workspace, next.id); else this.selected.delete(workspace);
     }
     this.changed(page, 'pageRemoved');
+    if (!this.owns(page.projectId, page.threadId) || page.coreInstanceId !== this.coreIdentity(page.projectId))
+      this.fileReceipts.delete(workspace);
     if (!preserveContext && ![...this.pages.values()].some(other => other.partition === page.partition))
       this.releaseWorkspaceContext(page);
   }
@@ -321,9 +359,9 @@ class CorePreview {
   }
   closeNative(page) {
     if (!page.view) return;
+    page.styleTrial = null;
     const c = page.view.webContents;
-    for (const item of page.downloads ?? []) item.cancel();
-    page.downloads?.clear();
+    this.cancelFileOperations(page, 'page_closed_after_dispatch');
     if (page.onDownload) c.session.removeListener('will-download', page.onDownload);
     page.diagnosticsReady = false; page.diagnosticRequests?.clear();
     page.claiming?.cancel();
@@ -331,8 +369,24 @@ class CorePreview {
     if (!c.isDestroyed()) c.close();
     page.view = null;
   }
+  cancelFileOperations(page, reason) {
+    if (page.fileHandoff?.timer) clearTimeout(page.fileHandoff.timer);
+    page.fileHandoff = null;
+    for (const item of page.downloads ?? []) {
+      const record = page.downloadRecords?.get(item);
+      if (record && !['completed', 'cancelled', 'interrupted', 'unknown'].includes(record.status)) {
+        record.status = 'unknown'; record.reason = reason;
+        this.fileReceipt(page, record);
+      }
+      item.cancel();
+      if (record?.timer) clearTimeout(record.timer);
+    }
+    page.downloads?.clear();
+    page.downloadRecords?.clear();
+  }
   pinned(page) {
     return !page.view || page.crashed || page.control !== 'human' || page.requestedVisible || !!page.annotationCaptureId
+      || !!page.styleTrial
       || page.activeAction || page.activeRead || page.activeSelection || page.activePrepare || page.claiming || page.plans.size > 0
       || page.inputPending.size > 0 || page.heldButtons.size > 0 || page.heldKeys.size > 0
       || page.dialogPending || page.fileHandoff || (page.downloads?.size ?? 0) > 0;
@@ -371,8 +425,10 @@ class CorePreview {
       canGoForward: c?.navigationHistory.canGoForward() ?? false,
       error: page?.error ?? '',
       browser: page ? { pageId: page.id, control: page.control,
+        trialActive: !!page.styleTrial, trialStale: !!page.styleTrial?.stale,
         transferError: page.transferError ?? null, resource: page.view ? page.crashed ? 'crashed' : 'ready' : 'suspended',
-        stateLoss: page.stateLoss ?? null } : null,
+        stateLoss: page.stateLoss ?? null,
+        downloadIntentExpiresAt: page.fileHandoff?.kind === 'download' ? page.fileHandoff.expiresAt : null } : null,
     };
     return page ? { ...state, workspace: this.snapshot(page.projectId, page.threadId) } : state;
   }
@@ -437,7 +493,13 @@ class CorePreview {
         for (const [method, params] of releases) await nativeWithin(this.dispatchInput(page, method, params), deadline);
         if (page.inputPending.size) await nativeWithin(Promise.allSettled([...page.inputPending]), deadline);
         if (page.heldButtons.size || page.heldKeys.size) throw new Error('原生输入释放未确认，请关闭页面');
-        if (c.debugger.isAttached()) c.debugger.detach();
+        if (c.debugger.isAttached()) {
+          if (page.fileChooserIntercepted) {
+            await nativeWithin(c.debugger.sendCommand('Page.setInterceptFileChooserDialog', { enabled: false }), deadline);
+            page.fileChooserIntercepted = false;
+          }
+          c.debugger.detach();
+        }
         if (page.control === 'transferring' && page.controlEpoch === epoch) {
           page.control = 'human'; page.transferError = null;
           page.view?.setVisible(this.pageStillOwned(page) && this.owner === pageKey(page.coreInstanceId, page.projectId, page.threadId, page.id)
@@ -462,8 +524,10 @@ class CorePreview {
       || !page.view.webContents.getURL()
       || !this.owns(projectId, threadId)) throw new Error('当前聊天没有可认领的页面');
     if (page.control !== 'human' || page.claiming || page.activeSelection || page.annotationCaptureId
-      || page.activeRead || page.activePrepare || page.activeAction)
+      || page.activeRead || page.activePrepare || page.activeAction || page.fileHandoff || page.downloads.size)
       throw new Error('浏览页面当前不可认领');
+    if (page.styleTrial && !(await this.clearStyleTrial(page)).cleared)
+      throw new Error('页面试改已失效，请刷新页面后再交还 Agent');
     const c = page.view.webContents;
     const initial = { pageGeneration: page.pageGeneration, documentEpoch: page.documentGeneration,
       controlEpoch: page.controlEpoch, url: c.getURL() };
@@ -482,7 +546,7 @@ class CorePreview {
         || page.pageGeneration !== initial.pageGeneration || page.documentGeneration !== initial.documentEpoch
         || page.controlEpoch !== initial.controlEpoch || c.isDestroyed() || c.getURL() !== initial.url
         || c.isDevToolsOpened()) throw new Error('Browser claim was revoked');
-      page.control = 'agent'; grantedEpoch = ++page.controlEpoch; page.refs.clear(); page.plans.clear();
+      page.control = 'agent'; grantedEpoch = ++page.controlEpoch; page.refs.clear(); page.plans.clear(); page.batchProgress = null;
       page.lastObservation = null; page.needsObservation = true;
       this.clearDiagnostics(page, 'new_control_epoch');
       if (!c.debugger.isAttached()) c.debugger.attach('1.3');
@@ -490,6 +554,10 @@ class CorePreview {
       // Electron's live console-message event supplies Console evidence; CDP
       // Network starts only after this explicit enable receipt.
       await Promise.race([c.debugger.sendCommand('Network.enable', { maxPostDataSize: 0 }), cancelled]);
+      // An indirect Agent click may open an <input type=file> chooser. Keep
+      // Chromium's chooser suppressed for the entire Agent control epoch.
+      await Promise.race([c.debugger.sendCommand('Page.setInterceptFileChooserDialog', { enabled: true }), cancelled]);
+      page.fileChooserIntercepted = true;
       if (!this.pageStillOwned(page) || page.claiming !== claim || page.control !== 'agent'
         || page.pageGeneration !== initial.pageGeneration || page.documentGeneration !== initial.documentEpoch
         || page.controlEpoch !== grantedEpoch || c.isDestroyed() || c.getURL() !== initial.url
@@ -497,7 +565,7 @@ class CorePreview {
       page.diagnosticsStartedAt = Date.now() / 1000;
       page.diagnosticsReady = true;
       this.changed(page, 'controlChanged');
-      return { protocol: 'areal.browser.host.v1', operations: ['describe', 'observe', 'capture', 'act', 'wait', 'navigate', 'newPage', 'diagnostics'], available: true,
+      return { protocol: 'areal.browser.host.v1', operations: ['describe', 'observe', 'capture', 'act', 'wait', 'navigate', 'newPage', 'diagnostics', 'runBatch'], available: true,
         coreInstanceId: page.coreInstanceId, projectId, threadId, pageId: page.id, browserHostId: this.browserHostId,
         hostGeneration: this.hostGeneration, pageGeneration: initial.pageGeneration, controlEpoch: grantedEpoch };
     } catch (error) {
@@ -843,8 +911,191 @@ class CorePreview {
       if (page.activeRead === read) page.activeRead = null;
     }
   }
+  async beginStyleTrial(projectId, threadId, pageId, captureId, elementId) {
+    const page = this.page(projectId, threadId, pageId);
+    const selected = page?.annotationElement;
+    const frozen = page?.annotationCapture;
+    if (!selected || selected.captureId !== captureId || selected.elementId !== elementId || !frozen
+      || page.styleTrial || page.control !== 'human' || page.claiming) throw new Error('请重新选择当前页面元素');
+    if ((await this.checkElement(projectId, threadId, pageId, captureId, elementId)).stale
+      || page.annotationElement !== selected || page.annotationCapture !== frozen) throw new Error('选择的元素已变化');
+    const trialId = randomUUID();
+    page.styleTrial = { trialId, backendNodeId: selected.backendNodeId,
+      pageGeneration: frozen.pageGeneration, documentEpoch: frozen.documentEpoch,
+      controlEpoch: frozen.controlEpoch, nativeWebContentsId: frozen.nativeWebContentsId,
+      sourceUrl: frozen.sourceUrl, evidence: selected.result,
+      history: [], cursor: 0, commandCount: 0, busy: false, stale: false };
+    page.annotationCaptureId = null; page.annotationCapture = null; page.annotationElement = null;
+    return { trialId, element: selected.result, active: true, sourceMapping: selected.result.sourceMapping };
+  }
+  async styleTrialCommand(projectId, threadId, pageId, trialId, operation, property, value) {
+    const page = this.page(projectId, threadId, pageId), trial = page?.styleTrial;
+    const c = page?.view?.webContents;
+    if (!trial || trial.trialId !== trialId || !c || trial.busy) throw new Error('页面试改已失效');
+    if (operation === 'applyStyleTrial') validateEdit(property, value);
+    if (operation === 'applyStyleTrial' && trial.cursor >= 20) throw new Error('页面试改最多20步；请先撤销或发送意图');
+    if (trial.commandCount >= 60) throw new Error('页面试改操作已达上限；请清除并重新选择元素');
+    let read = null;
+    const valid = () => page.styleTrial === trial && !trial.stale && this.pageStillOwned(page)
+      && this.owns(projectId, threadId) && page.control === 'human' && !page.claiming
+      && page.pageGeneration === trial.pageGeneration && page.documentGeneration === trial.documentEpoch
+      && page.controlEpoch === trial.controlEpoch && page.view?.webContents === c
+      && c.id === trial.nativeWebContentsId && !c.isDestroyed() && !c.isDevToolsOpened()
+      && c.getURL() === trial.sourceUrl && !page.activeAction && page.activeRead === read && !page.activePrepare;
+    if (!valid()) { trial.stale = true; throw new Error('页面试改已失效，请刷新页面'); }
+    const step = operation === 'undoStyleTrial' ? trial.history[trial.cursor - 1]
+      : operation === 'redoStyleTrial' ? trial.history[trial.cursor] : null;
+    if (operation !== 'applyStyleTrial' && !step) return this.styleTrialState(trial);
+    const editedProperty = step?.property ?? property;
+    const latest = new Map();
+    for (const applied of trial.history.slice(0, trial.cursor)) latest.set(applied.property, applied.after);
+    if (operation === 'redoStyleTrial' && !latest.has(editedProperty)) latest.set(editedProperty, step.before);
+    const checks = [...latest].map(([property, expected]) => ({ property, expected }));
+    const replacement = operation === 'applyStyleTrial' ? { value, priority: '' }
+      : operation === 'undoStyleTrial' ? step.before : step.after;
+    trial.busy = true;
+    trial.commandCount++;
+    const deadline = performance.now() + 3000;
+    let rejectCancel;
+    const cancelled = new Promise((_, reject) => { rejectCancel = reject; });
+    void cancelled.catch(() => {});
+    read = { requestId: randomUUID(), cancel: () => rejectCancel(new Error('页面试改已取消')) };
+    page.activeRead = read;
+    try {
+      const result = await mutateStyleTrial(c, trial.backendNodeId, editedProperty, checks, replacement,
+        promise => Promise.race([nativeWithin(promise, deadline), cancelled]));
+      if (!valid() || result.stale) { trial.stale = true; throw new Error('应用已修改或替换目标，试改已失效'); }
+      if (operation === 'applyStyleTrial' && isDeepStrictEqual(result.before, result.after))
+        throw new Error('试改值未改变当前属性');
+      if (operation === 'applyStyleTrial') {
+        trial.history.length = trial.cursor;
+        trial.history.push({ property, before: result.before, after: result.after });
+        trial.cursor++;
+      } else if (operation === 'undoStyleTrial') trial.cursor--;
+      else trial.cursor++;
+      return this.styleTrialState(trial);
+    } finally { trial.busy = false; if (page.activeRead === read) page.activeRead = null; }
+  }
+  styleTrialState(trial) {
+    return { trialId: trial.trialId, active: !trial.stale, stale: trial.stale,
+      canUndo: trial.cursor > 0, canRedo: trial.cursor < trial.history.length,
+      edits: trial.history.slice(0, trial.cursor).map(step => ({ property: step.property,
+        before: step.before.value, after: step.after.value })),
+      element: trial.evidence, sourceMapping: trial.evidence.sourceMapping };
+  }
+  async captureStyleTrialAfter(projectId, threadId, pageId, trialId) {
+    const page = this.page(projectId, threadId, pageId), trial = page?.styleTrial;
+    if (!trial || trial.trialId !== trialId || trial.stale || trial.busy || !trial.cursor)
+      throw new Error('请先在当前页面完成试改');
+    const c = page.view?.webContents;
+    let read = null;
+    const same = () => page.styleTrial === trial && !trial.stale && !trial.busy
+      && this.pageStillOwned(page) && this.owns(projectId, threadId)
+      && page.control === 'human' && !page.claiming && page.activeRead === read && !page.activeAction
+      && !page.activePrepare && page.pageGeneration === trial.pageGeneration
+      && page.documentGeneration === trial.documentEpoch && page.controlEpoch === trial.controlEpoch
+      && page.view?.webContents === c && c && !c.isDestroyed() && !c.isDevToolsOpened()
+      && c.id === trial.nativeWebContentsId && c.getURL() === trial.sourceUrl;
+    if (!same() || c.debugger.isAttached()) throw new Error('试改目标已变化，请刷新页面');
+    const deadline = performance.now() + 3000;
+    let rejectCancel;
+    const cancelled = new Promise((_, reject) => { rejectCancel = reject; });
+    void cancelled.catch(() => {});
+    read = { requestId: randomUUID(), cancel: () => rejectCancel(new Error('试改截图已取消')) };
+    page.activeRead = read;
+    const bounded = promise => Promise.race([nativeWithin(promise, deadline), cancelled]);
+    let attached = false, cssX, cssY, viewportKey;
+    try {
+      const viewport = await bounded(readIsolated(c, viewportScript));
+      if (!same()) throw new Error('试改目标已变化，请刷新页面');
+      viewportKey = viewportFacts(this.window, page, viewport).key;
+      c.debugger.attach('1.3'); attached = true;
+      const send = (method, params = {}) => bounded(c.debugger.sendCommand(method, params));
+      const [frames, box] = await Promise.all([
+        send('Page.getFrameTree'), send('DOM.getBoxModel', { backendNodeId: trial.backendNodeId }),
+      ]);
+      if (!same() || !frames.frameTree?.frame?.id) throw new Error('试改目标已变化，请刷新页面');
+      const quad = box.model?.border;
+      if (!Array.isArray(quad) || quad.length !== 8 || !quad.every(Number.isFinite))
+        throw new Error('试改目标已离开页面，请刷新页面');
+      const xs = [quad[0], quad[2], quad[4], quad[6]];
+      const ys = [quad[1], quad[3], quad[5], quad[7]];
+      const left = Math.max(0, Math.min(...xs)), right = Math.min(viewport.width, Math.max(...xs));
+      const top = Math.max(0, Math.min(...ys)), bottom = Math.min(viewport.height, Math.max(...ys));
+      if (right <= left || bottom <= top) throw new Error('试改目标已离开截图视口，请刷新页面');
+      cssX = (left + right) / 2; cssY = (top + bottom) / 2;
+    } finally {
+      if (attached && !c.isDestroyed() && c.debugger.isAttached()) c.debugger.detach();
+      if (page.activeRead === read) page.activeRead = null;
+      read = null;
+    }
+    if (!same() || viewportFacts(this.window, page, await nativeWithin(readIsolated(c, viewportScript), deadline)).key !== viewportKey)
+      throw new Error('试改目标已变化，请刷新页面');
+    const capture = await this.captureRegion(projectId, threadId, pageId);
+    try {
+      // Recheck the current private node against a new privacy-guarded bitmap.
+      // The original screenshot coordinates are invalid after a layout edit.
+      if (!same() || page.annotationCapture?.viewportKey !== viewportKey)
+        throw new Error('截图期间试改目标已变化，请刷新页面');
+      const x = Math.min(capture.viewport.bitmapWidth - 1, Math.floor(cssX * capture.viewport.bitmapWidth / capture.viewport.width));
+      const y = Math.min(capture.viewport.bitmapHeight - 1, Math.floor(cssY * capture.viewport.bitmapHeight / capture.viewport.height));
+      const element = await this.selectElement(projectId, threadId, pageId, capture.captureId,
+        x, y, trial.backendNodeId);
+      if (!element.available || page.styleTrial !== trial || trial.stale)
+        throw new Error('试改目标在截图时已变化，请撤销或刷新');
+      return { capture, element, trial: this.styleTrialState(trial) };
+    } catch (error) {
+      if (page.annotationCaptureId === capture.captureId) {
+        page.annotationCaptureId = null; page.annotationCapture = null; page.annotationElement = null;
+      }
+      throw error;
+    }
+  }
+  async clearStyleTrial(page) {
+    const trial = page?.styleTrial;
+    if (!trial) return { cleared: true, stale: false };
+    if (trial.busy) throw new Error('页面试改操作仍在进行');
+    const c = page.view?.webContents;
+    const same = c && !c.isDestroyed() && this.pageStillOwned(page)
+      && page.control === 'human' && page.pageGeneration === trial.pageGeneration
+      && page.documentGeneration === trial.documentEpoch && page.controlEpoch === trial.controlEpoch
+      && c.id === trial.nativeWebContentsId && c.getURL() === trial.sourceUrl;
+    if (!same || trial.stale) { trial.stale = true; return { cleared: false, stale: true }; }
+    trial.busy = true;
+    const deadline = performance.now() + 3000;
+    let cleared = false;
+    let rejectCancel;
+    const cancelled = new Promise((_, reject) => { rejectCancel = reject; });
+    void cancelled.catch(() => {});
+    const read = { requestId: randomUUID(), cancel: () => rejectCancel(new Error('页面试改已取消')) };
+    if (page.activeRead) { trial.busy = false; throw new Error('页面正在执行其他原生操作'); }
+    page.activeRead = read;
+    try {
+      while (trial.cursor > 0) {
+        const step = trial.history[trial.cursor - 1];
+        const latest = new Map();
+        for (const applied of trial.history.slice(0, trial.cursor)) latest.set(applied.property, applied.after);
+        const checks = [...latest].map(([property, expected]) => ({ property, expected }));
+        const result = await mutateStyleTrial(c, trial.backendNodeId, step.property, checks, step.before,
+          promise => Promise.race([nativeWithin(promise, deadline), cancelled]));
+        if (result.stale || page.styleTrial !== trial || !this.pageStillOwned(page)
+          || page.documentGeneration !== trial.documentEpoch || c.getURL() !== trial.sourceUrl) {
+          trial.stale = true; return { cleared: false, stale: true };
+        }
+        trial.cursor--;
+      }
+      cleared = true;
+      return { cleared: true, stale: false };
+    } finally {
+      trial.busy = false;
+      if (page.activeRead === read) page.activeRead = null;
+      if (cleared && page.styleTrial === trial) page.styleTrial = null;
+    }
+  }
   cancelRead({ projectId, threadId, pageId, requestId, hostGeneration }) {
     if (hostGeneration !== this.hostGeneration) return;
+    const batch = this.page(projectId, threadId, pageId)?.activeBatch;
+    if (batch?.requestId === requestId) batch.cancel();
     const active = this.page(projectId, threadId, pageId)?.activeRead;
     if (active?.requestId === requestId) active.cancel();
     const action = this.page(projectId, threadId, pageId)?.activeAction;
@@ -914,6 +1165,12 @@ class CorePreview {
     if (generation !== page.pageGeneration || documentEpoch !== page.documentGeneration
       || controlEpoch !== page.controlEpoch || frameId !== 'main') throw new Error('stale_ref');
     const ax = await c.debugger.sendCommand('Accessibility.getPartialAXTree', { backendNodeId });
+    const dom = await c.debugger.sendCommand('DOM.describeNode', { backendNodeId, depth: 2 });
+    const isFileInput = value => value?.nodeName?.toUpperCase() === 'INPUT'
+      && value.attributes?.some((attribute, index, attributes) => index % 2 === 0
+        && attribute.toLowerCase() === 'type' && attributes[index + 1]?.toLowerCase() === 'file');
+    if (isFileInput(dom.node) || dom.node?.children?.some(isFileInput))
+      throw new Error('human_takeover_required');
     const node = ax.nodes?.find(value => value.backendDOMNodeId === backendNodeId);
     if (!node || node.ignored || node.properties?.some(property => property.name === 'disabled' && property.value?.value === true))
       throw new Error('target_unavailable');
@@ -953,6 +1210,145 @@ class CorePreview {
       callId: request.callId, pageId: page.id, browserHostId: this.browserHostId,
       hostGeneration: this.hostGeneration, pageGeneration: page.pageGeneration,
       controlEpoch: page.controlEpoch, plan };
+  }
+  batchIdentity(request) {
+    return JSON.stringify([this.hostGeneration, request.coreInstanceId, request.projectId,
+      request.threadId, request.turnId, request.callId]);
+  }
+  batchStep(request, step) {
+    return { ...request, operation: step.operation, parameters: step.operation === 'act'
+      ? { pageId: request.pageId, snapshotId: step.snapshotId, action: step.action }
+      : { pageId: request.pageId, timeoutMs: step.timeoutMs } };
+  }
+  async prepareBatch(request) {
+    const key = this.batchIdentity(request);
+    const parameters = JSON.stringify(request.parameters);
+    const existing = this.batchCalls.get(key);
+    if (existing) {
+      if (existing.parameters !== parameters) throw new Error('not_sent');
+      return existing.preparePromise;
+    }
+    const { page, c } = this.actionPage(request);
+    if (this.batchCalls.size >= 256) throw new Error('not_sent');
+    const record = { parameters, page, plan: null, result: null, executePromise: null, cancelled: false };
+    this.batchCalls.set(key, record);
+    record.preparePromise = (async () => {
+      const stepPlans = [];
+      const deadline = performance.now() + 9000; // Adapter preparation expires at 10s.
+      try {
+        if (page.needsObservation || page.lastObservation !== request.parameters.snapshotId) throw new Error('stale_ref');
+        for (const step of request.parameters.steps) {
+          if (performance.now() >= deadline) throw new Error('not_sent');
+          const prepared = await this.prepare({ ...this.batchStep(request, step), batchDeadline: deadline });
+          stepPlans.push(prepared.plan);
+          if (performance.now() >= deadline || page.view?.webContents !== c || page.controlEpoch !== request.controlEpoch)
+            throw new Error('plan_stale');
+        }
+        const plan = { preparedActionId: randomUUID(), operation: 'runBatch', pageId: page.id,
+          origin: new URL(c.getURL()).origin, url: observationUrl(c.getURL()),
+          snapshotId: request.parameters.snapshotId, steps: stepPlans,
+          pageGeneration: page.pageGeneration, documentEpoch: page.documentGeneration,
+          controlEpoch: page.controlEpoch, viewportRevision: page.viewportRevision,
+          browserHostId: this.browserHostId, hostGeneration: this.hostGeneration,
+          threadId: request.threadId, turnId: request.turnId, callId: request.callId,
+          expiresAt: Date.now() + 300000 };
+        plan.fingerprint = createHash('sha256').update(JSON.stringify(plan)).digest('hex');
+        record.plan = plan;
+        page.plans.set(plan.preparedActionId, { plan, pageUrl: c.getURL() });
+        return { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration,
+          projectId: request.projectId, threadId: request.threadId, turnId: request.turnId,
+          callId: request.callId, pageId: page.id, browserHostId: this.browserHostId,
+          hostGeneration: this.hostGeneration, pageGeneration: page.pageGeneration,
+          controlEpoch: page.controlEpoch, plan };
+      } catch (error) {
+        for (const plan of stepPlans) page.plans.delete(plan.preparedActionId);
+        throw error;
+      }
+    })();
+    return record.preparePromise;
+  }
+  async executeBatch(request) {
+    const record = this.batchCalls.get(this.batchIdentity(request));
+    if (!record || record.parameters !== JSON.stringify(request.parameters)) throw new Error('plan_stale');
+    if (record.executePromise) return record.executePromise;
+    const approved = request.browserApproval?.plan;
+    const saved = approved && record.page.plans.get(approved.preparedActionId);
+    const { page, c } = this.actionPage(request);
+    if (record.page !== page || !record.plan || !saved || !isDeepStrictEqual(approved, record.plan)
+      || !isDeepStrictEqual(saved.plan, record.plan) || approved.expiresAt < Date.now()
+      || saved.pageUrl !== c.getURL() || page.controlEpoch !== approved.controlEpoch
+      || page.documentGeneration !== approved.documentEpoch) throw new Error('plan_stale');
+    // Register before the first asynchronous step so concurrent equal callIds
+    // share one execution; a different argument body is rejected above.
+    record.executePromise = (async () => {
+      page.plans.delete(approved.preparedActionId);
+      const receipts = [];
+      page.batchProgress = { callId: request.callId, completed: 0,
+        total: request.parameters.steps.length, status: 'running' };
+      this.changed(page, 'operationChanged');
+      const deadline = performance.now() + 29000;
+      let expired = false;
+      const batch = { requestId: request.requestId, cancel: () => {
+        record.cancelled = true;
+        if (page.activeAction?.requestId === request.requestId) page.activeAction.cancel();
+      } };
+      page.activeBatch = batch;
+      const timer = setTimeout(() => {
+        expired = true;
+        batch.cancel();
+      }, 29000);
+      const base = { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration,
+        projectId: request.projectId, threadId: request.threadId, turnId: request.turnId,
+        callId: request.callId, pageId: page.id, browserHostId: this.browserHostId,
+        hostGeneration: this.hostGeneration, pageGeneration: page.pageGeneration,
+        controlEpoch: approved.controlEpoch, preparedActionId: approved.preparedActionId };
+      try {
+        for (const [index, step] of request.parameters.steps.entries()) {
+          const remaining = deadline - performance.now();
+          if (record.cancelled || expired || remaining <= 1000 || (step.operation === 'wait' && step.timeoutMs + 1000 > remaining)) {
+            const result = { ...base, error: 'budget_exceeded', dispatch: 'not_sent',
+              receipts, failedStep: index, remaining: 'not_sent', remainingSteps: request.parameters.steps.length - index };
+            page.batchProgress = { callId: request.callId, completed: receipts.length,
+              total: request.parameters.steps.length, status: 'rejected' };
+            this.changed(page, 'operationChanged');
+            record.result = result; return result;
+          }
+          try {
+            this.actionPage(request); // Page, host generation and local control fence.
+            if (page.controlEpoch !== approved.controlEpoch || page.documentGeneration !== approved.documentEpoch)
+              throw new Error('plan_stale');
+            const result = await this.execute({ ...this.batchStep(request, step), batchDeadline: deadline,
+              browserApproval: { plan: approved.steps[index] },
+              batchGuard: () => record.cancelled || performance.now() >= deadline });
+            receipts.push({ stepIndex: index, operation: step.operation, status: 'confirmed', dispatch: result.dispatch,
+              verification: result.verification ?? 'not_checked', preparedActionId: result.preparedActionId });
+            page.batchProgress = { callId: request.callId, completed: receipts.length,
+              total: request.parameters.steps.length, status: 'running' };
+            this.changed(page, 'operationChanged');
+          } catch (error) {
+            const unknown = error.message === 'outcome_unknown';
+            const result = { ...base, error: unknown ? 'outcome_unknown' : error.message,
+              dispatch: unknown ? 'unknown' : 'not_sent', receipts,
+              failedStep: index, remaining: 'not_sent', remainingSteps: request.parameters.steps.length - index - 1 };
+            page.batchProgress = { callId: request.callId, completed: receipts.length,
+              total: request.parameters.steps.length, status: unknown ? 'unknown' : 'rejected' };
+            this.changed(page, 'operationChanged');
+            record.result = result; return result;
+          }
+        }
+        const result = { ...base, dispatch: 'confirmed', receipts,
+          verification: 'not_checked' };
+        page.batchProgress = { callId: request.callId, completed: receipts.length,
+          total: receipts.length, status: 'confirmed' };
+        this.changed(page, 'operationChanged');
+        record.result = result; return result;
+      } finally {
+        clearTimeout(timer);
+        for (const plan of approved.steps) page.plans.delete(plan.preparedActionId);
+        if (page.activeBatch === batch) page.activeBatch = null;
+      }
+    })();
+    return record.executePromise;
   }
   async executeNavigation(request) {
     const { page, c } = this.actionPage(request);
@@ -1013,12 +1409,14 @@ class CorePreview {
     }
   }
   async prepare(request) {
-    if (request.phase !== 'prepare' || !['act', 'wait', 'navigate', 'newPage'].includes(request.operation)) throw new Error('not_sent');
+    if (request.phase !== 'prepare' || !['act', 'wait', 'navigate', 'newPage', 'runBatch'].includes(request.operation)) throw new Error('not_sent');
+    if (request.operation === 'runBatch') return this.prepareBatch(request);
     if (['navigate', 'newPage'].includes(request.operation)) return this.prepareNavigation(request);
     const { page, c } = this.actionPage(request);
     const initialDocument = page.documentGeneration;
     for (const [id, record] of page.plans) if (record.plan.expiresAt < Date.now()) page.plans.delete(id);
     if (page.activeRead || page.activePrepare || page.activeAction
+      || page.activeBatch
       || this.workspaceOutstanding(page.projectId, page.threadId) >= 16) throw new Error('not_sent');
     const url = new URL(c.getURL());
     const local = url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
@@ -1034,13 +1432,18 @@ class CorePreview {
     try {
       if (!c.debugger.isAttached()) c.debugger.attach('1.3');
       if (coordinate) target = coordinateTarget(capture, request.parameters.action);
-      else if (request.operation === 'act') target = await this.actionTarget(page, c, request.parameters.action.ref);
+      else if (request.operation === 'act') target = await (request.batchDeadline
+        ? batchWithin(this.actionTarget(page, c, request.parameters.action.ref), request.batchDeadline)
+        : this.actionTarget(page, c, request.parameters.action.ref));
       if (request.parameters.action?.kind === 'fill'
         && !/^(textField|textbox|searchbox|comboBox|spinbutton)$/i.test(target.role))
         throw new Error('target_unavailable');
-      const viewport = await readIsolated(c, viewportScript);
+      const viewport = await (request.batchDeadline
+        ? batchWithin(readIsolated(c, viewportScript), request.batchDeadline)
+        : readIsolated(c, viewportScript));
       const viewportKey = viewportFacts(this.window, page, viewport).key;
-      if (!this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== request.controlEpoch
+      if ((request.batchDeadline && performance.now() >= request.batchDeadline)
+        || !this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== request.controlEpoch
         || page.pageGeneration !== request.pageGeneration || page.documentGeneration !== initialDocument || c.isDestroyed()
         || c.getURL() !== url.href) throw new Error('plan_stale');
       if (page.viewportKey !== viewportKey) { page.viewportKey = viewportKey; page.viewportRevision++; }
@@ -1069,13 +1472,17 @@ class CorePreview {
     }
   }
   async execute(request) {
-    if (request.phase !== 'execute' || !['act', 'wait', 'navigate', 'newPage'].includes(request.operation)) throw new Error('not_sent');
+    if (request.phase !== 'execute' || !['act', 'wait', 'navigate', 'newPage', 'runBatch'].includes(request.operation)) throw new Error('not_sent');
+    if (request.operation === 'runBatch') return this.executeBatch(request);
     if (['navigate', 'newPage'].includes(request.operation)) return this.executeNavigation(request);
     const { page, c } = this.actionPage(request);
     const approved = request.browserApproval?.plan;
     const saved = approved && page.plans.get(approved.preparedActionId);
-    const nowViewport = await readIsolated(c, viewportScript);
+    const nowViewport = await (request.batchDeadline
+      ? batchWithin(readIsolated(c, viewportScript), request.batchDeadline)
+      : readIsolated(c, viewportScript));
     const nowKey = viewportFacts(this.window, page, nowViewport).key;
+    if (request.batchGuard?.()) throw new Error('not_sent');
     if (!saved || !isDeepStrictEqual(approved, saved.plan)
       || saved.plan.threadId !== request.threadId || saved.plan.turnId !== request.turnId
       || saved.plan.callId !== request.callId || saved.plan.operation !== request.operation
@@ -1090,7 +1497,7 @@ class CorePreview {
       || !isDeepStrictEqual(saved.plan.action, request.operation === 'act'
         ? request.parameters.action : { kind: 'wait', timeoutMs: request.parameters.timeoutMs })) throw new Error('plan_stale');
     page.plans.delete(approved.preparedActionId);
-    if (page.activeRead || page.activePrepare || page.activeAction) throw new Error('not_sent');
+    if (page.activeRead || page.activePrepare || page.activeAction || (page.activeBatch && !request.batchGuard)) throw new Error('not_sent');
     let cancelled;
     const stop = new Promise((_, reject) => { cancelled = reject; });
     const action = { requestId: request.requestId, syntheticInput: request.operation === 'act', dispatched: false, cancelled: false,
@@ -1102,9 +1509,11 @@ class CorePreview {
       if (this.window.isFocused() && c.isFocused()) this.window.webContents.focus();
       page.view.setVisible(false);
     }
-    const deadline = setTimeout(() => action.cancel(), request.operation === 'wait'
+    const stepTimeout = request.operation === 'wait'
       ? Math.min(30000, request.parameters.timeoutMs + 1000)
-      : request.parameters.action.kind === 'drag' ? 12000 : 5000);
+      : request.parameters.action.kind === 'drag' ? 12000 : 5000;
+    const deadline = setTimeout(() => action.cancel(), request.batchDeadline
+      ? Math.max(1, Math.min(stepTimeout, request.batchDeadline - performance.now())) : stepTimeout);
     try {
       if (request.operation === 'wait') {
         await Promise.race([new Promise(resolve => setTimeout(resolve, request.parameters.timeoutMs)), stop]);
@@ -1128,7 +1537,7 @@ class CorePreview {
         // before-input-event cannot distinguish a physical key from CDP echo.
         if (this.window.isFocused() && c.isFocused()) throw new Error('not_sent');
         const live = () => {
-          if (action.cancelled || !this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== saved.plan.controlEpoch
+          if (action.cancelled || request.batchGuard?.() || !this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== saved.plan.controlEpoch
             || page.documentGeneration !== saved.plan.documentEpoch || page.viewportRevision !== saved.plan.viewportRevision
             || c.isDestroyed()) throw new Error(action.dispatched ? 'outcome_unknown' : 'plan_stale');
         };
@@ -1409,7 +1818,9 @@ class CorePreview {
       control: 'human', controlEpoch: 0, documentGeneration: 0, viewportRevision: 0, refs: new Map(),
       plans: new Map(), lastObservation: null, needsObservation: true, nextRef: 0,
       heldButtons: new Map(), heldKeys: new Map(), inputPending: new Set(), requestedVisible: false,
-      downloads: new Set(), dialogPending: false, fileHandoff: false, stateLoss: options.stateLoss ?? null,
+      downloads: new Set(), downloadRecords: new Map(), dialogPending: false, fileHandoff: null,
+      fileChooserIntercepted: false,
+      stateLoss: options.stateLoss ?? null,
       diagnosticsReady: false, diagnosticsStartedAt: null, diagnosticEvents: [], diagnosticRequests: new Map(), diagnosticBytes: 0,
       diagnosticSequence: 0, diagnosticLoss: null },
       c = view.webContents;
@@ -1423,6 +1834,10 @@ class CorePreview {
         line: Number.isSafeInteger(value.lineNumber) ? value.lineNumber : null });
     });
     c.debugger.on('message', (_event, method, params) => {
+      if (method === 'Page.fileChooserOpened') {
+        if (page.control === 'agent') this.revoke(page);
+        return;
+      }
       if (!page.diagnosticsReady || page.control !== 'agent' || !this.pageStillOwned(page)) return;
       if (method === 'Network.requestWillBeSent') {
         if (typeof params?.requestId !== 'string') return;
@@ -1464,27 +1879,99 @@ class CorePreview {
       }
     });
     c.debugger.on('detach', () => {
+      page.fileChooserIntercepted = false;
       this.clearDiagnostics(page, 'debugger_detached');
       if (page.control === 'agent') this.revoke(page);
     });
-    c.on('devtools-opened', () => this.revoke(page));
+    c.on('devtools-opened', () => { if (page.styleTrial) page.styleTrial.stale = true; this.revoke(page); });
     c.on('devtools-closed', () => {
       if (!this.pageStillOwned(page)) return;
       page.pageGeneration++; page.documentGeneration++; page.refs.clear(); page.plans.clear();
       page.needsObservation = true; this.clearDiagnostics(page, 'devtools_closed'); this.changed(page);
     });
     page.onDownload = (event, item, source) => {
-      if (source !== c) return;
-      if (!this.pageStillOwned(page)) { event.preventDefault(); return; }
-      if (!page.fileHandoff || page.downloads.size >= 4) {
-        event.preventDefault();
-        page.error = '下载需要明确的文件交接；未保存文件';
-        this.changed(page);
+      if (source !== c) {
+        // No page listener owns downloads started by Session APIs or an
+        // already released WebContents; do not let Electron choose a path.
+        if (![...this.pages.values()].some(other => other.session === c.session && other.view?.webContents === source))
+          event.preventDefault();
         return;
       }
+      const intent = page.fileHandoff;
+      const key = pageKey(page.coreInstanceId, projectId, threadId, page.id);
+      const current = () => this.pageStillOwned(page) && page.view?.webContents === c
+        && this.owner === key && this.selected.get(workspaceKey(page.coreInstanceId, projectId, threadId)) === page.id
+        && page.control === 'human' && page.controlEpoch === intent?.controlEpoch
+        && page.pageGeneration === intent?.pageGeneration
+        // A download link may start navigation without committing a new
+        // document; it remains the original Page only while getURL is unchanged.
+        && [intent?.documentGeneration, intent?.documentGeneration + 1].includes(page.documentGeneration)
+        && c.getURL() === intent?.url
+        && page.requestedVisible && page.view.getVisible() && this.window.isVisible()
+        && !this.window.isMinimized() && this.window.isFocused() && !c.isDestroyed() && !page.crashed;
+      if (!intent || intent.kind !== 'download' || Date.now() > intent.expiresAt
+        || !current() || page.downloads.size >= 1) {
+        event.preventDefault();
+        if (this.pageStillOwned(page)) {
+          page.error = '下载需要当前页面的明确文件交接；未保存文件';
+          this.changed(page);
+        }
+        return;
+      }
+      clearTimeout(intent.timer); page.fileHandoff = null;
+      const total = item.getTotalBytes();
+      const id = randomUUID();
+      let pageOrigin = 'unknown';
+      try { pageOrigin = new URL(c.getURL()).origin; } catch { /* Current Page origin stays unknown. */ }
+      const record = { id, pageId: page.id, threadId, openerId: page.openerId,
+        pageOrigin, initiator: 'unknown', source: diagnosticUrl(item.getURL()),
+        name: safeText(basename(item.getFilename()), 120),
+        sizeBytes: Number.isSafeInteger(total) && total > 0 ? total : null,
+        receivedBytes: 0, target: null, status: 'choosing', reason: null,
+        networkOutcome: 'unknown' };
+      if (record.sizeBytes !== null && record.sizeBytes > MAX_FILE_BYTES) {
+        event.preventDefault(); record.status = 'cancelled'; record.reason = 'size_limit';
+        this.fileReceipt(page, record); return;
+      }
+      // Electron opens its native Save dialog before creating a destination.
+      // setSavePath is intentionally absent: only the user supplies a path.
+      try { item.setSaveDialogOptions({ title: '保存网页下载', message: `${pageOrigin} · 最大 64 MiB` }); }
+      catch {
+        event.preventDefault(); record.status = 'cancelled'; record.reason = 'native_dialog_unavailable';
+        this.fileReceipt(page, record); return;
+      }
       page.downloads.add(item);
-      item.once('done', () => { page.downloads.delete(item); this.changed(page); });
-      this.changed(page);
+      page.downloadRecords.set(item, record);
+      record.timer = setTimeout(() => {
+        if (page.downloads.has(item)) {
+          record.status = 'unknown'; record.reason = 'download_timeout_after_dispatch';
+          item.cancel(); this.fileReceipt(page, record);
+        }
+      }, DOWNLOAD_TIMEOUT_MS);
+      item.on('updated', (_event, state) => {
+        if (!page.downloads.has(item)) return;
+        const received = item.getReceivedBytes();
+        record.receivedBytes = Number.isSafeInteger(received) && received >= 0 ? received : record.receivedBytes;
+        const target = item.getSavePath();
+        if (target) record.target = safeText(basename(target), 120);
+        if (record.receivedBytes > MAX_FILE_BYTES) {
+          record.status = 'unknown'; record.reason = 'size_limit_after_dispatch'; item.cancel();
+        } else if (record.status !== 'unknown') record.status = state === 'interrupted' ? 'interrupted' : 'downloading';
+        this.fileReceipt(page, record);
+      });
+      item.once('done', (_event, state) => {
+        clearTimeout(record.timer); delete record.timer;
+        // Closing a Page removes its ownership before Electron settles the
+        // cancelled DownloadItem. Its late callback must not restore receipts.
+        if (!this.pageStillOwned(page) || page.downloadRecords.get(item) !== record) return;
+        page.downloads.delete(item); page.downloadRecords.delete(item);
+        const target = item.getSavePath();
+        if (target) record.target = safeText(basename(target), 120);
+        if (record.status !== 'unknown') record.status = ['completed', 'cancelled', 'interrupted'].includes(state) ? state : 'unknown';
+        if (state === 'cancelled' && !target && !record.reason) record.reason = 'chooser_cancelled';
+        this.fileReceipt(page, record);
+      });
+      this.fileReceipt(page, record);
     };
     c.session.on('will-download', page.onDownload);
     c.setWindowOpenHandler(details => {
@@ -1541,11 +2028,18 @@ class CorePreview {
         event.preventDefault();
       }
     });
-    c.on("did-start-navigation", (_event, url, _inPlace, main) => {
+    c.on("did-start-navigation", (_event, url, inPlace, main) => {
       if (!this.pageStillOwned(page)) return;
       page.dialogPending = false;
       page.activeSelection?.cancel();
       if (main) {
+        // A new document discards its inline trial values. A same-document
+        // navigation may retain them, so fence the trial until an explicit
+        // refresh; never auto-reload and discard an unsaved form.
+        if (page.styleTrial) {
+          if (inPlace) page.styleTrial.stale = true;
+          else page.styleTrial = null;
+        }
         page.activeRead?.cancel();
         if (page.approvedNavigation === url) page.approvedNavigation = null;
         else this.revoke(page);
@@ -1560,6 +2054,16 @@ class CorePreview {
       }
       if (this.pageStillOwned(page)) this.changed(page);
     });
+    const clearCommittedFileHandoff = () => {
+      if (!this.pageStillOwned(page) || !page.fileHandoff) return;
+      clearTimeout(page.fileHandoff.timer);
+      page.fileHandoff = null;
+      this.changed(page);
+    };
+    // A download link can start navigation without committing a document.
+    // Keep the arm through that start, but never carry it into a new Page URL.
+    c.on('did-navigate', clearCommittedFileHandoff);
+    c.on('did-navigate-in-page', clearCommittedFileHandoff);
     c.on("did-fail-load", (_event, code, message, url, main) => {
       if (!this.pageStillOwned(page)) return;
       page.dialogPending = false;
@@ -1581,6 +2085,7 @@ class CorePreview {
       if (this.pages.get(owner) !== page) return;
       page.title = c.isDestroyed() ? page.title : c.getTitle() || page.title;
       this.revoke(page);
+      this.cancelFileOperations(page, 'native_crash_after_dispatch');
       page.crashed = true;
       page.error = '预览页面已退出，请重新加载';
       this.changed(page);
@@ -1631,6 +2136,46 @@ class CorePreview {
       if (page.origin !== 'agent' && request.userIntent !== true) throw new Error('关闭人工页面需要明确用户操作');
       this.release(key); return this.state(this.page(request.projectId, request.threadId));
     }
+    if (request.operation === 'allowNextDownload') {
+      const c = page?.view?.webContents;
+      if (request.userIntent !== true || !page || page.id !== request.pageId || !c
+        || !this.pageStillOwned(page) || page.control !== 'human' || page.crashed || c.isDestroyed()
+        || c.isDevToolsOpened() || page.fileHandoff || page.downloads.size || page.annotationCaptureId
+        || page.styleTrial
+        || page.activeSelection || page.activeRead || page.activePrepare || page.activeAction || page.claiming
+        || page.dialogPending || !c.getURL()
+        || this.owner !== key || this.selected.get(workspace) !== page.id || !page.requestedVisible
+        || !page.view.getVisible() || !this.window.isVisible() || this.window.isMinimized()
+        || !this.window.isFocused()) throw new Error('请先接管并显示当前页面，再允许下一次下载');
+      const intent = { kind: 'download', pageGeneration: page.pageGeneration,
+        documentGeneration: page.documentGeneration, controlEpoch: page.controlEpoch,
+        url: c.getURL(), expiresAt: Date.now() + DOWNLOAD_INTENT_MS };
+      intent.timer = setTimeout(() => {
+        if (page.fileHandoff === intent) { page.fileHandoff = null; this.changed(page); }
+      }, DOWNLOAD_INTENT_MS);
+      page.fileHandoff = intent;
+      this.changed(page);
+      return this.state(page);
+    }
+    if (request.operation === 'cancelFileHandoff') {
+      if (!page || page.id !== request.pageId || page.control !== 'human' || !this.pageStillOwned(page))
+        throw new Error('文件交接页面已变化');
+      if (page.fileHandoff?.timer) clearTimeout(page.fileHandoff.timer);
+      page.fileHandoff = null; this.changed(page);
+      return this.state(page);
+    }
+    if (request.operation === 'cancelDownload') {
+      if (request.userIntent !== true || !page || page.id !== request.pageId
+        || !this.pageStillOwned(page) || page.control !== 'human') throw new Error('文件交接页面已变化');
+      const entry = [...page.downloadRecords].find(([, record]) => record.id === request.downloadId);
+      if (!entry) throw new Error('下载已结束');
+      const [item, record] = entry;
+      record.status = 'unknown'; record.reason = 'user_cancelled_after_dispatch';
+      record.networkOutcome = 'unknown';
+      this.fileReceipt(page, record);
+      item.cancel();
+      return this.state(page);
+    }
     if (request.operation === 'captureRegion')
       return this.captureRegion(request.projectId, request.threadId, request.pageId);
     if (request.operation === 'captureElement')
@@ -1641,6 +2186,22 @@ class CorePreview {
     }
     if (request.operation === 'checkElement')
       return this.checkElement(request.projectId, request.threadId, request.pageId, request.captureId, request.elementId);
+    if (request.operation === 'beginStyleTrial')
+      return this.beginStyleTrial(request.projectId, request.threadId, request.pageId, request.captureId, request.elementId);
+    if (['applyStyleTrial', 'undoStyleTrial', 'redoStyleTrial'].includes(request.operation))
+      return this.styleTrialCommand(request.projectId, request.threadId, request.pageId,
+        request.trialId, request.operation, request.property, request.value);
+    if (request.operation === 'styleTrialState') {
+      const trial = page?.styleTrial;
+      if (!trial || trial.trialId !== request.trialId) throw new Error('页面试改已失效');
+      return this.styleTrialState(trial);
+    }
+    if (request.operation === 'captureStyleTrialAfter')
+      return this.captureStyleTrialAfter(request.projectId, request.threadId, request.pageId, request.trialId);
+    if (request.operation === 'clearStyleTrial') {
+      if (!page?.styleTrial || page.styleTrial.trialId !== request.trialId) throw new Error('页面试改已失效');
+      return this.clearStyleTrial(page);
+    }
     if (request.operation === 'endRegion') {
       if (!page) return this.state(null);
       if (!this.owns(request.projectId, request.threadId) || page.annotationCaptureId !== request.captureId)
@@ -1653,6 +2214,8 @@ class CorePreview {
     if (request.operation === 'hide') {
       if (page) {
         page.requestedVisible = false; page.activeSelection?.cancel();
+        if (page.fileHandoff?.timer) clearTimeout(page.fileHandoff.timer);
+        page.fileHandoff = null;
         if (page.control === 'human' && page.annotationCaptureId) page.activeRead?.cancel();
       }
       if (!request.projectId || this.owner === key) {
@@ -1745,6 +2308,11 @@ class CorePreview {
       if (!alreadyAllowed && !page.networkPolicy.allowHumanNavigation(target, local))
         throw new Error('浏览安全策略拒绝该地址');
     }
+    if (['navigate', 'back', 'forward', 'reload', 'devtools'].includes(request.operation) && page.styleTrial) {
+      const cleared = await this.clearStyleTrial(page);
+      if (!cleared.cleared && request.operation !== 'reload')
+        throw new Error('试改已失效，请刷新页面后继续导航');
+    }
     if (['navigate', 'back', 'forward', 'reload', 'stop'].includes(request.operation)) this.revoke(page);
     if (page.control === 'transferring' && !['state', 'show', 'hide', 'stop', 'release', 'selectPage'].includes(request.operation))
       throw new Error('原生输入尚未收敛，请停止或关闭页面');
@@ -1764,6 +2332,13 @@ class CorePreview {
     }
     switch (request.operation) {
       case 'selectPage':
+        {
+          const outgoing = this.pages.get(this.owner);
+          if (outgoing?.fileHandoff?.timer) clearTimeout(outgoing.fileHandoff.timer);
+          if (outgoing) outgoing.fileHandoff = null;
+        }
+        if (page.fileHandoff?.timer) clearTimeout(page.fileHandoff.timer);
+        page.fileHandoff = null;
         this.selected.set(workspace, page.id);
         this.changed(page);
         break;

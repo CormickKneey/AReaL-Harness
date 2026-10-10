@@ -377,7 +377,10 @@ class CoreBackend {
       this.onChange();
       return;
     }
-    const resumed = await client.request('thread/resume', { threadId }, {
+    if (!client.capabilities?.methods?.includes('areal/thread/observe')) {
+      throw new Error('当前 Core 不支持安全观察已有聊天；请更新 Core 后重新连接');
+    }
+    const resumed = await client.request('areal/thread/observe', { threadId }, {
       onResult: result => { if (this.currentConnection(project, client)) project.model.replace(result.thread); },
     });
     this.requireConnection(project, client);
@@ -395,6 +398,28 @@ class CoreBackend {
       this.refreshConfiguration(project, threadId),
       this.refreshQueue(project, threadId),
     ]);
+  }
+
+  async bindBrowserHostForClaim(project, threadId) {
+    const client = project.client;
+    if (!client?.capabilities?.methods?.includes('areal/thread/observe')) {
+      throw new Error('当前 Core 不支持安全观察已有聊天；请更新 Core 后重新连接');
+    }
+    // A local, explicit page claim may rebind an idle host. Read Core's
+    // current state first; the Core checks idle state and host ownership again.
+    const observed = await client.request('areal/thread/observe', { threadId }, {
+      onResult: result => { if (this.currentConnection(project, client)) project.model.replace(result.thread); },
+    });
+    this.requireConnection(project, client);
+    const thread = observed.thread;
+    if (!thread?.dynamicTools?.some(tool => tool.name === 'browser_v1')
+      || thread.desktop?.archived || thread.status?.type !== 'idle') {
+      throw new Error('聊天正在执行或浏览器未启用，请刷新后再认领页面');
+    }
+    await client.request('thread/resume', { threadId }, {
+      onResult: result => { if (this.currentConnection(project, client)) project.model.replace(result.thread); },
+    });
+    this.requireConnection(project, client);
   }
 
   async refreshQueue(project, threadId) {

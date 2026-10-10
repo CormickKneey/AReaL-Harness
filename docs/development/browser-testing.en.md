@@ -77,6 +77,10 @@ Fixtures include separate-origin sites, simulated HTTPOnly-cookie login, cross-o
 | B-48 | Packaged self-containment | An isolated package passes without dev dependencies, global Chrome or exposed CDP. | 19 |
 | B-49 | Full R2 workflow | A real package demonstrates the required development collaboration with review evidence. | 19 |
 
+Ticket 16 source checks cover trusted IPC scope, file limits and Agent file-input refusal only. The M2 real Electron fixture must exercise human upload selection and cancellation plus an indirect Agent click on the same Page/Thread; an independent site counter must show no automatic replay after cancellation. For downloads, verify that no file is written before the system Save dialog, the user alone chooses the path, and unknown size, limit, timeout, close/crash, sibling Page ownership and cancellation receipts match actual files and GUI state. If a test injects OS dialog selection, disclose that substitution; it does not prove a human made the choice.
+
+Ticket 15 source checks cover constrained IPC, Main node identity/current-value fences, and Composer draft wiring. M2 must still exercise B-37/B-38 on a real native page: undo/redo, HMR node replacement, navigation, keyboard/IME, sensitive-content capture refusal, failed draft send, and actual page/Core receipts before and after clearing the trial. Source checks alone do not accept these scenarios.
+
 ## Fault injection
 
 Cut before prepare, during approval, before execute, after input reaches the fixture but before receipt, before Core persistence, on Main/adapter exit, on Core restart and during Page replacement. Verify not_sent/confirmed/UNKNOWN classification, no replay and no stale writes. An aborted signal alone is not cancellation evidence.

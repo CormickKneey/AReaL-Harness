@@ -16,13 +16,19 @@
 
 11 票源码增加仅供可信 GUI 用户触发的 `captureElement`、`cancelElementSelection` 和 `checkElement` 预览 IPC，不扩展模型 `browser_v1` 操作。Controller 在可见 human Page 的同一 CDP 会话先启用 DOM 与 Overlay，接收 `inspectNodeRequested` 后关闭叠层，再调用已有隐私保护截图并读取该节点的 AX role/name、位图边界和 Page/文档/控制身份。选择与后续读取按 Core/Thread/Page/原生 WebContentsView、代次、显示状态及期限校验；取消或换页会使迟到结果失效。`human:` 证据 Ref 不放入 Agent 可动作的 Ref 缓存；发送前节点身份、语义、边界和视口变化会标记 `stale`，保留选择时证据。裁图与来源说明只进入原 Thread 的 Composer 草稿，用户明确发送后才经既有 Core Blob/MediaRef 和消息受理进入历史。无实际项目来源映射时不提供 React 源码位置；Canvas/不可核查的 iframe 或 Shadow 内容给出原因和区域反馈入口。既有截图保护对不可读跨源 Frame 拒绝图片，不伪造裁图。B-29/B-30 的真实原生与 Core/GUI 验收仍待 M2。
 
+15 票源码增加可信 GUI 用户的 `beginStyleTrial`、`applyStyleTrial`、`undoStyleTrial`、`redoStyleTrial`、`captureStyleTrialAfter` 和 `clearStyleTrial` 预览 IPC；模型工具定义不变。Main 仅对 11 票原生选中的私有 backend 节点接受固定文本/颜色/字体/间距/尺寸词表，拒绝任意 CSS、CSS 值中的 URL/脚本以及 Renderer 选择器；普通文本按文本节点赋值。每步在隔离世界按真实当前属性值、节点连接及 Page/文档/控制代次核对；应用替换节点或改写已试改属性后拒绝回放。最多 20 步。清除仅在当前值仍等于本次覆盖时恢复旧值；不确定时要求刷新，不以试改效果宣称源码验证。跨文档导航丢弃旧覆盖；页内导航将试改标为过期并阻止交还控制，用户须明确刷新以清除可能存活的覆盖，避免自动刷新丢失表单内容。前后截图都经过既有隐私保护，只有选中元素裁图与用户意图进入原 Thread Composer 草稿，显式发送才经既有 Core 媒体与消息受理进入历史。源码位置未知时如实标注。B-37/B-38 真实原生和 Core/GUI 验收仍待 M2。
+
 12 票源码加入 `diagnostics` 只读操作：参数为 `pageId`、`kind=console|network`、可选非负整数 `cursor`、可选 `limit=1–200`（默认 50）。结果带页/控制/文档代次、事件序号、下一游标、丢失区间标记和 200 条/256 KiB 页缓冲上限。Console 来自当前 WebContents 的实时事件；网络来自同一页 CDP 的请求/响应/失败元数据，启用时不调用可能回放旧日志的 `Runtime.enable` 或 `Console.enable`。只保存 URL 的去查询/片段形式、方法、状态与有界错误信息，不保存 body、header 或凭据；敏感文本保守隐藏。接管立即清空缓冲并停止采集，交还开启新控制代次；迟到的网络请求按原生创建时间排除。显式 DevTools 打开撤销 Agent 控制，关闭后需要重新认领和观察。诊断工具结果是当前 Thread 的 Core Item，预览验证卡链接其来源；B-31/B-32 的真实 Electron/Core/GUI 验收仍待 M2，源码检查不证明原生事件时序。
 
-09 票的资源生命周期源码限制每窗口最多 8 个原生 Page、每 Workspace 最多 4 个逻辑 Page，并在原生对象分配前检查。执行中、控制交接中、可见人工页、准备计划和文件交接页不参与空闲驱逐；无可驱逐页时拒绝新页。驱逐保留同一 Page shell 的 URL/标题并报告状态损失，重开会提升 `pageGeneration`；隐藏本身不导航或关闭。归档、隐藏项目和窗口关闭撤销页面归属并关闭临时上下文的最后引用；取消与迟到结果不能重新显示旧页或将已派发操作改成确定未发送。当前版本不提供浏览器文件交接，下载在创建文件前拒绝。B-24–B-26 仍待 M1 统一真实 Electron/Core/GUI 验收。
+09 票的资源生命周期源码限制每窗口最多 8 个原生 Page、每 Workspace 最多 4 个逻辑 Page，并在原生对象分配前检查。执行中、控制交接中、可见人工页、准备计划和文件交接页不参与空闲驱逐；无可驱逐页时拒绝新页。驱逐保留同一 Page shell 的 URL/标题并报告状态损失，重开会提升 `pageGeneration`；隐藏本身不导航或关闭。归档、隐藏项目和窗口关闭撤销页面归属并关闭临时上下文的最后引用；取消与迟到结果不能重新显示旧页或将已派发操作改成确定未发送。B-24–B-26 仍待 M1 统一真实 Electron/Core/GUI 验收。
+
+16 票的文件交接源码要求用户在当前可见 human Page 中明确许可下一次下载；许可 30 秒后失效，只能消费一次，并绑定原生 WebContents、Page、Thread、文档与控制代次。Electron 原生保存对话框取得目标后才写入，Main 不接受 Renderer 或模型提供的路径。每页同时最多一个下载、单项最多 64 MiB、最长 120 秒；超限、关闭、崩溃会取消，已派发下载的网络副作用标记未知且不自动重试。只保留每 Workspace 最近 8 条本机会话回执，记录 Page、opener、来源可知程度、文件名、大小或未知、目标文件名及完成/取消/中断状态。网页上传沿用 human 控制下的系统文件选择器；Agent 控制时 Core 准备拒绝文件输入，原生 CDP 另拦截间接触发的文件选择器并撤销控制。无文件内容、宿主路径或文件选择接口交给模型。B-39/B-40 的真实 Electron/网站验收待 M2 统一运行。
 
 每页私有 Ref 缓存最多保留 1000 个存活身份，优先保留本次观察发出的 Ref；较旧的被驱逐 Ref 返回 `stale_ref`，公开 ID 不复用。原生截图前后均检查已知敏感字段，包括带可选 section 前缀的密码、支付安全码和一次性验证码自动填充 token，并在截图期间观察到 DOM 变更时拒绝图片。栅栏覆盖主文档、可读 Frame 和开放 Shadow root；短暂的 Canvas 像素或不可读的封闭 Shadow 内容无法证明安全，含未知秘密的页面不适合自动截图。
 
 ## 1. 两条既有连接与一个新能力
+
+Ticket 17 在既有 `browser_v1` 包络新增 `runBatch`，不修改持久化工具定义。参数为 `{pageId, snapshotId, steps}`，包含 1–8 步；每步为已有 `act` 动作（`{operation:"act", snapshotId, action}`）或有界等待（`{operation:"wait", timeoutMs}`）。所有步骤使用同一 Page 与已观察快照，不允许导航、新页面、任意代码、隐式网络工具或文件权限。截图坐标仅可用于首步，因为输入会使截图失效；已知等待总时长不能超过内部 29 秒执行预算。Core 准备并批准具体完整序列；Main 私有保存逐步计划，在每次派发前检查原生目标和控制 fence。结果包含逐步已确认回执与 `verification:not_checked`；后续确定拒绝时剩余步骤标为 `not_sent`。任一步不确定则整个工具为 UNKNOWN，并在 Core 错误详情保留已确认前缀。相同 call 身份共享运行中或已完成结果，参数变化拒绝。Preview 沿既有 Page operation 投影显示进度。B-41/B-42 真实 Electron/Core 验收及单步与批量 fixture 的工具次数实测留待 M2。
 
 现有链路是 Core app-server ↔ 独立桌面适配器，以及该适配器 ↔ Electron Main 的认证本地服务连接；Renderer 不持有 Core 凭据。后者现在主要传递状态与客户端命令，须新增有界的反向 Browser 请求、结果和取消，复用其认证，不新增公开浏览器服务端口。
 
@@ -193,7 +199,7 @@ Core 的4 MiB WS帧上限是全链路实际约束；适配器更大的本地帧�
 
 ## 10. 旧 Thread 与多客户端：新增 Core 接口
 
-`areal/thread/tools/attach` 已实现；`areal/thread/observe` 仍为设计提案。客户端须通过 `areal/capabilities` 的方法列表、`features.browserToolAttachment` 和 `browserToolBundles` 发现当前部署能力，不修改固定 Codex 兼容 schema 的既有定义。
+`areal/thread/tools/attach` 与 `areal/thread/observe` 已在源码实现。客户端通过 `areal/capabilities` 的方法列表和 `features.atomicObserve` 发现观察能力，通过 `features.browserToolAttachment` 和 `browserToolBundles` 发现追加能力；不修改固定 Codex 兼容 schema 的既有定义。GUI 重连与打开 Thread 先调用 `areal/thread/observe`，只恢复 Core 权威投影；旧 Core 未公布该方法时明确提示不支持，不用 `thread/resume` 偷取宿主。用户显式认领当前原生页后，GUI 再读取权威状态，并且仅在 Thread 空闲时通过既有 `thread/resume` 尝试重绑；Core 仍执行宿主冲突检查。观察者的工具回执不能代替绑定宿主，页面操作不从 URL 或缓存事件重放。B-43–B-46 的真实 Electron 故障注入验收仍待 M2。
 
 | 方法 | 请求 | 语义 |
 |---|---|---|

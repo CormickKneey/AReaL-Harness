@@ -11,10 +11,13 @@ import { call } from "./services.js";
 import { BrowserRegionAnnotation, type RegionDraft } from "./BrowserRegionAnnotation.js";
 import { attachmentDrafts, sending, stageThreadDraft } from "./Composer.js";
 import { BrowserVerificationCard } from "./BrowserVerificationCard.js";
+import "./BrowserFileHandoff.css";
+import { BrowserStyleTrial, type StyleTrialDraft } from './BrowserStyleTrial.js';
 import type { Action } from "./services.js";
 import type { PreviewRequest, OwnedPreviewOperation } from '@areal/workbench/desktop-contract';
 const locations = new Map<string, { url: string; link?: string }>();
 const regionDrafts = new Map<string, RegionDraft>();
+const styleTrialDrafts = new Map<string, StyleTrialDraft>();
 export function Preview({
   services,
   projectId,
@@ -58,6 +61,13 @@ export function Preview({
   const [annotationBusyOwner, setAnnotationBusyOwner] = useState<string | null>(null);
   const annotationBusy = annotationBusyOwner === owner;
   const annotationControl = useRef<HTMLButtonElement>(null);
+  const [styleTrialState, setStyleTrialState] = useState<{ owner: string; draft: StyleTrialDraft | null }>(() =>
+    ({ owner, draft: styleTrialDrafts.get(owner) ?? null }));
+  const styleTrial = styleTrialState.owner === owner ? styleTrialState.draft : styleTrialDrafts.get(owner) ?? null;
+  const [styleBusyOwner, setStyleBusyOwner] = useState<string | null>(null);
+  const styleBusy = styleBusyOwner === owner;
+  const styleTrialRef = useRef(styleTrial);
+  styleTrialRef.current = styleTrial;
   const annotatingRef = useRef(annotating);
   annotatingRef.current = annotating;
   const box = useRef<HTMLDivElement>(null);
@@ -77,7 +87,7 @@ export function Preview({
         operation,
         projectId,
         threadId,
-        ...(stateRef.current.browser?.pageId && !['subscribe', 'unsubscribe', 'newPage'].includes(operation)
+        ...(stateRef.current.browser?.pageId && !['state', 'subscribe', 'unsubscribe', 'newPage'].includes(operation)
           ? { pageId: stateRef.current.browser.pageId } : {}),
         ...extra,
       });
@@ -149,7 +159,8 @@ export function Preview({
         projectId,
         threadId,
         ...(value.browser?.pageId ? { pageId: value.browser.pageId } : {}),
-        visible: !!value.url && !value.error && !errorRef.current && !overlay && !annotatingRef.current && height > 0 &&
+        visible: !!value.url && !value.error && !errorRef.current && !overlay && !annotatingRef.current
+          && !styleTrialRef.current?.after && height > 0 &&
           box.current.checkVisibility({ visibilityProperty: true }),
         bounds: { x: r.x, y: r.y, width: r.width, height },
       };
@@ -208,6 +219,138 @@ export function Preview({
     if (draft) regionDrafts.set(owner, draft);
     else regionDrafts.delete(owner);
     setAnnotationState({ owner, draft });
+  };
+  const updateStyleTrial = (draft: StyleTrialDraft | null) => {
+    styleTrialRef.current = draft;
+    if (draft) styleTrialDrafts.set(owner, draft); else styleTrialDrafts.delete(owner);
+    setStyleTrialState({ owner, draft });
+  };
+  const startStyleTrial = async () => {
+    if (styleBusy || styleTrial || annotating || annotationBusy) return;
+    setStyleBusyOwner(owner); setError('');
+    let capture: RegionDraft['capture'] | null = null;
+    try {
+      const pageId = stateRef.current.browser?.pageId;
+      if (!pageId) throw new Error('请选择当前页面');
+      if (stateRef.current.browser?.control === 'agent')
+        await services.preview({ operation: 'takeover', projectId, threadId, pageId });
+      const selected = await services.preview({ operation: 'captureElement', projectId, threadId, pageId });
+      capture = selected.capture as RegionDraft['capture'];
+      if (!selected.element?.available) throw new Error(selected.element?.reason || '此元素不支持页面试改');
+      const begun = await services.preview({ operation: 'beginStyleTrial', projectId, threadId,
+        pageId, captureId: capture.captureId, elementId: selected.element.elementId });
+      if (!mounted.current || current.current !== owner) {
+        await services.preview({ operation: 'clearStyleTrial', projectId, threadId, pageId, trialId: begun.trialId });
+        return;
+      }
+      updateStyleTrial({ trialId: begun.trialId, before: capture, element: selected.element,
+        edits: [], canUndo: false, canRedo: false, stale: false, intent: '' });
+    } catch (e) {
+      if (capture) void services.preview({ operation: 'endRegion', projectId, threadId,
+        pageId: capture.pageId, captureId: capture.captureId }).catch(() => {});
+      if (mounted.current && current.current === owner) setError(e instanceof Error ? e.message : String(e));
+    } finally { setStyleBusyOwner(value => value === owner ? null : value); }
+  };
+  const changeStyleTrial = async (operation: 'applyStyleTrial' | 'undoStyleTrial' | 'redoStyleTrial', property?: string, value?: string) => {
+    const draft = styleTrialRef.current;
+    if (!draft || styleBusy) return;
+    setStyleBusyOwner(owner); setError('');
+    try {
+      const next = await services.preview({ operation, projectId, threadId, pageId: draft.before.pageId,
+        trialId: draft.trialId, ...(property ? { property } : {}), ...(value !== undefined ? { value } : {}) });
+      if (mounted.current && current.current === owner && styleTrialRef.current === draft)
+        updateStyleTrial({ ...draft, edits: next.edits, canUndo: next.canUndo, canRedo: next.canRedo, stale: next.stale });
+    } catch (e) {
+      if (mounted.current && current.current === owner) {
+        setError(e instanceof Error ? e.message : String(e));
+        const latest = styleTrialRef.current;
+        if (latest?.trialId === draft.trialId && /失效|已修改|已替换/.test(String(e)))
+          updateStyleTrial({ ...latest, stale: true });
+      }
+    } finally { setStyleBusyOwner(value => value === owner ? null : value); }
+  };
+  const cancelStyleTrial = async () => {
+    const draft = styleTrialRef.current;
+    if (!draft || styleBusy) return;
+    setStyleBusyOwner(owner); setError('');
+    try {
+      if (!draft.cleared) {
+        try {
+          const cleared = await services.preview({ operation: 'clearStyleTrial', projectId, threadId,
+            pageId: draft.before.pageId, trialId: draft.trialId });
+          if (!cleared.cleared) throw new Error('试改目标已变化，请刷新页面清除残留效果');
+        } catch (error) {
+          const currentPage = await services.preview({ operation: 'state', projectId, threadId, pageId: draft.before.pageId });
+          if (currentPage.browser?.trialActive) throw error;
+          // A navigation or page closure already discarded the old document.
+        }
+      }
+      if (draft.after) await services.preview({ operation: 'endRegion', projectId, threadId,
+        pageId: draft.before.pageId, captureId: draft.after.capture.captureId });
+      if (mounted.current && current.current === owner) updateStyleTrial(null);
+    } catch (e) {
+      if (mounted.current && current.current === owner) setError(e instanceof Error ? e.message : String(e));
+    } finally { setStyleBusyOwner(value => value === owner ? null : value); }
+  };
+  const cropStyleEvidence = async (capture: RegionDraft['capture'], bounds: NonNullable<RegionDraft['region']>) => {
+    const image = new Image(); image.src = `data:image/png;base64,${capture.imageBase64}`;
+    await image.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = bounds.width; canvas.height = bounds.height;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('无法生成页面试改证据');
+    context.drawImage(image, bounds.x, bounds.y, bounds.width, bounds.height, 0, 0, bounds.width, bounds.height);
+    return new Promise<Blob>((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob)
+      : reject(new Error('无法生成页面试改证据')), 'image/png'));
+  };
+  const stageStyleTrial = async () => {
+    const original = styleTrialRef.current;
+    if (!original || styleBusy || !original.intent.trim() || !original.edits.length) return;
+    setStyleBusyOwner(owner); setError('');
+    try {
+      let draft = original;
+      if (!draft.after) {
+        const after = await services.preview({ operation: 'captureStyleTrialAfter', projectId, threadId,
+          pageId: draft.before.pageId, trialId: draft.trialId });
+        if (!mounted.current || current.current !== owner || styleTrialRef.current !== draft)
+          throw new Error('试改所属聊天已变化');
+        await services.preview({ operation: 'hide', projectId, threadId, pageId: draft.before.pageId });
+        if (!mounted.current || current.current !== owner || styleTrialRef.current !== draft)
+          throw new Error('试改所属聊天已变化');
+        draft = { ...draft, after: { capture: after.capture, element: after.element } };
+        updateStyleTrial(draft);
+      }
+      const beforeBlob = await cropStyleEvidence(draft.before, draft.element.bounds);
+      const afterBlob = await cropStyleEvidence(draft.after!.capture, draft.after!.element.bounds);
+      if (!mounted.current || current.current !== owner || styleTrialRef.current !== draft)
+        throw new Error('试改所属聊天已变化');
+      if (!draft.cleared) {
+        const cleared = await services.preview({ operation: 'clearStyleTrial', projectId, threadId,
+          pageId: draft.before.pageId, trialId: draft.trialId });
+        if (!cleared.cleared) throw new Error('试改目标已变化，请刷新页面后重新核查');
+        if (!mounted.current || current.current !== owner || styleTrialRef.current !== draft)
+          throw new Error('试改所属聊天已变化');
+        draft = { ...draft, cleared: true };
+        updateStyleTrial(draft);
+      }
+      if (!mounted.current || current.current !== owner || styleTrialRef.current !== draft)
+        throw new Error('试改所属聊天已变化');
+      const capture = draft.before;
+      const description = `页面试改意图（已清除临时效果，未写入代码）\nURL: ${capture.url}\n截图时间: ${capture.capturedAt}\nCore: ${capture.coreInstanceId}; Page: ${capture.pageId}; pageGeneration: ${capture.pageGeneration}; documentEpoch: ${capture.documentEpoch}; controlEpoch: ${capture.controlEpoch}; viewportRevision: ${capture.viewportRevision}\n选择时元素: role=${JSON.stringify(draft.element.role)}; name=${JSON.stringify(draft.element.name)}; historicalRef=${draft.element.evidenceRef}; sourceMapping=${draft.element.sourceMapping}; React 源码位置未知。Agent 必须重新 observe 并取得新 Ref。\n属性值: ${JSON.stringify(draft.edits)}\n前后证据: browser-style-before-${capture.captureId}.png; browser-style-after-${draft.after!.capture.captureId}.png\n用户意图: ${draft.intent.trim()}\n最终验证必须在清除试改后基于真实页面执行。`;
+      const draftKey = `areal-gui:draft:${projectId}:${threadId}`;
+      if (sending.has(draftKey) || localStorage.getItem(`${draftKey}:pending`))
+        throw new Error('当前聊天有结果待核对的发送；请先确认结果，再加入试改意图');
+      const files = [...(attachmentDrafts.get(draftKey) ?? []),
+        new File([beforeBlob], `browser-style-before-${capture.captureId}.png`, { type: 'image/png' }),
+        new File([afterBlob], `browser-style-after-${draft.after!.capture.captureId}.png`, { type: 'image/png' })];
+      const existing = localStorage.getItem(draftKey) ?? '';
+      const key = stageThreadDraft(projectId, threadId, [existing, description].filter(Boolean).join('\n\n'), files);
+      window.dispatchEvent(new CustomEvent('areal-draft-change', { detail: key }));
+      updateStyleTrial(null);
+      await services.preview({ operation: 'endRegion', projectId, threadId,
+        pageId: capture.pageId, captureId: draft.after!.capture.captureId });
+    } catch (e) { if (mounted.current && current.current === owner) setError(e instanceof Error ? e.message : String(e)); }
+    finally { setStyleBusyOwner(value => value === owner ? null : value); }
   };
   const cancelAnnotation = async () => {
     if (!annotating || annotationBusy) return;
@@ -309,6 +452,7 @@ export function Preview({
   const uninspectedUnknown = thread?.turns?.some((turn: Data) => turn.items?.some((item: Data) =>
     item.type === 'dynamicToolCall' && !item.execution?.inspection &&
     (item.execution?.outcome === 'unknown' || item.execution?.hooks?.some((hook: Data) => hook.outcome === 'unknown')))) === true;
+  const batch = state.workspace?.pages?.find((page: Data) => page.pageId === state.browser?.pageId)?.operation;
   let address = url;
   if (!fullAddress && !addressFocused && !editing.current) {
     try { address = new URL(url).host; } catch { /* Keep a not-yet-valid user draft. */ }
@@ -329,6 +473,12 @@ export function Preview({
       </div>
       {state.browser?.stateLoss && <div className="preview-viewport-toolbar" role="status">
         {state.browser.stateLoss}
+      </div>}
+      {batch && <div className="preview-viewport-toolbar" role="status">
+        浏览步骤 {batch.completed}/{batch.total} · {batch.status === 'running' ? '进行中'
+          : batch.status === 'confirmed' ? '已确认输入，仍需检查页面结果'
+            : batch.status === 'unknown' ? '结果未知，请检查聊天记录'
+              : '已停止，剩余步骤未执行'}
       </div>}
       {browserEnabled && <div className="preview-viewport-toolbar" role="note">
         临时登录只在当前浏览工作区使用；关闭工作区或重启后可能需要重新登录。
@@ -381,7 +531,10 @@ export function Preview({
           ? <Button type="button" size="sm" onClick={() => void request('takeover')}>接管页面</Button>
           : <>
             {uninspectedUnknown && <span role="status">原浏览器动作结果 UNKNOWN。请先到聊天记录核查并确认；交还不会重试该动作。</span>}
-            <Button type="button" size="sm" disabled={claiming || uninspectedUnknown || !!state.loading || !!state.error}
+            <Button type="button" size="sm" disabled={claiming || uninspectedUnknown || !!state.loading || !!state.error
+              || !!styleTrial
+              || !!state.browser?.downloadIntentExpiresAt || (state.workspace?.fileReceipts ?? []).some((receipt: Data) =>
+                receipt.pageId === state.browser?.pageId && ['choosing', 'downloading', 'interrupted'].includes(receipt.status))}
             onClick={() => {
               setClaiming(true);
               void (async () => {
@@ -396,13 +549,45 @@ export function Preview({
             }}>交还并让 Agent 检查当前页</Button>
           </>}
       </div>}
+      {browserEnabled && state.url && <div className="preview-viewport-toolbar" role="group" aria-label="网页文件交接">
+        {state.browser?.control === 'human' ? <>
+          <Button type="button" size="sm" disabled={!!state.browser?.downloadIntentExpiresAt || !!annotating || !!styleTrial}
+            onClick={() => void request('allowNextDownload', { userIntent: true })}>允许下一次下载</Button>
+          {state.browser?.downloadIntentExpiresAt && <>
+            <span role="status">30 秒内在当前网页触发一次下载，随后选择保存位置。</span>
+            <Button type="button" size="sm" onClick={() => void request('cancelFileHandoff')}>取消下载许可</Button>
+          </>}
+          <span>上传请在网页中使用文件选择控件；系统选择器取消后可继续操作。</span>
+        </> : <span>文件选择需要先接管页面。</span>}
+      </div>}
+      {browserEnabled && (state.workspace?.fileReceipts ?? []).length > 0 &&
+        <div className="preview-viewport-toolbar preview-file-status" role="list" aria-label="网页下载状态">
+          {(state.workspace.fileReceipts as Data[]).map((receipt: Data) => <div role="listitem" key={receipt.id}>
+            {receipt.name || '未命名下载'} · 页面 {receipt.pageOrigin || '未知'} · 发起者 {receipt.initiator === 'unknown' ? '未知' : receipt.initiator}
+            {' · '}{receipt.source || '来源网址未知'}
+            {' · '}{receipt.sizeBytes == null ? '大小未知' : `${receipt.sizeBytes} B`}
+            {' · '}{({ choosing: '选择保存位置', downloading: '下载中', completed: '已完成', cancelled: '已取消', interrupted: '已中断', unknown: '结果待核对' } as Record<string, string>)[receipt.status] ?? '状态未知'}
+            {receipt.target ? ` · 保存为 ${receipt.target}` : ''}
+            {['choosing', 'downloading', 'interrupted'].includes(receipt.status) && receipt.pageId === state.browser?.pageId
+              && state.browser?.control === 'human' && <Button type="button" size="sm"
+                onClick={() => void request('cancelDownload', { downloadId: receipt.id, userIntent: true })}>取消下载</Button>}
+          </div>)}
+        </div>}
       {browserEnabled && state.url && <div className="preview-viewport-toolbar" role="group" aria-label="页面标注">
-        <Button ref={annotationControl} type="button" size="sm" disabled={annotationBusy || !!annotating || state.browser?.control === 'transferring'}
+        <Button ref={annotationControl} type="button" size="sm" disabled={annotationBusy || styleBusy || !!styleTrial || !!annotating || state.browser?.control === 'transferring'}
           onClick={() => void startAnnotation()}>截取区域并标注</Button>
-        <Button type="button" size="sm" disabled={annotationBusy || !!annotating || state.browser?.control === 'transferring'}
+        <Button type="button" size="sm" disabled={annotationBusy || styleBusy || !!styleTrial || !!annotating || state.browser?.control === 'transferring'}
           onClick={() => void startAnnotation('element')}>选择元素并标注</Button>
+        <Button type="button" size="sm" disabled={annotationBusy || styleBusy || !!styleTrial || !!annotating || state.browser?.control === 'transferring'}
+          onClick={() => void startStyleTrial()}>选择元素并试改</Button>
         {annotationBusy && !annotating && <span role="status">在页面中点击要标注的元素；按 Esc 取消。</span>}
       </div>}
+      {styleTrial && <BrowserStyleTrial draft={styleTrial} busy={styleBusy}
+        onApply={(property, value) => void changeStyleTrial('applyStyleTrial', property, value)}
+        onUndo={() => void changeStyleTrial('undoStyleTrial')}
+        onRedo={() => void changeStyleTrial('redoStyleTrial')}
+        onIntent={value => updateStyleTrial({ ...styleTrial, intent: value })}
+        onStage={() => void stageStyleTrial()} onCancel={() => void cancelStyleTrial()} />}
       {!browserEnabled && browserAvailable && state.url && <div className="preview-viewport-toolbar">
         <Button type="button" size="sm" disabled={claiming} onClick={() => {
           setClaiming(true);
@@ -411,7 +596,8 @@ export function Preview({
             .finally(() => { if (mounted.current && current.current === owner) setClaiming(false); });
         }}>在当前聊天启用浏览器</Button>
       </div>}
-      {thread && <BrowserVerificationCard thread={thread} projectId={projectId} action={action} onReview={onReview} onTool={onTool} />}
+      {thread && <BrowserVerificationCard thread={thread} projectId={projectId} action={action} onReview={onReview} onTool={onTool}
+        trialActive={!!styleTrial && !styleTrial.cleared || !!state.browser?.trialActive} />}
       {responsive && (
         <div className="preview-viewport-toolbar">
           <label>

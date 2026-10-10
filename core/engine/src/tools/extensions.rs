@@ -135,7 +135,7 @@ impl Invocation<'_> {
         }
         let browser_plan = if self.call.name == "browser_v1"
             && matches!(self.entry.backend, Backend::Client)
-            && matches!(arguments["operation"].as_str(), Some("act" | "wait" | "navigate" | "newPage"))
+            && matches!(arguments["operation"].as_str(), Some("act" | "wait" | "navigate" | "newPage" | "runBatch"))
         {
             let host = self
                 .host
@@ -546,6 +546,14 @@ impl Invocation<'_> {
                     .map_err(unknown)?
             }
         };
+        if self.call.name == "browser_v1"
+            && response.structured_content.as_ref().is_some_and(|content|
+                content["code"] == "outcome_unknown" && content["dispatch"] == "unknown")
+        {
+            let mut error = unknown("browser batch step outcome is UNKNOWN; inspect the confirmed prefix");
+            error.details = response.structured_content;
+            return Err(error);
+        }
         self.engine
             .materialize_tool_media(self.cell, &mut response.content_items)
             .await
