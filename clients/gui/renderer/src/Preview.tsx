@@ -272,7 +272,6 @@ export function Preview({
       const key = stageThreadDraft(projectId, threadId, [existing, description].filter(Boolean).join('\n\n'), files);
       window.dispatchEvent(new CustomEvent('areal-draft-change', { detail: key }));
       updateAnnotation(null);
-      if (mounted.current && current.current === owner) annotationControl.current?.focus();
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setAnnotationBusy(false); }
   };
