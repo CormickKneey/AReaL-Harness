@@ -25,6 +25,7 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'areal-ui', privileges: { standa
 const guiRoot = app.isPackaged ? join(process.resourcesPath, 'areal-gui') : resolve(__dirname, '../../../renderer/dist');
 const mime = { '.wasm': 'application/wasm', '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.json': 'application/json', '.woff2': 'font/woff2', '.woff': 'font/woff', '.svg': 'image/svg+xml', '.png': 'image/png' };
 let window, backend, preview, updates, quitting = false, exitReady = false, themeId = 'system';
+const previewSubscriptions = new Map();
 let startupPending = true, startupPainted = false, startupReady = false;
 // The renderer owns first-screen readiness; Main alone owns native visibility.
 // Consume this gate once so late data cannot reopen a window the user hid.
@@ -87,7 +88,10 @@ async function createWindow() {
     window.once('show', () => { startupPending = false; });
     window.once('ready-to-show', () => { startupPainted = true; presentStartup(); });
   }
-  preview = new CorePreview(window, WebContentsView, (projectId, threadId) => backend.ownsThread(projectId, threadId), () => backend.snapshot().library?.settings ?? {});
+  preview = new CorePreview(window, WebContentsView,
+    (projectId, threadId) => backend.ownsThread(projectId, threadId),
+    () => backend.snapshot().library?.settings ?? {},
+    projectId => backend.status.browserCore?.[projectId] ?? null);
   preview.onRevoke = identity => { void backend.browserRevoke(identity).catch(() => {}); };
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
@@ -122,7 +126,7 @@ app.whenReady().then(async () => {
   backend.onBrowserRequest = async request => {
     if (quitting || !preview || !window || window.isDestroyed()) throw new Error('Browser host unavailable');
     try { return await (request.phase === 'prepare' ? preview.prepare(request)
-      : ['act', 'wait'].includes(request.operation) ? preview.execute(request) : preview.observe(request)); }
+      : ['act', 'wait', 'navigate', 'newPage'].includes(request.operation) ? preview.execute(request) : preview.observe(request)); }
     catch (error) {
       if (error.message === 'outcome_unknown') throw error;
       return { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration, projectId: request.projectId,
@@ -140,15 +144,30 @@ app.whenReady().then(async () => {
     trusted(event);
     validatePreview(request);
     if (!preview) throw new Error('预览不可用');
+    if (request?.operation === 'subscribe') {
+      if (!backend.ownsThread(request.projectId, request.threadId)) throw new Error('请选择有效任务');
+      const key = JSON.stringify([request.projectId, request.threadId]);
+      previewSubscriptions.get(key)?.();
+      const subscription = preview.subscribe(request.projectId, request.threadId, update => {
+        if (!window.isDestroyed()) window.webContents.send('areal-core:preview-event', update);
+      });
+      previewSubscriptions.set(key, subscription.unsubscribe);
+      return subscription.snapshot;
+    }
+    if (request?.operation === 'unsubscribe') {
+      const key = JSON.stringify([request.projectId, request.threadId]);
+      previewSubscriptions.get(key)?.(); previewSubscriptions.delete(key);
+      return null;
+    }
     if (request?.operation === 'claim') {
-      const identity = await preview.claim(request.projectId, request.threadId);
+      const identity = await preview.claim(request.projectId, request.threadId, request.pageId);
       try { await backend.browserClaim(identity); trusted(event); }
-      catch (error) { preview.takeover(request.projectId, request.threadId); throw error; }
-      return preview.state(preview.pages.get(`${request.projectId}:${request.threadId}`));
+      catch (error) { preview.takeover(request.projectId, request.threadId, request.pageId); throw error; }
+      return preview.state(preview.page(request.projectId, request.threadId, request.pageId));
     }
     if (request?.operation === 'takeover') {
-      const value = preview.takeover(request.projectId, request.threadId);
-      void backend.browserRevoke({ projectId: request.projectId, threadId: request.threadId }).catch(() => {});
+      const value = preview.takeover(request.projectId, request.threadId, request.pageId);
+      void backend.browserRevoke({ projectId: request.projectId, threadId: request.threadId, pageId: request.pageId }).catch(() => {});
       return value;
     }
     return preview.command(request);

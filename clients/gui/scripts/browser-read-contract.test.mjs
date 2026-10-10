@@ -17,6 +17,10 @@ test('browser observation and capture accept only bounded declared parameters', 
   assert.equal(validToolInput({ operation: 'act', parameters: { pageId, snapshotId: pageId, action: { kind: 'click', ref: 'r1', preparedActionId: 'forged' } } }), false);
   assert.equal(validToolInput({ operation: 'act', parameters: { pageId, snapshotId: pageId, action: { kind: 'fill', ref: 'r1', value: 'ok', allow: true } } }), false);
   assert.equal(validToolInput({ operation: 'wait', parameters: { pageId, timeoutMs: 30001 } }), false);
+  assert.equal(validToolInput({ operation: 'navigate', parameters: { pageId, url: 'http://localhost:3000/next' } }), true);
+  assert.equal(validToolInput({ operation: 'newPage', parameters: { pageId, url: 'http://localhost:3000/new' } }), true);
+  assert.equal(validToolInput({ operation: 'newPage', parameters: { pageId, url: 'javascript:alert(1)' } }), false);
+  assert.equal(validToolInput({ operation: 'navigate', parameters: { pageId, url: 'http://localhost:3000', allow: true } }), false);
 });
 
 test('bound client may answer a browser tool request while ordinary clients reject it', async () => {
@@ -52,8 +56,8 @@ test('an authenticated owner claim refuses a request from another Core generatio
   const service = new DesktopService(backend, 'fixture-identity');
   const receive = (id, method, params) => service.receive(owner, Buffer.from(JSON.stringify({ id, method, params })));
   await receive(1, 'hello', { protocol: PROTOCOL, identity: 'fixture-identity' });
-  await receive(2, 'browserClaim', { protocol: 'areal.browser.host.v1', operations: ['describe', 'observe', 'capture', 'act', 'wait'],
-    available: true, projectId: 'project-1', threadId: 'thread-1', pageId, browserHostId: 'host-1',
+  await receive(2, 'browserClaim', { protocol: 'areal.browser.host.v1', operations: ['describe', 'observe', 'capture', 'act', 'wait', 'navigate', 'newPage'],
+    available: true, coreInstanceId: 'core-1', projectId: 'project-1', threadId: 'thread-1', pageId, browserHostId: 'host-1',
     hostGeneration: 1, pageGeneration: 1, controlEpoch: 1 });
   assert.equal(sent.at(-1).result.claimed, true);
   const result = await service.browserRead({ projectId: 'project-1', threadId: 'thread-1', turnId: 'turn-1',

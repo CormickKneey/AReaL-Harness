@@ -49,6 +49,7 @@ export interface PlatformServices {
         id: string;
     }) => void): () => void;
     preview(params: PreviewRequest): Promise<Data>;
+    onPreviewEvent?(listener: (event: Data) => void): () => void;
 }
 export type Action = (name: CommandName, params?: Data) => Promise<any>;
 // 业务投影仍由各能力所有者建模；此适配保留现有 Action 调用方的返回类型。
