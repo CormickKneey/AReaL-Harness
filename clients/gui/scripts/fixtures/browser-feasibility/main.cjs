@@ -234,6 +234,8 @@ app.whenReady().then(async () => {
         window,
         WebContentsView,
         (projectId, threadId) => projectId === owner.projectId && threadId === owner.threadId,
+        () => ({}),
+        () => 'fixture-core',
     );
     await window.loadFile(join(__dirname, "shell.html"));
     await preview.command({ operation: "show", ...owner, bounds });
