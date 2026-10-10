@@ -2,7 +2,7 @@
 
 const definition = Object.freeze({
   name: 'browser_v1',
-  description: 'Inspect and navigate authorized pages in this desktop thread. Call describe first; page changes require Core approval.',
+  description: 'Inspect, diagnose and navigate authorized pages in this desktop thread. Call describe first; diagnostics returns bounded Console/network metadata, and page changes require Core approval.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -29,6 +29,13 @@ function validToolInput(value) {
     } catch { return false; }
   }
   if (value.operation === 'describe') return keys.length === 0;
+  if (value.operation === 'diagnostics') return typeof value.parameters.pageId === 'string'
+    && /^[0-9a-f-]{36}$/.test(value.parameters.pageId)
+    && keys.every(key => ['pageId', 'kind', 'cursor', 'limit'].includes(key))
+    && ['console', 'network'].includes(value.parameters.kind)
+    && (value.parameters.cursor === undefined || (Number.isSafeInteger(value.parameters.cursor) && value.parameters.cursor >= 0))
+    && (value.parameters.limit === undefined || (Number.isSafeInteger(value.parameters.limit)
+      && value.parameters.limit >= 1 && value.parameters.limit <= 200));
   if (!['observe', 'capture', 'act', 'wait'].includes(value.operation)
     || typeof value.parameters.pageId !== 'string' || !/^[0-9a-f-]{36}$/.test(value.parameters.pageId)) return false;
   if (value.operation === 'wait') return keys.every(key => ['pageId', 'timeoutMs'].includes(key))

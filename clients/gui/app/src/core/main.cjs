@@ -126,7 +126,8 @@ app.whenReady().then(async () => {
   backend.onBrowserRequest = async request => {
     if (quitting || !preview || !window || window.isDestroyed()) throw new Error('Browser host unavailable');
     try { return await (request.phase === 'prepare' ? preview.prepare(request)
-      : ['act', 'wait', 'navigate', 'newPage'].includes(request.operation) ? preview.execute(request) : preview.observe(request)); }
+      : ['act', 'wait', 'navigate', 'newPage'].includes(request.operation) ? preview.execute(request)
+      : request.operation === 'diagnostics' ? preview.diagnostics(request) : preview.observe(request)); }
     catch (error) {
       if (error.message === 'outcome_unknown') throw error;
       return { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration, projectId: request.projectId,
