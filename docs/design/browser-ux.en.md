@@ -43,6 +43,8 @@ Missing semantics, Canvas internals, and unresolvable iframe/Shadow content prov
 
 **F. Temporary style experiment.** Human-only constrained text/color/font/spacing/size edits with undo/redo, always labeled “Page preview; source unchanged”. Track old values and document identity; remove only overlays owned by the experiment. Navigation/HMR replacing the target invalidates it rather than overwriting new app state. Send intent and before/after evidence for a subsequent source edit. Clear temporary overlays before final verification, so an unchanged source cannot appear fixed.
 
+The current source path starts with “Select element and preview style” on the visible native page and reuses human Overlay selection and a guarded before image. Its form retains the original chat owner and offers constrained values, undo/redo, Escape cancel, and Ctrl/Cmd+Enter draft staging; IME composition suppresses shortcuts. Before and after evidence crops only the rechecked same element; full images remain local. The trial is cleared before staging, and the verification card warns that an active trial cannot prove a source change. A replaced or application-edited target requires reload to remove uncertain remaining effects. Failed Composer send retains the existing draft and does not retry automatically.
+
 ## 4. Native-view constraints
 
 React z-index is not a WebContentsView overlay implementation. A trusted native overlay/local view must handle resizing, focus, IME, occlusion and display scale without granting remote pages a privileged preload. In agent mode it blocks human page input but retains takeover; in human mode it revokes agent admission. Capture web content without agent cursor/labels/toolbars by default.
