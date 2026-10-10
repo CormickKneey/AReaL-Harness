@@ -49,6 +49,9 @@ class DesktopService {
       starting: this.backend.starting.size, pid: process.pid,
       browserCore: Object.fromEntries([...this.backend.projects].map(([id, project]) =>
         [id, project.service?.serviceId ?? null])),
+      // Authenticated desktop Main uses actual active Core listeners to deny
+      // Browser Session requests to control ports. This is not a UI grant.
+      browserControlEndpoints: [...this.backend.projects.values()].map(project => project.endpoint).filter(Boolean),
     } };
   }
   send(socket, value) {

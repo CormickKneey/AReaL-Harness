@@ -311,6 +311,9 @@ export function Preview({
       {state.browser?.stateLoss && <div className="preview-viewport-toolbar" role="status">
         {state.browser.stateLoss}
       </div>}
+      {browserEnabled && <div className="preview-viewport-toolbar" role="note">
+        临时登录只在当前浏览工作区使用；关闭工作区或重启后可能需要重新登录。
+      </div>}
       <BrowserToolbar
         addressValue={address}
         browserState={{

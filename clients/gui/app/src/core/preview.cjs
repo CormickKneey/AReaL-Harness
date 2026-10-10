@@ -7,6 +7,7 @@ const { randomUUID, randomBytes, createHash } = require('node:crypto');
 const { performance } = require('node:perf_hooks');
 const { isDeepStrictEqual } = require('node:util');
 const { validatePreview } = require('@areal/workbench/desktop-contract');
+const { WorkspaceNetworkPolicy, loopback } = require('./browser-network.cjs');
 
 function webUrl(value) {
   const text = String(value ?? "").trim();
@@ -131,13 +132,17 @@ function boundsWithinWindow(value, size) {
 }
 /** 网页没有 preload/Node/产品 IPC；任务拥有独立内容与导航历史。 */
 class CorePreview {
-  constructor(window, WebContentsView, owns, preferences = () => ({}), coreIdentity = () => null) {
+  constructor(window, WebContentsView, owns, preferences = () => ({}), coreIdentity = () => null,
+    controlEndpoints = () => [], confirmDevelopmentOrigin = async () => false) {
     this.window = window;
     this.WebContentsView = WebContentsView;
     this.owns = owns;
     this.preferences = preferences;
     this.coreIdentity = coreIdentity;
+    this.controlEndpoints = controlEndpoints;
+    this.confirmDevelopmentOrigin = confirmDevelopmentOrigin;
     this.pages = new Map();
+    this.contexts = new Map();
     this.selected = new Map();
     this.eventSequences = new Map();
     this.listeners = new Set();
@@ -158,6 +163,25 @@ class CorePreview {
     return this.pages.get(pageKey(page.coreInstanceId, page.projectId, page.threadId, page.id)) === page
       && page.coreInstanceId === this.coreIdentity(page.projectId)
       && this.owns(page.projectId, page.threadId);
+  }
+  developmentPromptFence(page) {
+    return { view: page.view, pageGeneration: page.pageGeneration,
+      documentGeneration: page.documentGeneration, controlEpoch: page.controlEpoch };
+  }
+  currentDevelopmentPrompt(page, fence) {
+    if (!this.pageStillOwned(page) || !page.view || page.view.webContents.isDestroyed()) return false;
+    const key = pageKey(page.coreInstanceId, page.projectId, page.threadId, page.id);
+    const workspace = workspaceKey(page.coreInstanceId, page.projectId, page.threadId);
+    // A blank initial page is bound by the current trusted `show` request even
+    // before there is a URL to make its native view visible.
+    const initialBlank = !page.url && !page.view.webContents.getURL();
+    return this.owner === key && this.view === fence.view && page.view === fence.view
+      && this.selected.get(workspace) === page.id && page.control === 'human'
+      && !page.annotationCaptureId
+      && page.pageGeneration === fence.pageGeneration
+      && page.documentGeneration === fence.documentGeneration
+      && page.controlEpoch === fence.controlEpoch
+      && (page.requestedVisible || initialBlank);
   }
   metadata(page) {
     const c = page.view?.webContents;
@@ -211,7 +235,34 @@ class CorePreview {
       this.releaseWorkspaceContext(page);
   }
   releaseWorkspaceContext(page) {
-    void page.session?.clearStorageData().catch(() => {});
+    const context = this.contexts.get(page.partition);
+    if (!context || context.session !== page.session) return;
+    this.contexts.delete(page.partition);
+    context.policy.close();
+    // The deny-only webRequest listener remains installed while Chromium
+    // closes sockets, unregisters workers and clears this in-memory Session.
+    void (async () => {
+      const results = await Promise.allSettled([
+        context.session.closeAllConnections(), context.session.clearStorageData(),
+        context.session.clearCache(), context.session.clearAuthCache(),
+      ]);
+      if (results.some(result => result.status === 'rejected'))
+        console.warn('Browser Workspace Session cleanup failed');
+    })();
+  }
+  ensureWorkspaceContext(page) {
+    const key = workspaceKey(page.coreInstanceId, page.projectId, page.threadId);
+    const existing = this.contexts.get(page.partition);
+    if (existing) {
+      if (existing.workspace !== key || existing.session !== page.session)
+        throw new Error('浏览工作区上下文归属不匹配');
+      return existing.policy;
+    }
+    if (page.session.storagePath !== null) throw new Error('浏览工作区需要临时 Session');
+    const policy = new WorkspaceNetworkPolicy(this.controlEndpoints);
+    policy.install(page.session);
+    this.contexts.set(page.partition, { workspace: key, session: page.session, policy });
+    return policy;
   }
   releaseInvalidOwners() {
     for (const [key, page] of this.pages) if (!this.owns(page.projectId, page.threadId)
@@ -486,6 +537,7 @@ class CorePreview {
       || this.workspaceOutstanding(page.projectId, page.threadId) >= 16)
       throw new Error('not_sent');
     const target = webUrl(request.parameters.url);
+    if (!page.networkPolicy.canAuthorize(target)) throw new Error('not_sent');
     const source = c.getURL();
     if (!source) throw new Error('plan_stale');
     const plan = { preparedActionId: randomUUID(), operation: request.operation, pageId: page.id,
@@ -518,6 +570,7 @@ class CorePreview {
       throw new Error('plan_stale');
     page.plans.delete(approved.preparedActionId);
     if (page.activeRead || page.activePrepare || page.activeAction) throw new Error('not_sent');
+    if (!page.networkPolicy.allowApprovedNavigation(target)) throw new Error('not_sent');
     let cancel;
     const stopped = new Promise((_, reject) => { cancel = () => reject(new Error('outcome_unknown')); });
     const action = { requestId: request.requestId, dispatched: false, cancelled: false,
@@ -920,6 +973,8 @@ class CorePreview {
       heldButtons: new Map(), heldKeys: new Map(), inputPending: new Set(), requestedVisible: false,
       downloads: new Set(), dialogPending: false, fileHandoff: false, stateLoss: options.stateLoss ?? null },
       c = view.webContents;
+    try { page.networkPolicy = this.ensureWorkspaceContext(page); }
+    catch (error) { if (!c.isDestroyed()) c.close(); throw error; }
     page.onDownload = (event, item, source) => {
       if (source !== c) return;
       if (!this.pageStillOwned(page)) { event.preventDefault(); return; }
@@ -943,7 +998,13 @@ class CorePreview {
         return { action: 'deny' };
       page.userPopupIntentUntil = 0;
       let url;
-      try { url = webUrl(details.url); } catch { return { action: 'deny' }; }
+      let source;
+      try { url = webUrl(details.url); source = new URL(c.getURL()); }
+      catch { return { action: 'deny' }; }
+      // A popup can reuse the existing site context; it cannot create a new
+      // network grant from page-controlled URL text, even after a local click.
+      if (new URL(url).origin !== source.origin
+        || !page.networkPolicy.permits({ url, resourceType: 'mainFrame' })) return { action: 'deny' };
       if (!['foreground-tab', 'background-tab', 'new-window'].includes(details.disposition))
         return { action: 'deny' };
       const id = randomUUID();
@@ -967,6 +1028,7 @@ class CorePreview {
     const navigate = (event, url) => {
       try {
         webUrl(url);
+        if (!page.networkPolicy.permits({ url, resourceType: 'mainFrame' })) event.preventDefault();
       } catch {
         event.preventDefault();
       }
@@ -976,6 +1038,7 @@ class CorePreview {
     c.on("will-frame-navigate", (event) => {
       try {
         webUrl(event.url);
+        if (!page.networkPolicy.permits({ url: event.url, resourceType: 'subFrame' })) event.preventDefault();
       } catch {
         event.preventDefault();
       }
@@ -1083,6 +1146,7 @@ class CorePreview {
       if (!request.projectId || this.owner === key) {
         if (!page) { const displayed = this.pages.get(this.owner); if (displayed) displayed.requestedVisible = false; }
         this.view?.setVisible(false);
+        this.owner = null; this.view = null;
       }
       return this.state(page);
     }
@@ -1091,6 +1155,8 @@ class CorePreview {
       throw new Error('请选择已连接 Core 的有效任务');
     if (request.operation === 'openLink') {
       const url = webUrl(request.url), host = new URL(url).hostname;
+      if (!(page?.networkPolicy ?? new WorkspaceNetworkPolicy(this.controlEndpoints)).canAuthorize(url))
+        throw new Error('浏览安全策略拒绝该地址');
       const local = host === 'localhost' || host.endsWith('.localhost') || host === '[::1]' || /^127\./.test(host);
       const settings = this.preferences();
       const destination = local ? settings.browserLocalTarget ?? 'internal' : settings.browserLinkTarget ?? 'external';
@@ -1147,6 +1213,26 @@ class CorePreview {
     }
     this.pages.delete(key); this.pages.set(key, page);
     const c = page.view.webContents;
+    if (target) {
+      if (!page.networkPolicy.canAuthorize(target)) throw new Error('浏览安全策略拒绝该地址');
+      const origin = new URL(target).origin;
+      const alreadyAllowed = page.networkPolicy.permits({ url: target, resourceType: 'mainFrame' });
+      const local = loopback(new URL(target).hostname);
+      if (!alreadyAllowed && local) {
+        const fence = this.developmentPromptFence(page);
+        if (page.pendingDevelopmentPrompt || !this.currentDevelopmentPrompt(page, fence))
+          throw new Error('开发站点授权需要当前页面由用户控制');
+        const prompt = page.pendingDevelopmentPrompt = randomUUID();
+        let confirmed;
+        try { confirmed = await this.confirmDevelopmentOrigin({ origin,
+          page, fence }); }
+        finally { if (page.pendingDevelopmentPrompt === prompt) page.pendingDevelopmentPrompt = null; }
+        if (!confirmed || !this.currentDevelopmentPrompt(page, fence)
+          || page.pendingDevelopmentPrompt) throw new Error('尚未授权此开发站点');
+      }
+      if (!alreadyAllowed && !page.networkPolicy.allowHumanNavigation(target, local))
+        throw new Error('浏览安全策略拒绝该地址');
+    }
     if (['navigate', 'back', 'forward', 'reload', 'stop'].includes(request.operation)) this.revoke(page);
     if (page.control === 'transferring' && !['state', 'show', 'hide', 'stop', 'release', 'selectPage'].includes(request.operation))
       throw new Error('原生输入尚未收敛，请停止或关闭页面');
