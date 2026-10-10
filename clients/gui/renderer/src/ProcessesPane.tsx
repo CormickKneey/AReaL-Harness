@@ -3,6 +3,7 @@ import { Textarea } from "./components/ui/textarea.js";
 import { Button } from "./components/ui/button.js";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./components/ui/dialog.js";
 import type { Action, Data } from "./services.js";
+import { observedServiceUrls } from "./developmentService.js";
 
 type Process = { id: string; argv: string[]; lifetime: string; state: string; cleanupConfirmed: boolean; error?: string; turnId?: string; owner: string; inputs?: { action: string; outcome: string }[] };
 type Runtime = { state: string; exitCode: number | null; signal: string | null; cleanupError?: string; stopReason?: string };
@@ -10,7 +11,7 @@ const states: Record<string, string> = { starting: "启动中", running: "运行
 const records: Record<string, string> = { accepted: "已受理", running: "已启动", failed: "启动失败", closed: "已关闭", unknown: "待确认" };
 
 /** Core managed-process records only; Runtime tool process IDs are a different scope. */
-export function ProcessesPane({ project, thread, action }: { project: Data; thread: Data; action: Action }) {
+export function ProcessesPane({ project, thread, action, onOpenService }: { project: Data; thread: Data; action: Action; onOpenService: (url: string) => void }) {
   const [items, setItems] = useState<Process[]>([]), [selected, setSelected] = useState("");
   const [loading, setLoading] = useState(true), [error, setError] = useState("");
   const [runtime, setRuntime] = useState<Runtime | null>(null), [detailError, setDetailError] = useState("");
@@ -54,7 +55,7 @@ export function ProcessesPane({ project, thread, action }: { project: Data; thre
     detailSequence.current++; setWaiting(false); setWaitNotice(""); setInput(""); setControlError("");
     setRuntime(null); setOutput(""); setPartial(false); setDetailError("");
     if (!selected || !connected) return;
-    let live = true, timer: ReturnType<typeof setTimeout>, cursor: string | undefined, closed = false;
+    let live = true, timer: ReturnType<typeof setTimeout>, cursor: string | undefined, closed = false, retainedChars = 0;
     const decoders = new Map<string, TextDecoder>();
     const poll = async () => {
       try {
@@ -71,7 +72,8 @@ export function ProcessesPane({ project, thread, action }: { project: Data; thre
           }
           closed = page.closed; cursor = page.nextCursor;
           if (closed) for (const decoder of decoders.values()) text += decoder.decode();
-          if (page.gap || page.truncated) setPartial(true);
+          retainedChars += text.length;
+          if (page.gap || page.truncated || retainedChars > 262144) setPartial(true);
           setOutput(previous => {
             const combined = previous + text;
             return combined.length > 262144 ? "[仅保留最近输出]\n" + combined.slice(-262144) : combined;
@@ -138,6 +140,7 @@ export function ProcessesPane({ project, thread, action }: { project: Data; thre
   };
   const stdinClosed = current?.inputs?.some(op => op.action === "closeStdin" && op.outcome === "succeeded");
   const controlsDisabled = disabled || !runtime || runtime.state !== "running" || current?.cleanupConfirmed;
+  const serviceUrls = observedServiceUrls(output, !controlsDisabled && !detailError, partial);
   const stop = async () => {
     if (!confirm || disabled || locked.current) return;
     const target = confirm; locked.current = true; setBusy(true); setStopError("");
@@ -214,6 +217,10 @@ export function ProcessesPane({ project, thread, action }: { project: Data; thre
           {waitNotice && <p role="status">{waitNotice}</p>}
         </div>
         {partial && <p role="status">部分输出已过期或被截断。</p>}
+        {serviceUrls.length > 0 && <div role="group" aria-label="从受管进程输出发现的服务地址" className="flex flex-col gap-1">
+          <p className="text-foreground-subtle">以下地址来自此任务正在运行的受管进程输出。选择后在当前任务的浏览器打开；页面加载结果仍需核查。</p>
+          {serviceUrls.map(url => <Button key={url} size="sm" variant="outline" className="w-fit max-w-full truncate" title={url} onClick={() => onOpenService(url)}>打开 {url}</Button>)}
+        </div>}
         <pre role="log" aria-label="进程输出" aria-live="off" className="max-h-96 min-h-24 overflow-auto whitespace-pre-wrap break-words rounded-control bg-background-secondary p-2 font-mono text-xs">{output || "暂无输出"}</pre>
       </div>}
     </div>
