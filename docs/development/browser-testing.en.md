@@ -67,6 +67,8 @@ Fixtures include separate-origin sites, simulated HTTPOnly-cookie login, cross-o
 | B-38 | Verification without overrides | Style-only previews cannot satisfy source verification; clear them and inspect real output. | 15 |
 | B-39 | Human-selected uploads | Reject model paths, accept chooser cancellation, do not auto-share human-selected files. | 16 |
 | B-40 | Bounded downloads | Keep provenance/target/size/cancel receipts, clean up on limit/closure, never auto-execute. | 16 |
+
+Ticket 16 source checks cover trusted IPC scope, file limits and Agent file-input refusal only. The M2 real Electron fixture must exercise human upload selection and cancellation plus an indirect Agent click on the same Page/Thread; an independent site counter must show no automatic replay after cancellation. For downloads, verify that no file is written before the system Save dialog, the user alone chooses the path, and unknown size, limit, timeout, close/crash, sibling Page ownership and cancellation receipts match actual files and GUI state. If a test injects OS dialog selection, disclose that substitution; it does not prove a human made the choice.
 | B-41 | Batch prefix receipts | If step3 is rejected pre-dispatch, steps1–2 are retained and not repeated. | 17 |
 | B-42 | Batch takeover/UNKNOWN | Fence each step; any UNKNOWN halts without replay. | 17 |
 | B-43 | Observe without rebind | Atomic CLI observation preserves GUI ToolHost; other-socket replies do not settle calls. | 18 |

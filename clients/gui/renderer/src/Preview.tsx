@@ -11,6 +11,7 @@ import { call } from "./services.js";
 import { BrowserRegionAnnotation, type RegionDraft } from "./BrowserRegionAnnotation.js";
 import { attachmentDrafts, sending, stageThreadDraft } from "./Composer.js";
 import { BrowserVerificationCard } from "./BrowserVerificationCard.js";
+import "./BrowserFileHandoff.css";
 import type { Action } from "./services.js";
 import type { PreviewRequest, OwnedPreviewOperation } from '@areal/workbench/desktop-contract';
 const locations = new Map<string, { url: string; link?: string }>();
@@ -381,7 +382,9 @@ export function Preview({
           ? <Button type="button" size="sm" onClick={() => void request('takeover')}>接管页面</Button>
           : <>
             {uninspectedUnknown && <span role="status">原浏览器动作结果 UNKNOWN。请先到聊天记录核查并确认；交还不会重试该动作。</span>}
-            <Button type="button" size="sm" disabled={claiming || uninspectedUnknown || !!state.loading || !!state.error}
+            <Button type="button" size="sm" disabled={claiming || uninspectedUnknown || !!state.loading || !!state.error
+              || !!state.browser?.downloadIntentExpiresAt || (state.workspace?.fileReceipts ?? []).some((receipt: Data) =>
+                receipt.pageId === state.browser?.pageId && ['choosing', 'downloading', 'interrupted'].includes(receipt.status))}
             onClick={() => {
               setClaiming(true);
               void (async () => {
@@ -396,6 +399,30 @@ export function Preview({
             }}>交还并让 Agent 检查当前页</Button>
           </>}
       </div>}
+      {browserEnabled && state.url && <div className="preview-viewport-toolbar" role="group" aria-label="网页文件交接">
+        {state.browser?.control === 'human' ? <>
+          <Button type="button" size="sm" disabled={!!state.browser?.downloadIntentExpiresAt || !!annotating}
+            onClick={() => void request('allowNextDownload', { userIntent: true })}>允许下一次下载</Button>
+          {state.browser?.downloadIntentExpiresAt && <>
+            <span role="status">30 秒内在当前网页触发一次下载，随后选择保存位置。</span>
+            <Button type="button" size="sm" onClick={() => void request('cancelFileHandoff')}>取消下载许可</Button>
+          </>}
+          <span>上传请在网页中使用文件选择控件；系统选择器取消后可继续操作。</span>
+        </> : <span>文件选择需要先接管页面。</span>}
+      </div>}
+      {browserEnabled && (state.workspace?.fileReceipts ?? []).length > 0 &&
+        <div className="preview-viewport-toolbar preview-file-status" role="list" aria-label="网页下载状态">
+          {(state.workspace.fileReceipts as Data[]).map((receipt: Data) => <div role="listitem" key={receipt.id}>
+            {receipt.name || '未命名下载'} · 页面 {receipt.pageOrigin || '未知'} · 发起者 {receipt.initiator === 'unknown' ? '未知' : receipt.initiator}
+            {' · '}{receipt.source || '来源网址未知'}
+            {' · '}{receipt.sizeBytes == null ? '大小未知' : `${receipt.sizeBytes} B`}
+            {' · '}{({ choosing: '选择保存位置', downloading: '下载中', completed: '已完成', cancelled: '已取消', interrupted: '已中断', unknown: '结果待核对' } as Record<string, string>)[receipt.status] ?? '状态未知'}
+            {receipt.target ? ` · 保存为 ${receipt.target}` : ''}
+            {['choosing', 'downloading', 'interrupted'].includes(receipt.status) && receipt.pageId === state.browser?.pageId
+              && state.browser?.control === 'human' && <Button type="button" size="sm"
+                onClick={() => void request('cancelDownload', { downloadId: receipt.id, userIntent: true })}>取消下载</Button>}
+          </div>)}
+        </div>}
       {browserEnabled && state.url && <div className="preview-viewport-toolbar" role="group" aria-label="页面标注">
         <Button ref={annotationControl} type="button" size="sm" disabled={annotationBusy || !!annotating || state.browser?.control === 'transferring'}
           onClick={() => void startAnnotation()}>截取区域并标注</Button>
