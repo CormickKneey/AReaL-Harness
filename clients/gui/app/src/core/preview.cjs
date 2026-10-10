@@ -2287,7 +2287,8 @@ class CorePreview {
       return this.state(page);
     }
     this.pages.delete(key); this.pages.set(key, page);
-    const c = page.view.webContents;
+    const view = page.view, nativeGeneration = page.pageGeneration;
+    const c = view.webContents;
     if (target) {
       if (!page.networkPolicy.canAuthorize(target)) throw new Error('浏览安全策略拒绝该地址');
       const origin = new URL(target).origin;
@@ -2313,7 +2314,19 @@ class CorePreview {
       if (!cleared.cleared && request.operation !== 'reload')
         throw new Error('试改已失效，请刷新页面后继续导航');
     }
-    if (['navigate', 'back', 'forward', 'reload', 'stop'].includes(request.operation)) this.revoke(page);
+    if (['navigate', 'back', 'forward', 'reload'].includes(request.operation)) {
+      if (!this.pageStillOwned(page) || page.view !== view || page.pageGeneration !== nativeGeneration
+        || page.crashed || c.isDestroyed())
+        throw new Error('页面已关闭');
+      this.revoke(page); // Fence old Agent work before waiting on the local native channel.
+      const controlEpoch = page.controlEpoch;
+      if (page.control === 'transferring') await this.convergeInput(page);
+      if (!this.pageStillOwned(page) || page.view !== view || page.pageGeneration !== nativeGeneration
+        || page.crashed || c.isDestroyed())
+        throw new Error('页面已关闭');
+      if (page.control !== 'human' || page.controlEpoch !== controlEpoch)
+        throw new Error('原生输入尚未收敛，请停止或关闭页面');
+    } else if (request.operation === 'stop') this.revoke(page);
     if (page.control === 'transferring' && !['state', 'show', 'hide', 'stop', 'release', 'selectPage'].includes(request.operation))
       throw new Error('原生输入尚未收敛，请停止或关闭页面');
     if (request.bounds) {
