@@ -29,7 +29,7 @@ const site = createServer((request, response) => {
   response.setHeader('Content-Type', 'text/html; charset=utf-8');
   if (request.url.startsWith('/frame')) { response.end('<button>Same origin child</button><input name="token" value="HIDDEN_FRAME_TOKEN_03">'); return; }
   response.end(`<!doctype html><title>Evidence fixture</title><h1>${sentinel}</h1>
-    <button id="replace">Duplicate target</button><button>Duplicate target</button>
+    <button id="replace">Duplicate target</button><button>Duplicate target</button><button disabled>Disabled action</button>
     <label>Password <input id="password" type="password" value="HIDDEN_CANARY_03"></label>
     <input id="session" name="token" aria-label="Session credential" value="HIDDEN_TOKEN_03">
     <div id="otp">One-time code: HIDDEN_OTP_03</div>
@@ -115,9 +115,27 @@ try {
   await page.locator('.preview-panel').waitFor();
   await page.evaluate(({ projectId, threadId, url }) => window.arealDesktop.preview({ operation: 'navigate', projectId, threadId, url }), { projectId: project.id, threadId: first.threadId, url: siteUrl });
   const nativeId = await until(() => app.evaluate(({ webContents }, url) => webContents.getAllWebContents().find(c => c.getURL() === url)?.id, siteUrl), 'native page');
+  await app.evaluate(({ webContents }, id) => {
+    const contents = webContents.fromId(id), trace = { capturePage: 0, fullAXTree: 0 };
+    const capture = contents.capturePage.bind(contents), send = contents.debugger.sendCommand.bind(contents.debugger);
+    contents.capturePage = (...args) => { trace.capturePage++; return capture(...args); };
+    contents.debugger.sendCommand = (method, ...args) => {
+      if (method === 'Accessibility.getFullAXTree') trace.fullAXTree++;
+      return send(method, ...args);
+    };
+    contents.__browserEvidenceTrace = trace;
+  }, nativeId);
+  const nativeTrace = () => app.evaluate(({ webContents }, id) => ({ ...webContents.fromId(id).__browserEvidenceTrace }), nativeId);
+  const traceBeforeObserve = await nativeTrace();
   await page.getByRole('button', { name: '让 Agent 检查当前页' }).click();
   pageId = (await until(async () => { const value = await page.evaluate(({ projectId, threadId }) => window.arealDesktop.preview({ operation: 'state', projectId, threadId }), { projectId: project.id, threadId: first.threadId }); return value.browser?.control === 'agent' ? value : null; }, 'claim')).browser.pageId;
   const initial = toolResult(await nextTurn(first.threadId));
+  let completedTurns = 1;
+  async function runScenario(nextScenario, prompt) {
+    scenario = nextScenario;
+    await command('send', { projectId: project.id, threadId: first.threadId, text: prompt });
+    return toolResult(await nextTurn(first.threadId, completedTurns++));
+  }
   const observation = JSON.parse(initial.contentItems[0].text);
   rootRef = observation.nodes.find(node => node.name === 'Duplicate target')?.ref;
   assert.match(rootRef, /^r\d+$/);
@@ -132,75 +150,125 @@ try {
   assert.ok(!JSON.stringify(observation).includes('HIDDEN_FRAME_TOKEN_03'));
   assert.ok(!JSON.stringify(observation).includes('HIDDEN_SHADOW_SECRET_03'));
   assert.ok(!JSON.stringify(observation).includes('HIDDEN_OTP_03'));
+  assert.ok(observation.nodes.every(node => node.id && node.role && typeof node.state === 'object'));
+  assert.ok(observation.nodes.some(node => node.parent), 'AX observation preserves association hierarchy');
+  assert.ok(observation.nodes.some(node => node.role === 'button' && node.name === 'Duplicate target'));
+  assert.equal(observation.nodes.find(node => node.name === 'Disabled action')?.state.disabled, 'true');
   events.initial = { threadId: first.threadId, callId: initial.callId, observation };
+  const initialTrace = await nativeTrace();
+  assert.ok(initialTrace.fullAXTree > 0);
+  assert.equal(initialTrace.capturePage, traceBeforeObserve.capturePage, 'observe must not generate a screenshot');
+  const originalRef = rootRef;
+  const partial = JSON.parse((await runScenario('budget', 'Observe one node only')).contentItems[0].text);
+  assert.equal(partial.nodes.length, 1);
+  assert.ok(!partial.nodes.some(node => node.ref === originalRef), 'budget omits the original target');
+  const retained = JSON.parse((await runScenario('stale', 'Observe the unchanged target after a partial snapshot')).contentItems[0].text);
+  assert.equal(retained.nodes.find(node => node.name === 'Duplicate target')?.ref, originalRef);
+  events.partialIdentity = { partial, retainedRef: originalRef };
   await app.evaluate(({ webContents }, id) => webContents.fromId(id).executeJavaScript(`document.querySelector('#replace').outerHTML='<button id="replace">Duplicate target</button>'`), nativeId);
-  scenario = 'stale';
-  await command('send', { projectId: project.id, threadId: first.threadId, text: 'Observe old Ref after replacement' });
-  const stale = toolResult(await nextTurn(first.threadId, 1));
+  const stale = await runScenario('stale', 'Observe old Ref after replacement');
   assert.match(JSON.stringify(stale), /stale_ref/);
   events.stale = { callId: stale.callId, contentItems: stale.contentItems };
-  scenario = 'refresh';
-  await command('send', { projectId: project.id, threadId: first.threadId, text: 'Refresh semantic Ref' });
-  const refreshed = JSON.parse(toolResult(await nextTurn(first.threadId, 2)).contentItems[0].text);
+  const refreshed = JSON.parse((await runScenario('refresh', 'Refresh semantic Ref')).contentItems[0].text);
   rootRef = refreshed.nodes.find(node => node.name === 'Duplicate target')?.ref;
   assert.match(rootRef, /^r\d+$/);
   await app.evaluate(({ webContents }, id) => webContents.fromId(id).executeJavaScript(`document.querySelector('#same').src='/frame?revision=2'`), nativeId);
   await until(async () => app.evaluate(({ webContents }, id) => webContents.fromId(id).executeJavaScript(`document.querySelector('#same').contentWindow.location.search === '?revision=2'`), nativeId), 'frame document replaced');
-  scenario = 'stale';
-  await command('send', { projectId: project.id, threadId: first.threadId, text: 'Observe old Ref after frame document navigation' });
-  const frameStale = toolResult(await nextTurn(first.threadId, 3));
+  const frameStale = await runScenario('stale', 'Observe old Ref after frame document navigation');
   assert.match(JSON.stringify(frameStale), /stale_ref/);
   events.frameStale = { callId: frameStale.callId, contentItems: frameStale.contentItems };
   checks.push('B-07: duplicate-name replacement and Frame document navigation invalidate old Refs through Core without fallback');
-  scenario = 'budget';
-  await command('send', { projectId: project.id, threadId: first.threadId, text: 'Observe bounded page' });
-  const bounded = JSON.parse(toolResult(await nextTurn(first.threadId, 4)).contentItems[0].text);
+  const bounded = JSON.parse((await runScenario('budget', 'Observe bounded page')).contentItems[0].text);
   assert.equal(bounded.nodes.length, 1); assert.equal(bounded.truncated, true);
   assert.equal(bounded.truncationReason, 'budget');
   events.budget = bounded;
+  const beforeCaptureTrace = await nativeTrace();
+  assert.equal(beforeCaptureTrace.capturePage, traceBeforeObserve.capturePage, 'all observe calls remain semantic-only');
+  events.surfaceTraceBeforeCapture = beforeCaptureTrace;
   checks.push('B-08: real iframe and Shadow fixture has explicit coverage, bounded observation reports truncation');
-  scenario = 'capture';
-  await command('send', { projectId: project.id, threadId: first.threadId, text: 'Capture the current page' });
-  const protectedCapture = toolResult(await nextTurn(first.threadId, 5));
-  assert.match(JSON.stringify(protectedCapture), /evidence_unavailable/);
-  await app.evaluate(({ webContents }, id) => webContents.fromId(id).executeJavaScript(`document.querySelector('#password').remove();document.querySelector('#session').remove()`), nativeId);
-  await command('send', { projectId: project.id, threadId: first.threadId, text: 'Capture while same origin frame contains a secret' });
-  const frameCapture = toolResult(await nextTurn(first.threadId, 6));
-  assert.match(JSON.stringify(frameCapture), /evidence_unavailable/);
-  await app.evaluate(({ webContents }, id) => webContents.fromId(id).executeJavaScript(`document.querySelector('#same').contentDocument.querySelector('input').remove()`), nativeId);
-  await command('send', { projectId: project.id, threadId: first.threadId, text: 'Capture while Shadow root contains a secret' });
-  const shadowCapture = toolResult(await nextTurn(first.threadId, 7));
-  assert.match(JSON.stringify(shadowCapture), /evidence_unavailable/);
-  await app.evaluate(({ webContents }, id) => webContents.fromId(id).executeJavaScript(`document.querySelector('#shadow').shadowRoot.querySelector('input').remove()`), nativeId);
-  await command('send', { projectId: project.id, threadId: first.threadId, text: 'Capture while the page shows a plaintext OTP' });
-  const otpCapture = toolResult(await nextTurn(first.threadId, 8));
-  assert.match(JSON.stringify(otpCapture), /evidence_unavailable/);
-  await app.evaluate(({ webContents }, id) => webContents.fromId(id).executeJavaScript(`document.querySelector('#otp').remove()`), nativeId);
-  await command('send', { projectId: project.id, threadId: first.threadId, text: 'Capture while cross origin frame is unavailable' });
-  const crossFrameCapture = toolResult(await nextTurn(first.threadId, 9));
-  assert.match(JSON.stringify(crossFrameCapture), /evidence_unavailable/);
-  await app.evaluate(({ webContents }, id) => webContents.fromId(id).executeJavaScript(`document.querySelector('#cross').remove()`), nativeId);
-  events.sensitiveCapture = { root: protectedCapture.contentItems, frame: frameCapture.contentItems,
-    shadow: shadowCapture.contentItems, otp: otpCapture.contentItems, crossFrame: crossFrameCapture.contentItems };
+  async function pageScript(script) {
+    return app.evaluate(({ webContents }, { id, script }) => webContents.fromId(id).executeJavaScript(script), { id: nativeId, script });
+  }
+  const locations = () => pageScript(`({
+    root: !!document.querySelector('#password, #session'),
+    frame: !!document.querySelector('#same').contentDocument.querySelector('input'),
+    shadow: !!document.querySelector('#shadow').shadowRoot.querySelector('input'),
+    otp: !!document.querySelector('#otp'), cross: !!document.querySelector('#cross')
+  })`);
+  await pageScript(`document.querySelector('#password').remove();document.querySelector('#session').remove();
+    document.querySelector('#same').contentDocument.querySelector('input').remove();
+    document.querySelector('#shadow').shadowRoot.querySelector('input').remove();
+    document.querySelector('#otp').remove();document.querySelector('#cross').remove()`);
+  assert.deepEqual(await locations(), { root: false, frame: false, shadow: false, otp: false, cross: false });
+  const safeBaseline = await runScenario('capture', 'Capture the safe baseline before isolated refusals');
+  assert.ok(safeBaseline.contentItems.some(part => part.type === 'arealMedia'), 'baseline page must be capturable');
+  events.safeBaseline = { callId: safeBaseline.callId };
+  const cases = [
+    ['root', `document.body.insertAdjacentHTML('beforeend','<input id="password" type="password" value="ROOT_SECRET_03">')`, `document.querySelector('#password').remove()`],
+    ['frame', `document.querySelector('#same').contentDocument.body.insertAdjacentHTML('beforeend','<input name="token" value="FRAME_SECRET_03">')`, `document.querySelector('#same').contentDocument.querySelector('input').remove()`],
+    ['shadow', `document.querySelector('#shadow').shadowRoot.innerHTML += '<input name="secret" value="SHADOW_SECRET_03">'`, `document.querySelector('#shadow').shadowRoot.querySelector('input').remove()`],
+    ['otp', `document.body.insertAdjacentHTML('beforeend','<div id="otp">One-time code: OTP_SECRET_03</div>')`, `document.querySelector('#otp').remove()`],
+    ['cross', `document.body.insertAdjacentHTML('beforeend','<iframe id="cross" src="${childUrl}"></iframe>')`, `document.querySelector('#cross').remove()`],
+  ];
+  events.sensitiveCapture = {};
+  for (const [kind, add, remove] of cases) {
+    await pageScript(add);
+    if (kind === 'cross') await until(() => pageScript(`document.querySelector('#cross').contentDocument === null`), 'cross origin iframe loaded');
+    assert.deepEqual(Object.entries(await locations()).filter(([, present]) => present).map(([name]) => name), [kind], `${kind} is the only denying condition`);
+    const denied = await runScenario('capture', `Capture with only ${kind} sensitive condition`);
+    assert.match(JSON.stringify(denied), /evidence_unavailable/);
+    events.sensitiveCapture[kind] = denied.contentItems;
+    await pageScript(remove);
+    assert.deepEqual(Object.values(await locations()), [false, false, false, false, false]);
+  }
   await app.evaluate(({ webContents }, id) => {
-    const contents = webContents.fromId(id), original = contents.capturePage.bind(contents);
+    const contents = webContents.fromId(id), original = contents.capturePage;
     contents.capturePage = async (...args) => {
       await new Promise(resolve => setTimeout(resolve, 100));
       await contents.executeJavaScript('scrollTo(0, 500)');
       return original(...args);
     };
+    contents.__captureBeforeViewport = original;
   }, nativeId);
-  await command('send', { projectId: project.id, threadId: first.threadId, text: 'Capture while the viewport changes' });
-  const movedViewportCapture = toolResult(await nextTurn(first.threadId, 10));
+  const movedViewportCapture = await runScenario('capture', 'Capture while the viewport changes');
   assert.match(JSON.stringify(movedViewportCapture), /evidence_unavailable/);
   await app.evaluate(({ webContents }, id) => {
     const contents = webContents.fromId(id);
-    delete contents.capturePage;
+    contents.capturePage = contents.__captureBeforeViewport;
+    delete contents.__captureBeforeViewport;
     return contents.executeJavaScript('scrollTo(0, 0)');
   }, nativeId);
   events.movedViewportCapture = movedViewportCapture.contentItems;
-  await command('send', { projectId: project.id, threadId: first.threadId, text: 'Capture after sensitive fields and cross origin frame removed' });
-  const captured = toolResult(await nextTurn(first.threadId, 11));
+  await pageScript(`(async () => {
+    const canvas = document.createElement('canvas'); canvas.id = 'noise';
+    canvas.width = Math.ceil(innerWidth * devicePixelRatio);
+    canvas.height = Math.ceil(innerHeight * devicePixelRatio);
+    Object.assign(canvas.style, { position: 'fixed', inset: '0', width: '100vw', height: '100vh', zIndex: '9999' });
+    const context = canvas.getContext('2d'), pixels = context.createImageData(canvas.width, canvas.height);
+    let seed = 0x12345678;
+    for (let index = 0; index < pixels.data.length; index += 4) {
+      seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5;
+      pixels.data[index] = seed & 255; pixels.data[index + 1] = (seed >>> 8) & 255;
+      pixels.data[index + 2] = (seed >>> 16) & 255; pixels.data[index + 3] = 255;
+    }
+    context.putImageData(pixels, 0, 0); document.body.append(canvas);
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  })()`);
+  const largeImageBytes = await app.evaluate(async ({ webContents }, id) =>
+    (await webContents.fromId(id).capturePage()).toPNG().length, nativeId);
+  assert.ok(largeImageBytes > 2 * 1024 * 1024, `fixture must produce an oversized native PNG; got ${largeImageBytes} bytes`);
+  const oversizedCapture = await runScenario('capture', 'Capture an image above the encoded byte budget');
+  assert.match(JSON.stringify(oversizedCapture), /evidence_unavailable/);
+  events.oversizedCapture = { nativePngBytes: largeImageBytes, contentItems: oversizedCapture.contentItems };
+  await pageScript(`(async () => {
+    document.querySelector('#noise').remove();
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  })()`);
+  const captured = await runScenario('capture', 'Capture after sensitive conditions are removed');
+  const afterCaptureTrace = await nativeTrace();
+  assert.ok(afterCaptureTrace.capturePage > beforeCaptureTrace.capturePage);
+  assert.equal(afterCaptureTrace.fullAXTree, beforeCaptureTrace.fullAXTree, 'capture must not request the accessibility tree');
+  events.surfaceTraceAfterCapture = afterCaptureTrace;
   const image = captured.contentItems.find(part => part.type === 'arealMedia');
   assert.ok(image?.media?.uri?.startsWith('areal://blob/'));
   assert.ok(modelCalls.some(call => call.scenario === 'capture' && call.hadImage), 'model request must contain image bytes');

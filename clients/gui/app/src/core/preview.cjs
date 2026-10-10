@@ -33,7 +33,8 @@ const sensitiveCaptureScript = `(() => {
     if (root.querySelector(selector)) return true;
     for (const element of root.querySelectorAll('*')) {
       if (element.shadowRoot && scan(element.shadowRoot)) return true;
-      if ([...element.childNodes].some(child => child.nodeType === Node.TEXT_NODE && /password|passcode|secret|token|api.?key|credit.?card|cvv|authorization|one.?time.?code|\\botp\\b|credential/i.test(child.textContent))) return true;
+      if (!['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT'].includes(element.tagName)
+        && [...element.childNodes].some(child => child.nodeType === Node.TEXT_NODE && /password|passcode|secret|token|api.?key|credit.?card|cvv|authorization|one.?time.?code|\\botp\\b|credential/i.test(child.textContent))) return true;
     }
     for (const frame of root.querySelectorAll('iframe,frame')) {
       try { if (!frame.contentDocument || scan(frame.contentDocument)) return true; }
@@ -194,6 +195,8 @@ class CorePreview {
         return { ...base, capturedAt: new Date().toISOString(), viewport: { ...base.viewport, bitmapWidth: size.width, bitmapHeight: size.height }, mimeType: 'image/png', imageBase64: png.toString('base64'), byteLength: png.length };
       }
       const lines = [], entries = [], nodes = tree.nodes ?? [];
+      const liveIdentities = new Set(nodes.filter(node => node.backendDOMNodeId).map(node =>
+        JSON.stringify([page.pageGeneration, documentGeneration, epoch, node.frameId ?? 'main', node.backendDOMNodeId])));
       const requestedIdentity = parameters.rootRef && [...page.refs].find(([, ref]) => ref === parameters.rootRef)?.[0];
       if (parameters.rootRef && !requestedIdentity) throw new Error('stale_ref');
       const requestedBackend = requestedIdentity && JSON.parse(requestedIdentity)[4];
@@ -210,10 +213,11 @@ class CorePreview {
       const limitNodes = parameters.budget?.nodes ?? 200;
       const limitBytes = parameters.budget?.textBytes ?? 32 * 1024;
       const nextRefs = new Map();
+      const entryByNodeId = new Map();
       let textBytes = 0, truncated = false;
       for (const node of nodes) {
         if (node.ignored) continue;
-        const role = safeText(node.role?.value, 80);
+        const role = String(node.role?.value ?? '').slice(0, 80);
         const rawName = String(node.name?.value ?? '');
         const name = sensitiveNodes.has(node.nodeId) || sensitiveChild(node) ? '[redacted]' : safeText(rawName);
         const propertySensitive = (node.properties ?? []).some(property => sensitive.test(String(property.name)) || sensitive.test(String(property.value?.value)));
@@ -228,14 +232,27 @@ class CorePreview {
         if (rootNode && !descendant(node)) continue;
         const line = [ref, role, name, value].filter(Boolean).join(': ');
         if (!line) continue;
-        const bytes = Buffer.byteLength(line, 'utf8');
+        let ancestor = node.parentId;
+        while (ancestor && !entryByNodeId.has(ancestor)) ancestor = parent.get(ancestor);
+        const entry = { id: `n${entries.length + 1}`, role, name,
+          ...(ancestor ? { parent: entryByNodeId.get(ancestor) } : {}),
+          ...(node.frameId ? { frameId: node.frameId } : {}),
+          ...(ref ? { ref } : {}),
+          ...(value ? { value } : {}),
+          ...(node.description?.value ? { description: sensitiveNodes.has(node.nodeId) || sensitiveChild(node)
+            ? '[redacted]' : safeText(node.description.value) } : {}),
+          state: Object.fromEntries((node.properties ?? [])
+            .filter(property => ['checked', 'selected', 'disabled', 'expanded', 'required', 'invalid'].includes(property.name))
+            .map(property => [property.name, safeText(property.value?.value, 80)])) };
+        const bytes = Buffer.byteLength(line, 'utf8') + Buffer.byteLength(JSON.stringify(entry), 'utf8');
         if (lines.length >= limitNodes || textBytes + bytes > limitBytes) { truncated = true; break; }
         lines.push(line);
         if (ref) nextRefs.set(identity, ref);
-        entries.push({ role, name, ...(ref ? { ref } : {}) });
+        entries.push(entry);
+        entryByNodeId.set(node.nodeId, entry.id);
         textBytes += bytes;
       }
-      page.refs = nextRefs;
+      page.refs = new Map([...page.refs].filter(([identity]) => liveIdentities.has(identity)).concat([...nextRefs]));
       const seenFrames = new Set(nodes.map(node => node.frameId).filter(Boolean));
       const childFrames = [];
       const walkFrames = (branch, root = false) => {

@@ -6,7 +6,7 @@ This document defines the complete Browser testing contract. R0 has an isolated 
 
 For the current same-page read slice, run `make build`, `make gui-install`, and `make gui-build`, then `node clients/gui/scripts/browser-read-smoke.mjs` for B-04/B-05/B-06. The fixture uses an isolated home, synthetic site, and local deterministic model. It records Core dynamic-tool call IDs, real native WebContents identity and in-memory sentinel, GUI/native captures, server request counts, and cross-Thread, forged-result, and missing-host outcomes. Source-build results do not establish packaged-app, real-account, or other-OS acceptance.
 
-Ticket 03 uses `node clients/gui/scripts/browser-evidence-smoke.mjs` at the same acceptance seam for B-07/B-08/B-09: stale Refs after duplicate-name replacement and Frame navigation, iframe/Shadow coverage, budget truncation, refusal to capture sensitive forms, image input to the model, Core media retrieval in the GUI, and cross-Thread Blob denial. A scenario passes only when the script completes and retains its run manifest.
+Ticket 03 uses `node clients/gui/scripts/browser-evidence-smoke.mjs` at the same acceptance seam for B-07/B-08/B-09: retained Refs after a partial observation, stale Refs after duplicate-name replacement and Frame navigation, iframe/Shadow coverage, semantic state and parent association, and budget truncation. It isolates each sensitive root/Frame/Shadow/plaintext/cross-origin capture refusal, checks a viewport change and oversized native PNG, records which native observation surface was requested, then checks image input to the model, Core media retrieval in the GUI, and cross-Thread Blob denial. A scenario passes only when the script completes and retains its run manifest.
 
 ## Test layers
 

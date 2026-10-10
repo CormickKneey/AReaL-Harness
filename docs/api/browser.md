@@ -4,7 +4,7 @@
 
 **设计契约，部分实现。** 当前实现新建 Browser-enabled Thread 对已有原生预览页的显式认领、`describe`/`observe`/`capture`、本机接管撤销及宿主缺失拒绝；其余操作仍是提案。下文未来接口不表示已开放。不改变现有 [Core UNKNOWN 规则](core.md#dynamic-tools)。
 
-当前实现从新聊天 Composer 的“浏览器”开关注册固定 `browser_v1` 工具包。用户打开当前聊天的预览页后点击“让 Agent 检查当前页”，Main 在原 WebContentsView 上认领并经认证服务连接登记；模型回调由该 Thread 已绑定的 Core 连接承接。工具定义的 `operation:string` 保持可扩展包络；二次校验接受 `describe`（空参数）、`observe`（`pageId`、可选文档范围、Ref 与预算）及 `capture`（当前视口）。观察使用有界原生 AX 读取，按实际 Frame 覆盖状态报告不可读部分，Ref 绑定原生节点和代次；结果 URL 去除查询和片段。截图限制在 800 万像素、单边 4096 像素和 2 MiB PNG，使用现有 Core Blob 和工具媒体通道交给模型与聊天。已知敏感表单或不可读 Frame 存在时拒绝自动截图；这不是截图遮罩，也无法识别所有敏感内容。未实现动作、旧 Thread 接入或持久 Profile。人工接管、导航、Core/宿主换代会撤销读取；在途取消或超时不会自动重试。
+当前实现从新聊天 Composer 的“浏览器”开关注册固定 `browser_v1` 工具包。用户打开当前聊天的预览页后点击“让 Agent 检查当前页”，Main 在原 WebContentsView 上认领并经认证服务连接登记；模型回调由该 Thread 已绑定的 Core 连接承接。工具定义的 `operation:string` 保持可扩展包络；二次校验接受 `describe`（空参数）、`observe`（`pageId`、可选文档范围、Ref 与预算）及 `capture`（当前视口）。观察使用有界原生 AX 读取，按实际 Frame 覆盖状态报告不可读部分，并在可用时提供 role、name、state、value 与父节点关联。Ref 绑定原生节点和代次；预算截断本身不使被省略的存活 Ref 失效。结果 URL 去除查询和片段。截图限制在 800 万像素、单边 4096 像素和 2 MiB PNG，使用现有 Core Blob 和工具媒体通道交给模型与聊天。已知敏感表单或不可读 Frame 存在时拒绝自动截图；这不是截图遮罩，也无法识别所有敏感内容。未实现动作、旧 Thread 接入或持久 Profile。人工接管、导航、Core/宿主换代会撤销读取；在途取消或超时不会自动重试。
 
 ## 1. 两条既有连接与一个新能力
 
