@@ -87,7 +87,7 @@ export function Preview({
         operation,
         projectId,
         threadId,
-        ...(stateRef.current.browser?.pageId && !['subscribe', 'unsubscribe', 'newPage'].includes(operation)
+        ...(stateRef.current.browser?.pageId && !['state', 'subscribe', 'unsubscribe', 'newPage'].includes(operation)
           ? { pageId: stateRef.current.browser.pageId } : {}),
         ...extra,
       });
