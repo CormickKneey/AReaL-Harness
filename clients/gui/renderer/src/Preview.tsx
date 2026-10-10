@@ -194,13 +194,21 @@ export function Preview({
     else regionDrafts.delete(owner);
     setAnnotationState({ owner, draft });
   };
-  const cancelAnnotation = () => {
-    updateAnnotation(null);
-    annotationControl.current?.focus();
+  const cancelAnnotation = async () => {
+    if (!annotating || annotationBusy) return;
+    setAnnotationBusy(true); setError("");
+    try {
+      await services.preview({ operation: 'endRegion', projectId, threadId,
+        pageId: annotating.capture.pageId, captureId: annotating.capture.captureId });
+      updateAnnotation(null);
+      if (mounted.current && current.current === owner) annotationControl.current?.focus();
+    } catch (e) { if (mounted.current && current.current === owner) setError(e instanceof Error ? e.message : String(e)); }
+    finally { if (mounted.current && current.current === owner) setAnnotationBusy(false); }
   };
   const startAnnotation = async () => {
     if (annotationBusy || annotating) return;
     setAnnotationBusy(true); setError("");
+    let captured: RegionDraft['capture'] | null = null;
     try {
       const pageId = stateRef.current.browser?.pageId;
       if (!pageId) throw new Error("请选择当前页面");
@@ -208,14 +216,23 @@ export function Preview({
         await services.preview({ operation: 'takeover', projectId, threadId, pageId });
       }
       const capture = await services.preview({ operation: 'captureRegion', projectId, threadId, pageId });
-      if (!mounted.current || current.current !== owner) return;
       if (capture.projectId !== projectId || capture.threadId !== threadId || capture.pageId !== pageId
         || typeof capture.imageBase64 !== 'string' || !Number.isFinite(capture.viewport?.bitmapWidth)
         || !Number.isFinite(capture.viewport?.bitmapHeight)) throw new Error('截图所属页面已变化');
+      captured = capture as RegionDraft['capture'];
+      if (!mounted.current || current.current !== owner) {
+        await services.preview({ operation: 'endRegion', projectId, threadId, pageId, captureId: captured.captureId });
+        return;
+      }
       await services.preview({ operation: 'hide', projectId, threadId, pageId });
-      if (!mounted.current || current.current !== owner) return;
-      updateAnnotation({ capture: capture as RegionDraft['capture'], comment: '', region: null });
+      if (!mounted.current || current.current !== owner) {
+        await services.preview({ operation: 'endRegion', projectId, threadId, pageId, captureId: captured.captureId });
+        return;
+      }
+      updateAnnotation({ capture: captured, comment: '', region: null });
     } catch (e) {
+      if (captured) void services.preview({ operation: 'endRegion', projectId, threadId,
+        pageId: captured.pageId, captureId: captured.captureId }).catch(() => {});
       if (mounted.current && current.current === owner) setError(e instanceof Error ? e.message : String(e));
     } finally { if (mounted.current && current.current === owner) setAnnotationBusy(false); }
   };
@@ -236,16 +253,18 @@ export function Preview({
       const capture = draft.capture;
       const scaleX = capture.viewport.width / capture.viewport.bitmapWidth;
       const scaleY = capture.viewport.height / capture.viewport.bitmapHeight;
-      const description = `页面区域标注（冻结截图，页面之后可能变化）\nURL: ${capture.url}\n截图时间: ${capture.capturedAt}\nPage: ${capture.pageId}; documentEpoch: ${capture.documentEpoch}; pageGeneration: ${capture.pageGeneration}; viewportRevision: ${capture.viewport.viewportRevision}; captureId: ${capture.captureId}\n截图区域 bitmap(px): ${x},${y},${width},${height}; viewport CSS(px): ${(x * scaleX).toFixed(1)},${(y * scaleY).toFixed(1)},${(width * scaleX).toFixed(1)},${(height * scaleY).toFixed(1)}\n意见: ${draft.comment.trim()}`;
+      const description = `页面区域标注（冻结截图，页面之后可能变化；仅分享选中区域）\nURL: ${capture.url}\n截图时间: ${capture.capturedAt}\nCore: ${capture.coreInstanceId}; Page: ${capture.pageId}; pageGeneration: ${capture.pageGeneration}; documentEpoch: ${capture.documentEpoch}; controlEpoch: ${capture.controlEpoch}; viewportRevision: ${capture.viewport.viewportRevision}; captureId: ${capture.captureId}\n原截图 bitmap(px): ${capture.viewport.bitmapWidth}×${capture.viewport.bitmapHeight}; CSS viewport(px): ${capture.viewport.width}×${capture.viewport.height}; scroll(px): ${capture.viewport.scrollX},${capture.viewport.scrollY}; pageZoom: ${capture.viewport.pageZoom}\n选区 bitmap(px): ${x},${y},${width},${height}; viewport CSS(px): ${(x * scaleX).toFixed(1)},${(y * scaleY).toFixed(1)},${(width * scaleX).toFixed(1)},${(height * scaleY).toFixed(1)}\n裁图: browser-region-${capture.captureId}.png\n意见: ${draft.comment.trim()}`;
       const draftKey = `areal-gui:draft:${projectId}:${threadId}`;
       if (sending.has(draftKey) || localStorage.getItem(`${draftKey}:pending`))
         throw new Error('当前聊天有结果待核对的发送；请先确认结果，再加入标注草稿');
       const existing = localStorage.getItem(draftKey) ?? '';
       const files = [...(attachmentDrafts.get(draftKey) ?? []), new File([blob], `browser-region-${capture.captureId}.png`, { type: 'image/png' })];
+      await services.preview({ operation: 'endRegion', projectId, threadId,
+        pageId: capture.pageId, captureId: capture.captureId });
       const key = stageThreadDraft(projectId, threadId, [existing, description].filter(Boolean).join('\n\n'), files);
       window.dispatchEvent(new CustomEvent('areal-draft-change', { detail: key }));
       updateAnnotation(null);
-      annotationControl.current?.focus();
+      if (mounted.current && current.current === owner) annotationControl.current?.focus();
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setAnnotationBusy(false); }
   };
@@ -385,7 +404,7 @@ export function Preview({
           style={responsive ? { width: `min(100%, ${width}px)`, flex: "none" } : undefined}
         />
         {annotating && <BrowserRegionAnnotation draft={annotating} busy={annotationBusy}
-          onChange={updateAnnotation} onCancel={cancelAnnotation} onStage={draft => void stageAnnotation(draft)} />}
+          onChange={updateAnnotation} onCancel={() => void cancelAnnotation()} onStage={draft => void stageAnnotation(draft)} />}
         {failure ? (
           <BrowserLoadErrorState
               errorMessage={failure}

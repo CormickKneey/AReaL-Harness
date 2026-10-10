@@ -14,7 +14,7 @@ export interface RegionDraft {
     capturedAt: string;
     url: string;
     imageBase64: string;
-    viewport: { width: number; height: number; bitmapWidth: number; bitmapHeight: number; viewportRevision: number };
+    viewport: { width: number; height: number; scrollX: number; scrollY: number; pageZoom: number; bitmapWidth: number; bitmapHeight: number; viewportRevision: number };
   };
   comment: string;
   region: { x: number; y: number; width: number; height: number } | null;
@@ -65,7 +65,7 @@ export function BrowserRegionAnnotation({ draft, busy, onChange, onCancel, onSta
         event.preventDefault(); onStage(draft);
       }
     }}>
-    <div role="status">冻结截图 · {draft.capture.url} · {new Date(draft.capture.capturedAt).toLocaleString()}。实时页面可能已变化。</div>
+    <div role="status">冻结截图 · {draft.capture.url} · {new Date(draft.capture.capturedAt).toLocaleString()}。实时页面可能已变化。仅选中区域的裁图会加入聊天草稿。</div>
     <div className="browser-region-image-wrap">
       <img ref={image} alt="用于选择区域的冻结页面截图" draggable={false}
         src={`data:image/png;base64,${draft.capture.imageBase64}`}

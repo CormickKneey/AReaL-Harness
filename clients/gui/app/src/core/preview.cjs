@@ -227,7 +227,7 @@ class CorePreview {
     page.view = null;
   }
   pinned(page) {
-    return !page.view || page.crashed || page.control !== 'human' || page.requestedVisible
+    return !page.view || page.crashed || page.control !== 'human' || page.requestedVisible || !!page.annotationCaptureId
       || page.activeAction || page.activeRead || page.activePrepare || page.plans.size > 0
       || page.inputPending.size > 0 || page.heldButtons.size > 0 || page.heldKeys.size > 0
       || page.dialogPending || page.fileHandoff || (page.downloads?.size ?? 0) > 0;
@@ -381,7 +381,7 @@ class CorePreview {
       || !this.window.isVisible() || this.window.isMinimized() || !page.view.getVisible()
       || this.owner !== pageKey(page.coreInstanceId, projectId, threadId, pageId)
       || bounds.width <= 0 || bounds.height <= 0 || !c.getURL()
-      || page.activeRead || page.activePrepare || page.activeAction)
+      || page.activeRead || page.activePrepare || page.activeAction || page.annotationCaptureId)
       throw new Error('请先接管并显示当前页面，再截图标注');
     const epoch = page.controlEpoch, documentEpoch = page.documentGeneration, sourceUrl = c.getURL();
     const read = { requestId: randomUUID(), cancel: () => {} };
@@ -418,7 +418,9 @@ class CorePreview {
       const png = image.toPNG();
       if (png.length > 2 * 1024 * 1024) throw new Error('截图大小超出限制');
       if (!valid()) throw new Error('页面截图条件已变化');
-      return { captureId: randomUUID(), projectId, threadId, pageId,
+      const captureId = randomUUID();
+      page.annotationCaptureId = captureId;
+      return { captureId, projectId, threadId, pageId,
         coreInstanceId: page.coreInstanceId, pageGeneration: page.pageGeneration,
         documentEpoch, controlEpoch: epoch, viewportRevision: page.viewportRevision,
         url: observationUrl(c.getURL()), capturedAt: new Date().toISOString(),
@@ -1050,7 +1052,7 @@ class CorePreview {
       page = this.page(request.projectId, request.threadId);
       key = page && pageKey(page.coreInstanceId, request.projectId, request.threadId, page.id);
     }
-    if (request.pageId && !page && request.operation !== 'state') throw new Error('页面已关闭');
+    if (request.pageId && !page && !['state', 'endRegion'].includes(request.operation)) throw new Error('页面已关闭');
     if (request.operation === 'subscribe') return this.snapshot(request.projectId, request.threadId);
     // A read must not touch LRU order or publish another metadata event.
     if (request.operation === 'state') return page ? this.state(page)
@@ -1062,6 +1064,13 @@ class CorePreview {
     }
     if (request.operation === 'captureRegion')
       return this.captureRegion(request.projectId, request.threadId, request.pageId);
+    if (request.operation === 'endRegion') {
+      if (!page) return this.state(null);
+      if (!this.owns(request.projectId, request.threadId) || page.annotationCaptureId !== request.captureId)
+        throw new Error('标注页面已变化');
+      page.annotationCaptureId = null;
+      return this.state(page);
+    }
     if (request.operation === 'hide') {
       if (page) page.requestedVisible = false;
       if (!request.projectId || this.owner === key) {
