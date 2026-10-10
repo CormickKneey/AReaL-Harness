@@ -173,6 +173,8 @@ export function Preview({
       attributeFilter: ["data-open", "data-ending-style", "data-workspace-view"],
     });
     window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    window.visualViewport?.addEventListener("resize", update);
     update();
     void request("state");
     const timer = setInterval(async () => {
@@ -194,6 +196,8 @@ export function Preview({
       resize.disconnect();
       mutation.disconnect();
       window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+      window.visualViewport?.removeEventListener("resize", update);
       void services.preview({ operation: "hide", projectId, threadId, pageId: stateRef.current.browser?.pageId }).catch(() => {});
       void services.preview({ operation: 'cancelElementSelection', projectId, threadId,
         pageId: stateRef.current.browser?.pageId }).catch(() => {});
@@ -277,7 +281,7 @@ export function Preview({
         throw new Error('标注所属聊天已变化');
       const elementDescription = draft.element && draft.mode === 'element'
         ? `\n选择时元素: role=${JSON.stringify(draft.element.role)}; name=${JSON.stringify(draft.element.name)}; bounds bitmap(px)=${x},${y},${width},${height}; frame=${draft.element.frameId}; historicalRef=${draft.element.evidenceRef}; sourceMapping=${draft.element.sourceMapping}; ${elementCheck?.stale ? 'stale: 页面元素已变化，保留原证据。' : '发送时仍命中同一节点；页面之后仍可能变化。'} Agent 必须重新 observe 并取得新 Ref，禁止用 historicalRef 动作。React 源码位置未知。` : '';
-      const description = `页面${draft.element && draft.mode === 'element' ? '元素' : '区域'}标注（冻结截图，页面之后可能变化；仅分享选中区域）\nURL: ${capture.url}\n截图时间: ${capture.capturedAt}\nCore: ${capture.coreInstanceId}; Page: ${capture.pageId}; pageGeneration: ${capture.pageGeneration}; documentEpoch: ${capture.documentEpoch}; controlEpoch: ${capture.controlEpoch}; viewportRevision: ${capture.viewportRevision}; captureId: ${capture.captureId}\n原截图 bitmap(px): ${capture.viewport.bitmapWidth}×${capture.viewport.bitmapHeight}; CSS viewport(px): ${capture.viewport.width}×${capture.viewport.height}; scroll(px): ${capture.viewport.scrollX},${capture.viewport.scrollY}; pageZoom: ${capture.viewport.pageZoom}\n选区 bitmap(px): ${x},${y},${width},${height}; viewport CSS(px): ${(x * scaleX).toFixed(1)},${(y * scaleY).toFixed(1)},${(width * scaleX).toFixed(1)},${(height * scaleY).toFixed(1)}${elementDescription}\n裁图: browser-region-${capture.captureId}.png\n意见: ${draft.comment.trim()}`;
+      const description = `页面${draft.element && draft.mode === 'element' ? '元素' : '区域'}标注（冻结截图，页面之后可能变化；仅分享选中区域）\nURL: ${capture.url}\n截图时间: ${capture.capturedAt}\nCore: ${capture.coreInstanceId}; Page: ${capture.pageId}; pageGeneration: ${capture.pageGeneration}; documentEpoch: ${capture.documentEpoch}; controlEpoch: ${capture.controlEpoch}; viewportRevision: ${capture.viewportRevision}; captureId: ${capture.captureId}\n原截图 bitmap(px): ${capture.viewport.bitmapWidth}×${capture.viewport.bitmapHeight}; CSS viewport(px): ${capture.viewport.width}×${capture.viewport.height}; scroll(px): ${capture.viewport.scrollX},${capture.viewport.scrollY}; pageZoom: ${capture.viewport.pageZoom}; GUI zoom: ${capture.viewport.guiZoom}; DPR: ${capture.viewport.deviceScaleFactor}; native DIP bounds: ${JSON.stringify(capture.viewport.nativeBounds)}\n选区 bitmap(px): ${x},${y},${width},${height}; viewport CSS(px): ${(x * scaleX).toFixed(1)},${(y * scaleY).toFixed(1)},${(width * scaleX).toFixed(1)},${(height * scaleY).toFixed(1)}${elementDescription}\n裁图: browser-region-${capture.captureId}.png\n意见: ${draft.comment.trim()}`;
       const draftKey = `areal-gui:draft:${projectId}:${threadId}`;
       if (sending.has(draftKey) || localStorage.getItem(`${draftKey}:pending`))
         throw new Error('当前聊天有结果待核对的发送；请先确认结果，再加入标注草稿');

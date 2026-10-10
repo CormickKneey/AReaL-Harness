@@ -45,12 +45,22 @@ function validToolInput(value) {
       || typeof value.parameters.snapshotId !== 'string' || !/^[0-9a-f-]{36}$/.test(value.parameters.snapshotId)) return false;
     const action = value.parameters.action;
     if (!action || typeof action !== 'object' || Array.isArray(action)
-      || typeof action.ref !== 'string' || !/^r[1-9]\d*$/.test(action.ref)) return false;
+      || typeof action.kind !== 'string') return false;
+    const coordinate = key => Number.isSafeInteger(action[key]) && action[key] >= 0 && action[key] <= 4096;
+    const key = () => typeof action.key === 'string' && /^(Enter|Tab|Escape|Backspace|Arrow(Up|Down|Left|Right))$/.test(action.key);
+    if (action.kind === 'clickAt') return Object.keys(action).every(key => ['kind', 'x', 'y'].includes(key))
+      && coordinate('x') && coordinate('y');
+    if (action.kind === 'drag') return Object.keys(action).every(key => ['kind', 'fromX', 'fromY', 'toX', 'toY', 'steps'].includes(key))
+      && ['fromX', 'fromY', 'toX', 'toY'].every(coordinate)
+      && Number.isSafeInteger(action.steps) && action.steps >= 1 && action.steps <= 20;
+    if (action.kind === 'pressAt') return Object.keys(action).every(key => ['kind', 'x', 'y', 'key'].includes(key))
+      && coordinate('x') && coordinate('y') && key();
+    if (typeof action.ref !== 'string' || !/^r[1-9]\d*$/.test(action.ref)) return false;
     if (action.kind === 'click') return Object.keys(action).every(key => ['kind', 'ref'].includes(key));
     if (action.kind === 'fill') return Object.keys(action).every(key => ['kind', 'ref', 'value'].includes(key))
       && typeof action.value === 'string' && action.value.length <= 4096;
     if (action.kind === 'press') return Object.keys(action).every(key => ['kind', 'ref', 'key'].includes(key))
-      && typeof action.key === 'string' && /^(Enter|Tab|Escape|Backspace|Arrow(Up|Down|Left|Right))$/.test(action.key);
+      && key();
     return false;
   }
   if (value.operation === 'capture') return keys.every(key => ['pageId', 'scope'].includes(key))

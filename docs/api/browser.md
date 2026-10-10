@@ -2,9 +2,9 @@
 
 # Browser v1 契约
 
-**设计契约，部分实现。** 当前实现新建 Browser-enabled Thread 或空闲旧 Thread 接入 Browser 工具后对已有原生预览页的显式认领、`describe`/`observe`/`capture`/`diagnostics`、经 Core 准备和审批的 `act`（点击、填写、按键）与有界 `wait`、本机接管撤销及宿主缺失拒绝；其余操作仍是提案。下文未来接口不表示已开放。不改变现有 [Core UNKNOWN 规则](core.md#dynamic-tools)。04 票的原生 B-10–B-13 验收等待 M1 统一运行。
+**设计契约，部分实现。** 当前实现新建 Browser-enabled Thread 或空闲旧 Thread 接入 Browser 工具后对已有原生预览页的显式认领、`describe`/`observe`/`capture`/`diagnostics`、经 Core 准备和审批的 `act`（Ref 与截图坐标输入）与有界 `wait`、本机接管撤销及宿主缺失拒绝；其余操作仍是提案。下文未来接口不表示已开放。不改变现有 [Core UNKNOWN 规则](core.md#dynamic-tools)。04 票的原生 B-10–B-13 验收等待 M1 统一运行。
 
-当前实现从新聊天 Composer 的“浏览器”开关注册固定 `browser_v1` 工具包；空闲旧 Thread 可在预览中启用同一工具包。用户打开当前聊天的预览页后点击“让 Agent 检查当前页”，Main 在原 WebContentsView 上认领并经认证服务连接登记；模型回调由该 Thread 已绑定的 Core 连接承接。工具定义的 `operation:string` 保持可扩展包络；二次校验接受 `describe`（空参数）、`observe`（`pageId`、可选文档范围、Ref 与预算）、`capture`（当前视口）、`act`（pageId、snapshotId 与 Ref 上的点击/填写/按键）和 `wait`（pageId、1–30000 毫秒）。观察使用有界原生 AX 读取，按实际 Frame 覆盖状态报告不可读部分，并在可用时提供 role、name、state、value 与父节点关联。Ref 绑定原生节点和代次；预算截断本身不使被省略的存活 Ref 失效。结果 URL 去除查询和片段。截图限制在 800 万像素、单边 4096 像素和 2 MiB PNG，使用现有 Core Blob 和工具媒体通道交给模型与聊天。已知敏感表单或不可读 Frame 存在时拒绝自动截图；这不是截图遮罩，也无法识别所有敏感内容。持久 Profile 尚未实现。人工接管、导航、Core/宿主换代会撤销读取；在途取消或超时不会自动重试。
+当前实现从新聊天 Composer 的“浏览器”开关注册固定 `browser_v1` 工具包；空闲旧 Thread 可在预览中启用同一工具包。用户打开当前聊天的预览页后点击“让 Agent 检查当前页”，Main 在原 WebContentsView 上认领并经认证服务连接登记；模型回调由该 Thread 已绑定的 Core 连接承接。工具定义的 `operation:string` 保持可扩展包络；二次校验接受 `describe`（空参数）、`observe`（`pageId`、可选文档范围、Ref 与预算）、`capture`（当前视口）、`act`（pageId、snapshotId 与已公布的 Ref/截图坐标动作）和 `wait`（pageId、1–30000 毫秒）。观察使用有界原生 AX 读取，按实际 Frame 覆盖状态报告不可读部分，并在可用时提供 role、name、state、value 与父节点关联。Ref 绑定原生节点和代次；预算截断本身不使被省略的存活 Ref 失效。结果 URL 去除查询和片段。截图限制在 800 万像素、单边 4096 像素和 2 MiB PNG，使用现有 Core Blob 和工具媒体通道交给模型与聊天。已知敏感表单或不可读 Frame 存在时拒绝自动截图；这不是截图遮罩，也无法识别所有敏感内容。持久 Profile 尚未实现。人工接管、导航、Core/宿主换代会撤销读取；在途取消或超时不会自动重试。
 
 已知敏感内容检查和视口测量在 Electron 隔离世界运行，网页脚本不能替换检查所用的 DOM 查询方法或视口 getter。未知敏感内容仍可能无法识别；网页始终是不可信输入。
 
@@ -115,7 +115,9 @@ Page shell 可恢复 URL 与标题，但不恢复原生对象身份或表单/JS 
 
 Ref 私有映射键至少含 Page generation、Frame identity、Frame document identity、backend node identity。引用公开 ID 单调不复用；只在同一节点确实仍存在时复用。查不到或已导航时返回 `stale_ref`，不按名称/XPath fallback 去点击另一个节点。重新观察后由 Agent 决定新动作。
 
-动作准备与派发都验证目标仍连接、可见、可交互且 hit test 命中。布局可变时等待有界稳定，再检查；不使用页面脚本的 `.click()` 冒充真实输入。滚动/刷新可能改变有效条件，不能只比较一个全页 DOM revision。Canvas 坐标以**截图 bitmap → 页面 CSS viewport**的明确变换转换；不直接乘 DPR 猜测。缩放、视口或文档变化必须重新截图。
+Ref 动作准备与派发都验证目标仍连接、可见、可交互且 hit test 命中。布局可变时等待有界稳定，再检查；不使用页面脚本的 `.click()` 冒充真实输入。滚动/刷新可能改变有效条件，不能只比较一个全页 DOM revision。Canvas 坐标以**截图 bitmap → 页面 CSS viewport**的明确变换转换；不直接乘 DPR 猜测。缩放、视口或文档变化必须重新截图。
+
+当前截图坐标动作使用最新可见视口 `capture` 的 `observationId` 作为 `snapshotId`：`clickAt(x,y)`、`drag(fromX,fromY,toX,toY,steps)` 与 `pressAt(x,y,key)` 的坐标是截图 bitmap 整数像素，必须落在实际位图内；拖拽 `steps` 为 1–20。`describe` 公布当前支持的动作。Main 以实际 bitmap 和页面 CSS 尺寸转换为 CDP 输入坐标，将转换后的目标绑定到 Core 审批计划。Canvas 无 Ref 时必须使用此截图路径，不能编造 DOM selector。每次动作后都需重新截图才能继续按坐标输入。截图同时记录 CSS viewport、scroll、DPR、page zoom、GUI zoom、原生 DIP bounds 和 bitmap 尺寸；GUI Renderer 的 CSS bounds 按 GUI zoom 转为原生 DIP bounds。隐藏、最小化或零尺寸页面不提供自动截图。视口、缩放、scroll 或文档变化使旧截图和准备计划失效；稳定 Ref 仍重新检查 actionability。B-33/B-34 原生矩阵验收待 M2。
 
 ## 6. Core 审批与原生执行：两阶段，但不是事务
 
