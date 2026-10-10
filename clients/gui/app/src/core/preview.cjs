@@ -387,6 +387,7 @@ class CorePreview {
       // Network starts only after this explicit enable receipt.
       await c.debugger.sendCommand('Network.enable', { maxPostDataSize: 0 });
       if (!this.pageStillOwned(page) || page.control !== 'agent' || c.isDestroyed()) throw new Error('Browser page changed');
+      page.diagnosticsStartedAt = Date.now() / 1000;
       page.diagnosticsReady = true;
     } catch (error) { this.revoke(page); throw error; }
     this.changed(page, 'controlChanged');
@@ -408,6 +409,7 @@ class CorePreview {
   }
   clearDiagnostics(page, reason) {
     page.diagnosticsReady = false;
+    page.diagnosticsStartedAt = null;
     page.diagnosticRequests?.clear();
     page.diagnosticEvents = [];
     page.diagnosticBytes = 0;
@@ -443,7 +445,8 @@ class CorePreview {
       pageId: page.id, browserHostId: this.browserHostId, hostGeneration: this.hostGeneration,
       pageGeneration: page.pageGeneration, controlEpoch: epoch, kind: request.parameters.kind,
       events, cursor: events.at(-1)?.sequence ?? page.diagnosticSequence,
-      loss: cursor < first - 1 || (page.diagnosticLoss?.reason === 'request_map_evicted' && cursor <= page.diagnosticLoss.after)
+      loss: cursor < first - 1 || (['request_map_evicted', 'unattributed_request'].includes(page.diagnosticLoss?.reason)
+        && cursor <= page.diagnosticLoss.after)
         ? { after: cursor, before: first, reason: page.diagnosticLoss?.reason ?? 'unavailable_interval' } : null,
       bounded: { entries: MAX_DIAGNOSTICS, bytes: MAX_DIAGNOSTIC_BYTES },
       coverage: 'live Electron Console and CDP Network metadata; no bodies or headers' };
@@ -923,7 +926,7 @@ class CorePreview {
       plans: new Map(), lastObservation: null, needsObservation: true, nextRef: 0,
       heldButtons: new Map(), heldKeys: new Map(), inputPending: new Set(), requestedVisible: false,
       downloads: new Set(), dialogPending: false, fileHandoff: false, stateLoss: options.stateLoss ?? null,
-      diagnosticsReady: false, diagnosticEvents: [], diagnosticRequests: new Map(), diagnosticBytes: 0,
+      diagnosticsReady: false, diagnosticsStartedAt: null, diagnosticEvents: [], diagnosticRequests: new Map(), diagnosticBytes: 0,
       diagnosticSequence: 0, diagnosticLoss: null },
       c = view.webContents;
     c.on('console-message', (_event, details) => {
@@ -937,6 +940,12 @@ class CorePreview {
       if (!page.diagnosticsReady || page.control !== 'agent' || !this.pageStillOwned(page)) return;
       if (method === 'Network.requestWillBeSent') {
         if (typeof params?.requestId !== 'string') return;
+        // CDP's wallTime is the request's creation time. Reject any event
+        // queued from the prior human phase, including one delivered late.
+        if (!Number.isFinite(params.wallTime) || params.wallTime < page.diagnosticsStartedAt) {
+          page.diagnosticLoss = { after: page.diagnosticSequence, reason: 'unattributed_request' };
+          return;
+        }
         const previous = page.diagnosticRequests.get(params.requestId);
         if (previous && previous.controlEpoch === page.controlEpoch && params.redirectResponse) {
           this.addDiagnostic(page, { kind: 'network', url: previous.url, method: previous.method,
