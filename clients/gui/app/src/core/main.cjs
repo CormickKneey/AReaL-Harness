@@ -91,7 +91,22 @@ async function createWindow() {
   preview = new CorePreview(window, WebContentsView,
     (projectId, threadId) => backend.ownsThread(projectId, threadId),
     () => backend.snapshot().library?.settings ?? {},
-    projectId => backend.status.browserCore?.[projectId] ?? null);
+    projectId => backend.status.browserCore?.[projectId] ?? null,
+    () => [backend.metadata?.endpoint, ...(backend.status.browserControlEndpoints ?? [])].filter(Boolean),
+    async ({ origin, projectId, threadId, pageId }) => {
+      if (quitting || !backend.metadata?.endpoint || !window?.isVisible() || !window.isFocused()
+        || !backend.ownsThread(projectId, threadId)
+        || preview?.page(projectId, threadId, pageId)?.id !== pageId) return false;
+      const { response } = await dialog.showMessageBox(window, {
+        type: 'question', title: '允许本地开发站点',
+        message: `允许此浏览工作区访问 ${origin}？`,
+        detail: '仅允许此精确地址的临时站点状态；关闭工作区或重启后需要重新授权。',
+        buttons: ['取消', '仅此工作区允许'], defaultId: 0, cancelId: 0, noLink: true,
+      });
+      return response === 1 && !quitting && window?.isVisible() && window.isFocused()
+        && backend.ownsThread(projectId, threadId)
+        && preview?.page(projectId, threadId, pageId)?.id === pageId;
+    });
   preview.onRevoke = identity => { void backend.browserRevoke(identity).catch(() => {}); };
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
