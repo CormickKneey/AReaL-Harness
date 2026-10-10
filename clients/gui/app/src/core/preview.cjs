@@ -1,5 +1,7 @@
 "use strict";
 const MAX_CACHED_PAGES = 8;
+const workspaceKey = (projectId, threadId) => JSON.stringify([projectId, threadId]);
+const pageKey = (projectId, threadId, pageId) => JSON.stringify([projectId, threadId, pageId]);
 const { randomUUID, randomBytes, createHash } = require('node:crypto');
 const { performance } = require('node:perf_hooks');
 const { validatePreview } = require('@areal/workbench/desktop-contract');
@@ -133,48 +135,87 @@ class CorePreview {
     this.owns = owns;
     this.preferences = preferences;
     this.pages = new Map();
+    this.selected = new Map();
+    this.sequence = 0;
+    this.listeners = new Set();
     this.owner = null;
     this.view = null;
     this.browserHostId = randomUUID();
     this.hostGeneration = randomBytes(4).readUInt32BE(0);
   }
-  dispose() {
-    for (const owner of [...this.pages.keys()]) this.release(owner);
-    this.view = null;
-    this.owner = null;
+  workspacePages(projectId, threadId) {
+    return [...this.pages.values()].filter(page => page.projectId === projectId && page.threadId === threadId);
   }
-  release(owner) {
-    const page = this.pages.get(owner);
+  page(projectId, threadId, id) {
+    const selected = id ?? this.selected.get(workspaceKey(projectId, threadId));
+    return selected ? this.pages.get(pageKey(projectId, threadId, selected)) : null;
+  }
+  pageStillOwned(page) { return this.pages.get(pageKey(page.projectId, page.threadId, page.id)) === page; }
+  metadata(page) {
+    const c = page.view?.webContents;
+    return { pageId: page.id, openerId: page.openerId ?? null, origin: page.origin,
+      resource: page.crashed ? 'crashed' : 'ready', control: page.control,
+      url: c && !c.isDestroyed() ? c.getURL() || page.url : page.url,
+      title: c && !c.isDestroyed() ? safeText(c.getTitle(), 256) : safeText(page.title, 256),
+      pageGeneration: page.pageGeneration, documentEpoch: page.documentGeneration,
+      controlEpoch: page.controlEpoch, viewportRevision: page.viewportRevision };
+  }
+  snapshot(projectId, threadId) {
+    const key = workspaceKey(projectId, threadId);
+    return { sequence: this.sequence, workspaceId: key, selectedPageId: this.selected.get(key) ?? null,
+      pages: this.workspacePages(projectId, threadId).map(page => this.metadata(page)) };
+  }
+  subscribe(projectId, threadId, listener) {
+    const item = { key: workspaceKey(projectId, threadId), listener };
+    this.listeners.add(item);
+    return { snapshot: this.snapshot(projectId, threadId), unsubscribe: () => this.listeners.delete(item) };
+  }
+  changed(page, type = 'pageChanged') {
+    const event = { sequence: ++this.sequence, type, workspaceId: workspaceKey(page.projectId, page.threadId),
+      page: this.metadata(page) };
+    for (const item of this.listeners) if (item.key === event.workspaceId) item.listener(event);
+  }
+  dispose() {
+    for (const key of [...this.pages.keys()]) this.release(key);
+    this.view = null; this.owner = null;
+  }
+  release(key) {
+    const page = this.pages.get(key);
     if (!page) return;
     this.revoke(page);
-    // 先撤销归属，close/loadURL 的迟到回调不能写入新页面。
-    this.pages.delete(owner);
+    this.pages.delete(key);
     if (!this.window.isDestroyed()) this.window.contentView.removeChildView(page.view);
     if (!page.view.webContents.isDestroyed()) page.view.webContents.close();
-    if (this.owner === owner) { this.owner = null; this.view = null; }
+    if (this.owner === key) { this.owner = null; this.view = null; }
+    const workspace = workspaceKey(page.projectId, page.threadId);
+    if (this.selected.get(workspace) === page.id) {
+      const next = this.workspacePages(page.projectId, page.threadId)[0];
+      if (next) this.selected.set(workspace, next.id); else this.selected.delete(workspace);
+    }
+    this.changed(page, 'pageRemoved');
   }
   releaseInvalidOwners() {
-    for (const [owner, page] of this.pages) if (!this.owns(page.projectId, page.threadId)) this.release(owner);
+    for (const [key, page] of this.pages) if (!this.owns(page.projectId, page.threadId)) this.release(key);
   }
   prune() {
-    for (const owner of this.pages.keys()) {
+    for (const key of this.pages.keys()) {
       if (this.pages.size <= MAX_CACHED_PAGES) break;
-      if (owner !== this.owner) this.release(owner);
+      if (key !== this.owner) this.release(key);
     }
   }
   state(page = this.pages.get(this.owner)) {
     const contents = page?.view.webContents;
     const c = contents && !contents.isDestroyed() ? contents : null;
-    return {
-      url: c?.getURL() || page?.url || "",
-      title: c?.getTitle() ?? "",
+    const state = {
+      url: c?.getURL() || page?.url || '', title: c?.getTitle() ?? page?.title ?? '',
       loading: c?.isLoading() ?? false,
       canGoBack: c?.navigationHistory.canGoBack() ?? false,
       canGoForward: c?.navigationHistory.canGoForward() ?? false,
-      error: page?.error ?? "",
+      error: page?.error ?? '',
       browser: page ? { pageId: page.id, control: page.control,
         transferError: page.transferError ?? null } : null,
     };
+    return page ? { ...state, workspace: this.snapshot(page.projectId, page.threadId) } : state;
   }
   revoke(page) {
     if (page.control !== 'agent') return;
@@ -184,7 +225,7 @@ class CorePreview {
     page.view.setVisible(false);
     page.activeRead?.cancel();
     page.activeAction?.cancel();
-    this.onRevoke?.({ projectId: page.projectId, threadId: page.threadId });
+    this.onRevoke?.({ projectId: page.projectId, threadId: page.threadId, pageId: page.id });
     void this.convergeInput(page);
   }
   dispatchInput(page, method, params) {
@@ -249,9 +290,9 @@ class CorePreview {
     return page.converging;
   }
   revokeAll() { for (const page of this.pages.values()) this.revoke(page); }
-  async claim(projectId, threadId) {
-    const owner = `${projectId}:${threadId}`;
-    const page = this.pages.get(owner);
+  async claim(projectId, threadId, pageId) {
+    const page = this.page(projectId, threadId, pageId);
+    const owner = page && pageKey(projectId, threadId, page.id);
     if (!page || page.crashed || page.view.webContents.isDestroyed() || !page.view.webContents.getURL()
       || !this.owns(projectId, threadId)) throw new Error('当前聊天没有可认领的页面');
     if (page.control === 'transferring') throw new Error('原生输入尚未收敛，请停止或关闭页面');
@@ -259,28 +300,27 @@ class CorePreview {
     // discard it before re-enabling Agent observations.
     await readIsolated(page.view.webContents, clearCaptureGuardScript);
     if (page.control !== 'human' || this.pages.get(owner) !== page) throw new Error('页面控制状态已变化');
-    this.revokeAll();
     page.control = 'agent'; page.controlEpoch++; page.refs.clear(); page.plans.clear();
     page.lastObservation = null; page.needsObservation = true;
     return { protocol: 'areal.browser.host.v1', operations: ['describe', 'observe', 'capture', 'act', 'wait'], available: true,
       projectId, threadId, pageId: page.id, browserHostId: this.browserHostId,
       hostGeneration: this.hostGeneration, pageGeneration: page.pageGeneration, controlEpoch: page.controlEpoch };
   }
-  takeover(projectId, threadId) {
-    const page = this.pages.get(`${projectId}:${threadId}`);
+  takeover(projectId, threadId, pageId) {
+    const page = this.page(projectId, threadId, pageId);
     if (page) this.revoke(page);
     return this.state(page);
   }
-  cancelRead({ projectId, threadId, requestId, hostGeneration }) {
+  cancelRead({ projectId, threadId, pageId, requestId, hostGeneration }) {
     if (hostGeneration !== this.hostGeneration) return;
-    const active = this.pages.get(`${projectId}:${threadId}`)?.activeRead;
+    const active = this.page(projectId, threadId, pageId)?.activeRead;
     if (active?.requestId === requestId) active.cancel();
-    const action = this.pages.get(`${projectId}:${threadId}`)?.activeAction;
+    const action = this.page(projectId, threadId, pageId)?.activeAction;
     if (action?.requestId === requestId) action.cancel();
   }
   actionPage(request) {
     const { projectId, threadId, pageId, browserHostId, hostGeneration, pageGeneration, controlEpoch } = request;
-    const page = this.pages.get(`${projectId}:${threadId}`);
+    const page = this.page(projectId, threadId, pageId);
     if (!page || page.id !== pageId || page.projectId !== projectId || page.threadId !== threadId
       || browserHostId !== this.browserHostId || hostGeneration !== this.hostGeneration
       || pageGeneration !== page.pageGeneration || !this.owns(projectId, threadId)) throw new Error('plan_stale');
@@ -312,8 +352,75 @@ class CorePreview {
     return { identity, backendNodeId, x, y, viewport,
       role: safeText(node.role?.value, 80), name: safeText(node.name?.value, 256) };
   }
+  async prepareNavigation(request) {
+    const { page, c } = this.actionPage(request);
+    if (page.activeRead || page.activePrepare || page.activeAction || page.plans.size >= 16)
+      throw new Error('not_sent');
+    const target = webUrl(request.parameters.url);
+    const source = c.getURL();
+    if (!source) throw new Error('plan_stale');
+    const plan = { preparedActionId: randomUUID(), operation: request.operation, pageId: page.id,
+      origin: new URL(source).origin, targetOrigin: new URL(target).origin,
+      url: observationUrl(source), targetUrl: target,
+      pageGeneration: page.pageGeneration, documentEpoch: page.documentGeneration,
+      controlEpoch: page.controlEpoch, browserHostId: this.browserHostId,
+      hostGeneration: this.hostGeneration, threadId: request.threadId, turnId: request.turnId,
+      callId: request.callId, expiresAt: Date.now() + 300000 };
+    plan.fingerprint = createHash('sha256').update(JSON.stringify(plan)).digest('hex');
+    page.plans.set(plan.preparedActionId, { plan, pageUrl: source });
+    return { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration,
+      projectId: request.projectId, threadId: request.threadId, turnId: request.turnId,
+      callId: request.callId, pageId: page.id, browserHostId: this.browserHostId,
+      hostGeneration: this.hostGeneration, pageGeneration: page.pageGeneration,
+      controlEpoch: page.controlEpoch, plan };
+  }
+  async executeNavigation(request) {
+    const { page, c } = this.actionPage(request);
+    const approved = request.browserApproval?.plan;
+    const saved = approved && page.plans.get(approved.preparedActionId);
+    const target = webUrl(request.parameters.url);
+    if (!saved || JSON.stringify(saved.plan) !== JSON.stringify(approved)
+      || approved.operation !== request.operation || approved.pageId !== page.id
+      || approved.threadId !== request.threadId || approved.turnId !== request.turnId
+      || approved.callId !== request.callId || approved.expiresAt < Date.now()
+      || approved.targetUrl !== target || approved.origin !== new URL(c.getURL()).origin
+      || saved.pageUrl !== c.getURL() || approved.pageGeneration !== page.pageGeneration
+      || approved.documentEpoch !== page.documentGeneration || approved.controlEpoch !== page.controlEpoch)
+      throw new Error('plan_stale');
+    page.plans.delete(approved.preparedActionId);
+    if (page.activeRead || page.activePrepare || page.activeAction) throw new Error('not_sent');
+    if (request.operation === 'navigate') {
+      page.approvedNavigation = target;
+      page.url = target;
+      page.error = '';
+      try { await c.loadURL(target); }
+      catch (error) { if (this.pageStillOwned(page) && error.code !== 'ERR_ABORTED') page.error = error.message; }
+      this.changed(page);
+      return { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration,
+        projectId: request.projectId, threadId: request.threadId, turnId: request.turnId,
+        callId: request.callId, pageId: page.id, browserHostId: this.browserHostId,
+        hostGeneration: this.hostGeneration, pageGeneration: page.pageGeneration,
+        controlEpoch: page.controlEpoch, url: page.url, dispatch: 'confirmed' };
+    }
+    const id = randomUUID();
+    const child = this.create(pageKey(page.projectId, page.threadId, id), page.projectId, page.threadId,
+      { id, openerId: page.id, origin: 'agent' });
+    child.control = 'agent'; child.controlEpoch = page.controlEpoch;
+    child.approvedNavigation = target; child.url = target;
+    try { await child.view.webContents.loadURL(target); }
+    catch (error) { if (this.pageStillOwned(child) && error.code !== 'ERR_ABORTED') child.error = error.message; }
+    this.changed(child);
+    return { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration,
+      projectId: request.projectId, threadId: request.threadId, turnId: request.turnId,
+      callId: request.callId, pageId: page.id, browserHostId: this.browserHostId,
+      hostGeneration: this.hostGeneration, pageGeneration: page.pageGeneration,
+      controlEpoch: page.controlEpoch, createdPage: { pageId: child.id,
+        pageGeneration: child.pageGeneration, controlEpoch: child.controlEpoch },
+      url: target, dispatch: 'confirmed' };
+  }
   async prepare(request) {
-    if (request.phase !== 'prepare' || !['act', 'wait'].includes(request.operation)) throw new Error('not_sent');
+    if (request.phase !== 'prepare' || !['act', 'wait', 'navigate', 'newPage'].includes(request.operation)) throw new Error('not_sent');
+    if (['navigate', 'newPage'].includes(request.operation)) return this.prepareNavigation(request);
     const { page, c } = this.actionPage(request);
     const initialDocument = page.documentGeneration;
     for (const [id, record] of page.plans) if (record.plan.expiresAt < Date.now()) page.plans.delete(id);
@@ -360,7 +467,8 @@ class CorePreview {
     }
   }
   async execute(request) {
-    if (request.phase !== 'execute' || !['act', 'wait'].includes(request.operation)) throw new Error('not_sent');
+    if (request.phase !== 'execute' || !['act', 'wait', 'navigate', 'newPage'].includes(request.operation)) throw new Error('not_sent');
+    if (['navigate', 'newPage'].includes(request.operation)) return this.executeNavigation(request);
     const { page, c } = this.actionPage(request);
     const approved = request.browserApproval?.plan;
     const saved = approved && page.plans.get(approved.preparedActionId);
@@ -460,7 +568,7 @@ class CorePreview {
         // Even a failed action must release native input before local input resumes.
         page.control = 'transferring'; page.controlEpoch++;
         page.refs.clear(); page.plans.clear(); page.lastObservation = null; page.needsObservation = true;
-        this.onRevoke?.({ projectId: page.projectId, threadId: page.threadId });
+        this.onRevoke?.({ projectId: page.projectId, threadId: page.threadId, pageId: page.id });
         void this.convergeInput(page);
       }
     }
@@ -468,7 +576,7 @@ class CorePreview {
   async observe(request) {
     const { projectId, threadId, pageId, browserHostId, hostGeneration, pageGeneration, controlEpoch,
       coreInstanceId, coreGeneration, turnId, callId } = request ?? {};
-    const page = this.pages.get(`${projectId}:${threadId}`);
+    const page = this.page(projectId, threadId, pageId);
     if (browserHostId !== this.browserHostId || hostGeneration !== this.hostGeneration || !page
       || page.id !== pageId || page.pageGeneration !== pageGeneration || !this.owns(projectId, threadId))
       throw new Error('Browser page identity is stale');
@@ -499,7 +607,7 @@ class CorePreview {
       const viewportKey = JSON.stringify([viewport.width, viewport.height, viewport.scrollX, viewport.scrollY, zoom, viewport.deviceScaleFactor]);
       if (page.viewportKey !== viewportKey) { page.viewportKey = viewportKey; page.viewportRevision++; }
       if (page.control !== 'agent' || page.controlEpoch !== epoch || page.documentGeneration !== documentGeneration
-        || this.pages.get(`${projectId}:${threadId}`) !== page || c.isDestroyed()) throw new Error('Browser observation was revoked');
+        || this.page(projectId, threadId, pageId) !== page || c.isDestroyed()) throw new Error('Browser observation was revoked');
       const base = { observationId: randomUUID(), coreInstanceId, coreGeneration, projectId, threadId, turnId, callId, pageId,
         browserHostId, hostGeneration, pageGeneration, nativeWebContentsId: c.id,
         url: observationUrl(c.getURL()), title: safeText(c.getTitle(), 256), documentEpoch: documentGeneration,
@@ -642,21 +750,41 @@ class CorePreview {
       }
     }
   }
-  create(owner, projectId, threadId) {
+  create(owner, projectId, threadId, options = {}) {
+    const siblings = this.workspacePages(projectId, threadId);
+    const partition = siblings[0]?.partition ?? `areal-preview-${randomUUID()}`;
     const view = new this.WebContentsView({
       webPreferences: {
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,
-        partition: `areal-preview-${crypto.randomUUID()}`,
+        partition,
       },
     });
-    const page = { id: randomUUID(), pageGeneration: 1, view, projectId, threadId, error: "", url: "", crashed: false,
+    const page = { id: options.id ?? randomUUID(), pageGeneration: 1, view, partition, projectId, threadId,
+      openerId: options.openerId ?? null, origin: options.origin ?? 'human', title: '', error: '', url: '', crashed: false,
       control: 'human', controlEpoch: 0, documentGeneration: 0, viewportRevision: 0, refs: new Map(),
       plans: new Map(), lastObservation: null, needsObservation: true, nextRef: 0,
       heldButtons: new Map(), heldKeys: new Map(), inputPending: new Set(), requestedVisible: false },
       c = view.webContents;
-    c.setWindowOpenHandler(() => ({ action: "deny" }));
+    c.setWindowOpenHandler(details => {
+      // Electron must never create an unowned BrowserWindow. A local human click
+      // may create a sibling only after URL and current ownership checks.
+      if (page.control !== 'human' || !this.pageStillOwned(page) || !this.owns(projectId, threadId))
+        return { action: 'deny' };
+      let url;
+      try { url = webUrl(details.url); } catch { return { action: 'deny' }; }
+      if (!['foreground-tab', 'background-tab', 'new-window'].includes(details.disposition))
+        return { action: 'deny' };
+      const id = randomUUID();
+      const child = this.create(pageKey(projectId, threadId, id), projectId, threadId,
+        { id, openerId: page.id, origin: c.isFocused() ? 'human' : 'unknown' });
+      child.url = url;
+      void child.view.webContents.loadURL(url).catch(error => {
+        if (this.pageStillOwned(child) && error.code !== 'ERR_ABORTED') child.error = error.message;
+      });
+      return { action: 'deny' };
+    });
     c.session.setPermissionRequestHandler((_contents, _permission, respond) =>
       respond(false),
     );
@@ -679,7 +807,8 @@ class CorePreview {
     });
     c.on("did-start-navigation", (_event, url, _inPlace, main) => {
       if (main) {
-        this.revoke(page);
+        if (page.approvedNavigation === url) page.approvedNavigation = null;
+        else this.revoke(page);
         page.documentGeneration++;
         page.refs.clear();
         page.url = url;
@@ -715,106 +844,104 @@ class CorePreview {
     this.window.contentView.addChildView(view);
     view.setVisible(false);
     this.pages.set(owner, page);
+    const workspace = workspaceKey(projectId, threadId);
+    if (!this.selected.has(workspace)) this.selected.set(workspace, page.id);
+    this.changed(page, 'pageAdded');
     return page;
   }
   async command(request) {
     validatePreview(request);
-    const owner = `${request.projectId}:${request.threadId ?? ""}`;
-    if (request.operation === 'release') { this.release(owner); return this.state(null); }
-    if (request.operation === "hide") {
-      const hiddenPage = this.pages.get(owner);
-      if (hiddenPage) hiddenPage.requestedVisible = false;
-      if (!request.projectId || this.owner === owner)
-        this.view?.setVisible(false);
-      return this.state(hiddenPage);
+    const workspace = workspaceKey(request.projectId, request.threadId);
+    let page = this.page(request.projectId, request.threadId, request.pageId);
+    let key = page && pageKey(request.projectId, request.threadId, page.id);
+    if (request.pageId && !page && request.operation !== 'state') throw new Error('页面已关闭');
+    if (request.operation === 'subscribe') return this.snapshot(request.projectId, request.threadId);
+    if (request.operation === 'release') {
+      if (!page) return this.state(null);
+      if (page.origin !== 'agent' && request.userIntent !== true) throw new Error('关闭人工页面需要明确用户操作');
+      this.release(key); return this.state(this.page(request.projectId, request.threadId));
     }
-    if (!this.owns(request.projectId, request.threadId))
-      throw new Error("请选择有效任务");
-    if (request.operation === "openLink") {
+    if (request.operation === 'hide') {
+      if (page) page.requestedVisible = false;
+      if (!request.projectId || this.owner === key) this.view?.setVisible(false);
+      return this.state(page);
+    }
+    if (!this.owns(request.projectId, request.threadId)) throw new Error('请选择有效任务');
+    if (request.operation === 'openLink') {
       const url = webUrl(request.url), host = new URL(url).hostname;
       const local = host === 'localhost' || host.endsWith('.localhost') || host === '[::1]' || /^127\./.test(host);
       const settings = this.preferences();
       const destination = local ? settings.browserLocalTarget ?? 'internal' : settings.browserLinkTarget ?? 'external';
       if (destination === 'external') await require('electron').shell.openExternal(url);
-      // Renderer may have switched tasks while awaiting native handoff. It
-      // chooses whether to reveal an internal page; this read creates none.
       return { destination, url };
     }
-    const target =
-      request.operation === "navigate" ? webUrl(request.url) : null;
-    let page = this.pages.get(owner);
-    const restoreUrl = page?.url || request.url;
-    if (page && (page.crashed || page.view.webContents.isDestroyed()) && ['show', 'navigate', 'reload'].includes(request.operation)) {
-      this.release(owner); page = null;
+    if (request.operation === 'newPage') {
+      const id = randomUUID();
+      const child = this.create(pageKey(request.projectId, request.threadId, id), request.projectId, request.threadId,
+        { id, openerId: page?.id ?? null, origin: 'human' });
+      this.selected.set(workspace, child.id);
+      this.changed(child);
+      return this.state(child);
     }
-    if (!page && ["show", "navigate", "reload"].includes(request.operation)) {
+    const target = request.operation === 'navigate' ? webUrl(request.url) : null;
+    const restoreUrl = page?.url || request.url;
+    if (page && (page.crashed || page.view.webContents.isDestroyed())
+      && ['show', 'navigate', 'reload'].includes(request.operation)) {
+      this.release(key); page = null; key = null;
+    }
+    if (!page && ['show', 'navigate', 'reload'].includes(request.operation)) {
+      const id = randomUUID();
+      key = pageKey(request.projectId, request.threadId, id);
+      page = this.create(key, request.projectId, request.threadId, { id });
       const restored = request.operation !== 'navigate' && restoreUrl ? webUrl(restoreUrl) : null;
-      page = this.create(owner, request.projectId, request.threadId);
       if (restored) {
         page.url = restored;
-        const created = page;
-        void page.view.webContents.loadURL(page.url).catch(error => {
-          if (this.pages.get(owner) === created && error.code !== 'ERR_ABORTED') created.error = error.message;
+        void page.view.webContents.loadURL(restored).catch(error => {
+          if (this.pageStillOwned(page) && error.code !== 'ERR_ABORTED') page.error = error.message;
         });
       }
     }
     if (!page) return this.state(null);
-    this.pages.delete(owner); this.pages.set(owner, page);
+    this.pages.delete(key); this.pages.set(key, page);
     const c = page.view.webContents;
     if (['navigate', 'back', 'forward', 'reload', 'stop'].includes(request.operation)) this.revoke(page);
-    if (page.control === 'transferring' && !['state', 'show', 'hide', 'stop', 'release'].includes(request.operation))
+    if (page.control === 'transferring' && !['state', 'show', 'hide', 'stop', 'release', 'selectPage'].includes(request.operation))
       throw new Error('原生输入尚未收敛，请停止或关闭页面');
-    if (request.bounds)
-      page.view.setBounds(
-        boundsWithinWindow(request.bounds, this.window.getContentSize()),
-      );
+    if (request.bounds) page.view.setBounds(boundsWithinWindow(request.bounds, this.window.getContentSize()));
     switch (request.operation) {
-      case "show":
-        if (this.owner !== owner) this.view?.setVisible(false);
-        this.owner = owner;
-        this.view = page.view;
+      case 'selectPage':
+        this.selected.set(workspace, page.id);
+        this.changed(page);
+        break;
+      case 'show':
+        if (this.owner !== key) this.view?.setVisible(false);
+        this.owner = key; this.view = page.view;
         page.requestedVisible = request.visible !== false;
         page.view.setVisible(page.requestedVisible && page.control !== 'transferring' && !page.activeAction);
         break;
-      case "navigate": {
-        page.url = target;
-        page.error = "";
-        // Loading is observed through state; navigation completion cannot switch task ownership.
-        void c.loadURL(target).catch((error) => {
-          if (this.pages.get(owner) === page && error.code !== "ERR_ABORTED" && page.url === target)
-            page.error = error.message;
+      case 'navigate':
+        page.url = target; page.error = '';
+        void c.loadURL(target).catch(error => {
+          if (this.pageStillOwned(page) && error.code !== 'ERR_ABORTED' && page.url === target) page.error = error.message;
         });
         break;
-      }
-      case "back":
-        if (c.navigationHistory.canGoBack()) c.navigationHistory.goBack();
-        break;
-      case "forward":
-        if (c.navigationHistory.canGoForward()) c.navigationHistory.goForward();
-        break;
-      case "reload":
-        page.error = "";
+      case 'back': if (c.navigationHistory.canGoBack()) c.navigationHistory.goBack(); break;
+      case 'forward': if (c.navigationHistory.canGoForward()) c.navigationHistory.goForward(); break;
+      case 'reload':
+        page.error = '';
         if (c.getURL()) c.reload();
-        else if (page.url)
-          void c.loadURL(page.url).catch((error) => {
-            if (this.pages.get(owner) === page && error.code !== "ERR_ABORTED") page.error = error.message;
-          });
+        else if (page.url) void c.loadURL(page.url).catch(error => {
+          if (this.pageStillOwned(page) && error.code !== 'ERR_ABORTED') page.error = error.message;
+        });
         break;
-      case "stop":
-        c.stop();
-        break;
-      case "external":
-        await require("electron").shell.openExternal(
-          webUrl(c.getURL() || page.url),
-        );
-        break;
-      case "devtools":
-        this.revoke(page);
-        c.openDevTools({ mode: "detach" });
-        break;
+      case 'stop': c.stop(); break;
+      case 'external': await require('electron').shell.openExternal(webUrl(c.getURL() || page.url)); break;
+      case 'devtools': this.revoke(page); c.openDevTools({ mode: 'detach' }); break;
     }
+    this.changed(page);
     this.prune();
     return this.state(page);
   }
+
 }
 module.exports = { CorePreview, webUrl, boundsWithinWindow };
