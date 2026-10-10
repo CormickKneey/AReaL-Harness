@@ -91,7 +91,14 @@ async function createWindow() {
   preview.onRevoke = identity => { void backend.browserRevoke(identity).catch(() => {}); };
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
-  window.on('close', event => { if (!exitReady) { event.preventDefault(); window.hide(); } });
+  window.on('close', event => {
+    if (exitReady) return;
+    event.preventDefault();
+    // A close-to-background still ends this window's Browser ownership. Fence
+    // native callbacks before hiding; reopening creates fresh Pages on demand.
+    preview?.dispose();
+    window.hide();
+  });
   await window.loadURL('areal-ui://app/');
   return window;
 }
@@ -192,7 +199,7 @@ app.whenReady().then(async () => {
       if (name === 'recoverResources') { await recoverResources(); return { ok: true, value: null }; }
       if (name === 'connectService') { await backend.init(); return { ok: true, value: null }; }
       if (name === 'manage' && params.operation === 'archive') {
-        const answer = await dialog.showMessageBox(window, { type: 'question', message: '归档此会话？', detail: '历史仍可查看。当前 Core 不支持取消归档，归档后无法继续发送消息。', buttons: ['取消', '归档会话'], defaultId: 0, cancelId: 0 });
+        const answer = await dialog.showMessageBox(window, { type: 'question', message: '归档此会话？', detail: '历史仍可查看。当前 Core 不支持取消归档，归档后无法继续发送消息；该会话的临时浏览页面和登录状态也会关闭。', buttons: ['取消', '归档会话'], defaultId: 0, cancelId: 0 });
         if (answer.response !== 1) return { ok: true, value: { canceled: true } };
       }
       if (name === 'export') {
