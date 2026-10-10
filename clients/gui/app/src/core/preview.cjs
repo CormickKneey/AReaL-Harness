@@ -531,10 +531,11 @@ class CorePreview {
       const backendNodeId = await picked;
       if (!valid() || page.activeSelection !== selection || !Number.isSafeInteger(backendNodeId))
         throw new Error('元素选择已过期');
-      const box = await command('DOM.getBoxModel', { backendNodeId });
-      if (!valid() || !Array.isArray(box.model?.border)) throw new Error('元素选择已过期');
-      const quad = box.model.border;
-      const centerX = (quad[0] + quad[4]) / 2, centerY = (quad[1] + quad[5]) / 2;
+      const box = await command('DOM.getBoxModel', { backendNodeId }).catch(() => null);
+      if (!valid()) throw new Error('元素选择已过期');
+      const quad = box?.model?.border;
+      const centerX = Array.isArray(quad) ? (quad[0] + quad[4]) / 2 : null;
+      const centerY = Array.isArray(quad) ? (quad[1] + quad[5]) / 2 : null;
       // The native inspect overlay is disabled before the guarded screenshot.
       await command('Overlay.setInspectMode', { mode: 'none', highlightConfig: {} });
       await command('Overlay.disable');
@@ -544,20 +545,21 @@ class CorePreview {
       page.activeSelection = null;
       if (!valid()) throw new Error('元素选择已过期');
       const capture = await this.captureRegion(projectId, threadId, pageId);
-      const x = Math.max(0, Math.min(capture.viewport.bitmapWidth - 1,
-        Math.floor(centerX * capture.viewport.bitmapWidth / capture.viewport.width)));
-      const y = Math.max(0, Math.min(capture.viewport.bitmapHeight - 1,
-        Math.floor(centerY * capture.viewport.bitmapHeight / capture.viewport.height)));
+      const x = Number.isFinite(centerX) ? Math.max(0, Math.min(capture.viewport.bitmapWidth - 1,
+        Math.floor(centerX * capture.viewport.bitmapWidth / capture.viewport.width))) : null;
+      const y = Number.isFinite(centerY) ? Math.max(0, Math.min(capture.viewport.bitmapHeight - 1,
+        Math.floor(centerY * capture.viewport.bitmapHeight / capture.viewport.height))) : null;
       let element;
-      try { element = await this.selectElement(projectId, threadId, pageId, capture.captureId, x, y, backendNodeId); }
+      try { element = x === null || y === null
+        ? { available: false, reason: '此元素没有可核查的页面边界，请改用区域标注' }
+        : await this.selectElement(projectId, threadId, pageId, capture.captureId, x, y, backendNodeId); }
       catch (error) {
         if (page.annotationCaptureId === capture.captureId) {
           page.annotationCaptureId = null; page.annotationCapture = null; page.annotationElement = null;
         }
         throw error;
       }
-      if (!this.pageStillOwned(page) || !this.owns(projectId, threadId) || page.annotationCaptureId !== capture.captureId
-        || page.documentGeneration !== document || page.controlEpoch !== control) {
+      if (!valid() || page.annotationCaptureId !== capture.captureId) {
         page.annotationCaptureId = null; page.annotationCapture = null; page.annotationElement = null;
         throw new Error('元素选择已过期');
       }
@@ -630,6 +632,7 @@ class CorePreview {
       const captureId = randomUUID();
       page.annotationCaptureId = captureId;
       page.annotationCapture = { documentEpoch, controlEpoch: epoch, pageGeneration: page.pageGeneration,
+        nativeWebContentsId: c.id,
         sourceUrl, viewport, zoom, bitmapWidth: size.width, bitmapHeight: size.height };
       page.annotationElement = null;
       return { captureId, projectId, threadId, pageId,
@@ -659,6 +662,7 @@ class CorePreview {
       && this.pageStillOwned(page) && this.owns(projectId, threadId)
       && page.control === 'human' && page.controlEpoch === frozen.controlEpoch
       && page.pageGeneration === frozen.pageGeneration && page.documentGeneration === frozen.documentEpoch
+      && page.view?.webContents === c && c.id === frozen.nativeWebContentsId
       && !c.isDestroyed() && c.getURL() === frozen.sourceUrl && c.getZoomFactor() === frozen.zoom;
     if (!same()) throw new Error('元素选择已过期，请重新截图');
     let cancel;
@@ -735,6 +739,7 @@ class CorePreview {
     if (page.control !== 'human' || page.controlEpoch !== frozen.controlEpoch
       || page.pageGeneration !== frozen.pageGeneration || page.documentGeneration !== frozen.documentEpoch
       || !this.pageStillOwned(page) || !this.owns(projectId, threadId) || c.isDestroyed()
+      || page.view?.webContents !== c || c.id !== frozen.nativeWebContentsId
       || c.getURL() !== frozen.sourceUrl || c.isDevToolsOpened() || c.debugger.isAttached()) return { stale: true };
     let cancel;
     const cancelled = new Promise((_, reject) => { cancel = () => reject(new Error('元素检查已取消')); });
@@ -754,11 +759,23 @@ class CorePreview {
         ? await Promise.race([nativeWithin(c.debugger.sendCommand('DOM.getNodeForLocation', { x: Math.round(centerX), y: Math.round(centerY), includeUserAgentShadowDOM: false }), performance.now() + 3000), cancelled]) : null;
       const ax = await Promise.race([nativeWithin(c.debugger.sendCommand('Accessibility.getPartialAXTree', { backendNodeId: selected.backendNodeId }), performance.now() + 3000), cancelled]);
       const semantic = ax.nodes?.find(item => item.backendDOMNodeId === selected.backendNodeId && !item.ignored);
+      const xs = Array.isArray(quad) && quad.length === 8 ? [quad[0], quad[2], quad[4], quad[6]] : null;
+      const ys = Array.isArray(quad) && quad.length === 8 ? [quad[1], quad[3], quad[5], quad[7]] : null;
+      const bounds = xs && ys ? {
+        x: Math.max(0, Math.floor(Math.min(...xs) * frozen.bitmapWidth / frozen.viewport.width)),
+        y: Math.max(0, Math.floor(Math.min(...ys) * frozen.bitmapHeight / frozen.viewport.height)),
+        right: Math.min(frozen.bitmapWidth, Math.ceil(Math.max(...xs) * frozen.bitmapWidth / frozen.viewport.width)),
+        bottom: Math.min(frozen.bitmapHeight, Math.ceil(Math.max(...ys) * frozen.bitmapHeight / frozen.viewport.height)),
+      } : null;
+      const original = selected.result.bounds;
       return { stale: page.annotationElement !== selected || page.annotationCapture !== frozen
         || page.control !== 'human' || page.controlEpoch !== frozen.controlEpoch
         || page.documentGeneration !== frozen.documentEpoch || !this.pageStillOwned(page)
         || !this.owns(projectId, threadId) || c.isDestroyed() || c.getURL() !== frozen.sourceUrl
         || hit?.backendNodeId !== selected.backendNodeId
+        || !bounds || Math.abs(bounds.x - original.x) > 1 || Math.abs(bounds.y - original.y) > 1
+        || Math.abs(bounds.right - (original.x + original.width)) > 1
+        || Math.abs(bounds.bottom - (original.y + original.height)) > 1
         || safeText(semantic?.role?.value ?? 'unknown', 80) !== selected.result.role
         || safeText(semantic?.name?.value ?? '', 200) !== selected.result.name };
     } catch { return { stale: true }; }
