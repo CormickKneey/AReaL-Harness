@@ -1468,7 +1468,9 @@ class CorePreview {
         pageGeneration: page.pageGeneration, controlEpoch: page.controlEpoch, plan };
     } finally {
       page.activePrepare = false;
-      if (c.debugger.isAttached() && !page.diagnosticsReady) c.debugger.detach();
+      // Takeover convergence owns this channel after the Agent epoch ends.
+      if (page.control === 'agent' && page.controlEpoch === request.controlEpoch
+        && c.debugger.isAttached() && !page.diagnosticsReady) c.debugger.detach();
     }
   }
   async execute(request) {
@@ -1590,12 +1592,13 @@ class CorePreview {
       clearTimeout(deadline);
       if (page.activeAction === action) page.activeAction = null;
       if (request.operation === 'act') page.lastCapture = null;
-      if (page.control === 'agent' && page.inputPending.size === 0
+      if (page.control === 'agent' && page.controlEpoch === saved.plan.controlEpoch
+        && page.inputPending.size === 0
         && page.heldButtons.size === 0 && page.heldKeys.size === 0) {
         if (!c.isDestroyed() && c.debugger.isAttached() && !page.diagnosticsReady) c.debugger.detach();
         page.view?.setVisible(this.pageStillOwned(page) && this.owner === pageKey(page.coreInstanceId, page.projectId, page.threadId, page.id)
           && page.requestedVisible === true);
-      } else if (page.control === 'agent') {
+      } else if (page.control === 'agent' && page.controlEpoch === saved.plan.controlEpoch) {
         // Even a failed action must release native input before local input resumes.
         page.control = 'transferring'; page.controlEpoch++;
         page.refs.clear(); page.plans.clear(); page.lastObservation = null; page.needsObservation = true;
@@ -1795,7 +1798,8 @@ class CorePreview {
       clearTimeout(timer);
       if (page.activeRead === read) {
         page.activeRead = null;
-        try { if (!c.isDestroyed() && c.debugger.isAttached() && !page.diagnosticsReady) c.debugger.detach(); }
+        try { if (page.control === 'agent' && page.controlEpoch === epoch
+          && !c.isDestroyed() && c.debugger.isAttached() && !page.diagnosticsReady) c.debugger.detach(); }
         catch { /* A detached/crashed target already revoked this read. */ }
       }
     }
