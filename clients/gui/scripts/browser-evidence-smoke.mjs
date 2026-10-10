@@ -19,8 +19,11 @@ const workspace = join(scratch, 'workspace'), userHome = join(scratch, 'user');
 await mkdir(workspace); await mkdir(join(userHome, '.areal'), { recursive: true });
 execFileSync('git', ['init', '-b', 'main'], { cwd: workspace, stdio: 'ignore' });
 const sentinel = 'EVIDENCE_PAGE_03';
-const siteFacts = { gets: 0, posts: 0 };
-const sibling = createServer((_request, response) => { response.setHeader('Content-Type', 'text/html'); response.end('<button>Cross origin child</button>'); });
+const siteFacts = { gets: 0, posts: 0, childGets: 0 };
+const sibling = createServer((_request, response) => {
+  siteFacts.childGets++;
+  response.setHeader('Content-Type', 'text/html'); response.end('<button>Cross origin child</button>');
+});
 await new Promise(resolve => sibling.listen(0, '127.0.0.1', resolve));
 const childUrl = `http://127.0.0.1:${sibling.address().port}/`;
 const site = createServer((request, response) => {
@@ -43,23 +46,30 @@ const site = createServer((request, response) => {
 await new Promise(resolve => site.listen(0, '127.0.0.1', resolve));
 const siteUrl = `http://127.0.0.1:${site.address().port}/?token=SYNTHETIC_SECRET_03`;
 let pageId, rootRef, scenario = 'observe';
+let nextToolCall = 0;
+let issuedToolForScenario = false;
 const modelCalls = [];
 const model = createServer(async (request, response) => {
   let raw = ''; for await (const chunk of request) raw += chunk;
   const body = JSON.parse(raw);
   const last = body.messages.at(-1);
+  const imageData = JSON.stringify(last?.content ?? '').match(/data:image\/png;base64,([A-Za-z0-9+/=]+)/)?.[1];
+  const hadImage = !!imageData;
   modelCalls.push({ scenario, toolCallId: last?.tool_call_id,
-    hadImage: JSON.stringify(last?.content ?? '').includes('data:image/png;base64,'), tools: (body.tools ?? []).map(t => t.function?.name) });
+    lastRole: last?.role, hadImage, ...(hadImage ? { imageSHA256: createHash('sha256').update(Buffer.from(imageData, 'base64')).digest('hex') } : {}),
+    assistantToolCallIds: body.messages.flatMap(message => (message.tool_calls ?? []).map(call => call.id)),
+    tools: (body.tools ?? []).map(t => t.function?.name) });
   await until(() => pageId, 'page identity');
   response.writeHead(200, { 'Content-Type': 'text/event-stream' });
   const send = (delta, finish_reason = null) => response.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
-  if (last?.role !== 'tool') {
+  if (last?.role !== 'tool' && !hadImage && !issuedToolForScenario) {
+    issuedToolForScenario = true;
     const parameters = { pageId };
     if (scenario === 'stale') parameters.rootRef = rootRef;
     if (scenario === 'budget') parameters.budget = { nodes: 1, textBytes: 256 };
-    if (scenario === 'quota') parameters.budget = { nodes: 1000, textBytes: 128 * 1024 };
+    if (scenario === 'quota') parameters.budget = { nodes: 60, textBytes: 4 * 1024 };
     if (scenario === 'capture' || scenario === 'captureInserted') parameters.scope = 'viewport';
-    send({ tool_calls: [{ index: 0, id: `${scenario}-03`, type: 'function', function: {
+    send({ tool_calls: [{ index: 0, id: `${scenario}-${++nextToolCall}-03`, type: 'function', function: {
       name: 'browser_v1', arguments: JSON.stringify({ operation: ['capture', 'captureInserted'].includes(scenario) ? 'capture' : 'observe', parameters }),
     } }] });
     send({}, 'tool_calls');
@@ -106,20 +116,54 @@ try {
     const { spawnSync } = process.getBuiltinModule('node:child_process');
     const output = spawnSync(binary, ['--version'], { env: { ...process.env, HOME: process.env.AREAL_CORE_USER_HOME }, encoding: 'utf8' });
     const plain = spawnSync(binary, ['--version'], { encoding: 'utf8' });
+    const clean = spawnSync(binary, ['--version'], { env: { PATH: '/usr/bin:/bin:/usr/sbin:/sbin', HOME: process.env.AREAL_CORE_USER_HOME, TMPDIR: process.env.TMPDIR }, encoding: 'utf8' });
     const system = spawnSync('/usr/bin/true', [], { encoding: 'utf8' });
     return { exit: output.status, signal: output.signal, stdout: output.stdout, stderr: output.stderr,
-      plain: { exit: plain.status, signal: plain.signal }, system: { exit: system.status, signal: system.signal },
+      plain: { exit: plain.status, signal: plain.signal }, clean: { exit: clean.status, signal: clean.signal, stderr: clean.stderr },
+      inheritedVariableNames: Object.keys(process.env).filter(key => /^(DYLD_|ELECTRON_|NODE_|CODEX_|APP_SANDBOX)/.test(key)),
+      system: { exit: system.status, signal: system.signal },
       electronSandbox: app.isPackaged, homeExists: process.getBuiltinModule('node:fs').existsSync(process.env.AREAL_CORE_USER_HOME) };
   }, env.AREAL_CORE_BIN);
-  await app.evaluate(({ dialog, BrowserWindow }, path) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] }); BrowserWindow.getAllWindows()[0].setSize(1440, 960); }, workspace);
+  await app.evaluate(({ dialog, BrowserWindow }, { path, origins }) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] });
+    const original = dialog.showMessageBox;
+    dialog.showMessageBox = async (...args) => {
+      const options = args.at(-1);
+      const origin = origins.find(value => options?.message === `允许此浏览工作区访问 ${value}？`);
+      if (options?.title === '允许本地开发站点' && origin) {
+        globalThis.__m1OriginPrompts = [...(globalThis.__m1OriginPrompts ?? []), { origin, title: options.title }];
+        return { response: 1, checkboxChecked: false };
+      }
+      return original(...args);
+    };
+    BrowserWindow.getAllWindows()[0].setSize(1440, 960);
+  }, { path: workspace, origins: [new URL(siteUrl).origin, new URL(childUrl).origin] });
   await page.evaluate(() => window.arealDesktop.chooseProject());
   const project = await until(async () => (await state()).projects.find(item => item.root === workspace), 'project ready');
   const first = await command('create', { projectId: project.id, browserEnabled: true, profile: { id: 'fixture', revision: 'v1' } });
   await selectConversation(page, first.threadId);
   await page.keyboard.press('Meta+t');
   await page.locator('.preview-panel').waitFor();
-  await page.evaluate(({ projectId, threadId, url }) => window.arealDesktop.preview({ operation: 'navigate', projectId, threadId, url }), { projectId: project.id, threadId: first.threadId, url: siteUrl });
+  await app.evaluate(({ app, BrowserWindow }) => { app.focus({ steal: true }); BrowserWindow.getAllWindows()[0].focus(); });
+  await until(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isFocused()), 'focused Main Origin prompt');
+  await page.evaluate(({ projectId, threadId, url }) => window.arealDesktop.preview({ operation: 'navigate', projectId, threadId, url }),
+    { projectId: project.id, threadId: first.threadId, url: childUrl });
+  await until(() => app.evaluate(({ webContents }, url) => webContents.getAllWebContents().some(c => c.getURL() === url), childUrl), 'child Origin granted');
+  const childPageId = (await page.evaluate(({ projectId, threadId }) =>
+    window.arealDesktop.preview({ operation: 'state', projectId, threadId }),
+    { projectId: project.id, threadId: first.threadId })).browser.pageId;
+  await page.evaluate(({ projectId, threadId, pageId }) =>
+    window.arealDesktop.preview({ operation: 'show', projectId, threadId, pageId, visible: true }),
+    { projectId: project.id, threadId: first.threadId, pageId: childPageId });
+  await app.evaluate(({ app, BrowserWindow }) => { app.focus({ steal: true }); BrowserWindow.getAllWindows()[0].focus(); });
+  await page.evaluate(({ projectId, threadId, url }) => window.arealDesktop.preview({ operation: 'navigate', projectId, threadId, url }),
+    { projectId: project.id, threadId: first.threadId, url: siteUrl });
+  events.developmentOriginPrompts = await app.evaluate(() => globalThis.__m1OriginPrompts);
+  assert.deepEqual(events.developmentOriginPrompts.map(item => item.origin),
+    [new URL(childUrl).origin, new URL(siteUrl).origin], 'two exact synthetic-Origin Main prompts occurred');
+  events.developmentOriginPromptResponse = 'fixture-stub-allow-two-exact-origins';
   const nativeId = await until(() => app.evaluate(({ webContents }, url) => webContents.getAllWebContents().find(c => c.getURL() === url)?.id, siteUrl), 'native page');
+  await until(() => siteFacts.childGets >= 2, 'embedded child Origin response');
   await app.evaluate(({ webContents }, id) => {
     const contents = webContents.fromId(id), trace = { capturePage: 0, fullAXTree: 0 };
     const capture = contents.capturePage.bind(contents), send = contents.debugger.sendCommand.bind(contents.debugger);
@@ -135,11 +179,16 @@ try {
   await page.getByRole('button', { name: '让 Agent 检查当前页' }).click();
   pageId = (await until(async () => { const value = await page.evaluate(({ projectId, threadId }) => window.arealDesktop.preview({ operation: 'state', projectId, threadId }), { projectId: project.id, threadId: first.threadId }); return value.browser?.control === 'agent' ? value : null; }, 'claim')).browser.pageId;
   const initial = toolResult(await nextTurn(first.threadId));
+  console.error('browser-evidence: initial observation completed');
   let completedTurns = 1;
   async function runScenario(nextScenario, prompt) {
     scenario = nextScenario;
+    issuedToolForScenario = false;
+    console.error(`browser-evidence: ${nextScenario} starting`);
     await command('send', { projectId: project.id, threadId: first.threadId, text: prompt });
-    return toolResult(await nextTurn(first.threadId, completedTurns++));
+    const result = toolResult(await nextTurn(first.threadId, completedTurns++));
+    console.error(`browser-evidence: ${nextScenario} completed`);
+    return result;
   }
   const observation = JSON.parse(initial.contentItems[0].text);
   rootRef = observation.nodes.find(node => node.name === 'Duplicate target')?.ref;
@@ -147,18 +196,30 @@ try {
   assert.equal(observation.nativeWebContentsId, nativeId);
   assert.equal(observation.frameCoverage.childFrames.length, 2);
   assert.ok(observation.frameCoverage.childFrames.every(frame => ['covered', 'unavailable'].includes(frame.coverage)));
+  events.crossFrameDiagnostic = { childFrames: observation.frameCoverage.childFrames, childGets: siteFacts.childGets };
+  const crossOriginFrame = observation.frameCoverage.childFrames.find(frame => frame.url === childUrl);
+  const blockedCrossOriginFrame = observation.frameCoverage.childFrames.find(frame => frame.url === 'chrome-error://chromewebdata/');
+  assert.ok(crossOriginFrame || blockedCrossOriginFrame,
+    `cross-Origin child has explicit coverage or policy failure: ${JSON.stringify(events.crossFrameDiagnostic)}`);
+  assert.ok(siteFacts.childGets >= 2, 'child served both its human grant and embedded navigation');
+  assert.equal(await app.evaluate(({ webContents }, id) => webContents.fromId(id).executeJavaScript(
+    `document.querySelector('#cross').contentDocument === null`), nativeId), true,
+  'embedded child is actually cross-Origin');
+  events.crossOriginFrame = { frame: crossOriginFrame ?? blockedCrossOriginFrame,
+    loaded: !!crossOriginFrame, childGets: siteFacts.childGets,
+    limitation: crossOriginFrame ? null : "Native Session injects frame-src 'self' CSP" };
   assert.equal(observation.shadowCoverage, 'not-distinguished-by-accessibility-tree');
   assert.ok(observation.text.includes(sentinel));
   assert.ok(!JSON.stringify(observation).includes('SYNTHETIC_SECRET_03'));
   for (const secret of ['482913', '573824', '654321', '246813', '738291', '864209'])
     assert.ok(!JSON.stringify(observation).includes(secret), `AX observation exposed ${secret}`);
+  events.initial = { threadId: first.threadId, callId: initial.callId, observation };
   assert.ok(observation.nodes.every(node => node.id && node.role && typeof node.state === 'object'));
   assert.ok(observation.nodes.some(node => node.parent), 'AX observation preserves association hierarchy');
   assert.ok(observation.nodes.some(node => node.role === 'button' && node.name === 'Duplicate target'));
   assert.equal(observation.nodes.find(node => node.name === 'Disabled action')?.state.disabled, 'true');
-  assert.match(observation.nodes.find(node => node.role === 'textbox' && node.name === 'Search query')?.ref, /^r\d+$/);
+  assert.match(observation.nodes.find(node => node.role === 'textbox' && node.name.trim() === 'Search query')?.ref, /^r\d+$/);
   assert.ok(!observation.nodes.some(node => node.role === 'tablist' && node.ref), 'container roles do not receive Refs');
-  events.initial = { threadId: first.threadId, callId: initial.callId, observation };
   const initialTrace = await nativeTrace();
   assert.ok(initialTrace.fullAXTree > 0);
   assert.equal(initialTrace.capturePage, traceBeforeObserve.capturePage, 'observe must not generate a screenshot');
@@ -201,7 +262,7 @@ try {
     autocomplete: !!document.querySelector('#autofill-case'),
     cross: !!document.querySelector('#cross')
   })`);
-  await pageScript(`document.querySelector('#password').remove();document.querySelector('#session').remove();
+  await pageScript(`document.querySelector('#password').closest('label').remove();document.querySelector('#session').remove();
     document.querySelector('#same').contentDocument.querySelector('input').remove();
     document.querySelector('#shadow').shadowRoot.querySelector('input').remove();
     document.querySelector('#otp').remove();document.querySelector('#otpinput').remove();document.querySelector('#cross').remove()`);
@@ -232,9 +293,21 @@ try {
   await pageScript(`window.__restoreBrowserEvidence();document.querySelector('#spoof-secret').remove();delete window.__restoreBrowserEvidence`);
   events.mainWorldSpoof = { capture: spoofedCapture.contentItems, trustedWidth: spoofedObservation.viewport.width };
   const captureOnlyTrace = await nativeTrace();
+  events.beforeSafeCapture = await app.evaluate(({ webContents }, id) =>
+    webContents.fromId(id).executeJavaScriptInIsolatedWorld(1001, [{ code: `(() => ({
+      frames: [...document.querySelectorAll('iframe,frame')].map(frame => ({
+        url: frame.src.split('?')[0], readable: !!frame.contentDocument,
+        ready: frame.contentDocument?.readyState ?? null })),
+      sensitiveInputs: document.querySelectorAll('input[type="password"],input[name*="token" i],input[name*="secret" i],input[name*="key" i],input[autocomplete*="password" i],input[autocomplete*="one-time-code" i],input[autocomplete*="cc-csc" i]').length,
+      visibleSensitiveText: [...document.querySelectorAll('body *')].some(node =>
+        !['SCRIPT','STYLE','TEMPLATE','NOSCRIPT'].includes(node.tagName) &&
+        [...node.childNodes].some(child => child.nodeType === Node.TEXT_NODE &&
+          /password|passcode|secret|token|api.?key|credit.?card|cvv|authorization|one.?time.?code|\\botp\\b|credential/i.test(child.textContent)))
+    }))()` }]), nativeId);
   const safeBaseline = await runScenario('capture', 'Capture the safe baseline before isolated refusals');
+  events.safeBaseline = { callId: safeBaseline.callId, contentItems: safeBaseline.contentItems,
+    nativeTrace: await nativeTrace() };
   assert.ok(safeBaseline.contentItems.some(part => part.type === 'arealMedia'), 'baseline page must be capturable');
-  events.safeBaseline = { callId: safeBaseline.callId };
   const cases = [
     ['root', `document.body.insertAdjacentHTML('beforeend','<input id="password" type="password" value="ROOT_SECRET_03">')`, `document.querySelector('#password').remove()`],
     ['frame', `document.querySelector('#same').contentDocument.body.insertAdjacentHTML('beforeend','<input name="token" value="FRAME_SECRET_03">')`, `document.querySelector('#same').contentDocument.querySelector('input').remove()`],
@@ -342,61 +415,69 @@ try {
   events.surfaceTraceAfterCapture = afterCaptureTrace;
   const image = captured.contentItems.find(part => part.type === 'arealMedia');
   assert.ok(image?.media?.uri?.startsWith('areal://blob/'));
-  assert.ok(modelCalls.slice(modelCheckpoint).some(call => call.toolCallId === captured.callId && call.hadImage),
-    'this captured tool call must send image bytes to the model');
-  await page.locator(`[data-tool-id="${captured.id}"]`).getByRole('button').first().click();
-  const renderedImage = page.locator(`[data-tool-id="${captured.id}"] img`);
+  const modelImage = modelCalls.slice(modelCheckpoint).find(call => call.hadImage && call.assistantToolCallIds.includes(captured.callId));
+  assert.ok(modelImage, 'this captured tool call must send image bytes to the model');
+  const verification = page.locator('details[aria-label="浏览器验证结果"]');
+  await verification.locator('summary').click();
+  const renderedImage = verification.locator('img');
   await renderedImage.waitFor();
   const guiImage = await renderedImage.evaluate(async img => {
     await img.decode();
-    const bytes = await (await fetch(img.currentSrc)).arrayBuffer();
-    const hash = await crypto.subtle.digest('SHA-256', bytes);
-    return { complete: img.complete, width: img.naturalWidth, height: img.naturalHeight, bytes: bytes.byteLength,
-      sha256: Array.from(new Uint8Array(hash)).map(byte => byte.toString(16).padStart(2, '0')).join('') };
+    return { complete: img.complete, width: img.naturalWidth, height: img.naturalHeight, sourceScheme: new URL(img.currentSrc).protocol };
   });
   assert.ok(guiImage.complete && guiImage.width > 0 && guiImage.height > 0);
+  assert.equal(guiImage.sourceScheme, 'blob:');
+  const guiReadSHA256 = await page.evaluate(async ({ projectId, threadId, uri }) => {
+    const response = await window.arealDesktop.command('media', { projectId, threadId, operation: 'read', uri });
+    if (!response.ok) throw Error(JSON.stringify(response));
+    const hash = await crypto.subtle.digest('SHA-256', response.value.bytes);
+    return Array.from(new Uint8Array(hash)).map(byte => byte.toString(16).padStart(2, '0')).join('');
+  }, { projectId: project.id, threadId: first.threadId, uri: image.media.uri });
+  assert.equal(modelImage.imageSHA256, guiReadSHA256, 'model and GUI receive the same Core image Blob');
   await page.screenshot({ path: join(scratch, 'gui-image.png'), animations: 'disabled' });
   const nativePng = await app.evaluate(async ({ webContents }, id) => (await webContents.fromId(id).capturePage()).toPNG().toString('base64'), nativeId);
   await writeFile(join(scratch, 'native-page.png'), Buffer.from(nativePng, 'base64'));
+  const second = await command('create', { projectId: project.id, browserEnabled: true, profile: { id: 'fixture', revision: 'v1' } });
+  const denied = await page.evaluate(({ projectId, threadId, uri }) =>
+    window.arealDesktop.command('media', { projectId, threadId, operation: 'read', uri }),
+  { projectId: project.id, threadId: second.threadId, uri: image.media.uri });
+  assert.equal(denied.ok, false, 'different Thread must not read screenshot Blob');
+  assert.match(denied.error?.message ?? '', /404/);
+  events.image = { threadId: first.threadId, callId: captured.callId, nativeId, media: image.media,
+    guiImage, guiReadSHA256, modelImageSHA256: modelImage.imageSHA256,
+    crossThreadError: denied.error?.message, siteFacts: structuredClone(siteFacts) };
+  checks.push('B-09: Core tool image reaches deterministic model and GUI, Blob rejects another Thread');
   const beforeQuota = JSON.parse((await runScenario('refresh', 'Refresh a live Ref before bounded cache churn')).contentItems[0].text);
   rootRef = beforeQuota.nodes.find(node => node.name === 'Duplicate target')?.ref;
   assert.match(rootRef, /^r\d+$/);
   const anchorRef = rootRef, quotaObservations = [];
-  for (let batch = 0; batch < 4; batch++) {
+  for (let batch = 0; batch < 80; batch++) {
     await pageScript(`(() => {
-      const group = document.createElement('div'); group.id = 'quota-${batch}';
-      for (let index = 0; index < 700; index++) {
+      const group = document.createDocumentFragment();
+      for (let index = 0; index < 120; index++) {
         const button = document.createElement('button'); button.textContent = 'quota-${batch}-' + index;
+        button.dataset.quotaBatch = '${batch}';
         group.append(button);
       }
       document.body.prepend(group);
     })()`);
-    const observed = JSON.parse((await runScenario('quota', `Observe batch ${batch} under a bounded Ref cache`)).contentItems[0].text);
+    const result = await runScenario('quota', `Observe new live targets in bounded batch ${batch}`);
+    assert.ok(Buffer.byteLength(result.contentItems[0].text) < 16 * 1024, 'inline observation fits Core projection limit');
+    const observed = JSON.parse(result.contentItems[0].text);
+    assert.ok(!observed.rawResult, `batch ${batch} exceeded Core's 16 KiB inline projection`);
     assert.equal(observed.refCache.capacity, 1000);
-    assert.ok(observed.nodes.length <= 1000);
-    quotaObservations.push({ batch, emitted: observed.nodes.length, evicted: observed.refCache.evicted,
-      newestRef: observed.nodes.find(node => node.name.startsWith(`quota-${batch}-`))?.ref });
+    assert.ok(observed.nodes.length <= 60 && observed.budget.textBytes === 4 * 1024);
+    const newestRef = observed.nodes.find(node => node.name.startsWith(`quota-${batch}-`) && node.ref)?.ref;
+    assert.match(newestRef, /^r\d+$/, 'bounded observation must include a new actionable target');
+    quotaObservations.push({ batch, emitted: observed.nodes.length, issuedRefs: observed.nodes.filter(node => node.ref).length,
+      evicted: observed.refCache.evicted, newestRef });
+    if (observed.refCache.evicted > 0) break;
   }
-  assert.ok(quotaObservations.some(item => item.evicted > 0), 'still-live old Refs are evicted at capacity');
-  assert.ok(quotaObservations.at(-1).newestRef && Number(quotaObservations.at(-1).newestRef.slice(1)) > Number(anchorRef.slice(1)));
+  assert.ok(quotaObservations.at(-1)?.evicted > 0, 'live old Refs are evicted at capacity');
   const evictedRef = await runScenario('stale', 'Observe the old Ref after cache eviction');
   assert.match(JSON.stringify(evictedRef), /stale_ref/);
   events.refCapacity = { anchorRef, observations: quotaObservations, evictedContent: evictedRef.contentItems };
-  await pageScript(`document.querySelectorAll('[id^="quota-"]').forEach(node => node.remove())`);
-  const second = await command('create', { projectId: project.id, browserEnabled: true, profile: { id: 'fixture', revision: 'v1' } });
-  const metadata = JSON.parse(await readFile(join(scratch, 'core', 'service.json'), 'utf8'));
-  const url = new URL(metadata.endpoint); url.protocol = 'http:'; url.pathname = `/areal/blobs/${image.media.uri.split('/').at(-1)}`; url.searchParams.set('threadId', second.threadId);
-  const ownedUrl = new URL(url); ownedUrl.searchParams.set('threadId', first.threadId);
-  const owned = await fetch(ownedUrl, { headers: { Authorization: `Bearer ${metadata.token}` } });
-  assert.equal(owned.status, 200);
-  const ownedBytes = Buffer.from(await owned.arrayBuffer());
-  assert.equal(guiImage.sha256, createHash('sha256').update(ownedBytes).digest('hex'), 'GUI decodes this Core Blob');
-  const denied = await fetch(url, { headers: { Authorization: `Bearer ${metadata.token}` } });
-  assert.notEqual(denied.status, 200, 'different Thread must not read screenshot Blob');
-  events.image = { threadId: first.threadId, callId: captured.callId, nativeId, media: image.media,
-    guiImage, coreBlobSHA256: createHash('sha256').update(ownedBytes).digest('hex'),
-    crossThreadStatus: denied.status, siteFacts: structuredClone(siteFacts) };
-  checks.push('B-09: Core tool image reaches deterministic model and GUI, Blob rejects another Thread');
+  checks.push('B-07: bounded inline snapshots eventually evict a still-live old Ref');
   assert.equal(siteFacts.posts, 0);
   assert.deepEqual(errors, []);
   passed = true;
