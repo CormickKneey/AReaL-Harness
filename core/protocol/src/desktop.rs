@@ -10,7 +10,7 @@ pub const BROWSER_V1_BUNDLE: &str = "areal.browser.v1";
 pub fn browser_v1_tool() -> super::ToolDefinition {
     super::ToolDefinition {
         name: "browser_v1".into(),
-        description: "Inspect, diagnose and navigate authorized pages in this desktop thread. Call describe first; diagnostics returns bounded Console/network metadata, and page changes require Core approval.".into(),
+        description: "Inspect and navigate authorized pages in this desktop thread. Call describe first; page changes require Core approval.".into(),
         input_schema: serde_json::json!({
             "type":"object",
             "properties":{"operation":{"type":"string"},"parameters":{"type":"object"}},

@@ -2,7 +2,7 @@
 
 const definition = Object.freeze({
   name: 'browser_v1',
-  description: 'Inspect, diagnose and navigate authorized pages in this desktop thread. Call describe first; diagnostics returns bounded Console/network metadata, and page changes require Core approval.',
+  description: 'Inspect and navigate authorized pages in this desktop thread. Call describe first; page changes require Core approval.',
   inputSchema: {
     type: 'object',
     properties: {
