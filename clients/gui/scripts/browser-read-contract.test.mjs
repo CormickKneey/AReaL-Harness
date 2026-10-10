@@ -29,6 +29,22 @@ test('browser observation and capture accept only bounded declared parameters', 
   assert.equal(validToolInput({ operation: 'navigate', parameters: { pageId, url: 'http://localhost:3000', allow: true } }), false);
 });
 
+test('batch accepts only eight observed same-page actions or bounded waits', () => {
+  const pageId = '00000000-0000-4000-8000-000000000001';
+  const snapshotId = '00000000-0000-4000-8000-000000000002';
+  const click = { operation: 'act', snapshotId, action: { kind: 'click', ref: 'r1' } };
+  const wait = { operation: 'wait', timeoutMs: 50 };
+  const input = steps => ({ operation: 'runBatch', parameters: { pageId, snapshotId, steps } });
+  assert.equal(validToolInput(input([click, wait])), true);
+  assert.equal(validToolInput(input(Array(8).fill(wait))), true);
+  assert.equal(validToolInput(input([])), false);
+  assert.equal(validToolInput(input(Array(9).fill(wait))), false);
+  assert.equal(validToolInput(input([{ operation: 'navigate', url: 'http://localhost/' }])), false);
+  assert.equal(validToolInput(input([{ ...click, pageId }])), false);
+  assert.equal(validToolInput(input([click, { operation: 'act', snapshotId, action: { kind: 'clickAt', x: 1, y: 1 } }])), false);
+  assert.equal(validToolInput({ operation: 'runBatch', parameters: { pageId, snapshotId, steps: [click], approved: true } }), false);
+});
+
 test('bound client may answer a browser tool request while ordinary clients reject it', async () => {
   const replies = [];
   const socket = { readyState: 1, send: data => replies.push(JSON.parse(data)) };
@@ -62,7 +78,7 @@ test('an authenticated owner claim refuses a request from another Core generatio
   const service = new DesktopService(backend, 'fixture-identity');
   const receive = (id, method, params) => service.receive(owner, Buffer.from(JSON.stringify({ id, method, params })));
   await receive(1, 'hello', { protocol: PROTOCOL, identity: 'fixture-identity' });
-  await receive(2, 'browserClaim', { protocol: 'areal.browser.host.v1', operations: ['describe', 'observe', 'capture', 'act', 'wait', 'navigate', 'newPage', 'diagnostics'],
+  await receive(2, 'browserClaim', { protocol: 'areal.browser.host.v1', operations: ['describe', 'observe', 'capture', 'act', 'wait', 'navigate', 'newPage', 'diagnostics', 'runBatch'],
     available: true, coreInstanceId: 'core-1', projectId: 'project-1', threadId: 'thread-1', pageId, browserHostId: 'host-1',
     hostGeneration: 1, pageGeneration: 1, controlEpoch: 1 });
   assert.equal(sent.at(-1).result.claimed, true);

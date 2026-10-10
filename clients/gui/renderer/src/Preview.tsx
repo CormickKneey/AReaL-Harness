@@ -452,6 +452,7 @@ export function Preview({
   const uninspectedUnknown = thread?.turns?.some((turn: Data) => turn.items?.some((item: Data) =>
     item.type === 'dynamicToolCall' && !item.execution?.inspection &&
     (item.execution?.outcome === 'unknown' || item.execution?.hooks?.some((hook: Data) => hook.outcome === 'unknown')))) === true;
+  const batch = state.workspace?.pages?.find((page: Data) => page.pageId === state.browser?.pageId)?.operation;
   let address = url;
   if (!fullAddress && !addressFocused && !editing.current) {
     try { address = new URL(url).host; } catch { /* Keep a not-yet-valid user draft. */ }
@@ -472,6 +473,12 @@ export function Preview({
       </div>
       {state.browser?.stateLoss && <div className="preview-viewport-toolbar" role="status">
         {state.browser.stateLoss}
+      </div>}
+      {batch && <div className="preview-viewport-toolbar" role="status">
+        浏览步骤 {batch.completed}/{batch.total} · {batch.status === 'running' ? '进行中'
+          : batch.status === 'confirmed' ? '已确认输入，仍需检查页面结果'
+            : batch.status === 'unknown' ? '结果未知，请检查聊天记录'
+              : '已停止，剩余步骤未执行'}
       </div>}
       {browserEnabled && <div className="preview-viewport-toolbar" role="note">
         临时登录只在当前浏览工作区使用；关闭工作区或重启后可能需要重新登录。

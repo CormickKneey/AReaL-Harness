@@ -52,6 +52,16 @@ async function nativeWithin(promise, deadline) {
     })]);
   } finally { clearTimeout(timer); }
 }
+async function batchWithin(promise, deadline) {
+  const remaining = deadline - performance.now();
+  if (remaining <= 0) throw new Error('not_sent');
+  let timer;
+  try {
+    return await Promise.race([promise, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('not_sent')), remaining);
+    })]);
+  } finally { clearTimeout(timer); }
+}
 const viewportScript = `({width:innerWidth,height:innerHeight,scrollX,scrollY,deviceScaleFactor:devicePixelRatio})`;
 const coordinateKinds = new Set(['clickAt', 'drag', 'pressAt']);
 function viewportFacts(window, page, viewport) {
@@ -207,6 +217,9 @@ class CorePreview {
     this.view = null;
     this.browserHostId = randomUUID();
     this.hostGeneration = randomBytes(4).readUInt32BE(0);
+    // A call identity is retained for this host lifetime. Losing a transport
+    // reply must never turn a repeated call into permission to replay a prefix.
+    this.batchCalls = new Map();
   }
   workspacePages(projectId, threadId) {
     return [...this.pages.values()].filter(page => page.coreInstanceId === this.coreIdentity(projectId)
@@ -248,7 +261,8 @@ class CorePreview {
       url: c && !c.isDestroyed() ? c.getURL() || page.url : page.url,
       title: c && !c.isDestroyed() ? safeText(c.getTitle(), 256) : safeText(page.title, 256),
       pageGeneration: page.pageGeneration, documentEpoch: page.documentGeneration,
-      controlEpoch: page.controlEpoch, viewportRevision: page.viewportRevision };
+      controlEpoch: page.controlEpoch, viewportRevision: page.viewportRevision,
+      operation: page.batchProgress ?? null };
   }
   snapshot(projectId, threadId) {
     const key = workspaceKey(this.coreIdentity(projectId), projectId, threadId);
@@ -532,7 +546,7 @@ class CorePreview {
         || page.pageGeneration !== initial.pageGeneration || page.documentGeneration !== initial.documentEpoch
         || page.controlEpoch !== initial.controlEpoch || c.isDestroyed() || c.getURL() !== initial.url
         || c.isDevToolsOpened()) throw new Error('Browser claim was revoked');
-      page.control = 'agent'; grantedEpoch = ++page.controlEpoch; page.refs.clear(); page.plans.clear();
+      page.control = 'agent'; grantedEpoch = ++page.controlEpoch; page.refs.clear(); page.plans.clear(); page.batchProgress = null;
       page.lastObservation = null; page.needsObservation = true;
       this.clearDiagnostics(page, 'new_control_epoch');
       if (!c.debugger.isAttached()) c.debugger.attach('1.3');
@@ -551,7 +565,7 @@ class CorePreview {
       page.diagnosticsStartedAt = Date.now() / 1000;
       page.diagnosticsReady = true;
       this.changed(page, 'controlChanged');
-      return { protocol: 'areal.browser.host.v1', operations: ['describe', 'observe', 'capture', 'act', 'wait', 'navigate', 'newPage', 'diagnostics'], available: true,
+      return { protocol: 'areal.browser.host.v1', operations: ['describe', 'observe', 'capture', 'act', 'wait', 'navigate', 'newPage', 'diagnostics', 'runBatch'], available: true,
         coreInstanceId: page.coreInstanceId, projectId, threadId, pageId: page.id, browserHostId: this.browserHostId,
         hostGeneration: this.hostGeneration, pageGeneration: initial.pageGeneration, controlEpoch: grantedEpoch };
     } catch (error) {
@@ -1080,6 +1094,8 @@ class CorePreview {
   }
   cancelRead({ projectId, threadId, pageId, requestId, hostGeneration }) {
     if (hostGeneration !== this.hostGeneration) return;
+    const batch = this.page(projectId, threadId, pageId)?.activeBatch;
+    if (batch?.requestId === requestId) batch.cancel();
     const active = this.page(projectId, threadId, pageId)?.activeRead;
     if (active?.requestId === requestId) active.cancel();
     const action = this.page(projectId, threadId, pageId)?.activeAction;
@@ -1195,6 +1211,145 @@ class CorePreview {
       hostGeneration: this.hostGeneration, pageGeneration: page.pageGeneration,
       controlEpoch: page.controlEpoch, plan };
   }
+  batchIdentity(request) {
+    return JSON.stringify([this.hostGeneration, request.coreInstanceId, request.projectId,
+      request.threadId, request.turnId, request.callId]);
+  }
+  batchStep(request, step) {
+    return { ...request, operation: step.operation, parameters: step.operation === 'act'
+      ? { pageId: request.pageId, snapshotId: step.snapshotId, action: step.action }
+      : { pageId: request.pageId, timeoutMs: step.timeoutMs } };
+  }
+  async prepareBatch(request) {
+    const key = this.batchIdentity(request);
+    const parameters = JSON.stringify(request.parameters);
+    const existing = this.batchCalls.get(key);
+    if (existing) {
+      if (existing.parameters !== parameters) throw new Error('not_sent');
+      return existing.preparePromise;
+    }
+    const { page, c } = this.actionPage(request);
+    if (this.batchCalls.size >= 256) throw new Error('not_sent');
+    const record = { parameters, page, plan: null, result: null, executePromise: null, cancelled: false };
+    this.batchCalls.set(key, record);
+    record.preparePromise = (async () => {
+      const stepPlans = [];
+      const deadline = performance.now() + 9000; // Adapter preparation expires at 10s.
+      try {
+        if (page.needsObservation || page.lastObservation !== request.parameters.snapshotId) throw new Error('stale_ref');
+        for (const step of request.parameters.steps) {
+          if (performance.now() >= deadline) throw new Error('not_sent');
+          const prepared = await this.prepare({ ...this.batchStep(request, step), batchDeadline: deadline });
+          stepPlans.push(prepared.plan);
+          if (performance.now() >= deadline || page.view?.webContents !== c || page.controlEpoch !== request.controlEpoch)
+            throw new Error('plan_stale');
+        }
+        const plan = { preparedActionId: randomUUID(), operation: 'runBatch', pageId: page.id,
+          origin: new URL(c.getURL()).origin, url: observationUrl(c.getURL()),
+          snapshotId: request.parameters.snapshotId, steps: stepPlans,
+          pageGeneration: page.pageGeneration, documentEpoch: page.documentGeneration,
+          controlEpoch: page.controlEpoch, viewportRevision: page.viewportRevision,
+          browserHostId: this.browserHostId, hostGeneration: this.hostGeneration,
+          threadId: request.threadId, turnId: request.turnId, callId: request.callId,
+          expiresAt: Date.now() + 300000 };
+        plan.fingerprint = createHash('sha256').update(JSON.stringify(plan)).digest('hex');
+        record.plan = plan;
+        page.plans.set(plan.preparedActionId, { plan, pageUrl: c.getURL() });
+        return { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration,
+          projectId: request.projectId, threadId: request.threadId, turnId: request.turnId,
+          callId: request.callId, pageId: page.id, browserHostId: this.browserHostId,
+          hostGeneration: this.hostGeneration, pageGeneration: page.pageGeneration,
+          controlEpoch: page.controlEpoch, plan };
+      } catch (error) {
+        for (const plan of stepPlans) page.plans.delete(plan.preparedActionId);
+        throw error;
+      }
+    })();
+    return record.preparePromise;
+  }
+  async executeBatch(request) {
+    const record = this.batchCalls.get(this.batchIdentity(request));
+    if (!record || record.parameters !== JSON.stringify(request.parameters)) throw new Error('plan_stale');
+    if (record.executePromise) return record.executePromise;
+    const approved = request.browserApproval?.plan;
+    const saved = approved && record.page.plans.get(approved.preparedActionId);
+    const { page, c } = this.actionPage(request);
+    if (record.page !== page || !record.plan || !saved || !isDeepStrictEqual(approved, record.plan)
+      || !isDeepStrictEqual(saved.plan, record.plan) || approved.expiresAt < Date.now()
+      || saved.pageUrl !== c.getURL() || page.controlEpoch !== approved.controlEpoch
+      || page.documentGeneration !== approved.documentEpoch) throw new Error('plan_stale');
+    // Register before the first asynchronous step so concurrent equal callIds
+    // share one execution; a different argument body is rejected above.
+    record.executePromise = (async () => {
+      page.plans.delete(approved.preparedActionId);
+      const receipts = [];
+      page.batchProgress = { callId: request.callId, completed: 0,
+        total: request.parameters.steps.length, status: 'running' };
+      this.changed(page, 'operationChanged');
+      const deadline = performance.now() + 29000;
+      let expired = false;
+      const batch = { requestId: request.requestId, cancel: () => {
+        record.cancelled = true;
+        if (page.activeAction?.requestId === request.requestId) page.activeAction.cancel();
+      } };
+      page.activeBatch = batch;
+      const timer = setTimeout(() => {
+        expired = true;
+        batch.cancel();
+      }, 29000);
+      const base = { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration,
+        projectId: request.projectId, threadId: request.threadId, turnId: request.turnId,
+        callId: request.callId, pageId: page.id, browserHostId: this.browserHostId,
+        hostGeneration: this.hostGeneration, pageGeneration: page.pageGeneration,
+        controlEpoch: approved.controlEpoch, preparedActionId: approved.preparedActionId };
+      try {
+        for (const [index, step] of request.parameters.steps.entries()) {
+          const remaining = deadline - performance.now();
+          if (record.cancelled || expired || remaining <= 1000 || (step.operation === 'wait' && step.timeoutMs + 1000 > remaining)) {
+            const result = { ...base, error: 'budget_exceeded', dispatch: 'not_sent',
+              receipts, failedStep: index, remaining: 'not_sent', remainingSteps: request.parameters.steps.length - index };
+            page.batchProgress = { callId: request.callId, completed: receipts.length,
+              total: request.parameters.steps.length, status: 'rejected' };
+            this.changed(page, 'operationChanged');
+            record.result = result; return result;
+          }
+          try {
+            this.actionPage(request); // Page, host generation and local control fence.
+            if (page.controlEpoch !== approved.controlEpoch || page.documentGeneration !== approved.documentEpoch)
+              throw new Error('plan_stale');
+            const result = await this.execute({ ...this.batchStep(request, step), batchDeadline: deadline,
+              browserApproval: { plan: approved.steps[index] },
+              batchGuard: () => record.cancelled || performance.now() >= deadline });
+            receipts.push({ stepIndex: index, operation: step.operation, status: 'confirmed', dispatch: result.dispatch,
+              verification: result.verification ?? 'not_checked', preparedActionId: result.preparedActionId });
+            page.batchProgress = { callId: request.callId, completed: receipts.length,
+              total: request.parameters.steps.length, status: 'running' };
+            this.changed(page, 'operationChanged');
+          } catch (error) {
+            const unknown = error.message === 'outcome_unknown';
+            const result = { ...base, error: unknown ? 'outcome_unknown' : error.message,
+              dispatch: unknown ? 'unknown' : 'not_sent', receipts,
+              failedStep: index, remaining: 'not_sent', remainingSteps: request.parameters.steps.length - index - 1 };
+            page.batchProgress = { callId: request.callId, completed: receipts.length,
+              total: request.parameters.steps.length, status: unknown ? 'unknown' : 'rejected' };
+            this.changed(page, 'operationChanged');
+            record.result = result; return result;
+          }
+        }
+        const result = { ...base, dispatch: 'confirmed', receipts,
+          verification: 'not_checked' };
+        page.batchProgress = { callId: request.callId, completed: receipts.length,
+          total: receipts.length, status: 'confirmed' };
+        this.changed(page, 'operationChanged');
+        record.result = result; return result;
+      } finally {
+        clearTimeout(timer);
+        for (const plan of approved.steps) page.plans.delete(plan.preparedActionId);
+        if (page.activeBatch === batch) page.activeBatch = null;
+      }
+    })();
+    return record.executePromise;
+  }
   async executeNavigation(request) {
     const { page, c } = this.actionPage(request);
     const approved = request.browserApproval?.plan;
@@ -1254,12 +1409,14 @@ class CorePreview {
     }
   }
   async prepare(request) {
-    if (request.phase !== 'prepare' || !['act', 'wait', 'navigate', 'newPage'].includes(request.operation)) throw new Error('not_sent');
+    if (request.phase !== 'prepare' || !['act', 'wait', 'navigate', 'newPage', 'runBatch'].includes(request.operation)) throw new Error('not_sent');
+    if (request.operation === 'runBatch') return this.prepareBatch(request);
     if (['navigate', 'newPage'].includes(request.operation)) return this.prepareNavigation(request);
     const { page, c } = this.actionPage(request);
     const initialDocument = page.documentGeneration;
     for (const [id, record] of page.plans) if (record.plan.expiresAt < Date.now()) page.plans.delete(id);
     if (page.activeRead || page.activePrepare || page.activeAction
+      || page.activeBatch
       || this.workspaceOutstanding(page.projectId, page.threadId) >= 16) throw new Error('not_sent');
     const url = new URL(c.getURL());
     const local = url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
@@ -1275,13 +1432,18 @@ class CorePreview {
     try {
       if (!c.debugger.isAttached()) c.debugger.attach('1.3');
       if (coordinate) target = coordinateTarget(capture, request.parameters.action);
-      else if (request.operation === 'act') target = await this.actionTarget(page, c, request.parameters.action.ref);
+      else if (request.operation === 'act') target = await (request.batchDeadline
+        ? batchWithin(this.actionTarget(page, c, request.parameters.action.ref), request.batchDeadline)
+        : this.actionTarget(page, c, request.parameters.action.ref));
       if (request.parameters.action?.kind === 'fill'
         && !/^(textField|textbox|searchbox|comboBox|spinbutton)$/i.test(target.role))
         throw new Error('target_unavailable');
-      const viewport = await readIsolated(c, viewportScript);
+      const viewport = await (request.batchDeadline
+        ? batchWithin(readIsolated(c, viewportScript), request.batchDeadline)
+        : readIsolated(c, viewportScript));
       const viewportKey = viewportFacts(this.window, page, viewport).key;
-      if (!this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== request.controlEpoch
+      if ((request.batchDeadline && performance.now() >= request.batchDeadline)
+        || !this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== request.controlEpoch
         || page.pageGeneration !== request.pageGeneration || page.documentGeneration !== initialDocument || c.isDestroyed()
         || c.getURL() !== url.href) throw new Error('plan_stale');
       if (page.viewportKey !== viewportKey) { page.viewportKey = viewportKey; page.viewportRevision++; }
@@ -1310,13 +1472,17 @@ class CorePreview {
     }
   }
   async execute(request) {
-    if (request.phase !== 'execute' || !['act', 'wait', 'navigate', 'newPage'].includes(request.operation)) throw new Error('not_sent');
+    if (request.phase !== 'execute' || !['act', 'wait', 'navigate', 'newPage', 'runBatch'].includes(request.operation)) throw new Error('not_sent');
+    if (request.operation === 'runBatch') return this.executeBatch(request);
     if (['navigate', 'newPage'].includes(request.operation)) return this.executeNavigation(request);
     const { page, c } = this.actionPage(request);
     const approved = request.browserApproval?.plan;
     const saved = approved && page.plans.get(approved.preparedActionId);
-    const nowViewport = await readIsolated(c, viewportScript);
+    const nowViewport = await (request.batchDeadline
+      ? batchWithin(readIsolated(c, viewportScript), request.batchDeadline)
+      : readIsolated(c, viewportScript));
     const nowKey = viewportFacts(this.window, page, nowViewport).key;
+    if (request.batchGuard?.()) throw new Error('not_sent');
     if (!saved || !isDeepStrictEqual(approved, saved.plan)
       || saved.plan.threadId !== request.threadId || saved.plan.turnId !== request.turnId
       || saved.plan.callId !== request.callId || saved.plan.operation !== request.operation
@@ -1331,7 +1497,7 @@ class CorePreview {
       || !isDeepStrictEqual(saved.plan.action, request.operation === 'act'
         ? request.parameters.action : { kind: 'wait', timeoutMs: request.parameters.timeoutMs })) throw new Error('plan_stale');
     page.plans.delete(approved.preparedActionId);
-    if (page.activeRead || page.activePrepare || page.activeAction) throw new Error('not_sent');
+    if (page.activeRead || page.activePrepare || page.activeAction || (page.activeBatch && !request.batchGuard)) throw new Error('not_sent');
     let cancelled;
     const stop = new Promise((_, reject) => { cancelled = reject; });
     const action = { requestId: request.requestId, syntheticInput: request.operation === 'act', dispatched: false, cancelled: false,
@@ -1343,9 +1509,11 @@ class CorePreview {
       if (this.window.isFocused() && c.isFocused()) this.window.webContents.focus();
       page.view.setVisible(false);
     }
-    const deadline = setTimeout(() => action.cancel(), request.operation === 'wait'
+    const stepTimeout = request.operation === 'wait'
       ? Math.min(30000, request.parameters.timeoutMs + 1000)
-      : request.parameters.action.kind === 'drag' ? 12000 : 5000);
+      : request.parameters.action.kind === 'drag' ? 12000 : 5000;
+    const deadline = setTimeout(() => action.cancel(), request.batchDeadline
+      ? Math.max(1, Math.min(stepTimeout, request.batchDeadline - performance.now())) : stepTimeout);
     try {
       if (request.operation === 'wait') {
         await Promise.race([new Promise(resolve => setTimeout(resolve, request.parameters.timeoutMs)), stop]);
@@ -1369,7 +1537,7 @@ class CorePreview {
         // before-input-event cannot distinguish a physical key from CDP echo.
         if (this.window.isFocused() && c.isFocused()) throw new Error('not_sent');
         const live = () => {
-          if (action.cancelled || !this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== saved.plan.controlEpoch
+          if (action.cancelled || request.batchGuard?.() || !this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== saved.plan.controlEpoch
             || page.documentGeneration !== saved.plan.documentEpoch || page.viewportRevision !== saved.plan.viewportRevision
             || c.isDestroyed()) throw new Error(action.dispatched ? 'outcome_unknown' : 'plan_stale');
         };
