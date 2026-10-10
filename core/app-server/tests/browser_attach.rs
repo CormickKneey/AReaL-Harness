@@ -71,7 +71,17 @@ async fn observer_subscribes_without_taking_the_browser_callback() {
     assert_eq!(done.turns[0].status, areal_protocol::TurnStatus::Completed);
     let observed_done = loop { let message = next(&mut observer).await; if message["method"] == "turn/completed" { break message; } };
     assert_eq!(observed_done["params"]["threadId"], id);
-    owner.close(None).await.unwrap(); second_host.close(None).await.unwrap(); observer.close(None).await.unwrap();
+    owner.close(None).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(3), owner.next()).await.unwrap();
+    let rejected = call(&mut second_host, "turn/start", json!({"threadId":id,"input":[{"type":"text","text":"inspect again"}]})).await;
+    assert_eq!(rejected["error"]["code"], -32602, "{rejected}");
+    assert!(rejected["error"]["message"].as_str().unwrap().contains("connected owner"));
+    let history = engine.read(id, true).await.unwrap();
+    assert_eq!(history.turns.len(), 1, "rejected submission must not create a Turn");
+    assert!(history.turns.iter().flat_map(|turn| &turn.items).all(|item| !matches!(item,
+        areal_protocol::Item::DynamicToolCall { execution, .. }
+        if execution.outcome == areal_protocol::ToolOutcome::Unknown)));
+    second_host.close(None).await.unwrap(); observer.close(None).await.unwrap();
     engine.shutdown().await; stop.cancel(); task.await.unwrap().unwrap();
 }
 async fn connected(url: &str) -> Socket {
