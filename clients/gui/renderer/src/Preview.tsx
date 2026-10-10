@@ -7,6 +7,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { Button } from "./components/ui/button.js";
 import type { PlatformServices, Data } from "./services.js";
+import { call } from "./services.js";
 import type { PreviewRequest, OwnedPreviewOperation } from '@areal/workbench/desktop-contract';
 const locations = new Map<string, { url: string; link?: string }>();
 export function Preview({
@@ -16,6 +17,7 @@ export function Preview({
   initialUrl,
   initialRequest = 0,
   fullAddress = false,
+  browserEnabled = false,
 }: {
   services: PlatformServices;
   projectId: string;
@@ -23,6 +25,7 @@ export function Preview({
   initialUrl: string;
   initialRequest?: number;
   fullAddress?: boolean;
+  browserEnabled?: boolean;
   onError: (s: string) => void;
 }) {
   const owner = `${projectId}:${threadId}`;
@@ -32,6 +35,7 @@ export function Preview({
   const [responsive, setResponsive] = useState(false);
   const [width, setWidth] = useState(390);
   const [addressFocused, setAddressFocused] = useState(false);
+  const [claiming, setClaiming] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const editing = useRef(false);
   const current = useRef(owner);
@@ -186,6 +190,23 @@ export function Preview({
           void request("navigate", { url });
         }}
       />
+      {browserEnabled && state.url && <div className="preview-viewport-toolbar" role="group" aria-label="共享浏览器控制">
+        <span>{state.browser?.control === 'agent' ? 'Agent 可观察当前页' : '你控制当前页'}</span>
+        {state.browser?.control === 'agent'
+          ? <Button type="button" size="sm" onClick={() => void request('takeover')}>接管页面</Button>
+          : <Button type="button" size="sm" disabled={claiming || !!state.loading || !!state.error}
+            onClick={() => {
+              setClaiming(true);
+              void (async () => {
+                try {
+                  const next = await services.preview({ operation: 'claim', projectId, threadId });
+                  if (mounted.current && current.current === owner) setState(next);
+                  await call(services, 'send', { projectId, threadId, text: '请使用 browser_v1 检查我刚授权的当前页面，先 describe，再 observe，并报告页面实际内容。' });
+                } catch (e) { if (mounted.current && current.current === owner) setError(e instanceof Error ? e.message : String(e)); }
+                finally { if (mounted.current && current.current === owner) setClaiming(false); }
+              })();
+            }}>让 Agent 检查当前页</Button>}
+      </div>}
       {responsive && (
         <div className="preview-viewport-toolbar">
           <label>

@@ -1012,6 +1012,7 @@ function AppContent({ services }: { services: PlatformServices }) {
           initialUrl={previewSource === `${project.id}:${threadId}` ? previewUrl : ""}
           initialRequest={previewRequest}
           fullAddress={library.settings?.browserFullAddress === true}
+          browserEnabled={thread?.dynamicTools?.some((tool: Data) => tool.name === 'browser_v1') === true}
           onError={setError}
         />
       );

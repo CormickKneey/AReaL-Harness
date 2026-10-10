@@ -1,9 +1,12 @@
 'use strict';
 const { randomBytes, timingSafeEqual } = require('node:crypto');
+const { appendFileSync } = require('node:fs');
 const { WebSocketServer } = require('ws');
 const { validateCommand: validateDesktopCommand, desktopError } = require('@areal/workbench/desktop-contract');
 const { inspectResources, recoverResource, summary, blocked } = require('./resource-recovery.cjs');
+const { validToolInput, failure: browserFailure, success: browserSuccess } = require('./browser-tool.cjs');
 const PROTOCOL = 'areal.desktop-service.v1';
+const browserKey = (projectId, threadId) => JSON.stringify([projectId, threadId]);
 function validateCommand(name, params) {
   validateDesktopCommand(name, params, { serviceOnly: true });
 }
@@ -31,6 +34,9 @@ class DesktopService {
     this.backgroundNotifications = backgroundNotifications; this.power = power;
     this.pendingNotificationTarget = null;
     this.token = randomBytes(32).toString('hex'); this.clients = new Set();
+    this.browserClaims = new Map(); this.browserPending = new Map(); this.nextBrowserId = 0;
+    this.browserTestTrace = process.env.AREAL_BROWSER_READ_TEST_TRACE;
+    backend.browserRead = request => this.browserRead(request);
     this.sequence = 0; this.inflight = 0; this.stopping = false;
     this.idleSince = Date.now(); this.closed = false;
     backend.onChange = () => this.schedule();
@@ -94,6 +100,11 @@ class DesktopService {
       socket.on('error', () => {});
       socket.on('message', bytes => { void this.receive(socket, bytes); });
       socket.on('close', () => {
+        for (const [key, claim] of this.browserClaims) if (claim.socket === socket) this.browserClaims.delete(key);
+        for (const [id, pending] of this.browserPending) if (pending.socket === socket) {
+          this.browserPending.delete(id); clearTimeout(pending.timer);
+          pending.reject(new Error('Browser host disconnected after dispatch'));
+        }
         this.sampleActivity();
         if (this.clients.delete(socket) && !this.clients.size) this.idleSince = Date.now();
         this.sampleActivity(); this.schedule();
@@ -150,6 +161,37 @@ class DesktopService {
         setImmediate(() => this.onStop()); return;
       }
       if (!this.clients.has(socket)) throw new Error('请先完成后台服务握手');
+      if (method === 'browserClaim') {
+        const { projectId, threadId, pageId, browserHostId, hostGeneration, pageGeneration, controlEpoch } = params ?? {};
+        if (params?.protocol !== 'areal.browser.host.v1' || params?.available !== true
+          || JSON.stringify(params?.operations) !== JSON.stringify(['describe', 'observe'])) throw new Error('浏览器宿主能力不兼容');
+        if (![projectId, threadId, pageId, browserHostId].every(value => typeof value === 'string' && value.length > 0 && value.length <= 256)
+          || ![hostGeneration, pageGeneration, controlEpoch].every(Number.isSafeInteger)) throw new Error('无效浏览页面身份');
+        const project = this.backend.projects.get(projectId);
+        const thread = project?.model.state.threads[threadId];
+        if (!thread?.dynamicTools?.some(tool => tool.name === 'browser_v1')) throw new Error('当前聊天未启用浏览器');
+        const coreInstanceId = project.service?.serviceId, coreGeneration = project.service?.generation;
+        if (typeof coreInstanceId !== 'string' || typeof coreGeneration !== 'string') throw new Error('Core 部署身份不可用');
+        const key = browserKey(projectId, threadId);
+        const previous = this.browserClaims.get(key);
+        if (previous && previous.socket !== socket && previous.socket.readyState === 1) throw new Error('浏览页面已由其他桌面窗口认领');
+        this.browserClaims.set(key, { socket, coreInstanceId, coreGeneration, pageId,
+          browserHostId, hostGeneration, pageGeneration, controlEpoch });
+        this.send(socket, { id, result: { claimed: true } }); return;
+      }
+      if (method === 'browserRevoke') {
+        const key = browserKey(params?.projectId, params?.threadId);
+        if (this.browserClaims.get(key)?.socket === socket) this.browserClaims.delete(key);
+        this.send(socket, { id, result: { revoked: true } }); return;
+      }
+      if (method === 'browserResult') {
+        const pending = this.browserPending.get(params?.requestId);
+        if (!pending || pending.socket !== socket) throw new Error('无效浏览器回执');
+        this.browserPending.delete(params.requestId); clearTimeout(pending.timer);
+        if (params?.error) pending.reject(new Error('Browser host failed after dispatch'));
+        else pending.resolve(params?.result);
+        this.send(socket, { id, result: null }); return;
+      }
       if (method === 'remoteControl') {
         if (!this.remote) throw new Error('手机连接未初始化');
         this.inflight++;
@@ -197,6 +239,8 @@ class DesktopService {
   }
   close() {
     this.closed = true;
+    for (const pending of this.browserPending.values()) { clearTimeout(pending.timer); pending.reject(new Error('Browser service closed after dispatch')); }
+    this.browserPending.clear(); this.browserClaims.clear();
     this.remote?.close();
     this.power?.close();
     this.backgroundNotifications?.close(); this.pendingNotificationTarget = null;
@@ -209,6 +253,54 @@ class DesktopService {
     this.inflight++; this.schedule();
     try { return await this.backend.command(name, request); }
     finally { this.inflight--; this.schedule(); }
+  }
+  async browserRead(request) {
+    const { projectId, threadId, turnId, callId, coreInstanceId, coreGeneration, signal, arguments: input } = request ?? {};
+    if (typeof projectId !== 'string' || typeof threadId !== 'string' || typeof turnId !== 'string'
+      || typeof callId !== 'string' || typeof coreInstanceId !== 'string' || !validToolInput(input))
+      return browserFailure('invalid_arguments', 'Unsupported browser operation or parameters');
+    const key = browserKey(projectId, threadId);
+    const claim = this.browserClaims.get(key);
+    if (!claim || claim.socket.readyState !== 1) return browserFailure('host_unavailable', 'No authorized live desktop page');
+    if (claim.coreInstanceId !== coreInstanceId || claim.coreGeneration !== coreGeneration) {
+      this.browserClaims.delete(key);
+      return browserFailure('host_unavailable', 'Core deployment changed; authorize the page again');
+    }
+    if (input.operation === 'describe') return browserSuccess({ protocol: 'areal.browser.host.v1',
+      browserHostId: claim.browserHostId, hostGeneration: claim.hostGeneration, available: true,
+      operations: ['describe', 'observe'], pageId: claim.pageId });
+    if (input.parameters.pageId !== claim.pageId) return browserFailure('wrong_page', 'Page does not belong to this thread');
+    if (this.browserPending.size >= 8) return browserFailure('host_busy', 'Too many pending browser observations');
+    if (signal?.aborted) throw new Error('Browser request was cancelled');
+    const requestId = ++this.nextBrowserId;
+    const trace = phase => { if (this.browserTestTrace) appendFileSync(this.browserTestTrace,
+      JSON.stringify({ phase, requestId, threadId, callId }) + '\n'); };
+    const result = await new Promise((resolve, reject) => {
+      const finish = (kind, value) => { trace('finished'); clearTimeout(timer); signal?.removeEventListener('abort', onAbort); this.browserPending.delete(requestId); kind(value); };
+      const cancelNative = () => this.send(claim.socket, { method: 'browserCancel', params: {
+        requestId, projectId, threadId, hostGeneration: claim.hostGeneration } });
+      const onAbort = () => { cancelNative(); finish(reject, new Error('Browser request was cancelled')); };
+      const timer = setTimeout(() => { cancelNative(); finish(reject, new Error('Browser host response unknown')); }, 15000);
+      this.browserPending.set(requestId, { socket: claim.socket, resolve: value => finish(resolve, value), reject: error => finish(reject, error), timer });
+      trace('pending');
+      signal?.addEventListener('abort', onAbort, { once: true });
+      this.send(claim.socket, { method: 'browserRequest', params: { requestId, coreInstanceId, coreGeneration,
+        projectId, threadId, turnId, callId, pageId: claim.pageId, browserHostId: claim.browserHostId,
+        hostGeneration: claim.hostGeneration, pageGeneration: claim.pageGeneration,
+        controlEpoch: claim.controlEpoch, operation: input.operation } });
+    });
+    if (this.browserClaims.get(key) !== claim) return browserFailure('human_control', 'Browser authorization was revoked');
+    const currentProject = this.backend.projects.get(projectId);
+    if (currentProject?.service?.serviceId !== coreInstanceId || currentProject.service.generation !== coreGeneration)
+      return browserFailure('host_unavailable', 'Core deployment changed during observation');
+    if (!result || typeof result !== 'object' || result.pageId !== claim.pageId || result.callId !== callId
+      || result.turnId !== turnId || result.threadId !== threadId || result.projectId !== projectId
+      || result.coreInstanceId !== coreInstanceId || result.coreGeneration !== coreGeneration
+      || result.browserHostId !== claim.browserHostId || result.hostGeneration !== claim.hostGeneration
+      || result.pageGeneration !== claim.pageGeneration || result.controlEpoch !== claim.controlEpoch
+      || JSON.stringify(result).length > 128 * 1024) throw new Error('Invalid browser host response');
+    if (result.error) return browserFailure(result.error, result.error === 'human_control' ? 'Human controls this page' : 'Page unavailable');
+    return browserSuccess(result);
   }
 }
 module.exports = { PROTOCOL, DesktopService, validateCommand, encodeMedia, decodeMedia };

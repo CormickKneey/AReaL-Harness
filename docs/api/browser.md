@@ -2,7 +2,9 @@
 
 # Browser v1 契约
 
-**设计契约，尚未实现。** 除标注“现有”的 Core 方法外，本页命名均为提案。实现时由规范类型生成 schema 与调用方类型，禁止手写多套漂移的契约。本页比规格中的概述更精确；不改变现有 [Core UNKNOWN 规则](core.md#dynamic-tools)。
+**设计契约，部分实现。** 当前仅实现新建 Browser-enabled Thread 对已有原生预览页的显式认领、`describe`/`observe`、本机接管撤销及宿主缺失拒绝；其余操作仍是提案。下文未来接口不表示已开放。不改变现有 [Core UNKNOWN 规则](core.md#dynamic-tools)。
+
+当前实现从新聊天 Composer 的“浏览器”开关注册固定 `browser_v1` 工具包。用户打开当前聊天的预览页后点击“让 Agent 检查当前页”，Main 在原 WebContentsView 上认领并经认证服务连接登记；模型回调由该 Thread 已绑定的 Core 连接承接。工具定义的 `operation:string` 保持可扩展包络，但二次校验只接受 `describe`（空参数）与 `observe`（`pageId`）。观察使用有界的原生 AX 读取，结果中的 URL 去除查询和片段；未实现截图、动作、旧 Thread 接入或持久 Profile。人工接管、导航、Core/宿主换代会撤销读取；在途取消或超时不会自动重试。
 
 ## 1. 两条既有连接与一个新能力
 
