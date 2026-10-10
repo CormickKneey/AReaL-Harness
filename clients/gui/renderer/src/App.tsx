@@ -1016,6 +1016,12 @@ function AppContent({ services }: { services: PlatformServices }) {
           browserAvailable={project.core?.features?.browserToolAttachment === true && thread?.status?.type === 'idle' && !thread?.desktop?.archived}
           toolsetRevision={thread?.toolsetRevision ?? 0}
           thread={thread}
+          action={resourceAction}
+          onReview={turnId => { setReviewRequest({ owner: panelOwner, turnId }); setPanel("改动"); }}
+          onTool={itemId => {
+            setWorkspaceView("split");
+            requestAnimationFrame(() => document.querySelector(`[data-tool-id="${CSS.escape(itemId)}"]`)?.scrollIntoView({ block: "center" }));
+          }}
           onError={setError}
         />
       );
@@ -1024,7 +1030,11 @@ function AppContent({ services }: { services: PlatformServices }) {
     if (panel === "执行计划") return <PlanPane key={`${project.id}:${threadId}`} {...props} action={resourceAction} />;
     if (panel === "已保存授权") return <SavedPermissionsPane key={`${project.id}:${threadId}`} {...props} action={resourceAction} />;
     if (panel === "上下文") return <ContextPane key={`${project.id}:${threadId}`} {...props} action={resourceAction} />;
-    if (panel === "进程") return <ProcessesPane key={`${project.id}:${threadId}`} {...props} action={resourceAction} />;
+    if (panel === "进程") return <ProcessesPane key={`${project.id}:${threadId}`} {...props} action={resourceAction}
+      onOpenService={url => {
+        setPreviewUrl(url); setPreviewSource(`${project.id}:${threadId}`); setPreviewRequest(value => value + 1);
+        setPanel("预览");
+      }} />;
     if (panel === "Skills")
       return (
         <div className="utility-content">
