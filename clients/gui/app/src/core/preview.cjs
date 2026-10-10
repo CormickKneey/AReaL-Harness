@@ -1468,7 +1468,9 @@ class CorePreview {
         pageGeneration: page.pageGeneration, controlEpoch: page.controlEpoch, plan };
     } finally {
       page.activePrepare = false;
-      if (c.debugger.isAttached() && !page.diagnosticsReady) c.debugger.detach();
+      // Takeover convergence owns this channel after the Agent epoch ends.
+      if (page.control === 'agent' && page.controlEpoch === request.controlEpoch
+        && c.debugger.isAttached() && !page.diagnosticsReady) c.debugger.detach();
     }
   }
   async execute(request) {
@@ -1590,12 +1592,13 @@ class CorePreview {
       clearTimeout(deadline);
       if (page.activeAction === action) page.activeAction = null;
       if (request.operation === 'act') page.lastCapture = null;
-      if (page.control === 'agent' && page.inputPending.size === 0
+      if (page.control === 'agent' && page.controlEpoch === saved.plan.controlEpoch
+        && page.inputPending.size === 0
         && page.heldButtons.size === 0 && page.heldKeys.size === 0) {
         if (!c.isDestroyed() && c.debugger.isAttached() && !page.diagnosticsReady) c.debugger.detach();
         page.view?.setVisible(this.pageStillOwned(page) && this.owner === pageKey(page.coreInstanceId, page.projectId, page.threadId, page.id)
           && page.requestedVisible === true);
-      } else if (page.control === 'agent') {
+      } else if (page.control === 'agent' && page.controlEpoch === saved.plan.controlEpoch) {
         // Even a failed action must release native input before local input resumes.
         page.control = 'transferring'; page.controlEpoch++;
         page.refs.clear(); page.plans.clear(); page.lastObservation = null; page.needsObservation = true;
@@ -1795,7 +1798,8 @@ class CorePreview {
       clearTimeout(timer);
       if (page.activeRead === read) {
         page.activeRead = null;
-        try { if (!c.isDestroyed() && c.debugger.isAttached() && !page.diagnosticsReady) c.debugger.detach(); }
+        try { if (page.control === 'agent' && page.controlEpoch === epoch
+          && !c.isDestroyed() && c.debugger.isAttached() && !page.diagnosticsReady) c.debugger.detach(); }
         catch { /* A detached/crashed target already revoked this read. */ }
       }
     }
@@ -2287,7 +2291,8 @@ class CorePreview {
       return this.state(page);
     }
     this.pages.delete(key); this.pages.set(key, page);
-    const c = page.view.webContents;
+    const view = page.view, nativeGeneration = page.pageGeneration;
+    const c = view.webContents;
     if (target) {
       if (!page.networkPolicy.canAuthorize(target)) throw new Error('浏览安全策略拒绝该地址');
       const origin = new URL(target).origin;
@@ -2313,7 +2318,19 @@ class CorePreview {
       if (!cleared.cleared && request.operation !== 'reload')
         throw new Error('试改已失效，请刷新页面后继续导航');
     }
-    if (['navigate', 'back', 'forward', 'reload', 'stop'].includes(request.operation)) this.revoke(page);
+    if (['navigate', 'back', 'forward', 'reload'].includes(request.operation)) {
+      if (!this.pageStillOwned(page) || page.view !== view || page.pageGeneration !== nativeGeneration
+        || page.crashed || c.isDestroyed())
+        throw new Error('页面已关闭');
+      this.revoke(page); // Fence old Agent work before waiting on the local native channel.
+      const controlEpoch = page.controlEpoch;
+      if (page.control === 'transferring') await this.convergeInput(page);
+      if (!this.pageStillOwned(page) || page.view !== view || page.pageGeneration !== nativeGeneration
+        || page.crashed || c.isDestroyed())
+        throw new Error('页面已关闭');
+      if (page.control !== 'human' || page.controlEpoch !== controlEpoch)
+        throw new Error('原生输入尚未收敛，请停止或关闭页面');
+    } else if (request.operation === 'stop') this.revoke(page);
     if (page.control === 'transferring' && !['state', 'show', 'hide', 'stop', 'release', 'selectPage'].includes(request.operation))
       throw new Error('原生输入尚未收敛，请停止或关闭页面');
     if (request.bounds) {

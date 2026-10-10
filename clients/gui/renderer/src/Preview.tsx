@@ -87,18 +87,19 @@ export function Preview({
         operation,
         projectId,
         threadId,
-        ...(stateRef.current.browser?.pageId && !['subscribe', 'unsubscribe', 'newPage'].includes(operation)
+        ...(stateRef.current.browser?.pageId && !['state', 'subscribe', 'unsubscribe', 'newPage'].includes(operation)
           ? { pageId: stateRef.current.browser.pageId } : {}),
         ...extra,
       });
       if (!mounted.current || current.current !== owner || seq !== sequence.current) return;
       const workspaceChanged = !!value.workspace?.workspaceId && value.workspace.workspaceId !== workspaceCursor.current.id;
+      const selectedPageChanged = !!value.workspace && value.workspace.selectedPageId !== stateRef.current.workspace?.selectedPageId;
       if (workspaceChanged) locations.delete(owner);
       if (workspaceChanged)
         refreshSubscription.current();
-      if (value.url || workspaceChanged || ['selectPage', 'newPage', 'release'].includes(operation)) {
-        if (!editing.current) setUrl(value.url);
-        if (value.url) locations.set(owner, { ...locations.get(owner), url: value.url });
+      if (value.url || workspaceChanged || selectedPageChanged || ['selectPage', 'newPage', 'release'].includes(operation)) {
+        if (!editing.current) setUrl(value.url ?? '');
+        if (value.url || selectedPageChanged) locations.set(owner, { ...locations.get(owner), url: value.url ?? '' });
       }
       setState(value);
       if (operation !== "state") setError("");
