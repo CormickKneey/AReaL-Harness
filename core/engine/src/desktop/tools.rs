@@ -25,6 +25,7 @@ impl Engine {
     pub(crate) async fn core_tool(
         self: &Arc<Self>,
         cell: &Cell,
+        turn_id: &str,
         call_id: &str,
         tool: &str,
         args: &Value,
@@ -72,7 +73,7 @@ impl Engine {
             }
             "development_service_start" => {
                 let argv = serde_json::from_value(args["argv"].clone()).map_err(invalid)?;
-                let request_id = format!("agent:{}", digest(&format!("{thread_id}:{call_id}"))?);
+                let request_id = format!("agent:{}", digest(&(&thread_id, turn_id, call_id))?);
                 let identity = format!("agent:{thread_id}");
                 let request = ProcessStart {
                     request_id: request_id.clone(),

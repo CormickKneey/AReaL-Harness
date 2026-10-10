@@ -298,7 +298,14 @@ impl Invocation<'_> {
             Backend::Core => {
                 return self
                     .engine
-                    .core_tool(self.cell, &self.call.id, &self.call.name, args, self.cancel)
+                    .core_tool(
+                        self.cell,
+                        self.turn_id,
+                        &self.call.id,
+                        &self.call.name,
+                        args,
+                        self.cancel,
+                    )
                     .await
                     .map(|value| (true, value))
                     .map_err(|error| {
