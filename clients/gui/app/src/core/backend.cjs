@@ -270,15 +270,19 @@ class CoreBackend {
       headers: { Authorization: `Bearer ${project.token}` }, followRedirects: false, maxPayload: 4 * 1024 * 1024,
     }), onServerRequest: async (method, params, context) => {
       if (!['item/tool/call', 'areal/browser/prepare'].includes(method) || params?.tool !== 'browser_v1') throw new Error('Unsupported client tool');
-      if (!this.currentConnection(project, client)) return browserFailure('host_unavailable', 'Desktop connection changed');
+      const connected = this.currentConnection(project, client);
       // Core invokes only tools bound to this connection. The local Thread
       // projection can lag the committed attachment until its event arrives.
-      return this.browserRead?.({ projectId: project.id, threadId: params.threadId,
+      const result = connected ? (await this.browserRead?.({ projectId: project.id, threadId: params.threadId,
         turnId: params.turnId, callId: params.callId, toolHostGeneration: params.hostGeneration, arguments: params.arguments,
         phase: method === 'areal/browser/prepare' ? 'prepare' : 'execute', browserApproval: params.browserApproval,
         coreInstanceId: project.service?.serviceId, coreGeneration: project.service?.generation,
-        signal: context.signal })
-        ?? browserFailure('host_unavailable', 'Desktop browser is unavailable');
+        signal: context.signal })) ?? browserFailure('host_unavailable', 'Desktop browser is unavailable')
+        : browserFailure('host_unavailable', 'Desktop connection changed');
+      if (method === 'areal/browser/prepare' && result?.success === false
+        && typeof result.structuredContent?.code === 'string' && result.structuredContent.dispatch === 'not_sent')
+        return { error: result.structuredContent.code, dispatch: 'not_sent' };
+      return result;
     } });
     project.client = client;
     client.onNotification((method, params) => {
