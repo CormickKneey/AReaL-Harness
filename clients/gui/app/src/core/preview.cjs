@@ -5,6 +5,7 @@ const workspaceKey = (coreInstanceId, projectId, threadId) => JSON.stringify([co
 const pageKey = (coreInstanceId, projectId, threadId, pageId) => JSON.stringify([coreInstanceId, projectId, threadId, pageId]);
 const { randomUUID, randomBytes, createHash } = require('node:crypto');
 const { performance } = require('node:perf_hooks');
+const { isDeepStrictEqual } = require('node:util');
 const { validatePreview } = require('@areal/workbench/desktop-contract');
 
 function webUrl(value) {
@@ -206,7 +207,10 @@ class CorePreview {
     }
     this.changed(page, 'pageRemoved');
     if (!preserveContext && ![...this.pages.values()].some(other => other.partition === page.partition))
-      void page.session?.clearStorageData().catch(() => {});
+      this.releaseWorkspaceContext(page);
+  }
+  releaseWorkspaceContext(page) {
+    void page.session?.clearStorageData().catch(() => {});
   }
   releaseInvalidOwners() {
     for (const [key, page] of this.pages) if (!this.owns(page.projectId, page.threadId)
@@ -435,7 +439,7 @@ class CorePreview {
     const approved = request.browserApproval?.plan;
     const saved = approved && page.plans.get(approved.preparedActionId);
     const target = webUrl(request.parameters.url);
-    if (!saved || JSON.stringify(saved.plan) !== JSON.stringify(approved)
+    if (!saved || !isDeepStrictEqual(saved.plan, approved)
       || approved.operation !== request.operation || approved.pageId !== page.id
       || approved.threadId !== request.threadId || approved.turnId !== request.turnId
       || approved.callId !== request.callId || approved.expiresAt < Date.now()
@@ -545,7 +549,7 @@ class CorePreview {
     const nowViewport = await readIsolated(c, viewportScript);
     const nowKey = JSON.stringify([nowViewport.width, nowViewport.height, nowViewport.scrollX,
       nowViewport.scrollY, c.getZoomFactor(), nowViewport.deviceScaleFactor]);
-    if (!saved || JSON.stringify(approved) !== JSON.stringify(saved.plan)
+    if (!saved || !isDeepStrictEqual(approved, saved.plan)
       || saved.plan.threadId !== request.threadId || saved.plan.turnId !== request.turnId
       || saved.plan.callId !== request.callId || saved.plan.operation !== request.operation
       || saved.plan.pageId !== request.pageId || saved.plan.expiresAt < Date.now()
@@ -554,7 +558,7 @@ class CorePreview {
       || saved.plan.controlEpoch !== page.controlEpoch || saved.plan.viewportRevision !== page.viewportRevision
       || saved.plan.viewportKey !== nowKey
       || saved.plan.snapshotId !== (request.operation === 'act' ? request.parameters.snapshotId : null)
-      || JSON.stringify(saved.plan.action) !== JSON.stringify(request.operation === 'act'
+      || !isDeepStrictEqual(saved.plan.action, request.operation === 'act'
         ? request.parameters.action : { kind: 'wait', timeoutMs: request.parameters.timeoutMs })) throw new Error('plan_stale');
     page.plans.delete(approved.preparedActionId);
     if (page.activeRead || page.activePrepare || page.activeAction) throw new Error('not_sent');
@@ -987,6 +991,9 @@ class CorePreview {
     }
     if (request.pageId && !page && request.operation !== 'state') throw new Error('页面已关闭');
     if (request.operation === 'subscribe') return this.snapshot(request.projectId, request.threadId);
+    // A read must not touch LRU order or publish another metadata event.
+    if (request.operation === 'state') return page ? this.state(page)
+      : { ...this.state(null), workspace: this.snapshot(request.projectId, request.threadId) };
     if (request.operation === 'release') {
       if (!page) return this.state(null);
       if (page.origin !== 'agent' && request.userIntent !== true) throw new Error('关闭人工页面需要明确用户操作');
@@ -1099,7 +1106,7 @@ class CorePreview {
       case 'external': await require('electron').shell.openExternal(webUrl(c.getURL() || page.url)); break;
       case 'devtools': this.revoke(page); c.openDevTools({ mode: 'detach' }); break;
     }
-    this.changed(page);
+    if (['navigate', 'reload', 'stop'].includes(request.operation)) this.changed(page);
     return this.state(page);
   }
 
