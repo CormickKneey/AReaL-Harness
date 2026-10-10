@@ -496,30 +496,36 @@ class CorePreview {
       && page.view === view && this.owner === key && page.control === 'human'
       && page.pageGeneration === generation && page.documentGeneration === document
       && page.controlEpoch === control && !c.isDestroyed() && c.getURL() === url
+      && page.activeSelection === selection && !selection.cancelled
       && view.getVisible() && this.window.isVisible() && !this.window.isMinimized();
     let resolvePick, rejectPick, rejectCancel;
     const picked = new Promise((resolve, reject) => { resolvePick = resolve; rejectPick = reject; });
     void picked.catch(() => {});
     const cancelled = new Promise((_, reject) => { rejectCancel = reject; });
     void cancelled.catch(() => {});
-    const selection = { cancel: () => {
+    const selection = { cancelled: false, cancel: () => {
+      selection.cancelled = true;
       rejectPick(new Error('元素选择已取消'));
       rejectCancel(new Error('元素选择已取消'));
+      page.activeRead?.cancel();
     } };
     page.activeSelection = selection;
-    let attached = false, timer;
+    let attached = false, timer, domEnabled = false;
     const onMessage = (_event, method, params) => {
       if (method === 'Overlay.inspectNodeRequested') resolvePick(params?.backendNodeId);
       if (method === 'Overlay.inspectModeCanceled') rejectPick(new Error('元素选择已取消'));
     };
     const onDetach = () => rejectPick(new Error('元素选择已中断'));
+    let commandDeadline = performance.now() + 5000;
     const command = (method, params = {}) => Promise.race([
-      nativeWithin(c.debugger.sendCommand(method, params), performance.now() + 3000), cancelled,
+      nativeWithin(c.debugger.sendCommand(method, params), commandDeadline), cancelled,
     ]);
     try {
       c.debugger.attach('1.3'); attached = true;
       c.debugger.on('message', onMessage);
       c.debugger.on('detach', onDetach);
+      // Chromium's Overlay agent requires DOM to be enabled first.
+      await command('DOM.enable'); domEnabled = true;
       await command('Overlay.enable');
       await command('Overlay.setInspectMode', { mode: 'searchForNode', highlightConfig: {
         showInfo: true, showRulers: false, showExtensionLines: false,
@@ -531,6 +537,7 @@ class CorePreview {
       const backendNodeId = await picked;
       if (!valid() || page.activeSelection !== selection || !Number.isSafeInteger(backendNodeId))
         throw new Error('元素选择已过期');
+      commandDeadline = performance.now() + 3000;
       const box = await command('DOM.getBoxModel', { backendNodeId }).catch(() => null);
       if (!valid()) throw new Error('元素选择已过期');
       const quad = box?.model?.border;
@@ -539,10 +546,10 @@ class CorePreview {
       // The native inspect overlay is disabled before the guarded screenshot.
       await command('Overlay.setInspectMode', { mode: 'none', highlightConfig: {} });
       await command('Overlay.disable');
+      await command('DOM.disable'); domEnabled = false;
       c.debugger.removeListener('message', onMessage);
       c.debugger.removeListener('detach', onDetach);
       c.debugger.detach(); attached = false;
-      page.activeSelection = null;
       if (!valid()) throw new Error('元素选择已过期');
       const capture = await this.captureRegion(projectId, threadId, pageId);
       const x = Number.isFinite(centerX) ? Math.max(0, Math.min(capture.viewport.bitmapWidth - 1,
@@ -569,6 +576,7 @@ class CorePreview {
       if (!c.isDestroyed() && attached && c.debugger.isAttached()) {
         await nativeWithin(c.debugger.sendCommand('Overlay.setInspectMode', { mode: 'none', highlightConfig: {} }), performance.now() + 1000).catch(() => {});
         await nativeWithin(c.debugger.sendCommand('Overlay.disable'), performance.now() + 1000).catch(() => {});
+        if (domEnabled) await nativeWithin(c.debugger.sendCommand('DOM.disable'), performance.now() + 1000).catch(() => {});
         c.debugger.detach();
       }
       c.debugger.removeListener('message', onMessage);
@@ -672,14 +680,13 @@ class CorePreview {
     page.activeRead = read;
     let attached = false;
     const unavailable = reason => ({ available: false, reason });
+    const deadline = performance.now() + 3000;
+    const bounded = promise => Promise.race([nativeWithin(promise, deadline), cancelled]);
     try {
-      const currentViewport = await Promise.race([readIsolated(c, viewportScript), cancelled]);
+      const currentViewport = await bounded(readIsolated(c, viewportScript));
       if (!same() || !isDeepStrictEqual(currentViewport, frozen.viewport)) throw new Error('元素选择已过期，请重新截图');
       c.debugger.attach('1.3'); attached = true;
-      const deadline = performance.now() + 3000;
-      const command = (method, parameters = {}) => Promise.race([
-        nativeWithin(c.debugger.sendCommand(method, parameters), deadline), cancelled,
-      ]);
+      const command = (method, parameters = {}) => bounded(c.debugger.sendCommand(method, parameters));
       const cssX = Math.floor(x * frozen.viewport.width / frozen.bitmapWidth);
       const cssY = Math.floor(y * frozen.viewport.height / frozen.bitmapHeight);
       const [hit, frames] = await Promise.all([
@@ -748,16 +755,18 @@ class CorePreview {
     if (page.claiming || page.activeRead || page.activeAction || page.activePrepare) return { stale: true };
     page.activeRead = read;
     let attached = false;
+    const deadline = performance.now() + 3000;
+    const bounded = promise => Promise.race([nativeWithin(promise, deadline), cancelled]);
     try {
-      const viewport = await Promise.race([readIsolated(c, viewportScript), cancelled]);
+      const viewport = await bounded(readIsolated(c, viewportScript));
       if (!isDeepStrictEqual(viewport, frozen.viewport) || c.getZoomFactor() !== frozen.zoom) return { stale: true };
       c.debugger.attach('1.3'); attached = true;
-      const box = await Promise.race([nativeWithin(c.debugger.sendCommand('DOM.getBoxModel', { backendNodeId: selected.backendNodeId }), performance.now() + 3000), cancelled]);
+      const box = await bounded(c.debugger.sendCommand('DOM.getBoxModel', { backendNodeId: selected.backendNodeId }));
       const quad = box.model?.border;
       const centerX = quad && (quad[0] + quad[4]) / 2, centerY = quad && (quad[1] + quad[5]) / 2;
       const hit = Number.isFinite(centerX) && Number.isFinite(centerY)
-        ? await Promise.race([nativeWithin(c.debugger.sendCommand('DOM.getNodeForLocation', { x: Math.round(centerX), y: Math.round(centerY), includeUserAgentShadowDOM: false }), performance.now() + 3000), cancelled]) : null;
-      const ax = await Promise.race([nativeWithin(c.debugger.sendCommand('Accessibility.getPartialAXTree', { backendNodeId: selected.backendNodeId }), performance.now() + 3000), cancelled]);
+        ? await bounded(c.debugger.sendCommand('DOM.getNodeForLocation', { x: Math.round(centerX), y: Math.round(centerY), includeUserAgentShadowDOM: false })) : null;
+      const ax = await bounded(c.debugger.sendCommand('Accessibility.getPartialAXTree', { backendNodeId: selected.backendNodeId }));
       const semantic = ax.nodes?.find(item => item.backendDOMNodeId === selected.backendNodeId && !item.ignored);
       const xs = Array.isArray(quad) && quad.length === 8 ? [quad[0], quad[2], quad[4], quad[6]] : null;
       const ys = Array.isArray(quad) && quad.length === 8 ? [quad[1], quad[3], quad[5], quad[7]] : null;
@@ -1547,12 +1556,16 @@ class CorePreview {
       if (!page) return this.state(null);
       if (!this.owns(request.projectId, request.threadId) || page.annotationCaptureId !== request.captureId)
         throw new Error('标注页面已变化');
+      if (page.control === 'human') page.activeRead?.cancel();
       page.annotationCaptureId = null;
       page.annotationCapture = null; page.annotationElement = null;
       return this.state(page);
     }
     if (request.operation === 'hide') {
-      if (page) { page.requestedVisible = false; page.activeSelection?.cancel(); }
+      if (page) {
+        page.requestedVisible = false; page.activeSelection?.cancel();
+        if (page.control === 'human' && page.annotationCaptureId) page.activeRead?.cancel();
+      }
       if (!request.projectId || this.owner === key) {
         if (!page) { const displayed = this.pages.get(this.owner); if (displayed) displayed.requestedVisible = false; }
         this.view?.setVisible(false);
