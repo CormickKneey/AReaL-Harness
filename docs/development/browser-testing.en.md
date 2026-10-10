@@ -2,6 +2,8 @@
 
 # Browser behavior and release acceptance
 
+Ticket 04 adds the source path for B-10–B-13. The M1 unified native fixture must verify a Core interaction contains the prepared page/target/Origin, denial causes zero server effects, approval sends exactly one native click/fill/press effect, and navigation, target replacement, viewport change, takeover, forged approval, and cross-Thread requests produce zero effects. Inject a prepare failure before any input and a lost reply after the fixture server receives input; assert `not_sent` and Core UNKNOWN respectively. These native assertions have not run as part of the ticket source checks.
+
 This document defines the complete Browser testing contract. R0 has an isolated native experiment entry; results belong to individual runs and do not imply all scenarios have run. Subsequent acceptance follows the existing real Electron/Core/Runtime/deterministic-model smoke, connection and architecture pattern from the [GUI guide](../../clients/gui/README.en.md).
 
 For the current same-page read slice, run `make build`, `make gui-install`, and `make gui-build`, then `node clients/gui/scripts/browser-read-smoke.mjs` for B-04/B-05/B-06. The fixture uses an isolated home, synthetic site, and local deterministic model. It records Core dynamic-tool call IDs, real native WebContents identity and in-memory sentinel, GUI/native captures, server request counts, and cross-Thread, forged-result, and missing-host outcomes. Source-build results do not establish packaged-app, real-account, or other-OS acceptance.

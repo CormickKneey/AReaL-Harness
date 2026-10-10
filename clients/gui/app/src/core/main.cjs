@@ -114,13 +114,19 @@ app.whenReady().then(async () => {
   backend.onBrowserCancel = request => preview?.cancelRead(request);
   backend.onBrowserRequest = async request => {
     if (quitting || !preview || !window || window.isDestroyed()) throw new Error('Browser host unavailable');
-    try { return await preview.observe(request); }
-    catch (error) { return { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration, projectId: request.projectId,
+    try { return await (request.phase === 'prepare' ? preview.prepare(request)
+      : ['act', 'wait'].includes(request.operation) ? preview.execute(request) : preview.observe(request)); }
+    catch (error) {
+      if (error.message === 'outcome_unknown') throw error;
+      return { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration, projectId: request.projectId,
       threadId: request.threadId, turnId: request.turnId, callId: request.callId, pageId: request.pageId,
       browserHostId: request.browserHostId, hostGeneration: request.hostGeneration,
       pageGeneration: request.pageGeneration, controlEpoch: request.controlEpoch,
       error: /Human controls|revoked/.test(error.message) ? 'human_control'
         : error.message === 'stale_ref' ? 'stale_ref'
+        : /plan_stale/.test(error.message) ? 'plan_stale'
+        : error.message === 'human_takeover_required' ? 'human_takeover_required'
+        : /not_sent|target_unavailable/.test(error.message) ? 'not_sent'
         : /budget exceeded|Sensitive field|viewport changed|content changed during capture|capture guard unavailable/.test(error.message) ? 'evidence_unavailable' : 'page_unavailable' }; }
   };
   ipcMain.handle('areal-core:preview', async (event, request) => {

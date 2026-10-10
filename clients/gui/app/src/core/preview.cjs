@@ -1,6 +1,6 @@
 "use strict";
 const MAX_CACHED_PAGES = 8;
-const { randomUUID, randomBytes } = require('node:crypto');
+const { randomUUID, randomBytes, createHash } = require('node:crypto');
 const { validatePreview } = require('@areal/workbench/desktop-contract');
 
 function webUrl(value) {
@@ -161,8 +161,9 @@ class CorePreview {
   }
   revoke(page) {
     if (page.control !== 'agent') return;
-    page.control = 'human'; page.controlEpoch++; page.refs.clear();
+    page.control = 'human'; page.controlEpoch++; page.refs.clear(); page.plans.clear();
     page.activeRead?.cancel();
+    page.activeAction?.cancel();
     if (page.view.webContents.debugger.isAttached()) page.view.webContents.debugger.detach();
     this.onRevoke?.({ projectId: page.projectId, threadId: page.threadId });
   }
@@ -173,8 +174,8 @@ class CorePreview {
     if (!page || page.crashed || page.view.webContents.isDestroyed() || !page.view.webContents.getURL()
       || !this.owns(projectId, threadId)) throw new Error('当前聊天没有可认领的页面');
     this.revokeAll();
-    page.control = 'agent'; page.controlEpoch++; page.refs.clear();
-    return { protocol: 'areal.browser.host.v1', operations: ['describe', 'observe', 'capture'], available: true,
+    page.control = 'agent'; page.controlEpoch++; page.refs.clear(); page.plans.clear();
+    return { protocol: 'areal.browser.host.v1', operations: ['describe', 'observe', 'capture', 'act', 'wait'], available: true,
       projectId, threadId, pageId: page.id, browserHostId: this.browserHostId,
       hostGeneration: this.hostGeneration, pageGeneration: page.pageGeneration, controlEpoch: page.controlEpoch };
   }
@@ -187,6 +188,177 @@ class CorePreview {
     if (hostGeneration !== this.hostGeneration) return;
     const active = this.pages.get(`${projectId}:${threadId}`)?.activeRead;
     if (active?.requestId === requestId) active.cancel();
+    const action = this.pages.get(`${projectId}:${threadId}`)?.activeAction;
+    if (action?.requestId === requestId) action.cancel();
+  }
+  actionPage(request) {
+    const { projectId, threadId, pageId, browserHostId, hostGeneration, pageGeneration, controlEpoch } = request;
+    const page = this.pages.get(`${projectId}:${threadId}`);
+    if (!page || page.id !== pageId || page.projectId !== projectId || page.threadId !== threadId
+      || browserHostId !== this.browserHostId || hostGeneration !== this.hostGeneration
+      || pageGeneration !== page.pageGeneration || !this.owns(projectId, threadId)) throw new Error('plan_stale');
+    if (page.control !== 'agent' || page.controlEpoch !== controlEpoch) throw new Error('plan_stale');
+    const c = page.view.webContents;
+    if (page.crashed || c.isDestroyed() || c.isDevToolsOpened()) throw new Error('plan_stale');
+    return { page, c };
+  }
+  async actionTarget(page, c, ref) {
+    const identity = [...page.refs].find(([, value]) => value === ref)?.[0];
+    if (!identity) throw new Error('stale_ref');
+    const [generation, documentEpoch, controlEpoch, frameId, backendNodeId] = JSON.parse(identity);
+    if (generation !== page.pageGeneration || documentEpoch !== page.documentGeneration
+      || controlEpoch !== page.controlEpoch || frameId !== 'main') throw new Error('stale_ref');
+    const ax = await c.debugger.sendCommand('Accessibility.getPartialAXTree', { backendNodeId });
+    const node = ax.nodes?.find(value => value.backendDOMNodeId === backendNodeId);
+    if (!node || node.ignored || node.properties?.some(property => property.name === 'disabled' && property.value?.value === true))
+      throw new Error('target_unavailable');
+    const box = await c.debugger.sendCommand('DOM.getBoxModel', { backendNodeId });
+    const quad = box.model?.content;
+    if (!Array.isArray(quad) || quad.length !== 8) throw new Error('target_unavailable');
+    const x = (quad[0] + quad[2] + quad[4] + quad[6]) / 4;
+    const y = (quad[1] + quad[3] + quad[5] + quad[7]) / 4;
+    const viewport = await readIsolated(c, viewportScript);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x >= viewport.width || y >= viewport.height)
+      throw new Error('target_unavailable');
+    const hit = await c.debugger.sendCommand('DOM.getNodeForLocation', { x: Math.round(x), y: Math.round(y), includeUserAgentShadowDOM: false });
+    if (hit.backendNodeId !== backendNodeId) throw new Error('target_unavailable');
+    return { identity, backendNodeId, x, y, viewport,
+      role: safeText(node.role?.value, 80), name: safeText(node.name?.value, 256) };
+  }
+  async prepare(request) {
+    if (request.phase !== 'prepare' || !['act', 'wait'].includes(request.operation)) throw new Error('not_sent');
+    const { page, c } = this.actionPage(request);
+    const initialDocument = page.documentGeneration;
+    for (const [id, record] of page.plans) if (record.plan.expiresAt < Date.now()) page.plans.delete(id);
+    if (page.activeRead || page.activePrepare || page.activeAction || page.plans.size >= 16) throw new Error('not_sent');
+    const url = new URL(c.getURL());
+    const local = url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+    if (!local) throw new Error('human_takeover_required'); // Unknown/external effects require human takeover.
+    if (request.operation === 'act' && request.parameters.snapshotId !== page.lastObservation) throw new Error('stale_ref');
+    let target = null;
+    page.activePrepare = true;
+    try {
+      if (!c.debugger.isAttached()) c.debugger.attach('1.3');
+      if (request.operation === 'act') target = await this.actionTarget(page, c, request.parameters.action.ref);
+      if (request.parameters.action?.kind === 'fill'
+        && !/^(textField|textbox|searchbox|comboBox|spinbutton)$/i.test(target.role))
+        throw new Error('target_unavailable');
+      const viewport = await readIsolated(c, viewportScript);
+      const zoom = c.getZoomFactor();
+      const viewportKey = JSON.stringify([viewport.width, viewport.height, viewport.scrollX, viewport.scrollY, zoom, viewport.deviceScaleFactor]);
+      if (page.control !== 'agent' || page.controlEpoch !== request.controlEpoch
+        || page.pageGeneration !== request.pageGeneration || page.documentGeneration !== initialDocument || c.isDestroyed()
+        || c.getURL() !== url.href) throw new Error('plan_stale');
+      if (page.viewportKey !== viewportKey) { page.viewportKey = viewportKey; page.viewportRevision++; }
+      const plan = { preparedActionId: randomUUID(), operation: request.operation, pageId: page.id,
+        origin: url.origin, url: observationUrl(url.href),
+        snapshotId: request.operation === 'act' ? request.parameters.snapshotId : null,
+        target: target ? { ref: request.parameters.action.ref,
+          role: target.role, name: target.name, x: target.x, y: target.y } : null,
+        action: request.operation === 'act' ? request.parameters.action : { kind: 'wait', timeoutMs: request.parameters.timeoutMs },
+        pageGeneration: page.pageGeneration, documentEpoch: page.documentGeneration,
+        controlEpoch: page.controlEpoch, viewportRevision: page.viewportRevision, viewportKey,
+        browserHostId: this.browserHostId, hostGeneration: this.hostGeneration,
+        threadId: request.threadId, turnId: request.turnId, callId: request.callId,
+        expiresAt: Date.now() + 300000 };
+      plan.fingerprint = createHash('sha256').update(JSON.stringify({ plan, targetIdentity: target?.identity })).digest('hex');
+      page.plans.set(plan.preparedActionId, { plan, targetIdentity: target?.identity, pageUrl: url.href });
+      return { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration,
+        projectId: request.projectId, threadId: request.threadId, turnId: request.turnId, callId: request.callId,
+        pageId: page.id, browserHostId: this.browserHostId, hostGeneration: this.hostGeneration,
+        pageGeneration: page.pageGeneration, controlEpoch: page.controlEpoch, plan };
+    } finally {
+      page.activePrepare = false;
+      if (c.debugger.isAttached()) c.debugger.detach();
+    }
+  }
+  async execute(request) {
+    if (request.phase !== 'execute' || !['act', 'wait'].includes(request.operation)) throw new Error('not_sent');
+    const { page, c } = this.actionPage(request);
+    const approved = request.browserApproval?.plan;
+    const saved = approved && page.plans.get(approved.preparedActionId);
+    const nowViewport = await readIsolated(c, viewportScript);
+    const nowKey = JSON.stringify([nowViewport.width, nowViewport.height, nowViewport.scrollX,
+      nowViewport.scrollY, c.getZoomFactor(), nowViewport.deviceScaleFactor]);
+    if (!saved || JSON.stringify(approved) !== JSON.stringify(saved.plan)
+      || saved.plan.threadId !== request.threadId || saved.plan.turnId !== request.turnId
+      || saved.plan.callId !== request.callId || saved.plan.operation !== request.operation
+      || saved.plan.pageId !== request.pageId || saved.plan.expiresAt < Date.now()
+      || saved.plan.origin !== new URL(c.getURL()).origin || saved.pageUrl !== c.getURL()
+      || saved.plan.pageGeneration !== page.pageGeneration || saved.plan.documentEpoch !== page.documentGeneration
+      || saved.plan.controlEpoch !== page.controlEpoch || saved.plan.viewportRevision !== page.viewportRevision
+      || saved.plan.viewportKey !== nowKey
+      || saved.plan.snapshotId !== (request.operation === 'act' ? request.parameters.snapshotId : null)
+      || JSON.stringify(saved.plan.action) !== JSON.stringify(request.operation === 'act'
+        ? request.parameters.action : { kind: 'wait', timeoutMs: request.parameters.timeoutMs })) throw new Error('plan_stale');
+    page.plans.delete(approved.preparedActionId);
+    if (page.activeRead || page.activePrepare || page.activeAction) throw new Error('not_sent');
+    let cancelled;
+    const stop = new Promise((_, reject) => { cancelled = reject; });
+    const action = { requestId: request.requestId, dispatched: false, cancelled: false,
+      cancel: () => { action.cancelled = true; cancelled(new Error(action.dispatched ? 'outcome_unknown' : 'not_sent')); } };
+    page.activeAction = action;
+    const deadline = setTimeout(() => action.cancel(), Math.min(30000, request.operation === 'wait' ? request.parameters.timeoutMs + 1000 : 5000));
+    try {
+      if (request.operation === 'wait') {
+        await Promise.race([new Promise(resolve => setTimeout(resolve, request.parameters.timeoutMs)), stop]);
+      } else {
+        if (!c.debugger.isAttached()) c.debugger.attach('1.3');
+        let target = await Promise.race([this.actionTarget(page, c, request.parameters.action.ref), stop]);
+        if (target.identity !== saved.targetIdentity || target.x !== saved.plan.target.x || target.y !== saved.plan.target.y
+          || target.role !== saved.plan.target.role || target.name !== saved.plan.target.name)
+          throw new Error('plan_stale');
+        await Promise.race([new Promise(resolve => setTimeout(resolve, 50)), stop]);
+        target = await Promise.race([this.actionTarget(page, c, request.parameters.action.ref), stop]);
+        if (target.identity !== saved.targetIdentity || target.x !== saved.plan.target.x || target.y !== saved.plan.target.y
+          || target.role !== saved.plan.target.role || target.name !== saved.plan.target.name
+          || c.getURL() !== saved.pageUrl || page.controlEpoch !== saved.plan.controlEpoch)
+          throw new Error('plan_stale');
+        const live = () => {
+          if (action.cancelled || page.control !== 'agent' || page.controlEpoch !== saved.plan.controlEpoch
+            || page.documentGeneration !== saved.plan.documentEpoch || c.isDestroyed()) throw new Error('outcome_unknown');
+        };
+        const input = params => { live(); action.dispatched = true; return c.debugger.sendCommand('Input.dispatchMouseEvent', params); };
+        const keyboard = params => { live(); return c.debugger.sendCommand('Input.dispatchKeyEvent', params); };
+        const click = async () => {
+          await input({ type: 'mousePressed', x: target.x, y: target.y, button: 'left', clickCount: 1 });
+          await input({ type: 'mouseReleased', x: target.x, y: target.y, button: 'left', clickCount: 1 });
+        };
+        page.agentInput = true;
+        await Promise.race([(async () => {
+          await click();
+          if (request.parameters.action.kind === 'fill') {
+            const modifier = process.platform === 'darwin' ? 8 : 2;
+            await keyboard({ type: 'keyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: modifier });
+            await keyboard({ type: 'keyUp', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: modifier });
+            live(); await c.debugger.sendCommand('Input.insertText', { text: request.parameters.action.value });
+          } else if (request.parameters.action.kind === 'press') {
+            const key = request.parameters.action.key;
+            const code = { Enter: 13, Tab: 9, Escape: 27, Backspace: 8,
+              ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40 }[key];
+            await keyboard({ type: 'keyDown', key, windowsVirtualKeyCode: code });
+            await keyboard({ type: 'keyUp', key, windowsVirtualKeyCode: code });
+          }
+        })(), stop]);
+      }
+      if (page.control !== 'agent' || page.controlEpoch !== saved.plan.controlEpoch)
+        throw new Error(action.dispatched ? 'outcome_unknown' : 'not_sent');
+      return { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration,
+        projectId: request.projectId, threadId: request.threadId, turnId: request.turnId, callId: request.callId,
+        pageId: page.id, browserHostId: this.browserHostId, hostGeneration: this.hostGeneration,
+        pageGeneration: page.pageGeneration, controlEpoch: page.controlEpoch,
+        dispatch: action.dispatched ? 'confirmed' : 'not_sent', inputConfirmed: action.dispatched,
+        verification: 'not_checked',
+        preparedActionId: saved.plan.preparedActionId };
+    } catch (error) {
+      if (action.dispatched) throw new Error('outcome_unknown');
+      throw error;
+    } finally {
+      clearTimeout(deadline);
+      if (page.activeAction === action) page.activeAction = null;
+      page.agentInput = false;
+      if (!c.isDestroyed() && c.debugger.isAttached()) c.debugger.detach();
+    }
   }
   async observe(request) {
     const { projectId, threadId, pageId, browserHostId, hostGeneration, pageGeneration, controlEpoch,
@@ -198,7 +370,7 @@ class CorePreview {
     if (page.control !== 'agent' || page.controlEpoch !== controlEpoch) throw new Error('Human controls this page');
     const c = page.view.webContents;
     if (page.crashed || c.isDestroyed() || c.isDevToolsOpened()) throw new Error('Browser page is unavailable');
-    if (page.activeRead) throw new Error('Browser page is busy');
+    if (page.activeRead || page.activePrepare || page.activeAction) throw new Error('Browser page is busy');
     let cancel;
     const cancelled = new Promise((_, reject) => { cancel = () => reject(new Error('Browser observation was revoked')); });
     const read = { requestId: request.requestId, cancel };
@@ -346,6 +518,7 @@ class CorePreview {
         for (const child of branch.childFrames ?? []) walkFrames(child);
       };
       walkFrames(frames.frameTree, true);
+      page.lastObservation = base.observationId;
       return { ...base, frameCoverage: { main: 'covered', childFrames },
         shadowCoverage: 'not-distinguished-by-accessibility-tree', dynamicCoverage: 'snapshot-at-capturedAt',
         truncated, truncationReason: truncated ? 'budget' : null,
@@ -370,7 +543,8 @@ class CorePreview {
       },
     });
     const page = { id: randomUUID(), pageGeneration: 1, view, projectId, threadId, error: "", url: "", crashed: false,
-      control: 'human', controlEpoch: 0, documentGeneration: 0, viewportRevision: 0, refs: new Map(), nextRef: 0 },
+      control: 'human', controlEpoch: 0, documentGeneration: 0, viewportRevision: 0, refs: new Map(),
+      plans: new Map(), lastObservation: null, nextRef: 0 },
       c = view.webContents;
     c.setWindowOpenHandler(() => ({ action: "deny" }));
     c.session.setPermissionRequestHandler((_contents, _permission, respond) =>
@@ -415,7 +589,7 @@ class CorePreview {
       page.crashed = true;
       page.error = '预览页面已退出，请重新加载';
     });
-    c.on('before-input-event', () => this.revoke(page));
+    c.on('before-input-event', () => { if (!page.agentInput) this.revoke(page); });
     this.window.contentView.addChildView(view);
     view.setVisible(false);
     this.pages.set(owner, page);

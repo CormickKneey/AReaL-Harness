@@ -60590,7 +60590,7 @@
     }
   },
   "serverRequests": {
-    "item/tool/call": {
+    "areal/browser/prepare": {
       "additionalProperties": false,
       "properties": {
         "arguments": {},
@@ -60619,9 +60619,54 @@
         "hostGeneration"
       ],
       "type": "object"
+    },
+    "item/tool/call": {
+      "additionalProperties": false,
+      "properties": {
+        "arguments": {},
+        "browserApproval": {
+          "additionalProperties": false,
+          "properties": {
+            "plan": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "plan"
+          ],
+          "type": "object"
+        },
+        "callId": {
+          "type": "string"
+        },
+        "hostGeneration": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId",
+        "callId",
+        "tool",
+        "arguments",
+        "hostGeneration"
+      ],
+      "type": "object"
     }
   },
   "serverResponses": {
+    "areal/browser/prepare": {
+      "type": "object"
+    },
     "item/tool/call": {
       "additionalProperties": false,
       "properties": {

@@ -11,6 +11,7 @@ export function ApprovalRequest({ item, projectId, action }: { item: Data; proje
   const [unknown, setUnknown] = useState(false);
   const [error, setError] = useState("");
   const canRemember = item.effectivePermissions?.rememberAllowed === true;
+  const browserPlan = item.tool === "browser_v1" ? item.effectiveArguments?.plan : null;
   const respond = async (decision: "deny" | "allowOnce" | "allowSession" | "allowProject") => {
     if (inFlight.current || submitted || unknown) return;
     if ((decision === "allowSession" || decision === "allowProject") && !canRemember) return;
@@ -34,7 +35,13 @@ export function ApprovalRequest({ item, projectId, action }: { item: Data; proje
   };
   return <section className="interaction" data-interaction="approval" aria-label="工具审批" aria-busy={busy}>
     <strong>允许执行 {item.tool}？</strong>
-    <pre>{JSON.stringify(item.effectiveArguments, null, 2)}</pre>
+    {browserPlan ? <div>
+      <p>页面：{browserPlan.url}（{browserPlan.origin}）</p>
+      <p>操作：{browserPlan.action?.kind}{browserPlan.target ? ` · ${browserPlan.target.role} ${browserPlan.target.name} [${browserPlan.target.ref}]` : ""}</p>
+      {browserPlan.action?.kind === "fill" && <p>填写：{browserPlan.action.value}</p>}
+      {browserPlan.action?.kind === "press" && <p>按键：{browserPlan.action.key}</p>}
+      <p>目标页面或控件变化后，本次批准会失效。</p>
+    </div> : <pre>{JSON.stringify(item.effectiveArguments, null, 2)}</pre>}
     <Feedback error={error} message={submitted ? "已提交，等待执行状态更新。" : undefined} />
     {unknown && <Button variant="outline" disabled={busy} onClick={() => void refresh()}>核对待审批状态</Button>}
     <div className="flex flex-wrap gap-2">
@@ -43,6 +50,8 @@ export function ApprovalRequest({ item, projectId, action }: { item: Data; proje
       {canRemember && <Button variant="outline" disabled={busy || submitted || unknown} onClick={() => void respond("allowSession")}>本任务允许此操作</Button>}
       {canRemember && <Button variant="outline" disabled={busy || submitted || unknown} onClick={() => void respond("allowProject")}>本项目允许此操作</Button>}
     </div>
-    {canRemember && <p className="mt-2 text-ui-caption text-foreground-subtle">记住的授权只适用于相同参数及权限条件，可在任务菜单的“已保存授权”中撤销。</p>}
+    {canRemember && <p className="mt-2 text-ui-caption text-foreground-subtle">{browserPlan
+      ? "记住的授权仅适用于当前页面、精确 Origin 和操作类型；目标变化仍须重新准备。"
+      : "记住的授权只适用于相同参数及权限条件，可在任务菜单的“已保存授权”中撤销。"}</p>}
   </section>;
 }

@@ -2,11 +2,13 @@
 
 # Browser v1 契约
 
-**设计契约，部分实现。** 当前实现新建 Browser-enabled Thread 或空闲旧 Thread 接入 Browser 工具后对已有原生预览页的显式认领、`describe`/`observe`/`capture`、本机接管撤销及宿主缺失拒绝；其余操作仍是提案。下文未来接口不表示已开放。不改变现有 [Core UNKNOWN 规则](core.md#dynamic-tools)。
+**设计契约，部分实现。** 当前实现新建 Browser-enabled Thread 或空闲旧 Thread 接入 Browser 工具后对已有原生预览页的显式认领、`describe`/`observe`/`capture`、经 Core 准备和审批的 `act`（点击、填写、按键）与有界 `wait`、本机接管撤销及宿主缺失拒绝；其余操作仍是提案。下文未来接口不表示已开放。不改变现有 [Core UNKNOWN 规则](core.md#dynamic-tools)。04 票的原生 B-10–B-13 验收等待 M1 统一运行。
 
-当前实现从新聊天 Composer 的“浏览器”开关注册固定 `browser_v1` 工具包；空闲旧 Thread 可在预览中启用同一工具包。用户打开当前聊天的预览页后点击“让 Agent 检查当前页”，Main 在原 WebContentsView 上认领并经认证服务连接登记；模型回调由该 Thread 已绑定的 Core 连接承接。工具定义的 `operation:string` 保持可扩展包络；二次校验接受 `describe`（空参数）、`observe`（`pageId`、可选文档范围、Ref 与预算）及 `capture`（当前视口）。观察使用有界原生 AX 读取，按实际 Frame 覆盖状态报告不可读部分，并在可用时提供 role、name、state、value 与父节点关联。Ref 绑定原生节点和代次；预算截断本身不使被省略的存活 Ref 失效。结果 URL 去除查询和片段。截图限制在 800 万像素、单边 4096 像素和 2 MiB PNG，使用现有 Core Blob 和工具媒体通道交给模型与聊天。已知敏感表单或不可读 Frame 存在时拒绝自动截图；这不是截图遮罩，也无法识别所有敏感内容。未实现动作或持久 Profile。人工接管、导航、Core/宿主换代会撤销读取；在途取消或超时不会自动重试。
+当前实现从新聊天 Composer 的“浏览器”开关注册固定 `browser_v1` 工具包；空闲旧 Thread 可在预览中启用同一工具包。用户打开当前聊天的预览页后点击“让 Agent 检查当前页”，Main 在原 WebContentsView 上认领并经认证服务连接登记；模型回调由该 Thread 已绑定的 Core 连接承接。工具定义的 `operation:string` 保持可扩展包络；二次校验接受 `describe`（空参数）、`observe`（`pageId`、可选文档范围、Ref 与预算）、`capture`（当前视口）、`act`（pageId、snapshotId 与 Ref 上的点击/填写/按键）和 `wait`（pageId、1–30000 毫秒）。观察使用有界原生 AX 读取，按实际 Frame 覆盖状态报告不可读部分，并在可用时提供 role、name、state、value 与父节点关联。Ref 绑定原生节点和代次；预算截断本身不使被省略的存活 Ref 失效。结果 URL 去除查询和片段。截图限制在 800 万像素、单边 4096 像素和 2 MiB PNG，使用现有 Core Blob 和工具媒体通道交给模型与聊天。已知敏感表单或不可读 Frame 存在时拒绝自动截图；这不是截图遮罩，也无法识别所有敏感内容。持久 Profile 尚未实现。人工接管、导航、Core/宿主换代会撤销读取；在途取消或超时不会自动重试。
 
 已知敏感内容检查和视口测量在 Electron 隔离世界运行，网页脚本不能替换检查所用的 DOM 查询方法或视口 getter。未知敏感内容仍可能无法识别；网页始终是不可信输入。
+
+当前动作切片只准备用户显式认领的 HTTP 回环页面。Core 可将开发操作许可记住在精确 Origin、页面和操作类型内。外部页面在 prepare 阶段返回 `human_takeover_required`。每份计划短期有效，绑定当前观察、目标、文档、控制代次和视口；过期返回 `plan_stale`，不自动改目标。输入确认回执的业务验证仍为 `not_checked`。
 
 每页私有 Ref 缓存最多保留 1000 个存活身份，优先保留本次观察发出的 Ref；较旧的被驱逐 Ref 返回 `stale_ref`，公开 ID 不复用。原生截图前后均检查已知敏感字段，包括带可选 section 前缀的密码、支付安全码和一次性验证码自动填充 token，并在截图期间观察到 DOM 变更时拒绝图片。栅栏覆盖主文档、可读 Frame 和开放 Shadow root；短暂的 Canvas 像素或不可读的封闭 Shadow 内容无法证明安全，含未知秘密的页面不适合自动截图。
 

@@ -269,12 +269,13 @@ class CoreBackend {
     const client = new CoreClient({ createSocket: () => new WebSocket(project.endpoint, {
       headers: { Authorization: `Bearer ${project.token}` }, followRedirects: false, maxPayload: 4 * 1024 * 1024,
     }), onServerRequest: async (method, params, context) => {
-      if (method !== 'item/tool/call' || params?.tool !== 'browser_v1') throw new Error('Unsupported client tool');
+      if (!['item/tool/call', 'areal/browser/prepare'].includes(method) || params?.tool !== 'browser_v1') throw new Error('Unsupported client tool');
       if (!this.currentConnection(project, client)) return browserFailure('host_unavailable', 'Desktop connection changed');
       // Core invokes only tools bound to this connection. The local Thread
       // projection can lag the committed attachment until its event arrives.
       return this.browserRead?.({ projectId: project.id, threadId: params.threadId,
         turnId: params.turnId, callId: params.callId, toolHostGeneration: params.hostGeneration, arguments: params.arguments,
+        phase: method === 'areal/browser/prepare' ? 'prepare' : 'execute', browserApproval: params.browserApproval,
         coreInstanceId: project.service?.serviceId, coreGeneration: project.service?.generation,
         signal: context.signal })
         ?? browserFailure('host_unavailable', 'Desktop browser is unavailable');
