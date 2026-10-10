@@ -26,12 +26,15 @@ function observationUrl(value) {
   url.username = ''; url.password = ''; url.search = ''; url.hash = '';
   return url.href;
 }
-const sensitive = /password|passcode|secret|token|api.?key|credit.?card|cvv|authorization/i;
+const sensitive = /password|passcode|secret|token|api.?key|credit.?card|cvv|authorization|one.?time.?code|\botp\b|credential/i;
 const sensitiveCaptureScript = `(() => {
   const selector = 'input[type="password"],input[autocomplete="cc-number"],input[autocomplete="one-time-code"],input[name*="token" i],input[name*="secret" i],input[name*="key" i]';
   const scan = root => {
     if (root.querySelector(selector)) return true;
-    for (const element of root.querySelectorAll('*')) if (element.shadowRoot && scan(element.shadowRoot)) return true;
+    for (const element of root.querySelectorAll('*')) {
+      if (element.shadowRoot && scan(element.shadowRoot)) return true;
+      if ([...element.childNodes].some(child => child.nodeType === Node.TEXT_NODE && /password|passcode|secret|token|api.?key|credit.?card|cvv|authorization|one.?time.?code|\\botp\\b|credential/i.test(child.textContent))) return true;
+    }
     for (const frame of root.querySelectorAll('iframe,frame')) {
       try { if (!frame.contentDocument || scan(frame.contentDocument)) return true; }
       catch { return true; }
@@ -199,9 +202,9 @@ class CorePreview {
       const parent = new Map(nodes.map(node => [node.nodeId, node.parentId]));
       const descendant = node => { for (let id = node.nodeId; id; id = parent.get(id)) if (id === rootNode?.nodeId) return true; return false; };
       const sensitiveNodes = new Set(nodes.filter(node => /passwordField/i.test(String(node.role?.value ?? ''))
+        || sensitive.test(String(node.name?.value ?? ''))
         || (/textField|textbox|searchbox|comboBox/i.test(String(node.role?.value ?? ''))
-          && (sensitive.test(String(node.name?.value ?? ''))
-            || (node.properties ?? []).some(property => sensitive.test(String(property.name)) || sensitive.test(String(property.value?.value))))))
+          && (node.properties ?? []).some(property => sensitive.test(String(property.name)) || sensitive.test(String(property.value?.value)))))
         .map(node => node.nodeId));
       const sensitiveChild = node => { for (let id = node.parentId; id; id = parent.get(id)) if (sensitiveNodes.has(id)) return true; return false; };
       const limitNodes = parameters.budget?.nodes ?? 200;

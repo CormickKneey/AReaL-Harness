@@ -27,13 +27,15 @@ const site = createServer((request, response) => {
   if (request.method === 'POST') { siteFacts.posts++; response.end('ok'); return; }
   siteFacts.gets++;
   response.setHeader('Content-Type', 'text/html; charset=utf-8');
-  if (request.url.startsWith('/frame')) { response.end('<button>Same origin child</button>'); return; }
+  if (request.url.startsWith('/frame')) { response.end('<button>Same origin child</button><input name="token" value="HIDDEN_FRAME_TOKEN_03">'); return; }
   response.end(`<!doctype html><title>Evidence fixture</title><h1>${sentinel}</h1>
     <button id="replace">Duplicate target</button><button>Duplicate target</button>
     <label>Password <input id="password" type="password" value="HIDDEN_CANARY_03"></label>
     <input id="session" name="token" aria-label="Session credential" value="HIDDEN_TOKEN_03">
+    <div id="otp">One-time code: HIDDEN_OTP_03</div>
     <iframe id="same" src="/frame"></iframe><iframe id="cross" src="${childUrl}"></iframe>
-    <div id="shadow"></div><script>document.querySelector('#shadow').attachShadow({mode:'open'}).innerHTML='<button>Shadow target</button>';</script>`);
+    <div id="shadow"></div><script>document.querySelector('#shadow').attachShadow({mode:'open'}).innerHTML='<button>Shadow target</button><input name="secret" value="HIDDEN_SHADOW_SECRET_03">';</script>
+    <div style="height:2000px"></div>`);
 });
 await new Promise(resolve => site.listen(0, '127.0.0.1', resolve));
 const siteUrl = `http://127.0.0.1:${site.address().port}/?token=SYNTHETIC_SECRET_03`;
@@ -127,6 +129,9 @@ try {
   assert.ok(!JSON.stringify(observation).includes('SYNTHETIC_SECRET_03'));
   assert.ok(!JSON.stringify(observation).includes('HIDDEN_CANARY_03'));
   assert.ok(!JSON.stringify(observation).includes('HIDDEN_TOKEN_03'));
+  assert.ok(!JSON.stringify(observation).includes('HIDDEN_FRAME_TOKEN_03'));
+  assert.ok(!JSON.stringify(observation).includes('HIDDEN_SHADOW_SECRET_03'));
+  assert.ok(!JSON.stringify(observation).includes('HIDDEN_OTP_03'));
   events.initial = { threadId: first.threadId, callId: initial.callId, observation };
   await app.evaluate(({ webContents }, id) => webContents.fromId(id).executeJavaScript(`document.querySelector('#replace').outerHTML='<button id="replace">Duplicate target</button>'`), nativeId);
   scenario = 'stale';
@@ -159,12 +164,43 @@ try {
   const protectedCapture = toolResult(await nextTurn(first.threadId, 5));
   assert.match(JSON.stringify(protectedCapture), /evidence_unavailable/);
   await app.evaluate(({ webContents }, id) => webContents.fromId(id).executeJavaScript(`document.querySelector('#password').remove();document.querySelector('#session').remove()`), nativeId);
+  await command('send', { projectId: project.id, threadId: first.threadId, text: 'Capture while same origin frame contains a secret' });
+  const frameCapture = toolResult(await nextTurn(first.threadId, 6));
+  assert.match(JSON.stringify(frameCapture), /evidence_unavailable/);
+  await app.evaluate(({ webContents }, id) => webContents.fromId(id).executeJavaScript(`document.querySelector('#same').contentDocument.querySelector('input').remove()`), nativeId);
+  await command('send', { projectId: project.id, threadId: first.threadId, text: 'Capture while Shadow root contains a secret' });
+  const shadowCapture = toolResult(await nextTurn(first.threadId, 7));
+  assert.match(JSON.stringify(shadowCapture), /evidence_unavailable/);
+  await app.evaluate(({ webContents }, id) => webContents.fromId(id).executeJavaScript(`document.querySelector('#shadow').shadowRoot.querySelector('input').remove()`), nativeId);
+  await command('send', { projectId: project.id, threadId: first.threadId, text: 'Capture while the page shows a plaintext OTP' });
+  const otpCapture = toolResult(await nextTurn(first.threadId, 8));
+  assert.match(JSON.stringify(otpCapture), /evidence_unavailable/);
+  await app.evaluate(({ webContents }, id) => webContents.fromId(id).executeJavaScript(`document.querySelector('#otp').remove()`), nativeId);
   await command('send', { projectId: project.id, threadId: first.threadId, text: 'Capture while cross origin frame is unavailable' });
-  const crossFrameCapture = toolResult(await nextTurn(first.threadId, 6));
+  const crossFrameCapture = toolResult(await nextTurn(first.threadId, 9));
   assert.match(JSON.stringify(crossFrameCapture), /evidence_unavailable/);
   await app.evaluate(({ webContents }, id) => webContents.fromId(id).executeJavaScript(`document.querySelector('#cross').remove()`), nativeId);
+  events.sensitiveCapture = { root: protectedCapture.contentItems, frame: frameCapture.contentItems,
+    shadow: shadowCapture.contentItems, otp: otpCapture.contentItems, crossFrame: crossFrameCapture.contentItems };
+  await app.evaluate(({ webContents }, id) => {
+    const contents = webContents.fromId(id), original = contents.capturePage.bind(contents);
+    contents.capturePage = async (...args) => {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      await contents.executeJavaScript('scrollTo(0, 500)');
+      return original(...args);
+    };
+  }, nativeId);
+  await command('send', { projectId: project.id, threadId: first.threadId, text: 'Capture while the viewport changes' });
+  const movedViewportCapture = toolResult(await nextTurn(first.threadId, 10));
+  assert.match(JSON.stringify(movedViewportCapture), /evidence_unavailable/);
+  await app.evaluate(({ webContents }, id) => {
+    const contents = webContents.fromId(id);
+    delete contents.capturePage;
+    return contents.executeJavaScript('scrollTo(0, 0)');
+  }, nativeId);
+  events.movedViewportCapture = movedViewportCapture.contentItems;
   await command('send', { projectId: project.id, threadId: first.threadId, text: 'Capture after sensitive fields and cross origin frame removed' });
-  const captured = toolResult(await nextTurn(first.threadId, 7));
+  const captured = toolResult(await nextTurn(first.threadId, 11));
   const image = captured.contentItems.find(part => part.type === 'arealMedia');
   assert.ok(image?.media?.uri?.startsWith('areal://blob/'));
   assert.ok(modelCalls.some(call => call.scenario === 'capture' && call.hadImage), 'model request must contain image bytes');
