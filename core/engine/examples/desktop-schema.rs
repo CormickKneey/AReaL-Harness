@@ -42,6 +42,7 @@ fn main() {
     }
     add!("areal/subscription/remove", RemoveSubscriptions);
     add!("areal/thread/start", ThreadStart);
+    add!("areal/thread/tools/attach", AttachBrowserTools);
     add!("areal/thread/configure", ConfigureThread);
     add!("areal/turn/start", TurnStart);
     add!("areal/turn/enqueue", TurnStart);

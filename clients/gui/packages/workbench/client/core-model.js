@@ -13,7 +13,14 @@ export class CoreTaskModel {
   }
   connection(connected, error = null) { this.publish({ connected, error }); }
   replace(thread) {
-    this.publish({ threads: { ...this.state.threads, [thread.id]: thread } });
+    const old = this.state.threads[thread.id];
+    // A snapshot requested before an attachment may arrive after its committed event.
+    const currentRevision = old?.toolsetRevision ?? 0;
+    const incomingRevision = thread.toolsetRevision ?? 0;
+    const value = currentRevision > incomingRevision
+      ? { ...thread, dynamicTools: old.dynamicTools, toolsetRevision: currentRevision }
+      : thread;
+    this.publish({ threads: { ...this.state.threads, [thread.id]: value } });
   }
   setInteractions(threadId, value) {
     const old = this.state.interactions[threadId];
@@ -61,6 +68,12 @@ export class CoreTaskModel {
     }
     const thread = this.state.threads[params?.threadId];
     if (!thread) return;
+    if (method === 'areal/thread/tools/attached') {
+      if (!Number.isSafeInteger(params.toolsetRevision) || params.toolsetRevision < 0
+        || !Array.isArray(params.dynamicTools) || params.toolsetRevision <= (thread.toolsetRevision ?? 0)) return;
+      this.replace({ ...thread, toolsetRevision: params.toolsetRevision, dynamicTools: params.dynamicTools });
+      return;
+    }
     if (method === 'areal/thread/archived') { this.replace({ ...thread, desktop: { ...thread.desktop, archived: true } }); return; }
     const turns = [...thread.turns ?? []];
     // Core 丢弃的是一次模型响应，不是整个 Turn；已执行工具与用户输入必须保留。

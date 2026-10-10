@@ -6950,6 +6950,11 @@
                 }
               ]
             },
+            "toolsetRevision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
             "turns": {
               "items": {
                 "properties": {
@@ -13691,6 +13696,38 @@
       ],
       "type": "object"
     },
+    "areal/queue/steer": {
+      "additionalProperties": false,
+      "description": "把一个 pending 排队项一次受理到指定活动轮次；不允许客户端拼接 remove/steer。",
+      "properties": {
+        "expectedRevision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "expectedTurnId": {
+          "type": "string"
+        },
+        "queueItemId": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "threadId",
+        "expectedRevision",
+        "queueItemId",
+        "expectedTurnId"
+      ],
+      "title": "QueueSteer",
+      "type": "object"
+    },
     "areal/queue/update": {
       "additionalProperties": false,
       "properties": {
@@ -14673,6 +14710,33 @@
         "requestId"
       ],
       "title": "ThreadStart",
+      "type": "object"
+    },
+    "areal/thread/tools/attach": {
+      "additionalProperties": false,
+      "properties": {
+        "bundleId": {
+          "type": "string"
+        },
+        "expectedToolsetRevision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "threadId",
+        "expectedToolsetRevision",
+        "bundleId"
+      ],
+      "title": "AttachBrowserTools",
       "type": "object"
     },
     "areal/tool/acknowledge": {
@@ -16144,38 +16208,6 @@
         "expectedTurnId",
         "input"
       ],
-      "type": "object"
-    },
-    "areal/queue/steer": {
-      "additionalProperties": false,
-      "description": "把一个 pending 排队项一次受理到指定活动轮次；不允许客户端拼接 remove/steer。",
-      "properties": {
-        "expectedRevision": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "expectedTurnId": {
-          "type": "string"
-        },
-        "queueItemId": {
-          "type": "string"
-        },
-        "requestId": {
-          "type": "string"
-        },
-        "threadId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "requestId",
-        "threadId",
-        "expectedRevision",
-        "queueItemId",
-        "expectedTurnId"
-      ],
-      "title": "QueueSteer",
       "type": "object"
     }
   },
@@ -18312,6 +18344,11 @@
                     "type": "object"
                   }
                 ]
+              },
+              "toolsetRevision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
               },
               "turns": {
                 "items": {
@@ -21648,6 +21685,11 @@
                       "type": "object"
                     }
                   ]
+                },
+                "toolsetRevision": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
                 },
                 "turns": {
                   "items": {
@@ -32541,6 +32583,31 @@
       "title": "Queue",
       "type": "object"
     },
+    "areal/queue/steer": {
+      "additionalProperties": true,
+      "properties": {
+        "itemId": {
+          "type": "string"
+        },
+        "queueItemId": {
+          "type": "string"
+        },
+        "queueRevision": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "itemId",
+        "queueItemId",
+        "queueRevision",
+        "turnId"
+      ],
+      "type": "object"
+    },
     "areal/queue/update": {
       "additionalProperties": false,
       "properties": {
@@ -39630,6 +39697,11 @@
                   "type": "object"
                 }
               ]
+            },
+            "toolsetRevision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
             },
             "turns": {
               "items": {
@@ -48111,6 +48183,11 @@
                   }
                 ]
               },
+              "toolsetRevision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
               "turns": {
                 "items": {
                   "properties": {
@@ -51434,6 +51511,11 @@
                   "type": "object"
                 }
               ]
+            },
+            "toolsetRevision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
             },
             "turns": {
               "items": {
@@ -54779,6 +54861,11 @@
                   "type": "object"
                 }
               ]
+            },
+            "toolsetRevision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
             },
             "turns": {
               "items": {
@@ -58133,6 +58220,11 @@
                 }
               ]
             },
+            "toolsetRevision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
             "turns": {
               "items": {
                 "properties": {
@@ -60495,31 +60587,6 @@
         "turnId"
       ],
       "type": "object"
-    },
-    "areal/queue/steer": {
-      "additionalProperties": true,
-      "properties": {
-        "itemId": {
-          "type": "string"
-        },
-        "queueItemId": {
-          "type": "string"
-        },
-        "queueRevision": {
-          "minimum": 0,
-          "type": "integer"
-        },
-        "turnId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "itemId",
-        "queueItemId",
-        "queueRevision",
-        "turnId"
-      ],
-      "type": "object"
     }
   },
   "serverRequests": {
@@ -62769,6 +62836,11 @@
             "type": "object"
           }
         ]
+      },
+      "toolsetRevision": {
+        "format": "uint64",
+        "minimum": 0,
+        "type": "integer"
       },
       "turns": {
         "items": {

@@ -1,6 +1,84 @@
 use super::*;
 
 impl Engine {
+    /// 空闲旧会话只追加部署固定 Browser 包，受理回执与工具表同一快照提交。
+    pub async fn attach_browser_tools(
+        self: &Arc<Self>,
+        identity: String,
+        request: AttachBrowserTools,
+        host: Arc<dyn crate::tools::DynamicToolHost>,
+    ) -> Result<Value> {
+        self.mutate(move |engine| async move {
+            if request.bundle_id != BROWSER_V1_BUNDLE {
+                return Err(invalid("unsupported browser bundle"));
+            }
+            if host.is_closed() || host.identity() != identity {
+                return Err(Error::Conflict);
+            }
+            // 与 thread/start 共用串行门：同一身份/方法/requestId 不能跨 Thread 落两份回执。
+            let _serial = engine.desktop.creation.lock().await;
+            let hash = digest(&request)?;
+            let method = "areal/thread/tools/attach";
+            let cells: Vec<_> = engine.threads.read().await.values().cloned().collect();
+            for existing in cells {
+                let state = existing.state.lock().await;
+                if let Some(record) = state.thread.desktop.as_ref().and_then(|data| data.receipts.iter()
+                    .find(|record| record.identity == identity && record.request_id == request.request_id && record.method == method)) {
+                    if record.digest != hash || state.thread.id != request.thread_id { return Err(Error::Conflict); }
+                    return Ok(record.result.clone());
+                }
+            }
+            let cell = engine.cell(&request.thread_id).await?;
+            let mut state = cell.state.lock().await;
+            let mut data = desktop(&state.thread);
+            if let Some(result) = receipt(&data, &identity, &request.request_id, method, &hash)? {
+                return Ok(result);
+            }
+            if state.poisoned || state.active.is_some() || state.compacting
+                || !matches!(state.thread.status, ThreadStatus::Idle)
+                || state.thread.parent_thread_id.is_some() || data.archived
+                || state.thread.toolset_revision != request.expected_toolset_revision
+            {
+                return Err(Error::Conflict);
+            }
+            let mut bindings = cell.bindings.write().await;
+            if bindings.host.as_ref().is_some_and(|old| old.id() != host.id() && !old.is_closed()) {
+                return Err(Error::Conflict);
+            }
+            let tool = areal_protocol::desktop::browser_v1_tool();
+            let present = state.thread.dynamic_tools.iter().find(|entry| entry.name == tool.name);
+            if present.is_some_and(|entry| digest(entry).ok() != digest(&tool).ok()) {
+                return Err(Error::Conflict);
+            }
+            // 旧工具仅在原 live ToolHost 当前连接上继续执行；不能改绑给不认识它们的 GUI。
+            if state.thread.dynamic_tools.iter().any(|entry| entry.name != tool.name)
+                && !bindings.host.as_ref().is_some_and(|old| old.id() == host.id() && !old.is_closed())
+            {
+                return Err(invalid("existing client tools require their original live host; browser attachment unavailable"));
+            }
+            let mut candidate = state.thread.clone();
+            let mut registry = bindings.registry.clone();
+            if present.is_none() {
+                registry = registry.with_dynamic(&[tool.clone()]).map_err(invalid)?;
+                candidate.dynamic_tools.push(tool);
+                candidate.toolset_revision = candidate.toolset_revision.checked_add(1)
+                    .ok_or(Error::Conflict)?;
+            }
+            let result = json!({"threadId": candidate.id, "toolsetRevision":candidate.toolset_revision,
+                "bundleId":BROWSER_V1_BUNDLE});
+            remember(&mut data, &identity, &request.request_id, method, hash, result.clone());
+            candidate.desktop = Some(data);
+            engine.persist(&candidate).await?;
+            state.thread = candidate;
+            bindings.registry = registry;
+            bindings.host = Some(host);
+            cell.emit("areal/thread/tools/attached", json!({"threadId":request.thread_id,
+                "toolsetRevision":state.thread.toolset_revision,
+                "dynamicTools":state.thread.dynamic_tools}));
+            Ok(result)
+        }).await
+    }
+
     pub async fn create_configured(
         self: &Arc<Self>,
         identity: String,

@@ -9,6 +9,7 @@
 const commandDefinitions = Object.freeze({
   connect: ['service', 'project'], list: ['service', 'project'], open: ['service', 'thread'],
   create: ['service', 'project'], send: ['service', 'thread'], stop: ['service', 'thread'],
+  attachBrowser: ['service', 'thread'],
   respond: ['service', 'thread'], reconcile: ['service', 'project'], configure: ['service', 'thread'],
   queue: ['service', 'thread'], queueEdit: ['service', 'thread'], library: ['service', 'app'],
   manage: ['service', 'project'], workspace: ['service', 'project'], media: ['service', 'thread'],
@@ -39,6 +40,9 @@ function validateCommand(name, params, { serviceOnly = false } = {}) {
   if (scope !== 'app' && !identifier(params.projectId)) invalid();
   if (scope === 'thread' && !identifier(params.threadId)) invalid();
   if (name === 'create' && params.browserEnabled !== undefined && typeof params.browserEnabled !== 'boolean') invalid();
+  if (name === 'attachBrowser' && (typeof params.expectedToolsetRevision !== 'number'
+    || !Number.isSafeInteger(params.expectedToolsetRevision)
+    || params.expectedToolsetRevision < 0)) invalid();
   if (['manage', 'workspace', 'media', 'queueEdit', 'library', 'providers', 'chatgpt', 'analytics', 'resources', 'projectless', 'tasks', 'remoteControl'].includes(name)
     && !identifier(params.operation)) invalid();
   if (name !== 'configure') return;

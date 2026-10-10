@@ -21,7 +21,8 @@
     "test:e2e": "node scripts/migration-smoke.mjs",
     "sign:mac": "node scripts/notarize-macos.mjs",
     "test:update": "node scripts/update-smoke.mjs",
-    "test:browser-feasibility": "node scripts/browser-feasibility.mjs"
+    "test:browser-feasibility": "node scripts/browser-feasibility.mjs",
+    "test:browser-attach": "node scripts/browser-attach-smoke.mjs"
   },
   "devDependencies": {
     "prettier": "3.9.8"

@@ -622,6 +622,18 @@ impl Connection {
             return desktop::dispatch(engine, &self.principal.id, method, params).await;
         }
         match method {
+            "areal/thread/tools/attach" => {
+                if self.principal.id != "desktop-owner"
+                    || !self.principal.allows(auth::Permission::Interact)
+                    || !self.principal.allows(auth::Permission::Tools)
+                    || self.principal.thread_ids.is_some()
+                {
+                    return Err(RpcError { code: -32003, message: "trusted desktop tool host required".into() });
+                }
+                let request: areal_protocol::desktop::AttachBrowserTools = parse(params)?;
+                engine.attach_browser_tools(self.principal.id.clone(), request, self.tool_host.clone())
+                    .await.map_err(map_error)
+            }
             "areal/thread/start" => {
                 let p: areal_protocol::desktop::ThreadStart = parse(params)?;
                 if self.subscriptions.len() >= 128 {
@@ -659,6 +671,11 @@ impl Connection {
                     return Err(RpcError::invalid("unsupported AReaL API version"));
                 }
                 let mut methods = METHODS.to_vec();
+                let can_attach_browser = self.principal.id == "desktop-owner"
+                    && self.principal.allows(auth::Permission::Interact)
+                    && self.principal.allows(auth::Permission::Tools)
+                    && self.principal.thread_ids.is_none();
+                if !can_attach_browser { methods.retain(|method| *method != "areal/thread/tools/attach"); }
                 methods.extend_from_slice(desktop::METHODS);
                 methods.extend_from_slice(task_mode::METHODS);
                 if !engine.runtime_capabilities().is_null() {
@@ -678,7 +695,9 @@ impl Connection {
                 }
                 Ok(json!({"apiVersion": API_VERSION, "methods": methods,
                     "notifications": NOTIFICATIONS, "serverRequests":["item/tool/call"],
-                    "features":{"subscriptionRemoval":true,"atomicResume":true,
+                    "browserToolBundles":if can_attach_browser {json!([{"bundleId":areal_protocol::desktop::BROWSER_V1_BUNDLE,
+                        "definition":areal_protocol::desktop::browser_v1_tool()}])} else {json!([])},
+                    "features":{"subscriptionRemoval":true,"atomicResume":true,"browserToolAttachment":can_attach_browser,
                         "taskModes":true,"taskChannels":true,"asyncQuestions":true,"headlessInteractions":true,"goals":true,"dynamicTools":true,"mediaOutput":true,"durableSubmissionDeduplication":true,"profiles":true,"skills":true,"plans":true,"interactions":true,"queue":true,"providerConfiguration":true,"modelReset":true,"toolMedia":true,"blobUpload":true},
                     "limits":{"frameBytes":MAX_FRAME_BYTES,"subscriptions":128,"sendQueue":256,"threadEventWindow":128},
                     "runtime":engine.runtime_capabilities()}))

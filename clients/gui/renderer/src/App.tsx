@@ -1013,6 +1013,8 @@ function AppContent({ services }: { services: PlatformServices }) {
           initialRequest={previewRequest}
           fullAddress={library.settings?.browserFullAddress === true}
           browserEnabled={thread?.dynamicTools?.some((tool: Data) => tool.name === 'browser_v1') === true}
+          browserAvailable={project.core?.features?.browserToolAttachment === true && thread?.status?.type === 'idle' && !thread?.desktop?.archived}
+          toolsetRevision={thread?.toolsetRevision ?? 0}
           onError={setError}
         />
       );

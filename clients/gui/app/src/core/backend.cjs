@@ -271,9 +271,8 @@ class CoreBackend {
     }), onServerRequest: async (method, params, context) => {
       if (method !== 'item/tool/call' || params?.tool !== 'browser_v1') throw new Error('Unsupported client tool');
       if (!this.currentConnection(project, client)) return browserFailure('host_unavailable', 'Desktop connection changed');
-      const thread = project.model.state.threads[params.threadId];
-      if (!thread?.dynamicTools?.some(tool => tool.name === 'browser_v1'))
-        return browserFailure('wrong_thread', 'Browser is not enabled for this thread');
+      // Core invokes only tools bound to this connection. The local Thread
+      // projection can lag the committed attachment until its event arrives.
       return this.browserRead?.({ projectId: project.id, threadId: params.threadId,
         turnId: params.turnId, callId: params.callId, arguments: params.arguments,
         coreInstanceId: project.service?.serviceId, coreGeneration: project.service?.generation,
@@ -608,7 +607,7 @@ class CoreBackend {
   }
 
   async submit(project, method, parameters, { requestId } = {}) {
-    if (requestId !== undefined && (!(workgroupMutationMethods.has(method) || taskMutationMethods.has(method) || ['areal/agent/spawn', 'areal/process/start', 'areal/thread/start', ...['update','remove','reorder','pause','resume','steer'].map(name => `areal/queue/${name}`)].includes(method)) || typeof requestId !== 'string' || !/^[0-9a-f-]{36}$/.test(requestId))) throw new Error('无效请求标识');
+    if (requestId !== undefined && (!(workgroupMutationMethods.has(method) || taskMutationMethods.has(method) || ['areal/agent/spawn', 'areal/process/start', 'areal/thread/start', 'areal/thread/tools/attach', ...['update','remove','reorder','pause','resume','steer'].map(name => `areal/queue/${name}`)].includes(method)) || typeof requestId !== 'string' || !/^[0-9a-f-]{36}$/.test(requestId))) throw new Error('无效请求标识');
     const params = { ...parameters, requestId: requestId ?? randomUUID() };
     const entry = { method, params };
     // 活跃请求仅保存在内存；重启后仍在恢复日志中的请求应显示为结果未知。
@@ -701,7 +700,9 @@ class CoreBackend {
       const management = managementMethods.has(method);
       const processMutation = method.startsWith('areal/process/');
       const receiptMethod = processMutation && method !== 'areal/process/start' ? 'areal/process/control' : method;
-      if ((!management && !threadMutationMethods.has(method) && method !== 'areal/turn/enqueue' && !processMutation) || error.submissionUnknown || typeof error.code !== 'number') throw error;
+      if ((!management && !threadMutationMethods.has(method) && method !== 'areal/turn/enqueue'
+        && method !== 'areal/thread/tools/attach' && !processMutation)
+        || error.submissionUnknown || typeof error.code !== 'number') throw error;
       // 入队后的推进或管理日志落盘仍可能返回 RPC 错误；先核对原业务键，不能恢复草稿造成重复入队。
       let receipt;
       try {
@@ -866,6 +867,23 @@ class CoreBackend {
       case 'manage': return manage(this, project, request);
       case 'list': await this.listThreads(project); break;
       case 'open': await this.openThread(project, threadId); break;
+      case 'attachBrowser': {
+        if (!project.client.capabilities?.methods?.includes('areal/thread/tools/attach')
+          || project.client.capabilities?.features?.browserToolAttachment !== true
+          || !project.client.capabilities?.browserToolBundles?.some(bundle => bundle.bundleId === 'areal.browser.v1')) {
+          throw new Error('当前 Core 不支持在已有聊天启用浏览器');
+        }
+        const existing = project.model.state.threads[threadId];
+        if (!existing || existing.desktop?.archived || existing.status?.type !== 'idle'
+          || existing.toolsetRevision !== request.expectedToolsetRevision && (existing.toolsetRevision ?? 0) !== request.expectedToolsetRevision) {
+          throw new Error('聊天状态或工具版本已变化，请刷新后重试');
+        }
+        const result = await this.submit(project, 'areal/thread/tools/attach', {
+          threadId, expectedToolsetRevision: request.expectedToolsetRevision, bundleId: 'areal.browser.v1',
+        });
+        await this.openThread(project, threadId);
+        return result;
+      }
       case 'configure': await this.configureThread(project, threadId, request); break;
       case 'queue': {
         if (!request.requestId) return this.refreshQueue(project, threadId);
