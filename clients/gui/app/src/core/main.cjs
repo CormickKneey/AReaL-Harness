@@ -119,7 +119,9 @@ app.whenReady().then(async () => {
       threadId: request.threadId, turnId: request.turnId, callId: request.callId, pageId: request.pageId,
       browserHostId: request.browserHostId, hostGeneration: request.hostGeneration,
       pageGeneration: request.pageGeneration, controlEpoch: request.controlEpoch,
-      error: /Human controls|revoked/.test(error.message) ? 'human_control' : 'page_unavailable' }; }
+      error: /Human controls|revoked/.test(error.message) ? 'human_control'
+        : error.message === 'stale_ref' ? 'stale_ref'
+        : /budget exceeded|Sensitive field/.test(error.message) ? 'evidence_unavailable' : 'page_unavailable' }; }
   };
   ipcMain.handle('areal-core:preview', async (event, request) => {
     trusted(event);

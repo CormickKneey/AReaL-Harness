@@ -164,7 +164,7 @@ class DesktopService {
       if (method === 'browserClaim') {
         const { projectId, threadId, pageId, browserHostId, hostGeneration, pageGeneration, controlEpoch } = params ?? {};
         if (params?.protocol !== 'areal.browser.host.v1' || params?.available !== true
-          || JSON.stringify(params?.operations) !== JSON.stringify(['describe', 'observe'])) throw new Error('浏览器宿主能力不兼容');
+          || JSON.stringify(params?.operations) !== JSON.stringify(['describe', 'observe', 'capture'])) throw new Error('浏览器宿主能力不兼容');
         if (![projectId, threadId, pageId, browserHostId].every(value => typeof value === 'string' && value.length > 0 && value.length <= 256)
           || ![hostGeneration, pageGeneration, controlEpoch].every(Number.isSafeInteger)) throw new Error('无效浏览页面身份');
         const project = this.backend.projects.get(projectId);
@@ -255,7 +255,7 @@ class DesktopService {
     finally { this.inflight--; this.schedule(); }
   }
   async browserRead(request) {
-    const { projectId, threadId, turnId, callId, coreInstanceId, coreGeneration, signal, arguments: input } = request ?? {};
+    const { projectId, threadId, turnId, callId, toolHostGeneration, coreInstanceId, coreGeneration, signal, arguments: input } = request ?? {};
     if (typeof projectId !== 'string' || typeof threadId !== 'string' || typeof turnId !== 'string'
       || typeof callId !== 'string' || typeof coreInstanceId !== 'string' || !validToolInput(input))
       return browserFailure('invalid_arguments', 'Unsupported browser operation or parameters');
@@ -268,7 +268,7 @@ class DesktopService {
     }
     if (input.operation === 'describe') return browserSuccess({ protocol: 'areal.browser.host.v1',
       browserHostId: claim.browserHostId, hostGeneration: claim.hostGeneration, available: true,
-      operations: ['describe', 'observe'], pageId: claim.pageId });
+      operations: ['describe', 'observe', 'capture'], pageId: claim.pageId });
     if (input.parameters.pageId !== claim.pageId) return browserFailure('wrong_page', 'Page does not belong to this thread');
     if (this.browserPending.size >= 8) return browserFailure('host_busy', 'Too many pending browser observations');
     if (signal?.aborted) throw new Error('Browser request was cancelled');
@@ -287,7 +287,7 @@ class DesktopService {
       this.send(claim.socket, { method: 'browserRequest', params: { requestId, coreInstanceId, coreGeneration,
         projectId, threadId, turnId, callId, pageId: claim.pageId, browserHostId: claim.browserHostId,
         hostGeneration: claim.hostGeneration, pageGeneration: claim.pageGeneration,
-        controlEpoch: claim.controlEpoch, operation: input.operation } });
+        controlEpoch: claim.controlEpoch, operation: input.operation, parameters: input.parameters } });
     });
     if (this.browserClaims.get(key) !== claim) return browserFailure('human_control', 'Browser authorization was revoked');
     const currentProject = this.backend.projects.get(projectId);
@@ -298,8 +298,37 @@ class DesktopService {
       || result.coreInstanceId !== coreInstanceId || result.coreGeneration !== coreGeneration
       || result.browserHostId !== claim.browserHostId || result.hostGeneration !== claim.hostGeneration
       || result.pageGeneration !== claim.pageGeneration || result.controlEpoch !== claim.controlEpoch
-      || JSON.stringify(result).length > 128 * 1024) throw new Error('Invalid browser host response');
+      || JSON.stringify(result).length > (input.operation === 'capture' ? 3 * 1024 * 1024 : 512 * 1024)) throw new Error('Invalid browser host response');
     if (result.error) return browserFailure(result.error, result.error === 'human_control' ? 'Human controls this page' : 'Page unavailable');
+    if (input.operation === 'capture') {
+      if (result.mimeType !== 'image/png' || typeof result.imageBase64 !== 'string'
+        || result.imageBase64.length > 2_800_000 || typeof toolHostGeneration !== 'string')
+        throw new Error('Invalid browser image');
+      const bytes = Buffer.from(result.imageBase64, 'base64');
+      if (!bytes.length || bytes.length > 2 * 1024 * 1024 || bytes.toString('base64') !== result.imageBase64)
+        throw new Error('Invalid browser image');
+      const project = this.backend.projects.get(projectId);
+      const url = new URL(project.endpoint);
+      url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:';
+      url.pathname = '/areal/blobs'; url.search = '';
+      url.searchParams.set('threadId', threadId);
+      url.searchParams.set('callId', callId);
+      url.searchParams.set('hostGeneration', toolHostGeneration);
+      const uploaded = await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${project.token}`, 'Content-Type': 'image/png' },
+        body: bytes, redirect: 'error', signal: AbortSignal.timeout(10000) });
+      if (!uploaded.ok) throw new Error(`Browser evidence upload failed (${uploaded.status})`);
+      const media = await uploaded.json();
+      if (signal?.aborted || this.browserClaims.get(key) !== claim || claim.socket.readyState !== 1)
+        return browserFailure('human_control', 'Browser authorization was revoked during capture');
+      const current = this.backend.projects.get(projectId);
+      if (current?.service?.serviceId !== coreInstanceId || current.service.generation !== coreGeneration)
+        return browserFailure('host_unavailable', 'Core deployment changed during capture');
+      const { imageBase64, ...metadata } = result;
+      return { success: true, contentItems: [
+        { type: 'inputText', text: JSON.stringify({ ...metadata, media }) },
+        { type: 'arealMedia', modality: 'image', media },
+      ] };
+    }
     return browserSuccess(result);
   }
 }

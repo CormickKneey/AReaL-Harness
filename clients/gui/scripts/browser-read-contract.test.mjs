@@ -4,6 +4,16 @@ import { CoreClient } from '../packages/runtime-client/core.js';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { DesktopService, PROTOCOL } = require('../app/src/core/service-protocol.cjs');
+const { validToolInput } = require('../app/src/core/browser-tool.cjs');
+
+test('browser observation and capture accept only bounded declared parameters', () => {
+  const pageId = '00000000-0000-4000-8000-000000000001';
+  assert.equal(validToolInput({ operation: 'observe', parameters: { pageId, scope: 'document', budget: { nodes: 20, textBytes: 1024 } } }), true);
+  assert.equal(validToolInput({ operation: 'observe', parameters: { pageId, scope: 'viewport' } }), false);
+  assert.equal(validToolInput({ operation: 'capture', parameters: { pageId, scope: 'viewport' } }), true);
+  assert.equal(validToolInput({ operation: 'observe', parameters: { pageId, budget: { nodes: 1001 } } }), false);
+  assert.equal(validToolInput({ operation: 'capture', parameters: { pageId, scope: 'full' } }), false);
+});
 
 test('bound client may answer a browser tool request while ordinary clients reject it', async () => {
   const replies = [];
@@ -38,7 +48,7 @@ test('an authenticated owner claim refuses a request from another Core generatio
   const service = new DesktopService(backend, 'fixture-identity');
   const receive = (id, method, params) => service.receive(owner, Buffer.from(JSON.stringify({ id, method, params })));
   await receive(1, 'hello', { protocol: PROTOCOL, identity: 'fixture-identity' });
-  await receive(2, 'browserClaim', { protocol: 'areal.browser.host.v1', operations: ['describe', 'observe'],
+  await receive(2, 'browserClaim', { protocol: 'areal.browser.host.v1', operations: ['describe', 'observe', 'capture'],
     available: true, projectId: 'project-1', threadId: 'thread-1', pageId, browserHostId: 'host-1',
     hostGeneration: 1, pageGeneration: 1, controlEpoch: 1 });
   assert.equal(sent.at(-1).result.claimed, true);

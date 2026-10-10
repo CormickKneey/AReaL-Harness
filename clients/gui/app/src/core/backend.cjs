@@ -275,7 +275,7 @@ class CoreBackend {
       if (!thread?.dynamicTools?.some(tool => tool.name === 'browser_v1'))
         return browserFailure('wrong_thread', 'Browser is not enabled for this thread');
       return this.browserRead?.({ projectId: project.id, threadId: params.threadId,
-        turnId: params.turnId, callId: params.callId, arguments: params.arguments,
+        turnId: params.turnId, callId: params.callId, toolHostGeneration: params.hostGeneration, arguments: params.arguments,
         coreInstanceId: project.service?.serviceId, coreGeneration: project.service?.generation,
         signal: context.signal })
         ?? browserFailure('host_unavailable', 'Desktop browser is unavailable');
