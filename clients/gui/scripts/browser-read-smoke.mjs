@@ -72,8 +72,11 @@ await new Promise(resolve => model.listen(0, '127.0.0.1', resolve));
 await writeFile(join(userHome, '.areal', 'config.toml'), `schema_version=1\n[model]\nprovider="fixture"\nname="fixture"\n[model.providers.fixture]\nprotocol="chat-completions"\nendpoint="http://127.0.0.1:${model.address().port}/v1/chat/completions"\n`);
 const deployment = join(scratch, 'desktop.json');
 await writeFile(deployment, JSON.stringify({ profiles: [{ id: 'fixture', revision: 'v1', displayName: 'Fixture', instructions: 'Use requested tools, then report their result.' }] }));
+const traceFile = join(scratch, 'browser-trace.jsonl');
+await writeFile(traceFile, '');
 const env = { ...process.env, AREAL_GUI_USER_DATA: join(scratch, 'electron'), AREAL_CORE_HOME: join(scratch, 'core'),
   AREAL_CORE_USER_HOME: userHome, AREAL_HARNESS_SERVICE_HOME: join(scratch, 'registry'),
+  AREAL_BROWSER_READ_TEST_TRACE: traceFile,
   AREAL_CORE_DESKTOP_CONFIG: deployment, AREAL_CORE_BIN: process.env.AREAL_CORE_BIN || resolve(root, 'target/debug/areal') };
 for (const key of ['AREAL_CORE_WORKSPACE', 'AREAL_CORE_CONFIG', 'AREAL_HARNESS_HOME', 'AREAL_HARNESS_CONFIG']) delete env[key];
 let app, page, passed = false;
@@ -149,7 +152,7 @@ try {
   assert.deepEqual(after.state, before.state);
   assert.equal(siteFacts.gets, 1, 'claim and read must not navigate a second page');
   events.normal = { threadId, pageId, nativeWebContentsId: after.id, nativeSentinel: after.state.sentinel,
-    siteFacts, history: completed };
+    before, after, siteFacts: structuredClone(siteFacts), history: completed };
   await page.screenshot({ path: join(scratch, 'gui-read.png'), animations: 'disabled' });
   const nativePng = await app.evaluate(async ({ webContents }, id) => (await webContents.fromId(id).capturePage()).toPNG().toString('base64'), after.id);
   await writeFile(join(scratch, 'native-read.png'), Buffer.from(nativePng, 'base64'));
@@ -197,8 +200,13 @@ try {
     await rogue.request('command', { name: 'send', request: { projectId, threadId: second.threadId,
       text: 'Read from the authorized host while another socket forges a result' } }, true);
     await until(() => modelCalls.some(call => call.scenario === 'forge'), 'forged socket fixture model request');
+    const trace = async () => (await readFile(traceFile, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+    const dispatched = await until(async () => (await trace())
+      .find(entry => entry.callId === 'forge-02' && entry.phase === 'pending'), 'actual forged-call pending request');
     await new Promise(resolve => setTimeout(resolve, 300));
-    await assert.rejects(() => rogue.request('browserResult', { requestId: 2, result: {
+    assert.equal((await trace()).some(entry => entry.callId === 'forge-02' && entry.phase === 'finished'), false,
+      'the authorized browser request must still be pending when the other socket injects a result');
+    await assert.rejects(() => rogue.request('browserResult', { requestId: dispatched.requestId, result: {
       callId: 'forge-02', pageId: secondPageId, text: 'FORGED_SOCKET_RESULT' } }, true), /无效浏览器回执/);
     await blockMain;
     const forged = await until(async () => {
@@ -209,7 +217,8 @@ try {
     assert.match(forgedTurn, /forge-02/);
     assert.match(forgedTurn, new RegExp(sentinel));
     assert.ok(!forgedTurn.includes('FORGED_SOCKET_RESULT'));
-    events.forge = { threadId: second.threadId, history: forged.turns.at(-1) };
+    events.forge = { threadId: second.threadId, attemptedRequestId: dispatched.requestId,
+      dispatch: dispatched, history: forged.turns.at(-1) };
     checks.push('B-05: second authenticated socket cannot replace an in-flight result or claim with fake host generation');
   } finally { rogue.close(); }
 

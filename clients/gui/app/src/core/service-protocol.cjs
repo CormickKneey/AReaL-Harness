@@ -1,5 +1,6 @@
 'use strict';
 const { randomBytes, timingSafeEqual } = require('node:crypto');
+const { appendFileSync } = require('node:fs');
 const { WebSocketServer } = require('ws');
 const { validateCommand: validateDesktopCommand, desktopError } = require('@areal/workbench/desktop-contract');
 const { inspectResources, recoverResource, summary, blocked } = require('./resource-recovery.cjs');
@@ -34,6 +35,7 @@ class DesktopService {
     this.pendingNotificationTarget = null;
     this.token = randomBytes(32).toString('hex'); this.clients = new Set();
     this.browserClaims = new Map(); this.browserPending = new Map(); this.nextBrowserId = 0;
+    this.browserTestTrace = process.env.AREAL_BROWSER_READ_TEST_TRACE;
     backend.browserRead = request => this.browserRead(request);
     this.sequence = 0; this.inflight = 0; this.stopping = false;
     this.idleSince = Date.now(); this.closed = false;
@@ -271,13 +273,16 @@ class DesktopService {
     if (this.browserPending.size >= 8) return browserFailure('host_busy', 'Too many pending browser observations');
     if (signal?.aborted) throw new Error('Browser request was cancelled');
     const requestId = ++this.nextBrowserId;
+    const trace = phase => { if (this.browserTestTrace) appendFileSync(this.browserTestTrace,
+      JSON.stringify({ phase, requestId, threadId, callId }) + '\n'); };
     const result = await new Promise((resolve, reject) => {
-      const finish = (kind, value) => { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); this.browserPending.delete(requestId); kind(value); };
+      const finish = (kind, value) => { trace('finished'); clearTimeout(timer); signal?.removeEventListener('abort', onAbort); this.browserPending.delete(requestId); kind(value); };
       const cancelNative = () => this.send(claim.socket, { method: 'browserCancel', params: {
         requestId, projectId, threadId, hostGeneration: claim.hostGeneration } });
       const onAbort = () => { cancelNative(); finish(reject, new Error('Browser request was cancelled')); };
       const timer = setTimeout(() => { cancelNative(); finish(reject, new Error('Browser host response unknown')); }, 15000);
       this.browserPending.set(requestId, { socket: claim.socket, resolve: value => finish(resolve, value), reject: error => finish(reject, error), timer });
+      trace('pending');
       signal?.addEventListener('abort', onAbort, { once: true });
       this.send(claim.socket, { method: 'browserRequest', params: { requestId, coreInstanceId, coreGeneration,
         projectId, threadId, turnId, callId, pageId: claim.pageId, browserHostId: claim.browserHostId,
