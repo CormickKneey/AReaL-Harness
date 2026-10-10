@@ -27,6 +27,13 @@ function observationUrl(value) {
   return url.href;
 }
 const sensitive = /password|passcode|secret|token|api.?key|credit.?card|cvv|authorization|one.?time.?code|\botp\b|credential/i;
+const BROWSER_READ_WORLD = 1001;
+async function readIsolated(contents, code) {
+  const result = await contents.executeJavaScriptInIsolatedWorld(BROWSER_READ_WORLD, [{ code }]);
+  if (result === undefined) throw new Error('Browser isolated read failed');
+  return result;
+}
+const viewportScript = `({width:innerWidth,height:innerHeight,scrollX,scrollY,deviceScaleFactor:devicePixelRatio})`;
 const sensitiveCaptureScript = `(() => {
   const selector = 'input[type="password"],input[autocomplete="cc-number"],input[autocomplete="one-time-code"],input[name*="token" i],input[name*="secret" i],input[name*="key" i]';
   const scan = root => {
@@ -168,7 +175,10 @@ class CorePreview {
         ? await Promise.race([c.debugger.sendCommand('Accessibility.getFullAXTree'), cancelled]) : null;
       const frames = operation === 'observe'
         ? await Promise.race([c.debugger.sendCommand('Page.getFrameTree'), cancelled]) : null;
-      const viewport = await Promise.race([c.executeJavaScript(`({width:innerWidth,height:innerHeight,scrollX,scrollY,deviceScaleFactor:devicePixelRatio})`, true), cancelled]);
+      const viewport = await Promise.race([readIsolated(c, viewportScript), cancelled]);
+      if (![viewport.width, viewport.height, viewport.scrollX, viewport.scrollY, viewport.deviceScaleFactor]
+        .every(Number.isFinite) || viewport.width <= 0 || viewport.height <= 0 || viewport.deviceScaleFactor <= 0)
+        throw new Error('Browser viewport unavailable');
       const zoom = c.getZoomFactor();
       const viewportKey = JSON.stringify([viewport.width, viewport.height, viewport.scrollX, viewport.scrollY, zoom, viewport.deviceScaleFactor]);
       if (page.viewportKey !== viewportKey) { page.viewportKey = viewportKey; page.viewportRevision++; }
@@ -181,11 +191,12 @@ class CorePreview {
         viewport: { ...viewport, pageZoom: zoom, viewportRevision: page.viewportRevision } };
       if (operation === 'capture') {
         // A known sensitive form cannot be safely represented in an unmasked image.
-        const hasSensitive = await Promise.race([c.executeJavaScript(sensitiveCaptureScript, true), cancelled]);
+        const hasSensitive = await Promise.race([readIsolated(c, sensitiveCaptureScript), cancelled]);
+        if (typeof hasSensitive !== 'boolean') throw new Error('Browser sensitive-field check unavailable');
         if (hasSensitive) throw new Error('Sensitive field prevents automatic screenshot');
         const image = await Promise.race([c.capturePage(), cancelled]);
         if (page.control !== 'agent' || page.controlEpoch !== epoch || page.documentGeneration !== documentGeneration) throw new Error('Browser observation was revoked');
-        const currentViewport = await Promise.race([c.executeJavaScript(`({width:innerWidth,height:innerHeight,scrollX,scrollY,deviceScaleFactor:devicePixelRatio})`, true), cancelled]);
+        const currentViewport = await Promise.race([readIsolated(c, viewportScript), cancelled]);
         if (JSON.stringify(currentViewport) !== JSON.stringify(viewport) || c.getZoomFactor() !== zoom)
           throw new Error('Browser viewport changed during capture');
         const size = image.getSize();

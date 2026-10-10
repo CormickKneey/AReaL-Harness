@@ -200,6 +200,32 @@ try {
     document.querySelector('#shadow').shadowRoot.querySelector('input').remove();
     document.querySelector('#otp').remove();document.querySelector('#cross').remove()`);
   assert.deepEqual(await locations(), { root: false, frame: false, shadow: false, otp: false, cross: false });
+  await pageScript(`(() => {
+    document.body.insertAdjacentHTML('beforeend', '<input id="spoof-secret" type="password" value="SPOOFED_SECRET_03">');
+    const originals = {
+      documentQuery: Document.prototype.querySelector, documentAll: Document.prototype.querySelectorAll,
+      elementQuery: Element.prototype.querySelector, elementAll: Element.prototype.querySelectorAll,
+      width: Object.getOwnPropertyDescriptor(window, 'innerWidth')
+    };
+    Document.prototype.querySelector = Element.prototype.querySelector = () => null;
+    Document.prototype.querySelectorAll = Element.prototype.querySelectorAll = () => [];
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1 });
+    window.__restoreBrowserEvidence = () => {
+      Document.prototype.querySelector = originals.documentQuery;
+      Document.prototype.querySelectorAll = originals.documentAll;
+      Element.prototype.querySelector = originals.elementQuery;
+      Element.prototype.querySelectorAll = originals.elementAll;
+      if (originals.width) Object.defineProperty(window, 'innerWidth', originals.width);
+      else delete window.innerWidth;
+    };
+  })()`);
+  const spoofedCapture = await runScenario('capture', 'Capture while page scripts hide a password field');
+  assert.match(JSON.stringify(spoofedCapture), /evidence_unavailable/);
+  const spoofedObservation = JSON.parse((await runScenario('refresh', 'Observe while page scripts spoof viewport width')).contentItems[0].text);
+  assert.ok(spoofedObservation.viewport.width > 100, 'trusted viewport ignores main-world width spoof');
+  await pageScript(`window.__restoreBrowserEvidence();document.querySelector('#spoof-secret').remove();delete window.__restoreBrowserEvidence`);
+  events.mainWorldSpoof = { capture: spoofedCapture.contentItems, trustedWidth: spoofedObservation.viewport.width };
+  const captureOnlyTrace = await nativeTrace();
   const safeBaseline = await runScenario('capture', 'Capture the safe baseline before isolated refusals');
   assert.ok(safeBaseline.contentItems.some(part => part.type === 'arealMedia'), 'baseline page must be capturable');
   events.safeBaseline = { callId: safeBaseline.callId };
@@ -267,7 +293,7 @@ try {
   const captured = await runScenario('capture', 'Capture after sensitive conditions are removed');
   const afterCaptureTrace = await nativeTrace();
   assert.ok(afterCaptureTrace.capturePage > beforeCaptureTrace.capturePage);
-  assert.equal(afterCaptureTrace.fullAXTree, beforeCaptureTrace.fullAXTree, 'capture must not request the accessibility tree');
+  assert.equal(afterCaptureTrace.fullAXTree, captureOnlyTrace.fullAXTree, 'capture must not request the accessibility tree');
   events.surfaceTraceAfterCapture = afterCaptureTrace;
   const image = captured.contentItems.find(part => part.type === 'arealMedia');
   assert.ok(image?.media?.uri?.startsWith('areal://blob/'));
