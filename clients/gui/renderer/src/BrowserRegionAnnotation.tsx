@@ -16,7 +16,9 @@ export interface RegionDraft {
     capturedAt: string;
     url: string;
     imageBase64: string;
-    viewport: { width: number; height: number; scrollX: number; scrollY: number; pageZoom: number; bitmapWidth: number; bitmapHeight: number };
+    viewport: { width: number; height: number; scrollX: number; scrollY: number; pageZoom: number;
+      guiZoom: number; deviceScaleFactor: number; nativeBounds: { x: number; y: number; width: number; height: number };
+      bitmapWidth: number; bitmapHeight: number };
   };
   comment: string;
   region: { x: number; y: number; width: number; height: number } | null;

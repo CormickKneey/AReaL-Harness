@@ -16,6 +16,12 @@ test('browser observation and capture accept only bounded declared parameters', 
   assert.equal(validToolInput({ operation: 'act', parameters: { pageId, snapshotId: pageId, action: { kind: 'click', ref: 'r1' } } }), true);
   assert.equal(validToolInput({ operation: 'act', parameters: { pageId, snapshotId: pageId, action: { kind: 'click', ref: 'r1', preparedActionId: 'forged' } } }), false);
   assert.equal(validToolInput({ operation: 'act', parameters: { pageId, snapshotId: pageId, action: { kind: 'fill', ref: 'r1', value: 'ok', allow: true } } }), false);
+  assert.equal(validToolInput({ operation: 'act', parameters: { pageId, snapshotId: pageId, action: { kind: 'clickAt', x: 320, y: 180 } } }), true);
+  assert.equal(validToolInput({ operation: 'act', parameters: { pageId, snapshotId: pageId, action: { kind: 'drag', fromX: 10, fromY: 20, toX: 300, toY: 210, steps: 4 } } }), true);
+  assert.equal(validToolInput({ operation: 'act', parameters: { pageId, snapshotId: pageId, action: { kind: 'pressAt', x: 320, y: 180, key: 'ArrowRight' } } }), true);
+  assert.equal(validToolInput({ operation: 'act', parameters: { pageId, snapshotId: pageId, action: { kind: 'clickAt', x: -1, y: 180 } } }), false);
+  assert.equal(validToolInput({ operation: 'act', parameters: { pageId, snapshotId: pageId, action: { kind: 'drag', fromX: 1, fromY: 1, toX: 2, toY: 2, steps: 101 } } }), false);
+  assert.equal(validToolInput({ operation: 'act', parameters: { pageId, snapshotId: pageId, action: { kind: 'clickAt', x: 320, y: 180, approved: true } } }), false);
   assert.equal(validToolInput({ operation: 'wait', parameters: { pageId, timeoutMs: 30001 } }), false);
   assert.equal(validToolInput({ operation: 'navigate', parameters: { pageId, url: 'http://localhost:3000/next' } }), true);
   assert.equal(validToolInput({ operation: 'newPage', parameters: { pageId, url: 'http://localhost:3000/new' } }), true);

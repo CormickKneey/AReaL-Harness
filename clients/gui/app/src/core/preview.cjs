@@ -51,6 +51,32 @@ async function nativeWithin(promise, deadline) {
   } finally { clearTimeout(timer); }
 }
 const viewportScript = `({width:innerWidth,height:innerHeight,scrollX,scrollY,deviceScaleFactor:devicePixelRatio})`;
+const coordinateKinds = new Set(['clickAt', 'drag', 'pressAt']);
+function viewportFacts(window, page, viewport) {
+  const pageZoom = page.view.webContents.getZoomFactor();
+  const guiZoom = window.webContents.getZoomFactor();
+  const nativeBounds = page.view.getBounds();
+  const key = JSON.stringify([viewport.width, viewport.height, viewport.scrollX, viewport.scrollY,
+    pageZoom, viewport.deviceScaleFactor, guiZoom, nativeBounds]);
+  return { ...viewport, pageZoom, guiZoom, nativeBounds, key };
+}
+function bitmapPoint(capture, x, y) {
+  const { width, height, bitmapWidth, bitmapHeight } = capture;
+  if (![width, height, bitmapWidth, bitmapHeight].every(Number.isFinite)
+    || width <= 0 || height <= 0 || bitmapWidth <= 0 || bitmapHeight <= 0
+    || x < 0 || y < 0 || x >= bitmapWidth || y >= bitmapHeight)
+    throw new Error('target_unavailable');
+  // CDP Input uses page CSS viewport coordinates; the actual bitmap dimensions
+  // are the only safe conversion source across DPR and page/GUI zoom.
+  return { x: x * width / bitmapWidth, y: y * height / bitmapHeight };
+}
+function coordinateTarget(capture, action) {
+  if (action.kind === 'drag') return {
+    from: bitmapPoint(capture, action.fromX, action.fromY),
+    to: bitmapPoint(capture, action.toX, action.toY), steps: action.steps,
+  };
+  return { point: bitmapPoint(capture, action.x, action.y) };
+}
 const interactiveRoles = new Set(['button', 'link', 'textbox', 'textfield', 'searchbox', 'combobox',
   'checkbox', 'radiobutton', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'tab', 'switch',
   'slider', 'spinbutton', 'option', 'listbox']);
@@ -146,6 +172,13 @@ function boundsWithinWindow(value, size) {
     width: Math.max(0, Math.min(Math.round(value.width), size[0] - x)),
     height: Math.max(0, Math.min(Math.round(value.height), size[1] - y)),
   };
+}
+function rendererBoundsWithinWindow(value, window) {
+  const zoom = window.webContents.getZoomFactor();
+  if (!Number.isFinite(zoom) || zoom <= 0) throw new Error('无效 GUI 缩放');
+  if (!value) throw new Error('无效预览区域');
+  return boundsWithinWindow(Object.fromEntries(['x', 'y', 'width', 'height'].map(key => [key, value[key] * zoom])),
+    window.getContentSize());
 }
 /** 网页没有 preload/Node/产品 IPC；任务拥有独立内容与导航历史。 */
 class CorePreview {
@@ -347,7 +380,7 @@ class CorePreview {
     // This local fence runs before any Core request and before awaiting native input.
     page.control = 'transferring'; page.controlEpoch++; page.refs.clear(); page.plans.clear();
     this.clearDiagnostics(page, 'control_changed');
-    page.lastObservation = null; page.needsObservation = true;
+    page.lastObservation = null; page.lastCapture = null; page.needsObservation = true;
     page.view?.setVisible(false);
     page.activeRead?.cancel();
     page.activeAction?.cancel();
@@ -361,6 +394,8 @@ class CorePreview {
     // takeover transferring rather than pretending the held input was released.
     if (method === 'Input.dispatchMouseEvent') {
       if (params.type === 'mousePressed') page.heldButtons.set(params.button, { x: params.x, y: params.y });
+      if (params.type === 'mouseMoved' && page.heldButtons.has(params.button))
+        page.heldButtons.set(params.button, { x: params.x, y: params.y });
     } else if (method === 'Input.dispatchKeyEvent') {
       if (params.type === 'keyDown') page.heldKeys.set(params.key, params);
     }
@@ -511,8 +546,8 @@ class CorePreview {
       if (!valid() || ![viewport.width, viewport.height, viewport.scrollX, viewport.scrollY, viewport.deviceScaleFactor]
         .every(Number.isFinite) || viewport.width <= 0 || viewport.height <= 0 || viewport.deviceScaleFactor <= 0)
         throw new Error('页面截图条件已变化');
-      const zoom = c.getZoomFactor();
-      const viewportKey = JSON.stringify([viewport.width, viewport.height, viewport.scrollX, viewport.scrollY, zoom, viewport.deviceScaleFactor]);
+      const facts = viewportFacts(this.window, page, viewport);
+      const viewportKey = facts.key;
       if (page.viewportKey !== viewportKey) { page.viewportKey = viewportKey; page.viewportRevision++; }
       if (await bounded(readIsolated(c, captureGuardStartScript(guardToken, guardSequence))) !== true)
         throw new Error('页面截图保护不可用');
@@ -521,8 +556,8 @@ class CorePreview {
       if (!valid() || await bounded(readIsolated(c, sensitiveCaptureScript)) !== false)
         throw new Error('页面截图条件已变化');
       changed = await bounded(readIsolated(c, captureGuardStopScript(guardToken, guardSequence)));
-      if (changed !== false || !valid() || c.getZoomFactor() !== zoom
-        || JSON.stringify(await bounded(readIsolated(c, viewportScript))) !== JSON.stringify(viewport))
+      if (changed !== false || !valid()
+        || viewportFacts(this.window, page, await bounded(readIsolated(c, viewportScript))).key !== viewportKey)
         throw new Error('页面在截图期间发生变化，请重试');
       const size = image.getSize();
       if (size.width <= 0 || size.height <= 0 || size.width * size.height > 8_000_000
@@ -536,7 +571,8 @@ class CorePreview {
         coreInstanceId: page.coreInstanceId, pageGeneration: page.pageGeneration,
         documentEpoch, controlEpoch: epoch, viewportRevision: page.viewportRevision,
         url: observationUrl(c.getURL()), capturedAt: new Date().toISOString(),
-        viewport: { ...viewport, pageZoom: zoom, bitmapWidth: size.width, bitmapHeight: size.height },
+        viewport: { ...viewport, pageZoom: facts.pageZoom, guiZoom: facts.guiZoom,
+          nativeBounds: facts.nativeBounds, bitmapWidth: size.width, bitmapHeight: size.height },
         mimeType: 'image/png', imageBase64: png.toString('base64') };
     } finally {
       clearTimeout(timer);
@@ -725,26 +761,33 @@ class CorePreview {
     const local = url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
     if (!local) throw new Error('human_takeover_required'); // Unknown/external effects require human takeover.
     if (page.needsObservation || (request.operation === 'act' && request.parameters.snapshotId !== page.lastObservation)) throw new Error('stale_ref');
+    const coordinate = request.operation === 'act' && coordinateKinds.has(request.parameters.action.kind);
+    const capture = coordinate ? page.lastCapture : null;
+    if (coordinate && (!capture || capture.observationId !== request.parameters.snapshotId
+      || capture.pageGeneration !== page.pageGeneration || capture.documentEpoch !== page.documentGeneration
+      || capture.controlEpoch !== page.controlEpoch || capture.viewportRevision !== page.viewportRevision)) throw new Error('stale_ref');
     let target = null;
     page.activePrepare = true;
     try {
       if (!c.debugger.isAttached()) c.debugger.attach('1.3');
-      if (request.operation === 'act') target = await this.actionTarget(page, c, request.parameters.action.ref);
+      if (coordinate) target = coordinateTarget(capture, request.parameters.action);
+      else if (request.operation === 'act') target = await this.actionTarget(page, c, request.parameters.action.ref);
       if (request.parameters.action?.kind === 'fill'
         && !/^(textField|textbox|searchbox|comboBox|spinbutton)$/i.test(target.role))
         throw new Error('target_unavailable');
       const viewport = await readIsolated(c, viewportScript);
-      const zoom = c.getZoomFactor();
-      const viewportKey = JSON.stringify([viewport.width, viewport.height, viewport.scrollX, viewport.scrollY, zoom, viewport.deviceScaleFactor]);
+      const viewportKey = viewportFacts(this.window, page, viewport).key;
       if (!this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== request.controlEpoch
         || page.pageGeneration !== request.pageGeneration || page.documentGeneration !== initialDocument || c.isDestroyed()
         || c.getURL() !== url.href) throw new Error('plan_stale');
       if (page.viewportKey !== viewportKey) { page.viewportKey = viewportKey; page.viewportRevision++; }
+      if (coordinate && (capture.viewportKey !== viewportKey || capture.url !== url.href)) throw new Error('plan_stale');
       const plan = { preparedActionId: randomUUID(), operation: request.operation, pageId: page.id,
         origin: url.origin, url: observationUrl(url.href),
         snapshotId: request.operation === 'act' ? request.parameters.snapshotId : null,
-        target: target ? { ref: request.parameters.action.ref,
-          role: target.role, name: target.name, x: target.x, y: target.y } : null,
+        target: target ? coordinate ? { ...target, captureId: capture.observationId,
+          bitmapWidth: capture.bitmapWidth, bitmapHeight: capture.bitmapHeight }
+          : { ref: request.parameters.action.ref, role: target.role, name: target.name, x: target.x, y: target.y } : null,
         action: request.operation === 'act' ? request.parameters.action : { kind: 'wait', timeoutMs: request.parameters.timeoutMs },
         pageGeneration: page.pageGeneration, documentEpoch: page.documentGeneration,
         controlEpoch: page.controlEpoch, viewportRevision: page.viewportRevision, viewportKey,
@@ -769,8 +812,7 @@ class CorePreview {
     const approved = request.browserApproval?.plan;
     const saved = approved && page.plans.get(approved.preparedActionId);
     const nowViewport = await readIsolated(c, viewportScript);
-    const nowKey = JSON.stringify([nowViewport.width, nowViewport.height, nowViewport.scrollX,
-      nowViewport.scrollY, c.getZoomFactor(), nowViewport.deviceScaleFactor]);
+    const nowKey = viewportFacts(this.window, page, nowViewport).key;
     if (!saved || !isDeepStrictEqual(approved, saved.plan)
       || saved.plan.threadId !== request.threadId || saved.plan.turnId !== request.turnId
       || saved.plan.callId !== request.callId || saved.plan.operation !== request.operation
@@ -779,6 +821,8 @@ class CorePreview {
       || saved.plan.pageGeneration !== page.pageGeneration || saved.plan.documentEpoch !== page.documentGeneration
       || saved.plan.controlEpoch !== page.controlEpoch || saved.plan.viewportRevision !== page.viewportRevision
       || saved.plan.viewportKey !== nowKey
+      || (coordinateKinds.has(request.parameters.action?.kind)
+        && page.lastCapture?.observationId !== saved.plan.target?.captureId)
       || saved.plan.snapshotId !== (request.operation === 'act' ? request.parameters.snapshotId : null)
       || !isDeepStrictEqual(saved.plan.action, request.operation === 'act'
         ? request.parameters.action : { kind: 'wait', timeoutMs: request.parameters.timeoutMs })) throw new Error('plan_stale');
@@ -795,20 +839,26 @@ class CorePreview {
       if (this.window.isFocused() && c.isFocused()) this.window.webContents.focus();
       page.view.setVisible(false);
     }
-    const deadline = setTimeout(() => action.cancel(), Math.min(30000, request.operation === 'wait' ? request.parameters.timeoutMs + 1000 : 5000));
+    const deadline = setTimeout(() => action.cancel(), request.operation === 'wait'
+      ? Math.min(30000, request.parameters.timeoutMs + 1000)
+      : request.parameters.action.kind === 'drag' ? 12000 : 5000);
     try {
       if (request.operation === 'wait') {
         await Promise.race([new Promise(resolve => setTimeout(resolve, request.parameters.timeoutMs)), stop]);
       } else {
         if (!c.debugger.isAttached()) c.debugger.attach('1.3');
-        let target = await Promise.race([this.actionTarget(page, c, request.parameters.action.ref), stop]);
-        if (target.identity !== saved.targetIdentity || target.x !== saved.plan.target.x || target.y !== saved.plan.target.y
-          || target.role !== saved.plan.target.role || target.name !== saved.plan.target.name)
+        const coordinate = coordinateKinds.has(request.parameters.action.kind);
+        let target = coordinate ? saved.plan.target
+          : await Promise.race([this.actionTarget(page, c, request.parameters.action.ref), stop]);
+        if (!coordinate && (target.identity !== saved.targetIdentity || target.x !== saved.plan.target.x || target.y !== saved.plan.target.y
+          || target.role !== saved.plan.target.role || target.name !== saved.plan.target.name))
           throw new Error('plan_stale');
         await Promise.race([new Promise(resolve => setTimeout(resolve, 50)), stop]);
-        target = await Promise.race([this.actionTarget(page, c, request.parameters.action.ref), stop]);
-        if (target.identity !== saved.targetIdentity || target.x !== saved.plan.target.x || target.y !== saved.plan.target.y
-          || target.role !== saved.plan.target.role || target.name !== saved.plan.target.name
+        if (!coordinate) target = await Promise.race([this.actionTarget(page, c, request.parameters.action.ref), stop]);
+        const currentViewport = await Promise.race([readIsolated(c, viewportScript), stop]);
+        if ((!coordinate && (target.identity !== saved.targetIdentity || target.x !== saved.plan.target.x || target.y !== saved.plan.target.y
+          || target.role !== saved.plan.target.role || target.name !== saved.plan.target.name))
+          || viewportFacts(this.window, page, currentViewport).key !== saved.plan.viewportKey
           || c.getURL() !== saved.pageUrl || page.controlEpoch !== saved.plan.controlEpoch)
           throw new Error('plan_stale');
         // If the native page still owns local keyboard focus, do not dispatch.
@@ -816,23 +866,32 @@ class CorePreview {
         if (this.window.isFocused() && c.isFocused()) throw new Error('not_sent');
         const live = () => {
           if (action.cancelled || !this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== saved.plan.controlEpoch
-            || page.documentGeneration !== saved.plan.documentEpoch || c.isDestroyed()) throw new Error('outcome_unknown');
+            || page.documentGeneration !== saved.plan.documentEpoch || page.viewportRevision !== saved.plan.viewportRevision
+            || c.isDestroyed()) throw new Error(action.dispatched ? 'outcome_unknown' : 'plan_stale');
         };
         const input = params => { live(); action.dispatched = true; return this.dispatchInput(page, 'Input.dispatchMouseEvent', params); };
         const keyboard = params => { live(); action.dispatched = true; return this.dispatchInput(page, 'Input.dispatchKeyEvent', params); };
-        const click = async () => {
-          await input({ type: 'mousePressed', x: target.x, y: target.y, button: 'left', clickCount: 1 });
-          await input({ type: 'mouseReleased', x: target.x, y: target.y, button: 'left', clickCount: 1 });
+        const click = async point => {
+          await input({ type: 'mousePressed', x: point.x, y: point.y, button: 'left', clickCount: 1 });
+          await input({ type: 'mouseReleased', x: point.x, y: point.y, button: 'left', clickCount: 1 });
         };
         await Promise.race([(async () => {
-          await click();
+          if (request.parameters.action.kind === 'drag') {
+            const { from, to, steps } = target;
+            await input({ type: 'mouseMoved', x: from.x, y: from.y, button: 'none' });
+            await input({ type: 'mousePressed', x: from.x, y: from.y, button: 'left', clickCount: 1 });
+            for (let step = 1; step <= steps; step++) await input({ type: 'mouseMoved',
+              x: from.x + (to.x - from.x) * step / steps, y: from.y + (to.y - from.y) * step / steps,
+              button: 'left', buttons: 1 });
+            await input({ type: 'mouseReleased', x: to.x, y: to.y, button: 'left', clickCount: 1 });
+          } else await click(coordinate ? target.point : target);
           if (request.parameters.action.kind === 'fill') {
             const modifier = process.platform === 'darwin' ? 8 : 2;
             await keyboard({ type: 'keyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: modifier });
             await keyboard({ type: 'keyUp', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: modifier });
             live(); action.dispatched = true;
             await this.dispatchInput(page, 'Input.insertText', { text: request.parameters.action.value });
-          } else if (request.parameters.action.kind === 'press') {
+          } else if (['press', 'pressAt'].includes(request.parameters.action.kind)) {
             const key = request.parameters.action.key;
             const code = { Enter: 13, Tab: 9, Escape: 27, Backspace: 8,
               ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40 }[key];
@@ -856,6 +915,7 @@ class CorePreview {
     } finally {
       clearTimeout(deadline);
       if (page.activeAction === action) page.activeAction = null;
+      if (request.operation === 'act') page.lastCapture = null;
       if (page.control === 'agent' && page.inputPending.size === 0
         && page.heldButtons.size === 0 && page.heldKeys.size === 0) {
         if (!c.isDestroyed() && c.debugger.isAttached() && !page.diagnosticsReady) c.debugger.detach();
@@ -893,6 +953,12 @@ class CorePreview {
       if (!c.debugger.isAttached()) c.debugger.attach('1.3');
       const operation = request.operation;
       if (operation !== 'observe' && operation !== 'capture') throw new Error('Unsupported browser operation');
+      if (operation === 'capture') {
+        const bounds = page.view.getBounds();
+        if (!this.window.isVisible() || this.window.isMinimized() || !page.view.getVisible()
+          || !page.requestedVisible || this.owner !== pageKey(page.coreInstanceId, projectId, threadId, pageId)
+          || bounds.width <= 0 || bounds.height <= 0) throw new Error('Browser viewport unavailable');
+      }
       const parameters = request.parameters ?? {};
       const tree = operation === 'observe'
         ? await Promise.race([c.debugger.sendCommand('Accessibility.getFullAXTree'), cancelled]) : null;
@@ -902,8 +968,8 @@ class CorePreview {
       if (![viewport.width, viewport.height, viewport.scrollX, viewport.scrollY, viewport.deviceScaleFactor]
         .every(Number.isFinite) || viewport.width <= 0 || viewport.height <= 0 || viewport.deviceScaleFactor <= 0)
         throw new Error('Browser viewport unavailable');
-      const zoom = c.getZoomFactor();
-      const viewportKey = JSON.stringify([viewport.width, viewport.height, viewport.scrollX, viewport.scrollY, zoom, viewport.deviceScaleFactor]);
+      const facts = viewportFacts(this.window, page, viewport);
+      const viewportKey = facts.key;
       if (page.viewportKey !== viewportKey) { page.viewportKey = viewportKey; page.viewportRevision++; }
       if (!this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== epoch
         || page.documentGeneration !== documentGeneration || c.isDestroyed()) throw new Error('Browser observation was revoked');
@@ -911,7 +977,8 @@ class CorePreview {
         browserHostId, hostGeneration, pageGeneration, nativeWebContentsId: c.id,
         url: observationUrl(c.getURL()), title: safeText(c.getTitle(), 256), documentEpoch: documentGeneration,
         controlEpoch: epoch, capturedAt: new Date().toISOString(), scope: operation === 'capture' ? 'viewport' : (parameters.scope ?? 'document'),
-        viewport: { ...viewport, pageZoom: zoom, viewportRevision: page.viewportRevision } };
+        viewport: { ...viewport, pageZoom: facts.pageZoom, guiZoom: facts.guiZoom,
+          nativeBounds: facts.nativeBounds, viewportRevision: page.viewportRevision } };
       if (operation === 'capture') {
         // A known sensitive form or a DOM change during capture cannot be safely represented unmasked.
         const guardToken = randomUUID();
@@ -936,15 +1003,21 @@ class CorePreview {
         }
         if (postSensitive !== false || changed !== false) throw new Error('Browser content changed during capture');
         const currentViewport = await Promise.race([readIsolated(c, viewportScript), cancelled]);
-        if (JSON.stringify(currentViewport) !== JSON.stringify(viewport) || c.getZoomFactor() !== zoom)
+        if (viewportFacts(this.window, page, currentViewport).key !== viewportKey
+          || !this.window.isVisible() || this.window.isMinimized() || !page.view.getVisible()
+          || !page.requestedVisible || this.owner !== pageKey(page.coreInstanceId, projectId, threadId, pageId))
           throw new Error('Browser viewport changed during capture');
         const size = image.getSize();
-        if (size.width * size.height > 8_000_000 || size.width > 4096 || size.height > 4096) throw new Error('Screenshot pixel budget exceeded');
+        if (size.width <= 0 || size.height <= 0 || size.width * size.height > 8_000_000 || size.width > 4096 || size.height > 4096) throw new Error('Screenshot pixel budget exceeded');
         const png = image.toPNG();
         if (png.length > 2 * 1024 * 1024) throw new Error('Screenshot byte budget exceeded');
         if (!this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== epoch)
           throw new Error('Browser observation was revoked');
         page.lastObservation = base.observationId;
+        page.lastCapture = { observationId: base.observationId, pageGeneration: page.pageGeneration,
+          documentEpoch: documentGeneration, controlEpoch: epoch, viewportRevision: page.viewportRevision,
+          viewportKey, url: c.getURL(), width: viewport.width, height: viewport.height,
+          bitmapWidth: size.width, bitmapHeight: size.height };
         page.needsObservation = false;
         return { ...base, capturedAt: new Date().toISOString(), viewport: { ...base.viewport, bitmapWidth: size.width, bitmapHeight: size.height }, mimeType: 'image/png', imageBase64: png.toString('base64'), byteLength: png.length };
       }
@@ -1396,7 +1469,20 @@ class CorePreview {
     if (['navigate', 'back', 'forward', 'reload', 'stop'].includes(request.operation)) this.revoke(page);
     if (page.control === 'transferring' && !['state', 'show', 'hide', 'stop', 'release', 'selectPage'].includes(request.operation))
       throw new Error('原生输入尚未收敛，请停止或关闭页面');
-    if (request.bounds) page.view.setBounds(boundsWithinWindow(request.bounds, this.window.getContentSize()));
+    if (request.bounds) {
+      const bounds = rendererBoundsWithinWindow(request.bounds, this.window);
+      const previous = page.view.getBounds();
+      const guiZoom = this.window.webContents.getZoomFactor();
+      if (!isDeepStrictEqual(bounds, previous) || page.guiZoom !== guiZoom) {
+        page.view.setBounds(bounds);
+        page.guiZoom = guiZoom;
+        page.viewportKey = null;
+        page.viewportRevision++;
+        page.lastCapture = null;
+        page.plans.clear();
+        this.changed(page, 'viewportChanged');
+      }
+    }
     switch (request.operation) {
       case 'selectPage':
         this.selected.set(workspace, page.id);

@@ -173,6 +173,8 @@ export function Preview({
       attributeFilter: ["data-open", "data-ending-style", "data-workspace-view"],
     });
     window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    window.visualViewport?.addEventListener("resize", update);
     update();
     void request("state");
     const timer = setInterval(async () => {
@@ -194,6 +196,8 @@ export function Preview({
       resize.disconnect();
       mutation.disconnect();
       window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+      window.visualViewport?.removeEventListener("resize", update);
       void services.preview({ operation: "hide", projectId, threadId, pageId: stateRef.current.browser?.pageId }).catch(() => {});
     };
   }, [services, projectId, threadId]);
@@ -263,7 +267,7 @@ export function Preview({
       const capture = draft.capture;
       const scaleX = capture.viewport.width / capture.viewport.bitmapWidth;
       const scaleY = capture.viewport.height / capture.viewport.bitmapHeight;
-      const description = `页面区域标注（冻结截图，页面之后可能变化；仅分享选中区域）\nURL: ${capture.url}\n截图时间: ${capture.capturedAt}\nCore: ${capture.coreInstanceId}; Page: ${capture.pageId}; pageGeneration: ${capture.pageGeneration}; documentEpoch: ${capture.documentEpoch}; controlEpoch: ${capture.controlEpoch}; viewportRevision: ${capture.viewportRevision}; captureId: ${capture.captureId}\n原截图 bitmap(px): ${capture.viewport.bitmapWidth}×${capture.viewport.bitmapHeight}; CSS viewport(px): ${capture.viewport.width}×${capture.viewport.height}; scroll(px): ${capture.viewport.scrollX},${capture.viewport.scrollY}; pageZoom: ${capture.viewport.pageZoom}\n选区 bitmap(px): ${x},${y},${width},${height}; viewport CSS(px): ${(x * scaleX).toFixed(1)},${(y * scaleY).toFixed(1)},${(width * scaleX).toFixed(1)},${(height * scaleY).toFixed(1)}\n裁图: browser-region-${capture.captureId}.png\n意见: ${draft.comment.trim()}`;
+      const description = `页面区域标注（冻结截图，页面之后可能变化；仅分享选中区域）\nURL: ${capture.url}\n截图时间: ${capture.capturedAt}\nCore: ${capture.coreInstanceId}; Page: ${capture.pageId}; pageGeneration: ${capture.pageGeneration}; documentEpoch: ${capture.documentEpoch}; controlEpoch: ${capture.controlEpoch}; viewportRevision: ${capture.viewportRevision}; captureId: ${capture.captureId}\n原截图 bitmap(px): ${capture.viewport.bitmapWidth}×${capture.viewport.bitmapHeight}; CSS viewport(px): ${capture.viewport.width}×${capture.viewport.height}; scroll(px): ${capture.viewport.scrollX},${capture.viewport.scrollY}; pageZoom: ${capture.viewport.pageZoom}; GUI zoom: ${capture.viewport.guiZoom}; DPR: ${capture.viewport.deviceScaleFactor}; native DIP bounds: ${JSON.stringify(capture.viewport.nativeBounds)}\n选区 bitmap(px): ${x},${y},${width},${height}; viewport CSS(px): ${(x * scaleX).toFixed(1)},${(y * scaleY).toFixed(1)},${(width * scaleX).toFixed(1)},${(height * scaleY).toFixed(1)}\n裁图: browser-region-${capture.captureId}.png\n意见: ${draft.comment.trim()}`;
       const draftKey = `areal-gui:draft:${projectId}:${threadId}`;
       if (sending.has(draftKey) || localStorage.getItem(`${draftKey}:pending`))
         throw new Error('当前聊天有结果待核对的发送；请先确认结果，再加入标注草稿');
