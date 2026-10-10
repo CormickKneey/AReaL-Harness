@@ -8,7 +8,7 @@ The new-chat Composer Browser switch registers the fixed `browser_v1` tool packa
 
 Known-sensitive capture checks and viewport measurements run in Electron's isolated world so page scripts cannot replace the DOM query methods or viewport getters used by those checks. Unknown sensitive content can still escape detection; the page itself remains untrusted.
 
-The private Ref cache retains at most 1000 live identities per page. Current emitted Refs take priority; older evicted Refs return `stale_ref`, and public IDs are never reused. Capture checks known sensitive fields before and after the native image and refuses any observed DOM mutation during the capture interval. The guard covers the main document, readable Frames, and open Shadow roots; transient canvas pixels and inaccessible closed Shadow content cannot be proven clean, so automatic capture remains unsuitable for pages with unknown secrets.
+The private Ref cache retains at most 1000 live identities per page. Current emitted Refs take priority; older evicted Refs return `stale_ref`, and public IDs are never reused. Capture checks known sensitive fields, including password, payment security code, and one-time-code autocomplete tokens with optional section prefixes, before and after the native image and refuses any observed DOM mutation during the capture interval. The guard covers the main document, readable Frames, and open Shadow roots; transient canvas pixels and inaccessible closed Shadow content cannot be proven clean, so automatic capture remains unsuitable for pages with unknown secrets.
 
 ## 1. Existing connections, new host capability
 

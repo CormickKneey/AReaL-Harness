@@ -198,13 +198,14 @@ try {
     frame: !!document.querySelector('#same').contentDocument.querySelector('input'),
     shadow: !!document.querySelector('#shadow').shadowRoot.querySelector('input'),
     otp: !!document.querySelector('#otp'), otpInput: !!document.querySelector('#otpinput'),
+    autocomplete: !!document.querySelector('#autofill-case'),
     cross: !!document.querySelector('#cross')
   })`);
   await pageScript(`document.querySelector('#password').remove();document.querySelector('#session').remove();
     document.querySelector('#same').contentDocument.querySelector('input').remove();
     document.querySelector('#shadow').shadowRoot.querySelector('input').remove();
     document.querySelector('#otp').remove();document.querySelector('#otpinput').remove();document.querySelector('#cross').remove()`);
-  assert.deepEqual(await locations(), { root: false, frame: false, shadow: false, otp: false, otpInput: false, cross: false });
+  assert.deepEqual(await locations(), { root: false, frame: false, shadow: false, otp: false, otpInput: false, autocomplete: false, cross: false });
   await pageScript(`(() => {
     document.body.insertAdjacentHTML('beforeend', '<input id="spoof-secret" type="password" value="SPOOFED_SECRET_03">');
     const originals = {
@@ -240,19 +241,29 @@ try {
     ['shadow', `document.querySelector('#shadow').shadowRoot.innerHTML += '<input name="secret" value="SHADOW_SECRET_03">'`, `document.querySelector('#shadow').shadowRoot.querySelector('input').remove()`],
     ['otp', `document.body.insertAdjacentHTML('beforeend','<div id="otp">One-time code: 246813</div>')`, `document.querySelector('#otp').remove()`],
     ['otpInput', `document.body.insertAdjacentHTML('beforeend','<input id="otpinput" autocomplete="one-time-code" value="654321">')`, `document.querySelector('#otpinput').remove()`],
+    ['currentPasswordAutocomplete', `document.body.insertAdjacentHTML('beforeend','<input id="autofill-case" type="text" autocomplete="current-password" value="642819">')`, `document.querySelector('#autofill-case').remove()`, 'autocomplete'],
+    ['cardSecurityCodeAutocomplete', `document.body.insertAdjacentHTML('beforeend','<input id="autofill-case" type="text" autocomplete="cc-csc" value="642819">')`, `document.querySelector('#autofill-case').remove()`, 'autocomplete'],
+    ['sectionOtpAutocomplete', `document.body.insertAdjacentHTML('beforeend','<input id="autofill-case" type="text" autocomplete="section-login one-time-code" value="642819">')`, `document.querySelector('#autofill-case').remove()`, 'autocomplete'],
     ['cross', `document.body.insertAdjacentHTML('beforeend','<iframe id="cross" src="${childUrl}"></iframe>')`, `document.querySelector('#cross').remove()`],
   ];
   events.sensitiveCapture = {};
-  for (const [kind, add, remove] of cases) {
+  for (const [kind, add, remove, location = kind] of cases) {
     await pageScript(add);
     if (kind === 'cross') await until(() => pageScript(`document.querySelector('#cross').contentDocument === null`), 'cross origin iframe loaded');
-    assert.deepEqual(Object.entries(await locations()).filter(([, present]) => present).map(([name]) => name), [kind], `${kind} is the only denying condition`);
+    assert.deepEqual(Object.entries(await locations()).filter(([, present]) => present).map(([name]) => name), [location], `${kind} is the only denying condition`);
+    const traceBefore = await nativeTrace();
     const denied = await runScenario('capture', `Capture with only ${kind} sensitive condition`);
     assert.match(JSON.stringify(denied), /evidence_unavailable/);
+    assert.equal((await nativeTrace()).capturePage, traceBefore.capturePage, `${kind} must refuse before native capture`);
     events.sensitiveCapture[kind] = denied.contentItems;
     await pageScript(remove);
-    assert.deepEqual(Object.values(await locations()), [false, false, false, false, false, false]);
+    assert.deepEqual(Object.values(await locations()), [false, false, false, false, false, false, false]);
   }
+  await pageScript(`document.body.insertAdjacentHTML('beforeend','<input id="autofill-case" type="text" autocomplete="name" value="642819">')`);
+  const ordinaryAutofill = await runScenario('capture', 'Capture with ordinary autocomplete name');
+  assert.ok(ordinaryAutofill.contentItems.some(part => part.type === 'arealMedia'), 'ordinary autocomplete name remains capturable');
+  await pageScript(`document.querySelector('#autofill-case').remove()`);
+  events.ordinaryAutofill = { callId: ordinaryAutofill.callId };
   await app.evaluate(({ webContents }, id) => {
     const contents = webContents.fromId(id), original = contents.capturePage;
     contents.capturePage = async (...args) => {

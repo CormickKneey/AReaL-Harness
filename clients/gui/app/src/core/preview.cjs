@@ -39,9 +39,13 @@ const interactiveRoles = new Set(['button', 'link', 'textbox', 'textfield', 'sea
   'slider', 'spinbutton', 'option', 'listbox']);
 const MAX_REFS = 1000;
 const sensitiveCaptureScript = `(() => {
-  const selector = 'input[type="password"],input[autocomplete="cc-number"],input[autocomplete="one-time-code"],input[name*="token" i],input[name*="secret" i],input[name*="key" i]';
+  const selector = 'input[type="password"],input[name*="token" i],input[name*="secret" i],input[name*="key" i]';
+  const sensitiveAutocomplete = new Set(['current-password', 'new-password', 'cc-number', 'cc-csc', 'one-time-code']);
   const scan = root => {
     if (root.querySelector(selector)) return true;
+    for (const input of root.querySelectorAll('input[autocomplete]')) {
+      if (input.getAttribute('autocomplete').trim().toLowerCase().split(/\\s+/).some(token => sensitiveAutocomplete.has(token))) return true;
+    }
     for (const element of root.querySelectorAll('*')) {
       if (element.shadowRoot && scan(element.shadowRoot)) return true;
       if (!['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT'].includes(element.tagName)
