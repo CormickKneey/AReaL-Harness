@@ -8,7 +8,11 @@ use std::sync::{
 };
 use tokio::sync::oneshot;
 
-type Reply = oneshot::Sender<anyhow::Result<DynamicToolResponse>>;
+type Reply = oneshot::Sender<anyhow::Result<Value>>;
+struct PendingReply {
+    sender: Reply,
+    prepare: bool,
+}
 static CONNECTION_ID: AtomicU64 = AtomicU64::new(1);
 
 pub(super) struct ToolHost {
@@ -17,7 +21,7 @@ pub(super) struct ToolHost {
     next: AtomicU64,
     tx: mpsc::Sender<Value>,
     stop: CancellationToken,
-    pending: StdMutex<HashMap<String, Reply>>,
+    pending: StdMutex<HashMap<String, PendingReply>>,
 }
 impl ToolHost {
     #[cfg(test)]
@@ -53,13 +57,15 @@ impl ToolHost {
             return;
         };
         let result = if response.get("error").is_some() || response.get("result").is_none() {
-            Err(anyhow::anyhow!(
+            Err(anyhow::anyhow!(if reply.prepare {
+                "browser prepare failed before execution; dispatch is not_sent"
+            } else {
                 "dynamic tool client returned an RPC error or malformed reply; outcome is UNKNOWN"
-            ))
+            }))
         } else {
-            serde_json::from_value(response["result"].clone()).map_err(Into::into)
+            Ok(response["result"].clone())
         };
-        let _ = reply.send(result);
+        let _ = reply.sender.send(result);
     }
 }
 
@@ -90,11 +96,39 @@ impl DynamicToolHost for ToolHost {
     fn is_closed(&self) -> bool {
         self.stop.is_cancelled()
     }
+    async fn prepare_browser(
+        &self,
+        params: Value,
+        cancel: CancellationToken,
+    ) -> anyhow::Result<Option<Value>> {
+        Ok(Some(
+            tokio::time::timeout(
+                std::time::Duration::from_secs(12),
+                self.request("areal/browser/prepare", params, cancel),
+            )
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!("browser prepare timed out before execution; dispatch is not_sent")
+            })??,
+        ))
+    }
     async fn call(
         &self,
         params: Value,
         cancel: CancellationToken,
     ) -> anyhow::Result<DynamicToolResponse> {
+        let value = self.request("item/tool/call", params, cancel).await?;
+        serde_json::from_value(value).map_err(Into::into)
+    }
+}
+
+impl ToolHost {
+    async fn request(
+        &self,
+        method: &str,
+        params: Value,
+        cancel: CancellationToken,
+    ) -> anyhow::Result<Value> {
         anyhow::ensure!(!self.is_closed(), "dynamic tool client disconnected");
         let id = format!(
             "areal-tool/{}/{}",
@@ -102,14 +136,20 @@ impl DynamicToolHost for ToolHost {
             self.next.fetch_add(1, Ordering::Relaxed)
         );
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().unwrap().insert(id.clone(), tx);
+        self.pending.lock().unwrap().insert(
+            id.clone(),
+            PendingReply {
+                sender: tx,
+                prepare: method == "areal/browser/prepare",
+            },
+        );
         let _pending = Pending {
             host: self,
             id: id.clone(),
         };
         if self
             .tx
-            .try_send(json!({"jsonrpc":"2.0","id":id,"method":"item/tool/call","params":params}))
+            .try_send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))
             .is_err()
         {
             self.stop.cancel();
@@ -117,8 +157,8 @@ impl DynamicToolHost for ToolHost {
         }
         tokio::select! {
             biased;
-            _ = cancel.cancelled() => anyhow::bail!("dynamic tool call cancelled; external outcome is UNKNOWN"),
-            _ = self.stop.cancelled() => anyhow::bail!("dynamic tool client disconnected; outcome is UNKNOWN"),
+            _ = cancel.cancelled() => anyhow::bail!("dynamic tool request cancelled"),
+            _ = self.stop.cancelled() => anyhow::bail!("dynamic tool client disconnected"),
             result = rx => result?,
         }
     }

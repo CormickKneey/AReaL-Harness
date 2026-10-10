@@ -20,8 +20,23 @@ function validToolInput(value) {
     || !value.parameters || typeof value.parameters !== 'object' || Array.isArray(value.parameters)) return false;
   const keys = Object.keys(value.parameters);
   if (value.operation === 'describe') return keys.length === 0;
-  if (!['observe', 'capture'].includes(value.operation)
+  if (!['observe', 'capture', 'act', 'wait'].includes(value.operation)
     || typeof value.parameters.pageId !== 'string' || !/^[0-9a-f-]{36}$/.test(value.parameters.pageId)) return false;
+  if (value.operation === 'wait') return keys.every(key => ['pageId', 'timeoutMs'].includes(key))
+    && Number.isSafeInteger(value.parameters.timeoutMs) && value.parameters.timeoutMs >= 1 && value.parameters.timeoutMs <= 30000;
+  if (value.operation === 'act') {
+    if (!keys.every(key => ['pageId', 'snapshotId', 'action'].includes(key))
+      || typeof value.parameters.snapshotId !== 'string' || !/^[0-9a-f-]{36}$/.test(value.parameters.snapshotId)) return false;
+    const action = value.parameters.action;
+    if (!action || typeof action !== 'object' || Array.isArray(action)
+      || typeof action.ref !== 'string' || !/^r[1-9]\d*$/.test(action.ref)) return false;
+    if (action.kind === 'click') return Object.keys(action).every(key => ['kind', 'ref'].includes(key));
+    if (action.kind === 'fill') return Object.keys(action).every(key => ['kind', 'ref', 'value'].includes(key))
+      && typeof action.value === 'string' && action.value.length <= 4096;
+    if (action.kind === 'press') return Object.keys(action).every(key => ['kind', 'ref', 'key'].includes(key))
+      && typeof action.key === 'string' && /^(Enter|Tab|Escape|Backspace|Arrow(Up|Down|Left|Right))$/.test(action.key);
+    return false;
+  }
   if (value.operation === 'capture') return keys.every(key => ['pageId', 'scope'].includes(key))
     && value.parameters.scope === 'viewport';
   if (!keys.every(key => ['pageId', 'scope', 'budget', 'rootRef'].includes(key))) return false;
@@ -35,7 +50,8 @@ function validToolInput(value) {
 }
 
 function failure(code, message) {
-  return { success: false, contentItems: [{ type: 'inputText', text: `${code}: ${message}` }] };
+  return { success: false, contentItems: [{ type: 'inputText', text: `${code}: ${message}` }],
+    structuredContent: { code, dispatch: 'not_sent' } };
 }
 
 function success(value) {

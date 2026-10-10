@@ -102,7 +102,7 @@ export class CoreClient {
     catch { this.close(); return; }
     if (!message || typeof message !== 'object' || Array.isArray(message)) { this.close(); return; }
     if (message.method && message.id !== undefined) {
-      if (message.method !== 'item/tool/call' || !this.onServerRequest) {
+      if (!['item/tool/call', 'areal/browser/prepare'].includes(message.method) || !this.onServerRequest) {
         this.socket.send(JSON.stringify({ id: message.id, error: { code: -32601, message: 'Client tool host is not available' } }));
         return;
       }

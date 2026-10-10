@@ -277,9 +277,21 @@ fn main() {
     let (responses, notifications) = schema::projections();
     output["responses"] = responses;
     output["notifications"] = notifications;
-    output["serverRequests"] = json!({"item/tool/call":object(json!({"threadId":string,"turnId":string,"callId":string,"tool":string,"arguments":{},"hostGeneration":string}),vec!["threadId","turnId","callId","tool","arguments","hostGeneration"])});
-    output["serverResponses"] =
-        json!({"item/tool/call":schemars::schema_for!(areal_protocol::DynamicToolResponse)});
+    let browser_request = object(
+        json!({"threadId":string,"turnId":string,"callId":string,"tool":string,"arguments":{},"hostGeneration":string}),
+        vec![
+            "threadId",
+            "turnId",
+            "callId",
+            "tool",
+            "arguments",
+            "hostGeneration",
+        ],
+    );
+    output["serverRequests"] = json!({"item/tool/call":browser_request,
+        "areal/browser/prepare":object(json!({"threadId":string,"turnId":string,"callId":string,"tool":string,"arguments":{},"hostGeneration":string}),vec!["threadId","turnId","callId","tool","arguments","hostGeneration"])});
+    output["serverRequests"]["item/tool/call"]["properties"]["browserApproval"] = json!({"type":"object","properties":{"plan":{"type":"object"}},"required":["plan"],"additionalProperties":false});
+    output["serverResponses"] = json!({"item/tool/call":schemars::schema_for!(areal_protocol::DynamicToolResponse),"areal/browser/prepare":{"type":"object"}});
     inline(&mut output, &Value::Null);
     println!("{}", serde_json::to_string_pretty(&output).unwrap());
 }

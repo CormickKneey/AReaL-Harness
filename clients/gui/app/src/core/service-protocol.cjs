@@ -164,7 +164,7 @@ class DesktopService {
       if (method === 'browserClaim') {
         const { projectId, threadId, pageId, browserHostId, hostGeneration, pageGeneration, controlEpoch } = params ?? {};
         if (params?.protocol !== 'areal.browser.host.v1' || params?.available !== true
-          || JSON.stringify(params?.operations) !== JSON.stringify(['describe', 'observe', 'capture'])) throw new Error('浏览器宿主能力不兼容');
+          || JSON.stringify(params?.operations) !== JSON.stringify(['describe', 'observe', 'capture', 'act', 'wait'])) throw new Error('浏览器宿主能力不兼容');
         if (![projectId, threadId, pageId, browserHostId].every(value => typeof value === 'string' && value.length > 0 && value.length <= 256)
           || ![hostGeneration, pageGeneration, controlEpoch].every(Number.isSafeInteger)) throw new Error('无效浏览页面身份');
         const project = this.backend.projects.get(projectId);
@@ -255,10 +255,15 @@ class DesktopService {
     finally { this.inflight--; this.schedule(); }
   }
   async browserRead(request) {
-    const { projectId, threadId, turnId, callId, toolHostGeneration, coreInstanceId, coreGeneration, signal, arguments: input } = request ?? {};
+    const { projectId, threadId, turnId, callId, toolHostGeneration, coreInstanceId, coreGeneration, signal, arguments: input,
+      phase = 'execute', browserApproval } = request ?? {};
     if (typeof projectId !== 'string' || typeof threadId !== 'string' || typeof turnId !== 'string'
       || typeof callId !== 'string' || typeof coreInstanceId !== 'string' || !validToolInput(input))
       return browserFailure('invalid_arguments', 'Unsupported browser operation or parameters');
+    const action = ['act', 'wait'].includes(input.operation);
+    if (action && phase === 'execute' && (!browserApproval?.plan || typeof browserApproval.plan.preparedActionId !== 'string'))
+      return browserFailure('approval_required', 'Core approval metadata is required');
+    if (phase === 'prepare' && !action) throw new Error('Browser prepare is only for actions');
     const key = browserKey(projectId, threadId);
     const claim = this.browserClaims.get(key);
     if (!claim || claim.socket.readyState !== 1) return browserFailure('host_unavailable', 'No authorized live desktop page');
@@ -268,7 +273,7 @@ class DesktopService {
     }
     if (input.operation === 'describe') return browserSuccess({ protocol: 'areal.browser.host.v1',
       browserHostId: claim.browserHostId, hostGeneration: claim.hostGeneration, available: true,
-      operations: ['describe', 'observe', 'capture'], pageId: claim.pageId });
+      operations: ['describe', 'observe', 'capture', 'act', 'wait'], pageId: claim.pageId });
     if (input.parameters.pageId !== claim.pageId) return browserFailure('wrong_page', 'Page does not belong to this thread');
     if (this.browserPending.size >= 8) return browserFailure('host_busy', 'Too many pending browser observations');
     if (signal?.aborted) throw new Error('Browser request was cancelled');
@@ -280,14 +285,17 @@ class DesktopService {
       const cancelNative = () => this.send(claim.socket, { method: 'browserCancel', params: {
         requestId, projectId, threadId, hostGeneration: claim.hostGeneration } });
       const onAbort = () => { cancelNative(); finish(reject, new Error('Browser request was cancelled')); };
-      const timer = setTimeout(() => { cancelNative(); finish(reject, new Error('Browser host response unknown')); }, 15000);
+      const timeoutMs = phase === 'prepare' ? 10000 : input.operation === 'wait'
+        ? Math.min(35000, input.parameters.timeoutMs + 3000) : 15000;
+      const timer = setTimeout(() => { cancelNative(); finish(reject, new Error('Browser host response unknown')); }, timeoutMs);
       this.browserPending.set(requestId, { socket: claim.socket, resolve: value => finish(resolve, value), reject: error => finish(reject, error), timer });
       trace('pending');
       signal?.addEventListener('abort', onAbort, { once: true });
       this.send(claim.socket, { method: 'browserRequest', params: { requestId, coreInstanceId, coreGeneration,
         projectId, threadId, turnId, callId, pageId: claim.pageId, browserHostId: claim.browserHostId,
         hostGeneration: claim.hostGeneration, pageGeneration: claim.pageGeneration,
-        controlEpoch: claim.controlEpoch, operation: input.operation, parameters: input.parameters } });
+        controlEpoch: claim.controlEpoch, operation: input.operation, parameters: input.parameters,
+        phase, ...(action && phase === 'execute' ? { browserApproval } : {}) } });
     });
     if (this.browserClaims.get(key) !== claim) return browserFailure('human_control', 'Browser authorization was revoked');
     const currentProject = this.backend.projects.get(projectId);
@@ -299,7 +307,19 @@ class DesktopService {
       || result.browserHostId !== claim.browserHostId || result.hostGeneration !== claim.hostGeneration
       || result.pageGeneration !== claim.pageGeneration || result.controlEpoch !== claim.controlEpoch
       || JSON.stringify(result).length > (input.operation === 'capture' ? 3 * 1024 * 1024 : 512 * 1024)) throw new Error('Invalid browser host response');
-    if (result.error) return browserFailure(result.error, result.error === 'human_control' ? 'Human controls this page' : 'Page unavailable');
+    if (result.error) {
+      if (phase === 'prepare') return { error: result.error, dispatch: 'not_sent' };
+      const hint = { human_control: 'Human controls this page', plan_stale: 'Page or target changed; observe again before a new action',
+        stale_ref: 'Target changed; observe again', human_takeover_required: 'Use human takeover for this page',
+        not_sent: 'Target unavailable before input; observe again' }[result.error] ?? 'Page unavailable';
+      return browserFailure(result.error, hint);
+    }
+    if (phase === 'prepare') {
+      if (!result.plan || result.plan.pageId !== claim.pageId || result.plan.operation !== input.operation)
+        throw new Error('Invalid browser plan');
+      return result.plan;
+    }
+    if (action) return { ...browserSuccess(result), structuredContent: result };
     if (input.operation === 'capture') {
       if (result.mimeType !== 'image/png' || typeof result.imageBase64 !== 'string'
         || result.imageBase64.length > 2_800_000 || typeof toolHostGeneration !== 'string')

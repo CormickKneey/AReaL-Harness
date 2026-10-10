@@ -93,7 +93,7 @@ impl Invocation<'_> {
                     self.cancel,
                 )
                 .await?;
-            return self.invoke(&arguments).await;
+            return self.invoke(&arguments, None).await;
         }
         for hook in self.hooks(HookEvent::PreToolUse) {
             let response = self.hook(hook, &arguments, None).await?;
@@ -133,23 +133,74 @@ impl Invocation<'_> {
                 .await?;
             }
         }
+        let browser_plan = if self.call.name == "browser_v1"
+            && matches!(self.entry.backend, Backend::Client)
+            && matches!(arguments["operation"].as_str(), Some("act" | "wait"))
+        {
+            let host = self
+                .host
+                .as_ref()
+                .ok_or_else(|| invalid("browser host unavailable"))?;
+            let prepared = host.prepare_browser(json!({"threadId":self.thread_id,"turnId":self.turn_id,
+                "callId":self.call.id,"tool":"browser_v1","arguments":arguments,"hostGeneration":host.id()}),
+                self.cancel.clone()).await.map_err(invalid)?
+                .ok_or_else(|| invalid("browser prepare capability unavailable"))?;
+            if let Some(code) = prepared["error"].as_str() {
+                return Err(invalid(format!(
+                    "browser prepare {code}; dispatch is not_sent"
+                )));
+            }
+            if prepared["preparedActionId"]
+                .as_str()
+                .is_none_or(str::is_empty)
+                || prepared["pageId"] != arguments["parameters"]["pageId"]
+                || prepared["operation"] != arguments["operation"]
+                || prepared["origin"].as_str().is_none()
+                || prepared["fingerprint"].as_str().is_none()
+            {
+                return Err(invalid("browser host returned an invalid plan"));
+            }
+            self.edit(|execution, _| {
+                execution.effective_arguments = Some(json!({"arguments":arguments,"plan":prepared}))
+            })
+            .await?;
+            Some(prepared)
+        } else {
+            None
+        };
+        let approval_arguments = browser_plan
+            .as_ref()
+            .map(|plan| json!({"arguments":arguments,"plan":plan}));
         self.engine
             .approval(
                 self.cell,
                 &self.call.id,
                 &self.call.name,
-                &arguments,
+                approval_arguments.as_ref().unwrap_or(&arguments),
                 self.cancel,
             )
             .await?;
+        if browser_plan.is_some() {
+            let current = self.cell.bindings.read().await.host.clone();
+            if self
+                .host
+                .as_ref()
+                .zip(current.as_ref())
+                .is_none_or(|(prepared, active)| prepared.id() != active.id() || active.is_closed())
+            {
+                return Err(invalid(
+                    "browser host changed after approval; prepare again",
+                ));
+            }
+        }
         let result = if matches!(self.entry.backend, Backend::Mcp(_) | Backend::Plugin(_)) {
             // These backends own cancellation and cleanup; do not drop their futures first.
-            self.invoke(&arguments).await
+            self.invoke(&arguments, browser_plan.as_ref()).await
         } else {
             tokio::select! {
                 biased;
                 _ = self.cancel.cancelled() => Err(unknown("interrupted tool invocation; outcome is UNKNOWN")),
-                result = self.invoke(&arguments) => result,
+                result = self.invoke(&arguments, browser_plan.as_ref()) => result,
             }
         };
         if result.as_ref().is_err_and(uncertain) {
@@ -233,7 +284,11 @@ impl Invocation<'_> {
             .filter(|h| h.event == event && (h.matcher == "*" || h.matcher == self.call.name))
             .collect()
     }
-    async fn invoke(&self, args: &Value) -> rt::Result<(bool, Value)> {
+    async fn invoke(
+        &self,
+        args: &Value,
+        browser_plan: Option<&Value>,
+    ) -> rt::Result<(bool, Value)> {
         let mut response = match &self.entry.backend {
             Backend::Agent => {
                 return super::agents::invoke(self.engine, self.cell, &self.call.name, args)
@@ -472,7 +527,13 @@ impl Invocation<'_> {
                     .host
                     .as_ref()
                     .ok_or_else(|| unknown("dynamic tool client is unavailable"))?;
-                host.call(json!({"threadId":self.thread_id,"turnId":self.turn_id,"callId":self.call.id,"tool":self.call.name,"arguments":args,"hostGeneration":host.id()}), self.cancel.clone()).await.map_err(unknown)?
+                let mut request = json!({"threadId":self.thread_id,"turnId":self.turn_id,"callId":self.call.id,"tool":self.call.name,"arguments":args,"hostGeneration":host.id()});
+                if let Some(plan) = browser_plan {
+                    request["browserApproval"] = json!({"plan":plan});
+                }
+                host.call(request, self.cancel.clone())
+                    .await
+                    .map_err(unknown)?
             }
         };
         self.engine

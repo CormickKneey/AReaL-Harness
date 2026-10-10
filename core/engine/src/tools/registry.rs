@@ -127,6 +127,13 @@ pub trait DynamicToolHost: Send + Sync {
         self.id()
     }
     fn is_closed(&self) -> bool;
+    async fn prepare_browser(
+        &self,
+        _request: Value,
+        _cancel: CancellationToken,
+    ) -> anyhow::Result<Option<Value>> {
+        Ok(None)
+    }
     async fn call(
         &self,
         request: Value,
