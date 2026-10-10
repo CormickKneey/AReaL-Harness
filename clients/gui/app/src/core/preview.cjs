@@ -55,7 +55,9 @@ const sensitiveCaptureScript = `(() => {
   };
   return scan(document);
 })()`;
-const captureGuardStartScript = token => `(() => {
+const captureGuardStartScript = (token, sequence) => `(() => {
+  if ((globalThis.__arealCaptureGuardSequence ?? 0) >= ${sequence}) return false;
+  globalThis.__arealCaptureGuardSequence = ${sequence};
   const previous = globalThis.__arealCaptureGuard;
   for (const observer of previous?.observers ?? []) observer.disconnect();
   delete globalThis.__arealCaptureGuard;
@@ -75,7 +77,8 @@ const captureGuardStartScript = token => `(() => {
   try { watch(document); globalThis.__arealCaptureGuard = guard; return true; }
   catch { for (const observer of guard.observers) observer.disconnect(); return false; }
 })()`;
-const captureGuardStopScript = token => `(() => {
+const captureGuardStopScript = (token, sequence) => `(() => {
+  globalThis.__arealCaptureGuardSequence = Math.max(globalThis.__arealCaptureGuardSequence ?? 0, ${sequence});
   const guard = globalThis.__arealCaptureGuard;
   if (!guard || guard.token !== ${JSON.stringify(token)}) return true;
   const changed = guard.changed || guard.observers.some(observer => observer.takeRecords().length > 0);
@@ -224,10 +227,11 @@ class CorePreview {
       if (operation === 'capture') {
         // A known sensitive form or a DOM change during capture cannot be safely represented unmasked.
         const guardToken = randomUUID();
-        const watching = await Promise.race([readIsolated(c, captureGuardStartScript(guardToken)), cancelled]);
-        if (watching !== true) throw new Error('Browser capture guard unavailable');
+        const guardSequence = page.nextGuardSequence = (page.nextGuardSequence ?? 0) + 1;
         let image, postSensitive, changed = true;
         try {
+          const watching = await Promise.race([readIsolated(c, captureGuardStartScript(guardToken, guardSequence)), cancelled]);
+          if (watching !== true) throw new Error('Browser capture guard unavailable');
           const hasSensitive = await Promise.race([readIsolated(c, sensitiveCaptureScript), cancelled]);
           if (typeof hasSensitive !== 'boolean') throw new Error('Browser sensitive-field check unavailable');
           if (hasSensitive) throw new Error('Sensitive field prevents automatic screenshot');
@@ -237,7 +241,7 @@ class CorePreview {
           postSensitive = await Promise.race([readIsolated(c, sensitiveCaptureScript), cancelled]);
         } finally {
           changed = await Promise.race([
-            readIsolated(c, captureGuardStopScript(guardToken)).catch(() => true),
+            readIsolated(c, captureGuardStopScript(guardToken, guardSequence)).catch(() => true),
             new Promise(resolve => setTimeout(() => resolve(true), 1000)),
           ]);
         }
