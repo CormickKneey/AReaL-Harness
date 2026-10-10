@@ -326,6 +326,8 @@ pub fn projections() -> (Value, Value) {
         ),
     );
     insert(&["tool/acknowledge"], object(json!({})));
+    insert(&["thread/fork"], object(json!({"thread":thread.clone(),"requestId":string.clone()})));
+    insert(&["conversation/history"], object(json!({"snapshotId":string.clone(),"data":array(object(json!({"sourceThreadId":string.clone(),"sourceTurnId":string.clone(),"sourceItemId":string.clone(),"item":schema::<Item>()}))),"nextCursor":nullable(string.clone()),"complete":boolean})));
     responses.insert("thread/read".into(), object(json!({"thread":thread})));
     for name in ["thread/start", "thread/resume"] {
         responses.insert(name.into(),object(json!({"thread":thread,"cwd":string,"model":string,"modelProvider":string,"approvalPolicy":string,"permissionMode":{"enum":["YOLO","ASK_PERMISSIONS"]},"approvalsReviewer":string,"sandbox":any_object,"reasoningEffort":nullable(string.clone())})));

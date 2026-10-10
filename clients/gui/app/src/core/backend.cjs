@@ -633,7 +633,7 @@ class CoreBackend {
   }
 
   async submit(project, method, parameters, { requestId } = {}) {
-    if (requestId !== undefined && (!(workgroupMutationMethods.has(method) || taskMutationMethods.has(method) || ['areal/agent/spawn', 'areal/process/start', 'areal/thread/start', 'areal/thread/tools/attach', ...['update','remove','reorder','pause','resume','steer'].map(name => `areal/queue/${name}`)].includes(method)) || typeof requestId !== 'string' || !/^[0-9a-f-]{36}$/.test(requestId))) throw new Error('无效请求标识');
+    if (requestId !== undefined && (!(workgroupMutationMethods.has(method) || taskMutationMethods.has(method) || ['areal/agent/spawn', 'areal/process/start', 'areal/thread/start', 'areal/thread/fork', 'areal/thread/tools/attach', ...['update','remove','reorder','pause','resume','steer'].map(name => `areal/queue/${name}`)].includes(method)) || typeof requestId !== 'string' || !/^[0-9a-f-]{36}$/.test(requestId))) throw new Error('无效请求标识');
     const params = { ...parameters, requestId: requestId ?? randomUUID() };
     const entry = { method, params };
     // 活跃请求仅保存在内存；重启后仍在恢复日志中的请求应显示为结果未知。
@@ -716,6 +716,17 @@ class CoreBackend {
       return await project.client.request(method, method === 'areal/agent/spawn' ? spawn : method === 'turn/steer' ? steer : params);
     }
     catch (error) {
+      if (method === 'areal/thread/fork' && (error.code === -32603 || typeof error.code !== 'number')) {
+        try {
+          const receipts = await project.client.request('areal/request/read', { requestId: params.requestId });
+          const receipt = receipts.data.find(item => item.method === method);
+          if (typeof receipt?.result?.threadId === 'string') {
+            const result = await project.client.request('thread/read', { threadId: receipt.result.threadId, includeTurns: false });
+            return { thread: result.thread, requestId: params.requestId };
+          }
+        } catch { /* 保留原业务键，供用户显式核对。 */ }
+        throw Object.assign(new Error('分支创建结果待核对；不会自动重试'), { submissionUnknown: true, requestId: params.requestId });
+      }
       // Task receipts and Agent spawn receipts are not publicly queryable. An
       // internal error may follow a durable write; retain the journal entry.
       if (taskMutationMethods.has(method) || method === 'areal/agent/spawn' || method.startsWith('areal/workgroup/') || method === 'areal/workflow/start') {
@@ -934,6 +945,15 @@ class CoreBackend {
         await this.openThread(project, thread.id);
         await this.listThreads(project);
         return { threadId: thread.id };
+      }
+      case 'fork': {
+        if (!project.client.capabilities?.methods?.includes('areal/thread/fork')) throw new Error('当前 Core 不支持从此轮次创建分支');
+        const result = await this.submit(project, 'areal/thread/fork', {
+          sourceThreadId: request.sourceThreadId, anchor: request.anchor, workspaceMode: 'sharedCurrent',
+        }, { requestId: request.requestId });
+        await this.openThread(project, result.thread.id);
+        await this.listThreads(project);
+        return { threadId: result.thread.id, requestId: result.requestId };
       }
       case 'send': {
         const input = messageInput(this, request);

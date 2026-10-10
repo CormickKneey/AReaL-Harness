@@ -52,6 +52,7 @@ fn main() {
     add!("areal/interaction/respond", Respond);
     add!("areal/process/start", ProcessStart);
     add!("areal/agent/spawn", AgentSpawn);
+    add!("areal/thread/fork", ForkThread);
     add!("areal/profile/read", VersionRef);
     add!("areal/workflow/read", VersionRef);
     add!(
@@ -244,6 +245,7 @@ fn main() {
         );
     }
     methods.insert("turn/start".into(),object(json!({"threadId":string,"input":{"type":"array","items":schemars::schema_for!(areal_protocol::Input)}}),vec!["threadId","input"]));
+    methods.insert("areal/conversation/history".into(),object(json!({"threadId":string,"view":{"const":"inherited"},"cursor":string,"maxBytes":{"type":"integer","minimum":1,"maximum":262144}}),vec!["threadId","view"]));
     methods.insert("turn/steer".into(),object(json!({"threadId":string,"expectedTurnId":string,"input":{"type":"array","items":schemars::schema_for!(areal_protocol::Input)}}),vec!["threadId","expectedTurnId","input"]));
     methods.insert(
         "turn/interrupt".into(),

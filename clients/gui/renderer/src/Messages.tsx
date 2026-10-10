@@ -40,9 +40,11 @@ export function Messages({
   readTurnReview,
   beforeTurns,
   onAgent,
+  onFork,
 }: {
   beforeTurns?: ReactNode;
   onAgent?: (id: string) => void;
+  onFork?: (turnId: string) => Promise<void>;
   project: Data;
   thread: Data;
   action: Action;
@@ -58,6 +60,12 @@ export function Messages({
   const readingViewport = useRef<{ width: number; height: number } | undefined>(undefined);
   const owner = JSON.stringify([project.id, thread.id]);
   const latestTurnId = thread.turns?.at(-1)?.id;
+  const [forking, setForking] = useState(false);
+  const canFork = !!onFork && project.core?.features?.forkPreview === true
+    && !thread.parentThreadId && !thread.desktop?.archived
+    && (thread.turns ?? []).length > 0 && (thread.turns ?? []).every((turn: Data) =>
+      turn.status === "completed" && (turn.items ?? []).every((item: Data) =>
+        item.type === "agentMessage" || item.type === "userMessage" && (item.content ?? []).every((part: Data) => part.type === "text")));
   const activeOwner = useRef<string | undefined>(undefined);
   const seenTurn = useRef({ owner, id: latestTurnId });
   const reservation = useRef<ResponseSpace | undefined>(readingViews.get(owner)?.responseSpace);
@@ -311,6 +319,10 @@ export function Messages({
               <UnknownToolInspection key={`${project.id}:${thread.id}:${item.id}`} item={item} project={project} thread={thread} action={action} />)}
             <TurnFileSummary turn={turn} readTurnReview={readTurnReview} onFile={onFile} onReview={onReview} />
             {finalMessage && turn.status !== "inProgress" && <MessageActions text={finalMessage.text}><TurnHookStats turn={turn} /></MessageActions>}
+            {canFork && turn.id === latestTurnId && <button type="button" disabled={forking} onClick={() => {
+              setForking(true);
+              void onFork?.(turn.id).finally(() => setForking(false));
+            }}>{forking ? "正在创建分支…" : "从此轮次创建分支"}</button>}
             {turn.status === "inProgress" && (!segments.length || ["userMessage", "agentMessage", "agentMedia"].includes(segments.at(-1)?.type)) && (
               <TurnExecution items={[]} turn={turn} project={project} threadId={thread.id} renderItem={() => null} />
             )}

@@ -3,6 +3,8 @@ use super::*;
 use areal_protocol::desktop::*;
 
 pub(crate) const METHODS: &[&str] = &[
+    "areal/thread/fork",
+    "areal/conversation/history",
     "areal/permissions/read",
     "areal/permissions/forget",
     "areal/goal/get",
@@ -55,6 +57,9 @@ pub(crate) const METHODS: &[&str] = &[
     "areal/queue/resume",
     "areal/request/read",
 ];
+pub(crate) fn fork_preview_enabled() -> bool {
+    std::env::var("AREAL_DEV_CONVERSATION_DERIVATION").as_deref() == Ok("1")
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SkillList {
@@ -162,6 +167,7 @@ pub(crate) async fn dispatch(
                     .as_str()
                     .unwrap_or("management operation failed")
                     .into(),
+                data: error.get("data").cloned(),
             });
         }
         return Ok(reply["result"].clone());
@@ -175,7 +181,31 @@ async fn dispatch_inner(
     method: &str,
     params: Value,
 ) -> Result<Value, RpcError> {
+    if method == "areal/thread/fork" && !fork_preview_enabled() {
+        return Err(RpcError::method());
+    }
     let result = match method {
+        "areal/thread/fork" => {
+            let request: ForkThread = parse(params)?;
+            let request_id = request.request_id.clone();
+            match engine.fork_thread(identity.into(), request).await {
+                Ok(thread) => Ok(json!({"thread":thread,"requestId":request_id})),
+                Err(Error::Conflict) => return Err(RpcError { code: -32010, message: "request key conflicts with an existing Fork".into(), data: Some(json!({"reason":"REQUEST_CONFLICT","retryable":false})) }),
+                Err(Error::Invalid(reason)) if matches!(reason.as_str(), "SOURCE_KIND_UNSUPPORTED" | "ANCHOR_NOT_FOUND" | "TURN_NOT_TERMINAL" | "HISTORY_UNRESOLVED" | "PROFILE_NOT_SUPPORTED" | "MODEL_CONTEXT_INCOMPATIBLE") =>
+                    return Err(RpcError { code: -32010, message: reason.clone(), data: Some(json!({"reason":reason,"retryable":false})) }),
+                Err(Error::Storage(message)) if message.contains("history segment exceeds size limit") =>
+                    return Err(RpcError { code: -32010, message: "history exceeds the supported Fork preview limit".into(), data: Some(json!({"reason":"HISTORY_LIMIT_EXCEEDED","retryable":false})) }),
+                Err(error) => return Err(map_error(error)),
+            }
+        }
+        "areal/conversation/history" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct ReadHistory { thread_id: String, view: String, cursor: Option<String>, max_bytes: Option<usize> }
+            let p: ReadHistory = parse(params)?;
+            if p.view != "inherited" { return Err(RpcError::invalid("SCF-01 supports inherited history only")); }
+            engine.fork_history(&p.thread_id, p.cursor, p.max_bytes).await
+        }
         "areal/goal/get" => {
             let p: ThreadId = parse(params)?;
             engine.goal_get(&p.thread_id).await

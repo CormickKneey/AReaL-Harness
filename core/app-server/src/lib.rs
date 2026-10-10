@@ -354,6 +354,7 @@ async fn connection(
                     Err(RpcError {
                         code: -32700,
                         message: "Parse error".into(),
+                        data: None,
                     }),
                 ));
                 continue;
@@ -375,6 +376,7 @@ async fn connection(
                 Err(RpcError {
                     code: -32600,
                     message: "Invalid request".into(),
+                    data: None,
                 }),
             ));
             continue;
@@ -411,7 +413,7 @@ async fn connection(
             && (!conn.principal.allows(auth::Permission::Manage)
                 || conn.principal.thread_ids.is_some()))
             || !conn.principal.allows(auth::permission(method))
-            || ["threadId", "parentThreadId"].iter().any(|key| {
+            || ["threadId", "parentThreadId", "sourceThreadId"].iter().any(|key| {
                 params
                     .get(key)
                     .and_then(Value::as_str)
@@ -420,6 +422,7 @@ async fn connection(
             || (conn.principal.thread_ids.is_some()
                 && (method == "thread/start"
                     || method == "areal/thread/start"
+                    || method == "areal/thread/fork"
                     || method.starts_with("areal/workgroup/")
                     || method.starts_with("areal/workflow/start")))
         {
@@ -428,6 +431,7 @@ async fn connection(
                 Err(RpcError {
                     code: -32003,
                     message: "permission denied".into(),
+                    data: None,
                 }),
             ));
             continue;
@@ -526,6 +530,7 @@ impl Connection {
             return Err(RpcError {
                 code: -32001,
                 message: "subscription limit reached; use areal/subscription/remove".into(),
+                data: None,
             });
         }
         let events = engine.subscribe(id).await.map_err(map_error)?;
@@ -628,7 +633,7 @@ impl Connection {
                     || !self.principal.allows(auth::Permission::Tools)
                     || self.principal.thread_ids.is_some()
                 {
-                    return Err(RpcError { code: -32003, message: "trusted desktop tool host required".into() });
+                    return Err(RpcError { code: -32003, message: "trusted desktop tool host required".into(), data: None });
                 }
                 let request: areal_protocol::desktop::AttachBrowserTools = parse(params)?;
                 engine.attach_browser_tools(self.principal.id.clone(), request, self.tool_host.clone())
@@ -642,12 +647,14 @@ impl Connection {
                         message:
                             "subscription limit reached; unsubscribe before creating another thread"
                                 .into(),
+                        data: None,
                     });
                 }
                 if !p.dynamic_tools.is_empty() && !self.principal.allows(auth::Permission::Tools) {
                     return Err(RpcError {
                         code: -32003,
                         message: "tool host permission required".into(),
+                        data: None,
                     });
                 }
                 let thread = engine
@@ -677,6 +684,7 @@ impl Connection {
                     && self.principal.thread_ids.is_none();
                 if !can_attach_browser { methods.retain(|method| *method != "areal/thread/tools/attach"); }
                 methods.extend_from_slice(desktop::METHODS);
+                if !desktop::fork_preview_enabled() { methods.retain(|method| *method != "areal/thread/fork"); }
                 methods.extend_from_slice(task_mode::METHODS);
                 if !engine.runtime_capabilities().is_null() {
                     methods.extend_from_slice(processes::METHODS);
@@ -697,7 +705,7 @@ impl Connection {
                     "notifications": NOTIFICATIONS, "serverRequests":["item/tool/call"],
                     "browserToolBundles":if can_attach_browser {json!([{"bundleId":areal_protocol::desktop::BROWSER_V1_BUNDLE,
                         "definition":areal_protocol::desktop::browser_v1_tool()}])} else {json!([])},
-                    "features":{"subscriptionRemoval":true,"atomicResume":true,"atomicObserve":true,"browserToolAttachment":can_attach_browser,
+                    "features":{"conversationDerivationV1":if desktop::fork_preview_enabled() { json!({"preview":true,"forkBoundaries":["after"],"workspaceModes":["sharedCurrent"],"historyBytes":33554432}) } else { Value::Null },"subscriptionRemoval":true,"atomicResume":true,"atomicObserve":true,"browserToolAttachment":can_attach_browser,
                         "taskModes":true,"taskChannels":true,"asyncQuestions":true,"headlessInteractions":true,"goals":true,"dynamicTools":true,"mediaOutput":true,"durableSubmissionDeduplication":true,"profiles":true,"skills":true,"plans":true,"interactions":true,"queue":true,"providerConfiguration":true,"modelReset":true,"toolMedia":true,"blobUpload":true},
                     "limits":{"frameBytes":MAX_FRAME_BYTES,"subscriptions":128,"sendQueue":256,"threadEventWindow":128},
                     "runtime":engine.runtime_capabilities()}))
@@ -730,12 +738,14 @@ impl Connection {
                     return Err(RpcError {
                         code: -32001,
                         message: "subscription limit reached; use areal/subscription/remove".into(),
+                        data: None,
                     });
                 }
                 if !p.dynamic_tools.is_empty() && !self.principal.allows(auth::Permission::Tools) {
                     return Err(RpcError {
                         code: -32003,
                         message: "tool host permission required".into(),
+                        data: None,
                     });
                 }
                 validate_model(engine, p.model.as_deref())?;
@@ -758,6 +768,7 @@ impl Connection {
                     return Err(RpcError {
                         code: -32001,
                         message: "subscription limit reached".into(),
+                        data: None,
                     });
                 }
                 if self.principal.allows(auth::Permission::Tools) {
@@ -779,6 +790,7 @@ impl Connection {
                     return Err(RpcError {
                         code: -32001,
                         message: "subscription limit reached".into(),
+                        data: None,
                     });
                 }
                 let (thread, events) = engine
@@ -882,6 +894,7 @@ fn map_error(error: Error) -> RpcError {
     RpcError {
         code,
         message: error.to_string(),
+        data: None,
     }
 }
 

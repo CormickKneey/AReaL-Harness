@@ -11,7 +11,7 @@ use tokio::sync::Semaphore;
 mod archive;
 
 // 持久化版本与服务状态必须一致，避免客户端误判可恢复的数据格式。
-pub(crate) const STATE_VERSION: u32 = 13;
+pub(crate) const STATE_VERSION: u32 = 14;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Record {
@@ -93,6 +93,10 @@ impl Store {
             }
             if let Some(reference) = &record.thread.history_archive {
                 archive::read_segment(&self.root, &reference.head)?;
+            }
+            if let Some(areal_protocol::Conversation::Fork { version, history_seed, .. }) = &record.thread.conversation {
+                anyhow::ensure!(*version == 1 && record.version >= 14, "unsupported fork conversation version");
+                archive::read_segment(&self.root, &history_seed.snapshot_id)?;
             }
             let mut repaired = false;
             if let Some(goal) = &mut record.thread.goals.goal {
@@ -233,7 +237,13 @@ impl Store {
             let mut history = std::collections::BTreeSet::new();
             fn visit(v:&serde_json::Value,keep:&mut std::collections::BTreeSet<String>){match v{serde_json::Value::String(s)=>{if let Some(id)=s.strip_prefix("areal://blob/"){keep.insert(id.into());}},serde_json::Value::Array(v)=>{for x in v{visit(x,keep);}},serde_json::Value::Object(v)=>{for x in v.values(){visit(x,keep);}},_=>{}}}
             for e in std::fs::read_dir(&root)?{let p=e?.path();if p.extension().and_then(|s|s.to_str())==Some("json"){let record:Record=serde_json::from_slice(&std::fs::read(p)?)?;visit(&serde_json::to_value(&record.thread)?,&mut keep);
-                archive::visit_segments(&root, record.thread.history_archive, &mut history, |turns| { visit(&serde_json::to_value(turns)?, &mut keep); Ok(()) })?;}}
+                archive::visit_segments(&root, record.thread.history_archive, &mut history, |turns| { visit(&serde_json::to_value(turns)?, &mut keep); Ok(()) })?;
+                if let Some(areal_protocol::Conversation::Fork { history_seed, .. }) = &record.thread.conversation {
+                    history.insert(history_seed.snapshot_id.clone());
+                    let turns = archive::read_segment(&root, &history_seed.snapshot_id)?.turns;
+                    visit(&serde_json::to_value(turns)?, &mut keep);
+                }
+            }}
             let mut deleted=0;let mut reclaimed=0;let mut retained=0;
             for e in std::fs::read_dir(root.join("blobs"))?{let e=e?;let name=e.file_name().to_string_lossy().into_owned();if name.len()!=64||!name.bytes().all(|c|c.is_ascii_hexdigit())||!e.file_type()?.is_file(){continue;}
 if keep.contains(&name){retained+=e.metadata()?.len();}else{reclaimed+=e.metadata()?.len();std::fs::remove_file(e.path())?;deleted+=1;}}

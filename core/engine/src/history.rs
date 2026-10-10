@@ -348,6 +348,14 @@ pub(super) fn checkpoint_inputs(
 }
 
 pub(super) fn history(thread: &Thread, store: &store::Store) -> anyhow::Result<Vec<Message>> {
+    if let Some(areal_protocol::Conversation::Fork { history_seed, .. }) = &thread.conversation {
+        let mut logical = thread.clone();
+        logical.conversation = None;
+        let mut inherited = store.read_fork_snapshot(&history_seed.snapshot_id)?;
+        inherited.extend(std::mem::take(&mut logical.turns));
+        logical.turns = inherited;
+        return history(&logical, store);
+    }
     let mut messages = Vec::new();
     let items: Vec<_> = thread.turns.iter().flat_map(|turn| &turn.items).collect();
     let start = if let Some(checkpoint) = &thread.context_checkpoint {

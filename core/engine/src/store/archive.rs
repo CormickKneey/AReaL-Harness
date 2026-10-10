@@ -8,7 +8,7 @@ const MAX_SEGMENT_BYTES: u64 = 32 * 1024 * 1024;
 pub(super) struct Segment {
     version: u32,
     previous: Option<HistoryArchive>,
-    turns: Vec<Turn>,
+    pub(super) turns: Vec<Turn>,
 }
 
 fn segment_path(root: &Path, digest: &str) -> Result<PathBuf> {
@@ -109,6 +109,20 @@ pub(super) fn visit_segments(
 }
 
 impl Store {
+    pub(crate) async fn write_fork_snapshot(&self, turns: Vec<Turn>) -> Result<(String, usize)> {
+        let root = self.root.clone();
+        tokio::task::spawn_blocking(move || {
+            let bytes = serde_json::to_vec(&Segment { version: 1, previous: None, turns })?;
+            let size = bytes.len();
+            Ok((append_segment(&root, &bytes)?, size))
+        }).await?
+    }
+
+    pub(crate) fn read_fork_snapshot(&self, snapshot_id: &str) -> Result<Vec<Turn>> {
+        let segment = read_segment(&self.root, snapshot_id)?;
+        anyhow::ensure!(segment.previous.is_none(), "fork snapshot contains archive chain");
+        Ok(segment.turns)
+    }
     pub(crate) async fn history_page(
         &self,
         thread: &Thread,

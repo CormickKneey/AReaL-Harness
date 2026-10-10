@@ -1,6 +1,6 @@
 'use strict';
 
-/** @typedef {{message:string, code?:string|number, submissionUnknown?:boolean, requestId?:string}} DesktopError */
+/** @typedef {{message:string, code?:string|number, reason?:string, submissionUnknown?:boolean, requestId?:string}} DesktopError */
 /** @template T @typedef {{ok:true,value:T}|{ok:false,error:DesktopError}} DesktopResult */
 /** @typedef {{id:string,revision:string}} ResourceRef */
 /** @typedef {{projectId:string,threadId:string,expectedRevision?:number,model?:{providerId:string,modelId:string}|null,profile?:ResourceRef,options?:Record<string,unknown>,parameters?:Record<string,unknown>,selectedSkills?:ResourceRef[]}} ConfigureRequest */
@@ -8,7 +8,7 @@
 // 名称、作用域和执行层只维护一份；Main 专属能力不能从后台服务入口调用。
 const commandDefinitions = Object.freeze({
   connect: ['service', 'project'], list: ['service', 'project'], open: ['service', 'thread'],
-  create: ['service', 'project'], send: ['service', 'thread'], stop: ['service', 'thread'],
+  create: ['service', 'project'], fork: ['service', 'project'], send: ['service', 'thread'], stop: ['service', 'thread'],
   attachBrowser: ['service', 'thread'],
   respond: ['service', 'thread'], reconcile: ['service', 'project'], configure: ['service', 'thread'],
   queue: ['service', 'thread'], queueEdit: ['service', 'thread'], library: ['service', 'app'],
@@ -40,6 +40,9 @@ function validateCommand(name, params, { serviceOnly = false } = {}) {
   if (scope !== 'app' && !identifier(params.projectId)) invalid();
   if (scope === 'thread' && !identifier(params.threadId)) invalid();
   if (name === 'create' && params.browserEnabled !== undefined && typeof params.browserEnabled !== 'boolean') invalid();
+  if (name === 'fork' && (!identifier(params.sourceThreadId) || !record(params.anchor)
+    || !identifier(params.anchor.turnId) || params.anchor.boundary !== 'after'
+    || params.workspaceMode !== 'sharedCurrent')) invalid();
   if (name === 'attachBrowser' && (typeof params.expectedToolsetRevision !== 'number'
     || !Number.isSafeInteger(params.expectedToolsetRevision)
     || params.expectedToolsetRevision < 0)) invalid();
@@ -91,11 +94,13 @@ function desktopError(error) {
   const value = record(error) || error instanceof Error ? error : {};
   const code = 'code' in value ? value.code : undefined;
   const requestId = 'requestId' in value ? value.requestId : undefined;
+  const reason = 'data' in value && record(value.data) && typeof value.data.reason === 'string' ? value.data.reason : undefined;
   return {
     message: typeof value.message === 'string' ? value.message : '桌面操作失败',
     ...(typeof code === 'string' || typeof code === 'number' ? { code } : {}),
     ...('submissionUnknown' in value && value.submissionUnknown === true ? { submissionUnknown: true } : {}),
     ...(typeof requestId === 'string' ? { requestId } : {}),
+    ...(reason ? { reason } : {}),
   };
 }
 
