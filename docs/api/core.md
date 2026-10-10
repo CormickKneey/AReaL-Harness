@@ -327,3 +327,5 @@ checkpoint 恢复最多保留 8 组接口导向文件片段，序列化内容总
 `ModelCapabilities` 和 `ModelOptions` 增加可选窗口/输出元数据；自定义 Rust 结构体字面量需补齐新字段或使用默认值。客户端协议中的 `ModelParameters.contextWindowTokens` 为新增可选字段。
 
 项目指令由 Engine 在每个 Turn 首次模型请求前加载，并保存为 `instructionSnapshot`。按工作区根到 Thread `cwd` 的目录链读取 `AGENTS.md`，来源路径随正文写入快照；不新增 API 字段，已有仅根文件项目保持兼容。正文合计超过 32 KiB、无效 UTF-8、符号链接或超过 64 层的目录链使 Turn 在请求模型前失败，不截断规则。作用域、优先级与 cwd 路径别名见[客户端指南](../guides/clients.md#历史恢复与观测)。
+
+Shared Browser 的工具准备、旧 Thread 工具包追加和只读观察订阅仍是[设计契约](browser.md)，尚未实现；不改变本页现有动态工具与 `thread/resume` 行为。

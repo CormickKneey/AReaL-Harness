@@ -313,3 +313,5 @@ Embedded Rust hosts constructing NativeFactory/NativeExecutor explicitly must pr
 `ModelCapabilities` and `ModelOptions` add optional window/output metadata; custom Rust struct literals must include the new fields or use defaults. `ModelParameters.contextWindowTokens` is additive in the client protocol.
 
 Engine loads project instructions before the first model request of each Turn and persists them in `instructionSnapshot`. It reads `AGENTS.md` along the workspace-root-to-Thread-`cwd` chain and includes source paths in the snapshot. No API fields are added; projects with only a root file remain compatible. Combined content above 32 KiB, invalid UTF-8, symlinks or a chain beyond 64 levels fail the Turn before a model request instead of truncating rules. See [clients](../guides/clients.en.md#history-recovery-and-observability) for scope, precedence and cwd path aliases.
+
+Shared Browser preparation, legacy Thread tool-bundle attachment and read-only observation subscriptions remain [proposed contracts](browser.en.md). They are not implemented and do not change existing dynamic tools or `thread/resume` behavior.

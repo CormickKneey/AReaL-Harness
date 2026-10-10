@@ -1,0 +1,187 @@
+**中文** | [English](browser.en.md)
+
+# Browser v1 契约
+
+**设计契约，尚未实现。** 除标注“现有”的 Core 方法外，本页命名均为提案。实现时由规范类型生成 schema 与调用方类型，禁止手写多套漂移的契约。本页比规格中的概述更精确；不改变现有 [Core UNKNOWN 规则](core.md#dynamic-tools)。
+
+## 1. 两条既有连接与一个新能力
+
+现有链路是 Core app-server ↔ 独立桌面适配器，以及该适配器 ↔ Electron Main 的认证本地服务连接；Renderer 不持有 Core 凭据。后者现在主要传递状态与客户端命令，须新增有界的反向 Browser 请求、结果和取消，复用其认证，不新增公开浏览器服务端口。
+
+- Core 已有 `item/tool/call`、动态 ToolHost、`areal/tool/cancelled` 和客户端结果；真实动作沿用此链路。
+- 新增可选 Host 能力 `areal.browser.host.v1`。握手包含协议版本、实际操作集合、browserHostId、hostGeneration、当前 Main availability；仅部署信任的客户端可以登记。
+- Main 只向被认证的桌面适配器接收执行请求；拒绝 Renderer 或网页伪造的工具回调。Main IPC 校验 sender 与 owning window，ID 本身不等于授权。
+- 独立适配器作为当前 Thread 的唯一回调连接。不能用第二条 Core 连接 `thread/resume` 抢占活跃宿主；观察另走第 10 节。
+- GUI Main 退出但适配器仍在时，报告 `host_unavailable`，不把适配器心跳当作页面可用。
+
+## 2. 模型接口与能力发现
+
+固定模型工具名：`browser_v1`。稳定的最外层输入是 `{operation:string, parameters:object}`，严格禁止其他顶层字段。字段长度/深度/字节有界；`parameters` 由实际操作的 schema 二次严格校验。这个可扩展包络使已持久化工具定义不因新增能力而改写。
+
+第一步调用 `describe` 获得支持的操作及短说明；只返回本 Host 已实现能力，不一次灌入全部开发文档。拒绝未知 operation/参数，绝不把字符串转成 shell、JS 或原始 CDP。规格描述未来能力不等于提前公布可用 capability。
+
+| operation | parameters 的意图 | 关键限制 |
+|---|---|---|
+| describe | 可选 topic | 限定当前绑定 Host；无系统端口或秘密 |
+| listPages | 无或已知 workspaceId | 只列当前 Thread 的授权页；人工页仅元数据 |
+| claimPage | pageId | 用户已选择/授权页；保留同一对象，不跨 Thread |
+| newPage | URL、用户可见目的 | 同一临时上下文；配额；导航审批 |
+| navigate | pageId、URL | 不依据活动标签推断目标；HTTP(S)；跨 Origin 重新检查 |
+| observe | pageId、scope、可选 rootRef、budget | DOM/AX 默认；标注 iframe 覆盖和截断 |
+| capture | pageId、viewport/full、可选 clip | 绑定视口；隐私与尺寸检查；返回 Core 授权证据 |
+| act | pageId、snapshotId、action | 受支持的 click/fill/press/scroll/hover/select/check/drag；实际计划审批 |
+| wait | pageId、condition、timeoutMs | 有界状态等待；不用全页 networkidle 当通用完成条件 |
+| closePage | pageId | 人工/未知来源需用户确认；不能关闭其他 Thread |
+| diagnostics | pageId、kind、cursor、limit | Console/network 摘要；隐藏正文、凭据和敏感 header |
+| runBatch | pageId、snapshotId、steps | ≤8 个已知动作/等待；总预算；逐步 fence；不能跨页、包含任意代码或提升授权 |
+
+每项操作、capability 和用户可见错误必须有行为测试。阶段构建未启用的 capability 返回确定的 `unsupported`，不创建占位浏览器。浏览器关联 Thread/Turn 来自 Core，不接受模型指定别人的 threadId、hostId、webContentsId 或 CDP sessionId。
+
+## 3. 内部身份包络
+
+下列是**新内部 DTO 示意，不是现有 API**。传输端生成/验证，不出现在模型可写参数中。
+
+```ts
+interface BrowserExecutionContext {
+  coreInstanceId: string;        // 来自已认证部署
+  projectId: string;
+  threadId: string;
+  turnId: string;
+  callId: string;                // Core 工具调用身份
+  requestId: string;             // 本次双向传输关联，不是业务去重键
+  browserHostId: string;
+  hostGeneration: number;
+  workspaceId: string;
+  pageId?: string;
+  pageGeneration?: number;
+  controlEpoch: number;
+  deadlineRemainingMs: number;  // 每一跳只能收窄，不能重新给满预算
+}
+```
+
+在 Map 中用结构化复合键或无歧义编码，不简单串接可能含分隔符的项目字符串。Host/原生连接换代、Page 替换、文档导航、控制交接、视口变化分别有独立代次，不混用一个 revision。
+
+- `hostGeneration`：Main/Host 实例或绑定替换；旧连接回执无写入资格。
+- `pageGeneration`：该逻辑 Page 的原生对象替换；恢复 URL 后仍是新代次。
+- `documentEpoch`：主文档/Frame 文档替换；Ref 失效。
+- `controlEpoch`：认领、接管、交还、撤销授权；旧动作计划失效。
+- `viewportRevision`：CSS 尺寸、缩放或截图坐标变换变化；旧坐标动作失效。
+- `eventSequence`：仅事件重订游标；不是控制权限，也不因读操作提升。
+
+## 4. 页面、上下文与事件
+
+Browser Workspace 绑定 `(coreInstanceId, projectId, threadId)`。首期每 Thread 一个 Workspace，多个 Page；跨 Thread 页面转移不支持。第一次认领旧预览沿用其实际 Session。新 sibling page 加入同一临时上下文；其他 Workspace 创建独立临时上下文。
+
+Controller 提供**原子 snapshot + subscribe**，UI 先安装 snapshot 的序号，再消费后续增量。发现序号缺口就重取，不能靠独立 read 和 subscribe 假设无窗口。事件至多携带元数据；DOM、图像和网络正文按需读取，不广播。
+
+事件包括 `pageAdded/pageChanged/pageRemoved`、`controlChanged`、`operationChanged`、`hostAvailabilityChanged`、`viewportChanged`、`diagnosticsAvailable`。GUI-only 投影可在原有本地状态通道中分发；持久工具事件仍使用 Core Item。只对所属 Thread/项目/window 授权接收者广播。
+
+页面状态采用正交维度：
+
+| 维度 | 状态 | 所有者 |
+|---|---|---|
+| 资源 | ready / suspended / crashed / closed | Controller |
+| 控制 | human / agent / transferring | Controller（Core 保有授权证据） |
+| 可达性 | connected / disconnected / incompatible | 已认证适配器与 Controller |
+| 操作 | prepared / dispatched / confirmed / rejected / unknown | 原生事实在 Controller，正式工具结果在 Core |
+
+Page shell 可恢复 URL 与标题，但不恢复原生对象身份或表单/JS heap；失去临时上下文必须明确显示“临时登录可能需要重做”。不要通过读取历史截图宣称恢复了 live page。
+
+## 5. 语义观察、Ref 与视觉坐标
+
+观察至少携带 `observationId/pageId/pageGeneration/documentEpoch/controlEpoch/url/title/capturedAt/scope/truncated/frameCoverage`。视口观察另含 CSS 尺寸、scroll offset、device scale、page zoom、bitmap size、`viewportRevision`。截图是时间点证据，不是锁定网页状态的保证。
+
+语义表示优先可见文本、role/name/state 与交互 Ref；不给每个非交互容器发 Ref。压缩结构不能丢失表单标签、错误提示、关联层级、iframe 来源和截断原因。未覆盖的跨源 iframe 明确标记 `unavailable`，不得伪装为空。
+
+Ref 私有映射键至少含 Page generation、Frame identity、Frame document identity、backend node identity。引用公开 ID 单调不复用；只在同一节点确实仍存在时复用。查不到或已导航时返回 `stale_ref`，不按名称/XPath fallback 去点击另一个节点。重新观察后由 Agent 决定新动作。
+
+动作准备与派发都验证目标仍连接、可见、可交互且 hit test 命中。布局可变时等待有界稳定，再检查；不使用页面脚本的 `.click()` 冒充真实输入。滚动/刷新可能改变有效条件，不能只比较一个全页 DOM revision。Canvas 坐标以**截图 bitmap → 页面 CSS viewport**的明确变换转换；不直接乘 DPR 猜测。缩放、视口或文档变化必须重新截图。
+
+## 6. Core 审批与原生执行：两阶段，但不是事务
+
+对会改变页面或触发外部副作用的操作：
+
+1. Core 记录 Tool Intent；校验工具包、实际 Thread 及部署策略。
+2. 通过**新增只读服务器请求** `areal/browser/prepare` 请求已绑定 Browser Host 准备。它只解析实际目标、动作和当前代次，不输入、不导航、不上传、不创建页面。新建页只能准备计划，执行阶段才分配资源。
+3. Host 返回有短有效期的 `preparedActionId`、规范化计划摘要/指纹、目标描述、Origin、范围、代次、预算、风险原因。网页提供的 label 作为不可信文本转义展示。Core 保存这份计划，不把模型描述当真实目标。
+4. Core 复用现有权限状态机与 `ApprovalRequest` 交互，审批域增加 browser。**执行许可只由 Core 的决定产生**；GUI 不另写允许规则。对外部网站高影响/未知语义操作优先人工接管。已明确授权的本地开发站点可获得本次 Workspace 的受限开发操作许可。
+5. Core 将获批的计划身份和许可放入**可信回调元信息**，与 `item/tool/call` 一起送 Host；不能放在模型 arguments 中。默认旧动态工具无此扩展。
+6. Host 按有效期、Origin、Page/文档/控制/视口代次、计划指纹重新验证，并即时检查目标。通过才标记 dispatched，发送输入，生成回执。条件失效返回 `plan_stale`，不在宿主内部自动改目标重试。
+
+`areal/browser/prepare` 是新增 Host 能力，需要 Core DynamicToolHost 的可选只读准备接口与专用关联响应；没有该能力的既有工具行为不变。prepare 超时、断线而尚未发 execute，Core 可记录确定的未执行；只有 Core 自己确认执行链未派发才使用这一结论，不能信任模型声称。
+
+审批持久记录属于 Core，短命 prepared records 属于 Controller，绝不维护第二份可长期放行的授权库。外层工具授权不足以替代原生控制栅栏。Core 审批允许之后人仍可随时接管撤销。
+
+## 7. Human Takeover 与暂停边界
+
+用户按接管或点击原生输入屏障：Controller **同步增加 controlEpoch**，禁止旧代次新动作，清退未派发队列并暂停 Agent 自动读/截图/诊断。控制通道不排在动作队列后。按下的合成按键/鼠标按钮做有界清理；已经到达网站的输入无法回滚。
+
+本机栅栏立即生效，但 human 输入开放前必须完成原生输入收敛屏障：已派发的合成输入结算、释放按键，确认不会再派发旧代次输入。这只等待本机原生通道，不等待 Core。若在有界时间内无法证明输入已收敛，保留 transferring、阻止双写，并提供停止/关闭该页的安全退出；不能把“已请求接管”显示成“接管完成”。网页已触发的网络/业务副作用可以继续，仍需保留 UNKNOWN。
+
+随后广播 human 状态并通知 Core。没有在途输入时可确定 `user_control`，并阻止 Agent 重复请求 Browser，允许当前 Turn 收尾或进行不依赖页面的其他工作；不自动启动新 Turn。已有输入无法确认时走 UNKNOWN，遵守 Core 的停止自动执行规则。不能因为“接管成功”就把那次动作写成未执行。
+
+人工控制不是仅禁写：Agent 侧 DOM、图像、Console、网络采样与历史缓冲交付均停止；只留宿主安全与生命周期必须的内部信号。人手动登录结束后默认丢弃这段可敏感的诊断缓冲。在途读/截图即使在接管前启动，返回时也必须重新验证controlEpoch；过时代次不得向模型或历史发布结果。暂停不能撤回先前已发给模型的证据，UI 应明确这一点。
+
+交还只接受可信用户操作。创建新 controlEpoch，清空旧 prepared records 与观察句柄，要求新 observe/capture。按钮“交还并继续”可合并显式交还与既有幂等用户提交，但不是自动重放旧工具；有 UNKNOWN 时先显示核对入口和既有检查确认。
+
+## 8. 回执、去重、超时和取消
+
+幂等键是 `(hostGeneration, threadId, turnId, callId, stepIndex)`；传输 requestId 只用于关联。相同键相同参数返回缓存的已知回执；不同参数拒绝冲突。相同在途键共享同一执行，不多发输入。回执缓存有界；一旦无法证明旧调用是否派发，返回 UNKNOWN，不以缓存缺失允许重发。Host 重启不恢复执行资格。
+
+| 事实 | 对 Core 的映射 | 后续 |
+|---|---|---|
+| 参数错、未授权、旧 Ref、用户控制、配额/能力不支持，确定未派发 | `success:false`，带 code 与 `dispatch:not_sent` | 可修正参数/重新观察；不能自动夺回控制 |
+| 动作派发和完成已确认 | `success:true`，回执与新状态 | 验证业务结果另算 |
+| 动作确认完成但业务检查未通过 | 动作仍成功，verification=failed | 新观察后决定新动作，不掩盖已提交事实 |
+| execute 派发后失去回执、超时、崩溃或取消，无法确定 | RPC error/既有 UNKNOWN 路径，附脱敏关联 ID | Core 停止自动执行；人工核对；不重放 |
+| 批量前几步确认，后一步确定未派发 | 已确认步骤+确定失败+剩余未执行，`success:false` | 不重复前几步 |
+| 批量任何一步结果不明 | 整体工具 UNKNOWN，保留此前已确认回执 | 剩余步骤不派发 |
+
+超时分 prepare、审批等待、执行和传输。内层预算必须先于外层剩余期限结束，为结构化回执留空间；审批等待不沿用 3 秒动作预算。建议初始单动作默认 5 秒、上限 30 秒；普通 wait 默认 3 秒、上限 30 秒；批量执行总上限 30 秒、最多8步。它们是资源策略初值，不是性能承诺；以真实测试调优。墙钟变化不延长本地单调预算。
+
+`areal/tool/cancelled` 传播到 adapter/Main，匹配原 requestId 和代次。尽力取消不保证回滚。迟到回执仅作核对证据，不能复活 Turn 或把 Core 已结算 UNKNOWN 静默改成成功。
+
+## 9. 资源、证据与安全限制
+
+### 配额初值
+
+沿用当前最多8个原生 Page 的窗口上限，另设每 Workspace 最多4页。执行、接管中的人工活动页、阻塞对话框与文件交接页不可驱逐；全部 pinned 时拒绝新页并提示关闭，而非杀掉工作页。隐藏可保留，暂停/驱逐仅对明确空闲页并展示状态损失。队列每 Workspace 至多16项，控制通道保留容量；没有无界 Promise/FIFO。
+
+观察默认最多200个交互节点、32 KiB文本，显式扩展最多1000节点、128 KiB。诊断单页缓冲最多200条/256 KiB，body 默认不收集。值为可调整初始上限，不是测得最优值。数据截断必须报告，不能无声截断结果。
+
+### 媒体
+
+Core 的4 MiB WS帧上限是全链路实际约束；适配器更大的本地帧额度不覆盖它。截图先限制像素/编码大小，再通过现有 Core 媒体/Blob 上传与工具结果契约交付。超过限制采用既有分块上传（若该版本有）或显式拒绝/降低预览尺寸；不得临时发明一个未经授权的大文件 HTTP 下载端口。上传方法名、MediaRef 和 contentItems 复用当前生成 schema，不在 Browser 层复制另一套媒体类型。
+
+全图证据保存 Core Blob；模型与 GUI 获取按 Thread/工具调用授权的引用。模型实际需要视觉判断时使用已支持的图像内容投影，不能只回一个模型读不到的 artifactId 就声称“已看到截图”。示意图像规范化不是当前截图实现已验证的证明。证据包含 URL（去敏感查询项）、时间、视口、Page/文档代次、工具 callId、可选代码变更/构建身份；无来源时字段缺省并标明未知。
+
+### 权限和隐私
+
+网页永远无 Node、preload 产品 API；保持 sandbox/contextIsolation/webSecurity、主/Frame导航检查及IPC来源检查。浏览器 Profile不是Agent Profile，不能从用户模型配置继承账号权限。拒绝 file/javascript/data 顶层导航、带凭据URL、私有产品协议、系统命令和 shell逃逸。新浏览器任务不得访问 Core/adapter 的内部控制端口，即使它们也在 localhost。
+
+开发站点按用户明确的精确 Origin 授权；允许本地应用不等于允许所有 localhost/内网/云元数据。跟踪重定向和Frame导航。导航许可不是完整网络沙箱：网页脚本、请求、Service Worker、WebSocket 等出口不能仅靠顶层URL检查约束；首期网络策略必须明确可覆盖的传输，对不覆盖的能力默认关闭或将目标限定为可信开发站点。不得声称域名白名单已实现全面防外传。
+
+原始 Cookie/Storage导出、浏览器级CDP、系统文件访问、任意 evaluate 不向模型开放。按权限提供有限调试操作。文本密码、令牌、Authorization/Cookie/Set-Cookie、敏感查询值默认脱敏；截图对已识别密码/敏感区遮罩，未知敏感内容不能保证检测，采集前须有站点/页面许可。手动输入流程优先接管。下载与用户选取上传另行授权，不能传任意宿主路径或自动打开可执行文件。
+
+### 信任模型与剩余风险
+
+主要防护对象是恶意网页、模型误操作、跨Thread串线与不可信Renderer输入；Core、认证桌面适配器与Main属于可信计算基础。本设计不防御已被攻陷的Main、操作系统管理员或另一个已获全磁盘/无限网络权限的工具。授权Runtime的任意宿主执行不会因为Browser接口受限而自动变安全。
+
+脱敏针对Browser自动采集与投影；用户已经在聊天中提供的秘密或模型已持有的值，不能承诺从既有历史撤回。凭据输入优先human阶段，不将密码表单值作为Agent操作参数。页面上的未知敏感信息仍需用户决定是否允许该页观察。
+
+## 10. 旧 Thread 与多客户端：新增 Core 接口
+
+下列 API 均为**提案**，必须通过 capability 发现，不修改固定 Codex 兼容 schema 的既有定义。
+
+| 方法 | 请求 | 语义 |
+|---|---|---|
+| `areal/thread/tools/attach` | requestId, threadId, expectedToolsetRevision, bundleId=`areal.browser.v1` | 仅 interact+tools 的可信部署客户端；Thread 空闲；原子追加部署固定工具包并绑定当前宿主；同名不同schema冲突；重复返回原结果 |
+| `areal/thread/observe` | threadId | 原子历史/状态快照+后续增量；只需 observe 权限；不重绑 ToolHost，不改变现有 `thread/resume` 行为 |
+
+附加 `toolsetRevision` 可选字段，旧 Thread缺省0；如当前存储格式不能兼容新增字段则显式提升格式并说明旧二进制不可读。禁止静默编辑持久 JSON。原始 dynamicTools定义保持不变，只允许追加一个部署登记包；不提供任意删除/替换工具接口。相同 requestId不同请求冲突。活跃或其他宿主占用时不 steal，返回结构化 busy/conflict。
+
+新建 GUI Thread 可登记固定 Dispatcher；旧Thread必须由用户启用。CLI/TUI 作为观察者使用新 observe，不实现 Electron Driver。由已有 GUI ToolHost 服务的Thread可继续通过授权Core入口提交消息；GUI不存在时明确 Browser unavailable，不启动另一个Chrome。子Agent默认不继承父Thread浏览控制；共享只读历史不等于控制授权。
+
+## 11. 版本与回退
+
+能力关闭后恢复普通预览；已有 Browser历史可读，live对象不重放。回退不得删掉历史工具定义或伪造旧版本可执行。若旧Core不能读取新增快照，明确阻止二进制降级并提供数据备份指引；禁止为了回退去改存储格式数字。每次客户端/Core契约变更同步生成类型、schema、文档和fixture。

@@ -101,3 +101,5 @@ Core `permissions` 负责审批模式、规则优先级与精确请求记忆；C
 模型目录的解析、校验和受控文件写入归 `core/config`，`core/server` 在启动时装配为 Engine 的执行投影。Clients 使用公开配置命令，不复制 TOML 解析或凭据存储。GUI 默认与 CLI 共用用户配置文件；独立服务登记目录由 `core/local-service` 选择，不改变配置查找，运行数据仍按 GUI 部署隔离。共享目录保存与安全重启分开，任务持有原模型快照；契约见[配置指南](../guides/configuration.md#gui-与-cli-共享模型目录)。
 
 历史回取分页读取原始记录。Goal 计量同样把已结算请求滚入分段，保留累计用量与未结算预留。这些存储职责位于 Core，不改变 Runtime 的执行所有权。
+
+共享 Browser 的设计沿用 Core 会话、审批与历史所有权，独立桌面适配器负责工具回调，Electron Main 拥有原生页面。设计与尚未实现的契约见[Browser 规格](browser.md)、[Browser API](../api/browser.md)及[所有权提案](../adr/0002-shared-browser-ownership.md)。
