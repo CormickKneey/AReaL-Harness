@@ -302,6 +302,9 @@ impl Invocation<'_> {
                     .await
                     .map(|value| (true, value))
                     .map_err(|error| {
+                        if self.call.name == "development_service_start" && matches!(error, Error::Storage(_)) {
+                            return unknown(error);
+                        }
                         let mut result = invalid(&error);
                         if let Error::Invalid(message) = &error
                             && let Some(details) = message.strip_prefix("GOAL_COMPLETION_PENDING: ")

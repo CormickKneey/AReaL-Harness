@@ -8,6 +8,8 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "./components/ui/button.js";
 import type { PlatformServices, Data } from "./services.js";
 import { call } from "./services.js";
+import { BrowserVerificationCard } from "./BrowserVerificationCard.js";
+import type { Action } from "./services.js";
 import type { PreviewRequest, OwnedPreviewOperation } from '@areal/workbench/desktop-contract';
 const locations = new Map<string, { url: string; link?: string }>();
 export function Preview({
@@ -21,6 +23,9 @@ export function Preview({
   browserAvailable = false,
   toolsetRevision = 0,
   thread,
+  action,
+  onReview,
+  onTool,
 }: {
   services: PlatformServices;
   projectId: string;
@@ -32,6 +37,9 @@ export function Preview({
   browserAvailable?: boolean;
   toolsetRevision?: number;
   thread?: Data;
+  action: Action;
+  onReview: (turnId: string) => void;
+  onTool: (itemId: string) => void;
   onError: (s: string) => void;
 }) {
   const owner = `${projectId}:${threadId}`;
@@ -233,6 +241,7 @@ export function Preview({
             .finally(() => { if (mounted.current && current.current === owner) setClaiming(false); });
         }}>在当前聊天启用浏览器</Button>
       </div>}
+      {thread && <BrowserVerificationCard thread={thread} projectId={projectId} action={action} onReview={onReview} onTool={onTool} />}
       {responsive && (
         <div className="preview-viewport-toolbar">
           <label>

@@ -155,6 +155,7 @@ impl Engine {
                 if matches!(
                     tool,
                     "ask_user_question"
+                        | "development_service_inspect"
                         | "read_tool_result"
                         | "read_history"
                         | "plan_update"
