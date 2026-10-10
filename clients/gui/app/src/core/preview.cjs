@@ -177,6 +177,7 @@ class CorePreview {
     const initialBlank = !page.url && !page.view.webContents.getURL();
     return this.owner === key && this.view === fence.view && page.view === fence.view
       && this.selected.get(workspace) === page.id && page.control === 'human'
+      && !page.annotationCaptureId
       && page.pageGeneration === fence.pageGeneration
       && page.documentGeneration === fence.documentGeneration
       && page.controlEpoch === fence.controlEpoch
