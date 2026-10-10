@@ -29,6 +29,23 @@ function validToolInput(value) {
     } catch { return false; }
   }
   if (value.operation === 'describe') return keys.length === 0;
+  if (value.operation === 'runBatch') {
+    if (!keys.every(key => ['pageId', 'snapshotId', 'steps'].includes(key))
+      || typeof value.parameters.pageId !== 'string' || !/^[0-9a-f-]{36}$/.test(value.parameters.pageId)
+      || typeof value.parameters.snapshotId !== 'string' || !/^[0-9a-f-]{36}$/.test(value.parameters.snapshotId)
+      || !Array.isArray(value.parameters.steps) || value.parameters.steps.length < 1 || value.parameters.steps.length > 8) return false;
+    if (value.parameters.steps.reduce((total, step) => total + (step?.operation === 'wait' ? step.timeoutMs : 0), 0) > 29000) return false;
+    return value.parameters.steps.every((step, index) => {
+      if (!step || typeof step !== 'object' || Array.isArray(step)) return false;
+      if (step.operation === 'wait') return Object.keys(step).every(key => ['operation', 'timeoutMs'].includes(key))
+        && Number.isSafeInteger(step.timeoutMs) && step.timeoutMs >= 1 && step.timeoutMs <= 30000;
+      if (step.operation !== 'act' || Object.keys(step).some(key => !['operation', 'snapshotId', 'action'].includes(key))
+        || step.snapshotId !== value.parameters.snapshotId
+        || (index > 0 && ['clickAt', 'drag', 'pressAt'].includes(step.action?.kind))) return false;
+      return validToolInput({ operation: 'act', parameters: { pageId: value.parameters.pageId,
+        snapshotId: step.snapshotId, action: step.action } });
+    });
+  }
   if (value.operation === 'diagnostics') return typeof value.parameters.pageId === 'string'
     && /^[0-9a-f-]{36}$/.test(value.parameters.pageId)
     && keys.every(key => ['pageId', 'kind', 'cursor', 'limit'].includes(key))
