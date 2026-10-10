@@ -1212,8 +1212,10 @@ class CorePreview {
             const key = request.parameters.action.key;
             const code = { Enter: 13, Tab: 9, Escape: 27, Backspace: 8,
               ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40 }[key];
-            await keyboard({ type: 'keyDown', key, windowsVirtualKeyCode: code });
-            await keyboard({ type: 'keyUp', key, windowsVirtualKeyCode: code });
+            const text = key === 'Enter' ? '\r' : undefined;
+            await keyboard({ type: 'keyDown', key, code: key, windowsVirtualKeyCode: code,
+              ...(text ? { text, unmodifiedText: text } : {}) });
+            await keyboard({ type: 'keyUp', key, code: key, windowsVirtualKeyCode: code });
           }
         })(), stop]);
       }
