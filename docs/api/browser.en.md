@@ -2,9 +2,9 @@
 
 # Browser v1 contract
 
-**Design contract, partly implemented.** The current slice supports explicit claiming of an existing native preview in a new Browser-enabled Thread, `describe`/`observe`/`capture`, local takeover revocation, and missing-host rejection. Other operations below remain proposals. Existing [Core UNKNOWN rules](core.en.md#dynamic-tools) remain in force.
+**Design contract, partly implemented.** The current slice supports explicit claiming of an existing native preview in a new Browser-enabled Thread or an idle older Thread after Browser attachment, `describe`/`observe`/`capture`, local takeover revocation, and missing-host rejection. Other operations below remain proposals. Existing [Core UNKNOWN rules](core.en.md#dynamic-tools) remain in force.
 
-The new-chat Composer Browser switch registers the fixed `browser_v1` tool package. After opening the current Thread's preview, the user clicks “Let Agent inspect this page”; Main claims the same WebContentsView and registers it through the authenticated service connection. The Thread's bound Core connection handles model callbacks. The extensible `operation:string` envelope is fixed. Secondary validation accepts `describe` (empty parameters), `observe` (`pageId`, optional document scope, Ref and budget), and `capture` (current viewport). Bounded native accessibility reads report actual Frame coverage and expose role, name, state, value, and parent association where available. Refs bind to native node identity and generations; a budget-limited observation does not itself invalidate an omitted live Ref. Tool URLs omit query and fragment values. Capture is limited to 8 million pixels, 4096 pixels per side, and a 2 MiB PNG, then uses the existing Core Blob and tool media path for model and chat access. Automatic capture refuses known sensitive forms and unreadable Frames; this is not image masking and cannot identify every secret. Actions, old-Thread attachment, and persistent Profiles are not available. Human takeover, navigation, and Core/host generation changes revoke reading; cancelled or timed-out calls are never replayed.
+The new-chat Composer Browser switch registers the fixed `browser_v1` tool package; an idle older Thread can enable the same package in Preview. After opening the current Thread's preview, the user clicks “Let Agent inspect this page”; Main claims the same WebContentsView and registers it through the authenticated service connection. The Thread's bound Core connection handles model callbacks. The extensible `operation:string` envelope is fixed. Secondary validation accepts `describe` (empty parameters), `observe` (`pageId`, optional document scope, Ref and budget), and `capture` (current viewport). Bounded native accessibility reads report actual Frame coverage and expose role, name, state, value, and parent association where available. Refs bind to native node identity and generations; a budget-limited observation does not itself invalidate an omitted live Ref. Tool URLs omit query and fragment values. Capture is limited to 8 million pixels, 4096 pixels per side, and a 2 MiB PNG, then uses the existing Core Blob and tool media path for model and chat access. Automatic capture refuses known sensitive forms and unreadable Frames; this is not image masking and cannot identify every secret. Actions and persistent Profiles are not available. Human takeover, navigation, and Core/host generation changes revoke reading; cancelled or timed-out calls are never replayed.
 
 Known-sensitive capture checks and viewport measurements run in Electron's isolated world so page scripts cannot replace the DOM query methods or viewport getters used by those checks. Unknown sensitive content can still escape detection; the page itself remains untrusted.
 
@@ -137,16 +137,22 @@ The primary threats are hostile web content, model mistakes, cross-Thread routin
 
 Redaction applies to automatic Browser capture/projection; secrets already supplied in chat or held by the model cannot be promised retracted from history. Prefer manual credential entry and do not expose password fields as agent action values. Unknown sensitive page content still requires the user’s observation decision.
 
-## 10. Proposed Core extensions
+## 10. Existing Threads and Core extensions
 
-Discover these **new** APIs by capability. Do not rewrite existing fixed Codex-compatibility definitions.
+`areal/thread/tools/attach` is implemented; `areal/thread/observe` remains a proposal. Discover attachment through the `areal/capabilities` method list, `features.browserToolAttachment`, and `browserToolBundles`. Do not rewrite existing fixed Codex compatibility definitions.
 
 | Method | Request | Meaning |
 |---|---|---|
 | areal/thread/tools/attach | requestId, threadId, expectedToolsetRevision, bundleId=areal.browser.v1 | Trusted interact+tools client; idle Thread; atomic append-only deployed bundle and current host binding; conflict on different same-name schema; idempotent |
 | areal/thread/observe | threadId | Atomic snapshot plus deltas with observe permission, without ToolHost rebinding; existing resume semantics unchanged |
 
-toolsetRevision is optional with legacy default0. If storage cannot accept the additive field, explicitly version the snapshot and disclose downgrade incompatibility. Never edit persisted JSON by hand. Existing dynamicTools entries are immutable; only the deployed bundle may be appended. No arbitrary replacement/deletion. Changed input under the same requestId conflicts. Busy Threads or another active host are not stolen.
+`Thread.toolsetRevision` is optional and defaults to 0 for older Threads. Core defines the fixed `areal.browser.v1` bundle; the request carries no tool schema. Attachment returns `threadId`, `toolsetRevision`, and `bundleId`. The same principal, method, `requestId`, and input replay the original durable Thread receipt; changed input conflicts. Busy or archived Threads, stale revisions, a same-name different definition, or another live host conflict. Existing `dynamicTools` entries and history remain intact. Attachment neither ends nor starts a Turn.
+
+After commit, Core emits `areal/thread/tools/attached` with `threadId`, the new `toolsetRevision`, and the complete `dynamicTools` array. The GUI projects that authoritative event onto an open Thread, and an older snapshot cannot undo the newer toolset. Tool callbacks remain checked by the bound Core host and native page claim, not a potentially stale GUI projection.
+
+The current GUI host executes only `browser_v1`. A Thread with other existing client dynamic tools allows attachment only on the same live original host connection. Once that host disconnects, rebinding to a GUI callback that cannot execute those tools is refused. Their definitions and history remain readable.
+
+Storage version increases from 12 to 13. The new Core reads older Threads with revision 0. Older Core binaries reject version 13 records; back up data and use a Core that understands version 13 rather than editing the version field or dropping tool history. The GUI hides activation when an older Core does not advertise support.
 
 New GUI Threads can register the dispatcher; legacy activation is explicit. CLI/TUI use observe rather than becoming an Electron driver. Authorized submissions to a GUI-hosted Thread retain that host. With no GUI, Browser is unavailable rather than a new Chrome. Child agents do not inherit parent browser control by default.
 

@@ -155,6 +155,7 @@ impl Engine {
             turns: Vec::new(),
             context_checkpoint: None,
             dynamic_tools,
+            toolset_revision: 0,
         };
         if let Some(data) = &mut thread.desktop {
             for receipt in &mut data.receipts {

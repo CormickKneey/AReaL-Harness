@@ -4,6 +4,23 @@ use serde::{Deserialize, Serialize};
 pub const API_VERSION: &str = "areal.core.v1";
 pub const MAX_SUBSCRIPTIONS: usize = 128;
 
+pub const BROWSER_V1_BUNDLE: &str = "areal.browser.v1";
+
+/// 已部署的 Browser 工具包；追加请求只选择此身份，不接受客户端定义。
+pub fn browser_v1_tool() -> super::ToolDefinition {
+    super::ToolDefinition {
+        name: "browser_v1".into(),
+        description: "Inspect the user-authorized live page in this desktop thread. Call describe first; only listed operations are available.".into(),
+        input_schema: serde_json::json!({
+            "type":"object",
+            "properties":{"operation":{"type":"string"},"parameters":{"type":"object"}},
+            "required":["operation","parameters"],
+            "additionalProperties":false
+        }),
+        output_schema: None,
+    }
+}
+
 pub const METHODS: &[&str] = &[
     "initialize",
     "model/list",
@@ -16,10 +33,20 @@ pub const METHODS: &[&str] = &[
     "turn/interrupt",
     "areal/capabilities",
     "areal/subscription/remove",
+    "areal/thread/tools/attach",
     "areal/agent/spawn",
     "areal/agent/list",
     "areal/tool/acknowledge",
 ];
+
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AttachBrowserTools {
+    pub request_id: String,
+    pub thread_id: String,
+    pub expected_toolset_revision: u64,
+    pub bundle_id: String,
+}
 pub const NOTIFICATIONS: &[&str] = &[
     "areal/goal/updated",
     "areal/goal/cleared",
@@ -40,6 +67,7 @@ pub const NOTIFICATIONS: &[&str] = &[
     "areal/task/updated",
     "areal/interaction/requested",
     "areal/interaction/resolved",
+    "areal/thread/tools/attached",
     "areal/process/updated",
     "areal/server/draining",
     "areal/server/configurationChanged",

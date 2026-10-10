@@ -2,9 +2,9 @@
 
 # Browser v1 契约
 
-**设计契约，部分实现。** 当前实现新建 Browser-enabled Thread 对已有原生预览页的显式认领、`describe`/`observe`/`capture`、本机接管撤销及宿主缺失拒绝；其余操作仍是提案。下文未来接口不表示已开放。不改变现有 [Core UNKNOWN 规则](core.md#dynamic-tools)。
+**设计契约，部分实现。** 当前实现新建 Browser-enabled Thread 或空闲旧 Thread 接入 Browser 工具后对已有原生预览页的显式认领、`describe`/`observe`/`capture`、本机接管撤销及宿主缺失拒绝；其余操作仍是提案。下文未来接口不表示已开放。不改变现有 [Core UNKNOWN 规则](core.md#dynamic-tools)。
 
-当前实现从新聊天 Composer 的“浏览器”开关注册固定 `browser_v1` 工具包。用户打开当前聊天的预览页后点击“让 Agent 检查当前页”，Main 在原 WebContentsView 上认领并经认证服务连接登记；模型回调由该 Thread 已绑定的 Core 连接承接。工具定义的 `operation:string` 保持可扩展包络；二次校验接受 `describe`（空参数）、`observe`（`pageId`、可选文档范围、Ref 与预算）及 `capture`（当前视口）。观察使用有界原生 AX 读取，按实际 Frame 覆盖状态报告不可读部分，并在可用时提供 role、name、state、value 与父节点关联。Ref 绑定原生节点和代次；预算截断本身不使被省略的存活 Ref 失效。结果 URL 去除查询和片段。截图限制在 800 万像素、单边 4096 像素和 2 MiB PNG，使用现有 Core Blob 和工具媒体通道交给模型与聊天。已知敏感表单或不可读 Frame 存在时拒绝自动截图；这不是截图遮罩，也无法识别所有敏感内容。未实现动作、旧 Thread 接入或持久 Profile。人工接管、导航、Core/宿主换代会撤销读取；在途取消或超时不会自动重试。
+当前实现从新聊天 Composer 的“浏览器”开关注册固定 `browser_v1` 工具包；空闲旧 Thread 可在预览中启用同一工具包。用户打开当前聊天的预览页后点击“让 Agent 检查当前页”，Main 在原 WebContentsView 上认领并经认证服务连接登记；模型回调由该 Thread 已绑定的 Core 连接承接。工具定义的 `operation:string` 保持可扩展包络；二次校验接受 `describe`（空参数）、`observe`（`pageId`、可选文档范围、Ref 与预算）及 `capture`（当前视口）。观察使用有界原生 AX 读取，按实际 Frame 覆盖状态报告不可读部分，并在可用时提供 role、name、state、value 与父节点关联。Ref 绑定原生节点和代次；预算截断本身不使被省略的存活 Ref 失效。结果 URL 去除查询和片段。截图限制在 800 万像素、单边 4096 像素和 2 MiB PNG，使用现有 Core Blob 和工具媒体通道交给模型与聊天。已知敏感表单或不可读 Frame 存在时拒绝自动截图；这不是截图遮罩，也无法识别所有敏感内容。未实现动作或持久 Profile。人工接管、导航、Core/宿主换代会撤销读取；在途取消或超时不会自动重试。
 
 已知敏感内容检查和视口测量在 Electron 隔离世界运行，网页脚本不能替换检查所用的 DOM 查询方法或视口 getter。未知敏感内容仍可能无法识别；网页始终是不可信输入。
 
@@ -177,14 +177,20 @@ Core 的4 MiB WS帧上限是全链路实际约束；适配器更大的本地帧�
 
 ## 10. 旧 Thread 与多客户端：新增 Core 接口
 
-下列 API 均为**提案**，必须通过 capability 发现，不修改固定 Codex 兼容 schema 的既有定义。
+`areal/thread/tools/attach` 已实现；`areal/thread/observe` 仍为设计提案。客户端须通过 `areal/capabilities` 的方法列表、`features.browserToolAttachment` 和 `browserToolBundles` 发现当前部署能力，不修改固定 Codex 兼容 schema 的既有定义。
 
 | 方法 | 请求 | 语义 |
 |---|---|---|
 | `areal/thread/tools/attach` | requestId, threadId, expectedToolsetRevision, bundleId=`areal.browser.v1` | 仅 interact+tools 的可信部署客户端；Thread 空闲；原子追加部署固定工具包并绑定当前宿主；同名不同schema冲突；重复返回原结果 |
 | `areal/thread/observe` | threadId | 原子历史/状态快照+后续增量；只需 observe 权限；不重绑 ToolHost，不改变现有 `thread/resume` 行为 |
 
-附加 `toolsetRevision` 可选字段，旧 Thread缺省0；如当前存储格式不能兼容新增字段则显式提升格式并说明旧二进制不可读。禁止静默编辑持久 JSON。原始 dynamicTools定义保持不变，只允许追加一个部署登记包；不提供任意删除/替换工具接口。相同 requestId不同请求冲突。活跃或其他宿主占用时不 steal，返回结构化 busy/conflict。
+`Thread.toolsetRevision` 可选，旧 Thread 缺省 0。固定 `areal.browser.v1` 包由 Core 定义；请求不传工具 schema。附加返回 `threadId`、`toolsetRevision`、`bundleId`。同一主体、方法和 `requestId` 的相同请求从 Thread 内持久回执返回原结果；输入不同返回冲突。忙碌、存档、版本不符、同名不同定义或其他仍在线的宿主返回冲突。原始 `dynamicTools` 和历史保持原样，只追加部署包，不提供任意删除或替换接口；附加不结束 Turn 或发起新 Turn。
+
+提交后 Core 发出 `areal/thread/tools/attached`，包含 `threadId`、新 `toolsetRevision` 与完整 `dynamicTools`；GUI 用该权威事件更新已有 Thread 投影，旧快照不能覆盖更新版本。工具回调仍由绑定的 Core 宿主和原生页认领校验，不依赖可能滞后的 GUI 投影。
+
+当前 GUI 宿主只执行 `browser_v1`。含其他既有客户端动态工具的 Thread 仅在同一在线原宿主连接上允许追加；原宿主已断开时拒绝改绑，以免把那些工具交给不能执行它们的 GUI 回调。原有定义和历史仍可读。
+
+存储版本从 12 提升至 13；新 Core 用默认 0 读取旧 Thread。旧 Core 拒绝 13 版记录；回退前应备份数据，并使用支持版本 13 的 Core 读取，禁止改写版本号或删去工具历史。GUI 在旧 Core 未公布能力时隐藏启用入口。
 
 新建 GUI Thread 可登记固定 Dispatcher；旧Thread必须由用户启用。CLI/TUI 作为观察者使用新 observe，不实现 Electron Driver。由已有 GUI ToolHost 服务的Thread可继续通过授权Core入口提交消息；GUI不存在时明确 Browser unavailable，不启动另一个Chrome。子Agent默认不继承父Thread浏览控制；共享只读历史不等于控制授权。
 

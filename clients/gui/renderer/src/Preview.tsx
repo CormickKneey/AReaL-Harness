@@ -18,6 +18,8 @@ export function Preview({
   initialRequest = 0,
   fullAddress = false,
   browserEnabled = false,
+  browserAvailable = false,
+  toolsetRevision = 0,
 }: {
   services: PlatformServices;
   projectId: string;
@@ -26,6 +28,8 @@ export function Preview({
   initialRequest?: number;
   fullAddress?: boolean;
   browserEnabled?: boolean;
+  browserAvailable?: boolean;
+  toolsetRevision?: number;
   onError: (s: string) => void;
 }) {
   const owner = `${projectId}:${threadId}`;
@@ -206,6 +210,14 @@ export function Preview({
                 finally { if (mounted.current && current.current === owner) setClaiming(false); }
               })();
             }}>让 Agent 检查当前页</Button>}
+      </div>}
+      {!browserEnabled && browserAvailable && state.url && <div className="preview-viewport-toolbar">
+        <Button type="button" size="sm" disabled={claiming} onClick={() => {
+          setClaiming(true);
+          void call(services, 'attachBrowser', { projectId, threadId, expectedToolsetRevision: toolsetRevision })
+            .catch((e) => { if (mounted.current && current.current === owner) setError(e instanceof Error ? e.message : String(e)); })
+            .finally(() => { if (mounted.current && current.current === owner) setClaiming(false); });
+        }}>在当前聊天启用浏览器</Button>
       </div>}
       {responsive && (
         <div className="preview-viewport-toolbar">

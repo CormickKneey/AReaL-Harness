@@ -431,7 +431,11 @@ pub struct Thread {
     pub context_checkpoint: Option<ContextCheckpoint>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dynamic_tools: Vec<ToolDefinition>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub toolset_revision: u64,
 }
+
+fn is_zero(value: &u64) -> bool { *value == 0 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RpcError {

@@ -42,6 +42,8 @@ function projectCoreCapabilities(binary, capabilities) {
     runtimeAvailable: capabilities ? capabilities.runtime != null : null,
     features: capabilities ? {
       conversation: supports('thread/start', 'turn/start'),
+      browserToolAttachment: supports('areal/thread/tools/attach') && capabilities?.features?.browserToolAttachment === true
+        && capabilities?.browserToolBundles?.some(bundle => bundle.bundleId === 'areal.browser.v1') === true,
       goals: supports('areal/goal/create', 'areal/goal/get'),
       tasks: supports('areal/task/create', 'areal/inbox/list'),
       processes: supports('areal/process/start', 'areal/process/list', 'areal/process/get', 'areal/process/read', 'areal/process/write', 'areal/process/closeStdin', 'areal/process/wait', 'areal/process/terminate', 'areal/process/resize'),
