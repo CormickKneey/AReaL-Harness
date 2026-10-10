@@ -21,8 +21,9 @@ function validateEdit(property, value) {
   } else if (property === 'line-height') {
     if (!length.test(value) && !/^(?:normal|[1-9](?:\.\d{1,2})?)$/.test(value)) throw new Error('无效行高');
   } else if (!length.test(value)) throw new Error('无效尺寸或间距');
-  // These forms are excluded even if a future vocabulary is widened.
-  if (/(?:url\s*\(|@import|expression\s*\(|javascript:|[;{}\\])/i.test(value)) throw new Error('页面试改不能包含脚本或外部资源');
+  // Text is assigned to an existing text node, never parsed as CSS or HTML.
+  if (property !== 'text' && /(?:url\s*\(|@import|expression\s*\(|javascript:|[;{}\\])/i.test(value))
+    throw new Error('页面试改不能包含脚本或外部资源');
 }
 
 // Fixed trusted code runs in a Chromium isolated world against a node resolved

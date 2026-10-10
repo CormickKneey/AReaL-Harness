@@ -925,13 +925,58 @@ class CorePreview {
     const page = this.page(projectId, threadId, pageId), trial = page?.styleTrial;
     if (!trial || trial.trialId !== trialId || trial.stale || trial.busy || !trial.cursor)
       throw new Error('请先在当前页面完成试改');
+    const c = page.view?.webContents;
+    let read = null;
+    const same = () => page.styleTrial === trial && !trial.stale && !trial.busy
+      && this.pageStillOwned(page) && this.owns(projectId, threadId)
+      && page.control === 'human' && !page.claiming && page.activeRead === read && !page.activeAction
+      && !page.activePrepare && page.pageGeneration === trial.pageGeneration
+      && page.documentGeneration === trial.documentEpoch && page.controlEpoch === trial.controlEpoch
+      && page.view?.webContents === c && c && !c.isDestroyed() && !c.isDevToolsOpened()
+      && c.id === trial.nativeWebContentsId && c.getURL() === trial.sourceUrl;
+    if (!same() || c.debugger.isAttached()) throw new Error('试改目标已变化，请刷新页面');
+    const deadline = performance.now() + 3000;
+    let rejectCancel;
+    const cancelled = new Promise((_, reject) => { rejectCancel = reject; });
+    void cancelled.catch(() => {});
+    read = { requestId: randomUUID(), cancel: () => rejectCancel(new Error('试改截图已取消')) };
+    page.activeRead = read;
+    const bounded = promise => Promise.race([nativeWithin(promise, deadline), cancelled]);
+    let attached = false, cssX, cssY, viewportKey;
+    try {
+      const viewport = await bounded(readIsolated(c, viewportScript));
+      if (!same()) throw new Error('试改目标已变化，请刷新页面');
+      viewportKey = viewportFacts(this.window, page, viewport).key;
+      c.debugger.attach('1.3'); attached = true;
+      const send = (method, params = {}) => bounded(c.debugger.sendCommand(method, params));
+      const [frames, box] = await Promise.all([
+        send('Page.getFrameTree'), send('DOM.getBoxModel', { backendNodeId: trial.backendNodeId }),
+      ]);
+      if (!same() || !frames.frameTree?.frame?.id) throw new Error('试改目标已变化，请刷新页面');
+      const quad = box.model?.border;
+      if (!Array.isArray(quad) || quad.length !== 8 || !quad.every(Number.isFinite))
+        throw new Error('试改目标已离开页面，请刷新页面');
+      const xs = [quad[0], quad[2], quad[4], quad[6]];
+      const ys = [quad[1], quad[3], quad[5], quad[7]];
+      const left = Math.max(0, Math.min(...xs)), right = Math.min(viewport.width, Math.max(...xs));
+      const top = Math.max(0, Math.min(...ys)), bottom = Math.min(viewport.height, Math.max(...ys));
+      if (right <= left || bottom <= top) throw new Error('试改目标已离开截图视口，请刷新页面');
+      cssX = (left + right) / 2; cssY = (top + bottom) / 2;
+    } finally {
+      if (attached && !c.isDestroyed() && c.debugger.isAttached()) c.debugger.detach();
+      if (page.activeRead === read) page.activeRead = null;
+      read = null;
+    }
+    if (!same() || viewportFacts(this.window, page, await nativeWithin(readIsolated(c, viewportScript), deadline)).key !== viewportKey)
+      throw new Error('试改目标已变化，请刷新页面');
     const capture = await this.captureRegion(projectId, threadId, pageId);
     try {
-      // A new privacy-guarded bitmap and a second native hit check bind the
-      // after image to the same private node, not to a Renderer selector.
-      const original = trial.evidence.bounds;
-      const x = Math.min(capture.viewport.bitmapWidth - 1, Math.round(original.x + original.width / 2));
-      const y = Math.min(capture.viewport.bitmapHeight - 1, Math.round(original.y + original.height / 2));
+      // Recheck the current private node against a new privacy-guarded bitmap.
+      // The original screenshot coordinates are invalid after a layout edit.
+      if (!same() || page.annotationCapture?.viewportKey !== viewportKey)
+        throw new Error('截图期间试改目标已变化，请刷新页面');
+      const x = Math.min(capture.viewport.bitmapWidth - 1, Math.floor(cssX * capture.viewport.bitmapWidth / capture.viewport.width));
+      const y = Math.min(capture.viewport.bitmapHeight - 1, Math.floor(cssY * capture.viewport.bitmapHeight / capture.viewport.height));
       const element = await this.selectElement(projectId, threadId, pageId, capture.captureId,
         x, y, trial.backendNodeId);
       if (!element.available || page.styleTrial !== trial || trial.stale)
@@ -1688,18 +1733,12 @@ class CorePreview {
       page.dialogPending = false;
       page.activeSelection?.cancel();
       if (main) {
-        // A new document discards its own inline trial values. A same-document
-        // app navigation can retain them; reload that route to discard the
-        // trial before a visual check can treat it as source behavior.
+        // A new document discards its inline trial values. A same-document
+        // navigation may retain them, so fence the trial until an explicit
+        // refresh; never auto-reload and discard an unsaved form.
         if (page.styleTrial) {
-          if (inPlace) {
-            const trial = page.styleTrial;
-            trial.stale = true;
-            queueMicrotask(() => {
-              if (this.pageStillOwned(page) && page.styleTrial === trial && !c.isDestroyed()
-                && page.control === 'human') c.reload();
-            });
-          } else page.styleTrial = null;
+          if (inPlace) page.styleTrial.stale = true;
+          else page.styleTrial = null;
         }
         page.activeRead?.cancel();
         if (page.approvedNavigation === url) page.approvedNavigation = null;

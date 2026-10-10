@@ -325,9 +325,13 @@ export function Preview({
         const cleared = await services.preview({ operation: 'clearStyleTrial', projectId, threadId,
           pageId: draft.before.pageId, trialId: draft.trialId });
         if (!cleared.cleared) throw new Error('试改目标已变化，请刷新页面后重新核查');
+        if (!mounted.current || current.current !== owner || styleTrialRef.current !== draft)
+          throw new Error('试改所属聊天已变化');
         draft = { ...draft, cleared: true };
         updateStyleTrial(draft);
       }
+      if (!mounted.current || current.current !== owner || styleTrialRef.current !== draft)
+        throw new Error('试改所属聊天已变化');
       const capture = draft.before;
       const description = `页面试改意图（已清除临时效果，未写入代码）\nURL: ${capture.url}\n截图时间: ${capture.capturedAt}\nCore: ${capture.coreInstanceId}; Page: ${capture.pageId}; pageGeneration: ${capture.pageGeneration}; documentEpoch: ${capture.documentEpoch}; controlEpoch: ${capture.controlEpoch}; viewportRevision: ${capture.viewportRevision}\n选择时元素: role=${JSON.stringify(draft.element.role)}; name=${JSON.stringify(draft.element.name)}; historicalRef=${draft.element.evidenceRef}; sourceMapping=${draft.element.sourceMapping}; React 源码位置未知。Agent 必须重新 observe 并取得新 Ref。\n属性值: ${JSON.stringify(draft.edits)}\n前后证据: browser-style-before-${capture.captureId}.png; browser-style-after-${draft.after!.capture.captureId}.png\n用户意图: ${draft.intent.trim()}\n最终验证必须在清除试改后基于真实页面执行。`;
       const draftKey = `areal-gui:draft:${projectId}:${threadId}`;
