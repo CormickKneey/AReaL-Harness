@@ -220,6 +220,7 @@ class CorePreview {
     const page = this.pages.get(key);
     if (!page) return;
     this.revoke(page);
+    page.activeRead?.cancel();
     this.pages.delete(key);
     this.closeNative(page);
     if (this.owner === key) { this.owner = null; this.view = null; }
@@ -277,7 +278,7 @@ class CorePreview {
     page.view = null;
   }
   pinned(page) {
-    return !page.view || page.crashed || page.control !== 'human' || page.requestedVisible
+    return !page.view || page.crashed || page.control !== 'human' || page.requestedVisible || !!page.annotationCaptureId
       || page.activeAction || page.activeRead || page.activePrepare || page.plans.size > 0
       || page.inputPending.size > 0 || page.heldButtons.size > 0 || page.heldKeys.size > 0
       || page.dialogPending || page.fileHandoff || (page.downloads?.size ?? 0) > 0;
@@ -402,10 +403,11 @@ class CorePreview {
     if (!page?.view || page.crashed || page.view.webContents.isDestroyed() || !page.view.webContents.getURL()
       || !this.owns(projectId, threadId)) throw new Error('当前聊天没有可认领的页面');
     if (page.control === 'transferring') throw new Error('原生输入尚未收敛，请停止或关闭页面');
+    if (page.activeRead) throw new Error('页面截图或观察尚未结束');
     // Any capture guard left by a revoked read observed only a private boolean;
     // discard it before re-enabling Agent observations.
     await readIsolated(page.view.webContents, clearCaptureGuardScript);
-    if (page.control !== 'human' || !this.pageStillOwned(page)) throw new Error('页面控制状态已变化');
+    if (page.control !== 'human' || !this.pageStillOwned(page) || page.activeRead) throw new Error('页面控制状态已变化');
     page.control = 'agent'; page.controlEpoch++; page.refs.clear(); page.plans.clear();
     page.lastObservation = null; page.needsObservation = true;
     this.changed(page, 'controlChanged');
@@ -417,6 +419,73 @@ class CorePreview {
     const page = this.page(projectId, threadId, pageId);
     if (page) this.revoke(page);
     return this.state(page);
+  }
+  async captureRegion(projectId, threadId, pageId) {
+    const page = this.page(projectId, threadId, pageId);
+    if (!page || page.id !== pageId || !this.owns(projectId, threadId)) throw new Error('页面已关闭');
+    // A requested takeover is not human control until the native input barrier completes.
+    if (page.control === 'transferring') await this.convergeInput(page);
+    if (!page.view || !this.pageStillOwned(page)) throw new Error('页面已关闭');
+    const c = page.view.webContents;
+    const bounds = page.view.getBounds();
+    if (page.control !== 'human' || page.crashed || c.isDestroyed() || c.isDevToolsOpened()
+      || !this.window.isVisible() || this.window.isMinimized() || !page.view.getVisible()
+      || this.owner !== pageKey(page.coreInstanceId, projectId, threadId, pageId)
+      || bounds.width <= 0 || bounds.height <= 0 || !c.getURL()
+      || page.activeRead || page.activePrepare || page.activeAction || page.annotationCaptureId)
+      throw new Error('请先接管并显示当前页面，再截图标注');
+    const epoch = page.controlEpoch, documentEpoch = page.documentGeneration, sourceUrl = c.getURL();
+    let cancel;
+    const cancelled = new Promise((_, reject) => { cancel = () => reject(new Error('页面截图已取消或超时')); });
+    const read = { requestId: randomUUID(), cancel };
+    page.activeRead = read;
+    const timer = setTimeout(cancel, 10000);
+    const bounded = promise => Promise.race([promise, cancelled]);
+    const guardToken = randomUUID();
+    const guardSequence = page.nextGuardSequence = (page.nextGuardSequence ?? 0) + 1;
+    const valid = () => page.control === 'human' && page.controlEpoch === epoch
+      && page.documentGeneration === documentEpoch && this.pageStillOwned(page) && this.owns(projectId, threadId)
+      && !c.isDestroyed() && c.getURL() === sourceUrl && page.view?.getVisible()
+      && this.owner === pageKey(page.coreInstanceId, projectId, threadId, pageId)
+      && page.activeRead === read && this.window.isVisible() && !this.window.isMinimized();
+    let changed = true;
+    try {
+      const viewport = await bounded(readIsolated(c, viewportScript));
+      if (!valid() || ![viewport.width, viewport.height, viewport.scrollX, viewport.scrollY, viewport.deviceScaleFactor]
+        .every(Number.isFinite) || viewport.width <= 0 || viewport.height <= 0 || viewport.deviceScaleFactor <= 0)
+        throw new Error('页面截图条件已变化');
+      const zoom = c.getZoomFactor();
+      const viewportKey = JSON.stringify([viewport.width, viewport.height, viewport.scrollX, viewport.scrollY, zoom, viewport.deviceScaleFactor]);
+      if (page.viewportKey !== viewportKey) { page.viewportKey = viewportKey; page.viewportRevision++; }
+      if (await bounded(readIsolated(c, captureGuardStartScript(guardToken, guardSequence))) !== true)
+        throw new Error('页面截图保护不可用');
+      if (await bounded(readIsolated(c, sensitiveCaptureScript)) !== false) throw new Error('页面包含敏感输入框，无法截图标注');
+      const image = await bounded(c.capturePage());
+      if (!valid() || await bounded(readIsolated(c, sensitiveCaptureScript)) !== false)
+        throw new Error('页面截图条件已变化');
+      changed = await bounded(readIsolated(c, captureGuardStopScript(guardToken, guardSequence)));
+      if (changed !== false || !valid() || c.getZoomFactor() !== zoom
+        || JSON.stringify(await bounded(readIsolated(c, viewportScript))) !== JSON.stringify(viewport))
+        throw new Error('页面在截图期间发生变化，请重试');
+      const size = image.getSize();
+      if (size.width <= 0 || size.height <= 0 || size.width * size.height > 8_000_000
+        || size.width > 4096 || size.height > 4096) throw new Error('截图像素超出限制');
+      const png = image.toPNG();
+      if (png.length > 2 * 1024 * 1024) throw new Error('截图大小超出限制');
+      if (!valid()) throw new Error('页面截图条件已变化');
+      const captureId = randomUUID();
+      page.annotationCaptureId = captureId;
+      return { captureId, projectId, threadId, pageId,
+        coreInstanceId: page.coreInstanceId, pageGeneration: page.pageGeneration,
+        documentEpoch, controlEpoch: epoch, viewportRevision: page.viewportRevision,
+        url: observationUrl(c.getURL()), capturedAt: new Date().toISOString(),
+        viewport: { ...viewport, pageZoom: zoom, bitmapWidth: size.width, bitmapHeight: size.height },
+        mimeType: 'image/png', imageBase64: png.toString('base64') };
+    } finally {
+      clearTimeout(timer);
+      if (changed !== false && valid()) await nativeWithin(readIsolated(c, clearCaptureGuardScript), performance.now() + 1000).catch(() => {});
+      if (page.activeRead === read) page.activeRead = null;
+    }
   }
   cancelRead({ projectId, threadId, pageId, requestId, hostGeneration }) {
     if (hostGeneration !== this.hostGeneration) return;
@@ -977,6 +1046,7 @@ class CorePreview {
       if (!this.pageStillOwned(page)) return;
       page.dialogPending = false;
       if (main) {
+        page.activeRead?.cancel();
         if (page.approvedNavigation === url) page.approvedNavigation = null;
         else this.revoke(page);
         page.documentGeneration++;
@@ -1051,7 +1121,7 @@ class CorePreview {
       page = this.page(request.projectId, request.threadId);
       key = page && pageKey(page.coreInstanceId, request.projectId, request.threadId, page.id);
     }
-    if (request.pageId && !page && request.operation !== 'state') throw new Error('页面已关闭');
+    if (request.pageId && !page && !['state', 'endRegion'].includes(request.operation)) throw new Error('页面已关闭');
     if (request.operation === 'subscribe') return this.snapshot(request.projectId, request.threadId);
     // A read must not touch LRU order or publish another metadata event.
     if (request.operation === 'state') return page ? this.state(page)
@@ -1060,6 +1130,15 @@ class CorePreview {
       if (!page) return this.state(null);
       if (page.origin !== 'agent' && request.userIntent !== true) throw new Error('关闭人工页面需要明确用户操作');
       this.release(key); return this.state(this.page(request.projectId, request.threadId));
+    }
+    if (request.operation === 'captureRegion')
+      return this.captureRegion(request.projectId, request.threadId, request.pageId);
+    if (request.operation === 'endRegion') {
+      if (!page) return this.state(null);
+      if (!this.owns(request.projectId, request.threadId) || page.annotationCaptureId !== request.captureId)
+        throw new Error('标注页面已变化');
+      page.annotationCaptureId = null;
+      return this.state(page);
     }
     if (request.operation === 'hide') {
       if (page) page.requestedVisible = false;
