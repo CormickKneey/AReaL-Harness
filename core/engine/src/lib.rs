@@ -597,6 +597,10 @@ impl Engine {
         if self.limits.max_history_bytes > 0
             && (bytes.len() as u64)
                 .saturating_add(thread.history_archive.as_ref().map_or(0, |a| a.bytes))
+                .saturating_add(match &thread.conversation {
+                    Some(areal_protocol::Conversation::Fork { history_seed, .. }) => history_seed.logical_bytes as u64,
+                    _ => 0,
+                })
                 > self.limits.max_history_bytes as u64
         {
             return Err(Error::Exhausted(

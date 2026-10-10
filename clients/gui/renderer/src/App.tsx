@@ -1077,6 +1077,16 @@ function AppContent({ services }: { services: PlatformServices }) {
     !(thread && admitting) &&
     thread?.conversation?.kind !== "fork" &&
     !thread?.turns?.some((turn: Data) => turn.items?.length || turn.status === "inProgress");
+  const forkFromTurn = async (turnId: string) => {
+    if (!project || !thread) return;
+    const owner = project.id;
+    const sourceThreadId = thread.id;
+    const route = `${owner}:${sourceThreadId}`;
+    if (!window.confirm("创建分支只复制此轮次及之前的对话历史。项目文件保持当前状态，分支与原会话共享工作区。继续创建？")) return;
+    const result = await action("fork", { projectId: owner, sourceThreadId,
+      anchor: { turnId, boundary: "after" }, workspaceMode: "sharedCurrent" });
+    if (activeConversation.current === route) await open(owner, result.threadId);
+  };
   const taskActions = <DropdownMenu>
                     <DropdownMenuTrigger
                       render={
@@ -1380,16 +1390,9 @@ function AppContent({ services }: { services: PlatformServices }) {
                           project={project}
                           thread={thread}
                           action={action}
-                          beforeTurns={thread.conversation?.kind === "fork" ? <ForkHistory projectId={project.id} thread={thread} action={resourceAction} /> : undefined}
-                          onFork={async turnId => {
-                            const owner = project.id;
-                            const sourceThreadId = thread.id;
-                            const route = `${owner}:${sourceThreadId}`;
-                            if (!window.confirm("创建分支只复制此轮次及之前的对话历史。项目文件保持当前状态，分支与原会话共享工作区。继续创建？")) return;
-                            const result = await action("fork", { projectId: owner, sourceThreadId,
-                              anchor: { turnId, boundary: "after" }, workspaceMode: "sharedCurrent" });
-                            if (activeConversation.current === route) await open(owner, result.threadId);
-                          }}
+                          beforeTurns={thread.conversation?.kind === "fork" ? <ForkHistory projectId={project.id} thread={thread} action={resourceAction}
+                            onFork={project.core?.features?.forkPreview === true && !thread.desktop?.archived ? forkFromTurn : undefined} /> : undefined}
+                          onFork={forkFromTurn}
                           dark={dark}
                           onLink={onLink}
                           onFile={openFile}
