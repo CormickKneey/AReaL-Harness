@@ -645,7 +645,9 @@ class CoreBackend {
         if (project.configurationChanges?.has(parameters.threadId)) {
           throw new Error('会话配置正在更新，请稍后再发送任务');
         }
-        const conflicting = pending.find(value => value.params.threadId === parameters.threadId);
+        const conflicting = method === 'areal/thread/fork'
+          ? pending.find(value => value.method === method && value.params.sourceThreadId === parameters.sourceThreadId)
+          : pending.find(value => value.params.threadId === parameters.threadId);
         if (conflicting) {
           throw new Error(this.awaitingResponses.has(conflicting)
             ? '当前操作正在等待响应，请稍后再试'
@@ -811,7 +813,13 @@ class CoreBackend {
           message: receipt.response?.error?.message,
         } }));
       }
-      const threadId = entry.params.threadId ?? receipt.threadId ?? receipt.result?.thread?.id;
+      const threadId = entry.params.threadId ?? receipt.threadId ?? receipt.result?.threadId ?? receipt.result?.thread?.id;
+      if (entry.method === 'areal/thread/fork' && threadId) {
+        // 创建收据属于新目标；保留结果给发起端的显式核对路径。
+        await this.changeOutcomes(project, outcomes => ({ ...outcomes, [entry.params.requestId]: {
+          accepted: true, method: entry.method, sourceThreadId: entry.params.sourceThreadId, threadId,
+        } }));
+      }
       if (entry.method === 'areal/thread/archive') await this.listThreads(project);
       if (threadId) await this.openThread(project, threadId);
       await this.changePending(project, pending => pending.filter(value => value !== entry));

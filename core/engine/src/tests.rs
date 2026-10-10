@@ -1,6 +1,67 @@
 use super::*;
 
 #[tokio::test]
+async fn fork_creation_faults_recover_only_committed_targets() {
+    for (stage, committed) in [
+        (store::ForkFault::BeforeSnapshot, false),
+        (store::ForkFault::AfterSnapshot, false),
+        (store::ForkFault::AfterTarget, true),
+        (store::ForkFault::AfterPersistError, true),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Engine::open(dir.path(), Arc::new(PendingModel), Limits::default()).unwrap();
+        let mut source = engine.create("/fixture".into()).await.unwrap();
+        let anchor = id();
+        source.turns.push(Turn {
+            started_at: None, completed_at: None, duration_ms: None, goal: None,
+            configuration: None, instruction_snapshot: None,
+            id: anchor.clone(), status: TurnStatus::Completed, error: None, usage: None,
+            items: vec![
+                Item::UserMessage { id: id(), content: vec![Input::text("known prefix")] },
+                Item::AgentMessage { id: id(), phase: None, text: "known answer".into() },
+            ],
+        });
+        // 不相关会话的账本满额不能抢先挡住 Fork 的原键查找。
+        let mut desktop = areal_protocol::desktop::DesktopState::default();
+        desktop.receipts = (0..1024).map(|index| areal_protocol::desktop::RequestReceipt {
+            identity: "other".into(), request_id: format!("old-{index}"),
+            method: "areal/turn/start".into(), digest: "old".into(), result: json!({}),
+        }).collect();
+        source.desktop = Some(desktop);
+        engine.persist(&source).await.unwrap();
+        engine.raw_cell(&source.id).await.unwrap().state.lock().await.thread = source.clone();
+        engine.store.set_fork_fault(stage);
+        let request = areal_protocol::desktop::ForkThread {
+            request_id: "stage-key".into(), source_thread_id: source.id.clone(),
+            anchor: areal_protocol::desktop::ForkAnchor { turn_id: anchor, boundary: "after".into() },
+            workspace_mode: "sharedCurrent".into(),
+        };
+        let replay = request.clone();
+        assert!(matches!(engine.fork_thread("owner".into(), request).await, Err(Error::Storage(_))));
+        let snapshots = std::fs::read_dir(dir.path().join("history"))
+            .map(|entries| entries.count()).unwrap_or(0);
+        assert_eq!(snapshots, if stage == store::ForkFault::BeforeSnapshot { 0 } else { 1 });
+        if stage == store::ForkFault::AfterPersistError {
+            let receipt = engine.find_request("owner", "stage-key").await.unwrap();
+            let target = receipt["data"][0]["result"]["threadId"].as_str().unwrap();
+            assert!(matches!(engine.start(target, vec![Input::text("must wait")]).await, Err(Error::Storage(_))));
+        }
+        engine.shutdown().await;
+        drop(engine);
+        let restored = Engine::open(dir.path(), Arc::new(PendingModel), Limits::default()).unwrap();
+        let receipts = restored.find_request("owner", "stage-key").await.unwrap();
+        assert_eq!(receipts["data"].as_array().unwrap().len(), usize::from(committed));
+        if committed {
+            let target = receipts["data"][0]["result"]["threadId"].as_str().unwrap();
+            assert_eq!(restored.fork_thread("owner".into(), replay).await.unwrap().id, target);
+        }
+        let threads = restored.list(None, 100, None).await.unwrap().0;
+        assert_eq!(threads.len(), if committed { 2 } else { 1 });
+        restored.shutdown().await;
+    }
+}
+
+#[tokio::test]
 async fn model_history_preserves_completion_batches_and_defers_tool_images() {
     let dir = tempfile::tempdir().unwrap();
     let engine = Engine::open(dir.path(), Arc::new(PendingModel), Limits::default()).unwrap();
