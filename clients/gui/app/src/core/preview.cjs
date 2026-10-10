@@ -197,6 +197,7 @@ class CorePreview {
     const page = this.pages.get(key);
     if (!page) return;
     this.revoke(page);
+    page.activeRead?.cancel();
     this.pages.delete(key);
     this.closeNative(page);
     if (this.owner === key) { this.owner = null; this.view = null; }
@@ -384,8 +385,12 @@ class CorePreview {
       || page.activeRead || page.activePrepare || page.activeAction || page.annotationCaptureId)
       throw new Error('请先接管并显示当前页面，再截图标注');
     const epoch = page.controlEpoch, documentEpoch = page.documentGeneration, sourceUrl = c.getURL();
-    const read = { requestId: randomUUID(), cancel: () => {} };
+    let cancel;
+    const cancelled = new Promise((_, reject) => { cancel = () => reject(new Error('页面截图已取消或超时')); });
+    const read = { requestId: randomUUID(), cancel };
     page.activeRead = read;
+    const timer = setTimeout(cancel, 10000);
+    const bounded = promise => Promise.race([promise, cancelled]);
     const guardToken = randomUUID();
     const guardSequence = page.nextGuardSequence = (page.nextGuardSequence ?? 0) + 1;
     const valid = () => page.control === 'human' && page.controlEpoch === epoch
@@ -395,22 +400,22 @@ class CorePreview {
       && page.activeRead === read && this.window.isVisible() && !this.window.isMinimized();
     let changed = true;
     try {
-      const viewport = await readIsolated(c, viewportScript);
+      const viewport = await bounded(readIsolated(c, viewportScript));
       if (!valid() || ![viewport.width, viewport.height, viewport.scrollX, viewport.scrollY, viewport.deviceScaleFactor]
         .every(Number.isFinite) || viewport.width <= 0 || viewport.height <= 0 || viewport.deviceScaleFactor <= 0)
         throw new Error('页面截图条件已变化');
       const zoom = c.getZoomFactor();
       const viewportKey = JSON.stringify([viewport.width, viewport.height, viewport.scrollX, viewport.scrollY, zoom, viewport.deviceScaleFactor]);
       if (page.viewportKey !== viewportKey) { page.viewportKey = viewportKey; page.viewportRevision++; }
-      if (await readIsolated(c, captureGuardStartScript(guardToken, guardSequence)) !== true)
+      if (await bounded(readIsolated(c, captureGuardStartScript(guardToken, guardSequence))) !== true)
         throw new Error('页面截图保护不可用');
-      if (await readIsolated(c, sensitiveCaptureScript) !== false) throw new Error('页面包含敏感输入框，无法截图标注');
-      const image = await c.capturePage();
-      if (!valid() || await readIsolated(c, sensitiveCaptureScript) !== false)
+      if (await bounded(readIsolated(c, sensitiveCaptureScript)) !== false) throw new Error('页面包含敏感输入框，无法截图标注');
+      const image = await bounded(c.capturePage());
+      if (!valid() || await bounded(readIsolated(c, sensitiveCaptureScript)) !== false)
         throw new Error('页面截图条件已变化');
-      changed = await readIsolated(c, captureGuardStopScript(guardToken, guardSequence));
+      changed = await bounded(readIsolated(c, captureGuardStopScript(guardToken, guardSequence)));
       if (changed !== false || !valid() || c.getZoomFactor() !== zoom
-        || JSON.stringify(await readIsolated(c, viewportScript)) !== JSON.stringify(viewport))
+        || JSON.stringify(await bounded(readIsolated(c, viewportScript))) !== JSON.stringify(viewport))
         throw new Error('页面在截图期间发生变化，请重试');
       const size = image.getSize();
       if (size.width <= 0 || size.height <= 0 || size.width * size.height > 8_000_000
@@ -427,7 +432,8 @@ class CorePreview {
         viewport: { ...viewport, pageZoom: zoom, bitmapWidth: size.width, bitmapHeight: size.height },
         mimeType: 'image/png', imageBase64: png.toString('base64') };
     } finally {
-      if (changed !== false && valid()) await readIsolated(c, clearCaptureGuardScript).catch(() => {});
+      clearTimeout(timer);
+      if (changed !== false && valid()) await nativeWithin(readIsolated(c, clearCaptureGuardScript), performance.now() + 1000).catch(() => {});
       if (page.activeRead === read) page.activeRead = null;
     }
   }
@@ -978,6 +984,7 @@ class CorePreview {
       if (!this.pageStillOwned(page)) return;
       page.dialogPending = false;
       if (main) {
+        page.activeRead?.cancel();
         if (page.approvedNavigation === url) page.approvedNavigation = null;
         else this.revoke(page);
         page.documentGeneration++;

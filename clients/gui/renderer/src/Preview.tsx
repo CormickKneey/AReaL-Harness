@@ -55,7 +55,8 @@ export function Preview({
   const [claiming, setClaiming] = useState(false);
   const [annotationState, setAnnotationState] = useState<{ owner: string; draft: RegionDraft | null }>(() => ({ owner, draft: regionDrafts.get(owner) ?? null }));
   const annotating = annotationState.owner === owner ? annotationState.draft : regionDrafts.get(owner) ?? null;
-  const [annotationBusy, setAnnotationBusy] = useState(false);
+  const [annotationBusyOwner, setAnnotationBusyOwner] = useState<string | null>(null);
+  const annotationBusy = annotationBusyOwner === owner;
   const annotationControl = useRef<HTMLButtonElement>(null);
   const annotatingRef = useRef(annotating);
   annotatingRef.current = annotating;
@@ -204,18 +205,18 @@ export function Preview({
   };
   const cancelAnnotation = async () => {
     if (!annotating || annotationBusy) return;
-    setAnnotationBusy(true); setError("");
+    setAnnotationBusyOwner(owner); setError("");
     try {
       await services.preview({ operation: 'endRegion', projectId, threadId,
         pageId: annotating.capture.pageId, captureId: annotating.capture.captureId });
       updateAnnotation(null);
       if (mounted.current && current.current === owner) annotationControl.current?.focus();
     } catch (e) { if (mounted.current && current.current === owner) setError(e instanceof Error ? e.message : String(e)); }
-    finally { if (mounted.current && current.current === owner) setAnnotationBusy(false); }
+    finally { setAnnotationBusyOwner(value => value === owner ? null : value); }
   };
   const startAnnotation = async () => {
     if (annotationBusy || annotating) return;
-    setAnnotationBusy(true); setError("");
+    setAnnotationBusyOwner(owner); setError("");
     let captured: RegionDraft['capture'] | null = null;
     try {
       const pageId = stateRef.current.browser?.pageId;
@@ -242,11 +243,11 @@ export function Preview({
       if (captured) void services.preview({ operation: 'endRegion', projectId, threadId,
         pageId: captured.pageId, captureId: captured.captureId }).catch(() => {});
       if (mounted.current && current.current === owner) setError(e instanceof Error ? e.message : String(e));
-    } finally { if (mounted.current && current.current === owner) setAnnotationBusy(false); }
+    } finally { setAnnotationBusyOwner(value => value === owner ? null : value); }
   };
   const stageAnnotation = async (draft: RegionDraft) => {
     if (annotationBusy) return;
-    setAnnotationBusy(true); setError("");
+    setAnnotationBusyOwner(owner); setError("");
     try {
       const image = new Image();
       image.src = `data:image/png;base64,${draft.capture.imageBase64}`;
@@ -265,15 +266,17 @@ export function Preview({
       const draftKey = `areal-gui:draft:${projectId}:${threadId}`;
       if (sending.has(draftKey) || localStorage.getItem(`${draftKey}:pending`))
         throw new Error('当前聊天有结果待核对的发送；请先确认结果，再加入标注草稿');
+      // No await between reading the target draft and staging it. A chat switch
+      // or concurrent Composer edit cannot make an earlier snapshot overwrite it.
       const existing = localStorage.getItem(draftKey) ?? '';
       const files = [...(attachmentDrafts.get(draftKey) ?? []), new File([blob], `browser-region-${capture.captureId}.png`, { type: 'image/png' })];
-      await services.preview({ operation: 'endRegion', projectId, threadId,
-        pageId: capture.pageId, captureId: capture.captureId });
       const key = stageThreadDraft(projectId, threadId, [existing, description].filter(Boolean).join('\n\n'), files);
       window.dispatchEvent(new CustomEvent('areal-draft-change', { detail: key }));
       updateAnnotation(null);
-    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-    finally { setAnnotationBusy(false); }
+      await services.preview({ operation: 'endRegion', projectId, threadId,
+        pageId: capture.pageId, captureId: capture.captureId });
+    } catch (e) { if (mounted.current && current.current === owner) setError(e instanceof Error ? e.message : String(e)); }
+    finally { setAnnotationBusyOwner(value => value === owner ? null : value); }
   };
   useEffect(() => {
     const link = `${initialRequest}:${initialUrl}`;

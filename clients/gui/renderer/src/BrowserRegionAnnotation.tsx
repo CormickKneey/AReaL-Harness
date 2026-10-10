@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { Button } from './components/ui/button.js';
+import './BrowserRegionAnnotation.css';
 
 export interface RegionDraft {
   capture: {

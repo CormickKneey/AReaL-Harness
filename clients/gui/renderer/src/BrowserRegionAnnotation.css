@@ -1,0 +1,11 @@
+.browser-region-annotation { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; gap: 8px; padding: 12px; background: var(--color-background); overflow: auto; }
+.browser-region-annotation [role="status"] { font-size: 12px; overflow-wrap: anywhere; }
+.browser-region-image-wrap { position: relative; align-self: center; width: fit-content; max-width: 100%; border: 1px solid var(--color-border); line-height: 0; }
+.browser-region-image-wrap img { display: block; max-width: 100%; max-height: 55vh; width: auto; height: auto; cursor: crosshair; touch-action: none; user-select: none; }
+.browser-region-selection { position: absolute; box-sizing: border-box; border: 2px solid var(--color-foreground); background: color-mix(in srgb, var(--color-foreground) 16%, transparent); pointer-events: none; }
+.browser-region-annotation label { display: flex; flex-direction: column; gap: 4px; }
+.browser-region-coordinates { display: flex; gap: 8px; flex-wrap: wrap; }
+.browser-region-coordinates label { width: 85px; }
+.browser-region-coordinates input { width: 100%; }
+.browser-region-annotation textarea { min-height: 70px; resize: vertical; }
+.browser-region-actions { display: flex; gap: 8px; flex-wrap: wrap; }
