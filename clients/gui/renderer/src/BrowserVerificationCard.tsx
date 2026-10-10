@@ -28,6 +28,9 @@ export function BrowserVerificationCard({ thread, projectId, action, onReview, o
     ["observe", "capture"].includes(entry.item.arguments?.operation) && recordedResult(entry.item));
   const latest = browser.at(-1);
   const latestCapture = browser.filter(entry => entry.item.arguments?.operation === "capture").at(-1);
+  const diagnostics = entries.filter(entry => entry.item.tool === "browser_v1" &&
+    entry.item.arguments?.operation === "diagnostics" && recordedResult(entry.item));
+  const latestDiagnostics = diagnostics.at(-1);
   const writes = entries.filter(entry => verifiedWrittenFiles([entry.item]).size > 0);
   const change = writes.at(-1);
   const checks = entries.filter(entry => ["verify_command", "read_process"].includes(entry.item.tool)
@@ -62,6 +65,11 @@ export function BrowserVerificationCard({ thread, projectId, action, onReview, o
         {latestCapture && latestCapture !== latest && itemLink(latestCapture.item, "截图回执")}
         {capture && <SentAttachment part={{ type: "image", uri: capture.media.uri, name: "页面截图" }}
           projectId={projectId} threadId={thread.id} action={action} />}</div>
+      {latestDiagnostics && <div><dt className="font-medium">页面诊断</dt><dd>
+        {(() => { const result = recordedResult(latestDiagnostics.item)!;
+          return `${result.kind === "network" ? "网络" : "Console"} · ${result.events?.length ?? 0} 条 · ${result.loss ? "存在缺口" : "无已知缺口"}`;
+        })()}
+      </dd>{itemLink(latestDiagnostics.item, "诊断来源与回执")}</div>}
       <div><dt className="font-medium">视觉判断</dt><dd>{capture && capturedAfterChange ? "已采集截图，尚待判断" : "未验证当前改动"}</dd></div>
       <div><dt className="font-medium">源码差异</dt><dd>{change ? <>
         <span>{changedFiles.join("、")}</span>{" "}<Button size="sm" variant="ghost" onClick={() => onReview(change.turn.id)}>查看本轮差异</Button>

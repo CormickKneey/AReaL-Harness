@@ -33,6 +33,7 @@ function observationUrl(value) {
   return url.href;
 }
 const sensitive = /password|passcode|secret|token|api.?key|credit.?card|cvv|authorization|one.?time.?code|\botp\b|credential/i;
+const diagnosticSensitive = /password|passcode|secret|token|api.?key|credit.?card|cvv|authorization|bearer|cookie|session.?id|one.?time.?code|\botp\b|credential/i;
 const BROWSER_READ_WORLD = 1001;
 async function readIsolated(contents, code) {
   const result = await contents.executeJavaScriptInIsolatedWorld(BROWSER_READ_WORLD, [{ code }]);
@@ -54,6 +55,8 @@ const interactiveRoles = new Set(['button', 'link', 'textbox', 'textfield', 'sea
   'checkbox', 'radiobutton', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'tab', 'switch',
   'slider', 'spinbutton', 'option', 'listbox']);
 const MAX_REFS = 1000;
+const MAX_DIAGNOSTICS = 200;
+const MAX_DIAGNOSTIC_BYTES = 256 * 1024;
 const sensitiveCaptureScript = `(() => {
   const selector = 'input[type="password"],input[name*="token" i],input[name*="secret" i],input[name*="key" i]';
   const sensitiveAutocomplete = new Set(['current-password', 'new-password', 'cc-number', 'cc-csc', 'one-time-code']);
@@ -114,6 +117,20 @@ const clearCaptureGuardScript = `(() => {
 function safeText(value, limit = 500) {
   const text = String(value ?? '').slice(0, limit);
   return sensitive.test(text) ? '[redacted]' : text;
+}
+function diagnosticText(value, limit = 500) {
+  const text = String(value ?? '').slice(0, limit);
+  if (diagnosticSensitive.test(text)) return '[redacted]';
+  return text.replace(/https?:\/\/[^\s"'<>]+/gi, raw => {
+    try { return observationUrl(raw); } catch { return '[redacted URL]'; }
+  });
+}
+function diagnosticUrl(value) {
+  try {
+    const url = new URL(value);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return '[redacted URL]';
+    return diagnosticText(observationUrl(url.href), 500);
+  } catch { return '[redacted URL]'; }
 }
 function boundsWithinWindow(value, size) {
   if (
@@ -274,13 +291,15 @@ class CorePreview {
     for (const item of page.downloads ?? []) item.cancel();
     page.downloads?.clear();
     if (page.onDownload) c.session.removeListener('will-download', page.onDownload);
+    page.diagnosticsReady = false; page.diagnosticRequests?.clear();
+    page.claiming?.cancel();
     if (!this.window.isDestroyed()) this.window.contentView.removeChildView(page.view);
     if (!c.isDestroyed()) c.close();
     page.view = null;
   }
   pinned(page) {
     return !page.view || page.crashed || page.control !== 'human' || page.requestedVisible || !!page.annotationCaptureId
-      || page.activeAction || page.activeRead || page.activePrepare || page.plans.size > 0
+      || page.activeAction || page.activeRead || page.activePrepare || page.claiming || page.plans.size > 0
       || page.inputPending.size > 0 || page.heldButtons.size > 0 || page.heldKeys.size > 0
       || page.dialogPending || page.fileHandoff || (page.downloads?.size ?? 0) > 0;
   }
@@ -327,6 +346,7 @@ class CorePreview {
     if (page.control !== 'agent') return;
     // This local fence runs before any Core request and before awaiting native input.
     page.control = 'transferring'; page.controlEpoch++; page.refs.clear(); page.plans.clear();
+    this.clearDiagnostics(page, 'control_changed');
     page.lastObservation = null; page.needsObservation = true;
     page.view?.setVisible(false);
     page.activeRead?.cancel();
@@ -401,24 +421,60 @@ class CorePreview {
   revokeAll() { for (const page of this.pages.values()) this.revoke(page); }
   async claim(projectId, threadId, pageId) {
     const page = this.page(projectId, threadId, pageId);
-    if (!page?.view || page.crashed || page.view.webContents.isDestroyed() || !page.view.webContents.getURL()
+    if (!page?.view || page.crashed || page.view.webContents.isDestroyed() || page.view.webContents.isDevToolsOpened()
+      || !page.view.webContents.getURL()
       || !this.owns(projectId, threadId)) throw new Error('当前聊天没有可认领的页面');
-    if (page.control === 'transferring') throw new Error('原生输入尚未收敛，请停止或关闭页面');
-    if (page.activeRead) throw new Error('页面截图或观察尚未结束');
-    // Any capture guard left by a revoked read observed only a private boolean;
-    // discard it before re-enabling Agent observations.
-    await readIsolated(page.view.webContents, clearCaptureGuardScript);
-    if (page.control !== 'human' || !this.pageStillOwned(page) || page.activeRead) throw new Error('页面控制状态已变化');
-    page.control = 'agent'; page.controlEpoch++; page.refs.clear(); page.plans.clear();
-    page.lastObservation = null; page.needsObservation = true;
-    this.changed(page, 'controlChanged');
-    return { protocol: 'areal.browser.host.v1', operations: ['describe', 'observe', 'capture', 'act', 'wait', 'navigate', 'newPage'], available: true,
-      coreInstanceId: page.coreInstanceId, projectId, threadId, pageId: page.id, browserHostId: this.browserHostId,
-      hostGeneration: this.hostGeneration, pageGeneration: page.pageGeneration, controlEpoch: page.controlEpoch };
+    if (page.control !== 'human' || page.claiming || page.annotationCaptureId
+      || page.activeRead || page.activePrepare || page.activeAction)
+      throw new Error('浏览页面当前不可认领');
+    const c = page.view.webContents;
+    const initial = { pageGeneration: page.pageGeneration, documentEpoch: page.documentGeneration,
+      controlEpoch: page.controlEpoch, url: c.getURL() };
+    let rejectClaim;
+    const cancelled = new Promise((_, reject) => { rejectClaim = reject; });
+    const claim = { cancel: () => rejectClaim(new Error('Browser claim was revoked')) };
+    page.claiming = claim;
+    page.activeRead = claim;
+    const timer = setTimeout(claim.cancel, 5000);
+    let grantedEpoch;
+    try {
+      // Any capture guard left by a revoked read observed only a private
+      // boolean; discard it before re-enabling Agent observations.
+      await Promise.race([readIsolated(c, clearCaptureGuardScript), cancelled]);
+      if (!this.pageStillOwned(page) || page.claiming !== claim || page.control !== 'human'
+        || page.pageGeneration !== initial.pageGeneration || page.documentGeneration !== initial.documentEpoch
+        || page.controlEpoch !== initial.controlEpoch || c.isDestroyed() || c.getURL() !== initial.url
+        || c.isDevToolsOpened()) throw new Error('Browser claim was revoked');
+      page.control = 'agent'; grantedEpoch = ++page.controlEpoch; page.refs.clear(); page.plans.clear();
+      page.lastObservation = null; page.needsObservation = true;
+      this.clearDiagnostics(page, 'new_control_epoch');
+      if (!c.debugger.isAttached()) c.debugger.attach('1.3');
+      // Runtime.enable and Console.enable can replay earlier page messages.
+      // Electron's live console-message event supplies Console evidence; CDP
+      // Network starts only after this explicit enable receipt.
+      await Promise.race([c.debugger.sendCommand('Network.enable', { maxPostDataSize: 0 }), cancelled]);
+      if (!this.pageStillOwned(page) || page.claiming !== claim || page.control !== 'agent'
+        || page.pageGeneration !== initial.pageGeneration || page.documentGeneration !== initial.documentEpoch
+        || page.controlEpoch !== grantedEpoch || c.isDestroyed() || c.getURL() !== initial.url
+        || c.isDevToolsOpened()) throw new Error('Browser claim was revoked');
+      page.diagnosticsStartedAt = Date.now() / 1000;
+      page.diagnosticsReady = true;
+      this.changed(page, 'controlChanged');
+      return { protocol: 'areal.browser.host.v1', operations: ['describe', 'observe', 'capture', 'act', 'wait', 'navigate', 'newPage', 'diagnostics'], available: true,
+        coreInstanceId: page.coreInstanceId, projectId, threadId, pageId: page.id, browserHostId: this.browserHostId,
+        hostGeneration: this.hostGeneration, pageGeneration: initial.pageGeneration, controlEpoch: grantedEpoch };
+    } catch (error) {
+      if (page.control === 'agent' && page.controlEpoch === grantedEpoch) this.revoke(page);
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      if (page.claiming === claim) page.claiming = null;
+      if (page.activeRead === claim) page.activeRead = null;
+    }
   }
   takeover(projectId, threadId, pageId) {
     const page = this.page(projectId, threadId, pageId);
-    if (page) this.revoke(page);
+    if (page) { page.claiming?.cancel(); this.revoke(page); }
     return this.state(page);
   }
   async captureRegion(projectId, threadId, pageId) {
@@ -494,6 +550,50 @@ class CorePreview {
     if (active?.requestId === requestId) active.cancel();
     const action = this.page(projectId, threadId, pageId)?.activeAction;
     if (action?.requestId === requestId) action.cancel();
+  }
+  clearDiagnostics(page, reason) {
+    page.diagnosticsReady = false;
+    page.diagnosticsStartedAt = null;
+    page.diagnosticRequests?.clear();
+    page.diagnosticEvents = [];
+    page.diagnosticBytes = 0;
+    page.diagnosticLoss = { after: page.diagnosticSequence ?? 0, reason };
+  }
+  addDiagnostic(page, event) {
+    if (!this.pageStillOwned(page) || page.control !== 'agent' || !page.diagnosticsReady) return;
+    const record = { sequence: ++page.diagnosticSequence, at: new Date().toISOString(),
+      pageGeneration: page.pageGeneration, documentEpoch: page.documentGeneration,
+      controlEpoch: page.controlEpoch, ...event };
+    const bytes = Buffer.byteLength(JSON.stringify(record));
+    page.diagnosticEvents.push({ record, bytes }); page.diagnosticBytes += bytes;
+    while (page.diagnosticEvents.length > MAX_DIAGNOSTICS || page.diagnosticBytes > MAX_DIAGNOSTIC_BYTES) {
+      const removed = page.diagnosticEvents.shift();
+      page.diagnosticBytes -= removed.bytes;
+      page.diagnosticLoss = { after: removed.record.sequence, reason: 'buffer_evicted' };
+    }
+    this.changed(page, 'diagnosticsAvailable');
+  }
+  async diagnostics(request) {
+    const { page, c } = this.actionPage(request);
+    if (!page.diagnosticsReady || !c.debugger.isAttached()) throw new Error('Browser diagnostics unavailable');
+    const epoch = page.controlEpoch;
+    const cursor = request.parameters.cursor ?? 0;
+    const limit = request.parameters.limit ?? 50;
+    const events = page.diagnosticEvents.filter(item => item.record.sequence > cursor
+      && item.record.kind === request.parameters.kind).slice(0, limit).map(item => item.record);
+    if (!this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== epoch)
+      throw new Error('Browser observation was revoked');
+    const first = page.diagnosticEvents[0]?.record.sequence ?? page.diagnosticSequence + 1;
+    return { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration,
+      projectId: request.projectId, threadId: request.threadId, turnId: request.turnId, callId: request.callId,
+      pageId: page.id, browserHostId: this.browserHostId, hostGeneration: this.hostGeneration,
+      pageGeneration: page.pageGeneration, controlEpoch: epoch, kind: request.parameters.kind,
+      events, cursor: events.at(-1)?.sequence ?? page.diagnosticSequence,
+      loss: cursor < first - 1 || (['request_map_evicted', 'unattributed_request'].includes(page.diagnosticLoss?.reason)
+        && cursor <= page.diagnosticLoss.after)
+        ? { after: cursor, before: first, reason: page.diagnosticLoss?.reason ?? 'unavailable_interval' } : null,
+      bounded: { entries: MAX_DIAGNOSTICS, bytes: MAX_DIAGNOSTIC_BYTES },
+      coverage: 'live Electron Console and CDP Network metadata; no bodies or headers' };
   }
   actionPage(request) {
     const { projectId, threadId, pageId, browserHostId, hostGeneration, pageGeneration, controlEpoch } = request;
@@ -659,7 +759,7 @@ class CorePreview {
         pageGeneration: page.pageGeneration, controlEpoch: page.controlEpoch, plan };
     } finally {
       page.activePrepare = false;
-      if (c.debugger.isAttached()) c.debugger.detach();
+      if (c.debugger.isAttached() && !page.diagnosticsReady) c.debugger.detach();
     }
   }
   async execute(request) {
@@ -758,7 +858,7 @@ class CorePreview {
       if (page.activeAction === action) page.activeAction = null;
       if (page.control === 'agent' && page.inputPending.size === 0
         && page.heldButtons.size === 0 && page.heldKeys.size === 0) {
-        if (!c.isDestroyed() && c.debugger.isAttached()) c.debugger.detach();
+        if (!c.isDestroyed() && c.debugger.isAttached() && !page.diagnosticsReady) c.debugger.detach();
         page.view?.setVisible(this.pageStillOwned(page) && this.owner === pageKey(page.coreInstanceId, page.projectId, page.threadId, page.id)
           && page.requestedVisible === true);
       } else if (page.control === 'agent') {
@@ -948,7 +1048,7 @@ class CorePreview {
       clearTimeout(timer);
       if (page.activeRead === read) {
         page.activeRead = null;
-        try { if (!c.isDestroyed() && c.debugger.isAttached()) c.debugger.detach(); }
+        try { if (!c.isDestroyed() && c.debugger.isAttached() && !page.diagnosticsReady) c.debugger.detach(); }
         catch { /* A detached/crashed target already revoked this read. */ }
       }
     }
@@ -971,10 +1071,70 @@ class CorePreview {
       control: 'human', controlEpoch: 0, documentGeneration: 0, viewportRevision: 0, refs: new Map(),
       plans: new Map(), lastObservation: null, needsObservation: true, nextRef: 0,
       heldButtons: new Map(), heldKeys: new Map(), inputPending: new Set(), requestedVisible: false,
-      downloads: new Set(), dialogPending: false, fileHandoff: false, stateLoss: options.stateLoss ?? null },
+      downloads: new Set(), dialogPending: false, fileHandoff: false, stateLoss: options.stateLoss ?? null,
+      diagnosticsReady: false, diagnosticsStartedAt: null, diagnosticEvents: [], diagnosticRequests: new Map(), diagnosticBytes: 0,
+      diagnosticSequence: 0, diagnosticLoss: null },
       c = view.webContents;
     try { page.networkPolicy = this.ensureWorkspaceContext(page); }
     catch (error) { if (!c.isDestroyed()) c.close(); throw error; }
+    c.on('console-message', (_event, details) => {
+      if (page.control !== 'agent' || !page.diagnosticsReady) return;
+      const value = details && typeof details === 'object' ? details : {};
+      this.addDiagnostic(page, { kind: 'console', level: ['error', 'warning', 'info', 'debug'].includes(value.level) ? value.level : 'log',
+        message: diagnosticText(value.message), source: diagnosticUrl(value.sourceId),
+        line: Number.isSafeInteger(value.lineNumber) ? value.lineNumber : null });
+    });
+    c.debugger.on('message', (_event, method, params) => {
+      if (!page.diagnosticsReady || page.control !== 'agent' || !this.pageStillOwned(page)) return;
+      if (method === 'Network.requestWillBeSent') {
+        if (typeof params?.requestId !== 'string') return;
+        // CDP's wallTime is the request's creation time. Reject any event
+        // queued from the prior human phase, including one delivered late.
+        if (!Number.isFinite(params.wallTime) || params.wallTime < page.diagnosticsStartedAt) {
+          page.diagnosticLoss = { after: page.diagnosticSequence, reason: 'unattributed_request' };
+          return;
+        }
+        const previous = page.diagnosticRequests.get(params.requestId);
+        if (previous && previous.controlEpoch === page.controlEpoch && params.redirectResponse) {
+          this.addDiagnostic(page, { kind: 'network', url: previous.url, method: previous.method,
+            status: Number.isSafeInteger(params.redirectResponse.status) ? params.redirectResponse.status : null,
+            resourceType: previous.resourceType ?? null, failure: null,
+            documentEpoch: previous.documentEpoch });
+        }
+        const request = params.request ?? {};
+        page.diagnosticRequests.set(params.requestId, { url: diagnosticUrl(request.url),
+          method: /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)$/.test(request.method) ? request.method : 'OTHER',
+          documentEpoch: page.documentGeneration, controlEpoch: page.controlEpoch });
+        while (page.diagnosticRequests.size > MAX_DIAGNOSTICS) {
+          page.diagnosticRequests.delete(page.diagnosticRequests.keys().next().value);
+          page.diagnosticLoss = { after: page.diagnosticSequence, reason: 'request_map_evicted' };
+        }
+      } else if (method === 'Network.responseReceived') {
+        const request = page.diagnosticRequests.get(params?.requestId);
+        if (!request || request.controlEpoch !== page.controlEpoch) return;
+        request.status = Number.isSafeInteger(params.response?.status) ? params.response.status : null;
+        request.resourceType = diagnosticText(params.type, 40);
+      } else if (method === 'Network.loadingFailed' || method === 'Network.loadingFinished') {
+        const request = page.diagnosticRequests.get(params?.requestId);
+        if (!request) return;
+        page.diagnosticRequests.delete(params.requestId);
+        if (request.controlEpoch !== page.controlEpoch) return;
+        this.addDiagnostic(page, { kind: 'network', url: request.url, method: request.method,
+          status: request.status ?? null, resourceType: request.resourceType ?? null,
+          failure: method === 'Network.loadingFailed' ? diagnosticText(params.errorText, 120) : null,
+          documentEpoch: request.documentEpoch });
+      }
+    });
+    c.debugger.on('detach', () => {
+      this.clearDiagnostics(page, 'debugger_detached');
+      if (page.control === 'agent') this.revoke(page);
+    });
+    c.on('devtools-opened', () => this.revoke(page));
+    c.on('devtools-closed', () => {
+      if (!this.pageStillOwned(page)) return;
+      page.pageGeneration++; page.documentGeneration++; page.refs.clear(); page.plans.clear();
+      page.needsObservation = true; this.clearDiagnostics(page, 'devtools_closed'); this.changed(page);
+    });
     page.onDownload = (event, item, source) => {
       if (source !== c) return;
       if (!this.pageStillOwned(page)) { event.preventDefault(); return; }
@@ -1269,7 +1429,12 @@ class CorePreview {
         break;
       case 'stop': c.stop(); break;
       case 'external': await require('electron').shell.openExternal(webUrl(c.getURL() || page.url)); break;
-      case 'devtools': this.revoke(page); c.openDevTools({ mode: 'detach' }); break;
+      case 'devtools':
+        this.revoke(page);
+        await this.convergeInput(page);
+        if (page.control !== 'human') throw new Error('原生输入尚未收敛，请停止或关闭页面');
+        c.openDevTools({ mode: 'detach' });
+        break;
     }
     if (['navigate', 'reload', 'stop'].includes(request.operation)) this.changed(page);
     return this.state(page);
