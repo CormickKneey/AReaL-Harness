@@ -2,7 +2,9 @@
 
 # Browser v1 contract
 
-**Proposed, not implemented.** Names below are proposals unless marked existing. Generate schemas and client types from canonical contract types. Preserve the existing [Core UNKNOWN rules](core.en.md#dynamic-tools).
+**Design contract, partly implemented.** The current slice only supports explicit claiming of an existing native preview in a new Browser-enabled Thread, `describe`/`observe`, local takeover revocation, and missing-host rejection. Other operations below remain proposals. Existing [Core UNKNOWN rules](core.en.md#dynamic-tools) remain in force.
+
+The new-chat Composer Browser switch registers the fixed `browser_v1` tool package. After opening the current Thread's preview, the user clicks “Let Agent inspect this page”; Main claims the same WebContentsView and registers it through the authenticated service connection. The Thread's bound Core connection handles model callbacks. The extensible `operation:string` envelope is fixed, while secondary validation currently accepts only `describe` (empty parameters) and `observe` (`pageId`). Observation uses bounded native accessibility-tree reads and removes URL query and fragment values from tool results. Capture, actions, old-Thread attachment, and persistent Profiles are not available. Human takeover, navigation, and Core/host generation changes revoke reading; cancelled or timed-out calls are never replayed.
 
 ## 1. Existing connections, new host capability
 

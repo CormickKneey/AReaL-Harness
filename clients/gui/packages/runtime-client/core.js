@@ -10,10 +10,12 @@ export class CoreRpcError extends Error {
 }
 
 export class CoreClient {
-  constructor({ createSocket, timeoutMs = 30_000 }) {
+  constructor({ createSocket, timeoutMs = 30_000, onServerRequest }) {
     this.createSocket = createSocket;
+    this.onServerRequest = onServerRequest;
     this.timeoutMs = timeoutMs;
     this.pending = new Map();
+    this.serverRequests = new Map();
     this.listeners = new Set();
     this.closeListeners = new Set();
     this.nextId = 0;
@@ -100,8 +102,23 @@ export class CoreClient {
     catch { this.close(); return; }
     if (!message || typeof message !== 'object' || Array.isArray(message)) { this.close(); return; }
     if (message.method && message.id !== undefined) {
-      // 首版只观察 Core 工具，未注册 Renderer 动态工具执行宿主。
-      this.socket.send(JSON.stringify({ id: message.id, error: { code: -32601, message: 'Client tool host is not available' } }));
+      if (message.method !== 'item/tool/call' || !this.onServerRequest) {
+        this.socket.send(JSON.stringify({ id: message.id, error: { code: -32601, message: 'Client tool host is not available' } }));
+        return;
+      }
+      const socket = this.socket;
+      const controller = new AbortController();
+      this.serverRequests.set(String(message.id), controller);
+      void Promise.resolve().then(() => this.onServerRequest(message.method, message.params,
+        { requestId: String(message.id), signal: controller.signal })).then(result => {
+        this.serverRequests.delete(String(message.id));
+        if (!this.closed && this.socket === socket && socket.readyState === 1)
+          socket.send(JSON.stringify({ id: message.id, result }));
+      }, () => {
+        this.serverRequests.delete(String(message.id));
+        if (!this.closed && this.socket === socket && socket.readyState === 1)
+          socket.send(JSON.stringify({ id: message.id, error: { code: -32603, message: 'Client tool host failed' } }));
+      });
       return;
     }
     if (message.id !== undefined) {
@@ -121,6 +138,7 @@ export class CoreClient {
       return;
     }
     if (typeof message.method === 'string') {
+      if (message.method === 'areal/tool/cancelled') this.serverRequests.get(String(message.params?.requestId))?.abort();
       for (const listener of this.listeners) listener(message.method, message.params);
     }
   }
@@ -136,6 +154,8 @@ export class CoreClient {
       }));
     }
     this.pending.clear();
+    for (const controller of this.serverRequests.values()) controller.abort();
+    this.serverRequests.clear();
     for (const listener of this.closeListeners) listener();
   }
 

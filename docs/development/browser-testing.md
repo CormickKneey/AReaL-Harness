@@ -4,6 +4,8 @@
 
 本文件定义完整 Browser 的测试契约。R0 原生实验已有独立入口，其结果以具体运行证据为准，不表示全部场景已经运行。后续主要测试切口沿用现有桌面 smoke/connection/architecture 的真实 Electron+Core+Runtime+确定性模型形态，参照[GUI指南](../../clients/gui/README.md)。
 
+当前同页读取切口运行 `make build`、`make gui-install`、`make gui-build` 后，以 `node clients/gui/scripts/browser-read-smoke.mjs` 验证 B-04/B-05/B-06。脚本仅用隔离 home、合成网页和本地确定性模型；记录 Core 动态工具 callId、真实原生 WebContents 身份与内存 sentinel、GUI/原生截图、服务端请求计数和跨 Thread/伪回执/宿主缺失结果。源码构建测试不代表安装包、真实账号或其他 OS 已验收。
+
 ## 测试层级
 
 1. **行为单测**只穷尽Ref身份、预算、去重、代次和状态转换；不要断言内部Map/类名。

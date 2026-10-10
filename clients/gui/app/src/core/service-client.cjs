@@ -35,9 +35,11 @@ async function waitForProcessExit(pid) {
 }
 
 class ServiceConnection {
-  constructor(onState = () => {}, onClose = () => {}, onNotification = () => {}, onNotificationOpen = () => {}) {
+  constructor(onState = () => {}, onClose = () => {}, onNotification = () => {}, onNotificationOpen = () => {}, onBrowserRequest = null, onBrowserCancel = null) {
     this.onNotification = onNotification;
     this.onNotificationOpen = onNotificationOpen;
+    this.onBrowserRequest = onBrowserRequest;
+    this.onBrowserCancel = onBrowserCancel;
     this.onState = onState; this.onClose = onClose; this.pending = new Map(); this.nextId = 0;
   }
   async connect(metadata) {
@@ -52,6 +54,15 @@ class ServiceConnection {
       if (message.method === 'notification') { this.onNotification(message.params); return; }
       if (message.method === 'notificationOpen') { this.onNotificationOpen(message.params); return; }
       if (message.method === 'state') { this.onState(message.params); return; }
+      if (message.method === 'browserCancel') { this.onBrowserCancel?.(message.params); return; }
+      if (message.method === 'browserRequest') {
+        if (!this.onBrowserRequest || !Number.isSafeInteger(message.params?.requestId)) { socket.terminate(); return; }
+        void Promise.resolve().then(() => this.onBrowserRequest(message.params)).then(
+          result => { if (this.socket === socket && socket.readyState === WebSocket.OPEN) void this.request('browserResult', { requestId: message.params.requestId, result }, true).catch(() => {}); },
+          () => { if (this.socket === socket && socket.readyState === WebSocket.OPEN) void this.request('browserResult', { requestId: message.params.requestId, error: 'host_failed' }, true).catch(() => {}); },
+        );
+        return;
+      }
       const entry = this.pending.get(message.id);
       if (!entry) return;
       this.pending.delete(message.id); clearTimeout(entry.timer);
@@ -115,6 +126,7 @@ class SharedCoreBackend {
     this.sequence = packet.sequence; this.value = packet.snapshot; this.status = packet.service; this.connectionState = { state: 'ready' }; this.onChange();
   }
   disconnected() {
+    this.onBrowserDisconnected?.();
     const stopped = !!this.connection && this.stoppedConnection === this.connection;
     const message = stopped ? '后台服务已停止，可按需重新连接' : this.controlState === 'unconfirmed' ? '停止结果未确认，请显式连接后核查后台状态；不会自动重发。' : '后台服务已断开，请重新连接';
     this.connectionState = { state: 'unavailable', message };
@@ -126,7 +138,10 @@ class SharedCoreBackend {
     let metadata;
     try { metadata = JSON.parse(await readFile(join(this.home, 'service.json'), 'utf8')); }
     catch (e) { if (e.code === 'ENOENT') return false; throw e; }
-    const connection = new ServiceConnection(packet => { if (this.connection === connection) this.accept(packet); }, () => { if (this.connection === connection) this.disconnected(); }, notice => { if (this.connection === connection) this.onNotification?.(notice); }, target => { if (this.connection === connection) this.onNotificationOpen?.(target); });
+    const connection = new ServiceConnection(packet => { if (this.connection === connection) this.accept(packet); }, () => { if (this.connection === connection) this.disconnected(); }, notice => { if (this.connection === connection) this.onNotification?.(notice); }, target => { if (this.connection === connection) this.onNotificationOpen?.(target); }, request => {
+      if (this.connection !== connection || this.disposed) throw new Error('Browser host is disconnected');
+      return this.onBrowserRequest?.(request) ?? Promise.reject(new Error('Browser host unavailable'));
+    }, request => { if (this.connection === connection) this.onBrowserCancel?.(request); });
     try { await connection.connect(metadata); }
     catch (e) { connection.close(); if (e.code === 'DISCONNECTED') return false; throw e; }
     if (this.disposed) { connection.close(); throw new Error('GUI 连接已关闭'); }
@@ -232,6 +247,14 @@ class SharedCoreBackend {
     } finally { await log.close(); }
   }
   async addProject(path) { await this.init(); return this.connection.request('addProject', { path }, true); }
+  async browserClaim(identity) {
+    if (!this.status.connected || !this.connection) throw new Error('后台尚未连接');
+    return this.connection.request('browserClaim', identity, true);
+  }
+  async browserRevoke(identity) {
+    if (!this.status.connected || !this.connection) return;
+    return this.connection.request('browserRevoke', identity, true);
+  }
   async command(name, request) {
     if (this.disposed) throw new Error('GUI 连接已关闭');
     // Only explicit reconnect opens a stopped service. Periodic panel reads must

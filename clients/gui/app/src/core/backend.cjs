@@ -21,6 +21,7 @@ const { workspaceCommand } = require('./workspace.cjs');
 const { CoreWorktrees } = require('./worktrees.cjs');
 const { ProjectlessWorkspaces } = require('./projectless.cjs');
 const { inspectCoreCapabilities, projectCoreCapabilities } = require('./core-capabilities.cjs');
+const { definition: browserTool, failure: browserFailure } = require('./browser-tool.cjs');
 
 const workgroupMutationMethods = new Set(['areal/workgroup/start', 'areal/workgroup/revise', 'areal/workflow/start']);
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -267,7 +268,18 @@ class CoreBackend {
     project.summariesLoaded = false;
     const client = new CoreClient({ createSocket: () => new WebSocket(project.endpoint, {
       headers: { Authorization: `Bearer ${project.token}` }, followRedirects: false, maxPayload: 4 * 1024 * 1024,
-    }) });
+    }), onServerRequest: async (method, params, context) => {
+      if (method !== 'item/tool/call' || params?.tool !== 'browser_v1') throw new Error('Unsupported client tool');
+      if (!this.currentConnection(project, client)) return browserFailure('host_unavailable', 'Desktop connection changed');
+      const thread = project.model.state.threads[params.threadId];
+      if (!thread?.dynamicTools?.some(tool => tool.name === 'browser_v1'))
+        return browserFailure('wrong_thread', 'Browser is not enabled for this thread');
+      return this.browserRead?.({ projectId: project.id, threadId: params.threadId,
+        turnId: params.turnId, callId: params.callId, arguments: params.arguments,
+        coreInstanceId: project.service?.serviceId, coreGeneration: project.service?.generation,
+        signal: context.signal })
+        ?? browserFailure('host_unavailable', 'Desktop browser is unavailable');
+    } });
     project.client = client;
     client.onNotification((method, params) => {
       if (!this.currentConnection(project, client)) return;
@@ -870,6 +882,7 @@ class CoreBackend {
       case 'create': {
         await this.resources.beforeCreate(project);
         const { thread } = await this.submit(project, 'areal/thread/start', { cwd: project.root,
+          ...(request.browserEnabled === true ? { dynamicTools: [browserTool] } : {}),
           ...(request.parameters ? { parameters: request.parameters } : {}),
           ...(request.model ? { model: request.model } : {}),
           ...((request.profile ?? project.resourceProfile ?? this.defaultProfile) ? { agentProfile: request.profile ?? project.resourceProfile ?? this.defaultProfile } : {}),

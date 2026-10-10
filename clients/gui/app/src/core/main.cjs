@@ -8,7 +8,7 @@ const { setupUpdater } = require('../update/electron.cjs');
 const { showCoreNotification } = require('./notifications.cjs');
 const { MenuBar } = require('./menu-bar.cjs');
 const { fileOpen } = require('./file-open.cjs');
-const { validateCommand, desktopError } = require('@areal/workbench/desktop-contract');
+const { validateCommand, validatePreview, desktopError } = require('@areal/workbench/desktop-contract');
 const { CorePreview } = require('./preview.cjs');
 const { configureUserData, serviceOptions } = require('./service-config.cjs');
 const { SharedCoreBackend } = require('./service-client.cjs');
@@ -88,6 +88,7 @@ async function createWindow() {
     window.once('ready-to-show', () => { startupPainted = true; presentStartup(); });
   }
   preview = new CorePreview(window, WebContentsView, (projectId, threadId) => backend.ownsThread(projectId, threadId), () => backend.snapshot().library?.settings ?? {});
+  preview.onRevoke = identity => { void backend.browserRevoke(identity).catch(() => {}); };
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.on('close', event => { if (!exitReady) { event.preventDefault(); window.hide(); } });
@@ -109,7 +110,34 @@ app.whenReady().then(async () => {
     onNotification: notice => showCoreNotification(Notification, window, notice, openNotificationTarget),
     onNotificationOpen: openNotificationTarget,
     recoverIncompatible: (metadata, home) => recoverStartupService({ metadata, home, notify: options => dialog.showMessageBox(window, options) }) });
-  ipcMain.handle('areal-core:preview', (event, request) => { trusted(event); if (!preview) throw new Error('预览不可用'); return preview.command(request); });
+  backend.onBrowserDisconnected = () => preview?.revokeAll();
+  backend.onBrowserCancel = request => preview?.cancelRead(request);
+  backend.onBrowserRequest = async request => {
+    if (quitting || !preview || !window || window.isDestroyed()) throw new Error('Browser host unavailable');
+    try { return await preview.observe(request); }
+    catch (error) { return { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration, projectId: request.projectId,
+      threadId: request.threadId, turnId: request.turnId, callId: request.callId, pageId: request.pageId,
+      browserHostId: request.browserHostId, hostGeneration: request.hostGeneration,
+      pageGeneration: request.pageGeneration, controlEpoch: request.controlEpoch,
+      error: /Human controls|revoked/.test(error.message) ? 'human_control' : 'page_unavailable' }; }
+  };
+  ipcMain.handle('areal-core:preview', async (event, request) => {
+    trusted(event);
+    validatePreview(request);
+    if (!preview) throw new Error('预览不可用');
+    if (request?.operation === 'claim') {
+      const identity = preview.claim(request.projectId, request.threadId);
+      try { await backend.browserClaim(identity); trusted(event); }
+      catch (error) { preview.takeover(request.projectId, request.threadId); throw error; }
+      return preview.state(preview.pages.get(`${request.projectId}:${request.threadId}`));
+    }
+    if (request?.operation === 'takeover') {
+      const value = preview.takeover(request.projectId, request.threadId);
+      void backend.browserRevoke({ projectId: request.projectId, threadId: request.threadId }).catch(() => {});
+      return value;
+    }
+    return preview.command(request);
+  });
   ipcMain.handle('areal-core:notification-target', event => { trusted(event); return notificationTarget; });
   ipcMain.handle('areal-core:notification-consumed', (event, id) => { trusted(event); if (notificationTarget?.id === id) notificationTarget = null; });
   ipcMain.handle('areal-core:snapshot', event => { trusted(event); return desktopSnapshot(); });

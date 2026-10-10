@@ -4,6 +4,8 @@
 
 This document defines the complete Browser testing contract. R0 has an isolated native experiment entry; results belong to individual runs and do not imply all scenarios have run. Subsequent acceptance follows the existing real Electron/Core/Runtime/deterministic-model smoke, connection and architecture pattern from the [GUI guide](../../clients/gui/README.en.md).
 
+For the current same-page read slice, run `make build`, `make gui-install`, and `make gui-build`, then `node clients/gui/scripts/browser-read-smoke.mjs` for B-04/B-05/B-06. The fixture uses an isolated home, synthetic site, and local deterministic model. It records Core dynamic-tool call IDs, real native WebContents identity and in-memory sentinel, GUI/native captures, server request counts, and cross-Thread, forged-result, and missing-host outcomes. Source-build results do not establish packaged-app, real-account, or other-OS acceptance.
+
 ## Test layers
 
 1. Behavioral unit tests exhaust reference identity, budgets, deduplication, generations and transitions, not private map/class details.

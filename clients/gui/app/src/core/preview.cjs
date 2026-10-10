@@ -1,5 +1,6 @@
 "use strict";
 const MAX_CACHED_PAGES = 8;
+const { randomUUID, randomBytes } = require('node:crypto');
 const { validatePreview } = require('@areal/workbench/desktop-contract');
 
 function webUrl(value) {
@@ -18,6 +19,11 @@ function webUrl(value) {
     url.password
   )
     throw new Error("预览仅支持不含凭据的 HTTP(S) 地址");
+  return url.href;
+}
+function observationUrl(value) {
+  const url = new URL(value);
+  url.username = ''; url.password = ''; url.search = ''; url.hash = '';
   return url.href;
 }
 function boundsWithinWindow(value, size) {
@@ -45,6 +51,8 @@ class CorePreview {
     this.pages = new Map();
     this.owner = null;
     this.view = null;
+    this.browserHostId = randomUUID();
+    this.hostGeneration = randomBytes(4).readUInt32BE(0);
   }
   dispose() {
     for (const owner of [...this.pages.keys()]) this.release(owner);
@@ -54,6 +62,7 @@ class CorePreview {
   release(owner) {
     const page = this.pages.get(owner);
     if (!page) return;
+    this.revoke(page);
     // 先撤销归属，close/loadURL 的迟到回调不能写入新页面。
     this.pages.delete(owner);
     if (!this.window.isDestroyed()) this.window.contentView.removeChildView(page.view);
@@ -79,7 +88,85 @@ class CorePreview {
       canGoBack: c?.navigationHistory.canGoBack() ?? false,
       canGoForward: c?.navigationHistory.canGoForward() ?? false,
       error: page?.error ?? "",
+      browser: page ? { pageId: page.id, control: page.control } : null,
     };
+  }
+  revoke(page) {
+    if (page.control !== 'agent') return;
+    page.control = 'human'; page.controlEpoch++;
+    page.activeRead?.cancel();
+    if (page.view.webContents.debugger.isAttached()) page.view.webContents.debugger.detach();
+    this.onRevoke?.({ projectId: page.projectId, threadId: page.threadId });
+  }
+  revokeAll() { for (const page of this.pages.values()) this.revoke(page); }
+  claim(projectId, threadId) {
+    const owner = `${projectId}:${threadId}`;
+    const page = this.pages.get(owner);
+    if (!page || page.crashed || page.view.webContents.isDestroyed() || !page.view.webContents.getURL()
+      || !this.owns(projectId, threadId)) throw new Error('当前聊天没有可认领的页面');
+    this.revokeAll();
+    page.control = 'agent'; page.controlEpoch++;
+    return { protocol: 'areal.browser.host.v1', operations: ['describe', 'observe'], available: true,
+      projectId, threadId, pageId: page.id, browserHostId: this.browserHostId,
+      hostGeneration: this.hostGeneration, pageGeneration: page.pageGeneration, controlEpoch: page.controlEpoch };
+  }
+  takeover(projectId, threadId) {
+    const page = this.pages.get(`${projectId}:${threadId}`);
+    if (page) this.revoke(page);
+    return this.state(page);
+  }
+  cancelRead({ projectId, threadId, requestId, hostGeneration }) {
+    if (hostGeneration !== this.hostGeneration) return;
+    const active = this.pages.get(`${projectId}:${threadId}`)?.activeRead;
+    if (active?.requestId === requestId) active.cancel();
+  }
+  async observe(request) {
+    const { projectId, threadId, pageId, browserHostId, hostGeneration, pageGeneration, controlEpoch,
+      coreInstanceId, coreGeneration, turnId, callId } = request ?? {};
+    const page = this.pages.get(`${projectId}:${threadId}`);
+    if (browserHostId !== this.browserHostId || hostGeneration !== this.hostGeneration || !page
+      || page.id !== pageId || page.pageGeneration !== pageGeneration || !this.owns(projectId, threadId))
+      throw new Error('Browser page identity is stale');
+    if (page.control !== 'agent' || page.controlEpoch !== controlEpoch) throw new Error('Human controls this page');
+    const c = page.view.webContents;
+    if (page.crashed || c.isDestroyed() || c.isDevToolsOpened()) throw new Error('Browser page is unavailable');
+    if (page.activeRead) throw new Error('Browser page is busy');
+    let cancel;
+    const cancelled = new Promise((_, reject) => { cancel = () => reject(new Error('Browser observation was revoked')); });
+    const read = { requestId: request.requestId, cancel };
+    page.activeRead = read;
+    const epoch = page.controlEpoch, documentGeneration = page.documentGeneration;
+    const timer = setTimeout(cancel, 10000);
+    try {
+      if (!c.debugger.isAttached()) c.debugger.attach('1.3');
+      const tree = await Promise.race([c.debugger.sendCommand('Accessibility.getFullAXTree'), cancelled]);
+      if (page.control !== 'agent' || page.controlEpoch !== epoch || page.documentGeneration !== documentGeneration
+        || this.pages.get(`${projectId}:${threadId}`) !== page || c.isDestroyed()) throw new Error('Browser observation was revoked');
+      const lines = [], nodes = tree.nodes ?? [];
+      let truncated = false;
+      for (const node of nodes) {
+        if (node.ignored) continue;
+        const role = String(node.role?.value ?? '').slice(0, 80);
+        const name = String(node.name?.value ?? '').slice(0, 500);
+        const value = role === 'textField' || role === 'passwordField' ? '' : String(node.value?.value ?? '').slice(0, 500);
+        const line = [role, name, value].filter(Boolean).join(': ');
+        if (!line) continue;
+        if (lines.length >= 160 || lines.join('\n').length + line.length > 16 * 1024) { truncated = true; break; }
+        lines.push(line);
+      }
+      return { coreInstanceId, coreGeneration, projectId, threadId, turnId, callId, pageId,
+        browserHostId, hostGeneration, pageGeneration, nativeWebContentsId: c.id,
+        url: observationUrl(c.getURL()), title: c.getTitle().slice(0, 256), documentEpoch: documentGeneration,
+        controlEpoch: epoch, capturedAt: new Date().toISOString(), scope: 'ax',
+        frameCoverage: 'main-frame', truncated, text: lines.join('\n') };
+    } finally {
+      clearTimeout(timer);
+      if (page.activeRead === read) {
+        page.activeRead = null;
+        try { if (!c.isDestroyed() && c.debugger.isAttached()) c.debugger.detach(); }
+        catch { /* A detached/crashed target already revoked this read. */ }
+      }
+    }
   }
   create(owner, projectId, threadId) {
     const view = new this.WebContentsView({
@@ -90,7 +177,8 @@ class CorePreview {
         partition: `areal-preview-${crypto.randomUUID()}`,
       },
     });
-    const page = { view, projectId, threadId, error: "", url: "", crashed: false },
+    const page = { id: randomUUID(), pageGeneration: 1, view, projectId, threadId, error: "", url: "", crashed: false,
+      control: 'human', controlEpoch: 0, documentGeneration: 0 },
       c = view.webContents;
     c.setWindowOpenHandler(() => ({ action: "deny" }));
     c.session.setPermissionRequestHandler((_contents, _permission, respond) =>
@@ -115,6 +203,8 @@ class CorePreview {
     });
     c.on("did-start-navigation", (_event, url, _inPlace, main) => {
       if (main) {
+        this.revoke(page);
+        page.documentGeneration++;
         page.url = url;
         page.error = "";
       }
@@ -124,9 +214,11 @@ class CorePreview {
     });
     c.on('render-process-gone', () => {
       if (this.pages.get(owner) !== page) return;
+      this.revoke(page);
       page.crashed = true;
       page.error = '预览页面已退出，请重新加载';
     });
+    c.on('before-input-event', () => this.revoke(page));
     this.window.contentView.addChildView(view);
     view.setVisible(false);
     this.pages.set(owner, page);
@@ -174,6 +266,7 @@ class CorePreview {
     if (!page) return this.state(null);
     this.pages.delete(owner); this.pages.set(owner, page);
     const c = page.view.webContents;
+    if (['navigate', 'back', 'forward', 'reload', 'stop'].includes(request.operation)) this.revoke(page);
     if (request.bounds)
       page.view.setBounds(
         boundsWithinWindow(request.bounds, this.window.getContentSize()),
@@ -218,6 +311,7 @@ class CorePreview {
         );
         break;
       case "devtools":
+        this.revoke(page);
         c.openDevTools({ mode: "detach" });
         break;
     }

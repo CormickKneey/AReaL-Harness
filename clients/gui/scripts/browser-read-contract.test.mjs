@@ -1,0 +1,52 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { CoreClient } from '../packages/runtime-client/core.js';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const { DesktopService, PROTOCOL } = require('../app/src/core/service-protocol.cjs');
+
+test('bound client may answer a browser tool request while ordinary clients reject it', async () => {
+  const replies = [];
+  const socket = { readyState: 1, send: data => replies.push(JSON.parse(data)) };
+  const request = { id: 9, method: 'item/tool/call', params: {
+    threadId: 'thread-1', turnId: 'turn-1', callId: 'call-1', tool: 'browser_v1',
+    arguments: { operation: 'observe', parameters: { pageId: 'page-1' } },
+  } };
+  const ordinary = new CoreClient({ createSocket: () => socket });
+  ordinary.socket = socket;
+  ordinary.receive(JSON.stringify(request));
+  assert.equal(replies.at(-1).error.code, -32601);
+
+  const bound = new CoreClient({ createSocket: () => socket, onServerRequest: async () => ({
+    success: true, contentItems: [{ type: 'inputText', text: 'fixture sentinel' }],
+  }) });
+  bound.socket = socket;
+  bound.receive(JSON.stringify(request));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(replies.at(-1).id, 9);
+  assert.equal(replies.at(-1).result.contentItems[0].text, 'fixture sentinel');
+});
+
+test('an authenticated owner claim refuses a request from another Core generation', async () => {
+  const pageId = '00000000-0000-4000-8000-000000000001';
+  const sent = [];
+  const owner = { readyState: 1, bufferedAmount: 0, send: data => sent.push(JSON.parse(data)) };
+  const project = { service: { serviceId: 'core-1', generation: 'generation-1' },
+    model: { state: { threads: { 'thread-1': { dynamicTools: [{ name: 'browser_v1' }] } } } } };
+  const backend = { projects: new Map([['project-1', project]]), starting: new Set(),
+    snapshot: () => ({}), hasWork: () => false };
+  const service = new DesktopService(backend, 'fixture-identity');
+  const receive = (id, method, params) => service.receive(owner, Buffer.from(JSON.stringify({ id, method, params })));
+  await receive(1, 'hello', { protocol: PROTOCOL, identity: 'fixture-identity' });
+  await receive(2, 'browserClaim', { protocol: 'areal.browser.host.v1', operations: ['describe', 'observe'],
+    available: true, projectId: 'project-1', threadId: 'thread-1', pageId, browserHostId: 'host-1',
+    hostGeneration: 1, pageGeneration: 1, controlEpoch: 1 });
+  assert.equal(sent.at(-1).result.claimed, true);
+  const result = await service.browserRead({ projectId: 'project-1', threadId: 'thread-1', turnId: 'turn-1',
+    callId: 'call-1', coreInstanceId: 'core-1', coreGeneration: 'generation-2',
+    arguments: { operation: 'observe', parameters: { pageId } } });
+  assert.match(JSON.stringify(result), /host_unavailable/);
+  assert.equal(sent.some(packet => packet.method === 'browserRequest'), false);
+  assert.equal(service.browserClaims.size, 0);
+  clearTimeout(service.timer);
+});
