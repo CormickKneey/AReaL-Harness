@@ -352,6 +352,7 @@ class CorePreview {
     if (!page?.view || page.crashed || page.view.webContents.isDestroyed() || !page.view.webContents.getURL()
       || !this.owns(projectId, threadId)) throw new Error('当前聊天没有可认领的页面');
     if (page.control === 'transferring') throw new Error('原生输入尚未收敛，请停止或关闭页面');
+    if (page.activeRead) throw new Error('页面截图或观察尚未结束');
     // Any capture guard left by a revoked read observed only a private boolean;
     // discard it before re-enabling Agent observations.
     await readIsolated(page.view.webContents, clearCaptureGuardScript);
