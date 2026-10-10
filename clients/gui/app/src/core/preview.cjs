@@ -308,7 +308,7 @@ class CorePreview {
     // Any capture guard left by a revoked read observed only a private boolean;
     // discard it before re-enabling Agent observations.
     await readIsolated(page.view.webContents, clearCaptureGuardScript);
-    if (page.control !== 'human' || this.pages.get(owner) !== page) throw new Error('页面控制状态已变化');
+    if (page.control !== 'human' || this.pages.get(owner) !== page || page.activeRead) throw new Error('页面控制状态已变化');
     page.control = 'agent'; page.controlEpoch++; page.refs.clear(); page.plans.clear();
     page.lastObservation = null; page.needsObservation = true;
     this.changed(page, 'controlChanged');
@@ -320,6 +320,61 @@ class CorePreview {
     const page = this.page(projectId, threadId, pageId);
     if (page) this.revoke(page);
     return this.state(page);
+  }
+  async captureRegion(projectId, threadId, pageId) {
+    const page = this.page(projectId, threadId, pageId);
+    if (!page || page.id !== pageId || !this.owns(projectId, threadId)) throw new Error('页面已关闭');
+    // A requested takeover is not human control until the native input barrier completes.
+    if (page.control === 'transferring') await this.convergeInput(page);
+    const c = page.view.webContents;
+    const bounds = page.view.getBounds();
+    if (page.control !== 'human' || page.crashed || c.isDestroyed() || c.isDevToolsOpened()
+      || !this.window.isVisible() || this.window.isMinimized() || !page.view.getVisible()
+      || bounds.width <= 0 || bounds.height <= 0 || !c.getURL()
+      || page.activeRead || page.activePrepare || page.activeAction)
+      throw new Error('请先接管并显示当前页面，再截图标注');
+    const epoch = page.controlEpoch, documentEpoch = page.documentGeneration, sourceUrl = c.getURL();
+    const read = { requestId: randomUUID(), cancel: () => {} };
+    page.activeRead = read;
+    const guardToken = randomUUID();
+    const guardSequence = page.nextGuardSequence = (page.nextGuardSequence ?? 0) + 1;
+    const valid = () => page.control === 'human' && page.controlEpoch === epoch
+      && page.documentGeneration === documentEpoch && this.page(projectId, threadId, pageId) === page
+      && !c.isDestroyed() && c.getURL() === sourceUrl && page.view.getVisible()
+      && page.activeRead === read && this.window.isVisible() && !this.window.isMinimized();
+    let changed = true;
+    try {
+      const viewport = await readIsolated(c, viewportScript);
+      if (!valid() || ![viewport.width, viewport.height, viewport.scrollX, viewport.scrollY, viewport.deviceScaleFactor]
+        .every(Number.isFinite) || viewport.width <= 0 || viewport.height <= 0 || viewport.deviceScaleFactor <= 0)
+        throw new Error('页面截图条件已变化');
+      const zoom = c.getZoomFactor();
+      if (await readIsolated(c, captureGuardStartScript(guardToken, guardSequence)) !== true)
+        throw new Error('页面截图保护不可用');
+      if (await readIsolated(c, sensitiveCaptureScript) !== false) throw new Error('页面包含敏感输入框，无法截图标注');
+      const image = await c.capturePage();
+      if (!valid() || await readIsolated(c, sensitiveCaptureScript) !== false)
+        throw new Error('页面截图条件已变化');
+      changed = await readIsolated(c, captureGuardStopScript(guardToken, guardSequence));
+      if (changed !== false || !valid() || c.getZoomFactor() !== zoom
+        || JSON.stringify(await readIsolated(c, viewportScript)) !== JSON.stringify(viewport))
+        throw new Error('页面在截图期间发生变化，请重试');
+      const size = image.getSize();
+      if (size.width <= 0 || size.height <= 0 || size.width * size.height > 8_000_000
+        || size.width > 4096 || size.height > 4096) throw new Error('截图像素超出限制');
+      const png = image.toPNG();
+      if (png.length > 2 * 1024 * 1024) throw new Error('截图大小超出限制');
+      if (!valid()) throw new Error('页面截图条件已变化');
+      return { captureId: randomUUID(), projectId, threadId, pageId,
+        coreInstanceId: page.coreInstanceId, pageGeneration: page.pageGeneration,
+        documentEpoch, controlEpoch: epoch, viewportRevision: page.viewportRevision,
+        url: observationUrl(c.getURL()), capturedAt: new Date().toISOString(),
+        viewport: { ...viewport, pageZoom: zoom, bitmapWidth: size.width, bitmapHeight: size.height },
+        mimeType: 'image/png', imageBase64: png.toString('base64') };
+    } finally {
+      if (changed !== false && valid()) await readIsolated(c, clearCaptureGuardScript).catch(() => {});
+      if (page.activeRead === read) page.activeRead = null;
+    }
   }
   cancelRead({ projectId, threadId, pageId, requestId, hostGeneration }) {
     if (hostGeneration !== this.hostGeneration) return;
@@ -910,6 +965,8 @@ class CorePreview {
       if (page.origin !== 'agent' && request.userIntent !== true) throw new Error('关闭人工页面需要明确用户操作');
       this.release(key); return this.state(this.page(request.projectId, request.threadId));
     }
+    if (request.operation === 'captureRegion')
+      return this.captureRegion(request.projectId, request.threadId, request.pageId);
     if (request.operation === 'hide') {
       if (page) page.requestedVisible = false;
       if (!request.projectId || this.owner === key) this.view?.setVisible(false);

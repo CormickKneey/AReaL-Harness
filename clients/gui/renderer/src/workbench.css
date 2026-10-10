@@ -1826,6 +1826,17 @@ button.composer-project:hover > svg,
 .preview-toolbar button { flex-shrink: 0; }
 .preview-stage { flex: 1; min-height: 0; position: relative; display: flex; justify-content: center; overflow: hidden; }
 .preview-stage .preview-webview { height: 100%; margin: 0; }
+.browser-region-annotation { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; gap: 8px; padding: 12px; background: var(--background); overflow: auto; }
+.browser-region-annotation [role="status"] { font-size: 12px; overflow-wrap: anywhere; }
+.browser-region-image-wrap { position: relative; align-self: center; width: fit-content; max-width: 100%; border: 1px solid var(--border); line-height: 0; }
+.browser-region-image-wrap img { display: block; max-width: 100%; max-height: 55vh; width: auto; height: auto; cursor: crosshair; touch-action: none; user-select: none; }
+.browser-region-selection { position: absolute; box-sizing: border-box; border: 2px solid var(--primary); background: color-mix(in srgb, var(--primary) 16%, transparent); pointer-events: none; }
+.browser-region-annotation label { display: flex; flex-direction: column; gap: 4px; }
+.browser-region-coordinates { display: flex; gap: 8px; flex-wrap: wrap; }
+.browser-region-coordinates label { width: 85px; }
+.browser-region-coordinates input { width: 100%; }
+.browser-region-annotation textarea { min-height: 70px; resize: vertical; }
+.browser-region-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .preview-placeholder { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; text-align: center; color: var(--color-foreground-subtle); }
 .preview-placeholder p { overflow-wrap: anywhere; max-width: 100%; }
 .preview-viewport-toolbar { display: flex; align-items: center; justify-content: center; gap: 16px; padding: 6px 12px; border-block: 1px solid var(--color-border); font-size: 12px; }

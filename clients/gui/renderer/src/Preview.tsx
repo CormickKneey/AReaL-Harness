@@ -8,8 +8,11 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "./components/ui/button.js";
 import type { PlatformServices, Data } from "./services.js";
 import { call } from "./services.js";
+import { BrowserRegionAnnotation, type RegionDraft } from "./BrowserRegionAnnotation.js";
+import { attachmentDrafts, sending, stageThreadDraft } from "./Composer.js";
 import type { PreviewRequest, OwnedPreviewOperation } from '@areal/workbench/desktop-contract';
 const locations = new Map<string, { url: string; link?: string }>();
+const regionDrafts = new Map<string, RegionDraft>();
 export function Preview({
   services,
   projectId,
@@ -42,6 +45,12 @@ export function Preview({
   const [width, setWidth] = useState(390);
   const [addressFocused, setAddressFocused] = useState(false);
   const [claiming, setClaiming] = useState(false);
+  const [annotationState, setAnnotationState] = useState<{ owner: string; draft: RegionDraft | null }>(() => ({ owner, draft: regionDrafts.get(owner) ?? null }));
+  const annotating = annotationState.owner === owner ? annotationState.draft : regionDrafts.get(owner) ?? null;
+  const [annotationBusy, setAnnotationBusy] = useState(false);
+  const annotationControl = useRef<HTMLButtonElement>(null);
+  const annotatingRef = useRef(annotating);
+  annotatingRef.current = annotating;
   const box = useRef<HTMLDivElement>(null);
   const editing = useRef(false);
   const current = useRef(owner);
@@ -131,7 +140,7 @@ export function Preview({
         projectId,
         threadId,
         ...(value.browser?.pageId ? { pageId: value.browser.pageId } : {}),
-        visible: !!value.url && !value.error && !errorRef.current && !overlay && height > 0 &&
+        visible: !!value.url && !value.error && !errorRef.current && !overlay && !annotatingRef.current && height > 0 &&
           box.current.checkVisibility({ visibilityProperty: true }),
         bounds: { x: r.x, y: r.y, width: r.width, height },
       };
@@ -179,6 +188,67 @@ export function Preview({
       void services.preview({ operation: "hide", projectId, threadId, pageId: stateRef.current.browser?.pageId }).catch(() => {});
     };
   }, [services, projectId, threadId]);
+  const updateAnnotation = (draft: RegionDraft | null) => {
+    annotatingRef.current = draft;
+    if (draft) regionDrafts.set(owner, draft);
+    else regionDrafts.delete(owner);
+    setAnnotationState({ owner, draft });
+  };
+  const cancelAnnotation = () => {
+    updateAnnotation(null);
+    annotationControl.current?.focus();
+  };
+  const startAnnotation = async () => {
+    if (annotationBusy || annotating) return;
+    setAnnotationBusy(true); setError("");
+    try {
+      const pageId = stateRef.current.browser?.pageId;
+      if (!pageId) throw new Error("请选择当前页面");
+      if (stateRef.current.browser?.control === 'agent') {
+        await services.preview({ operation: 'takeover', projectId, threadId, pageId });
+      }
+      const capture = await services.preview({ operation: 'captureRegion', projectId, threadId, pageId });
+      if (!mounted.current || current.current !== owner) return;
+      if (capture.projectId !== projectId || capture.threadId !== threadId || capture.pageId !== pageId
+        || typeof capture.imageBase64 !== 'string' || !Number.isFinite(capture.viewport?.bitmapWidth)
+        || !Number.isFinite(capture.viewport?.bitmapHeight)) throw new Error('截图所属页面已变化');
+      await services.preview({ operation: 'hide', projectId, threadId, pageId });
+      if (!mounted.current || current.current !== owner) return;
+      updateAnnotation({ capture: capture as RegionDraft['capture'], comment: '', region: null });
+    } catch (e) {
+      if (mounted.current && current.current === owner) setError(e instanceof Error ? e.message : String(e));
+    } finally { if (mounted.current && current.current === owner) setAnnotationBusy(false); }
+  };
+  const stageAnnotation = async (draft: RegionDraft) => {
+    if (annotationBusy) return;
+    setAnnotationBusy(true); setError("");
+    try {
+      const image = new Image();
+      image.src = `data:image/png;base64,${draft.capture.imageBase64}`;
+      await image.decode();
+      const { x, y, width, height } = draft.region!;
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      const context = canvas.getContext('2d');
+      if (!context) throw new Error('无法生成标注缩略图');
+      context.drawImage(image, x, y, width, height, 0, 0, width, height);
+      const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error('无法生成标注缩略图')), 'image/png'));
+      const capture = draft.capture;
+      const scaleX = capture.viewport.width / capture.viewport.bitmapWidth;
+      const scaleY = capture.viewport.height / capture.viewport.bitmapHeight;
+      const description = `页面区域标注（冻结截图，页面之后可能变化）\nURL: ${capture.url}\n截图时间: ${capture.capturedAt}\nPage: ${capture.pageId}; documentEpoch: ${capture.documentEpoch}; pageGeneration: ${capture.pageGeneration}; viewportRevision: ${capture.viewport.viewportRevision}; captureId: ${capture.captureId}\n截图区域 bitmap(px): ${x},${y},${width},${height}; viewport CSS(px): ${(x * scaleX).toFixed(1)},${(y * scaleY).toFixed(1)},${(width * scaleX).toFixed(1)},${(height * scaleY).toFixed(1)}\n意见: ${draft.comment.trim()}`;
+      const draftKey = `areal-gui:draft:${projectId}:${threadId}`;
+      if (sending.has(draftKey) || localStorage.getItem(`${draftKey}:pending`))
+        throw new Error('当前聊天有结果待核对的发送；请先确认结果，再加入标注草稿');
+      const existing = localStorage.getItem(draftKey) ?? '';
+      const files = [...(attachmentDrafts.get(draftKey) ?? []), new File([blob], `browser-region-${capture.captureId}.png`, { type: 'image/png' })];
+      const key = stageThreadDraft(projectId, threadId, [existing, description].filter(Boolean).join('\n\n'), files);
+      window.dispatchEvent(new CustomEvent('areal-draft-change', { detail: key }));
+      updateAnnotation(null);
+      annotationControl.current?.focus();
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setAnnotationBusy(false); }
+  };
   useEffect(() => {
     const link = `${initialRequest}:${initialUrl}`;
     if (initialUrl && locations.get(owner)?.link !== link) {
@@ -200,13 +270,13 @@ export function Preview({
       <div className="preview-viewport-toolbar" role="tablist" aria-label="浏览页面">
         {(state.workspace?.pages ?? []).map((page: Data, index: number) => (
           <Button key={page.pageId} type="button" size="sm" role="tab"
-            aria-selected={state.workspace?.selectedPageId === page.pageId}
+            aria-selected={state.workspace?.selectedPageId === page.pageId} disabled={!!annotating}
             onClick={() => void request('selectPage', { pageId: page.pageId })}>
             {page.title || page.url || `页面 ${index + 1}`}{page.resource === 'suspended' ? ' · 已暂停' : ''}
           </Button>
         ))}
-        <Button type="button" size="sm" aria-label="新建浏览页面" onClick={() => void request('newPage')}>＋</Button>
-        {!!state.browser?.pageId && <Button type="button" size="sm" aria-label="关闭当前浏览页面"
+        <Button type="button" size="sm" aria-label="新建浏览页面" disabled={!!annotating} onClick={() => void request('newPage')}>＋</Button>
+        {!!state.browser?.pageId && <Button type="button" size="sm" aria-label="关闭当前浏览页面" disabled={!!annotating}
           onClick={() => void request('release', { userIntent: true })}>关闭</Button>}
       </div>
       {state.browser?.stateLoss && <div className="preview-viewport-toolbar" role="status">
@@ -275,6 +345,10 @@ export function Preview({
             }}>交还并让 Agent 检查当前页</Button>
           </>}
       </div>}
+      {browserEnabled && state.url && <div className="preview-viewport-toolbar" role="group" aria-label="页面标注">
+        <Button ref={annotationControl} type="button" size="sm" disabled={annotationBusy || !!annotating || state.browser?.control === 'transferring'}
+          onClick={() => void startAnnotation()}>截取区域并标注</Button>
+      </div>}
       {!browserEnabled && browserAvailable && state.url && <div className="preview-viewport-toolbar">
         <Button type="button" size="sm" disabled={claiming} onClick={() => {
           setClaiming(true);
@@ -310,6 +384,8 @@ export function Preview({
           className="preview-webview"
           style={responsive ? { width: `min(100%, ${width}px)`, flex: "none" } : undefined}
         />
+        {annotating && <BrowserRegionAnnotation draft={annotating} busy={annotationBusy}
+          onChange={updateAnnotation} onCancel={cancelAnnotation} onStage={draft => void stageAnnotation(draft)} />}
         {failure ? (
           <BrowserLoadErrorState
               errorMessage={failure}
