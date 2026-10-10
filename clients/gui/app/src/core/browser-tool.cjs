@@ -20,8 +20,18 @@ function validToolInput(value) {
     || !value.parameters || typeof value.parameters !== 'object' || Array.isArray(value.parameters)) return false;
   const keys = Object.keys(value.parameters);
   if (value.operation === 'describe') return keys.length === 0;
-  return value.operation === 'observe' && keys.length === 1
-    && typeof value.parameters.pageId === 'string' && /^[0-9a-f-]{36}$/.test(value.parameters.pageId);
+  if (!['observe', 'capture'].includes(value.operation)
+    || typeof value.parameters.pageId !== 'string' || !/^[0-9a-f-]{36}$/.test(value.parameters.pageId)) return false;
+  if (value.operation === 'capture') return keys.every(key => ['pageId', 'scope'].includes(key))
+    && value.parameters.scope === 'viewport';
+  if (!keys.every(key => ['pageId', 'scope', 'budget', 'rootRef'].includes(key))) return false;
+  if (value.parameters.scope !== undefined && value.parameters.scope !== 'document') return false;
+  if (value.parameters.rootRef !== undefined && (typeof value.parameters.rootRef !== 'string' || !/^r[1-9]\d*$/.test(value.parameters.rootRef))) return false;
+  const budget = value.parameters.budget;
+  return budget === undefined || (budget && typeof budget === 'object' && !Array.isArray(budget)
+    && Object.keys(budget).every(key => ['nodes', 'textBytes'].includes(key))
+    && (budget.nodes === undefined || (Number.isSafeInteger(budget.nodes) && budget.nodes >= 1 && budget.nodes <= 1000))
+    && (budget.textBytes === undefined || (Number.isSafeInteger(budget.textBytes) && budget.textBytes >= 256 && budget.textBytes <= 128 * 1024)));
 }
 
 function failure(code, message) {

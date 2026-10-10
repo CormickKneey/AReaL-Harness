@@ -26,6 +26,74 @@ function observationUrl(value) {
   url.username = ''; url.password = ''; url.search = ''; url.hash = '';
   return url.href;
 }
+const sensitive = /password|passcode|secret|token|api.?key|credit.?card|cvv|authorization|one.?time.?code|\botp\b|credential/i;
+const BROWSER_READ_WORLD = 1001;
+async function readIsolated(contents, code) {
+  const result = await contents.executeJavaScriptInIsolatedWorld(BROWSER_READ_WORLD, [{ code }]);
+  if (result === undefined) throw new Error('Browser isolated read failed');
+  return result;
+}
+const viewportScript = `({width:innerWidth,height:innerHeight,scrollX,scrollY,deviceScaleFactor:devicePixelRatio})`;
+const interactiveRoles = new Set(['button', 'link', 'textbox', 'textfield', 'searchbox', 'combobox',
+  'checkbox', 'radiobutton', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'tab', 'switch',
+  'slider', 'spinbutton', 'option', 'listbox']);
+const MAX_REFS = 1000;
+const sensitiveCaptureScript = `(() => {
+  const selector = 'input[type="password"],input[name*="token" i],input[name*="secret" i],input[name*="key" i]';
+  const sensitiveAutocomplete = new Set(['current-password', 'new-password', 'cc-number', 'cc-csc', 'one-time-code']);
+  const scan = root => {
+    if (root.querySelector(selector)) return true;
+    for (const input of root.querySelectorAll('input[autocomplete]')) {
+      if (input.getAttribute('autocomplete').trim().toLowerCase().split(/\\s+/).some(token => sensitiveAutocomplete.has(token))) return true;
+    }
+    for (const element of root.querySelectorAll('*')) {
+      if (element.shadowRoot && scan(element.shadowRoot)) return true;
+      if (!['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT'].includes(element.tagName)
+        && [...element.childNodes].some(child => child.nodeType === Node.TEXT_NODE && /password|passcode|secret|token|api.?key|credit.?card|cvv|authorization|one.?time.?code|\\botp\\b|credential/i.test(child.textContent))) return true;
+    }
+    for (const frame of root.querySelectorAll('iframe,frame')) {
+      try { if (!frame.contentDocument || scan(frame.contentDocument)) return true; }
+      catch { return true; }
+    }
+    return false;
+  };
+  return scan(document);
+})()`;
+const captureGuardStartScript = (token, sequence) => `(() => {
+  if ((globalThis.__arealCaptureGuardSequence ?? 0) >= ${sequence}) return false;
+  globalThis.__arealCaptureGuardSequence = ${sequence};
+  const previous = globalThis.__arealCaptureGuard;
+  for (const observer of previous?.observers ?? []) observer.disconnect();
+  delete globalThis.__arealCaptureGuard;
+  const guard = { token: ${JSON.stringify(token)}, changed: false, observers: [] };
+  const watch = root => {
+    const observer = new MutationObserver(() => { guard.changed = true; });
+    observer.observe(root, { subtree: true, childList: true, attributes: true, characterData: true });
+    guard.observers.push(observer);
+    for (const element of root.querySelectorAll('*')) {
+      if (element.shadowRoot) watch(element.shadowRoot);
+      if (element.matches('iframe,frame')) {
+        if (!element.contentDocument) throw new Error('Frame unavailable');
+        watch(element.contentDocument);
+      }
+    }
+  };
+  try { watch(document); globalThis.__arealCaptureGuard = guard; return true; }
+  catch { for (const observer of guard.observers) observer.disconnect(); return false; }
+})()`;
+const captureGuardStopScript = (token, sequence) => `(() => {
+  globalThis.__arealCaptureGuardSequence = Math.max(globalThis.__arealCaptureGuardSequence ?? 0, ${sequence});
+  const guard = globalThis.__arealCaptureGuard;
+  if (!guard || guard.token !== ${JSON.stringify(token)}) return true;
+  const changed = guard.changed || guard.observers.some(observer => observer.takeRecords().length > 0);
+  for (const observer of guard.observers) observer.disconnect();
+  delete globalThis.__arealCaptureGuard;
+  return changed;
+})()`;
+function safeText(value, limit = 500) {
+  const text = String(value ?? '').slice(0, limit);
+  return sensitive.test(text) ? '[redacted]' : text;
+}
 function boundsWithinWindow(value, size) {
   if (
     !value ||
@@ -93,7 +161,7 @@ class CorePreview {
   }
   revoke(page) {
     if (page.control !== 'agent') return;
-    page.control = 'human'; page.controlEpoch++;
+    page.control = 'human'; page.controlEpoch++; page.refs.clear();
     page.activeRead?.cancel();
     if (page.view.webContents.debugger.isAttached()) page.view.webContents.debugger.detach();
     this.onRevoke?.({ projectId: page.projectId, threadId: page.threadId });
@@ -105,8 +173,8 @@ class CorePreview {
     if (!page || page.crashed || page.view.webContents.isDestroyed() || !page.view.webContents.getURL()
       || !this.owns(projectId, threadId)) throw new Error('当前聊天没有可认领的页面');
     this.revokeAll();
-    page.control = 'agent'; page.controlEpoch++;
-    return { protocol: 'areal.browser.host.v1', operations: ['describe', 'observe'], available: true,
+    page.control = 'agent'; page.controlEpoch++; page.refs.clear();
+    return { protocol: 'areal.browser.host.v1', operations: ['describe', 'observe', 'capture'], available: true,
       projectId, threadId, pageId: page.id, browserHostId: this.browserHostId,
       hostGeneration: this.hostGeneration, pageGeneration: page.pageGeneration, controlEpoch: page.controlEpoch };
   }
@@ -139,26 +207,150 @@ class CorePreview {
     const timer = setTimeout(cancel, 10000);
     try {
       if (!c.debugger.isAttached()) c.debugger.attach('1.3');
-      const tree = await Promise.race([c.debugger.sendCommand('Accessibility.getFullAXTree'), cancelled]);
+      const operation = request.operation;
+      if (operation !== 'observe' && operation !== 'capture') throw new Error('Unsupported browser operation');
+      const parameters = request.parameters ?? {};
+      const tree = operation === 'observe'
+        ? await Promise.race([c.debugger.sendCommand('Accessibility.getFullAXTree'), cancelled]) : null;
+      const frames = operation === 'observe'
+        ? await Promise.race([c.debugger.sendCommand('Page.getFrameTree'), cancelled]) : null;
+      const viewport = await Promise.race([readIsolated(c, viewportScript), cancelled]);
+      if (![viewport.width, viewport.height, viewport.scrollX, viewport.scrollY, viewport.deviceScaleFactor]
+        .every(Number.isFinite) || viewport.width <= 0 || viewport.height <= 0 || viewport.deviceScaleFactor <= 0)
+        throw new Error('Browser viewport unavailable');
+      const zoom = c.getZoomFactor();
+      const viewportKey = JSON.stringify([viewport.width, viewport.height, viewport.scrollX, viewport.scrollY, zoom, viewport.deviceScaleFactor]);
+      if (page.viewportKey !== viewportKey) { page.viewportKey = viewportKey; page.viewportRevision++; }
       if (page.control !== 'agent' || page.controlEpoch !== epoch || page.documentGeneration !== documentGeneration
         || this.pages.get(`${projectId}:${threadId}`) !== page || c.isDestroyed()) throw new Error('Browser observation was revoked');
-      const lines = [], nodes = tree.nodes ?? [];
-      let truncated = false;
+      const base = { observationId: randomUUID(), coreInstanceId, coreGeneration, projectId, threadId, turnId, callId, pageId,
+        browserHostId, hostGeneration, pageGeneration, nativeWebContentsId: c.id,
+        url: observationUrl(c.getURL()), title: safeText(c.getTitle(), 256), documentEpoch: documentGeneration,
+        controlEpoch: epoch, capturedAt: new Date().toISOString(), scope: operation === 'capture' ? 'viewport' : (parameters.scope ?? 'document'),
+        viewport: { ...viewport, pageZoom: zoom, viewportRevision: page.viewportRevision } };
+      if (operation === 'capture') {
+        // A known sensitive form or a DOM change during capture cannot be safely represented unmasked.
+        const guardToken = randomUUID();
+        const guardSequence = page.nextGuardSequence = (page.nextGuardSequence ?? 0) + 1;
+        let image, postSensitive, changed = true;
+        try {
+          const watching = await Promise.race([readIsolated(c, captureGuardStartScript(guardToken, guardSequence)), cancelled]);
+          if (watching !== true) throw new Error('Browser capture guard unavailable');
+          const hasSensitive = await Promise.race([readIsolated(c, sensitiveCaptureScript), cancelled]);
+          if (typeof hasSensitive !== 'boolean') throw new Error('Browser sensitive-field check unavailable');
+          if (hasSensitive) throw new Error('Sensitive field prevents automatic screenshot');
+          image = await Promise.race([c.capturePage(), cancelled]);
+          if (page.control !== 'agent' || page.controlEpoch !== epoch || page.documentGeneration !== documentGeneration)
+            throw new Error('Browser observation was revoked');
+          postSensitive = await Promise.race([readIsolated(c, sensitiveCaptureScript), cancelled]);
+        } finally {
+          changed = await Promise.race([
+            readIsolated(c, captureGuardStopScript(guardToken, guardSequence)).catch(() => true),
+            new Promise(resolve => setTimeout(() => resolve(true), 1000)),
+          ]);
+        }
+        if (postSensitive !== false || changed !== false) throw new Error('Browser content changed during capture');
+        const currentViewport = await Promise.race([readIsolated(c, viewportScript), cancelled]);
+        if (JSON.stringify(currentViewport) !== JSON.stringify(viewport) || c.getZoomFactor() !== zoom)
+          throw new Error('Browser viewport changed during capture');
+        const size = image.getSize();
+        if (size.width * size.height > 8_000_000 || size.width > 4096 || size.height > 4096) throw new Error('Screenshot pixel budget exceeded');
+        const png = image.toPNG();
+        if (png.length > 2 * 1024 * 1024) throw new Error('Screenshot byte budget exceeded');
+        return { ...base, capturedAt: new Date().toISOString(), viewport: { ...base.viewport, bitmapWidth: size.width, bitmapHeight: size.height }, mimeType: 'image/png', imageBase64: png.toString('base64'), byteLength: png.length };
+      }
+      const lines = [], entries = [], nodes = tree.nodes ?? [];
+      const liveIdentities = new Set(nodes.filter(node => node.backendDOMNodeId).map(node =>
+        JSON.stringify([page.pageGeneration, documentGeneration, epoch, node.frameId ?? 'main', node.backendDOMNodeId])));
+      const requestedIdentity = parameters.rootRef && [...page.refs].find(([, ref]) => ref === parameters.rootRef)?.[0];
+      if (parameters.rootRef && !requestedIdentity) throw new Error('stale_ref');
+      const requestedBackend = requestedIdentity && JSON.parse(requestedIdentity)[4];
+      const rootNode = requestedBackend && nodes.find(node => node.backendDOMNodeId === requestedBackend);
+      if (parameters.rootRef && !rootNode) throw new Error('stale_ref');
+      const parent = new Map(nodes.map(node => [node.nodeId, node.parentId]));
+      const descendant = node => { for (let id = node.nodeId; id; id = parent.get(id)) if (id === rootNode?.nodeId) return true; return false; };
+      const sensitiveNodes = new Set(nodes.filter(node => /passwordField/i.test(String(node.role?.value ?? ''))
+        || sensitive.test(String(node.name?.value ?? ''))
+        || (/textField|textbox|searchbox|comboBox/i.test(String(node.role?.value ?? ''))
+          && (node.properties ?? []).some(property => sensitive.test(String(property.name)) || sensitive.test(String(property.value?.value)))))
+        .map(node => node.nodeId));
+      const fieldNodes = new Set(nodes.filter(node => /^(textField|passwordField|textbox|searchbox|comboBox)$/i
+        .test(String(node.role?.value ?? ''))).map(node => node.nodeId));
+      const fieldValues = [...new Set(nodes.filter(node => fieldNodes.has(node.nodeId))
+        .map(node => String(node.value?.value ?? '')).filter(Boolean))];
+      const fieldEcho = text => fieldValues.some(value => text === value || (value.length >= 3 && text.includes(value)));
+      const sensitiveChild = node => { for (let id = node.parentId; id; id = parent.get(id)) if (sensitiveNodes.has(id)) return true; return false; };
+      const fieldChild = node => { for (let id = node.parentId; id; id = parent.get(id)) if (fieldNodes.has(id)) return true; return false; };
+      const limitNodes = parameters.budget?.nodes ?? 200;
+      const limitBytes = parameters.budget?.textBytes ?? 32 * 1024;
+      const nextRefs = new Map();
+      const entryByNodeId = new Map();
+      let textBytes = 0, truncated = false;
       for (const node of nodes) {
         if (node.ignored) continue;
         const role = String(node.role?.value ?? '').slice(0, 80);
-        const name = String(node.name?.value ?? '').slice(0, 500);
-        const value = role === 'textField' || role === 'passwordField' ? '' : String(node.value?.value ?? '').slice(0, 500);
-        const line = [role, name, value].filter(Boolean).join(': ');
+        const rawName = String(node.name?.value ?? '');
+        const propertySensitive = (node.properties ?? []).some(property => sensitive.test(String(property.name)) || sensitive.test(String(property.value?.value)));
+        const sensitiveNode = sensitiveNodes.has(node.nodeId) || sensitiveChild(node) || propertySensitive;
+        const concealed = sensitiveNode || fieldChild(node) || fieldEcho(rawName);
+        const name = concealed ? '[redacted]' : safeText(rawName);
+        const value = concealed || /textField|passwordField|textbox|searchbox|comboBox/i.test(role)
+          || sensitive.test(rawName) || propertySensitive || fieldEcho(String(node.value?.value ?? ''))
+          ? '' : safeText(node.value?.value);
+        const identity = node.backendDOMNodeId && JSON.stringify([page.pageGeneration, documentGeneration, epoch, node.frameId ?? 'main', node.backendDOMNodeId]);
+        const interactive = interactiveRoles.has(role.toLowerCase()) && !concealed
+          && (!fieldNodes.has(node.nodeId) || name.trim().length > 0);
+        let ref;
+        if (identity && interactive) {
+          ref = page.refs.get(identity) ?? `r${++page.nextRef}`;
+        }
+        if (rootNode && !descendant(node)) continue;
+        const line = [ref, role, name, value].filter(Boolean).join(': ');
         if (!line) continue;
-        if (lines.length >= 160 || lines.join('\n').length + line.length > 16 * 1024) { truncated = true; break; }
+        let ancestor = node.parentId;
+        while (ancestor && !entryByNodeId.has(ancestor)) ancestor = parent.get(ancestor);
+        const entry = { id: `n${entries.length + 1}`, role, name,
+          ...(ancestor ? { parent: entryByNodeId.get(ancestor) } : {}),
+          ...(node.frameId ? { frameId: node.frameId } : {}),
+          ...(ref ? { ref } : {}),
+          ...(value ? { value } : {}),
+          ...(node.description?.value ? { description: concealed
+            ? '[redacted]' : safeText(node.description.value) } : {}),
+          state: Object.fromEntries((node.properties ?? [])
+            .filter(property => ['checked', 'selected', 'disabled', 'expanded', 'required', 'invalid'].includes(property.name))
+            .map(property => [property.name, safeText(property.value?.value, 80)])) };
+        const bytes = Buffer.byteLength(line, 'utf8') + Buffer.byteLength(JSON.stringify(entry), 'utf8');
+        if (lines.length >= limitNodes || textBytes + bytes > limitBytes) { truncated = true; break; }
         lines.push(line);
+        if (ref) nextRefs.set(identity, ref);
+        entries.push(entry);
+        entryByNodeId.set(node.nodeId, entry.id);
+        textBytes += bytes;
       }
-      return { coreInstanceId, coreGeneration, projectId, threadId, turnId, callId, pageId,
-        browserHostId, hostGeneration, pageGeneration, nativeWebContentsId: c.id,
-        url: observationUrl(c.getURL()), title: c.getTitle().slice(0, 256), documentEpoch: documentGeneration,
-        controlEpoch: epoch, capturedAt: new Date().toISOString(), scope: 'ax',
-        frameCoverage: 'main-frame', truncated, text: lines.join('\n') };
+      const retainedRefs = new Map([...page.refs].filter(([identity]) => liveIdentities.has(identity)));
+      for (const [identity, ref] of nextRefs) {
+        retainedRefs.delete(identity);
+        retainedRefs.set(identity, ref);
+      }
+      let refsEvicted = 0;
+      while (retainedRefs.size > MAX_REFS) {
+        retainedRefs.delete(retainedRefs.keys().next().value);
+        refsEvicted++;
+      }
+      page.refs = retainedRefs;
+      const seenFrames = new Set(nodes.map(node => node.frameId).filter(Boolean));
+      const childFrames = [];
+      const walkFrames = (branch, root = false) => {
+        if (!root) childFrames.push({ frameId: branch.frame.id, url: branch.frame.url ? observationUrl(branch.frame.url) : '',
+          coverage: seenFrames.has(branch.frame.id) ? 'covered' : 'unavailable' });
+        for (const child of branch.childFrames ?? []) walkFrames(child);
+      };
+      walkFrames(frames.frameTree, true);
+      return { ...base, frameCoverage: { main: 'covered', childFrames },
+        shadowCoverage: 'not-distinguished-by-accessibility-tree', dynamicCoverage: 'snapshot-at-capturedAt',
+        truncated, truncationReason: truncated ? 'budget' : null,
+        refCache: { capacity: MAX_REFS, evicted: refsEvicted },
+        budget: { nodes: limitNodes, textBytes: limitBytes }, nodes: entries, text: lines.join('\n') };
     } finally {
       clearTimeout(timer);
       if (page.activeRead === read) {
@@ -178,7 +370,7 @@ class CorePreview {
       },
     });
     const page = { id: randomUUID(), pageGeneration: 1, view, projectId, threadId, error: "", url: "", crashed: false,
-      control: 'human', controlEpoch: 0, documentGeneration: 0 },
+      control: 'human', controlEpoch: 0, documentGeneration: 0, viewportRevision: 0, refs: new Map(), nextRef: 0 },
       c = view.webContents;
     c.setWindowOpenHandler(() => ({ action: "deny" }));
     c.session.setPermissionRequestHandler((_contents, _permission, respond) =>
@@ -205,8 +397,13 @@ class CorePreview {
       if (main) {
         this.revoke(page);
         page.documentGeneration++;
+        page.refs.clear();
         page.url = url;
         page.error = "";
+      } else {
+        page.documentGeneration++;
+        page.refs.clear();
+        page.activeRead?.cancel();
       }
     });
     c.on("did-fail-load", (_event, code, message, url, main) => {
