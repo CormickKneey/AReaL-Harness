@@ -134,7 +134,7 @@ app.whenReady().then(async () => {
     validatePreview(request);
     if (!preview) throw new Error('预览不可用');
     if (request?.operation === 'claim') {
-      const identity = preview.claim(request.projectId, request.threadId);
+      const identity = await preview.claim(request.projectId, request.threadId);
       try { await backend.browserClaim(identity); trusted(event); }
       catch (error) { preview.takeover(request.projectId, request.threadId); throw error; }
       return preview.state(preview.pages.get(`${request.projectId}:${request.threadId}`));

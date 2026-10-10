@@ -297,10 +297,17 @@ class DesktopService {
         controlEpoch: claim.controlEpoch, operation: input.operation, parameters: input.parameters,
         phase, ...(action && phase === 'execute' ? { browserApproval } : {}) } });
     });
-    if (this.browserClaims.get(key) !== claim) return browserFailure('human_control', 'Browser authorization was revoked');
+    if (this.browserClaims.get(key) !== claim) {
+      // Execute may already have reached native input. Revocation cannot turn
+      // its missing receipt into a factual claim that nothing was sent.
+      if (action && phase === 'execute') throw new Error('Browser action outcome unknown after takeover');
+      return browserFailure('human_control', 'Browser authorization was revoked');
+    }
     const currentProject = this.backend.projects.get(projectId);
-    if (currentProject?.service?.serviceId !== coreInstanceId || currentProject.service.generation !== coreGeneration)
+    if (currentProject?.service?.serviceId !== coreInstanceId || currentProject.service.generation !== coreGeneration) {
+      if (action && phase === 'execute') throw new Error('Browser action outcome unknown after deployment change');
       return browserFailure('host_unavailable', 'Core deployment changed during observation');
+    }
     if (!result || typeof result !== 'object' || result.pageId !== claim.pageId || result.callId !== callId
       || result.turnId !== turnId || result.threadId !== threadId || result.projectId !== projectId
       || result.coreInstanceId !== coreInstanceId || result.coreGeneration !== coreGeneration
@@ -308,6 +315,8 @@ class DesktopService {
       || result.pageGeneration !== claim.pageGeneration || result.controlEpoch !== claim.controlEpoch
       || JSON.stringify(result).length > (input.operation === 'capture' ? 3 * 1024 * 1024 : 512 * 1024)) throw new Error('Invalid browser host response');
     if (result.error) {
+      if (action && phase === 'execute' && result.error === 'outcome_unknown')
+        throw new Error('Browser action outcome unknown');
       if (phase === 'prepare') return { error: result.error, dispatch: 'not_sent' };
       const hint = { human_control: 'Human controls this page', plan_stale: 'Page or target changed; observe again before a new action',
         stale_ref: 'Target changed; observe again', human_takeover_required: 'Use human takeover for this page',
@@ -321,6 +330,8 @@ class DesktopService {
     }
     if (action) return { ...browserSuccess(result), structuredContent: result };
     if (input.operation === 'capture') {
+      if (signal?.aborted || this.browserClaims.get(key) !== claim || claim.socket.readyState !== 1)
+        return browserFailure('human_control', 'Browser authorization was revoked during capture');
       if (result.mimeType !== 'image/png' || typeof result.imageBase64 !== 'string'
         || result.imageBase64.length > 2_800_000 || typeof toolHostGeneration !== 'string')
         throw new Error('Invalid browser image');
