@@ -91,7 +91,21 @@ async function createWindow() {
   preview = new CorePreview(window, WebContentsView,
     (projectId, threadId) => backend.ownsThread(projectId, threadId),
     () => backend.snapshot().library?.settings ?? {},
-    projectId => backend.status.browserCore?.[projectId] ?? null);
+    projectId => backend.status.browserCore?.[projectId] ?? null,
+    () => [backend.metadata?.endpoint, ...(backend.status.browserControlEndpoints ?? [])].filter(Boolean),
+    async ({ origin, page, fence }) => {
+      const current = () => !quitting && !!backend.metadata?.endpoint
+        && window && !window.isDestroyed() && window.isVisible() && !window.isMinimized()
+        && window.isFocused() && preview?.currentDevelopmentPrompt(page, fence);
+      if (!current()) return false;
+      const { response } = await dialog.showMessageBox(window, {
+        type: 'question', title: '允许本地开发站点',
+        message: `允许此浏览工作区访问 ${origin}？`,
+        detail: '仅允许此精确地址的临时站点状态；关闭工作区或重启后需要重新授权。',
+        buttons: ['取消', '仅此工作区允许'], defaultId: 0, cancelId: 0, noLink: true,
+      });
+      return response === 1 && current();
+    });
   preview.onRevoke = identity => { void backend.browserRevoke(identity).catch(() => {}); };
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
@@ -126,7 +140,8 @@ app.whenReady().then(async () => {
   backend.onBrowserRequest = async request => {
     if (quitting || !preview || !window || window.isDestroyed()) throw new Error('Browser host unavailable');
     try { return await (request.phase === 'prepare' ? preview.prepare(request)
-      : ['act', 'wait', 'navigate', 'newPage'].includes(request.operation) ? preview.execute(request) : preview.observe(request)); }
+      : ['act', 'wait', 'navigate', 'newPage'].includes(request.operation) ? preview.execute(request)
+      : request.operation === 'diagnostics' ? preview.diagnostics(request) : preview.observe(request)); }
     catch (error) {
       if (error.message === 'outcome_unknown') throw error;
       return { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration, projectId: request.projectId,

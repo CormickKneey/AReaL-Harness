@@ -49,6 +49,9 @@ class DesktopService {
       starting: this.backend.starting.size, pid: process.pid,
       browserCore: Object.fromEntries([...this.backend.projects].map(([id, project]) =>
         [id, project.service?.serviceId ?? null])),
+      // Authenticated desktop Main uses actual active Core listeners to deny
+      // Browser Session requests to control ports. This is not a UI grant.
+      browserControlEndpoints: [...this.backend.projects.values()].map(project => project.endpoint).filter(Boolean),
     } };
   }
   send(socket, value) {
@@ -167,7 +170,7 @@ class DesktopService {
         const { coreInstanceId: claimedCoreId, projectId, threadId, pageId,
           browserHostId, hostGeneration, pageGeneration, controlEpoch } = params ?? {};
         if (params?.protocol !== 'areal.browser.host.v1' || params?.available !== true
-          || JSON.stringify(params?.operations) !== JSON.stringify(['describe', 'observe', 'capture', 'act', 'wait', 'navigate', 'newPage'])) throw new Error('浏览器宿主能力不兼容');
+          || JSON.stringify(params?.operations) !== JSON.stringify(['describe', 'observe', 'capture', 'act', 'wait', 'navigate', 'newPage', 'diagnostics'])) throw new Error('浏览器宿主能力不兼容');
         if (![projectId, threadId, pageId, browserHostId].every(value => typeof value === 'string' && value.length > 0 && value.length <= 256)
           || ![hostGeneration, pageGeneration, controlEpoch].every(Number.isSafeInteger)) throw new Error('无效浏览页面身份');
         const project = this.backend.projects.get(projectId);
@@ -291,7 +294,7 @@ class DesktopService {
     }
     if (input.operation === 'describe') return browserSuccess({ protocol: 'areal.browser.host.v1',
       browserHostId: claim.browserHostId, hostGeneration: claim.hostGeneration, available: true,
-      operations: ['describe', 'observe', 'capture', 'act', 'wait', 'navigate', 'newPage'],
+      operations: ['describe', 'observe', 'capture', 'act', 'wait', 'navigate', 'newPage', 'diagnostics'],
       pages: [...claim.pages.keys()] });
     const pageClaim = claim.pages.get(input.parameters.pageId);
     if (!pageClaim) return browserFailure('wrong_page', 'Page does not belong to this thread');
