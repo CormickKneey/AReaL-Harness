@@ -1,6 +1,127 @@
 use super::*;
 
 impl Engine {
+    /// Fork 持有已提交前缀的不可变副本；创建不激活 Turn，也不继承来源执行绑定。
+    pub async fn fork_thread(self: &Arc<Self>, identity: String, request: ForkThread) -> Result<Thread> {
+        self.mutate(move |engine| async move {
+            let _serial = engine.desktop.creation.lock().await;
+            let hash = digest(&request)?;
+            let method = "areal/thread/fork";
+            let cells: Vec<_> = engine.threads.read().await.values().cloned().collect();
+            for cell in cells {
+                let state = cell.state.lock().await;
+                if let Some(data) = &state.thread.desktop {
+                    if receipt(data, &identity, &request.request_id, method, &hash)?.is_some() {
+                        return Ok(state.thread.clone());
+                    }
+                }
+            }
+            if request.workspace_mode != "sharedCurrent" || request.anchor.boundary != "after" {
+                return Err(invalid("SCF-01 supports only after and sharedCurrent"));
+            }
+            let source_cell = engine.raw_cell(&request.source_thread_id).await?;
+            let source_state = source_cell.state.lock().await;
+            if source_state.thread.parent_thread_id.is_some() || source_state.thread.conversation.is_some()
+                || source_state.thread.history_archive.is_some() || source_state.thread.context_checkpoint.is_some()
+                || source_state.thread.desktop.as_ref().is_some_and(|d| d.workflow_run.is_some() || d.archived) {
+                return Err(invalid("SOURCE_KIND_UNSUPPORTED"));
+            }
+            let source_cwd = source_state.thread.cwd.clone();
+            drop(source_state);
+            // 固定读取一份已提交记录；流式状态和来源 checkpoint 不进入历史种子。
+            let source = engine.store.read_thread(&request.source_thread_id).await
+                .map_err(|e| Error::Storage(e.to_string()))?;
+            let Some(last) = source.turns.last() else { return Err(invalid("ANCHOR_NOT_FOUND")); };
+            if last.id != request.anchor.turn_id { return Err(invalid("ANCHOR_NOT_FOUND")); }
+            if last.status != TurnStatus::Completed { return Err(invalid("TURN_NOT_TERMINAL")); }
+            if source.turns.iter().any(|turn| turn.status != TurnStatus::Completed) { return Err(invalid("HISTORY_UNRESOLVED")); }
+            if source.turns.iter().flat_map(|t| &t.items).any(|item| !match item {
+                Item::UserMessage { content, .. } => content.iter().all(|i| matches!(i, Input::Text { .. })),
+                Item::AgentMessage { .. } => true,
+                _ => false,
+            }) {
+                return Err(invalid("HISTORY_UNRESOLVED"));
+            }
+            let config = last.configuration.clone().or_else(|| source.desktop.as_ref().map(|d| d.configuration.clone())).unwrap_or_default();
+            if config.profile.as_ref().is_some_and(|p| p.workflow.is_some()) { return Err(invalid("PROFILE_NOT_SUPPORTED")); }
+            let model = engine.configured_model(&config).map_err(|_| invalid("MODEL_CONTEXT_INCOMPATIBLE"))?;
+            if !model.capabilities().supports_input(areal_protocol::Modality::Text) { return Err(invalid("MODEL_CONTEXT_INCOMPATIBLE")); }
+            let item_count = source.turns.iter().map(|t| t.items.len()).sum();
+            let turn_count = source.turns.len();
+            let (snapshot_id, logical_bytes) = engine.store.write_fork_snapshot(source.turns).await
+                .map_err(|e| Error::Storage(e.to_string()))?;
+            let thread_id = id();
+            let mut data = DesktopState { configuration: config, ..Default::default() };
+            remember(&mut data, &identity, &request.request_id, method, hash,
+                json!({"threadId":thread_id}));
+            let thread = Thread {
+                conversation: Some(areal_protocol::Conversation::Fork {
+                    version: 1,
+                    origin: areal_protocol::ConversationOrigin {
+                        source_thread_id: request.source_thread_id,
+                        source_turn_id: request.anchor.turn_id,
+                        boundary: "after".into(),
+                        snapshot_id: snapshot_id.clone(),
+                    },
+                    history_seed: areal_protocol::HistorySeed { snapshot_id, turn_count, item_count, logical_bytes },
+                    workspace_mode: "sharedCurrent".into(),
+                }),
+                goals: Default::default(), goal_owner: None, desktop: Some(data),
+                id: thread_id.clone(), session_id: thread_id.clone(), parent_thread_id: None,
+                preview: format!("分支 · {}", source.preview), model_provider: engine.model_provider(),
+                created_at: now(), updated_at: now(), status: ThreadStatus::Idle,
+                cwd: source_cwd, cli_version: env!("CARGO_PKG_VERSION").into(), source: "appServer".into(),
+                ephemeral: false, turns: Vec::new(), history_archive: None, context_checkpoint: None,
+                dynamic_tools: Vec::new(), toolset_revision: 0,
+            };
+            let cell = Cell::new(thread.clone(), 0, crate::tools::Bindings { registry: engine.registry.clone(), host: None });
+            // 容量锁跨越持久提交；read/list 只会看见已经同步完成的目标。
+            let mut threads = engine.threads.write().await;
+            if threads.len() >= engine.limits.max_threads { return Err(Error::Exhausted("thread capacity reached".into())); }
+            engine.persist(&thread).await?;
+            threads.insert(thread_id, cell);
+            Ok(thread)
+        }).await
+    }
+
+    pub async fn fork_history(&self, thread_id: &str, cursor: Option<String>, max_bytes: Option<usize>) -> Result<Value> {
+        let max_bytes = max_bytes.unwrap_or(65536);
+        if !(1..=262144).contains(&max_bytes) { return Err(invalid("maxBytes must be 1..262144")); }
+        let thread = self.read(thread_id, false).await?;
+        let Some(areal_protocol::Conversation::Fork { origin, history_seed, .. }) = thread.conversation else {
+            return Err(invalid("inherited history requires a Fork"));
+        };
+        let index = match cursor {
+            Some(value) => {
+                let (id, index) = value.rsplit_once(':').ok_or_else(|| invalid("invalid history cursor"))?;
+                if id != history_seed.snapshot_id { return Err(invalid("invalid history cursor")); }
+                index.parse::<usize>().map_err(invalid)?
+            }
+            None => 0,
+        };
+        let mut entries = Vec::new();
+        for turn in self.store.read_fork_snapshot(&history_seed.snapshot_id)
+            .map_err(|e| Error::Storage(e.to_string()))? {
+            for item in turn.items {
+                entries.push(json!({"sourceThreadId":origin.source_thread_id,
+                    "sourceTurnId":turn.id,"sourceItemId":item.id(),"item":item}));
+            }
+        }
+        if index > entries.len() { return Err(invalid("invalid history cursor")); }
+        let mut data = Vec::new();
+        let mut size = 0;
+        for entry in entries.iter().skip(index) {
+            let bytes = serde_json::to_vec(entry).map_err(invalid)?.len();
+            if bytes > max_bytes { return Err(Error::Exhausted("history item exceeds page budget".into())); }
+            if size + bytes > max_bytes { break; }
+            size += bytes;
+            data.push(entry.clone());
+        }
+        let next = index + data.len();
+        Ok(json!({"snapshotId":history_seed.snapshot_id,"data":data,
+            "nextCursor":(next < entries.len()).then(||format!("{}:{}",history_seed.snapshot_id,next)),
+            "complete":next == entries.len()}))
+    }
     /// 空闲旧会话只追加部署固定 Browser 包，受理回执与工具表同一快照提交。
     pub async fn attach_browser_tools(
         self: &Arc<Self>,

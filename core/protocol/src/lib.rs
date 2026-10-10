@@ -403,9 +403,43 @@ pub struct HistoryArchive {
     pub bytes: u64,
 }
 
+/// 不可变会话来源；未知角色反序列化失败，避免将新受限会话当作普通可写 Thread。
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum Conversation {
+    Fork {
+        version: u32,
+        origin: ConversationOrigin,
+        #[serde(rename = "historySeed")]
+        history_seed: HistorySeed,
+        #[serde(rename = "workspaceMode")]
+        workspace_mode: String,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationOrigin {
+    pub source_thread_id: String,
+    pub source_turn_id: String,
+    pub boundary: String,
+    pub snapshot_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct HistorySeed {
+    pub snapshot_id: String,
+    pub turn_count: usize,
+    pub item_count: usize,
+    pub logical_bytes: usize,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Thread {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation: Option<Conversation>,
     #[serde(default, skip_serializing_if = "goals::GoalState::is_empty")]
     pub goals: goals::GoalState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -441,6 +475,8 @@ fn is_zero(value: &u64) -> bool { *value == 0 }
 pub struct RpcError {
     pub code: i64,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<Value>,
 }
 
 impl RpcError {
@@ -448,12 +484,14 @@ impl RpcError {
         Self {
             code: -32602,
             message: message.into(),
+            data: None,
         }
     }
     pub fn method() -> Self {
         Self {
             code: -32601,
             message: "Method not found".into(),
+            data: None,
         }
     }
 }

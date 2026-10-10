@@ -34,6 +34,7 @@ import { MemoTaskItem } from "./TaskListItem.js";
 import { DndContext, DragOverlay } from "@dnd-kit/core";
 import { SidebarDragSurface, useSidebarDrag, type SidebarDragSource } from "./sidebarDrag.js";
 import { Messages } from "./Messages.js";
+import { ForkHistory } from "./ForkHistory.js";
 import { ConversationDraftEmptyState } from "./ConversationDraftEmptyState.js";
 import { NewTaskButtonGroup } from "./NewTaskButtonGroup.js";
 import { Composer, sending, subscribeSending } from "./Composer.js";
@@ -342,6 +343,8 @@ function AppContent({ services }: { services: PlatformServices }) {
   // Sidebar visibility must not change the owner of an explicitly opened resource.
   const project = noProject ? undefined : snapshot.projects.find((p) => p.id === projectId) ?? projects.find(p => !p.projectless);
   const thread = project?.state?.threads[threadId];
+  const activeConversation = React.useRef("");
+  activeConversation.current = `${project?.id ?? ""}:${thread?.id ?? ""}`;
   const recordWorkspaceLocation = useCallback((next: { projectId: string; threadId: string }, replace = false) => {
     setWorkspaceHistory(history => {
       const current = history.entries[history.index] ?? (project ? { projectId: project.id, threadId } : noProject ? { projectId: "", threadId: "" } : next);
@@ -1072,6 +1075,7 @@ function AppContent({ services }: { services: PlatformServices }) {
   );
   const empty =
     !(thread && admitting) &&
+    thread?.conversation?.kind !== "fork" &&
     !thread?.turns?.some((turn: Data) => turn.items?.length || turn.status === "inProgress");
   const taskActions = <DropdownMenu>
                     <DropdownMenuTrigger
@@ -1376,6 +1380,16 @@ function AppContent({ services }: { services: PlatformServices }) {
                           project={project}
                           thread={thread}
                           action={action}
+                          beforeTurns={thread.conversation?.kind === "fork" ? <ForkHistory projectId={project.id} thread={thread} action={resourceAction} /> : undefined}
+                          onFork={async turnId => {
+                            const owner = project.id;
+                            const sourceThreadId = thread.id;
+                            const route = `${owner}:${sourceThreadId}`;
+                            if (!window.confirm("创建分支只复制此轮次及之前的对话历史。项目文件保持当前状态，分支与原会话共享工作区。继续创建？")) return;
+                            const result = await action("fork", { projectId: owner, sourceThreadId,
+                              anchor: { turnId, boundary: "after" }, workspaceMode: "sharedCurrent" });
+                            if (activeConversation.current === route) await open(owner, result.threadId);
+                          }}
                           dark={dark}
                           onLink={onLink}
                           onFile={openFile}

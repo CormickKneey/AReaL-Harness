@@ -27,6 +27,7 @@ const reads = {
   profile: ['areal/profile/read', ['id', 'revision']], skills: ['areal/skill/list', ['threadId', 'agentProfile']],
   skill: ['areal/skill/read', ['threadId', 'agentProfile', 'skill', 'resource', 'offset', 'maxBytes']],
   inspect: ['areal/thread/inspect', ['threadId']], context: ['areal/context/read', ['threadId', 'offset', 'limit']],
+  inheritedHistory: ['areal/conversation/history', ['threadId', 'view', 'cursor', 'maxBytes']],
   plan: ['areal/plan/read', ['threadId']], processes: ['areal/process/list', ['threadId']],
   process: ['areal/process/get', ['threadId', 'id']],
   processWait: ['areal/process/wait', ['threadId', 'id', 'timeoutMs']],

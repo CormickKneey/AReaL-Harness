@@ -54,6 +54,22 @@ pub struct AttachBrowserTools {
 pub struct ObserveThread {
     pub thread_id: String,
 }
+
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ForkAnchor {
+    pub turn_id: String,
+    pub boundary: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ForkThread {
+    pub request_id: String,
+    pub source_thread_id: String,
+    pub anchor: ForkAnchor,
+    pub workspace_mode: String,
+}
 pub const NOTIFICATIONS: &[&str] = &[
     "areal/goal/updated",
     "areal/goal/cleared",

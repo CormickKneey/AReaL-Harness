@@ -121,6 +121,7 @@ impl Engine {
         }
         let thread_id = id();
         let mut thread = Thread {
+            conversation: None,
             history_archive: None,
             goals: Default::default(),
             goal_owner: parent.and_then(|p| {

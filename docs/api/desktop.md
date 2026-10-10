@@ -117,3 +117,11 @@ features.goals=true 表示服务支持 Goal，无需单独配置开关；Goal �
 `task/create/list/read/pause/resume/cancel/subscribe/unsubscribe`、`channel/read/reply`、`inbox/list` 构成独立于 Thread 的任务控制与通信 API，详见 [Task 契约](tasks.md)。task/updated 通知携带 Task 投影和 channelSequence；客户端通过分页频道读取维护消息。server/status 与 drain 增加 activeTasks，包含尚未到时的任务。GUI/TUI/WebUI 可共享同一 Inbox；现有会话交互面板仍处理同步问题和审批。
 
 可选 `parameters.contextWindowTokens`（1–2000000）声明模型容量，保存在模型默认参数与 Thread 覆盖中。`areal/model/list.contextWindowTokens` 未声明时仍为 null，`effectiveContextWindowTokens` 包含全局兜底。上下文检查增加 budget 字段 windowTokens、outputReserveTokens、inputLimitTokens、targetTokens、windowSource（model/fallback）。模型配置或凭据不可用时仍可查看上下文，budget 返回 null。这些元数据控制本地预检，不改变供应商模型容量。
+
+## Turn Fork 开发预览
+
+设置 `AREAL_DEV_CONVERSATION_DERIVATION=1` 后，`areal/capabilities` 仅声明 `conversationDerivationV1.preview` 子集：最近一个已完成的纯文本主会话 Turn 的 `after` 边界，以及 `sharedCurrent` 工作区。未开启时不公布 Fork 创建方法；既有 Fork 的继承历史仍可读取。此预览不代表完整 Side Chat/Fork P0 已验收。
+
+`areal/thread/fork` 接受 `{requestId,sourceThreadId,anchor:{turnId,boundary:"after"},workspaceMode:"sharedCurrent"}`。Core 从已提交来源记录冻结完整纯文本前缀，持久化目标自有快照和创建收据，再公开一个空闲的独立 Thread/Session；目标本地 `turns` 起初为空，来源 Goal、队列、审批和执行宿主均不继承。创建不启动模型或工具，不修改工作区文件。相同业务键和参数返回同一目标，参数冲突的 `error.data.reason` 是 `REQUEST_CONFLICT`。目标 `conversation.kind=fork`、`origin` 和 `historySeed` 是内容来源，不是 `parentThreadId` 委派关系。
+
+`areal/conversation/history {threadId,view:"inherited",cursor?,maxBytes?}` 按目标授权读取继承项，默认页预算 64 KiB、最大 256 KiB。此开发切片只接受能完整装入单页的纯文本 Item；过大项会明确拒绝，后续切片加入片段分页。`areal/context/read` 和目标后续模型请求从持久快照与本地 Turn 构造逻辑历史，不再读取来源实时会话。当前限制为一个 32 MiB 不可变段；复杂、冷历史和 before 锚点由后续切片处理。旧记录缺少 `conversation` 时仍按普通主会话读取；未知 kind 或不支持的版本拒绝恢复。
