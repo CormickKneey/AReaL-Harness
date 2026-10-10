@@ -2,7 +2,9 @@
 
 # 保留 WebContentsView 与窄 CDP Driver
 
-**状态：proposed（设计提案，尚未实施）**
+**状态：accepted（2026-10-10 用户批准技术方案；生产集成尚未实施）**
+
+R0 原生证据完成后，用户批准保留现有 WebContentsView、Main 窄 debugger Driver、可信原生输入遮罩，以及优先使用冻结截图承载区域反馈。后续实现按既有票的依赖推进；批准技术选择不代表 Core 工具链、接管、UNKNOWN 或发布验收已经完成。
 
 当前原生预览已采用 WebContentsView，且没有网页 preload/Node/产品桥。保留这一安全与生命周期边界，通过 Main 的 debugger 传输实现范围受限的 Browser Driver；不开放整个 Electron 的远程调试端口，不把不同 View 技术迁移当作 Browser 集成前置条件。
 

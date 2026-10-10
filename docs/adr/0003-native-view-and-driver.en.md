@@ -2,7 +2,9 @@
 
 # Retain WebContentsView and a narrow CDP driver
 
-**Status: proposed; not implemented**
+**Status: accepted (user approval on 2026-10-10); production integration not implemented**
+
+After reviewing the R0 native evidence, the user approved retaining the existing WebContentsView, a narrow Main debugger Driver, a trusted native input mask, and frozen screenshots as the preferred region-feedback surface. Implementation follows the existing ticket graph. Approval of the technical choice does not establish completion of Core tool routing, takeover, UNKNOWN handling or release acceptance.
 
 The current preview uses WebContentsView without page preload, Node or the product bridge. Retain that boundary and use Main’s debugger transport for a scoped Browser Driver. Do not expose application-wide remote debugging or make a view-technology migration a prerequisite.
 
