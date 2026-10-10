@@ -1,4 +1,4 @@
-// M1 public journey. Run once after SCF-01..05 are integrated, with a built GUI and Core.
+// M1 公开路径：SCF-01 至 05 集成且 GUI、Core 构建完成后运行一次。
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -80,7 +80,7 @@ async function send(text, threadId) {
   return { threadId: activeId, turnId: turns.at(-1).id };
 }
 async function stopService(env) {
-  // Explicit Core stop first; then terminate only the service registered in this isolated home.
+  // 优先显式停止 Core；失败时只终止此隔离目录注册的服务。
   try {
     const metadata = JSON.parse(await readFile(join(scratch, "core/service.json"), "utf8"));
     const { ServiceConnection } = require(join(desktop, "src/core/service-client.cjs"));
@@ -163,7 +163,7 @@ try {
   await page.getByRole("menuitem", { name: "新建项目", exact: true }).click();
   await until(s => s.projects[0]?.state?.connected, "project connection");
   projectId = (await state()).projects[0].id;
-  // Observe the exact GUI-generated mutation IDs at the public Core request boundary.
+  // 在公开 Core 请求边界记录 GUI 生成的准确请求标识。
   await app.evaluate((_electron, backendPath) => {
     const { CoreBackend } = require(backendPath);
     const original = CoreBackend.prototype.requestSubmission;
