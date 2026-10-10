@@ -7,6 +7,8 @@ import { createServer } from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { selectConversation, captureSmokeFailure } from './smoke-navigation.mjs';
+import { createBrowserEvidence } from './browser-evidence.mjs';
+import { checkBrowserStartup } from './browser-startup.mjs';
 
 // Public Core tool calls, independent desktop adapter, real Electron and a synthetic site.
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -74,8 +76,17 @@ const env = { ...process.env, AREAL_GUI_USER_DATA: join(scratch, 'electron'), AR
   AREAL_CORE_USER_HOME: userHome, AREAL_HARNESS_SERVICE_HOME: join(scratch, 'registry'),
   AREAL_CORE_DESKTOP_CONFIG: deployment, AREAL_CORE_BIN: process.env.AREAL_CORE_BIN || resolve(root, 'target/debug/areal') };
 for (const key of ['AREAL_CORE_WORKSPACE', 'AREAL_CORE_CONFIG', 'AREAL_HARNESS_HOME', 'AREAL_HARNESS_CONFIG']) delete env[key];
-let app, page, passed = false;
+let app, page, executionStatus = 'failed';
 const checks = [], errors = [], events = {};
+const evidence = createBrowserEvidence({ runKind: 'acceptance', cases: [
+  { id: 'B-07.ref-lifecycle', requirement: 'B-07' },
+  { id: 'B-08.coverage-budget', requirement: 'B-08' },
+  { id: 'B-09.media-privacy', requirement: 'B-09' },
+] });
+function record(id, assertion, observations) {
+  evidence.recordPass(id, { assertions: [assertion], observations });
+  checks.push(assertion);
+}
 async function until(predicate, label, timeout = 60000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) { const value = await predicate(); if (value) return value; await new Promise(resolve => setTimeout(resolve, 100)); }
@@ -97,20 +108,12 @@ function toolResult(turn) {
 }
 try {
   app = await electron.launch({ executablePath: require('electron'), args: [join(gui, 'app')], env, timeout: 120000 });
+  events.startup = await checkBrowserStartup(app, { binary: env.AREAL_CORE_BIN, userHome, scratch });
   page = await app.firstWindow(); page.setDefaultTimeout(15000);
   events.runtime = await app.evaluate(() => ({ versions: process.versions, platform: process.platform, arch: process.arch }));
   page.on('pageerror', error => errors.push(error.message));
   await page.getByTestId('areal-workbench').waitFor({ timeout: 120000 });
   await until(async () => (await state()).connection?.state === 'ready', 'desktop ready');
-  events.coreChildProbe = await app.evaluate(({ app }, binary) => {
-    const { spawnSync } = process.getBuiltinModule('node:child_process');
-    const output = spawnSync(binary, ['--version'], { env: { ...process.env, HOME: process.env.AREAL_CORE_USER_HOME }, encoding: 'utf8' });
-    const plain = spawnSync(binary, ['--version'], { encoding: 'utf8' });
-    const system = spawnSync('/usr/bin/true', [], { encoding: 'utf8' });
-    return { exit: output.status, signal: output.signal, stdout: output.stdout, stderr: output.stderr,
-      plain: { exit: plain.status, signal: plain.signal }, system: { exit: system.status, signal: system.signal },
-      electronSandbox: app.isPackaged, homeExists: process.getBuiltinModule('node:fs').existsSync(process.env.AREAL_CORE_USER_HOME) };
-  }, env.AREAL_CORE_BIN);
   await app.evaluate(({ dialog, BrowserWindow }, path) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] }); BrowserWindow.getAllWindows()[0].setSize(1440, 960); }, workspace);
   await page.evaluate(() => window.arealDesktop.chooseProject());
   const project = await until(async () => (await state()).projects.find(item => item.root === workspace), 'project ready');
@@ -181,7 +184,8 @@ try {
   const frameStale = await runScenario('stale', 'Observe old Ref after frame document navigation');
   assert.match(JSON.stringify(frameStale), /stale_ref/);
   events.frameStale = { callId: frameStale.callId, contentItems: frameStale.contentItems };
-  checks.push('B-07: duplicate-name replacement and Frame document navigation invalidate old Refs through Core without fallback');
+  record('B-07.ref-lifecycle', 'B-07: duplicate-name replacement and Frame document navigation invalidate old Refs through Core without fallback', {
+    initial: events.initial, partialIdentity: events.partialIdentity, stale: events.stale, frameStale: events.frameStale });
   const bounded = JSON.parse((await runScenario('budget', 'Observe bounded page')).contentItems[0].text);
   assert.equal(bounded.nodes.length, 1); assert.equal(bounded.truncated, true);
   assert.equal(bounded.truncationReason, 'budget');
@@ -189,7 +193,8 @@ try {
   const beforeCaptureTrace = await nativeTrace();
   assert.equal(beforeCaptureTrace.capturePage, traceBeforeObserve.capturePage, 'all observe calls remain semantic-only');
   events.surfaceTraceBeforeCapture = beforeCaptureTrace;
-  checks.push('B-08: real iframe and Shadow fixture has explicit coverage, bounded observation reports truncation');
+  record('B-08.coverage-budget', 'B-08: real iframe and Shadow fixture has explicit coverage, bounded observation reports truncation', {
+    initial: events.initial, budget: events.budget, surfaceTraceBeforeCapture: events.surfaceTraceBeforeCapture });
   async function pageScript(script) {
     return app.evaluate(({ webContents }, { id, script }) => webContents.fromId(id).executeJavaScript(script), { id: nativeId, script });
   }
@@ -396,11 +401,12 @@ try {
   events.image = { threadId: first.threadId, callId: captured.callId, nativeId, media: image.media,
     guiImage, coreBlobSHA256: createHash('sha256').update(ownedBytes).digest('hex'),
     crossThreadStatus: denied.status, siteFacts: structuredClone(siteFacts) };
-  checks.push('B-09: Core tool image reaches deterministic model and GUI, Blob rejects another Thread');
   assert.equal(siteFacts.posts, 0);
   assert.deepEqual(errors, []);
-  passed = true;
+  record('B-09.media-privacy', 'B-09: Core tool image reaches deterministic model and GUI, Blob rejects another Thread', events);
+  executionStatus = 'completed';
 } catch (error) {
+  if (error.code === 'BROWSER_STARTUP_BLOCKED') executionStatus = 'blocked';
   errors.push(error.stack ?? String(error));
   if (page) await captureSmokeFailure(page, scratch, error);
   throw error;
@@ -410,15 +416,20 @@ try {
   await Promise.all([new Promise(resolve => site.close(resolve)), new Promise(resolve => sibling.close(resolve)), new Promise(resolve => model.close(resolve))]);
   const files = ['app/src/core/browser-tool.cjs', 'app/src/core/backend.cjs', 'app/src/core/service-protocol.cjs',
     'app/src/core/preview.cjs', 'app/src/core/main.cjs', 'renderer/src/Messages.tsx', 'renderer/src/ToolEvent.tsx',
-    'scripts/browser-evidence-smoke.mjs'];
+    'scripts/browser-evidence-smoke.mjs', 'scripts/browser-evidence.mjs', 'scripts/browser-startup.mjs'];
   const hashes = Object.fromEntries(await Promise.all(files.map(async file => [file, createHash('sha256').update(await readFile(join(gui, file))).digest('hex')])));
-  await writeFile(join(scratch, 'manifest.json'), JSON.stringify({ passed, checks, errors, events, modelCalls,
+  const result = evidence.finish({ executionStatus, provenance: {
+    sourceHead: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
+    diffSHA256: createHash('sha256').update(execFileSync('git', ['diff', 'HEAD'], { cwd: root })).digest('hex'),
+    scriptSHA256: hashes['scripts/browser-evidence-smoke.mjs'],
+    coreBinarySHA256: createHash('sha256').update(await readFile(env.AREAL_CORE_BIN)).digest('hex'),
+  } });
+  await writeFile(join(scratch, 'manifest.json'), JSON.stringify({ ...result, checks, errors, events, modelCalls,
     startedAt, finishedAt: new Date().toISOString(), command: 'node clients/gui/scripts/browser-evidence-smoke.mjs',
     fixture: 'synthetic site and deterministic local chat-completions model in this script',
-    source: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
-    diffSHA256: createHash('sha256').update(execFileSync('git', ['diff', 'HEAD'], { cwd: root })).digest('hex'),
+    source: result.provenance.sourceHead, diffSHA256: result.provenance.diffSHA256,
     hashes, coreBinary: env.AREAL_CORE_BIN,
-    coreBinarySHA256: createHash('sha256').update(await readFile(env.AREAL_CORE_BIN)).digest('hex'),
+    coreBinarySHA256: result.provenance.coreBinarySHA256,
     scope: 'source Electron + Core/Runtime + independent adapter + deterministic model + synthetic sites' }, null, 2));
-  console.log(JSON.stringify({ passed, evidence: scratch, checks, errors }));
+  console.log(JSON.stringify({ executionStatus, acceptanceStatus: result.acceptanceStatus, evidence: scratch, checks, errors }));
 }

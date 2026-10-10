@@ -69,6 +69,8 @@ jobs:
         run: |
           pnpm --dir clients/gui typecheck 2>&1 | tee target/ci/gui/typecheck.log
           pnpm --dir clients/gui run verify 2>&1 | tee target/ci/gui/public.log
+      - name: Check Browser contracts and evidence
+        run: pnpm --dir clients/gui run test:browser-contracts 2>&1 | tee target/ci/gui/browser-contracts.log
       - name: Build Core and GUI
         run: |
           make build 2>&1 | tee target/ci/gui/core-build.log
@@ -88,4 +90,6 @@ jobs:
           path: |
             target/ci/gui/
             /private/tmp/areal-gui-*/
+            /private/tmp/areal-browser-*/
+            /private/tmp/shared-browser-06-evidence-*/
           retention-days: 7

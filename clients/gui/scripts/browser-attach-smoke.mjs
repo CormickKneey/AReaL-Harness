@@ -7,6 +7,8 @@ import { createServer } from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { selectConversation, captureSmokeFailure } from './smoke-navigation.mjs';
+import { createBrowserEvidence } from './browser-evidence.mjs';
+import { checkBrowserStartup } from './browser-startup.mjs';
 
 // B-17: old GUI Thread, real Core callback, and the original live native page.
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -62,7 +64,10 @@ const env = { ...process.env, AREAL_GUI_USER_DATA: join(scratch, 'electron'), AR
 for (const key of ['AREAL_CORE_WORKSPACE', 'AREAL_CORE_CONFIG', 'AREAL_HARNESS_HOME', 'AREAL_HARNESS_CONFIG']) delete env[key];
 const startedAt = new Date().toISOString();
 const checks = [], errors = [], events = {};
-let app, page, passed = false, runtime;
+let app, page, executionStatus = 'failed', runtime;
+const evidence = createBrowserEvidence({ runKind: 'acceptance', cases: [
+  { id: 'B-17.existing-thread', requirement: 'B-17' },
+] });
 async function until(predicate, label, timeout = 60000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) { const value = await predicate(); if (value) return value; await new Promise(resolve => setTimeout(resolve, 100)); }
@@ -82,6 +87,7 @@ async function nativeState() {
 }
 try {
   app = await electron.launch({ executablePath: process.env.AREAL_ELECTRON_EXECUTABLE || require('electron'), args: [join(gui, 'app')], env, timeout: 120000 });
+  events.startup = await checkBrowserStartup(app, { binary: env.AREAL_CORE_BIN, userHome, scratch });
   runtime = await app.evaluate(({ app }) => ({ product: app.getVersion(), electron: process.versions.electron,
     chromium: process.versions.chrome, node: process.versions.node }));
   page = await app.firstWindow(); page.setDefaultTimeout(15000);
@@ -146,8 +152,10 @@ try {
   await writeFile(join(scratch, 'native-legacy-page.png'), Buffer.from(nativePng, 'base64'));
   checks.push('B-17: old Turn preserved; Core revision and browser callback observed original native WebContents/sentinel without navigation');
   assert.deepEqual(errors, []);
-  passed = true;
+  evidence.recordPass('B-17.existing-thread', { assertions: [...checks], observations: events.B17 });
+  executionStatus = 'completed';
 } catch (error) {
+  if (error.code === 'BROWSER_STARTUP_BLOCKED') executionStatus = 'blocked';
   errors.push(error.stack ?? String(error));
   if (page) await captureSmokeFailure(page, scratch, error);
   throw error;
@@ -157,17 +165,22 @@ try {
   await Promise.all([new Promise(resolve => site.close(resolve)), new Promise(resolve => model.close(resolve))]);
   const files = ['app/src/core/backend.cjs', 'app/src/core/core-capabilities.cjs',
     'packages/workbench/client/desktop-contract.cjs', 'renderer/src/App.tsx', 'renderer/src/Preview.tsx',
-    'scripts/browser-attach-smoke.mjs'];
+    'scripts/browser-attach-smoke.mjs', 'scripts/browser-evidence.mjs', 'scripts/browser-startup.mjs'];
   const hashes = Object.fromEntries(await Promise.all(files.map(async file => [file,
     createHash('sha256').update(await readFile(join(gui, file))).digest('hex')])));
-  const manifest = { passed, checks, errors, events, modelCalls, startedAt, endedAt: new Date().toISOString(),
+  const result = evidence.finish({ executionStatus, provenance: {
     sourceHead: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
     diffSHA256: createHash('sha256').update(execFileSync('git', ['diff', 'HEAD'], { cwd: root })).digest('hex'),
-    hashes, coreBinary: env.AREAL_CORE_BIN,
+    scriptSHA256: hashes['scripts/browser-attach-smoke.mjs'],
     coreBinarySHA256: createHash('sha256').update(await readFile(env.AREAL_CORE_BIN)).digest('hex'),
+  } });
+  const manifest = { ...result, checks, errors, events, modelCalls, startedAt, endedAt: new Date().toISOString(),
+    sourceHead: result.provenance.sourceHead, diffSHA256: result.provenance.diffSHA256,
+    hashes, coreBinary: env.AREAL_CORE_BIN,
+    coreBinarySHA256: result.provenance.coreBinarySHA256,
     os: process.platform, arch: process.arch, runtime, fixtureVersion: 'browser-attach-fixture-v1',
     entrypoint: 'node clients/gui/scripts/browser-attach-smoke.mjs',
     scope: 'source Electron + independent desktop service + Core/Runtime + deterministic local model + synthetic site' };
   await writeFile(join(scratch, 'run-manifest.json'), JSON.stringify(manifest, null, 2));
-  console.log(JSON.stringify({ passed, evidence: scratch, checks, errors }));
+  console.log(JSON.stringify({ executionStatus, acceptanceStatus: result.acceptanceStatus, evidence: scratch, checks, errors }));
 }

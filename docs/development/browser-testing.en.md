@@ -100,7 +100,36 @@ Record tool calls, model text/image budget, separate prepare/approval/native/rec
 
 Each run emits run-manifest.json containing git SHA, package/OS/arch/Electron/driver/fixture versions, entry point, scenario IDs, times, results and gaps. Attach Core call/Item linkage, synthetic side-effect counts, redacted logs and screenshots. Keep UNKNOWN distinct from0/failure. Captures are observation; success requires explicit assertions or human review.
 
+The same-page read, observation/media, and existing-Thread attachment scripts use [`browser-evidence.mjs`](../../clients/gui/scripts/browser-evidence.mjs) to emit version 1 manifests:
+
+- `runKind` explicitly distinguishes `acceptance` from `diagnostic`; `executionStatus` is `completed`, `failed`, or `blocked` and describes execution.
+- `cases` declares stable case IDs and their requirements before execution. After assertions finish, record `passed`, assertion descriptions, and a copy of the observations at that boundary. Unexecuted cases remain `not_run`. Subcases such as `B-05.forged-receipt` do not stand for the whole requirement matrix.
+- `provenance` binds the source commit, worktree diff, script, and Core binary SHA-256. Existing `hashes` also include the inspected implementation and shared fixture helpers.
+- `acceptanceStatus` is derived from run kind, execution status, and all planned cases. Diagnostics are always `not_applicable`; partial runs cannot claim complete acceptance. `checks` is descriptive and cannot independently establish coverage.
+
+Summarize evidence for an explicit case list on the same candidate, for example:
+
+```sh
+node clients/gui/scripts/browser-evidence.mjs B-04.same-page,B-05.forged-receipt /path/to/manifest.json
+```
+
+Exit 0 means these cases have evidence; missing cases or invalid formats exit 1. Multiple manifests report `mode: composite` and retain each execution status, never `cleanRun`. Different source/diff/Core identities cannot be combined automatically. Historical `passed: true` manifests require manual inspection rather than automatic promotion. Diagnostics add no accepted cases. Preserve original failures and targeted repair results. The summary covers only the requested cases, not the entire milestone or release gate.
+
+Review whether a negative case distinguishes the intended wrong behavior: a forged receipt must use the actual in-flight request ID. Rejecting an arbitrary nonexistent ID does not establish same-ID isolation between sockets.
+
+## Frozen-candidate startup check
+
+Before business scenarios, these three scripts use [`browser-startup.mjs`](../../clients/gui/scripts/browser-startup.mjs) to run `config models read` in an isolated home from the actual Electron Main process. One probe per run replaces unrelated repeated `--version` comparisons. `startup.json` records parent/child PIDs, argv, binary hash, exit code, signal, timeout, and bounded stderr without configuration output. Startup failure is `blocked` and business cases remain unexecuted.
+
+Display and visible-window counts do not prove an unlocked desktop; `desktop.unlocked` stays `unverified`. The sole native acceptance owner first confirms desktop availability. Preserve the candidate and evidence after a locked screen or explicit execution-policy denial; resume when the relevant condition changes. An old binary's version probe cannot establish the current candidate's real startup path. This check does not alter signatures or system policy.
+
+## Tool-result readback
+
+Use the Core media/Blob path to verify screenshot input to the model and GUI display. Read truncated large tool results through `read_tool_result(resultId, after)`, following `nextCursor`, authorized against the original Item in its Thread. The owner is [`core/engine/src/tools/results.rs`](../../core/engine/src/tools/results.rs); see the [Core API](../api/core.en.md). Internal result snapshots are not media attachments. Smaller inline results can verify independent cache assertions, but do not establish large-result pagination coverage.
+
 ## Commands
+
+`pnpm --dir clients/gui run test:browser-contracts` runs the existing read, network, and diagnostics contract checks plus evidence classification and startup-probe checks. GUI CI runs it without desktop windows. It does not replace real Core/Native/GUI acceptance on a frozen candidate at milestone completion. During implementation run necessary local checks; causal repairs rerun affected cases while retaining earlier failures.
 
 Existing commands include make gui-smoke; pnpm --dir clients/gui run test:connection, test:architecture and test:composer; GUI typecheck and verify. A Browser-specific entry point must be implemented before use; test:browser does not exist by assumption. Follow current repository documentation/type checks.
 
