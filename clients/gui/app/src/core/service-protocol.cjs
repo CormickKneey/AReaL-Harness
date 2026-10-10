@@ -47,6 +47,8 @@ class DesktopService {
       connected: true, clients: this.clients.size, busy: this.backend.hasWork({ includePausedQueues: false }),
       activeCommands: this.inflight, providerUpdating: !!this.backend.providerUpdating,
       starting: this.backend.starting.size, pid: process.pid,
+      browserCore: Object.fromEntries([...this.backend.projects].map(([id, project]) =>
+        [id, project.service?.serviceId ?? null])),
     } };
   }
   send(socket, value) {
@@ -162,9 +164,10 @@ class DesktopService {
       }
       if (!this.clients.has(socket)) throw new Error('请先完成后台服务握手');
       if (method === 'browserClaim') {
-        const { projectId, threadId, pageId, browserHostId, hostGeneration, pageGeneration, controlEpoch } = params ?? {};
+        const { coreInstanceId: claimedCoreId, projectId, threadId, pageId,
+          browserHostId, hostGeneration, pageGeneration, controlEpoch } = params ?? {};
         if (params?.protocol !== 'areal.browser.host.v1' || params?.available !== true
-          || JSON.stringify(params?.operations) !== JSON.stringify(['describe', 'observe', 'capture', 'act', 'wait'])) throw new Error('浏览器宿主能力不兼容');
+          || JSON.stringify(params?.operations) !== JSON.stringify(['describe', 'observe', 'capture', 'act', 'wait', 'navigate', 'newPage'])) throw new Error('浏览器宿主能力不兼容');
         if (![projectId, threadId, pageId, browserHostId].every(value => typeof value === 'string' && value.length > 0 && value.length <= 256)
           || ![hostGeneration, pageGeneration, controlEpoch].every(Number.isSafeInteger)) throw new Error('无效浏览页面身份');
         const project = this.backend.projects.get(projectId);
@@ -172,16 +175,31 @@ class DesktopService {
         if (!thread?.dynamicTools?.some(tool => tool.name === 'browser_v1')) throw new Error('当前聊天未启用浏览器');
         const coreInstanceId = project.service?.serviceId, coreGeneration = project.service?.generation;
         if (typeof coreInstanceId !== 'string' || typeof coreGeneration !== 'string') throw new Error('Core 部署身份不可用');
+        if (claimedCoreId !== coreInstanceId) throw new Error('浏览页面属于旧 Core 部署');
         const key = browserKey(projectId, threadId);
         const previous = this.browserClaims.get(key);
         if (previous && previous.socket !== socket && previous.socket.readyState === 1) throw new Error('浏览页面已由其他桌面窗口认领');
-        this.browserClaims.set(key, { socket, coreInstanceId, coreGeneration, pageId,
-          browserHostId, hostGeneration, pageGeneration, controlEpoch });
+        const claim = previous && previous.socket === socket && previous.coreInstanceId === coreInstanceId
+          && previous.coreGeneration === coreGeneration && previous.browserHostId === browserHostId
+          && previous.hostGeneration === hostGeneration ? previous
+          : { socket, coreInstanceId, coreGeneration, browserHostId, hostGeneration,
+            pages: new Map(), revokedPages: new Set() };
+        claim.revokedPages.delete(pageId);
+        claim.pages.set(pageId, { pageId, pageGeneration, controlEpoch });
+        this.browserClaims.set(key, claim);
         this.send(socket, { id, result: { claimed: true } }); return;
       }
       if (method === 'browserRevoke') {
         const key = browserKey(params?.projectId, params?.threadId);
-        if (this.browserClaims.get(key)?.socket === socket) this.browserClaims.delete(key);
+        const claim = this.browserClaims.get(key);
+        if (claim?.socket === socket) {
+          if (typeof params?.pageId === 'string') {
+            claim.pages.delete(params.pageId);
+            claim.revokedPages.add(params.pageId);
+          }
+          else claim.pages.clear();
+          if (claim.pages.size === 0) this.browserClaims.delete(key);
+        }
         this.send(socket, { id, result: { revoked: true } }); return;
       }
       if (method === 'browserResult') {
@@ -260,7 +278,7 @@ class DesktopService {
     if (typeof projectId !== 'string' || typeof threadId !== 'string' || typeof turnId !== 'string'
       || typeof callId !== 'string' || typeof coreInstanceId !== 'string' || !validToolInput(input))
       return browserFailure('invalid_arguments', 'Unsupported browser operation or parameters');
-    const action = ['act', 'wait'].includes(input.operation);
+    const action = ['act', 'wait', 'navigate', 'newPage'].includes(input.operation);
     if (action && phase === 'execute' && (!browserApproval?.plan || typeof browserApproval.plan.preparedActionId !== 'string'))
       return browserFailure('approval_required', 'Core approval metadata is required');
     if (phase === 'prepare' && !action) throw new Error('Browser prepare is only for actions');
@@ -273,8 +291,10 @@ class DesktopService {
     }
     if (input.operation === 'describe') return browserSuccess({ protocol: 'areal.browser.host.v1',
       browserHostId: claim.browserHostId, hostGeneration: claim.hostGeneration, available: true,
-      operations: ['describe', 'observe', 'capture', 'act', 'wait'], pageId: claim.pageId });
-    if (input.parameters.pageId !== claim.pageId) return browserFailure('wrong_page', 'Page does not belong to this thread');
+      operations: ['describe', 'observe', 'capture', 'act', 'wait', 'navigate', 'newPage'],
+      pages: [...claim.pages.keys()] });
+    const pageClaim = claim.pages.get(input.parameters.pageId);
+    if (!pageClaim) return browserFailure('wrong_page', 'Page does not belong to this thread');
     if (this.browserPending.size >= 8) return browserFailure('host_busy', 'Too many pending browser observations');
     if (signal?.aborted) throw new Error('Browser request was cancelled');
     const requestId = ++this.nextBrowserId;
@@ -283,7 +303,7 @@ class DesktopService {
     const result = await new Promise((resolve, reject) => {
       const finish = (kind, value) => { trace('finished'); clearTimeout(timer); signal?.removeEventListener('abort', onAbort); this.browserPending.delete(requestId); kind(value); };
       const cancelNative = () => this.send(claim.socket, { method: 'browserCancel', params: {
-        requestId, projectId, threadId, hostGeneration: claim.hostGeneration } });
+        requestId, projectId, threadId, pageId: pageClaim.pageId, hostGeneration: claim.hostGeneration } });
       const onAbort = () => { cancelNative(); finish(reject, new Error('Browser request was cancelled')); };
       const timeoutMs = phase === 'prepare' ? 10000 : input.operation === 'wait'
         ? Math.min(35000, input.parameters.timeoutMs + 3000) : 15000;
@@ -292,12 +312,12 @@ class DesktopService {
       trace('pending');
       signal?.addEventListener('abort', onAbort, { once: true });
       this.send(claim.socket, { method: 'browserRequest', params: { requestId, coreInstanceId, coreGeneration,
-        projectId, threadId, turnId, callId, pageId: claim.pageId, browserHostId: claim.browserHostId,
-        hostGeneration: claim.hostGeneration, pageGeneration: claim.pageGeneration,
-        controlEpoch: claim.controlEpoch, operation: input.operation, parameters: input.parameters,
+        projectId, threadId, turnId, callId, pageId: pageClaim.pageId, browserHostId: claim.browserHostId,
+        hostGeneration: claim.hostGeneration, pageGeneration: pageClaim.pageGeneration,
+        controlEpoch: pageClaim.controlEpoch, operation: input.operation, parameters: input.parameters,
         phase, ...(action && phase === 'execute' ? { browserApproval } : {}) } });
     });
-    if (this.browserClaims.get(key) !== claim) {
+    if ((this.browserClaims.get(key) !== claim || claim.pages.get(pageClaim.pageId) !== pageClaim)) {
       // Execute may already have reached native input. Revocation cannot turn
       // its missing receipt into a factual claim that nothing was sent.
       if (action && phase === 'execute') throw new Error('Browser action outcome unknown after takeover');
@@ -308,11 +328,11 @@ class DesktopService {
       if (action && phase === 'execute') throw new Error('Browser action outcome unknown after deployment change');
       return browserFailure('host_unavailable', 'Core deployment changed during observation');
     }
-    if (!result || typeof result !== 'object' || result.pageId !== claim.pageId || result.callId !== callId
+    if (!result || typeof result !== 'object' || result.pageId !== pageClaim.pageId || result.callId !== callId
       || result.turnId !== turnId || result.threadId !== threadId || result.projectId !== projectId
       || result.coreInstanceId !== coreInstanceId || result.coreGeneration !== coreGeneration
       || result.browserHostId !== claim.browserHostId || result.hostGeneration !== claim.hostGeneration
-      || result.pageGeneration !== claim.pageGeneration || result.controlEpoch !== claim.controlEpoch
+      || result.pageGeneration !== pageClaim.pageGeneration || result.controlEpoch !== pageClaim.controlEpoch
       || JSON.stringify(result).length > (input.operation === 'capture' ? 3 * 1024 * 1024 : 512 * 1024)) throw new Error('Invalid browser host response');
     if (result.error) {
       if (action && phase === 'execute' && result.error === 'outcome_unknown')
@@ -324,13 +344,23 @@ class DesktopService {
       return browserFailure(result.error, hint);
     }
     if (phase === 'prepare') {
-      if (!result.plan || result.plan.pageId !== claim.pageId || result.plan.operation !== input.operation)
+      if (!result.plan || result.plan.pageId !== pageClaim.pageId || result.plan.operation !== input.operation)
         throw new Error('Invalid browser plan');
       return result.plan;
     }
-    if (action) return { ...browserSuccess(result), structuredContent: result };
+    if (action) {
+      if (input.operation === 'newPage' && result.createdPage) {
+        const child = result.createdPage;
+        if (typeof child.pageId !== 'string' || !Number.isSafeInteger(child.pageGeneration)
+          || !Number.isSafeInteger(child.controlEpoch) || claim.pages.has(child.pageId))
+          throw new Error('Invalid created browser page');
+        if (!claim.revokedPages.has(child.pageId)) claim.pages.set(child.pageId, {
+          pageId: child.pageId, pageGeneration: child.pageGeneration, controlEpoch: child.controlEpoch });
+      }
+      return { ...browserSuccess(result), structuredContent: result };
+    }
     if (input.operation === 'capture') {
-      if (signal?.aborted || this.browserClaims.get(key) !== claim || claim.socket.readyState !== 1)
+      if (signal?.aborted || (this.browserClaims.get(key) !== claim || claim.pages.get(pageClaim.pageId) !== pageClaim) || claim.socket.readyState !== 1)
         return browserFailure('human_control', 'Browser authorization was revoked during capture');
       if (result.mimeType !== 'image/png' || typeof result.imageBase64 !== 'string'
         || result.imageBase64.length > 2_800_000 || typeof toolHostGeneration !== 'string')
@@ -349,7 +379,7 @@ class DesktopService {
         body: bytes, redirect: 'error', signal: AbortSignal.timeout(10000) });
       if (!uploaded.ok) throw new Error(`Browser evidence upload failed (${uploaded.status})`);
       const media = await uploaded.json();
-      if (signal?.aborted || this.browserClaims.get(key) !== claim || claim.socket.readyState !== 1)
+      if (signal?.aborted || (this.browserClaims.get(key) !== claim || claim.pages.get(pageClaim.pageId) !== pageClaim) || claim.socket.readyState !== 1)
         return browserFailure('human_control', 'Browser authorization was revoked during capture');
       const current = this.backend.projects.get(projectId);
       if (current?.service?.serviceId !== coreInstanceId || current.service.generation !== coreGeneration)

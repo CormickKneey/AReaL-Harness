@@ -2,7 +2,7 @@
 
 const definition = Object.freeze({
   name: 'browser_v1',
-  description: 'Inspect the user-authorized live page in this desktop thread. Call describe first; only listed operations are available.',
+  description: 'Inspect and navigate authorized pages in this desktop thread. Call describe first; page changes require Core approval.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -19,6 +19,15 @@ function validToolInput(value) {
     || Object.keys(value).some(key => !['operation', 'parameters'].includes(key))
     || !value.parameters || typeof value.parameters !== 'object' || Array.isArray(value.parameters)) return false;
   const keys = Object.keys(value.parameters);
+  if (['navigate', 'newPage'].includes(value.operation)) {
+    if (!keys.every(key => ['pageId', 'url'].includes(key)) ||
+      typeof value.parameters.pageId !== 'string' || !/^[0-9a-f-]{36}$/.test(value.parameters.pageId) ||
+      typeof value.parameters.url !== 'string' || value.parameters.url.length > 2048) return false;
+    try {
+      const url = new URL(value.parameters.url);
+      return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password;
+    } catch { return false; }
+  }
   if (value.operation === 'describe') return keys.length === 0;
   if (!['observe', 'capture', 'act', 'wait'].includes(value.operation)
     || typeof value.parameters.pageId !== 'string' || !/^[0-9a-f-]{36}$/.test(value.parameters.pageId)) return false;

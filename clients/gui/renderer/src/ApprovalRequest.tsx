@@ -37,7 +37,8 @@ export function ApprovalRequest({ item, projectId, action }: { item: Data; proje
     <strong>允许执行 {item.tool}？</strong>
     {browserPlan ? <div>
       <p>页面：{browserPlan.url}（{browserPlan.origin}）</p>
-      <p>操作：{browserPlan.action?.kind}{browserPlan.target ? ` · ${browserPlan.target.role} ${browserPlan.target.name} [${browserPlan.target.ref}]` : ""}</p>
+      <p>操作：{browserPlan.action?.kind ?? browserPlan.operation}{browserPlan.target ? ` · ${browserPlan.target.role} ${browserPlan.target.name} [${browserPlan.target.ref}]` : ""}</p>
+      {browserPlan.targetUrl && <p>目标地址：{browserPlan.targetUrl}（{browserPlan.targetOrigin}）</p>}
       {browserPlan.action?.kind === "fill" && <p>填写：{browserPlan.action.value}</p>}
       {browserPlan.action?.kind === "press" && <p>按键：{browserPlan.action.key}</p>}
       <p>目标页面或控件变化后，本次批准会失效。</p>
@@ -51,7 +52,9 @@ export function ApprovalRequest({ item, projectId, action }: { item: Data; proje
       {canRemember && <Button variant="outline" disabled={busy || submitted || unknown} onClick={() => void respond("allowProject")}>本项目允许此操作</Button>}
     </div>
     {canRemember && <p className="mt-2 text-ui-caption text-foreground-subtle">{browserPlan
-      ? "记住的授权仅适用于当前页面、精确 Origin 和操作类型；目标变化仍须重新准备。"
+      ? browserPlan.targetOrigin
+        ? "记住的授权仅适用于当前页面、来源与目标 Origin 和操作类型；目标变化仍须重新准备。"
+        : "记住的授权仅适用于当前页面、精确 Origin 和操作类型；目标变化仍须重新准备。"
       : "记住的授权只适用于相同参数及权限条件，可在任务菜单的“已保存授权”中撤销。"}</p>}
   </section>;
 }

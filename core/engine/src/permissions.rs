@@ -49,7 +49,8 @@ impl Engine {
         // operation kind. The prepared target remains in each approval request;
         // its short-lived ID must not make a remembered local-site grant useless.
         let grant_arguments = if tool == "browser_v1" && arguments["plan"].is_object() {
-            json!({"origin":arguments["plan"]["origin"],"pageId":arguments["plan"]["pageId"],
+            json!({"origin":arguments["plan"]["origin"],"targetOrigin":arguments["plan"]["targetOrigin"],
+                "pageId":arguments["plan"]["pageId"],
                 "operation":arguments["plan"]["operation"],"actionKind":arguments["plan"]["action"]["kind"]})
         } else {
             arguments.clone()

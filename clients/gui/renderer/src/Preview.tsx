@@ -56,20 +56,29 @@ export function Preview({
   current.current = owner;
   const mounted = useRef(false);
   const sequence = useRef(0);
+  const workspaceCursor = useRef({ id: '', sequence: 0 });
+  const subscriptionRequest = useRef(0);
+  const refreshSubscription = useRef<() => void>(() => {});
   const request = async (operation: OwnedPreviewOperation, extra: Data = {}) => {
-    if (["navigate", "back", "forward", "reload"].includes(operation)) editing.current = false;
+    if (["navigate", "back", "forward", "reload", "selectPage", "newPage", "release"].includes(operation)) editing.current = false;
     const seq = ++sequence.current;
     try {
       const value = await services.preview({
         operation,
         projectId,
         threadId,
+        ...(stateRef.current.browser?.pageId && !['subscribe', 'unsubscribe', 'newPage'].includes(operation)
+          ? { pageId: stateRef.current.browser.pageId } : {}),
         ...extra,
       });
       if (!mounted.current || current.current !== owner || seq !== sequence.current) return;
-      if (value.url) {
+      const workspaceChanged = !!value.workspace?.workspaceId && value.workspace.workspaceId !== workspaceCursor.current.id;
+      if (workspaceChanged) locations.delete(owner);
+      if (workspaceChanged)
+        refreshSubscription.current();
+      if (value.url || workspaceChanged || ['selectPage', 'newPage', 'release'].includes(operation)) {
         if (!editing.current) setUrl(value.url);
-        locations.set(owner, { ...locations.get(owner), url: value.url });
+        if (value.url) locations.set(owner, { ...locations.get(owner), url: value.url });
       }
       setState(value);
       if (operation !== "state") setError("");
@@ -84,6 +93,29 @@ export function Preview({
   errorRef.current = error;
   useEffect(() => {
     mounted.current = true;
+    const install = async () => {
+      const token = ++subscriptionRequest.current;
+      try {
+        const snapshot = await services.preview({ operation: 'subscribe', projectId, threadId });
+        if (!mounted.current || token !== subscriptionRequest.current) return;
+        workspaceCursor.current = { id: snapshot.workspaceId,
+          sequence: workspaceCursor.current.id === snapshot.workspaceId
+            ? Math.max(workspaceCursor.current.sequence, snapshot.sequence) : snapshot.sequence };
+        void request('state');
+      } catch (e) { if (mounted.current) setError(e instanceof Error ? e.message : String(e)); }
+    };
+    refreshSubscription.current = () => { void install(); };
+    const unsubscribeEvents = services.onPreviewEvent?.(event => {
+      if (!mounted.current || event.workspaceId !== workspaceCursor.current.id) return;
+      if (event.sequence <= workspaceCursor.current.sequence) return;
+      if (event.sequence !== workspaceCursor.current.sequence + 1) {
+        void install();
+      } else {
+        workspaceCursor.current.sequence = event.sequence;
+        void request('state');
+      }
+    });
+    void install();
     let active = true,
       reading = false;
     let lastDisplay = "";
@@ -106,8 +138,7 @@ export function Preview({
         operation: "show",
         projectId,
         threadId,
-        // 被回收的原生页面只恢复已确认地址，不使用地址栏里的未提交草稿。
-        url: locations.get(owner)?.url,
+        ...(value.browser?.pageId ? { pageId: value.browser.pageId } : {}),
         visible: !!value.url && !value.error && !errorRef.current && !overlay && height > 0 &&
           box.current.checkVisibility({ visibilityProperty: true }),
         bounds: { x: r.x, y: r.y, width: r.width, height },
@@ -145,12 +176,15 @@ export function Preview({
     return () => {
       active = false;
       mounted.current = false;
+      subscriptionRequest.current++;
       sequence.current++;
       clearInterval(timer);
+      unsubscribeEvents?.();
+      void services.preview({ operation: 'unsubscribe', projectId, threadId }).catch(() => {});
       resize.disconnect();
       mutation.disconnect();
       window.removeEventListener("resize", update);
-      void services.preview({ operation: "hide", projectId, threadId }).catch(() => {});
+      void services.preview({ operation: "hide", projectId, threadId, pageId: stateRef.current.browser?.pageId }).catch(() => {});
     };
   }, [services, projectId, threadId]);
   useEffect(() => {
@@ -171,6 +205,21 @@ export function Preview({
   }
   return (
     <div className="preview-panel">
+      <div className="preview-viewport-toolbar" role="tablist" aria-label="浏览页面">
+        {(state.workspace?.pages ?? []).map((page: Data, index: number) => (
+          <Button key={page.pageId} type="button" size="sm" role="tab"
+            aria-selected={state.workspace?.selectedPageId === page.pageId}
+            onClick={() => void request('selectPage', { pageId: page.pageId })}>
+            {page.title || page.url || `页面 ${index + 1}`}{page.resource === 'suspended' ? ' · 已暂停' : ''}
+          </Button>
+        ))}
+        <Button type="button" size="sm" aria-label="新建浏览页面" onClick={() => void request('newPage')}>＋</Button>
+        {!!state.browser?.pageId && <Button type="button" size="sm" aria-label="关闭当前浏览页面"
+          onClick={() => void request('release', { userIntent: true })}>关闭</Button>}
+      </div>
+      {state.browser?.stateLoss && <div className="preview-viewport-toolbar" role="status">
+        {state.browser.stateLoss}
+      </div>}
       <BrowserToolbar
         addressValue={address}
         browserState={{
@@ -213,7 +262,7 @@ export function Preview({
             : '你控制当前页；人工期间的内容不会补发给 Agent，此前已交付的内容不会撤回'}</span>
         {state.browser?.control === 'transferring' ? <>
           <Button type="button" size="sm" onClick={() => void request('stop')}>停止加载</Button>
-          <Button type="button" size="sm" onClick={() => void request('release')}>关闭页面</Button>
+          <Button type="button" size="sm" onClick={() => void request('release', { userIntent: true })}>关闭页面</Button>
           {state.browser.transferError && <span role="alert">{state.browser.transferError}</span>}
         </> : state.browser?.control === 'agent'
           ? <Button type="button" size="sm" onClick={() => void request('takeover')}>接管页面</Button>
@@ -224,7 +273,8 @@ export function Preview({
               setClaiming(true);
               void (async () => {
                 try {
-                  const next = await services.preview({ operation: 'claim', projectId, threadId });
+                  const next = await services.preview({ operation: 'claim', projectId, threadId,
+                    pageId: stateRef.current.browser?.pageId });
                   if (mounted.current && current.current === owner) setState(next);
                   await call(services, 'send', { projectId, threadId, text: '请使用 browser_v1 检查我刚授权的当前页面，先 describe，再 observe，并报告页面实际内容。' });
                 } catch (e) { if (mounted.current && current.current === owner) setError(e instanceof Error ? e.message : String(e)); }
