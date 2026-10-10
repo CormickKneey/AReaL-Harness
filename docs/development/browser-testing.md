@@ -6,6 +6,8 @@
 
 09 票的 B-24–B-26 在 M1 统一 fixture 中通过公开 GUI/Core 入口验证：跨 Workspace 达到 8 个原生页和单 Workspace 4 个逻辑页，执行/接管/对话框页 pin 时新页被拒绝且原生对象数不增长；空闲驱逐必须显示状态损失。隐藏后核对原生对象、表单和 scroll；崩溃重开后核对 `pageGeneration`、旧 Ref/计划/回执拒绝以及已派发操作的 UNKNOWN。将延迟加载/接管回调与归档、隐藏项目、关闭窗口竞争，核对旧页不复活、共享 Session 在兄弟页存活时不清除，最后页面关闭后无孤儿 WebContents 或下载。该场景目前只准备了要求，尚未运行真实原生验收。
 
+08 票的 B-21–B-23 须通过公开 Core/GUI 路径，使用两个 Workspace 和合成回环登录服务。在一个 Workspace 设置 HTTPOnly Cookie、localStorage、IndexedDB 及 Service Worker；确认兄弟页在不重建已认领 WebContents 的情况下可见这些状态，第二个 Workspace 不可见。关闭一个兄弟页后第一页面仍保留状态；关闭最后一页后重建，确认临时状态已清除。可信精确 Origin 授权后才能导航。夹具探测另一个未授权的回环 Origin、实际 Core/适配器端点、内网/元数据目标，以及重定向、Frame、Worker fetch 与 WebSocket；禁止目标的服务端副作用计数必须为零。运行清单保留页面/Session 身份、请求及界面截图。该原生场景已准备，尚未运行。
+
 本文件定义完整 Browser 的测试契约。R0 原生实验已有独立入口，其结果以具体运行证据为准，不表示全部场景已经运行。后续主要测试切口沿用现有桌面 smoke/connection/architecture 的真实 Electron+Core+Runtime+确定性模型形态，参照[GUI指南](../../clients/gui/README.md)。
 
 当前同页读取切口运行 `make build`、`make gui-install`、`make gui-build` 后，以 `node clients/gui/scripts/browser-read-smoke.mjs` 验证 B-04/B-05/B-06。脚本仅用隔离 home、合成网页和本地确定性模型；记录 Core 动态工具 callId、真实原生 WebContents 身份与内存 sentinel、GUI/原生截图、服务端请求计数和跨 Thread/伪回执/宿主缺失结果。源码构建测试不代表安装包、真实账号或其他 OS 已验收。

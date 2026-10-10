@@ -192,7 +192,7 @@ try {
   try {
     await rogue.request('hello', { protocol: metadata.protocol, identity: metadata.identity });
     await assert.rejects(() => rogue.request('browserClaim', { projectId, threadId: second.threadId,
-      protocol: 'areal.browser.host.v1', operations: ['describe', 'observe', 'capture'], available: true,
+      protocol: 'areal.browser.host.v1', operations: ['describe', 'observe', 'capture', 'act', 'wait', 'navigate', 'newPage', 'diagnostics'], available: true,
       pageId: secondPageId, browserHostId: 'forged-host', hostGeneration: 999,
       pageGeneration: 1, controlEpoch: 1 }, true), /已由其他桌面窗口认领/);
     scenario = 'forge';
