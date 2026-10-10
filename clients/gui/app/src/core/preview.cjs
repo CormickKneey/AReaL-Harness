@@ -4,6 +4,7 @@ const workspaceKey = (coreInstanceId, projectId, threadId) => JSON.stringify([co
 const pageKey = (coreInstanceId, projectId, threadId, pageId) => JSON.stringify([coreInstanceId, projectId, threadId, pageId]);
 const { randomUUID, randomBytes, createHash } = require('node:crypto');
 const { performance } = require('node:perf_hooks');
+const { isDeepStrictEqual } = require('node:util');
 const { validatePreview } = require('@areal/workbench/desktop-contract');
 
 function webUrl(value) {
@@ -389,7 +390,7 @@ class CorePreview {
     const approved = request.browserApproval?.plan;
     const saved = approved && page.plans.get(approved.preparedActionId);
     const target = webUrl(request.parameters.url);
-    if (!saved || JSON.stringify(saved.plan) !== JSON.stringify(approved)
+    if (!saved || !isDeepStrictEqual(saved.plan, approved)
       || approved.operation !== request.operation || approved.pageId !== page.id
       || approved.threadId !== request.threadId || approved.turnId !== request.turnId
       || approved.callId !== request.callId || approved.expiresAt < Date.now()
@@ -497,7 +498,7 @@ class CorePreview {
     const nowViewport = await readIsolated(c, viewportScript);
     const nowKey = JSON.stringify([nowViewport.width, nowViewport.height, nowViewport.scrollX,
       nowViewport.scrollY, c.getZoomFactor(), nowViewport.deviceScaleFactor]);
-    if (!saved || JSON.stringify(approved) !== JSON.stringify(saved.plan)
+    if (!saved || !isDeepStrictEqual(approved, saved.plan)
       || saved.plan.threadId !== request.threadId || saved.plan.turnId !== request.turnId
       || saved.plan.callId !== request.callId || saved.plan.operation !== request.operation
       || saved.plan.pageId !== request.pageId || saved.plan.expiresAt < Date.now()
@@ -506,7 +507,7 @@ class CorePreview {
       || saved.plan.controlEpoch !== page.controlEpoch || saved.plan.viewportRevision !== page.viewportRevision
       || saved.plan.viewportKey !== nowKey
       || saved.plan.snapshotId !== (request.operation === 'act' ? request.parameters.snapshotId : null)
-      || JSON.stringify(saved.plan.action) !== JSON.stringify(request.operation === 'act'
+      || !isDeepStrictEqual(saved.plan.action, request.operation === 'act'
         ? request.parameters.action : { kind: 'wait', timeoutMs: request.parameters.timeoutMs })) throw new Error('plan_stale');
     page.plans.delete(approved.preparedActionId);
     if (page.activeRead || page.activePrepare || page.activeAction) throw new Error('not_sent');
