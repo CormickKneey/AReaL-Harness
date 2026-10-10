@@ -24,7 +24,7 @@ pub(crate) async fn run_with_profile(
         "--agent cannot be used when resuming a thread"
     );
     let id = match resume {
-        Some(id) => client.send("thread/resume", json!({"threadId":id}))?,
+        Some(id) => client.send("areal/thread/observe", json!({"threadId":id}))?,
         None => match agent_profile {
             Some(profile) => client.send(
                 "areal/thread/start",
@@ -124,7 +124,7 @@ pub(crate) async fn goal_with_profile(
         "--agent cannot be used when resuming a thread"
     );
     let start = match resume {
-        Some(id) => client.send("thread/resume", json!({"threadId":id}))?,
+        Some(id) => client.send("areal/thread/observe", json!({"threadId":id}))?,
         None => match agent_profile {
             Some(profile) => client.send(
                 "areal/thread/start",
