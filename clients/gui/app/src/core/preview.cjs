@@ -1,5 +1,6 @@
 "use strict";
 const MAX_CACHED_PAGES = 8;
+const MAX_WORKSPACE_PAGES = 4;
 const workspaceKey = (coreInstanceId, projectId, threadId) => JSON.stringify([coreInstanceId, projectId, threadId]);
 const pageKey = (coreInstanceId, projectId, threadId, pageId) => JSON.stringify([coreInstanceId, projectId, threadId, pageId]);
 const { randomUUID, randomBytes, createHash } = require('node:crypto');
@@ -153,11 +154,16 @@ class CorePreview {
     const selected = id ?? this.selected.get(workspaceKey(this.coreIdentity(projectId), projectId, threadId));
     return selected ? this.pages.get(pageKey(this.coreIdentity(projectId), projectId, threadId, selected)) : null;
   }
-  pageStillOwned(page) { return this.pages.get(pageKey(page.coreInstanceId, page.projectId, page.threadId, page.id)) === page; }
+  pageStillOwned(page) {
+    return this.pages.get(pageKey(page.coreInstanceId, page.projectId, page.threadId, page.id)) === page
+      && page.coreInstanceId === this.coreIdentity(page.projectId)
+      && this.owns(page.projectId, page.threadId);
+  }
   metadata(page) {
     const c = page.view?.webContents;
     return { coreInstanceId: page.coreInstanceId, pageId: page.id, openerId: page.openerId ?? null, origin: page.origin,
-      resource: page.crashed ? 'crashed' : 'ready', control: page.control,
+      resource: page.view ? page.crashed ? 'crashed' : 'ready' : 'suspended', control: page.control,
+      stateLoss: page.stateLoss ?? null,
       url: c && !c.isDestroyed() ? c.getURL() || page.url : page.url,
       title: c && !c.isDestroyed() ? safeText(c.getTitle(), 256) : safeText(page.title, 256),
       pageGeneration: page.pageGeneration, documentEpoch: page.documentGeneration,
@@ -175,6 +181,7 @@ class CorePreview {
     return { snapshot: this.snapshot(projectId, threadId), unsubscribe: () => this.listeners.delete(item) };
   }
   changed(page, type = 'pageChanged') {
+    if (type !== 'pageRemoved' && !this.pageStillOwned(page)) return;
     const key = workspaceKey(page.coreInstanceId, page.projectId, page.threadId);
     const sequence = (this.eventSequences.get(key) ?? 0) + 1;
     this.eventSequences.set(key, sequence);
@@ -186,13 +193,12 @@ class CorePreview {
     for (const key of [...this.pages.keys()]) this.release(key);
     this.view = null; this.owner = null;
   }
-  release(key) {
+  release(key, { preserveContext = false } = {}) {
     const page = this.pages.get(key);
     if (!page) return;
     this.revoke(page);
     this.pages.delete(key);
-    if (!this.window.isDestroyed()) this.window.contentView.removeChildView(page.view);
-    if (!page.view.webContents.isDestroyed()) page.view.webContents.close();
+    this.closeNative(page);
     if (this.owner === key) { this.owner = null; this.view = null; }
     const workspace = workspaceKey(page.coreInstanceId, page.projectId, page.threadId);
     if (this.selected.get(workspace) === page.id) {
@@ -200,19 +206,58 @@ class CorePreview {
       if (next) this.selected.set(workspace, next.id); else this.selected.delete(workspace);
     }
     this.changed(page, 'pageRemoved');
+    if (!preserveContext && ![...this.pages.values()].some(other => other.partition === page.partition))
+      this.releaseWorkspaceContext(page);
+  }
+  releaseWorkspaceContext(page) {
+    void page.session?.clearStorageData().catch(() => {});
   }
   releaseInvalidOwners() {
     for (const [key, page] of this.pages) if (!this.owns(page.projectId, page.threadId)
       || page.coreInstanceId !== this.coreIdentity(page.projectId)) this.release(key);
   }
-  prune() {
-    for (const key of this.pages.keys()) {
-      if (this.pages.size <= MAX_CACHED_PAGES) break;
-      if (key !== this.owner) this.release(key);
-    }
+  closeNative(page) {
+    if (!page.view) return;
+    const c = page.view.webContents;
+    for (const item of page.downloads ?? []) item.cancel();
+    page.downloads?.clear();
+    if (page.onDownload) c.session.removeListener('will-download', page.onDownload);
+    if (!this.window.isDestroyed()) this.window.contentView.removeChildView(page.view);
+    if (!c.isDestroyed()) c.close();
+    page.view = null;
+  }
+  pinned(page) {
+    return !page.view || page.crashed || page.control !== 'human' || page.requestedVisible
+      || page.activeAction || page.activeRead || page.activePrepare || page.plans.size > 0
+      || page.inputPending.size > 0 || page.heldButtons.size > 0 || page.heldKeys.size > 0
+      || page.dialogPending || page.fileHandoff || (page.downloads?.size ?? 0) > 0;
+  }
+  suspend(page) {
+    if (this.pinned(page)) throw new Error('页面正在使用，不能驱逐');
+    const c = page.view.webContents;
+    page.url = c.isDestroyed() ? page.url : c.getURL() || page.url;
+    page.title = c.isDestroyed() ? page.title : c.getTitle() || page.title;
+    page.refs.clear(); page.plans.clear(); page.lastObservation = null; page.needsObservation = true;
+    page.stateLoss = '页面已驱逐；只恢复网址，表单和临时登录可能需要重做';
+    this.closeNative(page);
+    this.changed(page);
+  }
+  reservePageSlot(projectId, threadId, replacing = false, excluded = null) {
+    this.releaseInvalidOwners();
+    if (!replacing && this.workspacePages(projectId, threadId).length >= MAX_WORKSPACE_PAGES)
+      throw new Error('当前浏览工作区已达4页，请先关闭页面');
+    const native = [...this.pages.values()].filter(page => page.view && page !== excluded);
+    if (native.length < MAX_CACHED_PAGES) return;
+    const idle = native.find(page => !this.pinned(page));
+    if (!idle) throw new Error('浏览页面已达8页且都在使用，请先关闭页面');
+    this.suspend(idle);
+  }
+  workspaceOutstanding(projectId, threadId) {
+    return this.workspacePages(projectId, threadId).reduce((count, page) => count + page.plans.size
+      + Number(!!page.activeRead) + Number(!!page.activePrepare) + Number(!!page.activeAction), 0);
   }
   state(page = this.pages.get(this.owner)) {
-    const contents = page?.view.webContents;
+    const contents = page?.view?.webContents;
     const c = contents && !contents.isDestroyed() ? contents : null;
     const state = {
       url: c?.getURL() || page?.url || '', title: c?.getTitle() ?? page?.title ?? '',
@@ -221,7 +266,8 @@ class CorePreview {
       canGoForward: c?.navigationHistory.canGoForward() ?? false,
       error: page?.error ?? '',
       browser: page ? { pageId: page.id, control: page.control,
-        transferError: page.transferError ?? null } : null,
+        transferError: page.transferError ?? null, resource: page.view ? page.crashed ? 'crashed' : 'ready' : 'suspended',
+        stateLoss: page.stateLoss ?? null } : null,
     };
     return page ? { ...state, workspace: this.snapshot(page.projectId, page.threadId) } : state;
   }
@@ -230,7 +276,7 @@ class CorePreview {
     // This local fence runs before any Core request and before awaiting native input.
     page.control = 'transferring'; page.controlEpoch++; page.refs.clear(); page.plans.clear();
     page.lastObservation = null; page.needsObservation = true;
-    page.view.setVisible(false);
+    page.view?.setVisible(false);
     page.activeRead?.cancel();
     page.activeAction?.cancel();
     this.onRevoke?.({ projectId: page.projectId, threadId: page.threadId, pageId: page.id });
@@ -257,6 +303,7 @@ class CorePreview {
   }
   async convergeInput(page) {
     if (page.converging) return page.converging;
+    if (!this.pageStillOwned(page) || !page.view) return;
     const c = page.view.webContents;
     const epoch = page.controlEpoch;
     page.converging = (async () => {
@@ -284,7 +331,8 @@ class CorePreview {
         if (c.debugger.isAttached()) c.debugger.detach();
         if (page.control === 'transferring' && page.controlEpoch === epoch) {
           page.control = 'human'; page.transferError = null;
-          page.view.setVisible(page.requestedVisible === true);
+          page.view?.setVisible(this.pageStillOwned(page) && this.owner === pageKey(page.coreInstanceId, page.projectId, page.threadId, page.id)
+            && page.requestedVisible === true);
         }
       } catch (error) {
         page.transferError = error.message;
@@ -301,14 +349,13 @@ class CorePreview {
   revokeAll() { for (const page of this.pages.values()) this.revoke(page); }
   async claim(projectId, threadId, pageId) {
     const page = this.page(projectId, threadId, pageId);
-    const owner = page && pageKey(page.coreInstanceId, projectId, threadId, page.id);
-    if (!page || page.crashed || page.view.webContents.isDestroyed() || !page.view.webContents.getURL()
+    if (!page?.view || page.crashed || page.view.webContents.isDestroyed() || !page.view.webContents.getURL()
       || !this.owns(projectId, threadId)) throw new Error('当前聊天没有可认领的页面');
     if (page.control === 'transferring') throw new Error('原生输入尚未收敛，请停止或关闭页面');
     // Any capture guard left by a revoked read observed only a private boolean;
     // discard it before re-enabling Agent observations.
     await readIsolated(page.view.webContents, clearCaptureGuardScript);
-    if (page.control !== 'human' || this.pages.get(owner) !== page) throw new Error('页面控制状态已变化');
+    if (page.control !== 'human' || !this.pageStillOwned(page)) throw new Error('页面控制状态已变化');
     page.control = 'agent'; page.controlEpoch++; page.refs.clear(); page.plans.clear();
     page.lastObservation = null; page.needsObservation = true;
     this.changed(page, 'controlChanged');
@@ -336,7 +383,8 @@ class CorePreview {
       || browserHostId !== this.browserHostId || hostGeneration !== this.hostGeneration
       || pageGeneration !== page.pageGeneration || !this.owns(projectId, threadId)) throw new Error('plan_stale');
     if (page.control !== 'agent' || page.controlEpoch !== controlEpoch) throw new Error('plan_stale');
-    const c = page.view.webContents;
+    const c = page.view?.webContents;
+    if (!c) throw new Error('plan_stale');
     if (page.crashed || c.isDestroyed() || c.isDevToolsOpened()) throw new Error('plan_stale');
     return { page, c };
   }
@@ -365,7 +413,8 @@ class CorePreview {
   }
   async prepareNavigation(request) {
     const { page, c } = this.actionPage(request);
-    if (page.activeRead || page.activePrepare || page.activeAction || page.plans.size >= 16)
+    if (page.activeRead || page.activePrepare || page.activeAction
+      || this.workspaceOutstanding(page.projectId, page.threadId) >= 16)
       throw new Error('not_sent');
     const target = webUrl(request.parameters.url);
     const source = c.getURL();
@@ -400,46 +449,47 @@ class CorePreview {
       throw new Error('plan_stale');
     page.plans.delete(approved.preparedActionId);
     if (page.activeRead || page.activePrepare || page.activeAction) throw new Error('not_sent');
-    if (request.operation === 'navigate') {
-      page.approvedNavigation = target;
-      page.url = target;
-      page.error = '';
-      try { void c.loadURL(target).catch(error => {
-        page.approvedNavigation = null;
-        if (this.pageStillOwned(page)) {
-          if (error.code !== 'ERR_ABORTED') page.error = error.message;
-          this.changed(page);
-        }
-      }); }
-      catch (error) { page.approvedNavigation = null; throw error; }
-      this.changed(page);
+    let cancel;
+    const stopped = new Promise((_, reject) => { cancel = () => reject(new Error('outcome_unknown')); });
+    const action = { requestId: request.requestId, dispatched: false, cancelled: false,
+      cancel() { this.cancelled = true; cancel(); } };
+    page.activeAction = action;
+    let child;
+    const deadline = setTimeout(() => action.cancel(), 12000);
+    try {
+      if (request.operation === 'navigate') {
+        page.approvedNavigation = target; page.url = target; page.error = '';
+        action.dispatched = true;
+        await Promise.race([c.loadURL(target), stopped]);
+      } else {
+        const id = randomUUID();
+        child = this.create(pageKey(page.coreInstanceId, page.projectId, page.threadId, id), page.projectId, page.threadId,
+          { id, openerId: page.id, origin: 'agent' });
+        child.control = 'agent'; child.controlEpoch = page.controlEpoch;
+        child.approvedNavigation = target; child.url = target;
+        action.dispatched = true;
+        await Promise.race([child.view.webContents.loadURL(target), stopped]);
+      }
+      if (action.cancelled || !this.pageStillOwned(page) || !this.owns(page.projectId, page.threadId)
+        || page.controlEpoch !== approved.controlEpoch || (child && !this.pageStillOwned(child)))
+        throw new Error('outcome_unknown');
+      this.changed(child ?? page);
       return { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration,
         projectId: request.projectId, threadId: request.threadId, turnId: request.turnId,
         callId: request.callId, pageId: page.id, browserHostId: this.browserHostId,
         hostGeneration: this.hostGeneration, pageGeneration: page.pageGeneration,
-        controlEpoch: page.controlEpoch, url: page.url, dispatch: 'confirmed' };
+        controlEpoch: page.controlEpoch, ...(child ? { createdPage: { pageId: child.id,
+          pageGeneration: child.pageGeneration, controlEpoch: child.controlEpoch } } : {}),
+        url: target, dispatch: 'confirmed' };
+    } catch (error) {
+      page.approvedNavigation = null;
+      if (child) child.approvedNavigation = null;
+      if (action.dispatched) throw new Error('outcome_unknown');
+      throw error;
+    } finally {
+      clearTimeout(deadline);
+      if (page.activeAction === action) page.activeAction = null;
     }
-    const id = randomUUID();
-    const child = this.create(pageKey(page.coreInstanceId, page.projectId, page.threadId, id), page.projectId, page.threadId,
-      { id, openerId: page.id, origin: 'agent' });
-    child.control = 'agent'; child.controlEpoch = page.controlEpoch;
-    child.approvedNavigation = target; child.url = target;
-    try { void child.view.webContents.loadURL(target).catch(error => {
-      child.approvedNavigation = null;
-      if (this.pageStillOwned(child)) {
-        if (error.code !== 'ERR_ABORTED') child.error = error.message;
-        this.changed(child);
-      }
-    }); }
-    catch (error) { this.release(pageKey(page.coreInstanceId, page.projectId, page.threadId, id)); throw error; }
-    this.changed(child);
-    return { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration,
-      projectId: request.projectId, threadId: request.threadId, turnId: request.turnId,
-      callId: request.callId, pageId: page.id, browserHostId: this.browserHostId,
-      hostGeneration: this.hostGeneration, pageGeneration: page.pageGeneration,
-      controlEpoch: page.controlEpoch, createdPage: { pageId: child.id,
-        pageGeneration: child.pageGeneration, controlEpoch: child.controlEpoch },
-      url: target, dispatch: 'confirmed' };
   }
   async prepare(request) {
     if (request.phase !== 'prepare' || !['act', 'wait', 'navigate', 'newPage'].includes(request.operation)) throw new Error('not_sent');
@@ -447,7 +497,8 @@ class CorePreview {
     const { page, c } = this.actionPage(request);
     const initialDocument = page.documentGeneration;
     for (const [id, record] of page.plans) if (record.plan.expiresAt < Date.now()) page.plans.delete(id);
-    if (page.activeRead || page.activePrepare || page.activeAction || page.plans.size >= 16) throw new Error('not_sent');
+    if (page.activeRead || page.activePrepare || page.activeAction
+      || this.workspaceOutstanding(page.projectId, page.threadId) >= 16) throw new Error('not_sent');
     const url = new URL(c.getURL());
     const local = url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
     if (!local) throw new Error('human_takeover_required'); // Unknown/external effects require human takeover.
@@ -463,7 +514,7 @@ class CorePreview {
       const viewport = await readIsolated(c, viewportScript);
       const zoom = c.getZoomFactor();
       const viewportKey = JSON.stringify([viewport.width, viewport.height, viewport.scrollX, viewport.scrollY, zoom, viewport.deviceScaleFactor]);
-      if (page.control !== 'agent' || page.controlEpoch !== request.controlEpoch
+      if (!this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== request.controlEpoch
         || page.pageGeneration !== request.pageGeneration || page.documentGeneration !== initialDocument || c.isDestroyed()
         || c.getURL() !== url.href) throw new Error('plan_stale');
       if (page.viewportKey !== viewportKey) { page.viewportKey = viewportKey; page.viewportRevision++; }
@@ -542,7 +593,7 @@ class CorePreview {
         // before-input-event cannot distinguish a physical key from CDP echo.
         if (this.window.isFocused() && c.isFocused()) throw new Error('not_sent');
         const live = () => {
-          if (action.cancelled || page.control !== 'agent' || page.controlEpoch !== saved.plan.controlEpoch
+          if (action.cancelled || !this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== saved.plan.controlEpoch
             || page.documentGeneration !== saved.plan.documentEpoch || c.isDestroyed()) throw new Error('outcome_unknown');
         };
         const input = params => { live(); action.dispatched = true; return this.dispatchInput(page, 'Input.dispatchMouseEvent', params); };
@@ -568,7 +619,7 @@ class CorePreview {
           }
         })(), stop]);
       }
-      if (page.control !== 'agent' || page.controlEpoch !== saved.plan.controlEpoch)
+      if (!this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== saved.plan.controlEpoch)
         throw new Error(action.dispatched ? 'outcome_unknown' : 'not_sent');
       return { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration,
         projectId: request.projectId, threadId: request.threadId, turnId: request.turnId, callId: request.callId,
@@ -586,7 +637,8 @@ class CorePreview {
       if (page.control === 'agent' && page.inputPending.size === 0
         && page.heldButtons.size === 0 && page.heldKeys.size === 0) {
         if (!c.isDestroyed() && c.debugger.isAttached()) c.debugger.detach();
-        page.view.setVisible(page.requestedVisible === true);
+        page.view?.setVisible(this.pageStillOwned(page) && this.owner === pageKey(page.coreInstanceId, page.projectId, page.threadId, page.id)
+          && page.requestedVisible === true);
       } else if (page.control === 'agent') {
         // Even a failed action must release native input before local input resumes.
         page.control = 'transferring'; page.controlEpoch++;
@@ -605,7 +657,8 @@ class CorePreview {
       || page.id !== pageId || page.pageGeneration !== pageGeneration || !this.owns(projectId, threadId))
       throw new Error('Browser page identity is stale');
     if (page.control !== 'agent' || page.controlEpoch !== controlEpoch) throw new Error('Human controls this page');
-    const c = page.view.webContents;
+    const c = page.view?.webContents;
+    if (!c) throw new Error('Browser page is unavailable');
     if (page.crashed || c.isDestroyed() || c.isDevToolsOpened()) throw new Error('Browser page is unavailable');
     if (page.activeRead || page.activePrepare || page.activeAction) throw new Error('Browser page is busy');
     let cancel;
@@ -630,8 +683,8 @@ class CorePreview {
       const zoom = c.getZoomFactor();
       const viewportKey = JSON.stringify([viewport.width, viewport.height, viewport.scrollX, viewport.scrollY, zoom, viewport.deviceScaleFactor]);
       if (page.viewportKey !== viewportKey) { page.viewportKey = viewportKey; page.viewportRevision++; }
-      if (page.control !== 'agent' || page.controlEpoch !== epoch || page.documentGeneration !== documentGeneration
-        || this.page(projectId, threadId, pageId) !== page || c.isDestroyed()) throw new Error('Browser observation was revoked');
+      if (!this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== epoch
+        || page.documentGeneration !== documentGeneration || c.isDestroyed()) throw new Error('Browser observation was revoked');
       const base = { observationId: randomUUID(), coreInstanceId, coreGeneration, projectId, threadId, turnId, callId, pageId,
         browserHostId, hostGeneration, pageGeneration, nativeWebContentsId: c.id,
         url: observationUrl(c.getURL()), title: safeText(c.getTitle(), 256), documentEpoch: documentGeneration,
@@ -649,7 +702,8 @@ class CorePreview {
           if (typeof hasSensitive !== 'boolean') throw new Error('Browser sensitive-field check unavailable');
           if (hasSensitive) throw new Error('Sensitive field prevents automatic screenshot');
           image = await Promise.race([c.capturePage(), cancelled]);
-          if (page.control !== 'agent' || page.controlEpoch !== epoch || page.documentGeneration !== documentGeneration)
+          if (!this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== epoch
+            || page.documentGeneration !== documentGeneration)
             throw new Error('Browser observation was revoked');
           postSensitive = await Promise.race([readIsolated(c, sensitiveCaptureScript), cancelled]);
         } finally {
@@ -666,7 +720,8 @@ class CorePreview {
         if (size.width * size.height > 8_000_000 || size.width > 4096 || size.height > 4096) throw new Error('Screenshot pixel budget exceeded');
         const png = image.toPNG();
         if (png.length > 2 * 1024 * 1024) throw new Error('Screenshot byte budget exceeded');
-        if (page.control !== 'agent' || page.controlEpoch !== epoch) throw new Error('Browser observation was revoked');
+        if (!this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== epoch)
+          throw new Error('Browser observation was revoked');
         page.lastObservation = base.observationId;
         page.needsObservation = false;
         return { ...base, capturedAt: new Date().toISOString(), viewport: { ...base.viewport, bitmapWidth: size.width, bitmapHeight: size.height }, mimeType: 'image/png', imageBase64: png.toString('base64'), byteLength: png.length };
@@ -758,6 +813,8 @@ class CorePreview {
         for (const child of branch.childFrames ?? []) walkFrames(child);
       };
       walkFrames(frames.frameTree, true);
+      if (!this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== epoch)
+        throw new Error('Browser observation was revoked');
       page.lastObservation = base.observationId;
       page.needsObservation = false;
       return { ...base, frameCoverage: { main: 'covered', childFrames },
@@ -775,8 +832,9 @@ class CorePreview {
     }
   }
   create(owner, projectId, threadId, options = {}) {
+    this.reservePageSlot(projectId, threadId, options.replacing === true);
     const siblings = this.workspacePages(projectId, threadId);
-    const partition = siblings[0]?.partition ?? `areal-preview-${randomUUID()}`;
+    const partition = options.partition ?? siblings[0]?.partition ?? `areal-preview-${randomUUID()}`;
     const view = new this.WebContentsView({
       webPreferences: {
         sandbox: true,
@@ -785,13 +843,28 @@ class CorePreview {
         partition,
       },
     });
-    const page = { id: options.id ?? randomUUID(), pageGeneration: 1, view, partition,
-      coreInstanceId: this.coreIdentity(projectId), projectId, threadId,
+    const page = { id: options.id ?? randomUUID(), pageGeneration: options.pageGeneration ?? 1, view, partition,
+      session: view.webContents.session, coreInstanceId: this.coreIdentity(projectId), projectId, threadId,
       openerId: options.openerId ?? null, origin: options.origin ?? 'human', title: '', error: '', url: '', crashed: false,
       control: 'human', controlEpoch: 0, documentGeneration: 0, viewportRevision: 0, refs: new Map(),
       plans: new Map(), lastObservation: null, needsObservation: true, nextRef: 0,
-      heldButtons: new Map(), heldKeys: new Map(), inputPending: new Set(), requestedVisible: false },
+      heldButtons: new Map(), heldKeys: new Map(), inputPending: new Set(), requestedVisible: false,
+      downloads: new Set(), dialogPending: false, fileHandoff: false, stateLoss: options.stateLoss ?? null },
       c = view.webContents;
+    page.onDownload = (event, item, source) => {
+      if (source !== c) return;
+      if (!this.pageStillOwned(page)) { event.preventDefault(); return; }
+      if (!page.fileHandoff || page.downloads.size >= 4) {
+        event.preventDefault();
+        page.error = '下载需要明确的文件交接；未保存文件';
+        this.changed(page);
+        return;
+      }
+      page.downloads.add(item);
+      item.once('done', () => { page.downloads.delete(item); this.changed(page); });
+      this.changed(page);
+    };
+    c.session.on('will-download', page.onDownload);
     c.setWindowOpenHandler(details => {
       // Electron must never create an unowned BrowserWindow. A local human click
       // may create a sibling only after URL and current ownership checks.
@@ -839,6 +912,8 @@ class CorePreview {
       }
     });
     c.on("did-start-navigation", (_event, url, _inPlace, main) => {
+      if (!this.pageStillOwned(page)) return;
+      page.dialogPending = false;
       if (main) {
         if (page.approvedNavigation === url) page.approvedNavigation = null;
         else this.revoke(page);
@@ -854,19 +929,32 @@ class CorePreview {
       if (this.pageStillOwned(page)) this.changed(page);
     });
     c.on("did-fail-load", (_event, code, message, url, main) => {
+      if (!this.pageStillOwned(page)) return;
+      page.dialogPending = false;
       if (main && code !== -3 && url === page.url) page.error = message;
       if (this.pageStillOwned(page)) this.changed(page);
     });
-    c.on('did-finish-load', () => { if (this.pageStillOwned(page)) this.changed(page); });
+    c.on('did-finish-load', () => {
+      if (!this.pageStillOwned(page)) return;
+      page.dialogPending = false;
+      this.changed(page);
+    });
+    c.on('will-prevent-unload', () => {
+      if (!this.pageStillOwned(page)) return;
+      page.dialogPending = true;
+      this.changed(page);
+    });
     c.on('page-title-updated', () => { if (this.pageStillOwned(page)) this.changed(page); });
     c.on('render-process-gone', () => {
       if (this.pages.get(owner) !== page) return;
+      page.title = c.isDestroyed() ? page.title : c.getTitle() || page.title;
       this.revoke(page);
       page.crashed = true;
       page.error = '预览页面已退出，请重新加载';
       this.changed(page);
     });
     c.on('before-input-event', (event, input) => {
+      if (!this.pageStillOwned(page)) { event.preventDefault(); return; }
       if (page.control === 'human' && c.isFocused() && input.type === 'keyDown'
         && ['Enter', 'Space'].includes(input.key)) page.userPopupIntentUntil = Date.now() + 1000;
       // CDP keys may echo while the native view is hidden. Only an action on a
@@ -877,6 +965,7 @@ class CorePreview {
       } else if (page.control === 'transferring') event.preventDefault();
     });
     c.on('before-mouse-event', (event, mouse) => {
+      if (!this.pageStillOwned(page)) { event.preventDefault(); return; }
       if (page.control === 'human' && mouse.type === 'mouseDown' && c.isFocused())
         page.userPopupIntentUntil = Date.now() + 1000;
       if (page.control === 'agent' && page.view.getVisible() && mouse.type === 'mouseDown') {
@@ -902,7 +991,7 @@ class CorePreview {
     }
     if (request.pageId && !page && request.operation !== 'state') throw new Error('页面已关闭');
     if (request.operation === 'subscribe') return this.snapshot(request.projectId, request.threadId);
-    // A metadata read must not change LRU order or publish another metadata event.
+    // A read must not touch LRU order or publish another metadata event.
     if (request.operation === 'state') return page ? this.state(page)
       : { ...this.state(null), workspace: this.snapshot(request.projectId, request.threadId) };
     if (request.operation === 'release') {
@@ -912,7 +1001,10 @@ class CorePreview {
     }
     if (request.operation === 'hide') {
       if (page) page.requestedVisible = false;
-      if (!request.projectId || this.owner === key) this.view?.setVisible(false);
+      if (!request.projectId || this.owner === key) {
+        if (!page) { const displayed = this.pages.get(this.owner); if (displayed) displayed.requestedVisible = false; }
+        this.view?.setVisible(false);
+      }
       return this.state(page);
     }
     if (request.operation !== 'state' && (!this.owns(request.projectId, request.threadId)
@@ -936,14 +1028,28 @@ class CorePreview {
     }
     const target = request.operation === 'navigate' ? webUrl(request.url) : null;
     const restoreUrl = page?.url || request.url;
-    if (page && (page.crashed || page.view.webContents.isDestroyed())
+    if (page && (!page.view || page.crashed || page.view.webContents.isDestroyed())
       && ['show', 'navigate', 'reload'].includes(request.operation)) {
-      this.release(key); page = null; key = null;
+      const previous = page;
+      this.reservePageSlot(request.projectId, request.threadId, true, previous);
+      const wasSelected = this.selected.get(workspace) === previous.id;
+      const saved = { id: previous.id, pageGeneration: previous.pageGeneration + 1,
+        partition: previous.partition, openerId: previous.openerId, origin: previous.origin,
+        stateLoss: previous.stateLoss ?? (previous.crashed ? '页面崩溃；只恢复网址，表单和临时登录可能需要重做' : null),
+        replacing: true };
+      this.release(key, { preserveContext: true });
+      page = this.create(key, request.projectId, request.threadId, saved);
+      page.title = previous.title;
+      page.url = previous.url;
+      page.error = previous.error;
+      if (wasSelected) this.selected.set(workspace, page.id);
     }
     if (!page && ['show', 'navigate', 'reload'].includes(request.operation)) {
       const id = randomUUID();
       key = pageKey(this.coreIdentity(request.projectId), request.projectId, request.threadId, id);
       page = this.create(key, request.projectId, request.threadId, { id });
+    }
+    if (page && ['show', 'navigate', 'reload'].includes(request.operation) && !page.view.webContents.getURL()) {
       const restored = request.operation !== 'navigate' && restoreUrl ? webUrl(restoreUrl) : null;
       if (restored) {
         page.url = restored;
@@ -953,6 +1059,13 @@ class CorePreview {
       }
     }
     if (!page) return { ...this.state(null), workspace: this.snapshot(request.projectId, request.threadId) };
+    if (!page.view) {
+      if (request.operation === 'selectPage') {
+        this.selected.set(workspace, page.id);
+        this.changed(page);
+      }
+      return this.state(page);
+    }
     this.pages.delete(key); this.pages.set(key, page);
     const c = page.view.webContents;
     if (['navigate', 'back', 'forward', 'reload', 'stop'].includes(request.operation)) this.revoke(page);
@@ -965,7 +1078,11 @@ class CorePreview {
         this.changed(page);
         break;
       case 'show':
-        if (this.owner !== key) this.view?.setVisible(false);
+        if (this.owner !== key) {
+          const outgoing = this.pages.get(this.owner);
+          if (outgoing) outgoing.requestedVisible = false;
+          this.view?.setVisible(false);
+        }
         this.owner = key; this.view = page.view;
         page.requestedVisible = request.visible !== false;
         page.view.setVisible(page.requestedVisible && page.control !== 'transferring' && !page.activeAction);
@@ -990,7 +1107,6 @@ class CorePreview {
       case 'devtools': this.revoke(page); c.openDevTools({ mode: 'detach' }); break;
     }
     if (['navigate', 'reload', 'stop'].includes(request.operation)) this.changed(page);
-    this.prune();
     return this.state(page);
   }
 

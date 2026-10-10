@@ -4,6 +4,8 @@
 
 04 票加入 B-10–B-13 的源码路径。M1 统一原生 fixture 须检查 Core 交互包含实际准备的页面、目标和 Origin；拒绝审批时服务端副作用为零，批准后原生点击/填写/按键只产生一次副作用；导航、目标替换、视口变化、接管、伪造审批和跨 Thread 请求均不产生副作用。分别在输入前注入 prepare 失败、在 fixture 服务端收到输入后丢失回执，断言 `not_sent` 和 Core UNKNOWN。04 票源码检查尚未运行这些原生断言。
 
+09 票的 B-24–B-26 在 M1 统一 fixture 中通过公开 GUI/Core 入口验证：跨 Workspace 达到 8 个原生页和单 Workspace 4 个逻辑页，执行/接管/对话框页 pin 时新页被拒绝且原生对象数不增长；空闲驱逐必须显示状态损失。隐藏后核对原生对象、表单和 scroll；崩溃重开后核对 `pageGeneration`、旧 Ref/计划/回执拒绝以及已派发操作的 UNKNOWN。将延迟加载/接管回调与归档、隐藏项目、关闭窗口竞争，核对旧页不复活、共享 Session 在兄弟页存活时不清除，最后页面关闭后无孤儿 WebContents 或下载。该场景目前只准备了要求，尚未运行真实原生验收。
+
 本文件定义完整 Browser 的测试契约。R0 原生实验已有独立入口，其结果以具体运行证据为准，不表示全部场景已经运行。后续主要测试切口沿用现有桌面 smoke/connection/architecture 的真实 Electron+Core+Runtime+确定性模型形态，参照[GUI指南](../../clients/gui/README.md)。
 
 当前同页读取切口运行 `make build`、`make gui-install`、`make gui-build` 后，以 `node clients/gui/scripts/browser-read-smoke.mjs` 验证 B-04/B-05/B-06。脚本仅用隔离 home、合成网页和本地确定性模型；记录 Core 动态工具 callId、真实原生 WebContents 身份与内存 sentinel、GUI/原生截图、服务端请求计数和跨 Thread/伪回执/宿主缺失结果。源码构建测试不代表安装包、真实账号或其他 OS 已验收。
