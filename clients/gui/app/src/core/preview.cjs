@@ -164,6 +164,24 @@ class CorePreview {
       && page.coreInstanceId === this.coreIdentity(page.projectId)
       && this.owns(page.projectId, page.threadId);
   }
+  developmentPromptFence(page) {
+    return { view: page.view, pageGeneration: page.pageGeneration,
+      documentGeneration: page.documentGeneration, controlEpoch: page.controlEpoch };
+  }
+  currentDevelopmentPrompt(page, fence) {
+    if (!this.pageStillOwned(page) || !page.view || page.view.webContents.isDestroyed()) return false;
+    const key = pageKey(page.coreInstanceId, page.projectId, page.threadId, page.id);
+    const workspace = workspaceKey(page.coreInstanceId, page.projectId, page.threadId);
+    // A blank initial page is bound by the current trusted `show` request even
+    // before there is a URL to make its native view visible.
+    const initialBlank = !page.url && !page.view.webContents.getURL();
+    return this.owner === key && this.view === fence.view && page.view === fence.view
+      && this.selected.get(workspace) === page.id && page.control === 'human'
+      && page.pageGeneration === fence.pageGeneration
+      && page.documentGeneration === fence.documentGeneration
+      && page.controlEpoch === fence.controlEpoch
+      && (page.requestedVisible || initialBlank);
+  }
   metadata(page) {
     const c = page.view?.webContents;
     return { coreInstanceId: page.coreInstanceId, pageId: page.id, openerId: page.openerId ?? null, origin: page.origin,
@@ -1048,6 +1066,7 @@ class CorePreview {
       if (!request.projectId || this.owner === key) {
         if (!page) { const displayed = this.pages.get(this.owner); if (displayed) displayed.requestedVisible = false; }
         this.view?.setVisible(false);
+        this.owner = null; this.view = null;
       }
       return this.state(page);
     }
@@ -1120,14 +1139,15 @@ class CorePreview {
       const alreadyAllowed = page.networkPolicy.permits({ url: target, resourceType: 'mainFrame' });
       const local = loopback(new URL(target).hostname);
       if (!alreadyAllowed && local) {
-        if (page.pendingDevelopmentPrompt || page.control !== 'human')
+        const fence = this.developmentPromptFence(page);
+        if (page.pendingDevelopmentPrompt || !this.currentDevelopmentPrompt(page, fence))
           throw new Error('开发站点授权需要当前页面由用户控制');
         const prompt = page.pendingDevelopmentPrompt = randomUUID();
         let confirmed;
         try { confirmed = await this.confirmDevelopmentOrigin({ origin,
-          projectId: page.projectId, threadId: page.threadId, pageId: page.id }); }
+          page, fence }); }
         finally { if (page.pendingDevelopmentPrompt === prompt) page.pendingDevelopmentPrompt = null; }
-        if (!confirmed || !this.pageStillOwned(page) || page.control !== 'human'
+        if (!confirmed || !this.currentDevelopmentPrompt(page, fence)
           || page.pendingDevelopmentPrompt) throw new Error('尚未授权此开发站点');
       }
       if (!alreadyAllowed && !page.networkPolicy.allowHumanNavigation(target, local))
