@@ -901,6 +901,9 @@ class CorePreview {
     }
     if (request.pageId && !page && request.operation !== 'state') throw new Error('页面已关闭');
     if (request.operation === 'subscribe') return this.snapshot(request.projectId, request.threadId);
+    // A metadata read must not change LRU order or publish another metadata event.
+    if (request.operation === 'state') return page ? this.state(page)
+      : { ...this.state(null), workspace: this.snapshot(request.projectId, request.threadId) };
     if (request.operation === 'release') {
       if (!page) return this.state(null);
       if (page.origin !== 'agent' && request.userIntent !== true) throw new Error('关闭人工页面需要明确用户操作');
@@ -985,7 +988,7 @@ class CorePreview {
       case 'external': await require('electron').shell.openExternal(webUrl(c.getURL() || page.url)); break;
       case 'devtools': this.revoke(page); c.openDevTools({ mode: 'detach' }); break;
     }
-    this.changed(page);
+    if (['navigate', 'reload', 'stop'].includes(request.operation)) this.changed(page);
     this.prune();
     return this.state(page);
   }
