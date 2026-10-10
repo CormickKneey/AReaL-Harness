@@ -48,12 +48,20 @@ async fn fork_is_durable_idle_and_replays_plain_text_prefix() {
     socket.send(Wire::Text(json!({"method":"initialized"}).to_string().into())).await.unwrap();
     let source = call(&mut socket, 2, "thread/start", json!({"cwd":"/workspace"})).await;
     let source_id = source["result"]["thread"]["id"].as_str().unwrap();
-    call(&mut socket, 3, "turn/start", json!({"threadId":source_id,"input":[{"type":"text","text":"first"}]})).await;
+    call(&mut socket, 3, "turn/start", json!({"threadId":source_id,"input":[{"type":"text","text":format!("first {}", "a".repeat(9000))}]})).await;
     completed(&mut socket, source_id).await;
-    call(&mut socket, 4, "turn/start", json!({"threadId":source_id,"input":[{"type":"text","text":"second"}]})).await;
+    call(&mut socket, 4, "turn/start", json!({"threadId":source_id,"input":[{"type":"text","text":format!("second {}", "b".repeat(9000))}]})).await;
+    completed(&mut socket, source_id).await;
+    call(&mut socket, 18, "turn/start", json!({"threadId":source_id,"input":[{"type":"text","text":format!("third {}", "c".repeat(9000))}]})).await;
+    completed(&mut socket, source_id).await;
+    call(&mut socket, 19, "turn/start", json!({"threadId":source_id,"input":[{"type":"text","text":format!("fourth {}", "d".repeat(9000))}]})).await;
     completed(&mut socket, source_id).await;
     let before = call(&mut socket, 5, "thread/read", json!({"threadId":source_id,"includeTurns":true})).await;
-    let anchor = before["result"]["thread"]["turns"][1]["id"].as_str().unwrap();
+    let anchor = before["result"]["thread"]["turns"][3]["id"].as_str().unwrap();
+    call(&mut socket, 13, "turn/start", json!({"threadId":source_id,"input":[{"type":"text","text":"LATER_SENTINEL"}]})).await;
+    completed(&mut socket, source_id).await;
+    let source_compact = call(&mut socket, 20, "areal/context/compact", json!({"threadId":source_id})).await;
+    assert!(source_compact["result"]["checkpoint"].is_object(), "expected source checkpoint");
     let params = json!({"requestId":"fork-key","sourceThreadId":source_id,"anchor":{"turnId":anchor,"boundary":"after"},"workspaceMode":"sharedCurrent"});
     let count = model.0.lock().unwrap().len();
     let fork = call(&mut socket, 6, "areal/thread/fork", params.clone()).await;
@@ -100,23 +108,82 @@ async fn fork_is_durable_idle_and_replays_plain_text_prefix() {
     let context = call(&mut socket, 9, "areal/context/read", json!({"threadId":fork_id,"offset":0,"limit":32})).await;
     let texts = context["result"]["data"].to_string();
     assert!(texts.contains("first") && texts.contains("second"), "{texts}");
+    assert!(!texts.contains("LATER_SENTINEL"), "{texts}");
     let inherited = call(&mut socket, 12, "areal/conversation/history", json!({"threadId":fork_id,"view":"inherited"})).await;
     assert_eq!(inherited["result"]["complete"], true);
     assert_eq!(inherited["result"]["data"][0]["sourceThreadId"], source_id);
     assert!(inherited["result"]["data"].to_string().contains("first"));
+    assert!(!inherited["result"]["data"].to_string().contains("LATER_SENTINEL"));
+    let expected_ids: Vec<_> = before["result"]["thread"]["turns"].as_array().unwrap().iter()
+        .flat_map(|turn| turn["items"].as_array().unwrap().iter().map(|item| item["id"].clone()))
+        .collect();
+    let inherited_ids: Vec<_> = inherited["result"]["data"].as_array().unwrap().iter()
+        .map(|entry| entry["sourceItemId"].clone()).collect();
+    assert_eq!(inherited_ids, expected_ids);
     call(&mut socket, 10, "turn/start", json!({"threadId":fork_id,"input":[{"type":"text","text":"fork only"}]})).await;
     completed(&mut socket, fork_id).await;
     let requests = model.0.lock().unwrap();
     let last = requests.last().unwrap().iter().map(Message::text_content).collect::<Vec<_>>().join(" ");
     assert!(last.contains("first") && last.contains("second") && last.contains("fork only"), "{last}");
-    let source_after = call(&mut socket, 11, "thread/read", json!({"threadId":source_id,"includeTurns":true})).await;
-    assert_eq!(source_after["result"]["thread"]["turns"], before["result"]["thread"]["turns"]);
-    let archived = call(&mut socket, 15, "areal/thread/archive", json!({"threadId":fork_id})).await;
-    assert_eq!(archived["result"]["archived"], true, "{archived}");
-    let after_archive = call(&mut second, 16, "areal/request/read", json!({"requestId":"fork-key"})).await;
-    assert_eq!(after_archive["result"]["data"][0]["result"]["threadId"], fork_id);
+    assert!(!last.contains("LATER_SENTINEL"), "{last}");
     drop(requests);
+    for (offset, letter) in ["e", "f", "g", "h", "i"].iter().enumerate() {
+        call(&mut socket, 21 + offset as u64, "turn/start", json!({"threadId":fork_id,
+            "input":[{"type":"text","text":format!("local-{offset} {}", letter.repeat(9000))}]})).await;
+        completed(&mut socket, fork_id).await;
+    }
+    let before_compact = call(&mut socket, 26, "thread/read", json!({"threadId":fork_id,"includeTurns":true})).await;
+    let local_item_ids: Vec<_> = before_compact["result"]["thread"]["turns"].as_array().unwrap().iter()
+        .flat_map(|turn| turn["items"].as_array().unwrap().iter().filter_map(|item| item["id"].as_str().map(str::to_owned)))
+        .collect();
+    let compact = call(&mut socket, 17, "areal/context/compact", json!({"threadId":fork_id})).await;
+    assert!(compact.get("result").is_some(), "{compact}");
+    assert!(compact["result"]["checkpoint"].is_object(), "expected a real checkpoint");
+    assert!(local_item_ids.iter().any(|id| compact["result"]["checkpoint"]["throughItemId"] == *id),
+        "expected compaction boundary in local Fork history");
+    assert!(!compact["result"].to_string().contains("LATER_SENTINEL"), "{compact}");
+    let projected = compact["result"]["data"].as_array().unwrap();
+    assert_eq!(projected.iter().filter(|entry| entry["text"].as_str().is_some_and(|text| text.starts_with("first "))).count(), 1);
+    call(&mut socket, 27, "turn/start", json!({"threadId":fork_id,"input":[{"type":"text","text":"after compact"}]})).await;
+    completed(&mut socket, fork_id).await;
+    let requests = model.0.lock().unwrap();
+    let continued = requests.last().unwrap();
+    assert_eq!(continued.iter().filter(|message| message.text_content().starts_with("first ")).count(), 1);
+    assert!(continued.iter().any(|message| message.text_content().contains("after compact")));
+    assert!(!continued.iter().any(|message| message.text_content().contains("LATER_SENTINEL")));
+    drop(requests);
+    let inherited_anchor = before["result"]["thread"]["turns"][0]["id"].as_str().unwrap();
+    let nested = call(&mut socket, 14, "areal/thread/fork", json!({"requestId":"nested-key","sourceThreadId":fork_id,
+        "anchor":{"turnId":inherited_anchor,"boundary":"after"},"workspaceMode":"sharedCurrent"})).await;
+    assert!(nested.get("result").is_some(), "{nested}");
+    let nested_id = nested["result"]["thread"]["id"].as_str().unwrap();
+    assert_eq!(nested["result"]["thread"]["turns"], json!([]));
+    let nested_page = call(&mut socket, 15, "areal/conversation/history", json!({"threadId":nested_id,"view":"inherited"})).await;
+    let nested_text = nested_page["result"]["data"].to_string();
+    assert!(nested_text.contains("first") && !nested_text.contains("second") && !nested_text.contains("fork only"), "{nested_text}");
+    assert_eq!(nested_page["result"]["data"][0]["sourceThreadId"], source_id);
+    assert_eq!(nested_page["result"]["data"][0]["sourceTurnId"], inherited_anchor);
+    let local_anchor = before_compact["result"]["thread"]["turns"][0]["id"].as_str().unwrap();
+    let mixed = call(&mut socket, 28, "areal/thread/fork", json!({"requestId":"mixed-key","sourceThreadId":fork_id,
+        "anchor":{"turnId":local_anchor,"boundary":"after"},"workspaceMode":"sharedCurrent"})).await;
+    assert!(mixed.get("result").is_some(), "{mixed}");
+    let mixed_id = mixed["result"]["thread"]["id"].as_str().unwrap();
+    let mixed_page = call(&mut socket, 29, "areal/conversation/history", json!({"threadId":mixed_id,"view":"inherited"})).await;
+    let mixed_entries = mixed_page["result"]["data"].as_array().unwrap();
+    assert_eq!(mixed_entries.first().unwrap()["sourceThreadId"], source_id);
+    assert_eq!(mixed_entries.last().unwrap()["sourceThreadId"], fork_id);
+    let nested_context = call(&mut socket, 16, "areal/context/read", json!({"threadId":nested_id,"offset":0,"limit":32})).await;
+    let nested_text = nested_context["result"]["data"].to_string();
+    assert!(nested_text.contains("first") && !nested_text.contains("second") && !nested_text.contains("fork only"), "{nested_text}");
+    let source_after = call(&mut socket, 11, "thread/read", json!({"threadId":source_id,"includeTurns":true})).await;
+    assert_eq!(source_after["result"]["thread"]["turns"].as_array().unwrap().len(), 5);
+    let archived = call(&mut socket, 30, "areal/thread/archive", json!({"threadId":fork_id})).await;
+    assert_eq!(archived["result"]["archived"], true, "{archived}");
+    let after_archive = call(&mut second, 31, "areal/request/read", json!({"requestId":"fork-key"})).await;
+    assert_eq!(after_archive["result"]["data"][0]["result"]["threadId"], fork_id);
+    socket.close(None).await.unwrap();
     drop(socket);
+    second.close(None).await.unwrap();
     drop(second);
     stop.cancel(); server.await.unwrap().unwrap();
     engine.shutdown().await;
@@ -126,5 +193,8 @@ async fn fork_is_durable_idle_and_replays_plain_text_prefix() {
     assert_eq!(receipt["data"][0]["result"]["threadId"], fork_id);
     let inherited = restored.context_read(fork_id, 0, 32).await.unwrap();
     let texts = inherited["data"].to_string();
-    assert!(texts.contains("first") && texts.contains("second"), "{texts}");
+    assert!(texts.contains("first"), "{texts}");
+    assert!(!texts.contains("LATER_SENTINEL"), "{texts}");
+    assert_eq!(inherited["data"].as_array().unwrap().iter()
+        .filter(|entry| entry["text"].as_str().is_some_and(|text| text.starts_with("first "))).count(), 1);
 }

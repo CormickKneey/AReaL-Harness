@@ -468,8 +468,16 @@ impl Engine {
             return Ok(());
         }
 
-        let items: Vec<_> = snapshot.turns.iter().flat_map(|turn| &turn.items).collect();
-        let previous = snapshot
+        // 先恢复本地冷段，再拼继承块；检查点可能跨过两层历史。
+        let hydrated_snapshot = self.store.hydrate(snapshot.clone()).await?;
+        let logical_snapshot = crate::history::logical_history(&hydrated_snapshot, &self.store)?;
+        let hydrated_local_items = hydrated_snapshot.turns.iter().map(|turn| turn.items.len()).sum::<usize>();
+        let inherited_items = logical_snapshot.turns.iter().map(|turn| turn.items.len()).sum::<usize>()
+            - hydrated_local_items;
+        let archived_local_items = hydrated_local_items
+            - snapshot.turns.iter().map(|turn| turn.items.len()).sum::<usize>();
+        let items: Vec<_> = logical_snapshot.turns.iter().flat_map(|turn| &turn.items).collect();
+        let previous = logical_snapshot
             .context_checkpoint
             .as_ref()
             .and_then(|checkpoint| {
@@ -518,7 +526,7 @@ impl Engine {
         let byte_target =
             byte_trigger.then_some(self.limits.context_window_bytes.saturating_mul(3) / 4);
         let mut best_saving = 0;
-        let mut probe = snapshot.clone();
+        let mut probe = logical_snapshot.clone();
         // 先检查近期保留边界，再检查最大可压缩前缀；不逐项重建长历史，
         // 避免大量工具轮次下 O(rounds × history) 的投影成本。
         let preferred = boundaries.iter().find(|(_, bytes, tokens)| {
@@ -553,7 +561,7 @@ impl Engine {
         }
         for cut in &candidates {
             let (retained_inputs, evidence) =
-                checkpoint_retention(&snapshot, *cut, budget.input_limit);
+                checkpoint_retention(&logical_snapshot, *cut, budget.input_limit);
             probe.context_checkpoint = Some(areal_protocol::ContextCheckpoint {
                 retained_inputs: Some(retained_inputs),
                 evidence,
@@ -622,7 +630,7 @@ impl Engine {
         let span = operation.span.clone();
         let result: anyhow::Result<()> = async {
             let boundary = items[cut - 1].id().to_owned();
-            let mut prefix = snapshot.clone();
+            let mut prefix = logical_snapshot.clone();
             let mut left = cut;
             for turn in &mut prefix.turns {
                 let take = left.min(turn.items.len());
@@ -792,7 +800,7 @@ impl Engine {
                 .map(|checkpoint| checkpoint.usage.clone())
                 .unwrap_or_default();
             cumulative_usage.add_assign(&usage);
-            let (retained_inputs, evidence) = checkpoint_retention(&snapshot, cut, budget.input_limit);
+            let (retained_inputs, evidence) = checkpoint_retention(&logical_snapshot, cut, budget.input_limit);
             candidate.context_checkpoint = Some(areal_protocol::ContextCheckpoint {
                 retained_inputs: Some(retained_inputs),
                 evidence,
@@ -825,7 +833,8 @@ impl Engine {
             audit["retainedItems"] = json!(items.len() - cut);
             audit["previousUsageCalibration"] = json!(previous_usage);
             self.store.save_audit(audit).await?;
-            self.store.archive_prefix(&mut candidate, cut).await?;
+            let local_cut = cut.saturating_sub(inherited_items + archived_local_items);
+            if local_cut > 0 { self.store.archive_prefix(&mut candidate, local_cut).await?; }
             self.persist(&candidate).await?;
             state.thread = candidate;
             cell.emit("areal/context/compacted", metrics);

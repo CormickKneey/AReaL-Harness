@@ -2,13 +2,15 @@
 use super::*;
 use areal_protocol::{HistoryArchive, Turn};
 
-const MAX_SEGMENT_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_SEGMENT_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Serialize, Deserialize)]
 pub(super) struct Segment {
     version: u32,
-    previous: Option<HistoryArchive>,
+    pub(super) previous: Option<HistoryArchive>,
     pub(super) turns: Vec<Turn>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(super) source_thread_ids: Vec<String>,
 }
 
 fn segment_path(root: &Path, digest: &str) -> Result<PathBuf> {
@@ -109,11 +111,13 @@ pub(super) fn visit_segments(
 }
 
 impl Store {
-    pub(crate) async fn write_fork_snapshot(&self, turns: Vec<Turn>) -> Result<(String, usize)> {
+    pub(crate) async fn write_fork_snapshot(&self, turns: Vec<Turn>, source_thread_ids: Vec<String>, max_bytes: usize) -> Result<(String, usize)> {
         let root = self.root.clone();
         tokio::task::spawn_blocking(move || {
-            let bytes = serde_json::to_vec(&Segment { version: 1, previous: None, turns })?;
+            anyhow::ensure!(turns.len() == source_thread_ids.len(), "fork snapshot provenance mismatch");
+            let bytes = serde_json::to_vec(&Segment { version: 1, previous: None, turns, source_thread_ids })?;
             let size = bytes.len();
+            anyhow::ensure!(size <= max_bytes, "fork snapshot exceeds history limit");
             Ok((append_segment(&root, &bytes)?, size))
         }).await?
     }
@@ -121,7 +125,15 @@ impl Store {
     pub(crate) fn read_fork_snapshot(&self, snapshot_id: &str) -> Result<Vec<Turn>> {
         let segment = read_segment(&self.root, snapshot_id)?;
         anyhow::ensure!(segment.previous.is_none(), "fork snapshot contains archive chain");
+        anyhow::ensure!(segment.source_thread_ids.len() == segment.turns.len(),
+            "fork snapshot provenance mismatch");
         Ok(segment.turns)
+    }
+    pub(crate) fn read_fork_snapshot_with_sources(&self, snapshot_id: &str) -> Result<(Vec<Turn>, Vec<String>)> {
+        let segment = read_segment(&self.root, snapshot_id)?;
+        anyhow::ensure!(segment.previous.is_none(), "fork snapshot contains archive chain");
+        anyhow::ensure!(segment.source_thread_ids.len() == segment.turns.len(), "fork snapshot provenance mismatch");
+        Ok((segment.turns, segment.source_thread_ids))
     }
     pub(crate) async fn history_page(
         &self,
@@ -227,6 +239,7 @@ impl Store {
             version: 1,
             previous: previous.clone(),
             turns: prefix,
+            source_thread_ids: Vec::new(),
         })?;
         let size = bytes.len() as u64;
         let root = self.root.clone();

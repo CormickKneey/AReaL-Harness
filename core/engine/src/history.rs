@@ -347,13 +347,26 @@ pub(super) fn checkpoint_inputs(
     retained.into_iter().map(|i| inputs[i].clone()).collect()
 }
 
-pub(super) fn history(thread: &Thread, store: &store::Store) -> anyhow::Result<Vec<Message>> {
+pub(super) fn logical_history(thread: &Thread, store: &store::Store) -> anyhow::Result<Thread> {
+    let mut logical = thread.clone();
     if let Some(areal_protocol::Conversation::Fork { history_seed, .. }) = &thread.conversation {
-        let mut logical = thread.clone();
         logical.conversation = None;
         let mut inherited = store.read_fork_snapshot(&history_seed.snapshot_id)?;
         inherited.extend(std::mem::take(&mut logical.turns));
         logical.turns = inherited;
+    }
+    Ok(logical)
+}
+
+pub(super) fn history(thread: &Thread, store: &store::Store) -> anyhow::Result<Vec<Message>> {
+    if let Some(areal_protocol::Conversation::Fork { history_seed, .. }) = &thread.conversation {
+        let mut logical = logical_history(thread, store)?;
+        // 检查点越过继承块并落在本地冷段时，冷段边界代表整个此前逻辑前缀。
+        if thread.context_checkpoint.as_ref().is_some_and(|checkpoint|
+            thread.history_archive.as_ref().is_some_and(|archive| archive.through_item_id == checkpoint.through_item_id)) {
+            let count = history_seed.turn_count.min(logical.turns.len());
+            logical.turns.drain(..count);
+        }
         return history(&logical, store);
     }
     let mut messages = Vec::new();

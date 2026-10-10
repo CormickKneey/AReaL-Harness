@@ -102,6 +102,10 @@ impl Store {
                         .history_archive
                         .as_ref()
                         .map_or(0, |a| a.bytes)
+                    .saturating_add(match &record.thread.conversation {
+                        Some(areal_protocol::Conversation::Fork { history_seed, .. }) => history_seed.logical_bytes as u64,
+                        _ => 0,
+                    })
                         .saturating_add(std::fs::metadata(&path)?.len())
                         <= max_bytes as u64,
                 "stored thread exceeds configured history limit"
@@ -115,9 +119,23 @@ impl Store {
             if let Some(reference) = &record.thread.history_archive {
                 archive::read_segment(&self.root, &reference.head)?;
             }
-            if let Some(areal_protocol::Conversation::Fork { version, history_seed, .. }) = &record.thread.conversation {
+            if let Some(areal_protocol::Conversation::Fork { version, origin, history_seed, .. }) = &record.thread.conversation {
                 anyhow::ensure!(*version == 1 && record.version >= 14, "unsupported fork conversation version");
-                archive::read_segment(&self.root, &history_seed.snapshot_id)?;
+                anyhow::ensure!(origin.snapshot_id == history_seed.snapshot_id, "fork snapshot reference mismatch");
+                let segment = archive::read_segment(&self.root, &history_seed.snapshot_id)?;
+                anyhow::ensure!(segment.previous.is_none(), "fork snapshot contains archive chain");
+                anyhow::ensure!(std::fs::metadata(self.root.join("history").join(&history_seed.snapshot_id))?.len() == history_seed.logical_bytes as u64,
+                    "fork snapshot size mismatch");
+                anyhow::ensure!(segment.turns.len() == history_seed.turn_count
+                    && segment.turns.iter().map(|turn| turn.items.len()).sum::<usize>() == history_seed.item_count,
+                    "fork snapshot manifest mismatch");
+                anyhow::ensure!(segment.source_thread_ids.len() == segment.turns.len()
+                    && segment.source_thread_ids.iter().all(|id| uuid::Uuid::parse_str(id).is_ok()),
+                    "fork snapshot provenance mismatch");
+                if origin.boundary == "after" {
+                    anyhow::ensure!(segment.turns.last().is_some_and(|turn| turn.id == origin.source_turn_id),
+                        "fork snapshot anchor mismatch");
+                }
             }
             let mut repaired = false;
             if let Some(goal) = &mut record.thread.goals.goal {
