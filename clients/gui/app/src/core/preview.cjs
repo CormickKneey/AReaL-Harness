@@ -1,6 +1,7 @@
 "use strict";
 const MAX_CACHED_PAGES = 8;
 const { randomUUID, randomBytes, createHash } = require('node:crypto');
+const { performance } = require('node:perf_hooks');
 const { validatePreview } = require('@areal/workbench/desktop-contract');
 
 function webUrl(value) {
@@ -32,6 +33,16 @@ async function readIsolated(contents, code) {
   const result = await contents.executeJavaScriptInIsolatedWorld(BROWSER_READ_WORLD, [{ code }]);
   if (result === undefined) throw new Error('Browser isolated read failed');
   return result;
+}
+async function nativeWithin(promise, deadline) {
+  const remaining = deadline - performance.now();
+  if (remaining <= 0) throw new Error('等待原生输入结算超时，请停止或关闭页面');
+  let timer;
+  try {
+    return await Promise.race([promise, new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('等待原生输入结算超时，请停止或关闭页面')), remaining);
+    })]);
+  } finally { clearTimeout(timer); }
 }
 const viewportScript = `({width:innerWidth,height:innerHeight,scrollX,scrollY,deviceScaleFactor:devicePixelRatio})`;
 const interactiveRoles = new Set(['button', 'link', 'textbox', 'textfield', 'searchbox', 'combobox',
@@ -89,6 +100,11 @@ const captureGuardStopScript = (token, sequence) => `(() => {
   for (const observer of guard.observers) observer.disconnect();
   delete globalThis.__arealCaptureGuard;
   return changed;
+})()`;
+const clearCaptureGuardScript = `(() => {
+  for (const observer of globalThis.__arealCaptureGuard?.observers ?? []) observer.disconnect();
+  delete globalThis.__arealCaptureGuard;
+  return true;
 })()`;
 function safeText(value, limit = 500) {
   const text = String(value ?? '').slice(0, limit);
@@ -156,25 +172,96 @@ class CorePreview {
       canGoBack: c?.navigationHistory.canGoBack() ?? false,
       canGoForward: c?.navigationHistory.canGoForward() ?? false,
       error: page?.error ?? "",
-      browser: page ? { pageId: page.id, control: page.control } : null,
+      browser: page ? { pageId: page.id, control: page.control,
+        transferError: page.transferError ?? null } : null,
     };
   }
   revoke(page) {
     if (page.control !== 'agent') return;
-    page.control = 'human'; page.controlEpoch++; page.refs.clear(); page.plans.clear();
+    // This local fence runs before any Core request and before awaiting native input.
+    page.control = 'transferring'; page.controlEpoch++; page.refs.clear(); page.plans.clear();
+    page.lastObservation = null; page.needsObservation = true;
+    page.view.setVisible(false);
     page.activeRead?.cancel();
     page.activeAction?.cancel();
-    if (page.view.webContents.debugger.isAttached()) page.view.webContents.debugger.detach();
     this.onRevoke?.({ projectId: page.projectId, threadId: page.threadId });
+    void this.convergeInput(page);
+  }
+  dispatchInput(page, method, params) {
+    const c = page.view.webContents;
+    // Record the native call before awaiting its receipt. A lost receipt leaves
+    // takeover transferring rather than pretending the held input was released.
+    if (method === 'Input.dispatchMouseEvent') {
+      if (params.type === 'mousePressed') page.heldButtons.set(params.button, { x: params.x, y: params.y });
+    } else if (method === 'Input.dispatchKeyEvent') {
+      if (params.type === 'keyDown') page.heldKeys.set(params.key, params);
+    }
+    const pending = c.debugger.sendCommand(method, params).then(value => {
+      if (method === 'Input.dispatchMouseEvent' && params.type === 'mouseReleased') page.heldButtons.delete(params.button);
+      if (method === 'Input.dispatchKeyEvent' && params.type === 'keyUp') page.heldKeys.delete(params.key);
+      return value;
+    });
+    page.inputPending.add(pending);
+    void pending.finally(() => page.inputPending.delete(pending)).catch(() => {});
+    return pending;
+  }
+  async convergeInput(page) {
+    if (page.converging) return page.converging;
+    const c = page.view.webContents;
+    const epoch = page.controlEpoch;
+    page.converging = (async () => {
+      await Promise.resolve();
+      try {
+        const deadline = performance.now() + 2000;
+        // Commands already submitted to CDP must settle before releases are sent.
+        // The deadline bounds the first attempt; a late settlement retries safely.
+        while (page.inputPending.size) {
+          const pending = [...page.inputPending];
+          await nativeWithin(Promise.allSettled(pending), deadline);
+        }
+        if (c.isDestroyed()) return;
+        if (!c.debugger.isAttached() && (page.heldButtons.size || page.heldKeys.size))
+          throw new Error('原生输入通道已断开，请关闭页面');
+        const releases = [
+          ...[...page.heldKeys.values()].map(key => ['Input.dispatchKeyEvent', { type: 'keyUp', key: key.key,
+            code: key.code, windowsVirtualKeyCode: key.windowsVirtualKeyCode }]),
+          ...[...page.heldButtons].map(([button, point]) => ['Input.dispatchMouseEvent',
+            { type: 'mouseReleased', button, x: point.x, y: point.y, clickCount: 1 }]),
+        ];
+        for (const [method, params] of releases) await nativeWithin(this.dispatchInput(page, method, params), deadline);
+        if (page.inputPending.size) await nativeWithin(Promise.allSettled([...page.inputPending]), deadline);
+        if (page.heldButtons.size || page.heldKeys.size) throw new Error('原生输入释放未确认，请关闭页面');
+        if (c.debugger.isAttached()) c.debugger.detach();
+        if (page.control === 'transferring' && page.controlEpoch === epoch) {
+          page.control = 'human'; page.transferError = null;
+          page.view.setVisible(page.requestedVisible === true);
+        }
+      } catch (error) {
+        page.transferError = error.message;
+        // Keep the view hidden. A later native receipt may allow convergence.
+        if (page.control === 'transferring' && page.controlEpoch === epoch && page.inputPending.size)
+          void Promise.allSettled([...page.inputPending]).then(() => {
+            page.converging = null;
+            if (page.control === 'transferring' && page.controlEpoch === epoch) void this.convergeInput(page);
+          });
+      } finally { page.converging = null; }
+    })();
+    return page.converging;
   }
   revokeAll() { for (const page of this.pages.values()) this.revoke(page); }
-  claim(projectId, threadId) {
+  async claim(projectId, threadId) {
     const owner = `${projectId}:${threadId}`;
     const page = this.pages.get(owner);
     if (!page || page.crashed || page.view.webContents.isDestroyed() || !page.view.webContents.getURL()
       || !this.owns(projectId, threadId)) throw new Error('当前聊天没有可认领的页面');
+    if (page.control === 'transferring') throw new Error('原生输入尚未收敛，请停止或关闭页面');
+    // Any capture guard left by a revoked read observed only a private boolean;
+    // discard it before re-enabling Agent observations.
+    await readIsolated(page.view.webContents, clearCaptureGuardScript);
+    if (page.control !== 'human' || this.pages.get(owner) !== page) throw new Error('页面控制状态已变化');
     this.revokeAll();
     page.control = 'agent'; page.controlEpoch++; page.refs.clear(); page.plans.clear();
+    page.lastObservation = null; page.needsObservation = true;
     return { protocol: 'areal.browser.host.v1', operations: ['describe', 'observe', 'capture', 'act', 'wait'], available: true,
       projectId, threadId, pageId: page.id, browserHostId: this.browserHostId,
       hostGeneration: this.hostGeneration, pageGeneration: page.pageGeneration, controlEpoch: page.controlEpoch };
@@ -234,7 +321,7 @@ class CorePreview {
     const url = new URL(c.getURL());
     const local = url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
     if (!local) throw new Error('human_takeover_required'); // Unknown/external effects require human takeover.
-    if (request.operation === 'act' && request.parameters.snapshotId !== page.lastObservation) throw new Error('stale_ref');
+    if (page.needsObservation || (request.operation === 'act' && request.parameters.snapshotId !== page.lastObservation)) throw new Error('stale_ref');
     let target = null;
     page.activePrepare = true;
     try {
@@ -295,9 +382,15 @@ class CorePreview {
     if (page.activeRead || page.activePrepare || page.activeAction) throw new Error('not_sent');
     let cancelled;
     const stop = new Promise((_, reject) => { cancelled = reject; });
-    const action = { requestId: request.requestId, dispatched: false, cancelled: false,
+    const action = { requestId: request.requestId, syntheticInput: request.operation === 'act', dispatched: false, cancelled: false,
       cancel: () => { action.cancelled = true; cancelled(new Error(action.dispatched ? 'outcome_unknown' : 'not_sent')); } };
     page.activeAction = action;
+    if (request.operation === 'act') {
+      // A hidden View can retain keyboard focus. Move focus only if this page
+      // owns the foreground window's native focus; never raise a background app.
+      if (this.window.isFocused() && c.isFocused()) this.window.webContents.focus();
+      page.view.setVisible(false);
+    }
     const deadline = setTimeout(() => action.cancel(), Math.min(30000, request.operation === 'wait' ? request.parameters.timeoutMs + 1000 : 5000));
     try {
       if (request.operation === 'wait') {
@@ -314,24 +407,27 @@ class CorePreview {
           || target.role !== saved.plan.target.role || target.name !== saved.plan.target.name
           || c.getURL() !== saved.pageUrl || page.controlEpoch !== saved.plan.controlEpoch)
           throw new Error('plan_stale');
+        // If the native page still owns local keyboard focus, do not dispatch.
+        // before-input-event cannot distinguish a physical key from CDP echo.
+        if (this.window.isFocused() && c.isFocused()) throw new Error('not_sent');
         const live = () => {
           if (action.cancelled || page.control !== 'agent' || page.controlEpoch !== saved.plan.controlEpoch
             || page.documentGeneration !== saved.plan.documentEpoch || c.isDestroyed()) throw new Error('outcome_unknown');
         };
-        const input = params => { live(); action.dispatched = true; return c.debugger.sendCommand('Input.dispatchMouseEvent', params); };
-        const keyboard = params => { live(); return c.debugger.sendCommand('Input.dispatchKeyEvent', params); };
+        const input = params => { live(); action.dispatched = true; return this.dispatchInput(page, 'Input.dispatchMouseEvent', params); };
+        const keyboard = params => { live(); action.dispatched = true; return this.dispatchInput(page, 'Input.dispatchKeyEvent', params); };
         const click = async () => {
           await input({ type: 'mousePressed', x: target.x, y: target.y, button: 'left', clickCount: 1 });
           await input({ type: 'mouseReleased', x: target.x, y: target.y, button: 'left', clickCount: 1 });
         };
-        page.agentInput = true;
         await Promise.race([(async () => {
           await click();
           if (request.parameters.action.kind === 'fill') {
             const modifier = process.platform === 'darwin' ? 8 : 2;
             await keyboard({ type: 'keyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: modifier });
             await keyboard({ type: 'keyUp', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: modifier });
-            live(); await c.debugger.sendCommand('Input.insertText', { text: request.parameters.action.value });
+            live(); action.dispatched = true;
+            await this.dispatchInput(page, 'Input.insertText', { text: request.parameters.action.value });
           } else if (request.parameters.action.kind === 'press') {
             const key = request.parameters.action.key;
             const code = { Enter: 13, Tab: 9, Escape: 27, Backspace: 8,
@@ -356,8 +452,17 @@ class CorePreview {
     } finally {
       clearTimeout(deadline);
       if (page.activeAction === action) page.activeAction = null;
-      page.agentInput = false;
-      if (!c.isDestroyed() && c.debugger.isAttached()) c.debugger.detach();
+      if (page.control === 'agent' && page.inputPending.size === 0
+        && page.heldButtons.size === 0 && page.heldKeys.size === 0) {
+        if (!c.isDestroyed() && c.debugger.isAttached()) c.debugger.detach();
+        page.view.setVisible(page.requestedVisible === true);
+      } else if (page.control === 'agent') {
+        // Even a failed action must release native input before local input resumes.
+        page.control = 'transferring'; page.controlEpoch++;
+        page.refs.clear(); page.plans.clear(); page.lastObservation = null; page.needsObservation = true;
+        this.onRevoke?.({ projectId: page.projectId, threadId: page.threadId });
+        void this.convergeInput(page);
+      }
     }
   }
   async observe(request) {
@@ -416,7 +521,7 @@ class CorePreview {
             throw new Error('Browser observation was revoked');
           postSensitive = await Promise.race([readIsolated(c, sensitiveCaptureScript), cancelled]);
         } finally {
-          changed = await Promise.race([
+          if (page.control === 'agent' && page.controlEpoch === epoch) changed = await Promise.race([
             readIsolated(c, captureGuardStopScript(guardToken, guardSequence)).catch(() => true),
             new Promise(resolve => setTimeout(() => resolve(true), 1000)),
           ]);
@@ -429,6 +534,9 @@ class CorePreview {
         if (size.width * size.height > 8_000_000 || size.width > 4096 || size.height > 4096) throw new Error('Screenshot pixel budget exceeded');
         const png = image.toPNG();
         if (png.length > 2 * 1024 * 1024) throw new Error('Screenshot byte budget exceeded');
+        if (page.control !== 'agent' || page.controlEpoch !== epoch) throw new Error('Browser observation was revoked');
+        page.lastObservation = base.observationId;
+        page.needsObservation = false;
         return { ...base, capturedAt: new Date().toISOString(), viewport: { ...base.viewport, bitmapWidth: size.width, bitmapHeight: size.height }, mimeType: 'image/png', imageBase64: png.toString('base64'), byteLength: png.length };
       }
       const lines = [], entries = [], nodes = tree.nodes ?? [];
@@ -519,6 +627,7 @@ class CorePreview {
       };
       walkFrames(frames.frameTree, true);
       page.lastObservation = base.observationId;
+      page.needsObservation = false;
       return { ...base, frameCoverage: { main: 'covered', childFrames },
         shadowCoverage: 'not-distinguished-by-accessibility-tree', dynamicCoverage: 'snapshot-at-capturedAt',
         truncated, truncationReason: truncated ? 'budget' : null,
@@ -544,7 +653,8 @@ class CorePreview {
     });
     const page = { id: randomUUID(), pageGeneration: 1, view, projectId, threadId, error: "", url: "", crashed: false,
       control: 'human', controlEpoch: 0, documentGeneration: 0, viewportRevision: 0, refs: new Map(),
-      plans: new Map(), lastObservation: null, nextRef: 0 },
+      plans: new Map(), lastObservation: null, needsObservation: true, nextRef: 0,
+      heldButtons: new Map(), heldKeys: new Map(), inputPending: new Set(), requestedVisible: false },
       c = view.webContents;
     c.setWindowOpenHandler(() => ({ action: "deny" }));
     c.session.setPermissionRequestHandler((_contents, _permission, respond) =>
@@ -589,7 +699,19 @@ class CorePreview {
       page.crashed = true;
       page.error = '预览页面已退出，请重新加载';
     });
-    c.on('before-input-event', () => { if (!page.agentInput) this.revoke(page); });
+    c.on('before-input-event', event => {
+      // CDP keys may echo while the native view is hidden. Only an action on a
+      // page without native focus may pass here; a focused page is local input.
+      if (page.control === 'agent' && (!page.activeAction?.syntheticInput || page.view.getVisible()
+        || (this.window.isFocused() && c.isFocused()))) {
+        event.preventDefault(); this.revoke(page);
+      } else if (page.control === 'transferring') event.preventDefault();
+    });
+    c.on('before-mouse-event', (event, mouse) => {
+      if (page.control === 'agent' && page.view.getVisible() && mouse.type === 'mouseDown') {
+        event.preventDefault(); this.revoke(page);
+      } else if (page.control === 'transferring') event.preventDefault();
+    });
     this.window.contentView.addChildView(view);
     view.setVisible(false);
     this.pages.set(owner, page);
@@ -600,9 +722,11 @@ class CorePreview {
     const owner = `${request.projectId}:${request.threadId ?? ""}`;
     if (request.operation === 'release') { this.release(owner); return this.state(null); }
     if (request.operation === "hide") {
+      const hiddenPage = this.pages.get(owner);
+      if (hiddenPage) hiddenPage.requestedVisible = false;
       if (!request.projectId || this.owner === owner)
         this.view?.setVisible(false);
-      return this.state(this.pages.get(owner));
+      return this.state(hiddenPage);
     }
     if (!this.owns(request.projectId, request.threadId))
       throw new Error("请选择有效任务");
@@ -638,6 +762,8 @@ class CorePreview {
     this.pages.delete(owner); this.pages.set(owner, page);
     const c = page.view.webContents;
     if (['navigate', 'back', 'forward', 'reload', 'stop'].includes(request.operation)) this.revoke(page);
+    if (page.control === 'transferring' && !['state', 'show', 'hide', 'stop', 'release'].includes(request.operation))
+      throw new Error('原生输入尚未收敛，请停止或关闭页面');
     if (request.bounds)
       page.view.setBounds(
         boundsWithinWindow(request.bounds, this.window.getContentSize()),
@@ -647,7 +773,8 @@ class CorePreview {
         if (this.owner !== owner) this.view?.setVisible(false);
         this.owner = owner;
         this.view = page.view;
-        page.view.setVisible(request.visible !== false);
+        page.requestedVisible = request.visible !== false;
+        page.view.setVisible(page.requestedVisible && page.control !== 'transferring' && !page.activeAction);
         break;
       case "navigate": {
         page.url = target;

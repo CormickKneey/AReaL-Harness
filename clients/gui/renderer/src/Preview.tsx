@@ -20,6 +20,7 @@ export function Preview({
   browserEnabled = false,
   browserAvailable = false,
   toolsetRevision = 0,
+  thread,
 }: {
   services: PlatformServices;
   projectId: string;
@@ -30,6 +31,7 @@ export function Preview({
   browserEnabled?: boolean;
   browserAvailable?: boolean;
   toolsetRevision?: number;
+  thread?: Data;
   onError: (s: string) => void;
 }) {
   const owner = `${projectId}:${threadId}`;
@@ -152,6 +154,9 @@ export function Preview({
     }
   }, [initialUrl, initialRequest, owner]);
   const failure = error || state.error;
+  const uninspectedUnknown = thread?.turns?.some((turn: Data) => turn.items?.some((item: Data) =>
+    item.type === 'dynamicToolCall' && !item.execution?.inspection &&
+    (item.execution?.outcome === 'unknown' || item.execution?.hooks?.some((hook: Data) => hook.outcome === 'unknown')))) === true;
   let address = url;
   if (!fullAddress && !addressFocused && !editing.current) {
     try { address = new URL(url).host; } catch { /* Keep a not-yet-valid user draft. */ }
@@ -195,10 +200,18 @@ export function Preview({
         }}
       />
       {browserEnabled && state.url && <div className="preview-viewport-toolbar" role="group" aria-label="共享浏览器控制">
-        <span>{state.browser?.control === 'agent' ? 'Agent 可观察当前页' : '你控制当前页'}</span>
-        {state.browser?.control === 'agent'
+        <span>{state.browser?.control === 'agent' ? 'Agent 可观察当前页'
+          : state.browser?.control === 'transferring' ? '正在释放 Agent 输入，暂不能操作页面'
+            : '你控制当前页；人工期间的内容不会补发给 Agent，此前已交付的内容不会撤回'}</span>
+        {state.browser?.control === 'transferring' ? <>
+          <Button type="button" size="sm" onClick={() => void request('stop')}>停止加载</Button>
+          <Button type="button" size="sm" onClick={() => void request('release')}>关闭页面</Button>
+          {state.browser.transferError && <span role="alert">{state.browser.transferError}</span>}
+        </> : state.browser?.control === 'agent'
           ? <Button type="button" size="sm" onClick={() => void request('takeover')}>接管页面</Button>
-          : <Button type="button" size="sm" disabled={claiming || !!state.loading || !!state.error}
+          : <>
+            {uninspectedUnknown && <span role="status">原浏览器动作结果 UNKNOWN。请先到聊天记录核查并确认；交还不会重试该动作。</span>}
+            <Button type="button" size="sm" disabled={claiming || uninspectedUnknown || !!state.loading || !!state.error}
             onClick={() => {
               setClaiming(true);
               void (async () => {
@@ -209,7 +222,8 @@ export function Preview({
                 } catch (e) { if (mounted.current && current.current === owner) setError(e instanceof Error ? e.message : String(e)); }
                 finally { if (mounted.current && current.current === owner) setClaiming(false); }
               })();
-            }}>让 Agent 检查当前页</Button>}
+            }}>交还并让 Agent 检查当前页</Button>
+          </>}
       </div>}
       {!browserEnabled && browserAvailable && state.url && <div className="preview-viewport-toolbar">
         <Button type="button" size="sm" disabled={claiming} onClick={() => {
