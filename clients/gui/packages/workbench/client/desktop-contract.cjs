@@ -21,8 +21,8 @@ const commandDefinitions = Object.freeze({
 });
 /** @typedef {keyof typeof commandDefinitions} CommandName */
 /** @template {CommandName} N @typedef {N extends 'configure' ? ConfigureRequest : Record<string,unknown>} CommandParams */
-/** @typedef {'show'|'navigate'|'back'|'forward'|'reload'|'stop'|'state'|'external'|'devtools'|'openLink'|'release'|'claim'|'takeover'|'captureRegion'|'captureElement'|'cancelElementSelection'|'checkElement'|'endRegion'|'newPage'|'selectPage'|'subscribe'|'unsubscribe'} OwnedPreviewOperation */
-/** @typedef {{operation:'hide',projectId?:string,threadId?:string,pageId?:string}|{operation:OwnedPreviewOperation,projectId:string,threadId:string,pageId?:string,captureId?:string,elementId?:string,url?:string,userIntent?:boolean,visible?:boolean,bounds?:{x:number,y:number,width:number,height:number}}} PreviewRequest */
+/** @typedef {'show'|'navigate'|'back'|'forward'|'reload'|'stop'|'state'|'external'|'devtools'|'openLink'|'release'|'claim'|'takeover'|'captureRegion'|'captureElement'|'cancelElementSelection'|'checkElement'|'endRegion'|'beginStyleTrial'|'applyStyleTrial'|'undoStyleTrial'|'redoStyleTrial'|'styleTrialState'|'captureStyleTrialAfter'|'clearStyleTrial'|'newPage'|'selectPage'|'subscribe'|'unsubscribe'} OwnedPreviewOperation */
+/** @typedef {{operation:'hide',projectId?:string,threadId?:string,pageId?:string}|{operation:OwnedPreviewOperation,projectId:string,threadId:string,pageId?:string,captureId?:string,elementId?:string,trialId?:string,property?:string,value?:string,url?:string,userIntent?:boolean,visible?:boolean,bounds?:{x:number,y:number,width:number,height:number}}} PreviewRequest */
 /** @param {unknown} value @returns {value is Record<string,unknown>} */
 function record(value) { return !!value && typeof value === 'object' && !Array.isArray(value); }
 /** @param {unknown} value @returns {value is string} */
@@ -58,7 +58,7 @@ function validateCommand(name, params, { serviceOnly = false } = {}) {
 function validatePreview(request) {
   if (!record(request)) invalid();
   if (request.operation === 'hide') return;
-  if (!['show', 'navigate', 'back', 'forward', 'reload', 'stop', 'state', 'external', 'devtools', 'openLink', 'release', 'claim', 'takeover', 'captureRegion', 'captureElement', 'cancelElementSelection', 'checkElement', 'endRegion', 'newPage', 'selectPage', 'subscribe', 'unsubscribe'].includes(String(request.operation))
+  if (!['show', 'navigate', 'back', 'forward', 'reload', 'stop', 'state', 'external', 'devtools', 'openLink', 'release', 'claim', 'takeover', 'captureRegion', 'captureElement', 'cancelElementSelection', 'checkElement', 'endRegion', 'beginStyleTrial', 'applyStyleTrial', 'undoStyleTrial', 'redoStyleTrial', 'styleTrialState', 'captureStyleTrialAfter', 'clearStyleTrial', 'newPage', 'selectPage', 'subscribe', 'unsubscribe'].includes(String(request.operation))
     || !identifier(request.projectId) || !identifier(request.threadId)) invalid();
   if (request.url !== undefined && typeof request.url !== 'string') invalid();
   if (request.pageId !== undefined && !identifier(request.pageId)) invalid();
@@ -66,6 +66,11 @@ function validatePreview(request) {
   if (request.operation === 'endRegion' && (!identifier(request.pageId) || !identifier(request.captureId))) invalid();
   if (request.operation === 'checkElement' && (!identifier(request.pageId) || !identifier(request.captureId))) invalid();
   if (request.operation === 'checkElement' && !identifier(request.elementId)) invalid();
+  if (request.operation === 'beginStyleTrial' && (!identifier(request.pageId) || !identifier(request.captureId) || !identifier(request.elementId))) invalid();
+  if (['applyStyleTrial', 'undoStyleTrial', 'redoStyleTrial', 'styleTrialState', 'captureStyleTrialAfter', 'clearStyleTrial'].includes(String(request.operation))
+    && (!identifier(request.pageId) || !identifier(request.trialId))) invalid();
+  if (request.operation === 'applyStyleTrial' && (typeof request.property !== 'string' || typeof request.value !== 'string'
+    || request.property.length > 40 || request.value.length > 500)) invalid();
   if (request.userIntent !== undefined && typeof request.userIntent !== 'boolean') invalid();
   if (request.operation === 'release' && request.userIntent !== true) invalid();
   if (request.operation === 'selectPage' && !identifier(request.pageId)) invalid();

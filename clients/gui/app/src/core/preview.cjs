@@ -8,6 +8,7 @@ const { performance } = require('node:perf_hooks');
 const { isDeepStrictEqual } = require('node:util');
 const { validatePreview } = require('@areal/workbench/desktop-contract');
 const { WorkspaceNetworkPolicy, loopback } = require('./browser-network.cjs');
+const { validateEdit, mutate: mutateStyleTrial } = require('./browser-style-trial.cjs');
 
 function webUrl(value) {
   const text = String(value ?? "").trim();
@@ -321,6 +322,7 @@ class CorePreview {
   }
   closeNative(page) {
     if (!page.view) return;
+    page.styleTrial = null;
     const c = page.view.webContents;
     for (const item of page.downloads ?? []) item.cancel();
     page.downloads?.clear();
@@ -333,6 +335,7 @@ class CorePreview {
   }
   pinned(page) {
     return !page.view || page.crashed || page.control !== 'human' || page.requestedVisible || !!page.annotationCaptureId
+      || !!page.styleTrial
       || page.activeAction || page.activeRead || page.activeSelection || page.activePrepare || page.claiming || page.plans.size > 0
       || page.inputPending.size > 0 || page.heldButtons.size > 0 || page.heldKeys.size > 0
       || page.dialogPending || page.fileHandoff || (page.downloads?.size ?? 0) > 0;
@@ -371,6 +374,7 @@ class CorePreview {
       canGoForward: c?.navigationHistory.canGoForward() ?? false,
       error: page?.error ?? '',
       browser: page ? { pageId: page.id, control: page.control,
+        trialActive: !!page.styleTrial, trialStale: !!page.styleTrial?.stale,
         transferError: page.transferError ?? null, resource: page.view ? page.crashed ? 'crashed' : 'ready' : 'suspended',
         stateLoss: page.stateLoss ?? null } : null,
     };
@@ -464,6 +468,8 @@ class CorePreview {
     if (page.control !== 'human' || page.claiming || page.activeSelection || page.annotationCaptureId
       || page.activeRead || page.activePrepare || page.activeAction)
       throw new Error('浏览页面当前不可认领');
+    if (page.styleTrial && !(await this.clearStyleTrial(page)).cleared)
+      throw new Error('页面试改已失效，请刷新页面后再交还 Agent');
     const c = page.view.webContents;
     const initial = { pageGeneration: page.pageGeneration, documentEpoch: page.documentGeneration,
       controlEpoch: page.controlEpoch, url: c.getURL() };
@@ -841,6 +847,142 @@ class CorePreview {
     finally {
       if (attached && !c.isDestroyed() && c.debugger.isAttached()) c.debugger.detach();
       if (page.activeRead === read) page.activeRead = null;
+    }
+  }
+  async beginStyleTrial(projectId, threadId, pageId, captureId, elementId) {
+    const page = this.page(projectId, threadId, pageId);
+    const selected = page?.annotationElement;
+    const frozen = page?.annotationCapture;
+    if (!selected || selected.captureId !== captureId || selected.elementId !== elementId || !frozen
+      || page.styleTrial || page.control !== 'human' || page.claiming) throw new Error('请重新选择当前页面元素');
+    if ((await this.checkElement(projectId, threadId, pageId, captureId, elementId)).stale
+      || page.annotationElement !== selected || page.annotationCapture !== frozen) throw new Error('选择的元素已变化');
+    const trialId = randomUUID();
+    page.styleTrial = { trialId, backendNodeId: selected.backendNodeId,
+      pageGeneration: frozen.pageGeneration, documentEpoch: frozen.documentEpoch,
+      controlEpoch: frozen.controlEpoch, nativeWebContentsId: frozen.nativeWebContentsId,
+      sourceUrl: frozen.sourceUrl, evidence: selected.result,
+      history: [], cursor: 0, commandCount: 0, busy: false, stale: false };
+    page.annotationCaptureId = null; page.annotationCapture = null; page.annotationElement = null;
+    return { trialId, element: selected.result, active: true, sourceMapping: selected.result.sourceMapping };
+  }
+  async styleTrialCommand(projectId, threadId, pageId, trialId, operation, property, value) {
+    const page = this.page(projectId, threadId, pageId), trial = page?.styleTrial;
+    const c = page?.view?.webContents;
+    if (!trial || trial.trialId !== trialId || !c || trial.busy) throw new Error('页面试改已失效');
+    if (operation === 'applyStyleTrial') validateEdit(property, value);
+    if (operation === 'applyStyleTrial' && trial.cursor >= 20) throw new Error('页面试改最多20步；请先撤销或发送意图');
+    if (trial.commandCount >= 60) throw new Error('页面试改操作已达上限；请清除并重新选择元素');
+    let read = null;
+    const valid = () => page.styleTrial === trial && !trial.stale && this.pageStillOwned(page)
+      && this.owns(projectId, threadId) && page.control === 'human' && !page.claiming
+      && page.pageGeneration === trial.pageGeneration && page.documentGeneration === trial.documentEpoch
+      && page.controlEpoch === trial.controlEpoch && page.view?.webContents === c
+      && c.id === trial.nativeWebContentsId && !c.isDestroyed() && !c.isDevToolsOpened()
+      && c.getURL() === trial.sourceUrl && !page.activeAction && page.activeRead === read && !page.activePrepare;
+    if (!valid()) { trial.stale = true; throw new Error('页面试改已失效，请刷新页面'); }
+    const step = operation === 'undoStyleTrial' ? trial.history[trial.cursor - 1]
+      : operation === 'redoStyleTrial' ? trial.history[trial.cursor] : null;
+    if (operation !== 'applyStyleTrial' && !step) return this.styleTrialState(trial);
+    const editedProperty = step?.property ?? property;
+    const latest = new Map();
+    for (const applied of trial.history.slice(0, trial.cursor)) latest.set(applied.property, applied.after);
+    if (operation === 'redoStyleTrial' && !latest.has(editedProperty)) latest.set(editedProperty, step.before);
+    const checks = [...latest].map(([property, expected]) => ({ property, expected }));
+    const replacement = operation === 'applyStyleTrial' ? { value, priority: '' }
+      : operation === 'undoStyleTrial' ? step.before : step.after;
+    trial.busy = true;
+    trial.commandCount++;
+    const deadline = performance.now() + 3000;
+    let rejectCancel;
+    const cancelled = new Promise((_, reject) => { rejectCancel = reject; });
+    void cancelled.catch(() => {});
+    read = { requestId: randomUUID(), cancel: () => rejectCancel(new Error('页面试改已取消')) };
+    page.activeRead = read;
+    try {
+      const result = await mutateStyleTrial(c, trial.backendNodeId, editedProperty, checks, replacement,
+        promise => Promise.race([nativeWithin(promise, deadline), cancelled]));
+      if (!valid() || result.stale) { trial.stale = true; throw new Error('应用已修改或替换目标，试改已失效'); }
+      if (operation === 'applyStyleTrial' && isDeepStrictEqual(result.before, result.after))
+        throw new Error('试改值未改变当前属性');
+      if (operation === 'applyStyleTrial') {
+        trial.history.length = trial.cursor;
+        trial.history.push({ property, before: result.before, after: result.after });
+        trial.cursor++;
+      } else if (operation === 'undoStyleTrial') trial.cursor--;
+      else trial.cursor++;
+      return this.styleTrialState(trial);
+    } finally { trial.busy = false; if (page.activeRead === read) page.activeRead = null; }
+  }
+  styleTrialState(trial) {
+    return { trialId: trial.trialId, active: !trial.stale, stale: trial.stale,
+      canUndo: trial.cursor > 0, canRedo: trial.cursor < trial.history.length,
+      edits: trial.history.slice(0, trial.cursor).map(step => ({ property: step.property,
+        before: step.before.value, after: step.after.value })),
+      element: trial.evidence, sourceMapping: trial.evidence.sourceMapping };
+  }
+  async captureStyleTrialAfter(projectId, threadId, pageId, trialId) {
+    const page = this.page(projectId, threadId, pageId), trial = page?.styleTrial;
+    if (!trial || trial.trialId !== trialId || trial.stale || trial.busy || !trial.cursor)
+      throw new Error('请先在当前页面完成试改');
+    const capture = await this.captureRegion(projectId, threadId, pageId);
+    try {
+      // A new privacy-guarded bitmap and a second native hit check bind the
+      // after image to the same private node, not to a Renderer selector.
+      const original = trial.evidence.bounds;
+      const x = Math.min(capture.viewport.bitmapWidth - 1, Math.round(original.x + original.width / 2));
+      const y = Math.min(capture.viewport.bitmapHeight - 1, Math.round(original.y + original.height / 2));
+      const element = await this.selectElement(projectId, threadId, pageId, capture.captureId,
+        x, y, trial.backendNodeId);
+      if (!element.available || page.styleTrial !== trial || trial.stale)
+        throw new Error('试改目标在截图时已变化，请撤销或刷新');
+      return { capture, element, trial: this.styleTrialState(trial) };
+    } catch (error) {
+      if (page.annotationCaptureId === capture.captureId) {
+        page.annotationCaptureId = null; page.annotationCapture = null; page.annotationElement = null;
+      }
+      throw error;
+    }
+  }
+  async clearStyleTrial(page) {
+    const trial = page?.styleTrial;
+    if (!trial) return { cleared: true, stale: false };
+    if (trial.busy) throw new Error('页面试改操作仍在进行');
+    const c = page.view?.webContents;
+    const same = c && !c.isDestroyed() && this.pageStillOwned(page)
+      && page.control === 'human' && page.pageGeneration === trial.pageGeneration
+      && page.documentGeneration === trial.documentEpoch && page.controlEpoch === trial.controlEpoch
+      && c.id === trial.nativeWebContentsId && c.getURL() === trial.sourceUrl;
+    if (!same || trial.stale) { trial.stale = true; return { cleared: false, stale: true }; }
+    trial.busy = true;
+    const deadline = performance.now() + 3000;
+    let cleared = false;
+    let rejectCancel;
+    const cancelled = new Promise((_, reject) => { rejectCancel = reject; });
+    void cancelled.catch(() => {});
+    const read = { requestId: randomUUID(), cancel: () => rejectCancel(new Error('页面试改已取消')) };
+    if (page.activeRead) { trial.busy = false; throw new Error('页面正在执行其他原生操作'); }
+    page.activeRead = read;
+    try {
+      while (trial.cursor > 0) {
+        const step = trial.history[trial.cursor - 1];
+        const latest = new Map();
+        for (const applied of trial.history.slice(0, trial.cursor)) latest.set(applied.property, applied.after);
+        const checks = [...latest].map(([property, expected]) => ({ property, expected }));
+        const result = await mutateStyleTrial(c, trial.backendNodeId, step.property, checks, step.before,
+          promise => Promise.race([nativeWithin(promise, deadline), cancelled]));
+        if (result.stale || page.styleTrial !== trial || !this.pageStillOwned(page)
+          || page.documentGeneration !== trial.documentEpoch || c.getURL() !== trial.sourceUrl) {
+          trial.stale = true; return { cleared: false, stale: true };
+        }
+        trial.cursor--;
+      }
+      cleared = true;
+      return { cleared: true, stale: false };
+    } finally {
+      trial.busy = false;
+      if (page.activeRead === read) page.activeRead = null;
+      if (cleared && page.styleTrial === trial) page.styleTrial = null;
     }
   }
   cancelRead({ projectId, threadId, pageId, requestId, hostGeneration }) {
@@ -1467,7 +1609,7 @@ class CorePreview {
       this.clearDiagnostics(page, 'debugger_detached');
       if (page.control === 'agent') this.revoke(page);
     });
-    c.on('devtools-opened', () => this.revoke(page));
+    c.on('devtools-opened', () => { if (page.styleTrial) page.styleTrial.stale = true; this.revoke(page); });
     c.on('devtools-closed', () => {
       if (!this.pageStillOwned(page)) return;
       page.pageGeneration++; page.documentGeneration++; page.refs.clear(); page.plans.clear();
@@ -1541,11 +1683,24 @@ class CorePreview {
         event.preventDefault();
       }
     });
-    c.on("did-start-navigation", (_event, url, _inPlace, main) => {
+    c.on("did-start-navigation", (_event, url, inPlace, main) => {
       if (!this.pageStillOwned(page)) return;
       page.dialogPending = false;
       page.activeSelection?.cancel();
       if (main) {
+        // A new document discards its own inline trial values. A same-document
+        // app navigation can retain them; reload that route to discard the
+        // trial before a visual check can treat it as source behavior.
+        if (page.styleTrial) {
+          if (inPlace) {
+            const trial = page.styleTrial;
+            trial.stale = true;
+            queueMicrotask(() => {
+              if (this.pageStillOwned(page) && page.styleTrial === trial && !c.isDestroyed()
+                && page.control === 'human') c.reload();
+            });
+          } else page.styleTrial = null;
+        }
         page.activeRead?.cancel();
         if (page.approvedNavigation === url) page.approvedNavigation = null;
         else this.revoke(page);
@@ -1641,6 +1796,22 @@ class CorePreview {
     }
     if (request.operation === 'checkElement')
       return this.checkElement(request.projectId, request.threadId, request.pageId, request.captureId, request.elementId);
+    if (request.operation === 'beginStyleTrial')
+      return this.beginStyleTrial(request.projectId, request.threadId, request.pageId, request.captureId, request.elementId);
+    if (['applyStyleTrial', 'undoStyleTrial', 'redoStyleTrial'].includes(request.operation))
+      return this.styleTrialCommand(request.projectId, request.threadId, request.pageId,
+        request.trialId, request.operation, request.property, request.value);
+    if (request.operation === 'styleTrialState') {
+      const trial = page?.styleTrial;
+      if (!trial || trial.trialId !== request.trialId) throw new Error('页面试改已失效');
+      return this.styleTrialState(trial);
+    }
+    if (request.operation === 'captureStyleTrialAfter')
+      return this.captureStyleTrialAfter(request.projectId, request.threadId, request.pageId, request.trialId);
+    if (request.operation === 'clearStyleTrial') {
+      if (!page?.styleTrial || page.styleTrial.trialId !== request.trialId) throw new Error('页面试改已失效');
+      return this.clearStyleTrial(page);
+    }
     if (request.operation === 'endRegion') {
       if (!page) return this.state(null);
       if (!this.owns(request.projectId, request.threadId) || page.annotationCaptureId !== request.captureId)
@@ -1744,6 +1915,11 @@ class CorePreview {
       }
       if (!alreadyAllowed && !page.networkPolicy.allowHumanNavigation(target, local))
         throw new Error('浏览安全策略拒绝该地址');
+    }
+    if (['navigate', 'back', 'forward', 'reload', 'devtools'].includes(request.operation) && page.styleTrial) {
+      const cleared = await this.clearStyleTrial(page);
+      if (!cleared.cleared && request.operation !== 'reload')
+        throw new Error('试改已失效，请刷新页面后继续导航');
     }
     if (['navigate', 'back', 'forward', 'reload', 'stop'].includes(request.operation)) this.revoke(page);
     if (page.control === 'transferring' && !['state', 'show', 'hide', 'stop', 'release', 'selectPage'].includes(request.operation))

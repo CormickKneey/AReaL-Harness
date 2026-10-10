@@ -17,9 +17,10 @@ function recordedResult(item: Data): Data | null {
 }
 
 /** A read-only view of Core Items. It never upgrades a command exit or image to page success. */
-export function BrowserVerificationCard({ thread, projectId, action, onReview, onTool }: {
+export function BrowserVerificationCard({ thread, projectId, action, onReview, onTool, trialActive = false }: {
   thread: Data; projectId: string; action: Action;
   onReview: (turnId: string) => void; onTool: (itemId: string) => void;
+  trialActive?: boolean;
 }) {
   const entries: { turn: Data; item: Data; index: number }[] = [];
   for (const turn of thread.turns ?? []) for (const item of turn.items ?? [])
@@ -52,6 +53,7 @@ export function BrowserVerificationCard({ thread, projectId, action, onReview, o
   return <details className="border-t border-border p-3 text-ui-sm" aria-label="浏览器验证结果">
     <summary className="cursor-pointer font-medium">浏览器验证结果</summary>
     <p className="text-foreground-subtle">以下记录来自此任务的 Core 工具历史。加载的构建版本未知；源码指纹不证明页面已更新。</p>
+    {trialActive && <p role="status">页面临时试改仍在生效；当前外观不能证明源码已修改。清除试改并重新观察后再验证。</p>}
     <dl className="mt-2 grid gap-2">
       <div><dt className="font-medium">行为检查</dt><dd>{receipt && checkAfterChange
         ? receipt.sourceUnchanged === true && receipt.exitCode === 0 ? "命令检查通过；同页业务断言尚未验证"
