@@ -240,13 +240,14 @@ class CorePreview {
     page.downloads?.clear();
     if (page.onDownload) c.session.removeListener('will-download', page.onDownload);
     page.diagnosticsReady = false; page.diagnosticRequests?.clear();
+    page.claiming?.cancel();
     if (!this.window.isDestroyed()) this.window.contentView.removeChildView(page.view);
     if (!c.isDestroyed()) c.close();
     page.view = null;
   }
   pinned(page) {
     return !page.view || page.crashed || page.control !== 'human' || page.requestedVisible
-      || page.activeAction || page.activeRead || page.activePrepare || page.plans.size > 0
+      || page.activeAction || page.activeRead || page.activePrepare || page.claiming || page.plans.size > 0
       || page.inputPending.size > 0 || page.heldButtons.size > 0 || page.heldKeys.size > 0
       || page.dialogPending || page.fileHandoff || (page.downloads?.size ?? 0) > 0;
   }
@@ -371,33 +372,56 @@ class CorePreview {
     if (!page?.view || page.crashed || page.view.webContents.isDestroyed() || page.view.webContents.isDevToolsOpened()
       || !page.view.webContents.getURL()
       || !this.owns(projectId, threadId)) throw new Error('当前聊天没有可认领的页面');
-    if (page.control === 'transferring') throw new Error('原生输入尚未收敛，请停止或关闭页面');
-    // Any capture guard left by a revoked read observed only a private boolean;
-    // discard it before re-enabling Agent observations.
-    await readIsolated(page.view.webContents, clearCaptureGuardScript);
-    if (page.control !== 'human' || !this.pageStillOwned(page)) throw new Error('页面控制状态已变化');
-    page.control = 'agent'; page.controlEpoch++; page.refs.clear(); page.plans.clear();
-    page.lastObservation = null; page.needsObservation = true;
-    this.clearDiagnostics(page, 'new_control_epoch');
+    if (page.control !== 'human' || page.claiming || page.activeRead || page.activePrepare || page.activeAction)
+      throw new Error('浏览页面当前不可认领');
+    const c = page.view.webContents;
+    const initial = { pageGeneration: page.pageGeneration, documentEpoch: page.documentGeneration,
+      controlEpoch: page.controlEpoch, url: c.getURL() };
+    let rejectClaim;
+    const cancelled = new Promise((_, reject) => { rejectClaim = reject; });
+    const claim = { cancel: () => rejectClaim(new Error('Browser claim was revoked')) };
+    page.claiming = claim;
+    page.activeRead = claim;
+    const timer = setTimeout(claim.cancel, 5000);
+    let grantedEpoch;
     try {
-      const c = page.view.webContents;
+      // Any capture guard left by a revoked read observed only a private
+      // boolean; discard it before re-enabling Agent observations.
+      await Promise.race([readIsolated(c, clearCaptureGuardScript), cancelled]);
+      if (!this.pageStillOwned(page) || page.claiming !== claim || page.control !== 'human'
+        || page.pageGeneration !== initial.pageGeneration || page.documentGeneration !== initial.documentEpoch
+        || page.controlEpoch !== initial.controlEpoch || c.isDestroyed() || c.getURL() !== initial.url
+        || c.isDevToolsOpened()) throw new Error('Browser claim was revoked');
+      page.control = 'agent'; grantedEpoch = ++page.controlEpoch; page.refs.clear(); page.plans.clear();
+      page.lastObservation = null; page.needsObservation = true;
+      this.clearDiagnostics(page, 'new_control_epoch');
       if (!c.debugger.isAttached()) c.debugger.attach('1.3');
       // Runtime.enable and Console.enable can replay earlier page messages.
       // Electron's live console-message event supplies Console evidence; CDP
       // Network starts only after this explicit enable receipt.
-      await c.debugger.sendCommand('Network.enable', { maxPostDataSize: 0 });
-      if (!this.pageStillOwned(page) || page.control !== 'agent' || c.isDestroyed()) throw new Error('Browser page changed');
+      await Promise.race([c.debugger.sendCommand('Network.enable', { maxPostDataSize: 0 }), cancelled]);
+      if (!this.pageStillOwned(page) || page.claiming !== claim || page.control !== 'agent'
+        || page.pageGeneration !== initial.pageGeneration || page.documentGeneration !== initial.documentEpoch
+        || page.controlEpoch !== grantedEpoch || c.isDestroyed() || c.getURL() !== initial.url
+        || c.isDevToolsOpened()) throw new Error('Browser claim was revoked');
       page.diagnosticsStartedAt = Date.now() / 1000;
       page.diagnosticsReady = true;
-    } catch (error) { this.revoke(page); throw error; }
-    this.changed(page, 'controlChanged');
-    return { protocol: 'areal.browser.host.v1', operations: ['describe', 'observe', 'capture', 'act', 'wait', 'navigate', 'newPage', 'diagnostics'], available: true,
-      coreInstanceId: page.coreInstanceId, projectId, threadId, pageId: page.id, browserHostId: this.browserHostId,
-      hostGeneration: this.hostGeneration, pageGeneration: page.pageGeneration, controlEpoch: page.controlEpoch };
+      this.changed(page, 'controlChanged');
+      return { protocol: 'areal.browser.host.v1', operations: ['describe', 'observe', 'capture', 'act', 'wait', 'navigate', 'newPage', 'diagnostics'], available: true,
+        coreInstanceId: page.coreInstanceId, projectId, threadId, pageId: page.id, browserHostId: this.browserHostId,
+        hostGeneration: this.hostGeneration, pageGeneration: initial.pageGeneration, controlEpoch: grantedEpoch };
+    } catch (error) {
+      if (page.control === 'agent' && page.controlEpoch === grantedEpoch) this.revoke(page);
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      if (page.claiming === claim) page.claiming = null;
+      if (page.activeRead === claim) page.activeRead = null;
+    }
   }
   takeover(projectId, threadId, pageId) {
     const page = this.page(projectId, threadId, pageId);
-    if (page) this.revoke(page);
+    if (page) { page.claiming?.cancel(); this.revoke(page); }
     return this.state(page);
   }
   cancelRead({ projectId, threadId, pageId, requestId, hostGeneration }) {
