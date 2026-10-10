@@ -37,13 +37,13 @@ export function BrowserVerificationCard({ thread, projectId, action, onReview, o
     && commandResult(entry.item)?.verification?.schema === "areal.verification.v1");
   const check = checks.at(-1);
   const services = entries.filter(entry => ["development_service_start", "development_service_inspect"].includes(entry.item.tool));
-  if (!latest) return null;
-  const observation = recordedResult(latest.item)!;
+  if (!latest && !latestDiagnostics) return null;
+  const observation = latest ? recordedResult(latest.item) : null;
   const capture = (latestCapture?.item.contentItems ?? []).find((part: Data) => part.type === "arealMedia" && part.modality === "image" && typeof part.media?.uri === "string");
   const checkResult = check ? commandResult(check.item) : null;
   const receipt = checkResult?.verification?.schema === "areal.verification.v1" ? checkResult.verification : null;
   const checkAfterChange = !change || (!!check && check.index > change.index);
-  const observedAfterChange = !change || latest.index > change.index;
+  const observedAfterChange = !!latest && (!change || latest.index > change.index);
   const capturedAfterChange = !!latestCapture && (!change || latestCapture.index > change.index);
   const changedFiles = change ? [...verifiedWrittenFiles([change.item]).keys()] : [];
   const recentService = services.at(-1);
@@ -58,10 +58,11 @@ export function BrowserVerificationCard({ thread, projectId, action, onReview, o
           : receipt.exitCode !== 0 ? `命令检查失败（退出码 ${receipt.exitCode}）` : "检查期间源码变化，结果待核对"
         : "未验证当前改动；需要明确的行为断言"}</dd>
         {check && itemLink(check.item, "检查回执")}</div>
-      <div><dt className="font-medium">页面观察</dt><dd>{observedAfterChange
-        ? `${observation.url ?? "当前页"} · ${observation.capturedAt ?? "采集时间未知"}`
-        : "最近页面观察早于源码改动，需要等待已知状态或 HMR 后重新观察"}</dd>
-        {itemLink(latest.item, "观察回执")}
+      <div><dt className="font-medium">页面观察</dt><dd>{!latest ? "尚未观察当前页"
+        : observedAfterChange
+          ? `${observation?.url ?? "当前页"} · ${observation?.capturedAt ?? "采集时间未知"}`
+          : "最近页面观察早于源码改动，需要等待已知状态或 HMR 后重新观察"}</dd>
+        {latest && itemLink(latest.item, "观察回执")}
         {latestCapture && latestCapture !== latest && itemLink(latestCapture.item, "截图回执")}
         {capture && <SentAttachment part={{ type: "image", uri: capture.media.uri, name: "页面截图" }}
           projectId={projectId} threadId={thread.id} action={action} />}</div>
