@@ -24,7 +24,13 @@ pub struct Store {
     _lock: File,
     io: Arc<Semaphore>,
     blob_write: Arc<tokio::sync::Mutex<()>>,
+    #[cfg(test)]
+    fork_fault: std::sync::Mutex<Option<ForkFault>>,
 }
+
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ForkFault { BeforeSnapshot, AfterSnapshot, AfterTarget, AfterPersistError }
 
 impl Store {
     pub fn open(root: &Path) -> Result<Self> {
@@ -45,7 +51,22 @@ impl Store {
             _lock: lock,
             io: Arc::new(Semaphore::new(8)),
             blob_write: Arc::new(tokio::sync::Mutex::new(())),
+            #[cfg(test)]
+            fork_fault: std::sync::Mutex::new(None),
         })
+    }
+    #[cfg(test)]
+    pub(crate) fn set_fork_fault(&self, fault: ForkFault) {
+        *self.fork_fault.lock().unwrap() = Some(fault);
+    }
+    #[cfg(test)]
+    pub(crate) fn check_fork_fault(&self, stage: ForkFault) -> crate::Result<()> {
+        let mut fault = self.fork_fault.lock().unwrap();
+        if *fault == Some(stage) {
+            *fault = None;
+            return Err(crate::Error::Storage("injected fork persistence fault".into()));
+        }
+        Ok(())
     }
     pub fn root(&self) -> &Path {
         &self.root
@@ -288,6 +309,9 @@ if keep.contains(&name){retained+=e.metadata()?.len();}else{reclaimed+=e.metadat
             atomic_write_encoded(&root, &id, &bytes)
         })
         .await??;
+        #[cfg(test)]
+        self.check_fork_fault(ForkFault::AfterPersistError)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         Ok(())
     }
 

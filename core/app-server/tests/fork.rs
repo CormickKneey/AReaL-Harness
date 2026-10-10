@@ -67,6 +67,33 @@ async fn fork_is_durable_idle_and_replays_plain_text_prefix() {
     assert_eq!(model.0.lock().unwrap().len(), count);
     let again = call(&mut socket, 7, "areal/thread/fork", params.clone()).await;
     assert_eq!(again["result"]["thread"]["id"], thread["id"]);
+    // 回复可以在目标提交后丢失；另一条连接只凭业务键找回目标。
+    let (mut second, _) = tokio_tungstenite::connect_async(format!("ws://{addr}")).await.unwrap();
+    call(&mut second, 1, "initialize", json!({"clientInfo":{"name":"test","version":"1"}})).await;
+    second.send(Wire::Text(json!({"method":"initialized"}).to_string().into())).await.unwrap();
+    let found = call(&mut second, 2, "areal/request/read", json!({"requestId":"fork-key"})).await;
+    assert_eq!(found["result"]["data"][0]["result"]["threadId"], thread["id"]);
+    let lost = json!({"requestId":"response-lost","sourceThreadId":source_id,"anchor":{"turnId":anchor,"boundary":"after"},"workspaceMode":"sharedCurrent"});
+    second.send(Wire::Text(json!({"id":20,"method":"areal/thread/fork","params":lost}).to_string().into())).await.unwrap();
+    drop(second);
+    let (mut second, _) = tokio_tungstenite::connect_async(format!("ws://{addr}")).await.unwrap();
+    call(&mut second, 1, "initialize", json!({"clientInfo":{"name":"test","version":"1"}})).await;
+    second.send(Wire::Text(json!({"method":"initialized"}).to_string().into())).await.unwrap();
+    let recovered = tokio::time::timeout(Duration::from_secs(10), async {
+      loop {
+        let result = call(&mut second, 21, "areal/request/read", json!({"requestId":"response-lost"})).await;
+        if let Some(id) = result["result"]["data"][0]["result"]["threadId"].as_str() { break id.to_owned(); }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+      }
+    }).await.unwrap();
+    let retried = call(&mut second, 22, "areal/thread/fork", lost).await;
+    assert_eq!(retried["result"]["thread"]["id"], recovered);
+    let simultaneous = tokio::join!(
+        call(&mut socket, 13, "areal/thread/fork", params.clone()),
+        call(&mut second, 14, "areal/thread/fork", params.clone())
+    );
+    assert_eq!(simultaneous.0["result"]["thread"]["id"], thread["id"]);
+    assert_eq!(simultaneous.1["result"]["thread"]["id"], thread["id"]);
     let changed = call(&mut socket, 8, "areal/thread/fork", json!({"requestId":"fork-key","sourceThreadId":source_id,"anchor":{"turnId":anchor,"boundary":"before"},"workspaceMode":"sharedCurrent"})).await;
     assert_eq!(changed["error"]["data"]["reason"], "REQUEST_CONFLICT");
     let fork_id = thread["id"].as_str().unwrap();
@@ -84,13 +111,20 @@ async fn fork_is_durable_idle_and_replays_plain_text_prefix() {
     assert!(last.contains("first") && last.contains("second") && last.contains("fork only"), "{last}");
     let source_after = call(&mut socket, 11, "thread/read", json!({"threadId":source_id,"includeTurns":true})).await;
     assert_eq!(source_after["result"]["thread"]["turns"], before["result"]["thread"]["turns"]);
+    let archived = call(&mut socket, 15, "areal/thread/archive", json!({"threadId":fork_id})).await;
+    assert_eq!(archived["result"]["archived"], true, "{archived}");
+    let after_archive = call(&mut second, 16, "areal/request/read", json!({"requestId":"fork-key"})).await;
+    assert_eq!(after_archive["result"]["data"][0]["result"]["threadId"], fork_id);
     drop(requests);
     drop(socket);
+    drop(second);
     stop.cancel(); server.await.unwrap().unwrap();
     engine.shutdown().await;
     drop(engine);
     let restored = Engine::open(dir.path(), model, Limits::default()).unwrap();
+    let receipt = restored.find_request("trusted-embedded-host", "fork-key").await.unwrap();
+    assert_eq!(receipt["data"][0]["result"]["threadId"], fork_id);
     let inherited = restored.context_read(fork_id, 0, 32).await.unwrap();
     let texts = inherited["data"].to_string();
-    assert!(texts.contains("first") && texts.contains("second") && texts.contains("fork only"), "{texts}");
+    assert!(texts.contains("first") && texts.contains("second"), "{texts}");
 }
