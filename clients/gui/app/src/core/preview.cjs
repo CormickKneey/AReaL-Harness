@@ -1606,6 +1606,9 @@ class CorePreview {
       });
       item.once('done', (_event, state) => {
         clearTimeout(record.timer); delete record.timer;
+        // Closing a Page removes its ownership before Electron settles the
+        // cancelled DownloadItem. Its late callback must not restore receipts.
+        if (!this.pageStillOwned(page) || page.downloadRecords.get(item) !== record) return;
         page.downloads.delete(item); page.downloadRecords.delete(item);
         const target = item.getSavePath();
         if (target) record.target = safeText(basename(target), 120);
@@ -1689,6 +1692,16 @@ class CorePreview {
       }
       if (this.pageStillOwned(page)) this.changed(page);
     });
+    const clearCommittedFileHandoff = () => {
+      if (!this.pageStillOwned(page) || !page.fileHandoff) return;
+      clearTimeout(page.fileHandoff.timer);
+      page.fileHandoff = null;
+      this.changed(page);
+    };
+    // A download link can start navigation without committing a document.
+    // Keep the arm through that start, but never carry it into a new Page URL.
+    c.on('did-navigate', clearCommittedFileHandoff);
+    c.on('did-navigate-in-page', clearCommittedFileHandoff);
     c.on("did-fail-load", (_event, code, message, url, main) => {
       if (!this.pageStillOwned(page)) return;
       page.dialogPending = false;
@@ -1794,8 +1807,9 @@ class CorePreview {
       const entry = [...page.downloadRecords].find(([, record]) => record.id === request.downloadId);
       if (!entry) throw new Error('下载已结束');
       const [item, record] = entry;
-      record.reason = 'user_cancelled_after_dispatch';
+      record.status = 'unknown'; record.reason = 'user_cancelled_after_dispatch';
       record.networkOutcome = 'unknown';
+      this.fileReceipt(page, record);
       item.cancel();
       return this.state(page);
     }
