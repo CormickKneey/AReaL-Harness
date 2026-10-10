@@ -65,6 +65,8 @@ Attribute popups to opener, Thread and transient context before accepting; no un
 
 Show download origin, name, size-or-unknown and state; save only after user confirmation and never execute. Uploads use a trusted user chooser, not model-specified host paths. Cancellation is a normal outcome. Files selected during human control are not automatically read by the agent.
 
+Current source path: the visible current human Page offers “Allow next download,” which permits one site-triggered item within 30 seconds. Electron's native Save dialog lets the user choose the destination; cancellation saves no file. Status shows the Page provenance, initiating origin (explicitly unknown when unavailable), filename, size or unknown, and completion/cancellation/interruption, with cancellation for active items. Files never open automatically, and a dispatched network request is never retried on cancellation. Uploads use the site's file control and the system chooser during human control; cancellation leaves the human Page usable. Explicit giveback lets the Agent freshly observe only visible site results, without receiving the chosen host path or file bytes. Native B-39/B-40 acceptance remains for M2.
+
 ## 7. Acceptance evidence
 
 Capture real evidence for same-page action, takeover/resume, region/element comments, source verification after clearing style overlays, and unavailable/error states. Distinguish unverified/passed/failed/unknown rather than one generic success badge. See the [test matrix](../development/browser-testing.en.md).

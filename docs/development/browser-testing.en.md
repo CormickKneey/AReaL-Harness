@@ -65,7 +65,6 @@ Fixtures include separate-origin sites, simulated HTTPOnly-cookie login, cross-o
 | B-36 | Code/verification linkage | Fail before, pass after and after reload, with check/capture linkage to call and change. | 14 |
 | B-37 | Style undo/HMR | Undo removes only owned overrides; HMR replacement does not restore stale application values. | 15 |
 | B-38 | Verification without overrides | Style-only previews cannot satisfy source verification; clear them and inspect real output. | 15 |
-
 | B-39 | Human-selected uploads | Reject model paths, accept chooser cancellation, do not auto-share human-selected files. | 16 |
 | B-40 | Bounded downloads | Keep provenance/target/size/cancel receipts, clean up on limit/closure, never auto-execute. | 16 |
 | B-41 | Batch prefix receipts | If step3 is rejected pre-dispatch, steps1–2 are retained and not repeated. | 17 |
@@ -77,6 +76,8 @@ Fixtures include separate-origin sites, simulated HTTPOnly-cookie login, cross-o
 | B-47 | Keyboard/accessibility | Key controls are keyboard-accessible with readable status, correct focus and IME. | 19 |
 | B-48 | Packaged self-containment | An isolated package passes without dev dependencies, global Chrome or exposed CDP. | 19 |
 | B-49 | Full R2 workflow | A real package demonstrates the required development collaboration with review evidence. | 19 |
+
+Ticket 16 source checks cover trusted IPC scope, file limits and Agent file-input refusal only. The M2 real Electron fixture must exercise human upload selection and cancellation plus an indirect Agent click on the same Page/Thread; an independent site counter must show no automatic replay after cancellation. For downloads, verify that no file is written before the system Save dialog, the user alone chooses the path, and unknown size, limit, timeout, close/crash, sibling Page ownership and cancellation receipts match actual files and GUI state. If a test injects OS dialog selection, disclose that substitution; it does not prove a human made the choice.
 
 Ticket 15 source checks cover constrained IPC, Main node identity/current-value fences, and Composer draft wiring. M2 must still exercise B-37/B-38 on a real native page: undo/redo, HMR node replacement, navigation, keyboard/IME, sensitive-content capture refusal, failed draft send, and actual page/Core receipts before and after clearing the trial. Source checks alone do not accept these scenarios.
 

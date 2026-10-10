@@ -21,8 +21,8 @@ const commandDefinitions = Object.freeze({
 });
 /** @typedef {keyof typeof commandDefinitions} CommandName */
 /** @template {CommandName} N @typedef {N extends 'configure' ? ConfigureRequest : Record<string,unknown>} CommandParams */
-/** @typedef {'show'|'navigate'|'back'|'forward'|'reload'|'stop'|'state'|'external'|'devtools'|'openLink'|'release'|'claim'|'takeover'|'captureRegion'|'captureElement'|'cancelElementSelection'|'checkElement'|'endRegion'|'beginStyleTrial'|'applyStyleTrial'|'undoStyleTrial'|'redoStyleTrial'|'styleTrialState'|'captureStyleTrialAfter'|'clearStyleTrial'|'newPage'|'selectPage'|'subscribe'|'unsubscribe'} OwnedPreviewOperation */
-/** @typedef {{operation:'hide',projectId?:string,threadId?:string,pageId?:string}|{operation:OwnedPreviewOperation,projectId:string,threadId:string,pageId?:string,captureId?:string,elementId?:string,trialId?:string,property?:string,value?:string,url?:string,userIntent?:boolean,visible?:boolean,bounds?:{x:number,y:number,width:number,height:number}}} PreviewRequest */
+/** @typedef {'show'|'navigate'|'back'|'forward'|'reload'|'stop'|'state'|'external'|'devtools'|'openLink'|'release'|'claim'|'takeover'|'captureRegion'|'captureElement'|'cancelElementSelection'|'checkElement'|'endRegion'|'beginStyleTrial'|'applyStyleTrial'|'undoStyleTrial'|'redoStyleTrial'|'styleTrialState'|'captureStyleTrialAfter'|'clearStyleTrial'|'newPage'|'selectPage'|'subscribe'|'unsubscribe'|'allowNextDownload'|'cancelFileHandoff'|'cancelDownload'} OwnedPreviewOperation */
+/** @typedef {{operation:'hide',projectId?:string,threadId?:string,pageId?:string}|{operation:OwnedPreviewOperation,projectId:string,threadId:string,pageId?:string,captureId?:string,elementId?:string,trialId?:string,property?:string,value?:string,downloadId?:string,url?:string,userIntent?:boolean,visible?:boolean,bounds?:{x:number,y:number,width:number,height:number}}} PreviewRequest */
 /** @param {unknown} value @returns {value is Record<string,unknown>} */
 function record(value) { return !!value && typeof value === 'object' && !Array.isArray(value); }
 /** @param {unknown} value @returns {value is string} */
@@ -58,11 +58,17 @@ function validateCommand(name, params, { serviceOnly = false } = {}) {
 function validatePreview(request) {
   if (!record(request)) invalid();
   if (request.operation === 'hide') return;
-  if (!['show', 'navigate', 'back', 'forward', 'reload', 'stop', 'state', 'external', 'devtools', 'openLink', 'release', 'claim', 'takeover', 'captureRegion', 'captureElement', 'cancelElementSelection', 'checkElement', 'endRegion', 'beginStyleTrial', 'applyStyleTrial', 'undoStyleTrial', 'redoStyleTrial', 'styleTrialState', 'captureStyleTrialAfter', 'clearStyleTrial', 'newPage', 'selectPage', 'subscribe', 'unsubscribe'].includes(String(request.operation))
+  if (!['show', 'navigate', 'back', 'forward', 'reload', 'stop', 'state', 'external', 'devtools', 'openLink', 'release', 'claim', 'takeover', 'captureRegion', 'captureElement', 'cancelElementSelection', 'checkElement', 'endRegion', 'beginStyleTrial', 'applyStyleTrial', 'undoStyleTrial', 'redoStyleTrial', 'styleTrialState', 'captureStyleTrialAfter', 'clearStyleTrial', 'newPage', 'selectPage', 'subscribe', 'unsubscribe', 'allowNextDownload', 'cancelFileHandoff', 'cancelDownload'].includes(String(request.operation))
     || !identifier(request.projectId) || !identifier(request.threadId)) invalid();
   if (request.url !== undefined && typeof request.url !== 'string') invalid();
   if (request.pageId !== undefined && !identifier(request.pageId)) invalid();
   if (request.captureId !== undefined && !identifier(request.captureId)) invalid();
+  if (request.downloadId !== undefined && !identifier(request.downloadId)) invalid();
+  if (['allowNextDownload', 'cancelFileHandoff', 'cancelDownload'].includes(String(request.operation))
+    && Object.keys(request).some(key => !['operation', 'projectId', 'threadId', 'pageId', 'downloadId', 'userIntent'].includes(key))) invalid();
+  if (['allowNextDownload', 'cancelFileHandoff', 'cancelDownload'].includes(String(request.operation)) && !identifier(request.pageId)) invalid();
+  if (request.operation === 'cancelDownload' && !identifier(request.downloadId)) invalid();
+  if (['allowNextDownload', 'cancelDownload'].includes(String(request.operation)) && request.userIntent !== true) invalid();
   if (request.operation === 'endRegion' && (!identifier(request.pageId) || !identifier(request.captureId))) invalid();
   if (request.operation === 'checkElement' && (!identifier(request.pageId) || !identifier(request.captureId))) invalid();
   if (request.operation === 'checkElement' && !identifier(request.elementId)) invalid();

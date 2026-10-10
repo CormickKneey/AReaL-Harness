@@ -6,6 +6,7 @@ const pageKey = (coreInstanceId, projectId, threadId, pageId) => JSON.stringify(
 const { randomUUID, randomBytes, createHash } = require('node:crypto');
 const { performance } = require('node:perf_hooks');
 const { isDeepStrictEqual } = require('node:util');
+const { basename } = require('node:path');
 const { validatePreview } = require('@areal/workbench/desktop-contract');
 const { WorkspaceNetworkPolicy, loopback } = require('./browser-network.cjs');
 const { validateEdit, mutate: mutateStyleTrial } = require('./browser-style-trial.cjs');
@@ -84,6 +85,10 @@ const interactiveRoles = new Set(['button', 'link', 'textbox', 'textfield', 'sea
 const MAX_REFS = 1000;
 const MAX_DIAGNOSTICS = 200;
 const MAX_DIAGNOSTIC_BYTES = 256 * 1024;
+const MAX_FILE_BYTES = 64 * 1024 * 1024;
+const MAX_FILE_RECEIPTS = 8;
+const DOWNLOAD_INTENT_MS = 30000;
+const DOWNLOAD_TIMEOUT_MS = 120000;
 const sensitiveCaptureScript = `(() => {
   const selector = 'input[type="password"],input[name*="token" i],input[name*="secret" i],input[name*="key" i]';
   const sensitiveAutocomplete = new Set(['current-password', 'new-password', 'cc-number', 'cc-csc', 'one-time-code']);
@@ -197,6 +202,7 @@ class CorePreview {
     this.selected = new Map();
     this.eventSequences = new Map();
     this.listeners = new Set();
+    this.fileReceipts = new Map();
     this.owner = null;
     this.view = null;
     this.browserHostId = randomUUID();
@@ -248,7 +254,8 @@ class CorePreview {
     const key = workspaceKey(this.coreIdentity(projectId), projectId, threadId);
     return { sequence: this.eventSequences.get(key) ?? 0, workspaceId: key,
       selectedPageId: this.selected.get(key) ?? null,
-      pages: this.workspacePages(projectId, threadId).map(page => this.metadata(page)) };
+      pages: this.workspacePages(projectId, threadId).map(page => this.metadata(page)),
+      fileReceipts: this.fileReceipts.get(key) ?? [] };
   }
   subscribe(projectId, threadId, listener) {
     const item = { key: workspaceKey(this.coreIdentity(projectId), projectId, threadId), listener };
@@ -267,6 +274,20 @@ class CorePreview {
   dispose() {
     for (const key of [...this.pages.keys()]) this.release(key);
     this.view = null; this.owner = null;
+    this.fileReceipts.clear();
+  }
+  fileReceipt(page, record) {
+    const key = workspaceKey(page.coreInstanceId, page.projectId, page.threadId);
+    const entries = this.fileReceipts.get(key) ?? [];
+    const index = entries.findIndex(value => value.id === record.id);
+    if (index >= 0) entries.splice(index, 1);
+    const { timer: _timer, ...publicRecord } = record;
+    entries.push(publicRecord);
+    while (entries.length > MAX_FILE_RECEIPTS) entries.shift();
+    this.fileReceipts.delete(key);
+    this.fileReceipts.set(key, entries);
+    while (this.fileReceipts.size > 32) this.fileReceipts.delete(this.fileReceipts.keys().next().value);
+    this.changed(page);
   }
   release(key, { preserveContext = false } = {}) {
     const page = this.pages.get(key);
@@ -283,6 +304,8 @@ class CorePreview {
       if (next) this.selected.set(workspace, next.id); else this.selected.delete(workspace);
     }
     this.changed(page, 'pageRemoved');
+    if (!this.owns(page.projectId, page.threadId) || page.coreInstanceId !== this.coreIdentity(page.projectId))
+      this.fileReceipts.delete(workspace);
     if (!preserveContext && ![...this.pages.values()].some(other => other.partition === page.partition))
       this.releaseWorkspaceContext(page);
   }
@@ -324,14 +347,28 @@ class CorePreview {
     if (!page.view) return;
     page.styleTrial = null;
     const c = page.view.webContents;
-    for (const item of page.downloads ?? []) item.cancel();
-    page.downloads?.clear();
+    this.cancelFileOperations(page, 'page_closed_after_dispatch');
     if (page.onDownload) c.session.removeListener('will-download', page.onDownload);
     page.diagnosticsReady = false; page.diagnosticRequests?.clear();
     page.claiming?.cancel();
     if (!this.window.isDestroyed()) this.window.contentView.removeChildView(page.view);
     if (!c.isDestroyed()) c.close();
     page.view = null;
+  }
+  cancelFileOperations(page, reason) {
+    if (page.fileHandoff?.timer) clearTimeout(page.fileHandoff.timer);
+    page.fileHandoff = null;
+    for (const item of page.downloads ?? []) {
+      const record = page.downloadRecords?.get(item);
+      if (record && !['completed', 'cancelled', 'interrupted', 'unknown'].includes(record.status)) {
+        record.status = 'unknown'; record.reason = reason;
+        this.fileReceipt(page, record);
+      }
+      item.cancel();
+      if (record?.timer) clearTimeout(record.timer);
+    }
+    page.downloads?.clear();
+    page.downloadRecords?.clear();
   }
   pinned(page) {
     return !page.view || page.crashed || page.control !== 'human' || page.requestedVisible || !!page.annotationCaptureId
@@ -376,7 +413,8 @@ class CorePreview {
       browser: page ? { pageId: page.id, control: page.control,
         trialActive: !!page.styleTrial, trialStale: !!page.styleTrial?.stale,
         transferError: page.transferError ?? null, resource: page.view ? page.crashed ? 'crashed' : 'ready' : 'suspended',
-        stateLoss: page.stateLoss ?? null } : null,
+        stateLoss: page.stateLoss ?? null,
+        downloadIntentExpiresAt: page.fileHandoff?.kind === 'download' ? page.fileHandoff.expiresAt : null } : null,
     };
     return page ? { ...state, workspace: this.snapshot(page.projectId, page.threadId) } : state;
   }
@@ -441,7 +479,13 @@ class CorePreview {
         for (const [method, params] of releases) await nativeWithin(this.dispatchInput(page, method, params), deadline);
         if (page.inputPending.size) await nativeWithin(Promise.allSettled([...page.inputPending]), deadline);
         if (page.heldButtons.size || page.heldKeys.size) throw new Error('原生输入释放未确认，请关闭页面');
-        if (c.debugger.isAttached()) c.debugger.detach();
+        if (c.debugger.isAttached()) {
+          if (page.fileChooserIntercepted) {
+            await nativeWithin(c.debugger.sendCommand('Page.setInterceptFileChooserDialog', { enabled: false }), deadline);
+            page.fileChooserIntercepted = false;
+          }
+          c.debugger.detach();
+        }
         if (page.control === 'transferring' && page.controlEpoch === epoch) {
           page.control = 'human'; page.transferError = null;
           page.view?.setVisible(this.pageStillOwned(page) && this.owner === pageKey(page.coreInstanceId, page.projectId, page.threadId, page.id)
@@ -466,7 +510,7 @@ class CorePreview {
       || !page.view.webContents.getURL()
       || !this.owns(projectId, threadId)) throw new Error('当前聊天没有可认领的页面');
     if (page.control !== 'human' || page.claiming || page.activeSelection || page.annotationCaptureId
-      || page.activeRead || page.activePrepare || page.activeAction)
+      || page.activeRead || page.activePrepare || page.activeAction || page.fileHandoff || page.downloads.size)
       throw new Error('浏览页面当前不可认领');
     if (page.styleTrial && !(await this.clearStyleTrial(page)).cleared)
       throw new Error('页面试改已失效，请刷新页面后再交还 Agent');
@@ -496,6 +540,10 @@ class CorePreview {
       // Electron's live console-message event supplies Console evidence; CDP
       // Network starts only after this explicit enable receipt.
       await Promise.race([c.debugger.sendCommand('Network.enable', { maxPostDataSize: 0 }), cancelled]);
+      // An indirect Agent click may open an <input type=file> chooser. Keep
+      // Chromium's chooser suppressed for the entire Agent control epoch.
+      await Promise.race([c.debugger.sendCommand('Page.setInterceptFileChooserDialog', { enabled: true }), cancelled]);
+      page.fileChooserIntercepted = true;
       if (!this.pageStillOwned(page) || page.claiming !== claim || page.control !== 'agent'
         || page.pageGeneration !== initial.pageGeneration || page.documentGeneration !== initial.documentEpoch
         || page.controlEpoch !== grantedEpoch || c.isDestroyed() || c.getURL() !== initial.url
@@ -1101,6 +1149,12 @@ class CorePreview {
     if (generation !== page.pageGeneration || documentEpoch !== page.documentGeneration
       || controlEpoch !== page.controlEpoch || frameId !== 'main') throw new Error('stale_ref');
     const ax = await c.debugger.sendCommand('Accessibility.getPartialAXTree', { backendNodeId });
+    const dom = await c.debugger.sendCommand('DOM.describeNode', { backendNodeId, depth: 2 });
+    const isFileInput = value => value?.nodeName?.toUpperCase() === 'INPUT'
+      && value.attributes?.some((attribute, index, attributes) => index % 2 === 0
+        && attribute.toLowerCase() === 'type' && attributes[index + 1]?.toLowerCase() === 'file');
+    if (isFileInput(dom.node) || dom.node?.children?.some(isFileInput))
+      throw new Error('human_takeover_required');
     const node = ax.nodes?.find(value => value.backendDOMNodeId === backendNodeId);
     if (!node || node.ignored || node.properties?.some(property => property.name === 'disabled' && property.value?.value === true))
       throw new Error('target_unavailable');
@@ -1596,7 +1650,9 @@ class CorePreview {
       control: 'human', controlEpoch: 0, documentGeneration: 0, viewportRevision: 0, refs: new Map(),
       plans: new Map(), lastObservation: null, needsObservation: true, nextRef: 0,
       heldButtons: new Map(), heldKeys: new Map(), inputPending: new Set(), requestedVisible: false,
-      downloads: new Set(), dialogPending: false, fileHandoff: false, stateLoss: options.stateLoss ?? null,
+      downloads: new Set(), downloadRecords: new Map(), dialogPending: false, fileHandoff: null,
+      fileChooserIntercepted: false,
+      stateLoss: options.stateLoss ?? null,
       diagnosticsReady: false, diagnosticsStartedAt: null, diagnosticEvents: [], diagnosticRequests: new Map(), diagnosticBytes: 0,
       diagnosticSequence: 0, diagnosticLoss: null },
       c = view.webContents;
@@ -1610,6 +1666,10 @@ class CorePreview {
         line: Number.isSafeInteger(value.lineNumber) ? value.lineNumber : null });
     });
     c.debugger.on('message', (_event, method, params) => {
+      if (method === 'Page.fileChooserOpened') {
+        if (page.control === 'agent') this.revoke(page);
+        return;
+      }
       if (!page.diagnosticsReady || page.control !== 'agent' || !this.pageStillOwned(page)) return;
       if (method === 'Network.requestWillBeSent') {
         if (typeof params?.requestId !== 'string') return;
@@ -1651,6 +1711,7 @@ class CorePreview {
       }
     });
     c.debugger.on('detach', () => {
+      page.fileChooserIntercepted = false;
       this.clearDiagnostics(page, 'debugger_detached');
       if (page.control === 'agent') this.revoke(page);
     });
@@ -1661,17 +1722,88 @@ class CorePreview {
       page.needsObservation = true; this.clearDiagnostics(page, 'devtools_closed'); this.changed(page);
     });
     page.onDownload = (event, item, source) => {
-      if (source !== c) return;
-      if (!this.pageStillOwned(page)) { event.preventDefault(); return; }
-      if (!page.fileHandoff || page.downloads.size >= 4) {
-        event.preventDefault();
-        page.error = '下载需要明确的文件交接；未保存文件';
-        this.changed(page);
+      if (source !== c) {
+        // No page listener owns downloads started by Session APIs or an
+        // already released WebContents; do not let Electron choose a path.
+        if (![...this.pages.values()].some(other => other.session === c.session && other.view?.webContents === source))
+          event.preventDefault();
         return;
       }
+      const intent = page.fileHandoff;
+      const key = pageKey(page.coreInstanceId, projectId, threadId, page.id);
+      const current = () => this.pageStillOwned(page) && page.view?.webContents === c
+        && this.owner === key && this.selected.get(workspaceKey(page.coreInstanceId, projectId, threadId)) === page.id
+        && page.control === 'human' && page.controlEpoch === intent?.controlEpoch
+        && page.pageGeneration === intent?.pageGeneration
+        // A download link may start navigation without committing a new
+        // document; it remains the original Page only while getURL is unchanged.
+        && [intent?.documentGeneration, intent?.documentGeneration + 1].includes(page.documentGeneration)
+        && c.getURL() === intent?.url
+        && page.requestedVisible && page.view.getVisible() && this.window.isVisible()
+        && !this.window.isMinimized() && this.window.isFocused() && !c.isDestroyed() && !page.crashed;
+      if (!intent || intent.kind !== 'download' || Date.now() > intent.expiresAt
+        || !current() || page.downloads.size >= 1) {
+        event.preventDefault();
+        if (this.pageStillOwned(page)) {
+          page.error = '下载需要当前页面的明确文件交接；未保存文件';
+          this.changed(page);
+        }
+        return;
+      }
+      clearTimeout(intent.timer); page.fileHandoff = null;
+      const total = item.getTotalBytes();
+      const id = randomUUID();
+      let pageOrigin = 'unknown';
+      try { pageOrigin = new URL(c.getURL()).origin; } catch { /* Current Page origin stays unknown. */ }
+      const record = { id, pageId: page.id, threadId, openerId: page.openerId,
+        pageOrigin, initiator: 'unknown', source: diagnosticUrl(item.getURL()),
+        name: safeText(basename(item.getFilename()), 120),
+        sizeBytes: Number.isSafeInteger(total) && total > 0 ? total : null,
+        receivedBytes: 0, target: null, status: 'choosing', reason: null,
+        networkOutcome: 'unknown' };
+      if (record.sizeBytes !== null && record.sizeBytes > MAX_FILE_BYTES) {
+        event.preventDefault(); record.status = 'cancelled'; record.reason = 'size_limit';
+        this.fileReceipt(page, record); return;
+      }
+      // Electron opens its native Save dialog before creating a destination.
+      // setSavePath is intentionally absent: only the user supplies a path.
+      try { item.setSaveDialogOptions({ title: '保存网页下载', message: `${pageOrigin} · 最大 64 MiB` }); }
+      catch {
+        event.preventDefault(); record.status = 'cancelled'; record.reason = 'native_dialog_unavailable';
+        this.fileReceipt(page, record); return;
+      }
       page.downloads.add(item);
-      item.once('done', () => { page.downloads.delete(item); this.changed(page); });
-      this.changed(page);
+      page.downloadRecords.set(item, record);
+      record.timer = setTimeout(() => {
+        if (page.downloads.has(item)) {
+          record.status = 'unknown'; record.reason = 'download_timeout_after_dispatch';
+          item.cancel(); this.fileReceipt(page, record);
+        }
+      }, DOWNLOAD_TIMEOUT_MS);
+      item.on('updated', (_event, state) => {
+        if (!page.downloads.has(item)) return;
+        const received = item.getReceivedBytes();
+        record.receivedBytes = Number.isSafeInteger(received) && received >= 0 ? received : record.receivedBytes;
+        const target = item.getSavePath();
+        if (target) record.target = safeText(basename(target), 120);
+        if (record.receivedBytes > MAX_FILE_BYTES) {
+          record.status = 'unknown'; record.reason = 'size_limit_after_dispatch'; item.cancel();
+        } else if (record.status !== 'unknown') record.status = state === 'interrupted' ? 'interrupted' : 'downloading';
+        this.fileReceipt(page, record);
+      });
+      item.once('done', (_event, state) => {
+        clearTimeout(record.timer); delete record.timer;
+        // Closing a Page removes its ownership before Electron settles the
+        // cancelled DownloadItem. Its late callback must not restore receipts.
+        if (!this.pageStillOwned(page) || page.downloadRecords.get(item) !== record) return;
+        page.downloads.delete(item); page.downloadRecords.delete(item);
+        const target = item.getSavePath();
+        if (target) record.target = safeText(basename(target), 120);
+        if (record.status !== 'unknown') record.status = ['completed', 'cancelled', 'interrupted'].includes(state) ? state : 'unknown';
+        if (state === 'cancelled' && !target && !record.reason) record.reason = 'chooser_cancelled';
+        this.fileReceipt(page, record);
+      });
+      this.fileReceipt(page, record);
     };
     c.session.on('will-download', page.onDownload);
     c.setWindowOpenHandler(details => {
@@ -1754,6 +1886,16 @@ class CorePreview {
       }
       if (this.pageStillOwned(page)) this.changed(page);
     });
+    const clearCommittedFileHandoff = () => {
+      if (!this.pageStillOwned(page) || !page.fileHandoff) return;
+      clearTimeout(page.fileHandoff.timer);
+      page.fileHandoff = null;
+      this.changed(page);
+    };
+    // A download link can start navigation without committing a document.
+    // Keep the arm through that start, but never carry it into a new Page URL.
+    c.on('did-navigate', clearCommittedFileHandoff);
+    c.on('did-navigate-in-page', clearCommittedFileHandoff);
     c.on("did-fail-load", (_event, code, message, url, main) => {
       if (!this.pageStillOwned(page)) return;
       page.dialogPending = false;
@@ -1775,6 +1917,7 @@ class CorePreview {
       if (this.pages.get(owner) !== page) return;
       page.title = c.isDestroyed() ? page.title : c.getTitle() || page.title;
       this.revoke(page);
+      this.cancelFileOperations(page, 'native_crash_after_dispatch');
       page.crashed = true;
       page.error = '预览页面已退出，请重新加载';
       this.changed(page);
@@ -1825,6 +1968,46 @@ class CorePreview {
       if (page.origin !== 'agent' && request.userIntent !== true) throw new Error('关闭人工页面需要明确用户操作');
       this.release(key); return this.state(this.page(request.projectId, request.threadId));
     }
+    if (request.operation === 'allowNextDownload') {
+      const c = page?.view?.webContents;
+      if (request.userIntent !== true || !page || page.id !== request.pageId || !c
+        || !this.pageStillOwned(page) || page.control !== 'human' || page.crashed || c.isDestroyed()
+        || c.isDevToolsOpened() || page.fileHandoff || page.downloads.size || page.annotationCaptureId
+        || page.styleTrial
+        || page.activeSelection || page.activeRead || page.activePrepare || page.activeAction || page.claiming
+        || page.dialogPending || !c.getURL()
+        || this.owner !== key || this.selected.get(workspace) !== page.id || !page.requestedVisible
+        || !page.view.getVisible() || !this.window.isVisible() || this.window.isMinimized()
+        || !this.window.isFocused()) throw new Error('请先接管并显示当前页面，再允许下一次下载');
+      const intent = { kind: 'download', pageGeneration: page.pageGeneration,
+        documentGeneration: page.documentGeneration, controlEpoch: page.controlEpoch,
+        url: c.getURL(), expiresAt: Date.now() + DOWNLOAD_INTENT_MS };
+      intent.timer = setTimeout(() => {
+        if (page.fileHandoff === intent) { page.fileHandoff = null; this.changed(page); }
+      }, DOWNLOAD_INTENT_MS);
+      page.fileHandoff = intent;
+      this.changed(page);
+      return this.state(page);
+    }
+    if (request.operation === 'cancelFileHandoff') {
+      if (!page || page.id !== request.pageId || page.control !== 'human' || !this.pageStillOwned(page))
+        throw new Error('文件交接页面已变化');
+      if (page.fileHandoff?.timer) clearTimeout(page.fileHandoff.timer);
+      page.fileHandoff = null; this.changed(page);
+      return this.state(page);
+    }
+    if (request.operation === 'cancelDownload') {
+      if (request.userIntent !== true || !page || page.id !== request.pageId
+        || !this.pageStillOwned(page) || page.control !== 'human') throw new Error('文件交接页面已变化');
+      const entry = [...page.downloadRecords].find(([, record]) => record.id === request.downloadId);
+      if (!entry) throw new Error('下载已结束');
+      const [item, record] = entry;
+      record.status = 'unknown'; record.reason = 'user_cancelled_after_dispatch';
+      record.networkOutcome = 'unknown';
+      this.fileReceipt(page, record);
+      item.cancel();
+      return this.state(page);
+    }
     if (request.operation === 'captureRegion')
       return this.captureRegion(request.projectId, request.threadId, request.pageId);
     if (request.operation === 'captureElement')
@@ -1863,6 +2046,8 @@ class CorePreview {
     if (request.operation === 'hide') {
       if (page) {
         page.requestedVisible = false; page.activeSelection?.cancel();
+        if (page.fileHandoff?.timer) clearTimeout(page.fileHandoff.timer);
+        page.fileHandoff = null;
         if (page.control === 'human' && page.annotationCaptureId) page.activeRead?.cancel();
       }
       if (!request.projectId || this.owner === key) {
@@ -1979,6 +2164,13 @@ class CorePreview {
     }
     switch (request.operation) {
       case 'selectPage':
+        {
+          const outgoing = this.pages.get(this.owner);
+          if (outgoing?.fileHandoff?.timer) clearTimeout(outgoing.fileHandoff.timer);
+          if (outgoing) outgoing.fileHandoff = null;
+        }
+        if (page.fileHandoff?.timer) clearTimeout(page.fileHandoff.timer);
+        page.fileHandoff = null;
         this.selected.set(workspace, page.id);
         this.changed(page);
         break;
