@@ -138,6 +138,7 @@ pub(crate) fn permission(method: &str) -> Permission {
             | "thread/list"
             | "thread/read"
             | "thread/resume"
+            | "areal/thread/observe"
             | "areal/subscription/remove"
             | "areal/task/subscribe"
             | "areal/task/unsubscribe"

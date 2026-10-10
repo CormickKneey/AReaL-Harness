@@ -697,7 +697,7 @@ impl Connection {
                     "notifications": NOTIFICATIONS, "serverRequests":["item/tool/call"],
                     "browserToolBundles":if can_attach_browser {json!([{"bundleId":areal_protocol::desktop::BROWSER_V1_BUNDLE,
                         "definition":areal_protocol::desktop::browser_v1_tool()}])} else {json!([])},
-                    "features":{"subscriptionRemoval":true,"atomicResume":true,"browserToolAttachment":can_attach_browser,
+                    "features":{"subscriptionRemoval":true,"atomicResume":true,"atomicObserve":true,"browserToolAttachment":can_attach_browser,
                         "taskModes":true,"taskChannels":true,"asyncQuestions":true,"headlessInteractions":true,"goals":true,"dynamicTools":true,"mediaOutput":true,"durableSubmissionDeduplication":true,"profiles":true,"skills":true,"plans":true,"interactions":true,"queue":true,"providerConfiguration":true,"modelReset":true,"toolMedia":true,"blobUpload":true},
                     "limits":{"frameBytes":MAX_FRAME_BYTES,"subscriptions":128,"sendQueue":256,"threadEventWindow":128},
                     "runtime":engine.runtime_capabilities()}))
@@ -765,6 +765,21 @@ impl Connection {
                         .bind_tool_host(&p.thread_id, self.tool_host.clone())
                         .await
                         .map_err(map_error)?;
+                }
+                let (thread, events) = engine
+                    .snapshot_and_subscribe(&p.thread_id)
+                    .await
+                    .map_err(map_error)?;
+                self.forward(&p.thread_id, events);
+                Ok(thread_result(engine, thread))
+            }
+            "areal/thread/observe" => {
+                let p: areal_protocol::desktop::ObserveThread = parse(params)?;
+                if !self.subscriptions.contains_key(&p.thread_id) && self.subscriptions.len() >= 128 {
+                    return Err(RpcError {
+                        code: -32001,
+                        message: "subscription limit reached".into(),
+                    });
                 }
                 let (thread, events) = engine
                     .snapshot_and_subscribe(&p.thread_id)

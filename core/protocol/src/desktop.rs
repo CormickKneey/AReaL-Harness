@@ -28,6 +28,7 @@ pub const METHODS: &[&str] = &[
     "thread/list",
     "thread/read",
     "thread/resume",
+    "areal/thread/observe",
     "turn/start",
     "turn/steer",
     "turn/interrupt",
@@ -46,6 +47,12 @@ pub struct AttachBrowserTools {
     pub thread_id: String,
     pub expected_toolset_revision: u64,
     pub bundle_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ObserveThread {
+    pub thread_id: String,
 }
 pub const NOTIFICATIONS: &[&str] = &[
     "areal/goal/updated",

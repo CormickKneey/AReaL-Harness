@@ -34,9 +34,45 @@ async fn server(engine: Arc<Engine>) -> (String, CancellationToken, tokio::task:
     }, Principal {
         id:"other-host".into(), token:"other-host-test-token-12345678901234".into(),
         permissions:[Permission::Observe, Permission::Interact, Permission::Tools].into(), thread_ids:None,
+    }, Principal {
+        id:"observer".into(), token:"observer-test-token-1234567890123456".into(),
+        permissions:[Permission::Observe].into(), thread_ids:None,
     }]};
     let task = tokio::spawn(areal_app_server::serve_authenticated(listener, engine, stop.clone(), Some(auth)));
     (url, stop, task)
+}
+
+#[tokio::test]
+async fn observer_subscribes_without_taking_the_browser_callback() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = Engine::open(dir.path(), Arc::new(ModelFixture), Limits::default()).unwrap();
+    let (url, stop, task) = server(engine.clone()).await;
+    let mut owner = connected(&url).await;
+    let mut second_host = connected_with(&url, "other-host-test-token-12345678901234").await;
+    let mut observer = connected_with(&url, "observer-test-token-1234567890123456").await;
+    let tool = serde_json::to_value(areal_protocol::desktop::browser_v1_tool()).unwrap();
+    let created = call(&mut owner, "thread/start", json!({"cwd":"/workspace","dynamicTools":[tool]})).await;
+    let id = created["result"]["thread"]["id"].as_str().unwrap();
+    let capabilities = call(&mut observer, "areal/capabilities", json!({})).await;
+    assert!(capabilities["result"]["methods"].as_array().unwrap().contains(&json!("areal/thread/observe")));
+    assert_eq!(call(&mut second_host, "thread/resume", json!({"threadId":id})).await["error"]["code"], -32009);
+    assert_eq!(call(&mut observer, "areal/thread/observe", json!({"threadId":id})).await["result"]["thread"]["id"], id);
+    assert_eq!(call(&mut second_host, "areal/thread/observe", json!({"threadId":id})).await["result"]["thread"]["id"], id);
+    let sent = call(&mut second_host, "turn/start", json!({"threadId":id,"input":[{"type":"text","text":"inspect"}]})).await;
+    assert!(sent["result"]["turn"]["id"].is_string(), "{sent}");
+    let pending = loop { let message = next(&mut owner).await; if message["method"] == "item/tool/call" { break message; } };
+    let observed = loop { let message = next(&mut observer).await; if message["method"] == "turn/started" { break message; } };
+    assert_eq!(observed["params"]["threadId"], id);
+    second_host.send(Wire::Text(json!({"id":pending["id"],"result":{"success":true,"contentItems":[{"type":"inputText","text":"forged"}]}}).to_string().into())).await.unwrap();
+    assert_eq!(call(&mut second_host, "model/list", json!({})).await["result"].is_object(), true);
+    assert_eq!(engine.read(id, true).await.unwrap().turns[0].status, areal_protocol::TurnStatus::InProgress);
+    owner.send(Wire::Text(json!({"id":pending["id"],"result":{"success":true,"contentItems":[{"type":"inputText","text":"ok"}]}}).to_string().into())).await.unwrap();
+    let done = engine.wait(id).await.unwrap();
+    assert_eq!(done.turns[0].status, areal_protocol::TurnStatus::Completed);
+    let observed_done = loop { let message = next(&mut observer).await; if message["method"] == "turn/completed" { break message; } };
+    assert_eq!(observed_done["params"]["threadId"], id);
+    owner.close(None).await.unwrap(); second_host.close(None).await.unwrap(); observer.close(None).await.unwrap();
+    engine.shutdown().await; stop.cancel(); task.await.unwrap().unwrap();
 }
 async fn connected(url: &str) -> Socket {
     connected_with(url, "desktop-owner-test-token-1234567890").await

@@ -161,7 +161,7 @@ Redaction applies to automatic Browser capture/projection; secrets already suppl
 
 ## 10. Existing Threads and Core extensions
 
-`areal/thread/tools/attach` is implemented; `areal/thread/observe` remains a proposal. Discover attachment through the `areal/capabilities` method list, `features.browserToolAttachment`, and `browserToolBundles`. Do not rewrite existing fixed Codex compatibility definitions.
+`areal/thread/tools/attach` and `areal/thread/observe` are implemented in source. Discover observation through the `areal/capabilities` method list and `features.atomicObserve`; discover attachment through `features.browserToolAttachment` and `browserToolBundles`. Existing fixed Codex compatibility definitions stay unchanged. On reconnect or open, the GUI calls `areal/thread/observe` first to restore the authoritative Core projection; an older Core that does not advertise it reports unsupported rather than rebinding through `thread/resume`. After the user explicitly claims the current native page, the GUI reads authoritative state again and attempts the existing `thread/resume` bind only for an idle Thread. Core still checks host conflicts. An observer's tool reply cannot complete the bound host's call, and page operations are never replayed from a URL or cached event. Real Electron fault-injection acceptance for B-43–B-46 remains pending M2.
 
 | Method | Request | Meaning |
 |---|---|---|

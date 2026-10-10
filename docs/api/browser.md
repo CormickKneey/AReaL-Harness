@@ -199,7 +199,7 @@ Core 的4 MiB WS帧上限是全链路实际约束；适配器更大的本地帧�
 
 ## 10. 旧 Thread 与多客户端：新增 Core 接口
 
-`areal/thread/tools/attach` 已实现；`areal/thread/observe` 仍为设计提案。客户端须通过 `areal/capabilities` 的方法列表、`features.browserToolAttachment` 和 `browserToolBundles` 发现当前部署能力，不修改固定 Codex 兼容 schema 的既有定义。
+`areal/thread/tools/attach` 与 `areal/thread/observe` 已在源码实现。客户端通过 `areal/capabilities` 的方法列表和 `features.atomicObserve` 发现观察能力，通过 `features.browserToolAttachment` 和 `browserToolBundles` 发现追加能力；不修改固定 Codex 兼容 schema 的既有定义。GUI 重连与打开 Thread 先调用 `areal/thread/observe`，只恢复 Core 权威投影；旧 Core 未公布该方法时明确提示不支持，不用 `thread/resume` 偷取宿主。用户显式认领当前原生页后，GUI 再读取权威状态，并且仅在 Thread 空闲时通过既有 `thread/resume` 尝试重绑；Core 仍执行宿主冲突检查。观察者的工具回执不能代替绑定宿主，页面操作不从 URL 或缓存事件重放。B-43–B-46 的真实 Electron 故障注入验收仍待 M2。
 
 | 方法 | 请求 | 语义 |
 |---|---|---|

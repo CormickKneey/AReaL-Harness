@@ -71,10 +71,11 @@ test('an authenticated owner claim refuses a request from another Core generatio
   const pageId = '00000000-0000-4000-8000-000000000001';
   const sent = [];
   const owner = { readyState: 1, bufferedAmount: 0, send: data => sent.push(JSON.parse(data)) };
-  const project = { service: { serviceId: 'core-1', generation: 'generation-1' },
+  const project = { client: { closed: false }, service: { serviceId: 'core-1', generation: 'generation-1' },
     model: { state: { threads: { 'thread-1': { dynamicTools: [{ name: 'browser_v1' }] } } } } };
   const backend = { projects: new Map([['project-1', project]]), starting: new Set(),
-    snapshot: () => ({}), hasWork: () => false };
+    snapshot: () => ({}), hasWork: () => false, providers: { redact: value => value },
+    bindBrowserHostForClaim: async () => {}, currentConnection: (current, client) => current.client === client && !client.closed };
   const service = new DesktopService(backend, 'fixture-identity');
   const receive = (id, method, params) => service.receive(owner, Buffer.from(JSON.stringify({ id, method, params })));
   await receive(1, 'hello', { protocol: PROTOCOL, identity: 'fixture-identity' });
@@ -88,5 +89,46 @@ test('an authenticated owner claim refuses a request from another Core generatio
   assert.match(JSON.stringify(result), /host_unavailable/);
   assert.equal(sent.some(packet => packet.method === 'browserRequest'), false);
   assert.equal(service.browserClaims.size, 0);
+  clearTimeout(service.timer);
+});
+
+test('revoked or competing claim cannot publish after the Core bind awaits', async () => {
+  const pageId = '00000000-0000-4000-8000-000000000001';
+  const sent = [];
+  const owner = { readyState: 1, bufferedAmount: 0, send: data => sent.push(JSON.parse(data)) };
+  const other = { readyState: 1, bufferedAmount: 0, send: data => sent.push(JSON.parse(data)) };
+  const project = { client: { closed: false }, service: { serviceId: 'core-1', generation: 'generation-1' },
+    model: { state: { threads: { 'thread-1': { dynamicTools: [{ name: 'browser_v1' }] } } } } };
+  const binds = [];
+  const backend = { projects: new Map([['project-1', project]]), starting: new Set(),
+    snapshot: () => ({}), hasWork: () => false, providers: { redact: value => value },
+    bindBrowserHostForClaim: () => new Promise(resolve => binds.push(resolve)),
+    currentConnection: (current, client) => current.client === client && !client.closed };
+  const service = new DesktopService(backend, 'fixture-identity');
+  const receive = (socket, id, method, params) => service.receive(socket, Buffer.from(JSON.stringify({ id, method, params })));
+  const claim = (host, epoch = 1) => ({ protocol: 'areal.browser.host.v1',
+    operations: ['describe', 'observe', 'capture', 'act', 'wait', 'navigate', 'newPage', 'diagnostics', 'runBatch'],
+    available: true, coreInstanceId: 'core-1', projectId: 'project-1', threadId: 'thread-1', pageId,
+    browserHostId: host, hostGeneration: 1, pageGeneration: 1, controlEpoch: epoch });
+  await receive(owner, 1, 'hello', { protocol: PROTOCOL, identity: 'fixture-identity' });
+  await receive(other, 2, 'hello', { protocol: PROTOCOL, identity: 'fixture-identity' });
+
+  const revoked = receive(owner, 3, 'browserClaim', claim('host-1'));
+  await Promise.resolve();
+  await receive(owner, 4, 'browserRevoke', { projectId: 'project-1', threadId: 'thread-1', pageId });
+  binds.shift()();
+  await revoked;
+  assert.equal(sent.find(packet => packet.id === 3)?.result?.claimed, undefined);
+  assert.equal(service.browserClaims.size, 0, 'revoked control cannot resurrect a pending page');
+
+  const first = receive(owner, 5, 'browserClaim', claim('host-1', 2));
+  await Promise.resolve();
+  const competing = receive(other, 6, 'browserClaim', claim('host-2', 2));
+  await Promise.resolve();
+  for (const release of binds.splice(0)) release();
+  await Promise.all([first, competing]);
+  assert.equal(sent.find(packet => packet.id === 6)?.result?.claimed, undefined,
+    'another live host cannot overtake a pending claim');
+  assert.equal(service.browserClaims.get(JSON.stringify(['project-1', 'thread-1']))?.browserHostId, 'host-1');
   clearTimeout(service.timer);
 });
