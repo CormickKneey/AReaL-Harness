@@ -7,11 +7,17 @@ impl Engine {
             let _serial = engine.desktop.creation.lock().await;
             let hash = digest(&request)?;
             let method = "areal/thread/fork";
+            if !valid_id(&request.request_id) {
+                return Err(invalid("requestId must be 1..128 ASCII identifier characters"));
+            }
             let cells: Vec<_> = engine.threads.read().await.values().cloned().collect();
             for cell in cells {
                 let state = cell.state.lock().await;
                 if let Some(data) = &state.thread.desktop {
-                    if receipt(data, &identity, &request.request_id, method, &hash)?.is_some() {
+                    if let Some(found) = data.receipts.iter().find(|record| {
+                        record.identity == identity && record.request_id == request.request_id && record.method == method
+                    }) {
+                        if found.digest != hash { return Err(Error::Conflict); }
                         return Ok(state.thread.clone());
                     }
                 }
@@ -67,11 +73,15 @@ impl Engine {
             let turn_count = prefix.len();
             let snapshot_limit = if engine.limits.max_history_bytes == 0 { 64 * 1024 * 1024 }
                 else { engine.limits.max_history_bytes.min(64 * 1024 * 1024) };
+            #[cfg(test)]
+            engine.store.check_fork_fault(crate::store::ForkFault::BeforeSnapshot)?;
             let (snapshot_id, logical_bytes) = engine.store.write_fork_snapshot(prefix.to_vec(), source_ids[..=anchor_index].to_vec(), snapshot_limit).await
                 .map_err(|e| Error::Storage(e.to_string()))?;
+            #[cfg(test)]
+            engine.store.check_fork_fault(crate::store::ForkFault::AfterSnapshot)?;
             let thread_id = id();
             let mut data = DesktopState { configuration: config, ..Default::default() };
-            remember(&mut data, &identity, &request.request_id, method, hash,
+            remember(&mut data, &identity, &request.request_id, method, hash.clone(),
                 json!({"threadId":thread_id}));
             let thread = Thread {
                 conversation: Some(areal_protocol::Conversation::Fork {
@@ -97,7 +107,22 @@ impl Engine {
             // 容量锁跨越持久提交；read/list 只会看见已经同步完成的目标。
             let mut threads = engine.threads.write().await;
             if threads.len() >= engine.limits.max_threads { return Err(Error::Exhausted("thread capacity reached".into())); }
-            engine.persist(&thread).await?;
+            if let Err(error) = engine.persist(&thread).await {
+                // rename 已完成而目录同步失败时，磁盘可能已有目标。先注册可核对的
+                // 完整记录，避免同进程的同键请求再创建第二个目标；原错误仍保持 UNKNOWN。
+                if let Ok(saved) = engine.store.read_thread(&thread_id).await {
+                    if saved.desktop.as_ref().is_some_and(|data| {
+                        receipt(data, &identity, &request.request_id, method, &hash)
+                            .ok().flatten().is_some()
+                    }) {
+                        cell.state.lock().await.poisoned = true;
+                        threads.insert(thread_id, cell);
+                    }
+                }
+                return Err(error);
+            }
+            #[cfg(test)]
+            engine.store.check_fork_fault(crate::store::ForkFault::AfterTarget)?;
             threads.insert(thread_id, cell);
             Ok(thread)
         }).await
