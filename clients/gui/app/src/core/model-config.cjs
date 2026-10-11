@@ -23,7 +23,10 @@ class ModelConfiguration {
     if (this.backend.config) args.push('--config', this.backend.config);
     return new Promise((resolve, reject) => {
       const child = execFile(this.backend.binary, args, { env: this.backend.hooks.environment(), timeout: 15000, maxBuffer: 2 * 1024 * 1024 }, (error, stdout, stderr) => {
-        if (error) { reject(new Error(`Core 模型配置失败：${this.backend.providers.redact(stderr || error.message).slice(0, 2048)}。配置若已变化，请刷新后重试。`)); return; }
+        if (error) {
+          console.error('Core 模型配置子进程失败', { operation, code: error.code, signal: error.signal, killed: error.killed });
+          reject(new Error(`Core 模型配置失败：${this.backend.providers.redact(stderr || error.message).slice(0, 2048)}。配置若已变化，请刷新后重试。`)); return;
+        }
         try { resolve(JSON.parse(stdout)); } catch { reject(new Error('Core 返回了无效的模型配置')); }
       });
       child.stdin.on('error', () => {});
