@@ -378,8 +378,8 @@ try {
   assert.ok((await page.getByTestId("chat-input").innerText()).includes(brought));
   assert.equal(JSON.stringify((await state()).projects[0].configurations?.[sourceThreadId] ?? null), mainConfigBefore,
     "main model configuration must survive Side and bring-back");
-  await page.getByRole("button", { name: "打开侧边面板标签页" }).click();
-  await page.getByRole("menuitem", { name: "旁路讨论" }).click();
+  // 关闭面板会记住当前任务的 lastPanel；主窗口的展开按钮恢复同一 Side 标签。
+  await page.getByRole("button", { name: "展开侧边面板", exact: true }).click();
   await sidePane.getByRole("region", { name: "相关讨论" }).getByRole("button", { name: new RegExp(sideQuestion) }).waitFor();
   assert.equal((await state()).projects[0].state.threads[sideThreadId].id, sideThreadId);
   checks.push("AC46/47/54: bring-back changed only the main local draft; hiding and reopening preserved the same Side identity");
