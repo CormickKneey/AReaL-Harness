@@ -35,6 +35,7 @@ import { DndContext, DragOverlay } from "@dnd-kit/core";
 import { SidebarDragSurface, useSidebarDrag, type SidebarDragSource } from "./sidebarDrag.js";
 import { Messages } from "./Messages.js";
 import { ForkHistory } from "./ForkHistory.js";
+import { ForkTargetDialog } from "./ForkTargetDialog.js";
 import { ConversationDraftEmptyState } from "./ConversationDraftEmptyState.js";
 import { NewTaskButtonGroup } from "./NewTaskButtonGroup.js";
 import { Composer, sending, subscribeSending } from "./Composer.js";
@@ -285,6 +286,7 @@ function AppContent({ services }: { services: PlatformServices }) {
   const [previewSource, setPreviewSource] = useState("");
   const [previewRequest, setPreviewRequest] = useState(0);
   const [rename, setRename] = useState<Data | null>(null);
+  const [forkIntent, setForkIntent] = useState<{ projectId: string; sourceThreadId: string; turnId: string; boundary: "before" | "after"; title: string; models: Data[]; profiles: Data[]; route: string; resolve: () => void } | null>(null);
   const [renameText, setRenameText] = useState("");
   useEffect(() => {
     const unsubscribe = services.onState(setSnapshot);
@@ -1082,15 +1084,13 @@ function AppContent({ services }: { services: PlatformServices }) {
     !(thread && admitting) &&
     thread?.conversation?.kind !== "fork" &&
     !thread?.turns?.some((turn: Data) => turn.items?.length || turn.status === "inProgress");
-  const forkFromTurn = async (turnId: string, boundary: "before" | "after") => {
-    if (!project || !thread) return;
+  const forkFromTurn = (turnId: string, boundary: "before" | "after"): Promise<void> => {
+    if (!project || !thread) return Promise.resolve();
     const owner = project.id;
     const sourceThreadId = thread.id;
     const route = `${owner}:${sourceThreadId}`;
-    if (!window.confirm(`从「${thread.preview || "当前会话"}」创建独立分支，${boundary === "after" ? "包含此轮及之前的对话" : "不包含此轮及之后的对话"}。文件仍是当前工作区的状态，不会回滚；新旧会话共享同一工作区。创建分支？`)) return;
-    const result = await resourceAction("fork", { projectId: owner, sourceThreadId,
-      anchor: { turnId, boundary }, workspaceMode: "sharedCurrent" });
-    if (activeConversation.current === route) await open(owner, result.threadId);
+    return new Promise(resolve => setForkIntent({ projectId: owner, sourceThreadId, turnId, boundary,
+      title: thread.preview || "当前会话", models: project.models ?? [], profiles: project.profiles ?? [], route, resolve }));
   };
   const openSideSelection = (selection: Data, excerpt: string, anchor?: Data) => {
     if (!project || !thread) return;
@@ -1686,6 +1686,15 @@ function AppContent({ services }: { services: PlatformServices }) {
           </form>
         </div>
       )}
+      {forkIntent && <ForkTargetDialog title={forkIntent.title} boundary={forkIntent.boundary} models={forkIntent.models} profiles={forkIntent.profiles}
+        onClose={() => { forkIntent.resolve(); setForkIntent(current => current === forkIntent ? null : current); }}
+        onCheck={() => resourceAction("reconcile", { projectId: forkIntent.projectId })}
+        onCreate={async target => {
+          const result = await resourceAction("fork", { projectId: forkIntent.projectId, sourceThreadId: forkIntent.sourceThreadId,
+            anchor: { turnId: forkIntent.turnId, boundary: forkIntent.boundary }, workspaceMode: "sharedCurrent", ...(target ? { target } : {}) });
+          forkIntent.resolve(); setForkIntent(current => current === forkIntent ? null : current);
+          if (activeConversation.current === forkIntent.route) void open(forkIntent.projectId, result.threadId).catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
+        }} />}
     </WorkbenchShell>
   );
 }

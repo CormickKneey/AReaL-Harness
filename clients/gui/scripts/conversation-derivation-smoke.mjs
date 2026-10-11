@@ -168,20 +168,26 @@ try {
   await page.getByRole("menuitem", { name: "新建项目", exact: true }).click();
   await until(s => s.projects[0]?.state?.connected, "project connection");
   projectId = (await state()).projects[0].id;
-  // 在公开 Core 请求边界记录 GUI 生成的准确请求标识。
-  await app.evaluate((_electron, backendPath) => {
-    const { CoreBackend } = require(backendPath);
-    const original = CoreBackend.prototype.requestSubmission;
+  // 共享后台独立运行；在真实连接的返回边界记录 Core 已确认的创建键。
+  await app.evaluate((_electron, connectionPath) => {
+    const { ServiceConnection } = require(connectionPath);
+    const original = ServiceConnection.prototype.request;
     globalThis.__scfMutations = [];
-    CoreBackend.prototype.requestSubmission = async function (project, method, parameters) {
-      const entry = { method, parameters, requestId: parameters.requestId, accepted: false };
-      if (method === "areal/thread/fork" || method === "areal/turn/start") globalThis.__scfMutations.push(entry);
-      const result = await original.call(this, project, method, parameters);
-      entry.accepted = true;
-      entry.resultThreadId = result?.thread?.id ?? null;
-      return result;
+    ServiceConnection.prototype.request = async function (method, parameters, mutation) {
+      if (method !== "command" || !["fork", "send"].includes(parameters?.name)) {
+        return original.call(this, method, parameters, mutation);
+      }
+      const entry = { command: parameters.name, parameters: parameters.request, accepted: false };
+      globalThis.__scfMutations.push(entry);
+      try {
+        const result = await original.call(this, method, parameters, mutation);
+        entry.accepted = true;
+        entry.requestId = result?.requestId ?? parameters.request?.requestId ?? null;
+        entry.resultThreadId = result?.threadId ?? result?.thread?.id ?? null;
+        return result;
+      } catch (error) { entry.error = error.message; throw error; }
     };
-  }, join(desktop, "src/core/backend.cjs"));
+  }, join(desktop, "src/core/service-client.cjs"));
   const first = await send(head);
   sourceThreadId = first.threadId;
   anchorTurnId = first.turnId;
@@ -271,6 +277,11 @@ try {
   await until(s => s.projects[0]?.state?.threads?.[sourceThreadId]?.turns?.at(-1)?.status === "completed", "source completes independently");
   assert.equal(await hash(fixturePath), workspaceBefore);
   checks.push("AC18/19: active Turn after is disabled, before creates an idle exact prefix, and the source completes independently");
+  const observed = await app.evaluate(() => globalThis.__scfMutations);
+  const forkResults = observed.filter(entry => entry.command === "fork" && entry.accepted);
+  assert.deepEqual(forkResults.map(entry => entry.resultThreadId), [targetThreadId, beforeThreadId]);
+  assert.ok(forkResults.every(entry => typeof entry.requestId === "string" && entry.requestId.length > 0));
+  assert.equal(new Set(forkResults.map(entry => entry.requestId)).size, 2);
   assert.deepEqual(pageErrors, []);
   passed = true;
 } catch (error) {
@@ -300,7 +311,7 @@ try {
   const manifest = {
     passed, failure, checks, events, pageErrors, electronStderr, frames, sourceCommit,
     command: "pnpm --dir clients/gui run test:conversation-derivation",
-    runtime: "real sandboxed Electron + Rust Core/Runtime + deterministic local HTTP/SSE model",
+    runtime: "real sandboxed Electron + Rust Core + deterministic local HTTP/SSE model; no native tool execution in this journey",
     sandbox, binary, binarySha256: await hash(binary).catch(() => null),
     smokeScriptSha256: await hash(fileURLToPath(import.meta.url)),
     sourceThreadId, targetThreadId, beforeThreadId, anchorTurnId, activeTurnId, projectId,
