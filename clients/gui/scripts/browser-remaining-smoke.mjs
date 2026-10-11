@@ -222,7 +222,11 @@ try {
   await page.bringToFront();
   await app.evaluate(({ app, BrowserWindow }) => { const win=BrowserWindow.getAllWindows()[0]; win.show(); win.restore(); app.focus({steal:true}); win.focus(); });
   console.log(JSON.stringify({ diagnostic:'awaiting-focus', appPid:app.process()?.pid }));
-  await until(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isFocused()), 'focused Main Origin prompt', 120000);
+  await until(() => app.evaluate(({ app, BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows()[0];
+    if (!win.isFocused()) { app.focus({ steal: true }); win.focus(); }
+    return win.isFocused();
+  }), 'focused Main Origin prompt', 120000);
   await page.evaluate(({ projectId, threadId, url }) => window.arealDesktop.preview({ operation: 'navigate', projectId, threadId, url }),
     { projectId, threadId, url: siteUrl });
   events.developmentOriginPrompt = await app.evaluate(() => globalThis.__m1OriginPrompt);
@@ -238,6 +242,12 @@ try {
   async function nativeCount() { return app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].contentView.children.length); }
   async function wcByUrl(url) { return until(()=>app.evaluate(({webContents},url)=>webContents.getAllWebContents().find(c=>c.getURL()===url && !c.isDestroyed())?.id,url),`Native ${url}`); }
   async function nativeClick(id,selector) {
+    // 原生激活是异步的；确认真实焦点后再派发用户输入。
+    await until(() => app.evaluate(({ app, webContents, BrowserWindow }, id) => {
+      const win = BrowserWindow.getAllWindows()[0], c = webContents.fromId(id);
+      win.show(); app.focus({ steal: true }); win.focus(); c.focus();
+      return win.isFocused() && c.isFocused();
+    }, id), 'focused Native user input');
     await app.evaluate(async({webContents,BrowserWindow},{id,selector})=>{
       const c=webContents.fromId(id),win=BrowserWindow.getAllWindows()[0];
       win.show();win.focus();c.focus();
