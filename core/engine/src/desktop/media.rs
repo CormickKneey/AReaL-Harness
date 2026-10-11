@@ -174,12 +174,19 @@ impl Engine {
         let thread = self.read(thread_id, true).await?;
         let uri = format!("areal://blob/{blob}");
         let snapshot = match &thread.conversation {
-            Some(areal_protocol::Conversation::Fork { history_seed, .. }) => Some(&history_seed.snapshot_id),
-            Some(areal_protocol::Conversation::Side { reference_snapshot, .. }) => Some(&reference_snapshot.snapshot_id),
+            Some(areal_protocol::Conversation::Fork { history_seed, .. }) => {
+                Some(&history_seed.snapshot_id)
+            }
+            Some(areal_protocol::Conversation::Side {
+                reference_snapshot, ..
+            }) => Some(&reference_snapshot.snapshot_id),
             _ => None,
         };
         let inherited = match snapshot {
-            Some(snapshot) => self.store.read_fork_snapshot(snapshot).map_err(|e| Error::Storage(e.to_string()))?,
+            Some(snapshot) => self
+                .store
+                .read_fork_snapshot(snapshot)
+                .map_err(|e| Error::Storage(e.to_string()))?,
             None => Vec::new(),
         };
         let associated=thread.desktop.as_ref().is_some_and(|d|d.uploads.iter().any(|m|m.uri==uri))
@@ -300,10 +307,10 @@ fn validate_fork_prefix_compatibility(prefix: &[Turn], model: &dyn Model) -> Res
                 for item in items {
                     let part: ToolContent =
                         serde_json::from_value(item.clone()).map_err(invalid)?;
-                    if let ToolContent::ArealMedia { modality, .. } = part {
-                        if !capabilities.supports_input(modality) {
-                            return Err(invalid("MODEL_MODALITY_INCOMPATIBLE"));
-                        }
+                    if let ToolContent::ArealMedia { modality, .. } = part
+                        && !capabilities.supports_input(modality)
+                    {
+                        return Err(invalid("MODEL_MODALITY_INCOMPATIBLE"));
                     }
                 }
             }

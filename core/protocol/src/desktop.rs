@@ -106,10 +106,25 @@ pub struct SideStart {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
-#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase", deny_unknown_fields)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 pub enum SideSelection {
-    ItemRange { turn_id: String, item_id: String, start_utf8: usize, end_utf8: usize, text_sha256: String },
-    UserQuote { text: String, claimed_turn_id: Option<String>, claimed_item_id: Option<String> },
+    ItemRange {
+        turn_id: String,
+        item_id: String,
+        start_utf8: usize,
+        end_utf8: usize,
+        text_sha256: String,
+    },
+    UserQuote {
+        text: String,
+        claimed_turn_id: Option<String>,
+        claimed_item_id: Option<String>,
+    },
 }
 pub const NOTIFICATIONS: &[&str] = &[
     "areal/goal/updated",

@@ -138,7 +138,12 @@ pub(crate) async fn dispatch(
             | "areal/conversation/unarchive"
             | "areal/blob/release"
     );
-    if method == "areal/conversation/unarchive" && params.get("requestId").and_then(Value::as_str).is_none_or(str::is_empty) {
+    if method == "areal/conversation/unarchive"
+        && params
+            .get("requestId")
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)
+    {
         return Err(RpcError::invalid("requestId is required for unarchive"));
     }
     if mutation && params.get("requestId").is_some() {
@@ -189,7 +194,11 @@ async fn dispatch_inner(
     method: &str,
     params: Value,
 ) -> Result<Value, RpcError> {
-    if matches!(method, "areal/thread/fork" | "areal/side/start" | "areal/conversation/unarchive") && !fork_preview_enabled() {
+    if matches!(
+        method,
+        "areal/thread/fork" | "areal/side/start" | "areal/conversation/unarchive"
+    ) && !fork_preview_enabled()
+    {
         return Err(RpcError::method());
     }
     let result = match method {
@@ -197,44 +206,132 @@ async fn dispatch_inner(
             let request: SideStart = parse(params)?;
             let request_id = request.request_id.clone();
             match engine.side_start(identity.into(), request).await {
-                Ok((thread, turn)) => Ok(json!({"thread":thread,"turn":turn,"requestId":request_id})),
-                Err(Error::Conflict) => return Err(RpcError { code:-32010, message:"request key conflicts with an existing Side".into(), data:Some(json!({"reason":"REQUEST_CONFLICT","retryable":false})) }),
-                Err(Error::Invalid(reason)) if matches!(reason.as_str(), "SOURCE_KIND_UNSUPPORTED" | "ANCHOR_NOT_FOUND" | "TURN_NOT_TERMINAL" | "HISTORY_UNRESOLVED" | "PROFILE_NOT_SUPPORTED" | "MODEL_CONTEXT_INCOMPATIBLE" | "WORKSPACE_READ_UNAVAILABLE" | "STALE_SELECTION" | "SELECTION_TOO_LARGE") =>
-                    return Err(RpcError { code:-32010, message:reason.clone(), data:Some(json!({"reason":reason,"retryable":false})) }),
+                Ok((thread, turn)) => {
+                    Ok(json!({"thread":thread,"turn":turn,"requestId":request_id}))
+                }
+                Err(Error::Conflict) => {
+                    return Err(RpcError {
+                        code: -32010,
+                        message: "request key conflicts with an existing Side".into(),
+                        data: Some(json!({"reason":"REQUEST_CONFLICT","retryable":false})),
+                    });
+                }
+                Err(Error::Invalid(reason))
+                    if matches!(
+                        reason.as_str(),
+                        "SOURCE_KIND_UNSUPPORTED"
+                            | "ANCHOR_NOT_FOUND"
+                            | "TURN_NOT_TERMINAL"
+                            | "HISTORY_UNRESOLVED"
+                            | "PROFILE_NOT_SUPPORTED"
+                            | "MODEL_CONTEXT_INCOMPATIBLE"
+                            | "WORKSPACE_READ_UNAVAILABLE"
+                            | "STALE_SELECTION"
+                            | "SELECTION_TOO_LARGE"
+                    ) =>
+                {
+                    return Err(RpcError {
+                        code: -32010,
+                        message: reason.clone(),
+                        data: Some(json!({"reason":reason,"retryable":false})),
+                    });
+                }
                 Err(error) => return Err(map_error(error)),
             }
         }
         "areal/side/context/read" => {
             #[derive(Deserialize)]
             #[serde(rename_all = "camelCase", deny_unknown_fields)]
-            struct ReadContext { thread_id: String, evidence_ref: Option<String>, cursor: Option<String>, max_bytes: Option<usize> }
+            struct ReadContext {
+                thread_id: String,
+                evidence_ref: Option<String>,
+                cursor: Option<String>,
+                max_bytes: Option<usize>,
+            }
             let p: ReadContext = parse(params)?;
-            engine.side_context_read(&p.thread_id, p.evidence_ref, p.cursor, p.max_bytes).await
+            engine
+                .side_context_read(&p.thread_id, p.evidence_ref, p.cursor, p.max_bytes)
+                .await
         }
         "areal/thread/fork" => {
             let request: ForkThread = parse(params)?;
             let request_id = request.request_id.clone();
             match engine.fork_thread(identity.into(), request).await {
                 Ok(thread) => Ok(json!({"thread":thread,"requestId":request_id})),
-                Err(Error::Conflict) => return Err(RpcError { code: -32010, message: "request key conflicts with an existing Fork".into(), data: Some(json!({"reason":"REQUEST_CONFLICT","retryable":false})) }),
-                Err(Error::Invalid(reason)) if matches!(reason.as_str(), "SOURCE_KIND_UNSUPPORTED" | "ANCHOR_NOT_FOUND" | "TURN_NOT_TERMINAL" | "HISTORY_UNRESOLVED" | "HISTORY_INTEGRITY" | "PROFILE_NOT_SUPPORTED" | "MODEL_CONTEXT_INCOMPATIBLE" | "MODEL_MODALITY_INCOMPATIBLE") =>
-                    return Err(RpcError { code: -32010, message: reason.clone(), data: Some(json!({"reason":reason,"retryable":false})) }),
-                Err(Error::Storage(message)) if message.contains("fork snapshot exceeds history limit") || message.contains("history segment exceeds size limit") =>
-                    return Err(RpcError { code: -32010, message: "Fork history exceeds the configured snapshot limit".into(), data: Some(json!({"reason":"HISTORY_LIMIT_EXCEEDED","retryable":false})) }),
-                Err(Error::Exhausted(message)) if message.contains("session history limit reached") =>
-                    return Err(RpcError { code: -32010, message: "Fork history exceeds the configured session limit".into(), data: Some(json!({"reason":"HISTORY_LIMIT_EXCEEDED","retryable":false})) }),
-                Err(Error::Storage(message)) if message.contains("history segment integrity check failed") || message.contains("fork snapshot") =>
-                    return Err(RpcError { code: -32010, message: "Fork source history failed integrity validation".into(), data: Some(json!({"reason":"HISTORY_INTEGRITY","retryable":false})) }),
+                Err(Error::Conflict) => {
+                    return Err(RpcError {
+                        code: -32010,
+                        message: "request key conflicts with an existing Fork".into(),
+                        data: Some(json!({"reason":"REQUEST_CONFLICT","retryable":false})),
+                    });
+                }
+                Err(Error::Invalid(reason))
+                    if matches!(
+                        reason.as_str(),
+                        "SOURCE_KIND_UNSUPPORTED"
+                            | "ANCHOR_NOT_FOUND"
+                            | "TURN_NOT_TERMINAL"
+                            | "HISTORY_UNRESOLVED"
+                            | "HISTORY_INTEGRITY"
+                            | "PROFILE_NOT_SUPPORTED"
+                            | "MODEL_CONTEXT_INCOMPATIBLE"
+                            | "MODEL_MODALITY_INCOMPATIBLE"
+                    ) =>
+                {
+                    return Err(RpcError {
+                        code: -32010,
+                        message: reason.clone(),
+                        data: Some(json!({"reason":reason,"retryable":false})),
+                    });
+                }
+                Err(Error::Storage(message))
+                    if message.contains("fork snapshot exceeds history limit")
+                        || message.contains("history segment exceeds size limit") =>
+                {
+                    return Err(RpcError {
+                        code: -32010,
+                        message: "Fork history exceeds the configured snapshot limit".into(),
+                        data: Some(json!({"reason":"HISTORY_LIMIT_EXCEEDED","retryable":false})),
+                    });
+                }
+                Err(Error::Exhausted(message))
+                    if message.contains("session history limit reached") =>
+                {
+                    return Err(RpcError {
+                        code: -32010,
+                        message: "Fork history exceeds the configured session limit".into(),
+                        data: Some(json!({"reason":"HISTORY_LIMIT_EXCEEDED","retryable":false})),
+                    });
+                }
+                Err(Error::Storage(message))
+                    if message.contains("history segment integrity check failed")
+                        || message.contains("fork snapshot") =>
+                {
+                    return Err(RpcError {
+                        code: -32010,
+                        message: "Fork source history failed integrity validation".into(),
+                        data: Some(json!({"reason":"HISTORY_INTEGRITY","retryable":false})),
+                    });
+                }
                 Err(error) => return Err(map_error(error)),
             }
         }
         "areal/conversation/history" => {
             #[derive(Deserialize)]
             #[serde(rename_all = "camelCase", deny_unknown_fields)]
-            struct ReadHistory { thread_id: String, view: String, cursor: Option<String>, max_bytes: Option<usize> }
+            struct ReadHistory {
+                thread_id: String,
+                view: String,
+                cursor: Option<String>,
+                max_bytes: Option<usize>,
+            }
             let p: ReadHistory = parse(params)?;
-            if p.view != "inherited" { return Err(RpcError::invalid("SCF-01 supports inherited history only")); }
-            engine.fork_history(&p.thread_id, p.cursor, p.max_bytes).await
+            if p.view != "inherited" {
+                return Err(RpcError::invalid("SCF-01 supports inherited history only"));
+            }
+            engine
+                .fork_history(&p.thread_id, p.cursor, p.max_bytes)
+                .await
         }
         "areal/goal/get" => {
             let p: ThreadId = parse(params)?;

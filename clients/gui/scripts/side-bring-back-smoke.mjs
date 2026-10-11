@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import { SideDraftWorkspace } from '../renderer/src/side-draft-owner.js';
 import { makeBringBackPreview, insertSideAnswer } from '../renderer/src/side-bring-back.js';
 
 class Storage {
   values = new Map();
   getItem(key) { return this.values.get(key) ?? null; }
+  removeItem(key) { this.values.delete(key); }
   setItem(key, value) { this.values.set(key, String(value)); }
 }
 const storage = new Storage();
@@ -37,3 +39,20 @@ assert.equal(insertSideAnswer({ storage, preview: whole, current: { ...current, 
 assert.equal(storage.getItem('areal-gui:draft:project-b:main-a'), null);
 assert.equal(storage.getItem(key).includes('完整回复'), false);
 console.log('side bring-back public draft state: passed');
+
+const workspace = new SideDraftWorkspace(storage, { instanceId: owner.instanceId, projectId: owner.projectId,
+  sourceThreadId: owner.sourceThreadId, randomId: () => 'draft-a' });
+const selected = workspace.selectSide('side-a');
+const retained = { ...whole, owner: { ...owner, paneOwner: workspace.owner(selected) }, text: '编辑后保留的文本' };
+workspace.saveBringBack(selected, retained);
+workspace.selectSide('side-b');
+assert.equal(workspace.bringBack(workspace.current()), null);
+const restoredWorkspace = new SideDraftWorkspace(storage, { instanceId: owner.instanceId, projectId: owner.projectId,
+  sourceThreadId: owner.sourceThreadId, randomId: () => 'draft-b' });
+assert.deepEqual(restoredWorkspace.bringBack(restoredWorkspace.selectSide('side-a')), retained);
+assert.equal(insertSideAnswer({ storage, preview: retained, current: { ...current, owner: { ...retained.owner, projectId: 'project-b' } } }).status, 'owner-changed');
+assert.equal(storage.getItem('areal-gui:draft:project-b:main-a'), null);
+assert.throws(() => workspace.saveBringBack({ kind: 'side', id: 'side-b' }, retained), /归属已变化/);
+workspace.saveBringBack(selected, null);
+assert.equal(workspace.bringBack(selected), null);
+console.log('side bring-back retained owner state: passed');

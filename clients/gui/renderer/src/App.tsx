@@ -214,6 +214,8 @@ function AppContent({ services }: { services: PlatformServices }) {
   const [reviewRequest, setReviewRequest] = useState<{ owner: string; threadId?: string } & ({ turnId: string; scope?: never } | { scope: "unstaged"; turnId?: never })>();
   const [panelTabs, setPanelTabs] = useState<string[]>([]);
   const [previewFileTab, setPreviewFileTab] = useState<string | undefined>();
+  const sideNarrow = React.useRef(false);
+  const sideTrigger = React.useRef<{ element: HTMLElement; route: string } | null>(null);
   const [workspaceView, setWorkspaceView] = useState<"split" | "panel" | "conversation">("split");
   const [filesOpen, setFilesOpen] = useState(false);
   const [revealedFile, setRevealedFile] = useState("");
@@ -622,8 +624,35 @@ function AppContent({ services }: { services: PlatformServices }) {
     setTerminalOpen(false);
     setPanel(create ? addTerminal(owner) : ensureTerminal(owner));
   };
+  const rememberSideTrigger = () => {
+    const focused = document.activeElement;
+    const element = focused?.getAttribute("role") === "menuitem"
+      ? document.querySelector<HTMLElement>('[aria-haspopup="menu"][aria-expanded="true"]') ?? focused : focused;
+    if (element instanceof HTMLElement && panel !== "旁路讨论") sideTrigger.current = { element, route: `${projectId}:${threadId}` };
+  };
+  const hidePanel = () => {
+    const returning = panel === "旁路讨论";
+    setWorkspaceView("split"); setPanel("");
+    if (returning) requestAnimationFrame(() => {
+      const trigger = sideTrigger.current;
+      if (trigger?.route !== `${projectId}:${threadId}`) return;
+      if (trigger.element.isConnected) trigger.element.focus();
+      else document.querySelector<HTMLElement>('[data-testid="chat-input"]')?.focus();
+    });
+  };
+  useEffect(() => {
+    const query = matchMedia("(max-width: 1200px)");
+    const resize = () => {
+      if (panel !== "旁路讨论") return;
+      if (query.matches) { sideNarrow.current = true; if (workspaceView === "split") setWorkspaceView("panel"); }
+      else if (sideNarrow.current) { sideNarrow.current = false; setWorkspaceView("split"); }
+    };
+    resize(); query.addEventListener("change", resize);
+    return () => query.removeEventListener("change", resize);
+  }, [panel, workspaceView]);
   const showPanel = (name: string) => {
-    setWorkspaceView(mode => name === "旁路讨论" && matchMedia("(max-width: 900px)").matches ? "panel" : mode === "split" ? mode : "panel");
+    if (name === "旁路讨论") { if (panel === name) { hidePanel(); return; } rememberSideTrigger(); }
+    setWorkspaceView(mode => name === "旁路讨论" && matchMedia("(max-width: 1200px)").matches ? "panel" : mode === "split" ? mode : "panel");
     if (["编辑目标", "执行计划", "上下文", "已保存授权", "进程"].includes(name)) {
       setPanel(name);
       return;
@@ -948,7 +977,7 @@ function AppContent({ services }: { services: PlatformServices }) {
     if (!project) return null;
     const props = { project, thread, action };
     if (panel === "旁路讨论" && thread && project.core?.features?.sidePreview === true && !thread.parentThreadId && thread.conversation?.kind !== "side") {
-      return <SideChatPane key={`${project.core?.instanceId}:${project.id}:${thread.id}:side`} project={project} source={thread} action={resourceAction} dark={dark} />;
+      return <SideChatPane onReturn={hidePanel} key={`${project.core?.instanceId}:${project.id}:${thread.id}:side`} project={project} source={thread} action={resourceAction} dark={dark} />;
     }
     if (panel.startsWith("agent:") && thread) {
       const childId = panel.slice(6);
@@ -1093,8 +1122,27 @@ function AppContent({ services }: { services: PlatformServices }) {
     return new Promise(resolve => setForkIntent({ projectId: owner, sourceThreadId, turnId, boundary,
       title: thread.preview || "当前会话", models: project.models ?? [], profiles: project.profiles ?? [], route, resolve }));
   };
+  const openForkOrigin = (sourceId: string, turnId: string) => {
+    if (!project) return;
+    const route = `${project.id}:${sourceId}`;
+    void open(project.id, sourceId).then(() => requestAnimationFrame(() => {
+      // 冷继承页按需到达；导航始终使用来源和稳定轮次 ID。
+      const locate = () => {
+        if (activeConversation.current !== route) return true;
+        const target = document.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(turnId)}"]`);
+        if (!target) return false;
+        target.scrollIntoView({ block: "center" }); return true;
+      };
+      document.querySelector<HTMLElement>('[aria-controls^="fork-history-"][aria-expanded="false"]')?.click();
+      if (locate()) return;
+      const observer = new MutationObserver(() => { if (locate()) { observer.disconnect(); clearTimeout(timeout); } });
+      const timeout = setTimeout(() => { observer.disconnect(); }, 10000);
+      observer.observe(document.querySelector('[data-testid="chat-view"]') ?? document.body, { childList: true, subtree: true });
+    })).catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
+  };
   const openSideSelection = (selection: Data, excerpt: string, anchor?: Data) => {
     if (!project || !thread) return;
+    rememberSideTrigger();
     const workspace = new SideDraftWorkspace(localStorage, { instanceId: project.core?.instanceId ?? "unknown",
       projectId: project.id, sourceThreadId: thread.id, randomId: () => crypto.randomUUID() });
     const draft = workspace.newDraft();
@@ -1102,7 +1150,7 @@ function AppContent({ services }: { services: PlatformServices }) {
     localStorage.setItem(`${owner}:selection`, JSON.stringify(selection));
     localStorage.setItem(`${owner}:selection-preview`, excerpt);
     if (anchor) localStorage.setItem(`${owner}:anchor`, JSON.stringify(anchor));
-    setWorkspaceView(mode => matchMedia("(max-width: 900px)").matches ? "panel" : mode === "split" ? mode : "panel");
+    setWorkspaceView(mode => matchMedia("(max-width: 1200px)").matches ? "panel" : mode === "split" ? mode : "panel");
     setPanel("旁路讨论");
     setPanelTabs(tabs => tabs.includes("旁路讨论") ? tabs : [...tabs, "旁路讨论"]);
     window.dispatchEvent(new CustomEvent("areal-side-selection", { detail: { owner, excerpt } }));
@@ -1410,7 +1458,8 @@ function AppContent({ services }: { services: PlatformServices }) {
                           project={project}
                           thread={thread}
                           action={action}
-                          beforeTurns={thread.conversation?.kind === "fork" ? <ForkHistory projectId={project.id} thread={thread} action={resourceAction}
+                          beforeTurns={thread.conversation?.kind === "fork" ? <ForkHistory projectId={project.id} thread={thread} source={project.state?.threads?.[thread.conversation.origin?.sourceThreadId] ?? project.summaries?.find((summary: Data) => summary.id === thread.conversation.origin?.sourceThreadId)} action={resourceAction}
+                            onOrigin={openForkOrigin}
                             onFork={project.core?.features?.forkPreview === true && !thread.desktop?.archived ? forkFromTurn : undefined}
                             onSideSelection={project.core?.features?.sidePreview === true && !thread.desktop?.archived ? openSideSelection : undefined} /> : undefined}
                           onFork={forkFromTurn}
@@ -1443,6 +1492,7 @@ function AppContent({ services }: { services: PlatformServices }) {
                           readAction={resourceAction}
                           onPanel={showPanel}
                           onSide={project.core?.features?.sidePreview === true && !thread.desktop?.archived && !thread.parentThreadId && thread.conversation?.kind !== "side" ? draft => {
+                            rememberSideTrigger();
                             const workspace = new SideDraftWorkspace(localStorage, { instanceId: project.core?.instanceId ?? "unknown",
                               projectId: project.id, sourceThreadId: thread.id, randomId: () => crypto.randomUUID() });
                             const current = workspace.current();
@@ -1451,7 +1501,7 @@ function AppContent({ services }: { services: PlatformServices }) {
                             const key = workspace.draftKey(selected);
                             const existing = localStorage.getItem(key) ?? "";
                             if (draft.trim()) localStorage.setItem(key, existing ? `${existing}\n${draft}` : draft);
-                            setWorkspaceView(mode => matchMedia("(max-width: 900px)").matches ? "panel" : mode === "split" ? mode : "panel");
+                            setWorkspaceView(mode => matchMedia("(max-width: 1200px)").matches ? "panel" : mode === "split" ? mode : "panel");
                             setPanel("旁路讨论");
                             setPanelTabs(tabs => tabs.includes("旁路讨论") ? tabs : [...tabs, "旁路讨论"]);
                             window.dispatchEvent(new CustomEvent("areal-side-draft", { detail: { owner, text: localStorage.getItem(key) ?? "" } }));
@@ -1561,7 +1611,10 @@ function AppContent({ services }: { services: PlatformServices }) {
             names={panelTabs}
             previewTabId={previewFileTab}
             onKeepTab={id => setPreviewFileTab(current => current === id ? undefined : current)}
-            workspaceView={{ mode: workspaceView, title: empty ? "新对话" : currentTitle, onChange: setWorkspaceView, actions: taskActions,
+            workspaceView={{ mode: workspaceView, title: empty ? "新对话" : currentTitle, onChange: mode => {
+              if (panel === "旁路讨论" && mode === "split" && matchMedia("(max-width: 1200px)").matches) hidePanel();
+              else setWorkspaceView(mode);
+            }, actions: taskActions,
               navigation: !sidebar ? <button className="icon-button" aria-label="展开侧栏" aria-expanded={false} aria-controls="areal-sidebar" onClick={() => setSidebar(true)}><SidebarToggleIcon /></button> : undefined }}
             dirtyFiles={Object.fromEntries(
               Object.entries(dirtyFiles)
@@ -1599,7 +1652,7 @@ function AppContent({ services }: { services: PlatformServices }) {
               setPanelTabs(tabs);
               setPreviewFileTab(current => current && tabs.includes(current) ? current : undefined);
             }}
-            onHide={() => { setWorkspaceView("split"); setPanel(""); }}
+            onHide={hidePanel}
             auxiliary={panel === "文件" ? workspaceFileTree : undefined}
             render={panelBody}
           />

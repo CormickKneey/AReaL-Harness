@@ -167,7 +167,7 @@ async fn authenticated_side_access_and_legacy_routes_preserve_policy() {
     let side = call(&mut owner, 2, "areal/side/start", create("owner-side-a")).await;
     let side_id = side["result"]["thread"]["id"]
         .as_str()
-        .expect(&side.to_string())
+        .unwrap_or_else(|| panic!("{}", side))
         .to_owned();
     engine
         .start(&source.id, vec![Input::text("later source evidence")])
@@ -177,7 +177,7 @@ async fn authenticated_side_access_and_legacy_routes_preserve_policy() {
     let other = call(&mut owner, 3, "areal/side/start", create("owner-side-b")).await;
     let other_id = other["result"]["thread"]["id"]
         .as_str()
-        .expect(&other.to_string())
+        .unwrap_or_else(|| panic!("{}", other))
         .to_owned();
     engine.wait(&side_id).await.unwrap();
     let before_configure = call(&mut owner, 6, "thread/read", json!({"threadId":side_id})).await;

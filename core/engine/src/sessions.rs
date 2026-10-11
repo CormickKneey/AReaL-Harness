@@ -228,19 +228,18 @@ impl Engine {
         let mut thread = {
             let state = cell.state.lock().await;
             let mut thread = state.thread.clone();
-            if thread.is_side() {
-                if let Some(active) = &state.active {
-                    if let Some(desktop) = thread.desktop.as_mut() {
-                        desktop.side_capacity_status = Some(
-                            if active.waiting_for_model_capacity {
-                                "waiting"
-                            } else {
-                                "available"
-                            }
-                            .into(),
-                        );
+            if thread.is_side()
+                && let Some(active) = &state.active
+                && let Some(desktop) = thread.desktop.as_mut()
+            {
+                desktop.side_capacity_status = Some(
+                    if active.waiting_for_model_capacity {
+                        "waiting"
+                    } else {
+                        "available"
                     }
-                }
+                    .into(),
+                );
             }
             thread
         };

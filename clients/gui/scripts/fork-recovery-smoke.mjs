@@ -7,7 +7,12 @@ import { CoreRpcError } from '../packages/runtime-client/core.js';
 
 const require = createRequire(import.meta.url);
 const { CoreBackend } = require('../app/src/core/backend.cjs');
-const { desktopError } = require('../packages/workbench/client/desktop-contract.cjs');
+const { desktopError, validateCommand } = require('../packages/workbench/client/desktop-contract.cjs');
+// 前后边界都必须穿过同一个公开桌面契约。
+for (const boundary of ['before', 'after']) validateCommand('fork', { projectId: 'project', sourceThreadId: 'source',
+  anchor: { turnId: 'turn', boundary }, workspaceMode: 'sharedCurrent' });
+assert.throws(() => validateCommand('fork', { projectId: 'project', sourceThreadId: 'source',
+  anchor: { turnId: 'turn', boundary: 'unknown' }, workspaceMode: 'sharedCurrent' }), /无效桌面操作/);
 const home = await mkdtemp(join(tmpdir(), 'areal-fork-recovery-'));
 try {
   const backend = Object.create(CoreBackend.prototype);

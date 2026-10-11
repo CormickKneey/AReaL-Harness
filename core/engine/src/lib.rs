@@ -551,10 +551,15 @@ impl Engine {
         })
     }
     pub fn side_workspace_read_available(&self) -> bool {
-        let Some(runtime) = self.runtime.as_ref() else { return false; };
+        let Some(runtime) = self.runtime.as_ref() else {
+            return false;
+        };
         let capabilities = &runtime.client.info().capabilities;
         let permissions = self.permission_config();
-        let native = matches!(capabilities["sandbox"].as_str(), Some("runtimeSeatbeltPathV1" | "runtimeBubblewrapPathV1"));
+        let native = matches!(
+            capabilities["sandbox"].as_str(),
+            Some("runtimeSeatbeltPathV1" | "runtimeBubblewrapPathV1")
+        );
         native && !runtime.client.is_closed() && capabilities["fullAccess"] == false
             && !["fs_read", "fs_list", "fs_stat", "search_files"].iter().any(|tool|
                 permissions.deny.iter().any(|pattern| permissions::matches_tool(pattern, tool)))

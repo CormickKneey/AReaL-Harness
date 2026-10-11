@@ -153,7 +153,7 @@ JSONL 的 30 天期限按文件最后修改时间计算，不逐条检查行的�
 
 工具错误审计新增 `errorCode` 与 `toolCallError`：`invalid_tool_call_index` 附固定原因、协议、字段路径、从 1 开始的 SSE 数据事件序号、index JSON 类型及已缓冲调用数量；`tool_call_budget_exceeded` 附预算类别、上限和观测值。字段只含固定标签和有界数值，诊断不复制 SSE、参数、reasoning 或非法字段值，使用同一记录的本地 `requestId` 关联。`responseShape.toolArgumentBytes` 沿用旧名称，实际累计通过校验的 id/name/arguments 字节。
 
-快照写入格式 12，可读取 1–12；旧二进制不能读取新快照。可选 `historyArchive` 引用 `history/` 中的不可变 SHA-256 分段，包含 head、throughItemId、completedTurns、items、bytes；单分段最多 32 MiB。先同步分段，再提交引用它的快照。热快照保留近期条目和 checkpoint；完整 thread 读取还原原始 Turn/Item，并省略存储清单。`read_history` 按 item ID 分页，无需加载全部归档。GC 同时追踪热快照与冷分段引用。工具意图持久化与 UNKNOWN 恢复不变，不重放归档副作用。usage/duration 缺失表示未知，不是 0。
+快照写入格式 14，可读取无派生元数据的旧格式 1–14；Fork/Side 记录必须使用格式 14 并通过会话版本与持久权限校验。旧二进制不能读取新快照，不能通过降低版本号绕过角色检查。可选 `historyArchive` 引用 `history/` 中的不可变 SHA-256 分段，包含 head、throughItemId、completedTurns、items、bytes；单分段最多 32 MiB。先同步分段，再提交引用它的快照。热快照保留近期条目和 checkpoint；完整 thread 读取还原原始 Turn/Item，并省略存储清单。`read_history` 按 item ID 分页，无需加载全部归档。GC 同时追踪热快照与冷分段引用。工具意图持久化与 UNKNOWN 恢复不变，不重放归档副作用。usage/duration 缺失表示未知，不是 0。
 
 `ToolExecution` 新增可选 `resultSnapshot: MediaRef` 与 `outputProjection` 度量对象，旧记录默认缺省。原文回取是模型 Core 工具 `read_tool_result`，不是新的 Runtime RPC；边界见[工具指南](../guides/tools.md)。模型请求审计另记 messageBlocks 的摘要/字节数、toolSchemaSha256 和 instructionsSha256，用于离线比较稳定前缀；不记录提示词正文，也不将前缀相同直接视为提供方缓存命中。`usageDetails` 记录提供方可选的缓存输入和推理 token；缺失时为 null，预算用量结构不变。
 
@@ -238,7 +238,7 @@ objective 为 1–4000 个 Unicode 字符且不能全空白。显式预算为正
 
 已设置跨 Run Token 总预算的周期 Task 不允许通过目标文本重新推断预算，继续由 Task 控制接口维护。
 
-GUI 仅提交目标文本及 inferLimits=true，不展示预算输入。create 的 inferLimits 不可和显式限制同时提交；update 的 inferLimits 要求 objective，清除旧限制并重新等待确认，保留 ID 和全部用量、不隐式启动。根 Agent 在执行工作前调用 goal_set_limits，解释用户明确指定的 token、轮次与活动时间（换算为秒）；没有指定的项不设限，任务正文中的数字不作为预算。推断请求及耗时也计入实际用量。模型至少需要三轮、allowlist 必须允许 goal_set_limits。旧数据中的数字限制保持原值；读取格式 1–12，旧 Core 不能读取格式 12。
+GUI 仅提交目标文本及 inferLimits=true，不展示预算输入。create 的 inferLimits 不可和显式限制同时提交；update 的 inferLimits 要求 objective，清除旧限制并重新等待确认，保留 ID 和全部用量、不隐式启动。根 Agent 在执行工作前调用 goal_set_limits，解释用户明确指定的 token、轮次与活动时间（换算为秒）；没有指定的项不设限，任务正文中的数字不作为预算。推断请求及耗时也计入实际用量。模型至少需要三轮、allowlist 必须允许 goal_set_limits。旧数据中的数字限制保持原值；无派生元数据的旧记录可读取格式 1–14，下一次写入升级为 14；旧 Core 不能读取新格式。
 
 resume 保留计量，不能使已经达到的限额失效；completed 不可恢复。resume 同时确认此前未知模型消费的保守预留，但不删除该预留，不将 accountingComplete 改回 true；工具 UNKNOWN 仍需独立检查与 acknowledge。普通 `thread/resume` 仍只恢复订阅和快照，不恢复 Goal 执行。暂停时保存原因，只有属于该次 Goal 暂停的队列暂停才可被 Goal resume 自动撤销。
 
@@ -286,7 +286,7 @@ goalId 和根线程身份由 Core 绑定，模型不能自报其他目标。summ
 
 Rust 嵌入式调用使用 `Limits.goals: goals::Policy` 及 `Engine::goal_get/goal_create/goal_control`。自定义 Model 的 `chat_limited` 必须显式接受逐请求输出上限，`share_context` 保留预算归因；内置 HTTP adapter 已支持。自定义 Workgroup Factory 需实现 `executor_for_goal` 并保留传入 Budget；默认实现对有 Goal 的调用明确报错。普通 Turn 和独立 Workgroup 沿用原行为。
 
-Goal 请求账本位于 `goals/<goal-id>.json`，发送前持久预留；主/子 Agent、原生 Workgroup、活动 Turn 摘要共享计量。确认结算的请求滚入不可变 `goals/requests/` 分段并汇总累计用量；热账本保留在途与未知请求，仍有 4 MiB 资源保护。默认没有累计请求次数预算。滚动不重置用量、不释放未知消费预留。clear 保留账本及归档，不提供自动账本 GC。API 仍为 areal.core.v1；快照格式 12 保存冷历史引用与有界 checkpoint 原文。
+Goal 请求账本位于 `goals/<goal-id>.json`，发送前持久预留；主/子 Agent、原生 Workgroup、活动 Turn 摘要共享计量。确认结算的请求滚入不可变 `goals/requests/` 分段并汇总累计用量；热账本保留在途与未知请求，仍有 4 MiB 资源保护。默认没有累计请求次数预算。滚动不重置用量、不释放未知消费预留。clear 保留账本及归档，不提供自动账本 GC。API 仍为 areal.core.v1；快照格式 14 保留冷历史引用与有界 checkpoint 原文，并保护 Fork/Side 的持久会话语义。
 
 Task Mode 在 Goal 之上提供 foreground/scheduled/background 任务、TaskRun、独立 Channel 与 Inbox。Goal create 同时返回 taskId/runId；Goal 内的 ask_user_question 可选 mode=async，headless 不等待用户。接口、预算与恢复语义见 [Task 契约](tasks.md)。timeUsedSeconds 包含协调 Turn 与 TaskRun worker 活动时间的并集，纯异步用户等待不计入。
 

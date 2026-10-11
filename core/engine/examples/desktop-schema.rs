@@ -248,7 +248,13 @@ fn main() {
     methods.insert("turn/start".into(),object(json!({"threadId":string,"input":{"type":"array","items":schemars::schema_for!(areal_protocol::Input)}}),vec!["threadId","input"]));
     methods.insert("areal/conversation/history".into(),object(json!({"threadId":string,"view":{"const":"inherited"},"cursor":string,"maxBytes":{"type":"integer","minimum":1,"maximum":262144}}),vec!["threadId","view"]));
     methods.insert("areal/conversation/list".into(),object(json!({"view":{"enum":["main","side","all"]},"sourceThreadId":string,"includeArchived":{"type":"boolean"},"limit":{"type":"integer","minimum":1,"maximum":100},"cursor":string}),vec![]));
-    methods.insert("areal/conversation/unarchive".into(),object(json!({"requestId":string,"threadId":string}),vec!["requestId","threadId"]));
+    methods.insert(
+        "areal/conversation/unarchive".into(),
+        object(
+            json!({"requestId":string,"threadId":string}),
+            vec!["requestId", "threadId"],
+        ),
+    );
     methods.insert("areal/side/context/read".into(),object(json!({"threadId":string,"evidenceRef":string,"cursor":string,"maxBytes":{"type":"integer","minimum":64,"maximum":16384}}),vec!["threadId"]));
     methods.insert("turn/steer".into(),object(json!({"threadId":string,"expectedTurnId":string,"input":{"type":"array","items":schemars::schema_for!(areal_protocol::Input)}}),vec!["threadId","expectedTurnId","input"]));
     methods.insert(

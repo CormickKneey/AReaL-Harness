@@ -24,7 +24,8 @@ function InheritedItem({ item, projectId, threadId, action }: { item: Data; proj
 }
 
 /** 从 Core 读取目标持有的历史种子；本地 Turn 仍是执行账本。 */
-export function ForkHistory({ projectId, thread, action, onFork, onSideSelection }: { projectId: string; thread: Data; action: Action; onFork?: (turnId: string, boundary: "before" | "after") => Promise<void>; onSideSelection?: (selection: Data, text: string, anchor?: Data) => void }) {
+export function ForkHistory({ projectId, thread, source, action, onOrigin, onFork, onSideSelection }: { projectId: string; thread: Data; source?: Data; action: Action; onOrigin: (threadId: string, turnId: string) => void; onFork?: (turnId: string, boundary: "before" | "after") => Promise<void>; onSideSelection?: (selection: Data, text: string, anchor?: Data) => void }) {
+  const [expanded, setExpanded] = useState(false);
   const [items, setItems] = useState<Data[]>([]);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [complete, setComplete] = useState(false);
@@ -62,7 +63,7 @@ export function ForkHistory({ projectId, thread, action, onFork, onSideSelection
     }
     onSideSelection(selection, selected.text, { kind: "turn", turnId: selected.turnId, boundary: "after" }); setSelected(null);
   };
-  useEffect(() => { partial.current = null; setItems([]); setCursor(undefined); setComplete(false); setError(""); }, [thread.id, snapshotId]);
+  useEffect(() => { partial.current = null; setExpanded(false); setItems([]); setCursor(undefined); setComplete(false); setError(""); }, [thread.id, snapshotId]);
   useEffect(() => {
     if (!snapshotId || complete || error) return;
     let cancelled = false;
@@ -98,8 +99,11 @@ export function ForkHistory({ projectId, thread, action, onFork, onSideSelection
   }, [action, projectId, thread.id, snapshotId, cursor, complete, error]);
   if (!snapshotId) return null;
   return <section className="fork-history" aria-label="继承的对话历史">
-    <p className="notice">继承至来源会话 <code>{thread.conversation.origin?.sourceThreadId}</code> 的轮次 <code>{thread.conversation.origin?.sourceTurnId}</code> {thread.conversation.origin?.boundary === "before" ? "之前" : "之后"}。项目文件使用当前共享工作区；历史中的文件内容可能已变化。</p>
-    {items.map((entry, index) => <article key={`${thread.id}:inherited:${entry.sourceTurnId}:${entry.sourceItemId}`} className="fork-history-item" onMouseUp={event => capture(entry, event.currentTarget)}>
+    <p>来自 <button type="button" onClick={() => onOrigin(thread.conversation.origin.sourceThreadId, thread.conversation.origin.sourceTurnId)}>{source?.preview || "来源会话"}</button> · 第 {(thread.conversation.historySeed.turnCount ?? 0) + (thread.conversation.origin?.boundary === "before" ? 1 : 0)} 轮{thread.conversation.origin?.boundary === "before" ? "之前" : "之后"}</p>
+    <p className="notice">当前共享工作区：项目文件保持当前状态；历史中的文件内容可能已变化。</p>
+    <button type="button" aria-expanded={expanded} aria-controls={`fork-history-${thread.id}`} onClick={() => setExpanded(value => !value)}>{expanded ? "收起继承历史" : "展开继承历史"} · {thread.conversation.historySeed.turnCount} 轮</button>
+    <div id={`fork-history-${thread.id}`} hidden={!expanded}>
+    {items.map((entry, index) => <article key={`${thread.id}:inherited:${entry.sourceTurnId}:${entry.sourceItemId}`} className="fork-history-item" data-turn-id={entry.sourceTurnId} onMouseUp={event => capture(entry, event.currentTarget)}>
       <small>{entry.item?.type === "userMessage" ? "原提问" : "继承记录"}</small>
       <div data-inherited-content><InheritedItem item={entry.item} projectId={projectId} threadId={thread.id} action={action} /></div>
       {selected && selected.turnId === entry.sourceTurnId && selected.itemId === entry.sourceItemId && <button type="button" onClick={() => void ask()}>在旁路中询问所选内容</button>}
@@ -117,5 +121,6 @@ export function ForkHistory({ projectId, thread, action, onFork, onSideSelection
     {forkError && <p role="alert">{forkError}</p>}
     {error && <p role="alert">继承历史读取失败：{error}</p>}
     {!complete && !error && <p role="status">正在加载继承历史…</p>}
+    </div>
   </section>;
 }

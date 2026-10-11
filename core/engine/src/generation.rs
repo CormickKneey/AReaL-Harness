@@ -176,7 +176,10 @@ impl Engine {
                         if let Some(active) = cell.state.lock().await.active.as_mut() {
                             active.waiting_for_model_capacity = true;
                         }
-                        cell.emit("areal/side/capacity", json!({"threadId":thread_id,"status":"waiting"}));
+                        cell.emit(
+                            "areal/side/capacity",
+                            json!({"threadId":thread_id,"status":"waiting"}),
+                        );
                     }
                     tokio::select! {
                         _ = cancel.cancelled() => anyhow::bail!("cancelled"),
@@ -417,10 +420,12 @@ impl Engine {
             let tools_enabled = !final_round && !output_handoff && !tool_definitions.is_empty();
             let tool_limits = model::ToolCallLimits {
                 max_calls: if tools_enabled {
-                    (tool_limit > 0)
-                        .then(|| tool_limit.saturating_sub(tool_count))
-                        .unwrap_or(usize::MAX)
-                        .min(self.limits.max_response_tool_calls)
+                    (if tool_limit > 0 {
+                        tool_limit.saturating_sub(tool_count)
+                    } else {
+                        usize::MAX
+                    })
+                    .min(self.limits.max_response_tool_calls)
                 } else {
                     0
                 },

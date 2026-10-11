@@ -18,10 +18,10 @@ use axum::{
     response::{Html, IntoResponse, Response},
     routing::get,
 };
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
@@ -415,12 +415,14 @@ async fn connection(
             && (!conn.principal.allows(auth::Permission::Manage)
                 || conn.principal.thread_ids.is_some()))
             || !conn.principal.allows(auth::permission(method))
-            || ["threadId", "parentThreadId", "sourceThreadId"].iter().any(|key| {
-                params
-                    .get(key)
-                    .and_then(Value::as_str)
-                    .is_some_and(|thread| !conn.principal.sees(thread))
-            })
+            || ["threadId", "parentThreadId", "sourceThreadId"]
+                .iter()
+                .any(|key| {
+                    params
+                        .get(key)
+                        .and_then(Value::as_str)
+                        .is_some_and(|thread| !conn.principal.sees(thread))
+                })
         {
             conn.send(response(
                 id.unwrap(),
@@ -440,23 +442,49 @@ async fn connection(
                 || method.starts_with("areal/workgroup/")
                 || method.starts_with("areal/workflow/start"))
         {
-            conn.send(response(id.unwrap(), Err(RpcError { code: -32010,
-                message: "scoped principals cannot create conversations".into(),
-                data: Some(json!({"reason":"SCOPED_PRINCIPAL_UNSUPPORTED","retryable":false})) })));
+            conn.send(response(
+                id.unwrap(),
+                Err(RpcError {
+                    code: -32010,
+                    message: "scoped principals cannot create conversations".into(),
+                    data: Some(json!({"reason":"SCOPED_PRINCIPAL_UNSUPPORTED","retryable":false})),
+                }),
+            ));
             continue;
         }
-        if let Some(thread_id) = params.get("threadId").or_else(|| params.get("parentThreadId")).and_then(Value::as_str) {
-            if engine.read(thread_id, false).await.is_ok_and(|thread| thread.is_side())
-                && !matches!(method,
-                    "thread/read" | "thread/resume" | "areal/thread/observe" |
-                    "turn/start" | "areal/turn/start" | "turn/interrupt" |
-                    "areal/side/context/read" | "areal/context/read" | "areal/thread/configure" |
-                    "areal/thread/archive" | "areal/conversation/unarchive" | "areal/request/read") {
-                conn.send(response(id.unwrap(), Err(RpcError { code: -32010,
+        if let Some(thread_id) = params
+            .get("threadId")
+            .or_else(|| params.get("parentThreadId"))
+            .and_then(Value::as_str)
+            && engine
+                .read(thread_id, false)
+                .await
+                .is_ok_and(|thread| thread.is_side())
+            && !matches!(
+                method,
+                "thread/read"
+                    | "thread/resume"
+                    | "areal/thread/observe"
+                    | "turn/start"
+                    | "areal/turn/start"
+                    | "turn/interrupt"
+                    | "areal/side/context/read"
+                    | "areal/context/read"
+                    | "areal/thread/configure"
+                    | "areal/thread/archive"
+                    | "areal/conversation/unarchive"
+                    | "areal/request/read"
+            )
+        {
+            conn.send(response(
+                id.unwrap(),
+                Err(RpcError {
+                    code: -32010,
                     message: "Side conversations cannot use this method".into(),
-                    data: Some(json!({"reason":"SIDE_POLICY_VIOLATION","retryable":false})) })));
-                continue;
-            }
+                    data: Some(json!({"reason":"SIDE_POLICY_VIOLATION","retryable":false})),
+                }),
+            ));
+            continue;
         }
         // Long waits and snapshot creation must not block cancellation/steering
         // on this same WebSocket. Bound independently from subscriptions.
@@ -535,44 +563,110 @@ impl Connection {
     async fn conversation_list(&self, engine: &Engine, params: Value) -> Result<Value, RpcError> {
         let p: ConversationList = parse(params)?;
         let view = p.view.as_deref().unwrap_or("main");
-        if !matches!(view, "main" | "side" | "all") { return Err(RpcError::invalid("view must be main, side or all")); }
-        let limit = p.limit.unwrap_or(30);
-        if !(1..=100).contains(&limit) { return Err(RpcError::invalid("limit must be 1..100")); }
-        if p.source_thread_id.is_some() && view == "main" { return Err(RpcError::invalid("sourceThreadId requires side or all view")); }
-        if let Some(source) = &p.source_thread_id {
-            if !self.principal.sees(source) { return Err(RpcError { code:-32003, message:"permission denied".into(), data:None }); }
+        if !matches!(view, "main" | "side" | "all") {
+            return Err(RpcError::invalid("view must be main, side or all"));
         }
-        let filter = format!("{}\0{}\0{}\0{}", self.principal.id, view, p.source_thread_id.as_deref().unwrap_or(""), p.include_archived.unwrap_or(false));
+        let limit = p.limit.unwrap_or(30);
+        if !(1..=100).contains(&limit) {
+            return Err(RpcError::invalid("limit must be 1..100"));
+        }
+        if p.source_thread_id.is_some() && view == "main" {
+            return Err(RpcError::invalid(
+                "sourceThreadId requires side or all view",
+            ));
+        }
+        if let Some(source) = &p.source_thread_id
+            && !self.principal.sees(source)
+        {
+            return Err(RpcError {
+                code: -32003,
+                message: "permission denied".into(),
+                data: None,
+            });
+        }
+        let filter = format!(
+            "{}\0{}\0{}\0{}",
+            self.principal.id,
+            view,
+            p.source_thread_id.as_deref().unwrap_or(""),
+            p.include_archived.unwrap_or(false)
+        );
         let digest = format!("{:x}", Sha256::digest(filter.as_bytes()));
-        let after: Option<(i64, String)> = p.cursor.as_deref().map(|cursor| {
-            let bytes = URL_SAFE_NO_PAD.decode(cursor).map_err(|_| RpcError::invalid("invalid conversation cursor"))?;
-            let saved: ConversationCursor = serde_json::from_slice(&bytes).map_err(|_| RpcError::invalid("invalid conversation cursor"))?;
-            if saved.filter != digest { return Err(RpcError::invalid("conversation cursor does not match filter or identity")); }
-            Ok((saved.created_at, saved.id))
-        }).transpose()?;
+        let after: Option<(i64, String)> = p
+            .cursor
+            .as_deref()
+            .map(|cursor| {
+                let bytes = URL_SAFE_NO_PAD
+                    .decode(cursor)
+                    .map_err(|_| RpcError::invalid("invalid conversation cursor"))?;
+                let saved: ConversationCursor = serde_json::from_slice(&bytes)
+                    .map_err(|_| RpcError::invalid("invalid conversation cursor"))?;
+                if saved.filter != digest {
+                    return Err(RpcError::invalid(
+                        "conversation cursor does not match filter or identity",
+                    ));
+                }
+                Ok((saved.created_at, saved.id))
+            })
+            .transpose()?;
         let mut data = Vec::new();
         let mut cursor = None;
         loop {
-            let (page, next) = engine.list(cursor.as_deref(), 100, None).await.map_err(map_error)?;
+            let (page, next) = engine
+                .list(cursor.as_deref(), 100, None)
+                .await
+                .map_err(map_error)?;
             data.extend(page.into_iter().filter(|thread| {
                 self.principal.sees(&thread.id)
-                    && (p.include_archived.unwrap_or(false) || !thread.desktop.as_ref().is_some_and(|d| d.archived))
-                    && match view { "main" => thread.parent_thread_id.is_none() && !thread.is_side()
-                        && !matches!(thread.source.as_str(), "nativeTaskAgent" | "nativeResearchAgent"), "side" => thread.is_side(), _ => true }
-                    && p.source_thread_id.as_ref().is_none_or(|source| match &thread.conversation {
-                        Some(areal_protocol::Conversation::Side { origin, .. }) | Some(areal_protocol::Conversation::Fork { origin, .. }) => &origin.source_thread_id == source,
-                        _ => false,
-                    })
+                    && (p.include_archived.unwrap_or(false)
+                        || !thread.desktop.as_ref().is_some_and(|d| d.archived))
+                    && match view {
+                        "main" => {
+                            thread.parent_thread_id.is_none()
+                                && !thread.is_side()
+                                && !matches!(
+                                    thread.source.as_str(),
+                                    "nativeTaskAgent" | "nativeResearchAgent"
+                                )
+                        }
+                        "side" => thread.is_side(),
+                        _ => true,
+                    }
+                    && p.source_thread_id
+                        .as_ref()
+                        .is_none_or(|source| match &thread.conversation {
+                            Some(areal_protocol::Conversation::Side { origin, .. })
+                            | Some(areal_protocol::Conversation::Fork { origin, .. }) => {
+                                &origin.source_thread_id == source
+                            }
+                            _ => false,
+                        })
             }));
-            match next { Some(next) => cursor = Some(next), None => break }
+            match next {
+                Some(next) => cursor = Some(next),
+                None => break,
+            }
         }
-        data.sort_by(|a,b| (a.created_at, &a.id).cmp(&(b.created_at, &b.id)));
-        if let Some(after) = after { data.retain(|thread| (thread.created_at, thread.id.clone()) > after); }
+        data.sort_by(|a, b| (a.created_at, &a.id).cmp(&(b.created_at, &b.id)));
+        if let Some(after) = after {
+            data.retain(|thread| (thread.created_at, thread.id.clone()) > after);
+        }
         let has_more = data.len() > limit;
         data.truncate(limit);
-        let next_cursor = if has_more { data.last().map(|thread| URL_SAFE_NO_PAD.encode(serde_json::to_vec(&ConversationCursor {
-            filter: digest, created_at: thread.created_at, id: thread.id.clone(),
-        }).expect("cursor serializes"))) } else { None };
+        let next_cursor = if has_more {
+            data.last().map(|thread| {
+                URL_SAFE_NO_PAD.encode(
+                    serde_json::to_vec(&ConversationCursor {
+                        filter: digest,
+                        created_at: thread.created_at,
+                        id: thread.id.clone(),
+                    })
+                    .expect("cursor serializes"),
+                )
+            })
+        } else {
+            None
+        };
         Ok(json!({"data":data,"nextCursor":next_cursor}))
     }
     fn send(&self, value: Value) {
@@ -685,7 +779,9 @@ impl Connection {
             return task_mode::dispatch(engine, &self.principal, method, params).await;
         }
         if method == "areal/conversation/list" {
-            if !desktop::fork_preview_enabled() { return Err(RpcError::method()); }
+            if !desktop::fork_preview_enabled() {
+                return Err(RpcError::method());
+            }
             return self.conversation_list(engine, params).await;
         }
         if desktop::METHODS.contains(&method) && method != "areal/thread/start" {
@@ -693,13 +789,18 @@ impl Connection {
                 let p: areal_protocol::desktop::TurnStart = parse(params.clone())?;
                 self.subscribe(engine, &p.thread_id).await?;
             }
-            let scoped_request_search = method == "areal/request/read" && self.principal.thread_ids.is_some()
+            let scoped_request_search = method == "areal/request/read"
+                && self.principal.thread_ids.is_some()
                 && params.get("threadId").and_then(Value::as_str).is_none();
             let mut result = desktop::dispatch(engine, &self.principal.id, method, params).await?;
-            if scoped_request_search {
-                if let Some(data) = result.get_mut("data").and_then(Value::as_array_mut) {
-                    data.retain(|entry| entry["threadId"].as_str().is_some_and(|id| self.principal.sees(id)));
-                }
+            if scoped_request_search
+                && let Some(data) = result.get_mut("data").and_then(Value::as_array_mut)
+            {
+                data.retain(|entry| {
+                    entry["threadId"]
+                        .as_str()
+                        .is_some_and(|id| self.principal.sees(id))
+                });
             }
             return Ok(result);
         }
@@ -710,11 +811,21 @@ impl Connection {
                     || !self.principal.allows(auth::Permission::Tools)
                     || self.principal.thread_ids.is_some()
                 {
-                    return Err(RpcError { code: -32003, message: "trusted desktop tool host required".into(), data: None });
+                    return Err(RpcError {
+                        code: -32003,
+                        message: "trusted desktop tool host required".into(),
+                        data: None,
+                    });
                 }
                 let request: areal_protocol::desktop::AttachBrowserTools = parse(params)?;
-                engine.attach_browser_tools(self.principal.id.clone(), request, self.tool_host.clone())
-                    .await.map_err(map_error)
+                engine
+                    .attach_browser_tools(
+                        self.principal.id.clone(),
+                        request,
+                        self.tool_host.clone(),
+                    )
+                    .await
+                    .map_err(map_error)
             }
             "areal/thread/start" => {
                 let p: areal_protocol::desktop::ThreadStart = parse(params)?;
@@ -759,9 +870,21 @@ impl Connection {
                     && self.principal.allows(auth::Permission::Interact)
                     && self.principal.allows(auth::Permission::Tools)
                     && self.principal.thread_ids.is_none();
-                if !can_attach_browser { methods.retain(|method| *method != "areal/thread/tools/attach"); }
+                if !can_attach_browser {
+                    methods.retain(|method| *method != "areal/thread/tools/attach");
+                }
                 methods.extend_from_slice(desktop::METHODS);
-                if !desktop::fork_preview_enabled() { methods.retain(|method| !matches!(*method, "areal/thread/fork" | "areal/side/start" | "areal/conversation/list" | "areal/conversation/unarchive")); }
+                if !desktop::fork_preview_enabled() {
+                    methods.retain(|method| {
+                        !matches!(
+                            *method,
+                            "areal/thread/fork"
+                                | "areal/side/start"
+                                | "areal/conversation/list"
+                                | "areal/conversation/unarchive"
+                        )
+                    });
+                }
                 methods.extend_from_slice(task_mode::METHODS);
                 if !engine.runtime_capabilities().is_null() {
                     methods.extend_from_slice(processes::METHODS);
@@ -782,7 +905,7 @@ impl Connection {
                     "notifications": NOTIFICATIONS, "serverRequests":["item/tool/call"],
                     "browserToolBundles":if can_attach_browser {json!([{"bundleId":areal_protocol::desktop::BROWSER_V1_BUNDLE,
                         "definition":areal_protocol::desktop::browser_v1_tool()}])} else {json!([])},
-                    "features":{"conversationDerivationV1":if desktop::fork_preview_enabled() { json!({"preview":true,"forkBoundaries":["after","before"],"workspaceModes":["sharedCurrent"],"sideWorkspaceAccess":if engine.side_workspace_read_available() {json!(["none","readOnly"])} else {json!(["none"])},"historyBytes":engine.fork_snapshot_limit()}) } else { Value::Null },"subscriptionRemoval":true,"atomicResume":true,"atomicObserve":true,"browserToolAttachment":can_attach_browser,
+                    "features":{"conversationDerivationV1":if desktop::fork_preview_enabled() { json!({"preview":true,"methods":["areal/thread/fork","areal/side/start","areal/conversation/list","areal/conversation/history","areal/conversation/unarchive","areal/side/context/read"],"limits":engine.conversation_derivation_limits(),"forkBoundaries":["after","before"],"workspaceModes":["sharedCurrent"],"sideWorkspaceAccess":if engine.side_workspace_read_available() {json!(["none","readOnly"])} else {json!(["none"])},"historyBytes":engine.fork_snapshot_limit()}) } else { Value::Null },"subscriptionRemoval":true,"atomicResume":true,"atomicObserve":true,"browserToolAttachment":can_attach_browser,
                         "taskModes":true,"taskChannels":true,"asyncQuestions":true,"headlessInteractions":true,"goals":true,"dynamicTools":true,"mediaOutput":true,"durableSubmissionDeduplication":true,"profiles":true,"skills":true,"plans":true,"interactions":true,"queue":true,"providerConfiguration":true,"modelReset":true,"toolMedia":true,"blobUpload":true},
                     "limits":{"frameBytes":MAX_FRAME_BYTES,"subscriptions":128,"sendQueue":256,"threadEventWindow":128},
                     "runtime":engine.runtime_capabilities()}))
@@ -863,7 +986,8 @@ impl Connection {
             }
             "areal/thread/observe" => {
                 let p: areal_protocol::desktop::ObserveThread = parse(params)?;
-                if !self.subscriptions.contains_key(&p.thread_id) && self.subscriptions.len() >= 128 {
+                if !self.subscriptions.contains_key(&p.thread_id) && self.subscriptions.len() >= 128
+                {
                     return Err(RpcError {
                         code: -32001,
                         message: "subscription limit reached".into(),
@@ -961,8 +1085,11 @@ fn parse<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, RpcError> {
 }
 fn map_error(error: Error) -> RpcError {
     if matches!(&error, Error::Invalid(reason) if reason == "SIDE_POLICY_VIOLATION") {
-        return RpcError { code: -32010, message: "SIDE_POLICY_VIOLATION".into(),
-            data: Some(json!({"reason":"SIDE_POLICY_VIOLATION","retryable":false})) };
+        return RpcError {
+            code: -32010,
+            message: "SIDE_POLICY_VIOLATION".into(),
+            data: Some(json!({"reason":"SIDE_POLICY_VIOLATION","retryable":false})),
+        };
     }
     let code = match &error {
         Error::Invalid(_) => -32602,

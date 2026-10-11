@@ -755,12 +755,23 @@ impl Engine {
         let entry = bindings.registry.get(&call.name);
         let side_read = cell.state.lock().await.thread.side_workspace_read();
         if cell.state.lock().await.thread.is_side()
-            && !(call.name == "side_context_read" && entry.as_ref().is_ok_and(|e| matches!(e.backend, Backend::Core)))
-            && !(side_read && entry.as_ref().is_ok_and(|e| side_file_tool(&call.name, &e.backend))) {
+            && !(call.name == "side_context_read"
+                && entry
+                    .as_ref()
+                    .is_ok_and(|e| matches!(e.backend, Backend::Core)))
+            && !(side_read
+                && entry
+                    .as_ref()
+                    .is_ok_and(|e| side_file_tool(&call.name, &e.backend)))
+        {
             anyhow::bail!("SIDE_POLICY_VIOLATION");
         }
-        if side_read && entry.as_ref().is_ok_and(|e| side_file_tool(&call.name, &e.backend))
-            && !self.side_workspace_read_available() {
+        if side_read
+            && entry
+                .as_ref()
+                .is_ok_and(|e| side_file_tool(&call.name, &e.backend))
+            && !self.side_workspace_read_available()
+        {
             anyhow::bail!("WORKSPACE_READ_UNAVAILABLE");
         }
         let coordination = entry
@@ -970,24 +981,45 @@ impl Engine {
             None
         };
         if let Some(runtime) = runtime {
-            let is_side_read = success && cell.state.lock().await.thread.side_workspace_read() &&
-                matches!(call.name.as_str(), "fs_read" | "fs_list" | "fs_stat" | "search_files");
+            let is_side_read = success
+                && cell.state.lock().await.thread.side_workspace_read()
+                && matches!(
+                    call.name.as_str(),
+                    "fs_read" | "fs_list" | "fs_stat" | "search_files"
+                );
             let current = result["sha256"].as_str().map(str::to_owned);
             let previous = if is_side_read && call.name == "fs_read" {
-                let path = serde_json::from_str::<Value>(&call.arguments).ok()
-                    .and_then(|args| args["path"].as_str().and_then(|p| resource_uri(p, runtime).ok()));
+                let path = serde_json::from_str::<Value>(&call.arguments)
+                    .ok()
+                    .and_then(|args| {
+                        args["path"]
+                            .as_str()
+                            .and_then(|p| resource_uri(p, runtime).ok())
+                    });
                 let state = cell.state.lock().await;
-                path.as_ref().and_then(|path| state.active.as_ref().and_then(|active|
-                    active.handles.version_order.iter().rev()
-                        .filter_map(|id| active.handles.versions.get(id))
-                        .find(|(known_path, _)| known_path == path)
-                        .map(|(_, hash)| hash.clone())))
-            } else { None };
+                path.as_ref().and_then(|path| {
+                    state.active.as_ref().and_then(|active| {
+                        active
+                            .handles
+                            .version_order
+                            .iter()
+                            .rev()
+                            .filter_map(|id| active.handles.versions.get(id))
+                            .find(|(known_path, _)| known_path == path)
+                            .map(|(_, hash)| hash.clone())
+                    })
+                })
+            } else {
+                None
+            };
             if is_side_read && let Some(object) = result.as_object_mut() {
                 object.insert("source".into(), json!("currentWorkspace"));
                 object.insert("versionNotice".into(), json!("Current workspace observation; not the source conversation's historical file version. Files may change between pages."));
                 if let (Some(previous), Some(current)) = (previous, current) {
-                    object.insert("changedSincePreviousPage".into(), json!(previous != current));
+                    object.insert(
+                        "changedSincePreviousPage".into(),
+                        json!(previous != current),
+                    );
                 }
             }
             cell.state

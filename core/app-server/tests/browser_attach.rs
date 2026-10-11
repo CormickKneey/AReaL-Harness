@@ -64,7 +64,7 @@ async fn observer_subscribes_without_taking_the_browser_callback() {
     let observed = loop { let message = next(&mut observer).await; if message["method"] == "turn/started" { break message; } };
     assert_eq!(observed["params"]["threadId"], id);
     second_host.send(Wire::Text(json!({"id":pending["id"],"result":{"success":true,"contentItems":[{"type":"inputText","text":"forged"}]}}).to_string().into())).await.unwrap();
-    assert_eq!(call(&mut second_host, "model/list", json!({})).await["result"].is_object(), true);
+    assert!(call(&mut second_host, "model/list", json!({})).await["result"].is_object());
     assert_eq!(engine.read(id, true).await.unwrap().turns[0].status, areal_protocol::TurnStatus::InProgress);
     owner.send(Wire::Text(json!({"id":pending["id"],"result":{"success":true,"contentItems":[{"type":"inputText","text":"ok"}]}}).to_string().into())).await.unwrap();
     let done = engine.wait(id).await.unwrap();

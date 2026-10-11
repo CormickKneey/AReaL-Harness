@@ -52,19 +52,36 @@ impl Invocation<'_> {
         self.validate(&arguments)?;
         {
             let state = self.cell.state.lock().await;
-            if state.thread.is_side() && !(self.call.name == "side_context_read" && matches!(self.entry.backend, Backend::Core))
-                && !(state.thread.side_workspace_read() && super::side_file_tool(&self.call.name, &self.entry.backend)) {
-                return Err(rt::Error::new(rt::ErrorCode::PermissionDenied, "SIDE_POLICY_VIOLATION"));
+            if state.thread.is_side()
+                && !(self.call.name == "side_context_read"
+                    && matches!(self.entry.backend, Backend::Core))
+                && !(state.thread.side_workspace_read()
+                    && super::side_file_tool(&self.call.name, &self.entry.backend))
+            {
+                return Err(rt::Error::new(
+                    rt::ErrorCode::PermissionDenied,
+                    "SIDE_POLICY_VIOLATION",
+                ));
             }
-            if state.thread.side_workspace_read() && super::side_file_tool(&self.call.name, &self.entry.backend) {
+            if state.thread.side_workspace_read()
+                && super::side_file_tool(&self.call.name, &self.entry.backend)
+            {
                 if !self.engine.side_workspace_read_available() {
-                    return Err(rt::Error::new(rt::ErrorCode::Unavailable, "WORKSPACE_READ_UNAVAILABLE"));
+                    return Err(rt::Error::new(
+                        rt::ErrorCode::Unavailable,
+                        "WORKSPACE_READ_UNAVAILABLE",
+                    ));
                 }
                 let path = arguments.get("path").and_then(Value::as_str).unwrap_or(".");
-                let runtime = self.engine.runtime.as_ref().ok_or_else(|| rt::Error::new(rt::ErrorCode::Unavailable, "WORKSPACE_READ_UNAVAILABLE"))?;
+                let runtime = self.engine.runtime.as_ref().ok_or_else(|| {
+                    rt::Error::new(rt::ErrorCode::Unavailable, "WORKSPACE_READ_UNAVAILABLE")
+                })?;
                 let uri = super::resource_uri(path, runtime).map_err(invalid)?;
                 if uri != "workspace://repo" && !uri.starts_with("workspace://repo/") {
-                    return Err(rt::Error::new(rt::ErrorCode::PermissionDenied, "SIDE_POLICY_VIOLATION"));
+                    return Err(rt::Error::new(
+                        rt::ErrorCode::PermissionDenied,
+                        "SIDE_POLICY_VIOLATION",
+                    ));
                 }
             }
             if state
@@ -150,8 +167,10 @@ impl Invocation<'_> {
         }
         let browser_plan = if self.call.name == "browser_v1"
             && matches!(self.entry.backend, Backend::Client)
-            && matches!(arguments["operation"].as_str(), Some("act" | "wait" | "navigate" | "newPage" | "runBatch"))
-        {
+            && matches!(
+                arguments["operation"].as_str(),
+                Some("act" | "wait" | "navigate" | "newPage" | "runBatch")
+            ) {
             let host = self
                 .host
                 .as_ref()
@@ -324,7 +343,9 @@ impl Invocation<'_> {
                     .await
                     .map(|value| (true, value))
                     .map_err(|error| {
-                        if self.call.name == "development_service_start" && matches!(error, Error::Storage(_)) {
+                        if self.call.name == "development_service_start"
+                            && matches!(error, Error::Storage(_))
+                        {
                             return unknown(error);
                         }
                         let mut result = invalid(&error);
@@ -390,7 +411,9 @@ impl Invocation<'_> {
                     name: self.call.name.clone(),
                     arguments: effective.to_string(),
                 };
-                if call.name == "read_file" || call.name == "search_files" && !state.thread.is_side() {
+                if call.name == "read_file"
+                    || call.name == "search_files" && !state.thread.is_side()
+                {
                     drop(state);
                     return navigation::invoke(
                         runtime,
@@ -562,10 +585,12 @@ impl Invocation<'_> {
             }
         };
         if self.call.name == "browser_v1"
-            && response.structured_content.as_ref().is_some_and(|content|
-                content["code"] == "outcome_unknown" && content["dispatch"] == "unknown")
+            && response.structured_content.as_ref().is_some_and(|content| {
+                content["code"] == "outcome_unknown" && content["dispatch"] == "unknown"
+            })
         {
-            let mut error = unknown("browser batch step outcome is UNKNOWN; inspect the confirmed prefix");
+            let mut error =
+                unknown("browser batch step outcome is UNKNOWN; inspect the confirmed prefix");
             error.details = response.structured_content;
             return Err(error);
         }

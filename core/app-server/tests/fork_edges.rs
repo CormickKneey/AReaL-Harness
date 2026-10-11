@@ -138,10 +138,9 @@ async fn turn(socket: &mut Socket, thread: &str, id: u64, text: &str) -> String 
             if let Some(last) = read["result"]["thread"]["turns"]
                 .as_array()
                 .and_then(|v| v.last())
+                && last["status"] == "completed"
             {
-                if last["status"] == "completed" {
-                    return last["id"].as_str().unwrap().to_owned();
-                }
+                return last["id"].as_str().unwrap().to_owned();
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
@@ -404,8 +403,10 @@ async fn snapshot_over_limit_refuses_fork_and_leaves_no_target() {
     );
     close_socket(socket).await;
     fixture.close().await;
-    let mut limits = Limits::default();
-    limits.max_history_bytes = record_bytes + 100;
+    let limits = Limits {
+        max_history_bytes: record_bytes + 100,
+        ..Limits::default()
+    };
     let fixture = Fixture::open(dir.path(), limits).await;
     let mut socket = fixture.socket().await;
     let refused = call(

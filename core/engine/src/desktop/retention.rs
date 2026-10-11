@@ -5,17 +5,24 @@ impl Engine {
         self.mutate(move |engine| async move {
             let cell = engine.raw_cell(&thread_id).await?;
             let mut state = cell.state.lock().await;
-            if !state.thread.is_side() { return Err(invalid("only Side conversations can be restored here")); }
+            if !state.thread.is_side() {
+                return Err(invalid("only Side conversations can be restored here"));
+            }
             if !state.thread.desktop.as_ref().is_some_and(|d| d.archived) {
                 return Ok(json!({"threadId":thread_id,"archived":false}));
             }
-            let mut candidate = engine.store.read_thread(&thread_id).await.map_err(invalid)?;
+            let mut candidate = engine
+                .store
+                .read_thread(&thread_id)
+                .await
+                .map_err(invalid)?;
             candidate.desktop.as_mut().unwrap().archived = false;
             engine.persist(&candidate).await?;
             state.thread = candidate;
             cell.emit("areal/thread/unarchived", json!({"threadId":thread_id}));
             Ok(json!({"threadId":thread_id,"archived":false}))
-        }).await
+        })
+        .await
     }
     pub async fn archive_thread(self: &Arc<Self>, thread_id: String) -> Result<Value> {
         self.mutate(move|engine|async move{
@@ -55,13 +62,20 @@ impl Engine {
                 return Err(invalid("upload is referenced by retained history or queue"));
             }
             let snapshot = match &state.thread.conversation {
-                Some(areal_protocol::Conversation::Fork { history_seed, .. }) => Some(&history_seed.snapshot_id),
-                Some(areal_protocol::Conversation::Side { reference_snapshot, .. }) => Some(&reference_snapshot.snapshot_id),
+                Some(areal_protocol::Conversation::Fork { history_seed, .. }) => {
+                    Some(&history_seed.snapshot_id)
+                }
+                Some(areal_protocol::Conversation::Side {
+                    reference_snapshot, ..
+                }) => Some(&reference_snapshot.snapshot_id),
                 None => None,
             };
             if let Some(snapshot) = snapshot {
                 let turns = engine.store.read_fork_snapshot(snapshot).map_err(invalid)?;
-                if serde_json::to_string(&turns).map_err(invalid)?.contains(&uri) {
+                if serde_json::to_string(&turns)
+                    .map_err(invalid)?
+                    .contains(&uri)
+                {
                     return Err(invalid("upload is referenced by retained history or queue"));
                 }
             }

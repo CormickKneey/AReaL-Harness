@@ -52,6 +52,20 @@ export class SideDraftWorkspace {
   owner(selection) { return `${this.prefix}:${selection.kind}:${selection.id}`; }
   draftKey(selection) { return `${this.owner(selection)}:draft`; }
   pendingKey(selection) { return `${this.owner(selection)}:pending`; }
+  bringBackKey(selection) { return `${this.owner(selection)}:bring-back`; }
+  bringBack(selection) {
+    try {
+      const preview = JSON.parse(this.storage.getItem(this.bringBackKey(selection)) ?? 'null');
+      return preview?.owner?.paneOwner === this.owner(selection) && typeof preview.text === 'string' &&
+        typeof preview.insertionId === 'string' ? preview : null;
+    } catch { return null; }
+  }
+  saveBringBack(selection, preview) {
+    if (!preview) { this.storage.removeItem(this.bringBackKey(selection)); return; }
+    if (preview.owner.paneOwner !== this.owner(selection)) throw new Error('带回预览的旁路归属已变化');
+    this.storage.setItem(this.bringBackKey(selection), JSON.stringify(preview));
+  }
+
   pendingDrafts() { return this.drafts().filter(id => this.storage.getItem(this.pendingKey({ kind: 'draft', id }))).map(id => ({ kind: 'draft', id })); }
   availableDrafts() { return this.drafts().filter(id => {
     const draft = { kind: 'draft', id };
