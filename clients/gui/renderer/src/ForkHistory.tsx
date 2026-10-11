@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Action, Data } from "./services.js";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./components/ui/dropdown-menu.js";
 import { SentAttachment } from "./MessageAttachment.js";
@@ -32,6 +32,7 @@ export function ForkHistory({ projectId, thread, action, onFork, onSideSelection
   const [forking, setForking] = useState(false);
   const [forkError, setForkError] = useState("");
   const [selected, setSelected] = useState<{ turnId: string; itemId: string; text: string; startUtf8?: number; endUtf8?: number } | null>(null);
+  const partial = useRef<{ itemId: string; json: string } | null>(null);
   const snapshotId = thread.conversation?.historySeed?.snapshotId;
   const capture = (entry: Data, article: HTMLElement) => {
     if (!onSideSelection) return;
@@ -61,14 +62,35 @@ export function ForkHistory({ projectId, thread, action, onFork, onSideSelection
     }
     onSideSelection(selection, selected.text, { kind: "turn", turnId: selected.turnId, boundary: "after" }); setSelected(null);
   };
-  useEffect(() => { setItems([]); setCursor(undefined); setComplete(false); setError(""); }, [thread.id, snapshotId]);
+  useEffect(() => { partial.current = null; setItems([]); setCursor(undefined); setComplete(false); setError(""); }, [thread.id, snapshotId]);
   useEffect(() => {
     if (!snapshotId || complete || error) return;
     let cancelled = false;
     void action("manage", { projectId, operation: "inheritedHistory", threadId: thread.id,
       view: "inherited", ...(cursor ? { cursor } : {}), maxBytes: 65536 }).then((page: Data) => {
       if (cancelled || page.snapshotId !== snapshotId) return;
-      setItems(previous => [...previous, ...(page.data ?? [])]);
+      const completeEntries: Data[] = [];
+      for (const entry of page.data ?? []) {
+        if (!entry.fragment) {
+          if (partial.current) throw new Error("继承历史分片不连续");
+          completeEntries.push(entry); continue;
+        }
+        const fragment = entry.fragment;
+        const pending = partial.current;
+        const bytes = pending ? new TextEncoder().encode(pending.json).length : 0;
+        if (fragment.offsetUtf8 !== bytes || pending && pending.itemId !== entry.sourceItemId) {
+          throw new Error("继承历史分片不连续");
+        }
+        const json = (pending?.json ?? "") + fragment.text;
+        const total = new TextEncoder().encode(json).length;
+        if (total > fragment.totalBytes) throw new Error("继承历史分片长度无效");
+        if (total === fragment.totalBytes) {
+          completeEntries.push(JSON.parse(json));
+          partial.current = null;
+        } else partial.current = { itemId: entry.sourceItemId, json };
+      }
+      if (page.complete && partial.current) throw new Error("继承历史分片不完整");
+      setItems(previous => [...previous, ...completeEntries]);
       setCursor(page.nextCursor ?? undefined);
       setComplete(page.complete === true);
     }).catch((cause: Error) => { if (!cancelled) setError(cause.message); });
