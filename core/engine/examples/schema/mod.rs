@@ -350,9 +350,9 @@ pub fn projections() -> (Value, Value) {
     insert(
         &["conversation/history"],
         object(
-            json!({"snapshotId":string.clone(),"data":array(json!({"oneOf":[
-                object(json!({"sourceThreadId":string.clone(),"sourceTurnId":string.clone(),"sourceItemId":string.clone(),"item":schema::<Item>()})),
-                object(json!({"sourceThreadId":string.clone(),"sourceTurnId":string.clone(),"sourceItemId":string.clone(),"fragment":object(json!({"text":string.clone(),"offsetUtf8":number.clone(),"nextOffsetUtf8":number.clone(),"totalBytes":number.clone()}))}))
+            json!({"snapshotId":nullable(string.clone()),"data":array(json!({"oneOf":[
+                object(json!({"sourceThreadId":string.clone(),"sourceTurnId":string.clone(),"sourceItemId":string.clone(),"sourceTurnStatus":schema::<TurnStatus>(),"item":schema::<Item>()})),
+                object(json!({"sourceThreadId":string.clone(),"sourceTurnId":string.clone(),"sourceItemId":string.clone(),"sourceTurnStatus":schema::<TurnStatus>(),"fragment":object(json!({"text":string.clone(),"offsetUtf8":number.clone(),"nextOffsetUtf8":number.clone(),"totalBytes":number.clone()}))}))
             ]})),"nextCursor":nullable(string.clone()),"complete":boolean}),
         ),
     );
@@ -364,8 +364,12 @@ pub fn projections() -> (Value, Value) {
         &["conversation/unarchive"],
         object(json!({"threadId":string.clone(),"archived":boolean})),
     );
+    insert(
+        &["thread/tools/attach"],
+        object(json!({"threadId":string,"toolsetRevision":number,"bundleId":string})),
+    );
     responses.insert("thread/read".into(), object(json!({"thread":thread})));
-    for name in ["thread/start", "thread/resume"] {
+    for name in ["thread/start", "thread/resume", "areal/thread/observe"] {
         responses.insert(name.into(),object(json!({"thread":thread,"cwd":string,"model":string,"modelProvider":string,"approvalPolicy":string,"permissionMode":{"enum":["YOLO","ASK_PERMISSIONS"]},"approvalsReviewer":string,"sandbox":any_object,"reasoningEffort":nullable(string.clone())})));
     }
     responses.insert(

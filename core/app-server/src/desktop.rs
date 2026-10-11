@@ -64,6 +64,17 @@ pub(crate) const METHODS: &[&str] = &[
 pub(crate) fn fork_preview_enabled() -> bool {
     std::env::var("AREAL_DEV_CONVERSATION_DERIVATION").as_deref() == Ok("1")
 }
+pub(crate) fn require_fork_preview() -> Result<(), RpcError> {
+    if fork_preview_enabled() {
+        Ok(())
+    } else {
+        Err(RpcError {
+            code: -32010,
+            message: "conversation derivation preview is disabled".into(),
+            data: Some(json!({"reason":"CONVERSATION_DERIVATION_DISABLED","retryable":false})),
+        })
+    }
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SkillList {
@@ -194,16 +205,10 @@ async fn dispatch_inner(
     method: &str,
     params: Value,
 ) -> Result<Value, RpcError> {
-    if matches!(
-        method,
-        "areal/thread/fork" | "areal/side/start" | "areal/conversation/unarchive"
-    ) && !fork_preview_enabled()
-    {
-        return Err(RpcError::method());
-    }
     let result = match method {
         "areal/side/start" => {
             let request: SideStart = parse(params)?;
+            require_fork_preview()?;
             let request_id = request.request_id.clone();
             match engine.side_start(identity.into(), request).await {
                 Ok((thread, turn)) => {
@@ -255,6 +260,7 @@ async fn dispatch_inner(
         }
         "areal/thread/fork" => {
             let request: ForkThread = parse(params)?;
+            require_fork_preview()?;
             let request_id = request.request_id.clone();
             match engine.fork_thread(identity.into(), request).await {
                 Ok(thread) => Ok(json!({"thread":thread,"requestId":request_id})),
@@ -326,11 +332,8 @@ async fn dispatch_inner(
                 max_bytes: Option<usize>,
             }
             let p: ReadHistory = parse(params)?;
-            if p.view != "inherited" {
-                return Err(RpcError::invalid("SCF-01 supports inherited history only"));
-            }
             engine
-                .fork_history(&p.thread_id, p.cursor, p.max_bytes)
+                .conversation_history(&p.thread_id, &p.view, p.cursor, p.max_bytes)
                 .await
         }
         "areal/goal/get" => {
@@ -399,6 +402,7 @@ async fn dispatch_inner(
         }
         "areal/conversation/unarchive" => {
             let p: ThreadId = parse(params)?;
+            require_fork_preview()?;
             engine.unarchive_conversation(p.thread_id).await
         }
         "areal/blob/release" => {

@@ -209,12 +209,7 @@ impl Registry {
     pub fn side_only(mut self, workspace_read: bool) -> Self {
         self.tools.retain(|name, tool| {
             (name == "side_context_read" && matches!(tool.backend, Backend::Core))
-                || (workspace_read
-                    && matches!(
-                        name.as_str(),
-                        "fs_read" | "fs_list" | "fs_stat" | "search_files"
-                    )
-                    && matches!(tool.backend, Backend::Builtin))
+                || (workspace_read && super::side_file_tool(name, &tool.backend))
         });
         self.order.retain(|name| self.tools.contains_key(name));
         self

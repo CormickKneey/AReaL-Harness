@@ -246,7 +246,7 @@ fn main() {
         );
     }
     methods.insert("turn/start".into(),object(json!({"threadId":string,"input":{"type":"array","items":schemars::schema_for!(areal_protocol::Input)}}),vec!["threadId","input"]));
-    methods.insert("areal/conversation/history".into(),object(json!({"threadId":string,"view":{"const":"inherited"},"cursor":string,"maxBytes":{"type":"integer","minimum":1,"maximum":262144}}),vec!["threadId","view"]));
+    methods.insert("areal/conversation/history".into(),object(json!({"threadId":string,"view":{"enum":["inherited","reference"]},"cursor":string,"maxBytes":{"type":"integer","minimum":1,"maximum":262144}}),vec!["threadId","view"]));
     methods.insert("areal/conversation/list".into(),object(json!({"view":{"enum":["main","side","all"]},"sourceThreadId":string,"includeArchived":{"type":"boolean"},"limit":{"type":"integer","minimum":1,"maximum":100},"cursor":string}),vec![]));
     methods.insert(
         "areal/conversation/unarchive".into(),

@@ -274,7 +274,7 @@ try {
   assert.equal((await page.getByTestId("chat-input").innerText()).trim(), "");
   await shot("02-fork-empty.png");
   const sourceTitle = (await state()).projects[0].state.threads[sourceThreadId].preview;
-  await inherited.getByRole("button", { name: sourceTitle, exact: true }).click();
+  await inherited.getByRole("button", { name: sourceTitle || "来源会话", exact: true }).click();
   await page.waitForFunction(id => document.querySelector('[data-testid="areal-workbench"]')?.dataset.threadId === id, sourceThreadId);
   assert.ok(await page.locator(`[data-turn-id="${anchorTurnId}"]`).isVisible());
   await selectConversation(page, targetThreadId);

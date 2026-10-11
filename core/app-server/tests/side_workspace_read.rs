@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use std::{
     path::PathBuf,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
     time::Duration,
@@ -26,6 +26,7 @@ type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 struct ReadModel {
     workspace: PathBuf,
     round: AtomicUsize,
+    observed: Mutex<Vec<Vec<String>>>,
 }
 
 #[async_trait]
@@ -51,6 +52,28 @@ impl Model for ReadModel {
             .filter_map(|tool| tool["function"]["name"].as_str())
             .collect();
         names.sort_unstable();
+        if !names.contains(&"side_context_read") {
+            return Ok(Box::pin(futures_util::stream::iter([Ok(
+                ModelEvent::text("source answer"),
+            )])));
+        }
+        let round = self.round.fetch_add(1, Ordering::SeqCst);
+        self.observed
+            .lock()
+            .unwrap()
+            .push(names.iter().map(|name| (*name).to_owned()).collect());
+        if round >= 8 {
+            let event = if messages.iter().any(|message| message.role == "tool") {
+                ModelEvent::text("restricted answer")
+            } else {
+                ModelEvent::ToolCall(ToolCall {
+                    id: format!("restricted-{round}"),
+                    name: "fs_read".into(),
+                    arguments: json!({"path":"note.txt"}).to_string(),
+                })
+            };
+            return Ok(Box::pin(futures_util::stream::iter([Ok(event)])));
+        }
         assert_eq!(
             names,
             [
@@ -61,7 +84,6 @@ impl Model for ReadModel {
                 "side_context_read"
             ]
         );
-        let round = self.round.fetch_add(1, Ordering::SeqCst);
         let previous = messages
             .iter()
             .rev()
@@ -185,6 +207,7 @@ async fn side_read_only_is_native_scoped_and_reports_current_file_changes() {
     let model = Arc::new(ReadModel {
         workspace: workspace.clone(),
         round: AtomicUsize::new(0),
+        observed: Mutex::new(Vec::new()),
     });
     let engine =
         Engine::open_with_runtime(&data, model.clone(), Limits::default(), runtime).unwrap();
@@ -237,7 +260,8 @@ async fn side_read_only_is_native_scoped_and_reports_current_file_changes() {
         .unwrap();
     assert_eq!(
         completed.turns[0].status,
-        areal_protocol::TurnStatus::Completed
+        areal_protocol::TurnStatus::Completed,
+        "{completed:?}"
     );
     assert_eq!(model.round.load(Ordering::SeqCst), 6);
     assert_eq!(
@@ -316,10 +340,106 @@ async fn side_read_only_is_native_scoped_and_reports_current_file_changes() {
         );
     }
     assert_eq!(model.round.load(Ordering::SeqCst), 8);
+    // 旧锚点曾有读取权限；创建时已收紧的来源配置仍是授权上限。
+    engine
+        .start(
+            source_id,
+            vec![areal_protocol::Input::text("old readable anchor")],
+        )
+        .await
+        .unwrap();
+    let source_turn = engine.wait(source_id).await.unwrap().turns[0].id.clone();
+    for (index, allowed) in [vec![], vec!["fs_stat"]].into_iter().enumerate() {
+        let revision = engine
+            .read(source_id, false)
+            .await
+            .unwrap()
+            .desktop
+            .unwrap_or_default()
+            .configuration
+            .revision;
+        let configured = call(
+            &mut socket,
+            101,
+            "areal/thread/configure",
+            json!({"threadId":source_id,
+            "expectedRevision":revision,"options":{"toolAllowlist":allowed}}),
+        )
+        .await;
+        assert!(configured["error"].is_null(), "{configured}");
+        let side = call(&mut socket, 102, "areal/side/start", json!({"requestId":format!("bounded-{index}"),
+            "sourceThreadId":source_id,"anchor":{"kind":"turn","turnId":source_turn,"boundary":"after"},
+            "workspaceAccess":"readOnly","input":[{"type":"text","text":"bounded read"}]})).await;
+        let id = side["result"]["thread"]["id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{side}"));
+        let thread = engine.wait(id).await.unwrap();
+        let mut expected = allowed.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        expected.push("side_context_read".into());
+        expected.sort();
+        assert_eq!(model.observed.lock().unwrap().last().unwrap(), &expected);
+        let rejected = thread.turns[0]
+            .items
+            .iter()
+            .find_map(|item| match item {
+                areal_protocol::Item::DynamicToolCall {
+                    tool,
+                    success,
+                    content_items,
+                    ..
+                } if tool == "fs_read" => Some((success, content_items)),
+                _ => None,
+            })
+            .expect("guessed forbidden read must be journaled");
+        assert_eq!(*rejected.0, Some(false));
+        assert!(
+            serde_json::to_string(rejected.1)
+                .unwrap()
+                .contains("immutable Turn allowlist")
+        );
+        let revision = thread.desktop.unwrap().configuration.revision;
+        let configured = call(
+            &mut socket,
+            103,
+            "areal/thread/configure",
+            json!({"threadId":id,
+            "expectedRevision":revision,"parameters":{}}),
+        )
+        .await;
+        assert!(configured["error"].is_null(), "{configured}");
+        let mut saved = engine
+            .read(id, false)
+            .await
+            .unwrap()
+            .desktop
+            .unwrap()
+            .configuration
+            .tool_allowlist
+            .unwrap();
+        saved.sort();
+        assert_eq!(saved, expected);
+    }
     drop(socket);
     stop.cancel();
     server.await.unwrap().unwrap();
     engine.shutdown().await;
+
+    drop(engine);
+    let restored = Engine::open_with_runtime(
+        &data,
+        model.clone(),
+        Limits::default(),
+        RuntimeConfig {
+            client: client.clone(),
+            workspace: workspace.clone(),
+            writable: true,
+            command_scope: None,
+            command_scratch: None,
+        },
+    )
+    .unwrap();
+    restored.shutdown().await;
+    drop(restored);
 
     let hook_data = dir.path().join("hook-data");
     let hooks = ToolExtensions {
@@ -337,6 +457,7 @@ async fn side_read_only_is_native_scoped_and_reports_current_file_changes() {
         Arc::new(ReadModel {
             workspace: workspace.clone(),
             round: AtomicUsize::new(0),
+            observed: Mutex::new(Vec::new()),
         }),
         Limits::default(),
         Some(RuntimeConfig {

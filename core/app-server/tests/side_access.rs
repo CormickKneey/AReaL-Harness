@@ -445,3 +445,122 @@ async fn authenticated_side_access_and_legacy_routes_preserve_policy() {
         "{refusal}"
     );
 }
+
+#[tokio::test]
+async fn recovered_side_unknown_can_be_inspected_without_changing_outcome() {
+    unsafe {
+        std::env::set_var("AREAL_DEV_CONVERSATION_DERIVATION", "1");
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let engine = Engine::open(dir.path(), Arc::new(TextModel), Limits::default()).unwrap();
+    let source = engine.create("/workspace".into()).await.unwrap();
+    engine
+        .start(&source.id, vec![Input::text("source evidence")])
+        .await
+        .unwrap();
+    engine.wait(&source.id).await.unwrap();
+    engine.shutdown().await;
+    drop(engine);
+    let inject_unknown = |thread_id: &str, item_id: &str| {
+        let path = dir.path().join(format!("{thread_id}.json"));
+        let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        record["thread"]["turns"][0]["items"].as_array_mut().unwrap().push(json!({
+            "type":"dynamicToolCall","id":item_id,"tool":"side_context_read","arguments":{},
+            "status":"failed","success":false,"contentItems":null,"callId":format!("lost-{item_id}"),
+            "execution":{"runtimeEpoch":"epoch","scopeId":"scope","operationId":item_id,"outcome":"unknown"}}));
+        std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+    };
+    inject_unknown(&source.id, "source-unknown");
+    let engine = Engine::open(dir.path(), Arc::new(TextModel), Limits::default()).unwrap();
+    let (side, _) = engine
+        .side_start(
+            "owner".into(),
+            serde_json::from_value(json!({
+        "requestId":"unknown-side", "sourceThreadId":source.id,"workspaceAccess":"none",
+        "input":[{"type":"text","text":"explain"}]}))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    engine.wait(&side.id).await.unwrap();
+    engine.shutdown().await;
+    drop(engine);
+    inject_unknown(&side.id, "own-unknown");
+    let engine = Engine::open(dir.path(), Arc::new(TextModel), Limits::default()).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let stop = CancellationToken::new();
+    let server = tokio::spawn(areal_app_server::serve(
+        listener,
+        engine.clone(),
+        stop.clone(),
+    ));
+    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}"))
+        .await
+        .unwrap();
+    call(
+        &mut socket,
+        1,
+        "initialize",
+        json!({"clientInfo":{"name":"test","version":"1"}}),
+    )
+    .await;
+    socket
+        .send(Wire::Text(
+            json!({"method":"initialized"}).to_string().into(),
+        ))
+        .await
+        .unwrap();
+    let blocked = call(
+        &mut socket,
+        2,
+        "turn/start",
+        json!({"threadId":side.id,"input":[{"type":"text","text":"continue"}]}),
+    )
+    .await;
+    assert!(blocked["error"].is_object(), "{blocked}");
+    let inspected = call(&mut socket,3,"areal/tool/acknowledge",json!({"threadId":side.id,"itemId":"own-unknown","inspection":"Checked persisted evidence; outcome remains unconfirmed"})).await;
+    assert!(inspected["error"].is_null(), "{inspected}");
+    let forged = call(
+        &mut socket,
+        4,
+        "areal/tool/acknowledge",
+        json!({"threadId":side.id,"itemId":"source-unknown","inspection":"not owned"}),
+    )
+    .await;
+    assert!(forged["error"].is_object(), "{forged}");
+    let source_record = engine.read(&source.id, true).await.unwrap();
+    let source_item = source_record.turns[0]
+        .items
+        .iter()
+        .find(|item| item.id() == "source-unknown")
+        .unwrap();
+    let areal_protocol::Item::DynamicToolCall { execution, .. } = source_item else {
+        panic!("tool expected")
+    };
+    assert!(execution.inspection.is_none());
+    assert_eq!(execution.outcome, areal_protocol::ToolOutcome::Unknown);
+    let thread = engine.read(&side.id, true).await.unwrap();
+    let item = thread.turns[0]
+        .items
+        .iter()
+        .find(|item| item.id() == "own-unknown")
+        .unwrap();
+    let areal_protocol::Item::DynamicToolCall { execution, .. } = item else {
+        panic!("tool expected")
+    };
+    assert_eq!(execution.outcome, areal_protocol::ToolOutcome::Unknown);
+    assert!(execution.inspection.is_some());
+    let archived = call(
+        &mut socket,
+        5,
+        "areal/thread/archive",
+        json!({"threadId":side.id}),
+    )
+    .await;
+    assert!(archived["error"].is_null(), "{archived}");
+    drop(socket);
+    stop.cancel();
+    server.await.unwrap().unwrap();
+    engine.shutdown().await;
+}
