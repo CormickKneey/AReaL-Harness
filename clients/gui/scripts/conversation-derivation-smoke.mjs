@@ -306,6 +306,8 @@ try {
   const sidePane = page.getByRole("region", { name: "旁路讨论" });
   await sidePane.getByText(unicodeExcerpt, { exact: false }).waitFor();
   assert.match(await sidePane.innerText(), /已持久化选区/);
+  await sidePane.getByLabel("文件访问范围").selectOption("none");
+  assert.equal(await sidePane.getByLabel("文件访问范围").inputValue(), "none");
   await sidePane.getByRole("textbox", { name: "旁路问题" }).fill(sideQuestion);
   const composingRequests = requests.length;
   await sidePane.getByRole("textbox", { name: "旁路问题" }).evaluate(element => {
@@ -327,6 +329,7 @@ try {
     t.turns?.at(-1)?.status === "completed"), "Side first answer during source Runtime tool");
   const side = Object.values(sideStarted.projects[0].state.threads).find(t => t.conversation?.kind === "side" && t.conversation.origin?.sourceThreadId === sourceThreadId);
   sideThreadId = side.id;
+  assert.equal(side.conversation.policy?.workspaceAccess, "none", "frozen evidence journey uses session-only Side policy");
   assert.equal(side.conversation.selection?.text, unicodeExcerpt);
   assert.equal(side.conversation.selection?.verified, true);
   assert.equal(sideStarted.projects[0].state.threads[sourceThreadId].turns.at(-1).status, "inProgress");
