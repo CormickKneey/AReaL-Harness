@@ -205,8 +205,8 @@ export function Messages({
       reservation.current = reserveResponseSpace && previous.id && follow.current && section && user && !goalContinuationLabel(latest)
         ? { turnId: latestTurnId, height: 0, contentHeight: 0 } : undefined;
     }
-    // Natural-flow consumers scroll in their parent. Their own height includes
-    // the spacer, so reserving against it would feed back into the next resize.
+    // 自然流布局由父容器滚动；自身高度包含占位，
+    // 用它计算预留空间会在下一次尺寸变化时形成反馈增长。
     if (!reserveResponseSpace) reservation.current = undefined;
     activeOwner.current = owner;
     seenTurn.current = { owner, id: latestTurnId };
