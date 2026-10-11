@@ -2,6 +2,22 @@
 
 use super::*;
 
+// 读取与订阅快照共用当前执行状态；冻结历史不持久化模型容量等待。
+fn project_side_capacity(thread: &mut Thread, active: Option<&Active>) {
+    if thread.is_side()
+        && let Some(desktop) = thread.desktop.as_mut()
+    {
+        desktop.side_capacity_status = active.map(|active| {
+            if active.waiting_for_model_capacity {
+                "waiting"
+            } else {
+                "available"
+            }
+            .into()
+        });
+    }
+}
+
 impl Engine {
     pub async fn read_blob(&self, id: &str) -> Result<Vec<u8>> {
         self.store
@@ -228,19 +244,7 @@ impl Engine {
         let mut thread = {
             let state = cell.state.lock().await;
             let mut thread = state.thread.clone();
-            if thread.is_side()
-                && let Some(active) = &state.active
-                && let Some(desktop) = thread.desktop.as_mut()
-            {
-                desktop.side_capacity_status = Some(
-                    if active.waiting_for_model_capacity {
-                        "waiting"
-                    } else {
-                        "available"
-                    }
-                    .into(),
-                );
-            }
+            project_side_capacity(&mut thread, state.active.as_ref());
             thread
         };
         if include_turns && thread.desktop.as_ref().is_some_and(|d| d.archived) {
@@ -323,6 +327,7 @@ impl Engine {
                 .await
                 .map_err(|e| Error::Storage(e.to_string()))?
         };
+        project_side_capacity(&mut thread, state.active.as_ref());
         self.refresh_goal_usage(&mut thread);
         Ok((thread, cell.events.subscribe()))
     }

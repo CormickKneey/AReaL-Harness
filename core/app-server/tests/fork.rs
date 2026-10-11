@@ -727,6 +727,17 @@ async fn side_snapshots_active_source_and_interrupts_independently() {
     })
     .await
     .unwrap();
+    let observed = call(
+        &mut socket,
+        100,
+        "areal/thread/observe",
+        json!({"threadId":side_id}),
+    )
+    .await;
+    assert_eq!(
+        observed["result"]["thread"]["desktop"]["sideCapacityStatus"],
+        "waiting"
+    );
     let over_capacity = call(&mut socket, 98, "areal/side/start", json!({"requestId":"side-over-capacity","sourceThreadId":source_id,"workspaceAccess":"none","input":[{"type":"text","text":"second side"}]})).await;
     assert!(
         over_capacity["error"]
@@ -767,6 +778,14 @@ async fn side_snapshots_active_source_and_interrupts_independently() {
         .await
         .unwrap()
         .unwrap();
+    let stopped = call(
+        &mut socket,
+        101,
+        "areal/thread/observe",
+        json!({"threadId":side_id}),
+    )
+    .await;
+    assert!(stopped["result"]["thread"]["desktop"]["sideCapacityStatus"].is_null());
     let another = call(&mut socket, 97, "areal/side/start", json!({"requestId":"side-after-stop","sourceThreadId":source_id,"workspaceAccess":"none","input":[{"type":"text","text":"another side"}]})).await;
     assert!(another["result"]["thread"].is_object(), "{another}");
     let another_id = another["result"]["thread"]["id"].as_str().unwrap();
