@@ -111,7 +111,7 @@ Controller 提供**原子 snapshot + subscribe**，UI 先安装 snapshot 的序�
 | 可达性 | connected / disconnected / incompatible | 已认证适配器与 Controller |
 | 操作 | prepared / dispatched / confirmed / rejected / unknown | 原生事实在 Controller，正式工具结果在 Core |
 
-Page shell 可恢复 URL 与标题，但不恢复原生对象身份或表单/JS heap；失去临时上下文必须明确显示“临时登录可能需要重做”。不要通过读取历史截图宣称恢复了 live page。
+Page shell 可恢复 URL 与标题，但不恢复原生对象身份或表单/JS heap；崩溃恢复仅使用最后已提交的文档地址，不恢复下载等未提交导航的暂存 URL；失去临时上下文必须明确显示“临时登录可能需要重做”。不要通过读取历史截图宣称恢复了 live page。
 
 ## 5. 语义观察、Ref 与视觉坐标
 

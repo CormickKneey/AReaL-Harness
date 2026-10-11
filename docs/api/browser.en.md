@@ -87,7 +87,7 @@ Controller provides atomic snapshot-and-subscribe. Install the snapshot sequence
 
 Electron Main's sole Page map owns native objects. The trusted main view installs `preview.subscribe` and receives its snapshot; later events carry Page metadata only, and a sequence gap triggers resubscription. Human new, select and close Page commands come from the main view; closing a human or unknown-source Page requires explicit user intent. `browser_v1` `navigate` and `newPage` prepare read-only, pass Core approval, then execute against a Page ID and generations. For `newPage`, `pageId` names the opener and the receipt returns the new Page ID. A website popup may join the same transient context only after recent, one-use local human input; Main denies other native window requests.
 
-Orthogonal state dimensions: resource=`ready|suspended|crashed|closed`; control=`human|agent|transferring`; reachability=`connected|disconnected|incompatible`; operation=`prepared|dispatched|confirmed|rejected|unknown`. Controller owns physical facts; Core owns the official outcome. Restore a Page shell’s URL/title, not identity, forms, heap or login. Historic evidence is not a restored live page.
+Orthogonal state dimensions: resource=`ready|suspended|crashed|closed`; control=`human|agent|transferring`; reachability=`connected|disconnected|incompatible`; operation=`prepared|dispatched|confirmed|rejected|unknown`. Controller owns physical facts; Core owns the official outcome. Restore a Page shell’s URL/title, not identity, forms, heap or login. Crash recovery uses only the last committed document URL, never a provisional URL from a download or other uncommitted navigation. Historic evidence is not a restored live page.
 
 ## 5. Observation and references
 

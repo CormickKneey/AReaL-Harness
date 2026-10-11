@@ -1826,7 +1826,7 @@ class CorePreview {
     });
     const page = { id: options.id ?? randomUUID(), pageGeneration: options.pageGeneration ?? 1, view, partition,
       session: view.webContents.session, coreInstanceId: this.coreIdentity(projectId), projectId, threadId,
-      openerId: options.openerId ?? null, origin: options.origin ?? 'human', title: '', error: '', url: '', crashed: false,
+      openerId: options.openerId ?? null, origin: options.origin ?? 'human', title: '', error: '', url: '', committedUrl: '', crashed: false,
       control: 'human', controlEpoch: 0, documentGeneration: 0, viewportRevision: 0, refs: new Map(),
       plans: new Map(), lastObservation: null, needsObservation: true, nextRef: 0,
       heldButtons: new Map(), heldKeys: new Map(), inputPending: new Set(), requestedVisible: false,
@@ -2066,16 +2066,20 @@ class CorePreview {
       }
       if (this.pageStillOwned(page)) this.changed(page);
     });
-    const clearCommittedFileHandoff = () => {
-      if (!this.pageStillOwned(page) || !page.fileHandoff) return;
-      clearTimeout(page.fileHandoff.timer);
-      page.fileHandoff = null;
+    const commitNavigation = url => {
+      if (!this.pageStillOwned(page)) return;
+      page.committedUrl = url;
+      page.url = url;
+      if (page.fileHandoff) {
+        clearTimeout(page.fileHandoff.timer);
+        page.fileHandoff = null;
+      }
       this.changed(page);
     };
     // A download link can start navigation without committing a document.
     // Keep the arm through that start, but never carry it into a new Page URL.
-    c.on('did-navigate', clearCommittedFileHandoff);
-    c.on('did-navigate-in-page', clearCommittedFileHandoff);
+    c.on('did-navigate', (_event, url) => commitNavigation(url));
+    c.on('did-navigate-in-page', (_event, url, main) => { if (main) commitNavigation(url); });
     c.on("did-fail-load", (_event, code, message, url, main) => {
       if (!this.pageStillOwned(page)) return;
       page.dialogPending = false;
@@ -2096,6 +2100,9 @@ class CorePreview {
     c.on('render-process-gone', () => {
       if (this.pages.get(owner) !== page) return;
       page.title = c.isDestroyed() ? page.title : c.getTitle() || page.title;
+      // A started download navigation has no committed document. Restoring its
+      // provisional URL would repeat an UNKNOWN transfer after a renderer crash.
+      page.url = page.committedUrl;
       this.revoke(page);
       this.cancelFileOperations(page, 'native_crash_after_dispatch');
       page.crashed = true;
