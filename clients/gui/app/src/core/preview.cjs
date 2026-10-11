@@ -80,7 +80,10 @@ function bitmapPoint(capture, x, y) {
     throw new Error('target_unavailable');
   // CDP Input uses page CSS viewport coordinates; the actual bitmap dimensions
   // are the only safe conversion source across DPR and page/GUI zoom.
-  return { x: x * width / bitmapWidth, y: y * height / bitmapHeight };
+  // 使用可精确表示的 1/64 CSS 像素精度，避免 JSON 往返的浮点末位变化
+  // 使同一批准计划失配；计划与视口的完整校验仍保留。
+  return { x: Math.round(x * width / bitmapWidth * 64) / 64,
+    y: Math.round(y * height / bitmapHeight * 64) / 64 };
 }
 function coordinateTarget(capture, action) {
   if (action.kind === 'drag') return {
