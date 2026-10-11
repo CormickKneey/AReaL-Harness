@@ -28,6 +28,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=("debug", "release"), default="release")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--unsigned-local", action="store_true",
+                        help="preserve input bytes without creating signatures; local validation only")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     destination = args.output.resolve()
@@ -54,7 +56,7 @@ def main():
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source / name, target)
-        if platform.system() == "Darwin":
+        if platform.system() == "Darwin" and not args.unsigned_local:
             subprocess.run(
                 ["/usr/bin/codesign", "--force", "--sign", "-", str(target)],
                 check=True,
@@ -66,6 +68,8 @@ def main():
                 capture_output=True,
             )
         files[str(relative)] = hashlib.sha256(target.read_bytes()).hexdigest()
+        if args.unsigned_local and files[str(relative)] != hashlib.sha256((source / name).read_bytes()).hexdigest():
+            raise ValueError(f"unsigned local copy changed input bytes: {name}")
     version = subprocess.check_output([str(source / "areal"), "--version"], text=True).strip()
     manifest = {
         "manifestVersion": 1,
@@ -98,7 +102,8 @@ def main():
             ),
         ],
         "optionalRuntimes": "Node/Python for configured tool hosts; explicitly supplied by deployment",
-        "signing": "ad-hoc; no Developer ID or notarization"
+        "signing": "no new signatures; input signatures preserved; local validation only"
+        if args.unsigned_local else "ad-hoc; no Developer ID or notarization"
         if platform.system() == "Darwin"
         else "unsigned; verify release SHA256SUMS",
     }

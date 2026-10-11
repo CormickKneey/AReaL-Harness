@@ -39,6 +39,8 @@ Homebrew formula 安装 `bin`、`libexec`、LICENSE 和 manifest，避免改变 
 
 ## GUI 发布
 
+本机无需新增签名时可使用 `AREAL_GUI_UNSIGNED_LOCAL=1 AREAL_GUI_PACKAGE_DIR=/绝对路径/新目录 pnpm --dir clients/gui package`，CLI bundle 对应 `python3 scripts/package.py --unsigned-local --profile debug --output /绝对路径/新目录`。该显式模式跳过 Core 副本和整个 app 的签名，builder 继续使用 `identity: null`；保留输入字节及已有签名，记录真实 bundle 签名核验结果，不移除签名或改变系统策略。它与 `AREAL_GUI_RELEASE=1` 互斥；默认流程仍创建本机 ad-hoc 签名。已生成 ZIP 不证明能启动，须从 ZIP 复制到新隔离目录验收，系统拒绝时保留首次失败并停止该启动路径。
+
 GUI 版本由 `clients/gui/package.json` 和 `clients/gui/app/package.json` 共同声明，与 Cargo/CLI 版本独立。发布地址统一为 `areal-project/AReaL-Harness`；版本 Release 使用 `gui-v<版本>` 标签，CLI 继续使用 `v<版本>`。GUI Release 不设为 GitHub Latest，避免改变 CLI 安装器的 Latest 语义。
 
 正式 GUI 包内写入 `areal-update.json`，更新源固定为 `https://github.com/areal-project/AReaL-Harness/releases/download/gui-update-channel/`。`gui-update-channel` 是仅承载当前 `latest-mac.yml` 的预发布频道；清单指向不可变 `gui-v<版本>` Release 中的 ZIP，并包含大小及 SHA-512。仅接受同仓库、同版本的附件地址。本地 ad-hoc 包没有更新配置。
