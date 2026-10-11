@@ -272,7 +272,7 @@ export function Messages({
         {beforeTurns}
         {thread.desktop?.archived && (
           <p role="status" className="notice">
-            此任务已归档，历史只读。当前 Core 不支持取消归档。
+            此任务已归档，历史只读。
           </p>
         )}
         {(thread.turns ?? []).map((turn: Data, turnIndex: number) => {
