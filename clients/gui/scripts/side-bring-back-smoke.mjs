@@ -10,8 +10,8 @@ class Storage {
 }
 const storage = new Storage();
 const owner = { instanceId: 'service-a', projectId: 'project-a', sourceThreadId: 'main-a', sideThreadId: 'side-a', paneOwner: 'service-a:project-a:main-a:side:side-a' };
-const source = { id: 'main-a', updatedAt: '2026-10-11T02:00:00Z' };
-const side = { id: 'side-a', createdAt: '2026-10-11T01:00:00Z', desktop: {}, conversation: { kind: 'side', origin: { sourceThreadId: 'main-a' }, referenceSnapshot: { snapshotId: 'snapshot-one' } } };
+const source = { id: 'main-a', updatedAt: 1791686759, turns: [{ id: 'turn-one', items: [{ id: 'answer-one' }] }] };
+const side = { id: 'side-a', createdAt: 1791686756, desktop: {}, conversation: { kind: 'side', origin: { sourceThreadId: 'main-a', sourceTurnId: 'turn-one', boundary: 'after' }, referenceSnapshot: { snapshotId: 'snapshot-one', turnCount: 1, itemCount: 1 } } };
 const key = 'areal-gui:draft:project-a:main-a';
 storage.setItem(key, '已有正文');
 storage.setItem(`${key}:version`, '3');
@@ -19,6 +19,11 @@ const preview = makeBringBackPreview({ storage, owner, source, side, answer: '�
 assert.match(preview.text, /选中的重点/);
 assert.match(preview.text, /snapshot-one/);
 assert.equal(preview.stale, true);
+const sameSecond = { ...source, updatedAt: side.createdAt };
+const stalePreview = source => makeBringBackPreview({ storage, owner, source, side, answer: '回复', insertionId: 'status-only' }).stale;
+assert.equal(stalePreview(sameSecond), false);
+assert.equal(stalePreview({ ...sameSecond, turns: [...source.turns, { id: 'turn-two', items: [] }] }), true);
+
 storage.setItem(key, '并发修改后的正文');
 storage.setItem(`${key}:version`, '4');
 const events = [];
