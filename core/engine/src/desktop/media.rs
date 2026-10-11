@@ -1,5 +1,6 @@
 //! 内容地址只用于完整性；访问权来自认证身份和会话归属。
 use super::*;
+use crate::model::{Model, ModelProtocol};
 use areal_protocol::{MediaRef, Modality, ToolContent};
 
 pub(crate) const MAX_UPLOAD: usize = 16 * 1024 * 1024;
@@ -37,6 +38,113 @@ fn validate_media(mime: &str, bytes: &[u8]) -> Result<Modality> {
     })
 }
 impl Engine {
+    pub(crate) fn validate_fork_model_compatibility(
+        &self,
+        thread: &Thread,
+        model: &dyn Model,
+    ) -> Result<()> {
+        if let Some(areal_protocol::Conversation::Fork { history_seed, .. }) = &thread.conversation
+        {
+            let prefix = self
+                .store
+                .read_fork_snapshot(&history_seed.snapshot_id)
+                .map_err(|e| Error::Storage(e.to_string()))?;
+            validate_fork_prefix_compatibility(&prefix, model)?;
+        }
+        Ok(())
+    }
+
+    /// 创建时验证整个继承前缀，拒绝任何目标适配器会丢失的上下文或媒体。
+    pub(crate) async fn validate_fork_replay(
+        &self,
+        prefix: &[Turn],
+        model: &dyn Model,
+    ) -> Result<()> {
+        validate_fork_prefix_compatibility(prefix, model)?;
+        for item in prefix.iter().flat_map(|turn| &turn.items) {
+            match item {
+                Item::UserMessage { content, .. } => {
+                    for input in content {
+                        match input {
+                            Input::Image { url, .. }
+                            | Input::Audio { url }
+                            | Input::File { url, .. }
+                                if url.starts_with("areal://blob/") =>
+                            {
+                                self.verify_inherited_blob(url, None, false).await?;
+                            }
+                            Input::LocalImage { .. } | Input::LocalAudio { .. } => {
+                                return Err(invalid("MODEL_CONTEXT_INCOMPATIBLE"));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Item::AgentMedia { media, .. } => {
+                    self.verify_inherited_blob(&media.uri, Some(media), false)
+                        .await?;
+                }
+                Item::DynamicToolCall {
+                    content_items,
+                    execution,
+                    ..
+                } => {
+                    if let Some(items) = content_items {
+                        for value in items {
+                            match serde_json::from_value::<ToolContent>(value.clone())
+                                .map_err(invalid)?
+                            {
+                                ToolContent::ArealMedia { media, .. } => {
+                                    self.verify_inherited_blob(&media.uri, Some(&media), false)
+                                        .await?;
+                                }
+                                ToolContent::InputText { .. } => {}
+                                ToolContent::InlineMedia { .. } => {
+                                    return Err(invalid("MODEL_CONTEXT_INCOMPATIBLE"));
+                                }
+                            }
+                        }
+                    }
+                    if let Some(media) = &execution.result_snapshot {
+                        self.verify_inherited_blob(&media.uri, Some(media), true)
+                            .await?;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    async fn verify_inherited_blob(
+        &self,
+        uri: &str,
+        media: Option<&MediaRef>,
+        raw_result: bool,
+    ) -> Result<()> {
+        let id = uri
+            .strip_prefix("areal://blob/")
+            .ok_or_else(|| invalid("MODEL_CONTEXT_INCOMPATIBLE"))?;
+        let bytes = self
+            .store
+            .read_blob(id)
+            .await
+            .map_err(|_| invalid("MODEL_CONTEXT_INCOMPATIBLE"))?;
+        if format!("{:x}", Sha256::digest(&bytes)) != id
+            || media.is_some_and(|m| {
+                m.size_bytes != bytes.len() as u64
+                    || if raw_result {
+                        m.mime_type != "application/json"
+                    } else {
+                        validate_media(&m.mime_type, &bytes).is_err()
+                    }
+            })
+        {
+            return Err(invalid("MODEL_CONTEXT_INCOMPATIBLE"));
+        }
+        Ok(())
+    }
+
     pub async fn upload_blob(
         self: &Arc<Self>,
         thread_id: String,
@@ -65,11 +173,30 @@ impl Engine {
     pub async fn thread_blob(&self, thread_id: &str, blob: &str) -> Result<Vec<u8>> {
         let thread = self.read(thread_id, true).await?;
         let uri = format!("areal://blob/{blob}");
-        let associated=thread.desktop.as_ref().is_some_and(|d|d.uploads.iter().any(|m|m.uri==uri)) || thread.turns.iter().flat_map(|t|&t.items).any(|item|matches!(item,Item::AgentMedia{media,..} if media.uri==uri) || matches!(item,Item::DynamicToolCall{content_items:Some(content),..} if content.iter().any(|c|c["media"]["uri"]==uri)));
+        let inherited = match &thread.conversation {
+            Some(areal_protocol::Conversation::Fork { history_seed, .. }) => self
+                .store
+                .read_fork_snapshot(&history_seed.snapshot_id)
+                .map_err(|e| Error::Storage(e.to_string()))?,
+            _ => Vec::new(),
+        };
+        let associated=thread.desktop.as_ref().is_some_and(|d|d.uploads.iter().any(|m|m.uri==uri))
+            || thread.turns.iter().chain(inherited.iter()).flat_map(|t|&t.items).any(|item| match item {
+                Item::UserMessage { content, .. } => content.iter().any(|input| matches!(input,
+                    Input::Image { url, .. } | Input::Audio { url } | Input::File { url, .. } if url == &uri)),
+                Item::AgentMedia { media, .. } => media.uri == uri,
+                Item::DynamicToolCall { content_items, execution, .. } => execution.result_snapshot.as_ref().is_some_and(|m|m.uri==uri)
+                    || content_items.as_ref().is_some_and(|items|items.iter().any(|c|c["media"]["uri"]==uri)),
+                _ => false,
+            });
         if !associated {
             return Err(Error::NotFound);
         }
-        self.read_blob(blob).await
+        let bytes = self.read_blob(blob).await?;
+        if format!("{:x}", Sha256::digest(&bytes)) != blob {
+            return Err(Error::NotFound);
+        }
+        Ok(bytes)
     }
     pub(crate) async fn materialize_tool_media(
         &self,
@@ -148,6 +275,46 @@ impl Engine {
         }
         Ok(())
     }
+}
+
+fn validate_fork_prefix_compatibility(prefix: &[Turn], model: &dyn Model) -> Result<()> {
+    let capabilities = model.capabilities();
+    for item in prefix.iter().flat_map(|turn| &turn.items) {
+        match item {
+            Item::UserMessage { content, .. }
+                if content
+                    .iter()
+                    .any(|input| !capabilities.supports_input(input.modality())) =>
+            {
+                return Err(invalid("MODEL_MODALITY_INCOMPATIBLE"));
+            }
+            Item::AgentMedia { modality, .. } if !capabilities.supports_input(*modality) => {
+                return Err(invalid("MODEL_MODALITY_INCOMPATIBLE"));
+            }
+            Item::DynamicToolCall {
+                content_items: Some(items),
+                ..
+            } => {
+                for item in items {
+                    let part: ToolContent =
+                        serde_json::from_value(item.clone()).map_err(invalid)?;
+                    if let ToolContent::ArealMedia { modality, .. } = part {
+                        if !capabilities.supports_input(modality) {
+                            return Err(invalid("MODEL_MODALITY_INCOMPATIBLE"));
+                        }
+                    }
+                }
+            }
+            Item::ModelContext { value, .. } => match value["type"].as_str() {
+                Some("areal_request_context" | "chat_reasoning") => {}
+                Some("reasoning" | "function_call")
+                    if model.replay_protocol() == Some(ModelProtocol::Responses) => {}
+                _ => return Err(invalid("MODEL_CONTEXT_INCOMPATIBLE")),
+            },
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 impl Engine {

@@ -658,9 +658,11 @@ class CoreBackend {
           ? pending.find(value => value.method === method && value.params.sourceThreadId === parameters.sourceThreadId)
           : pending.find(value => value.params.threadId === parameters.threadId);
         if (conflicting) {
-          throw new Error(this.awaitingResponses.has(conflicting)
+          const awaiting = this.awaitingResponses.has(conflicting);
+          throw Object.assign(new Error(awaiting
             ? '当前操作正在等待响应，请稍后再试'
-            : '上一次提交结果未知，请先查询受理结果');
+            : '上一次提交结果未知，请先查询受理结果'),
+          awaiting ? {} : { submissionUnknown: true, requestId: conflicting.params.requestId });
         }
         return [...pending, entry];
       });
@@ -967,9 +969,11 @@ class CoreBackend {
         if (!project.client.capabilities?.methods?.includes('areal/thread/fork')) throw new Error('当前 Core 不支持从此轮次创建分支');
         const result = await this.submit(project, 'areal/thread/fork', {
           sourceThreadId: request.sourceThreadId, anchor: request.anchor, workspaceMode: 'sharedCurrent',
+          ...(request.target ? { target: request.target } : {}),
         }, { requestId: request.requestId });
-        await this.openThread(project, result.thread.id);
-        await this.listThreads(project);
+        // 创建收据已确认受理；后续投影失败不能把已提交的创建显示成可重试错误。
+        try { await this.openThread(project, result.thread.id); await this.listThreads(project); }
+        catch { /* 调用方仍可凭 threadId 打开已提交目标。 */ }
         return { threadId: result.thread.id, requestId: result.requestId };
       }
       case 'side': {
