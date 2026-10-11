@@ -980,6 +980,17 @@ fn planner_validation_and_coalescing_do_not_introduce_dependency_cycles() {
     );
 }
 
+// 运行时上下文不是作者消息，也不是新的工具回执；fixture 只按对话消息推进脚本。
+fn fixture_last_message(
+    messages: &[areal_engine::model::Message],
+) -> &areal_engine::model::Message {
+    messages
+        .iter()
+        .rev()
+        .find(|message| message.role != "areal_context")
+        .expect("fixture conversation is empty")
+}
+
 struct ToolFixture {
     stall: Option<i32>,
     command_tools_only: bool,
@@ -1016,7 +1027,7 @@ impl areal_engine::model::Model for ToolFixture {
                 ]
             );
         }
-        let event = if messages.last().unwrap().role == "tool" {
+        let event = if fixture_last_message(&messages).role == "tool" {
             if let Some(code) = self.stall {
                 ModelEvent::ToolCall(ToolCall {id:format!("repeat-{}",messages.len()),name:"run_command".into(),
                     arguments:serde_json::json!({"argv":["/bin/sh","-c",format!("exit {code}")],"cwd":"workspace://repo","timeoutMs":1000}).to_string()})
@@ -1036,7 +1047,7 @@ esac"#;
                     arguments:serde_json::json!({"argv":["/bin/sh","-c",check_scratch],"cwd":"workspace://repo","timeoutMs":1000}).to_string()})
             } else {
                 let output: serde_json::Value =
-                    serde_json::from_str(&messages.last().unwrap().text_content())?;
+                    serde_json::from_str(&fixture_last_message(&messages).text_content())?;
                 anyhow::ensure!(
                     output["exitCode"] == 0,
                     "worker command did not receive private scratch environment: {output}"
@@ -1044,10 +1055,14 @@ esac"#;
                 ModelEvent::TextDelta("Finished".into())
             }
         } else {
-            let text = messages.last().unwrap().text_content();
+            let text = fixture_last_message(&messages).text_content();
             let file = if text.contains("Implement a\n") {
                 "a"
             } else {
+                assert!(
+                    text.contains("Implement b\n"),
+                    "fixture worker instruction missing: {text}"
+                );
                 "b"
             };
             if self.command_tools_only {
@@ -1633,7 +1648,7 @@ impl areal_engine::model::Model for InterruptedModel {
         messages: Vec<areal_engine::model::Message>,
         tools: Vec<serde_json::Value>,
     ) -> Result<areal_engine::model::AgentStream> {
-        if messages.last().unwrap().role == "tool" {
+        if fixture_last_message(&messages).role == "tool" {
             return Ok(Box::pin(futures_util::stream::iter([Err(self.0.into())])));
         }
         ToolFixture {
@@ -1733,7 +1748,7 @@ impl areal_engine::model::Model for CapacityModel {
         _: Vec<serde_json::Value>,
     ) -> Result<areal_engine::model::ModelStream> {
         use areal_engine::model::{ModelEvent, ToolCall};
-        let last = messages.last().unwrap();
+        let last = fixture_last_message(&messages);
         let event = if last.role == "tool" {
             let value: serde_json::Value = serde_json::from_str(&last.text_content())?;
             anyhow::ensure!(value["exitCode"] == 0, "capacity worker command failed");
@@ -1869,7 +1884,7 @@ impl areal_engine::model::Model for CommandFixture {
         _: Vec<serde_json::Value>,
     ) -> Result<areal_engine::model::ModelStream> {
         use areal_engine::model::{ModelEvent, ToolCall};
-        let event = if messages.last().unwrap().role == "tool" {
+        let event = if fixture_last_message(&messages).role == "tool" {
             ModelEvent::TextDelta("Finished".into())
         } else {
             let command = if self.slow_worker {

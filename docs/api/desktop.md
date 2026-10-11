@@ -45,6 +45,7 @@ Cookie 名为 `areal_session_<origin摘要>`，不指定 Domain，使用 `HttpOn
 | process/start/list/get/read/wait/write/resize/closeStdin/terminate | observe / interact | 受管进程与共享终端 |
 | process/acknowledgeCleanup | manage | 旧 epoch 的外部清理证据，保留 UNKNOWN |
 | thread/closeResources | interact | 等待受管资源回收 |
+| agent/delegate, execution/list/read/wait/artifact/cancel/apply | observe / interact | 统一委派与结果交付，见 [Core 契约](core.md#agent-tools) |
 | agent/spawn/wait, workflow/list/read/start | observe / interact | 配置化子任务或 Workgroup |
 | mcp/list/read/configure/connect/disconnect | manage | 配置、连接和目录 revision 分开管理 |
 | thread/inspect, context/read/compact | observe / interact | 权威执行视图、分页和空闲压缩 |

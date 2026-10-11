@@ -17,6 +17,9 @@ const binary = process.env.AREAL_GUI_EXECUTABLE
   ? resolve(dirname(process.env.AREAL_GUI_EXECUTABLE), "../Resources/areal-core/bin/areal")
   : process.env.AREAL_CORE_BIN || join(root, "target/debug/areal");
 assert.ok(binary, "AREAL_CORE_BIN must point to the actual built Core");
+const binarySha256AtStart = createHash("sha256")
+  .update(await readFile(binary))
+  .digest("hex");
 const scratch = await mkdtemp("/private/tmp/areal-gui-");
 const workspace = join(scratch, "workspace");
 await mkdir(workspace);
@@ -149,10 +152,11 @@ const server = createServer(async (req, res) => {
           id: "child",
           type: "function",
           function: {
-            name: "agent_spawn_configured",
+            name: "agent_spawn",
             arguments: JSON.stringify({
-              input: [{ type: "text", text: "只读检查项目" }],
-              workspaceMode: "sharedReadOnly",
+              prompt: "只读检查项目",
+              intent: "inspect",
+              delivery: "report",
             }),
           },
         },
@@ -179,8 +183,20 @@ await writeFile(
   config,
   `schema_version=1\n[model]\nprovider="fixture"\nname="fixture"\n[model.providers.fixture]\nprotocol="chat-completions"\nendpoint=${JSON.stringify(endpoint)}\n`,
 );
+// 本地 SSE fixture 必须直连；保留宿主已有排除项并同步两种大小写。
+const noProxy = [
+  ...new Set(
+    [process.env.NO_PROXY, process.env.no_proxy, "127.0.0.1,localhost,::1"]
+      .filter(Boolean)
+      .flatMap((value) => value.split(","))
+      .map((value) => value.trim())
+      .filter(Boolean),
+  ),
+].join(",");
 const env = {
   ...process.env,
+  NO_PROXY: noProxy,
+  no_proxy: noProxy,
   AREAL_GUI: "workbench",
   AREAL_BACKEND: "areal",
   AREAL_CORE_BIN: binary,
@@ -195,7 +211,8 @@ delete env.AREAL_CORE_WORKSPACE;
 if (process.env.AREAL_GUI_EXECUTABLE) delete env.AREAL_CORE_BIN;
 let app,
   page,
-  passed = false;
+  passed = false,
+  failure = null;
 const errors = [],
   frames = [],
   checks = [];
@@ -260,6 +277,7 @@ async function quit() {
   app = null;
 }
 console.log("GUI evidence:", scratch);
+console.log("Core binary SHA-256 at start:", binarySha256AtStart);
 try {
   await launch();
   const sandbox = await app.evaluate(({ BrowserWindow }) => {
@@ -301,6 +319,31 @@ try {
   assert.ok(tid);
   await shot("02-conversation");
   checks.push("sandboxed Electron; project picker; first send; real Core/Runtime and local SSE");
+  await send("启动子任务");
+  await until((s) => current(s).turns.at(-1)?.status === "completed", "delegation settled");
+  const executionList = await call("manage", {
+    projectId: pid,
+    parentThreadId: tid,
+    operation: "executions",
+    offset: 0,
+    limit: 50,
+  });
+  const execution = executionList.data.find((item) => item.title === "只读检查项目");
+  assert.ok(execution?.executionId);
+  assert.equal(execution.settled, true);
+  assert.equal(execution.verification.status, "notRun");
+  assert.equal(execution.delivery.status, "notRequired");
+  await openPanel("子任务");
+  const executionCard = page.getByTestId(`execution-${execution.executionId}`);
+  await executionCard.waitFor();
+  assert.match(await executionCard.innerText(), /未运行检查/);
+  assert.match(await executionCard.innerText(), /报告交付/);
+  assert.equal(await button("创建子任务").isVisible(), false);
+  await shot("02-subtask-delivery");
+  await button("关闭面板").click();
+  checks.push(
+    "unified agent delegation; one subtask panel; verification and delivery stay distinct",
+  );
   await send("审批写入");
   await button("允许一次").click();
   await until((s) => current(s).turns.at(-1)?.status === "completed", "approved write");
@@ -488,6 +531,7 @@ try {
   passed = true;
   console.log(JSON.stringify({ passed, scratch, checks }));
 } catch (error) {
+  failure = error.stack || error.message;
   console.error("renderer errors", errors);
   console.error(await page?.locator("body").innerText());
   await shot("failure").catch(() => {});
@@ -549,7 +593,10 @@ try {
       .update(await readFile(join(root, path)))
       .digest("hex");
   }
-  const diff = execFileSync("git", ["diff", "--binary", "HEAD"], { cwd: root });
+  const diff = execFileSync("git", ["diff", "--binary", "HEAD"], {
+    cwd: root,
+    maxBuffer: 32 * 1024 * 1024,
+  });
   await writeFile(
     join(scratch, "manifest.json"),
     JSON.stringify(
@@ -557,6 +604,7 @@ try {
         passed,
         commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root }).toString().trim(),
         sourceFiles,
+        binarySha256AtStart,
         binarySha256: createHash("sha256")
           .update(await readFile(binary))
           .digest("hex"),
@@ -570,6 +618,7 @@ try {
         frames,
         checks,
         errors,
+        failure,
       },
       null,
       2,

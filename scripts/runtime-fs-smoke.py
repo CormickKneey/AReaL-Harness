@@ -7,6 +7,7 @@ import hashlib
 from pathlib import Path
 import runpy
 import tempfile
+import uuid
 
 Runtime = runpy.run_path(str(Path(__file__).with_name("runtime-smoke.py")))["Runtime"]
 
@@ -82,6 +83,61 @@ def run(binary, directory):
         )
         runtime.expect_error("INVALID_ARGUMENT", "fs.execute", oversized)
         assert not (workspace / "oversized").exists()
+
+        # 分块交付在 commit 前不触碰目标，并保留条件删除和执行位回执。
+        assert runtime.info["capabilities"]["filesystem"]["artifactDelivery"] is True
+        delivery_data = bytes(range(256)) * 1025
+        delivery_hash = hashlib.sha256(delivery_data).hexdigest()
+        upload = str(uuid.uuid4())
+        delivery_path = "workspace://repo/new/delivery.bin"
+        for offset in range(0, len(delivery_data), 65536):
+            chunk = delivery_data[offset : offset + 65536]
+            stage = request(
+                {
+                    "kind": "stageFileChunk",
+                    "path": delivery_path,
+                    "uploadId": upload,
+                    "offset": offset,
+                    "dataBase64": base64.b64encode(chunk).decode(),
+                }
+            )
+            receipt = runtime.call("fs.execute", stage)
+            assert receipt["nextOffset"] == offset + len(chunk)
+            assert runtime.call("fs.execute", stage) == receipt
+        assert not (workspace / "new/delivery.bin").exists()
+        commit = request(
+            {
+                "kind": "commitFile",
+                "path": delivery_path,
+                "uploadId": upload,
+                "expected": {"kind": "absent"},
+                "expectedExecutable": None,
+                "sha256": delivery_hash,
+                "executable": True,
+            }
+        )
+        receipt = runtime.call("fs.execute", commit)
+        assert receipt["executable"] is True
+        assert runtime.call("fs.execute", commit) == receipt
+        assert (workspace / "new/delivery.bin").read_bytes() == delivery_data
+        assert fs("read", delivery_path, offset=0, maxBytes=1)["executable"] is True
+        removal = request(
+            {
+                "kind": "removeFile",
+                "path": delivery_path,
+                "expectedSha256": delivery_hash,
+                "expectedExecutable": False,
+            }
+        )
+        runtime.expect_error("CONFLICT", "fs.execute", removal)
+        removal = {
+            **removal,
+            "operationId": runtime.op(),
+            "command": {**removal["command"], "expectedExecutable": True},
+        }
+        assert runtime.call("fs.execute", removal) == {"removed": True}
+        assert runtime.call("fs.execute", removal) == {"removed": True}
+        assert not (workspace / "new/delivery.bin").exists()
 
         # Escaped JSON text is serialized again inside helper argv. A valid
         # patch must retain its raw-text budget across both envelopes.

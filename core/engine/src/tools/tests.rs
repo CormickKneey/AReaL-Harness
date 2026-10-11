@@ -931,3 +931,205 @@ fn pending_verification_pages_recover_handles_hidden_by_ordinary_snapshot() {
     assert_eq!(page["count"], 86);
     assert!(page["items"].as_array().unwrap().is_empty());
 }
+
+struct PendingExecutionGuard;
+#[async_trait::async_trait]
+impl Model for PendingExecutionGuard {
+    fn name(&self) -> &str {
+        "pending-execution-guard"
+    }
+    async fn stream(&self, _: Vec<model::Message>) -> anyhow::Result<model::ModelStream> {
+        Ok(Box::pin(futures_util::stream::pending()))
+    }
+}
+
+async fn assert_child_creation_gate(exclusive: bool) {
+    let dir = tempfile::tempdir().unwrap();
+    let limits = if exclusive {
+        Limits::default()
+    } else {
+        Limits {
+            max_children_per_turn: 0,
+            ..Limits::default()
+        }
+    };
+    let engine = Engine::open(dir.path(), Arc::new(PendingExecutionGuard), limits).unwrap();
+    let parent = engine.create("/workspace".into()).await.unwrap();
+    let parent_turn = engine
+        .start(&parent.id, vec![Input::text("parent")])
+        .await
+        .unwrap();
+    let thread_id = if exclusive {
+        engine.spawn_delegated_child(
+            serde_json::from_value(json!({"parentThreadId":parent.id,"input":[{"type":"text","text":"writer"}],"workspaceMode":"sharedWrite"})).unwrap(),
+            parent_turn.id,
+            true,
+            None,
+        ).await.unwrap().0.id
+    } else {
+        parent.id.clone()
+    };
+    let cell = engine.cell(&thread_id).await.unwrap();
+    if exclusive {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if cell
+                    .state
+                    .lock()
+                    .await
+                    .active
+                    .as_ref()
+                    .unwrap()
+                    .workspace_exclusive
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+    {
+        let mut bindings = cell.bindings.write().await;
+        if bindings.registry.get("workgroup_start").is_err() {
+            bindings.registry = bindings.registry.clone().with_workgroups(true).unwrap();
+        }
+        if bindings.registry.get("agent_spawn").is_err() {
+            bindings.registry = bindings.registry.clone().with_agents(true).unwrap();
+        }
+        for definition in agents::definitions() {
+            bindings
+                .registry
+                .insert(definition, Backend::Agent)
+                .unwrap();
+        }
+    }
+    for (name, args) in [
+        ("agent_spawn", json!({"prompt":"nested child"})),
+        (
+            "agent_spawn_configured",
+            json!({"input":[{"type":"text","text":"nested configured child"}]}),
+        ),
+        ("task_spawn", json!({"prompt":"nested task worker"})),
+        (
+            "delegate_tasks",
+            json!({"tasks":["nested research"],"wait":true}),
+        ),
+        (
+            "workgroup_start",
+            json!({"requestId":"nested-group","plan":{"objective":"nested work","tasks":[{"id":"child","instruction":"implement","writes":["result.txt"]}]}}),
+        ),
+    ] {
+        cell.bindings
+            .read()
+            .await
+            .registry
+            .get(name)
+            .unwrap()
+            .validate_input(&args)
+            .unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            engine.tool(
+                &cell,
+                &CancellationToken::new(),
+                ToolCall {
+                    id: name.into(),
+                    name: name.into(),
+                    arguments: args.to_string(),
+                },
+                usize::MAX,
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let state = cell.state.lock().await;
+        let item = state
+            .thread
+            .turns
+            .last()
+            .unwrap()
+            .items
+            .iter()
+            .find(|item| matches!(item, Item::DynamicToolCall { call_id, .. } if call_id == name))
+            .unwrap();
+        let Item::DynamicToolCall {
+            success,
+            content_items,
+            ..
+        } = item
+        else {
+            panic!("missing tool receipt")
+        };
+        assert_eq!(*success, Some(false), "{name}");
+        assert!(
+            serde_json::to_string(content_items)
+                .unwrap()
+                .contains("CHILD_EXECUTION_DISABLED"),
+            "{name}: {content_items:?}"
+        );
+        assert!(state.active.as_ref().unwrap().children.is_empty());
+    }
+    if exclusive {
+        let error = tokio::time::timeout(Duration::from_secs(2), engine.spawn_agent(
+            serde_json::from_value(json!({"parentThreadId":thread_id,"input":[{"type":"text","text":"nested RPC child"}]})).unwrap()
+        )).await.unwrap().unwrap_err();
+        assert!(error.to_string().contains("exclusive writers"));
+    }
+    engine
+        .tool(
+            &cell,
+            &CancellationToken::new(),
+            ToolCall {
+                id: "plan-read".into(),
+                name: "plan_read".into(),
+                arguments: "{}".into(),
+            },
+            usize::MAX,
+        )
+        .await
+        .unwrap();
+    assert!(cell.state.lock().await.thread.turns.last().unwrap().items.iter().any(|item|
+        matches!(item, Item::DynamicToolCall { call_id, success: Some(true), .. } if call_id == "plan-read")
+    ));
+    engine.shutdown().await;
+}
+
+#[tokio::test]
+async fn exclusive_writer_rejects_legacy_child_creation_without_deadlocking() {
+    assert_child_creation_gate(true).await;
+}
+
+#[tokio::test]
+async fn bounded_isolated_worker_cannot_bypass_its_zero_child_limit() {
+    assert_child_creation_gate(false).await;
+}
+
+#[test]
+fn child_creation_classification_is_bound_to_the_actual_backend() {
+    for name in [
+        "agent_spawn",
+        "agent_spawn_configured",
+        "task_spawn",
+        "delegate_tasks",
+        "workgroup_start",
+    ] {
+        assert!(!creates_child_execution(name, &Backend::Client));
+        assert!(!creates_child_execution(name, &Backend::Builtin));
+    }
+    for name in [
+        "agent_read",
+        "agent_wait",
+        "agent_cancel",
+        "agent_report",
+        "workgroup_read",
+        "workgroup_wait",
+        "workgroup_cancel",
+    ] {
+        assert!(!creates_child_execution(name, &Backend::Coordination));
+    }
+    assert!(!creates_child_execution("plan_read", &Backend::Core));
+    assert!(!creates_child_execution("read_agent", &Backend::Agent));
+}

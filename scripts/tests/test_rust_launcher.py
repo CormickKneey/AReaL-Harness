@@ -3,6 +3,7 @@
 import os
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import test_launcher_lifecycle as legacy
@@ -19,6 +20,20 @@ class RustLauncherTests(legacy.LauncherTests):
         if not executable.is_file():
             self.skipTest("build target/debug/areal first")
         self.command = [str(executable), "launcher", *self.command[2:]]
+
+    def test_preflight_reports_exit_status_and_empty_stderr(self):
+        dispatcher = self.bin / "areal"
+        for body, expected in [
+            ("sys.exit(7)", "exit status: 7"),
+            ("os.kill(os.getpid(), signal.SIGKILL)", "signal: 9"),
+        ]:
+            with self.subTest(expected=expected):
+                dispatcher.write_text(f"#!{sys.executable}\nimport os, signal, sys\n{body}\n")
+                result = subprocess.run(self.command, text=True, capture_output=True, timeout=10)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Core configuration failed (", result.stderr)
+                self.assertIn(expected, result.stderr)
+                self.assertIn("<no stderr>", result.stderr)
 
     def test_starts_without_python_on_path(self):
         # 测试子进程使用绝对 shebang；此处验证产品 launcher 不查找 Python。

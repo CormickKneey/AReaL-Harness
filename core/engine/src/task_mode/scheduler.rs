@@ -35,6 +35,10 @@ impl Engine {
                         break;
                     }
                     if let Err(error) = engine.advance_task(&id).await {
+                        // 用户控制或其他结算已推进 CAS；下一次唤醒重读，不能自行暂停新状态。
+                        if matches!(error, Error::Conflict) {
+                            continue;
+                        }
                         tracing::error!(task_id=%id,%error,"task dispatch failed");
                         if let Err(error) = engine
                             .edit_task(&id, |task| {
@@ -69,6 +73,29 @@ impl Engine {
         }
         task.revision += 1;
         self.save_tasks(&mut state, candidate, id).await
+    }
+
+    async fn control_goal_from_task(
+        self: &Arc<Self>,
+        task: &Task,
+        run: &TaskRun,
+        action: &str,
+        view: &Value,
+    ) -> Result<()> {
+        let operation = if action == "pause" { "stop" } else { action };
+        self.goal_control_for_task(
+            task.owner.clone(),
+            action.into(),
+            GoalControl {
+                request_id: format!("task-{operation}-{}-{}", run.id, task.revision),
+                thread_id: run.thread_id.clone().ok_or(Error::Conflict)?,
+                goal_id: run.goal_id.clone().ok_or(Error::Conflict)?,
+                expected_revision: view["revision"].as_u64().ok_or(Error::Conflict)?,
+            },
+            (task.id.clone(), task.revision),
+        )
+        .await?;
+        Ok(())
     }
 
     async fn advance_task(self: &Arc<Self>, task_id: &str) -> Result<()> {
@@ -106,18 +133,8 @@ impl Engine {
                     let goal: Goal =
                         serde_json::from_value(view["goal"].clone()).map_err(invalid)?;
                     if (task.paused || task.cancelled) && goal.status == GoalStatus::Active {
-                        self.goal_control(
-                            task.owner.clone(),
-                            "pause".into(),
-                            GoalControl {
-                                request_id: format!("task-stop-{}-{}", run.id, task.revision),
-                                thread_id: thread.clone(),
-                                goal_id: goal_id.clone(),
-                                expected_revision: view["revision"].as_u64().unwrap(),
-                            },
-                            None,
-                        )
-                        .await?;
+                        self.control_goal_from_task(&task, run, "pause", &view)
+                            .await?;
                         return Ok(());
                     }
                     if run.reason.as_deref() == Some("resumeRequested")
@@ -129,25 +146,20 @@ impl Engine {
                         && run.workers.iter().all(|w| w.settled)
                         && matches!(goal.status, GoalStatus::Paused | GoalStatus::Blocked)
                     {
-                        self.goal_control(
-                            task.owner.clone(),
-                            "resume".into(),
-                            GoalControl {
-                                request_id: format!("task-resume-{}-{}", run.id, task.revision),
-                                thread_id: thread.clone(),
-                                goal_id: goal_id.clone(),
-                                expected_revision: view["revision"].as_u64().unwrap(),
-                            },
-                            None,
-                        )
-                        .await?;
+                        self.control_goal_from_task(&task, run, "resume", &view)
+                            .await?;
                         self.edit_task(task_id, |task| {
                             task.runs.last_mut().unwrap().reason = None;
                         })
                         .await?;
                         return Ok(());
                     }
+                    let expected_revision = task.revision;
                     self.edit_task(task_id, |task| {
+                        // Goal 查询期间发生用户控制时，不能用旧投影覆盖 resumeRequested。
+                        if task.revision != expected_revision {
+                            return;
+                        }
                         let cancelled = task.cancelled;
                         let run = task.runs.last_mut().unwrap();
                         // 计划控制只影响未结束的执行，不能改写已结算 Run 的历史。
@@ -380,5 +392,173 @@ impl Engine {
             }
             Err(error) => Err(error),
         }
+    }
+}
+
+#[cfg(test)]
+mod control_race_tests {
+    use super::*;
+    struct Pending;
+    #[async_trait::async_trait]
+    impl Model for Pending {
+        fn name(&self) -> &str {
+            "task-control-race"
+        }
+        async fn stream(&self, _: Vec<model::Message>) -> anyhow::Result<model::ModelStream> {
+            Ok(Box::pin(futures_util::stream::pending()))
+        }
+        async fn chat_limited(
+            &self,
+            m: Vec<model::Message>,
+            _: Vec<Value>,
+            _: model::RequestPurpose,
+            _: Option<u64>,
+        ) -> anyhow::Result<model::ModelStream> {
+            self.stream(m).await
+        }
+    }
+    fn control(view: &Value, request_id: &str) -> GoalControl {
+        GoalControl {
+            request_id: request_id.into(),
+            thread_id: view["threadId"].as_str().unwrap().into(),
+            goal_id: view["goal"]["id"].as_str().unwrap().into(),
+            expected_revision: view["revision"].as_u64().unwrap(),
+        }
+    }
+    #[tokio::test]
+    async fn stale_paused_task_cannot_pause_a_goal_after_user_resume() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Engine::open(dir.path(), Arc::new(Pending), Limits::default()).unwrap();
+        // 直接驱动同一调度动作，固定“读旧 Task → 用户恢复 → 读新 Goal”的交错。
+        engine.task_modes.started.store(true, Ordering::Release);
+        let thread = engine.create("/workspace".into()).await.unwrap();
+        let created = engine
+            .goal_create(
+                "fixture".into(),
+                GoalCreate {
+                    request_id: "create".into(),
+                    thread_id: thread.id.clone(),
+                    expected_revision: 0,
+                    objective: "controlled task".into(),
+                    token_budget: None,
+                    max_turns: Some(5),
+                    max_active_seconds: None,
+                    infer_limits: false,
+                    interaction_mode: None,
+                },
+            )
+            .await
+            .unwrap();
+        engine
+            .goal_control(
+                "fixture".into(),
+                "pause".into(),
+                control(&created, "pause"),
+                None,
+            )
+            .await
+            .unwrap();
+        engine.wait(&thread.id).await.unwrap();
+        let stale = engine.task_list().await.remove(0);
+        assert!(stale.paused);
+        let paused = engine.goal_get(&thread.id).await.unwrap();
+        engine
+            .goal_control(
+                "fixture".into(),
+                "resume".into(),
+                control(&paused, "resume"),
+                None,
+            )
+            .await
+            .unwrap();
+        let resumed = engine.goal_get(&thread.id).await.unwrap();
+        assert_eq!(resumed["goal"]["status"], "active");
+        assert!(!engine.task_read(&stale.id).await.unwrap().paused);
+        let result = engine
+            .control_goal_from_task(&stale, stale.runs.last().unwrap(), "pause", &resumed)
+            .await;
+        let current = engine.goal_get(&thread.id).await.unwrap();
+        assert!(
+            matches!(result, Err(Error::Conflict)),
+            "stale control returned {result:?}; goal={current}"
+        );
+        assert_eq!(current["goal"]["status"], "active");
+        assert!(!engine.task_read(&stale.id).await.unwrap().paused);
+        engine.shutdown().await;
+    }
+    #[tokio::test]
+    async fn stale_resume_task_cannot_override_a_newer_task_pause() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Engine::open(dir.path(), Arc::new(Pending), Limits::default()).unwrap();
+        engine.task_modes.started.store(true, Ordering::Release);
+        let thread = engine.create("/workspace".into()).await.unwrap();
+        let created = engine
+            .goal_create(
+                "fixture".into(),
+                GoalCreate {
+                    request_id: "create".into(),
+                    thread_id: thread.id.clone(),
+                    expected_revision: 0,
+                    objective: "controlled task".into(),
+                    token_budget: None,
+                    max_turns: Some(5),
+                    max_active_seconds: None,
+                    infer_limits: false,
+                    interaction_mode: None,
+                },
+            )
+            .await
+            .unwrap();
+        engine
+            .goal_control(
+                "fixture".into(),
+                "pause".into(),
+                control(&created, "pause"),
+                None,
+            )
+            .await
+            .unwrap();
+        engine.wait(&thread.id).await.unwrap();
+        let task = engine.task_list().await.remove(0);
+        engine
+            .task_control(
+                "fixture".into(),
+                "resume".into(),
+                TaskControl {
+                    task_id: task.id.clone(),
+                    request_id: "resume-task".into(),
+                    expected_revision: task.revision,
+                },
+            )
+            .await
+            .unwrap();
+        let stale = engine.task_read(&task.id).await.unwrap();
+        assert_eq!(
+            stale.runs.last().unwrap().reason.as_deref(),
+            Some("resumeRequested")
+        );
+        engine
+            .task_control(
+                "fixture".into(),
+                "pause".into(),
+                TaskControl {
+                    task_id: task.id.clone(),
+                    request_id: "pause-task".into(),
+                    expected_revision: stale.revision,
+                },
+            )
+            .await
+            .unwrap();
+        let view = engine.goal_get(&thread.id).await.unwrap();
+        let result = engine
+            .control_goal_from_task(&stale, stale.runs.last().unwrap(), "resume", &view)
+            .await;
+        assert!(matches!(result, Err(Error::Conflict)));
+        assert_eq!(
+            engine.goal_get(&thread.id).await.unwrap()["goal"]["status"],
+            "paused"
+        );
+        assert!(engine.task_read(&task.id).await.unwrap().paused);
+        engine.shutdown().await;
     }
 }

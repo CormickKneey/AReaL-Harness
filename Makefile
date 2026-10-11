@@ -18,7 +18,7 @@ endif
 	test-protocol test-concurrency verify smoke server tui schemas docs clean \
 	capacity capacity-primitives capacity-core perf runtime test-runtime runtime-smoke verify-runtime \
 	cordis-pin update-cordis sdk-test harness harness-smoke verify-harness \
-	setup sdk-build script-test workgroup-smoke capacity-workgroup local-service-smoke \
+	setup sdk-build script-test workgroup-smoke unified-execution-smoke capacity-workgroup local-service-smoke \
 	verify-native
 
 help: ## 显示常用操作（默认目标）
@@ -94,12 +94,13 @@ verify-runtime: ## 顺序运行 Runtime 行为测试和真实 sandbox 验收
 	$(MAKE) test-runtime
 	$(MAKE) runtime-smoke
 
-verify: ## 常规验收：格式、静态检查、Rust/SDK/Python 测试与 TUI 冒烟
+verify: ## 常规验收：格式、静态检查、Rust/SDK/Python 测试与 TUI/统一委派冒烟
 	$(MAKE) cordis-pin
 	$(MAKE) -j2 fmt-check sdk-test script-test
 	$(MAKE) lint
 	$(MAKE) test
 	$(MAKE) smoke
+	$(MAKE) unified-execution-smoke
 
 sdk-build: ## 编译两套 TypeScript SDK
 	npm --prefix runtime/sdk-typescript run build
@@ -125,11 +126,15 @@ harness-smoke: build sdk-build ## 原生 SDK 与完整读改测试/强杀恢复
 	python3 scripts/runtime-sdk-smoke.py
 	node scripts/harness-smoke.mjs
 	node scripts/workgroup-smoke.mjs
+	node scripts/unified-execution-smoke.mjs
 	node scripts/plugin-smoke.mjs
 	node scripts/permissions-smoke.mjs
 	node scripts/permission-modes-smoke.mjs
 	python3 scripts/tui-local-smoke.py
 	node scripts/local-service-smoke.mjs
+
+unified-execution-smoke: build ## 真实 Runtime 的统一委派、组合交付、取消和恢复回归
+	node scripts/unified-execution-smoke.mjs
 
 local-service-smoke: build ## 验证共享服务、多个窗口与宿主故障恢复
 	node scripts/local-service-smoke.mjs

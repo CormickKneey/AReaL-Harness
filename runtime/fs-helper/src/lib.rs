@@ -1,3 +1,4 @@
+mod delivery;
 pub mod search;
 
 use areal_runtime_protocol::*;
@@ -110,8 +111,15 @@ pub fn execute(request: FileHelperRequest) -> Result<Value> {
             _ => Err(invalid("invalid path")),
         })
         .collect::<Result<_>>()?;
+    let create_parents = matches!(request.command, FileCommand::StageFileChunk { .. });
     let mut parent = root;
     for part in parts.iter().take(parts.len().saturating_sub(1)) {
+        if create_parents {
+            match fs::mkdirat(&parent, *part, Mode::from_bits_truncate(0o755)) {
+                Ok(()) | Err(rustix::io::Errno::EXIST) => {}
+                Err(error) => return Err(io(error)),
+            }
+        }
         parent = directory(&parent, part)?;
     }
     let name = parts.last().copied().unwrap_or(".");
@@ -122,13 +130,13 @@ pub fn execute(request: FileHelperRequest) -> Result<Value> {
             if max_bytes == 0 || max_bytes > MAX_FILE_CHUNK {
                 return Err(invalid("maxBytes must be 1..65536"));
             }
-            let (bytes, _) = read(&parent, name)?;
+            let (bytes, mode) = read(&parent, name)?;
             let begin = usize::try_from(offset)
                 .unwrap_or(usize::MAX)
                 .min(bytes.len());
             let end = begin.saturating_add(max_bytes).min(bytes.len());
             Ok(
-                json!({"dataBase64":STANDARD.encode(&bytes[begin..end]),"sha256":hash(&bytes),"size":bytes.len(),"nextOffset":end,"eof":end==bytes.len()}),
+                json!({"dataBase64":STANDARD.encode(&bytes[begin..end]),"sha256":hash(&bytes),"size":bytes.len(),"nextOffset":end,"eof":end==bytes.len(),"executable":mode & 0o111 != 0}),
             )
         }
         FileCommand::Stat { .. } => {
@@ -195,6 +203,9 @@ pub fn execute(request: FileHelperRequest) -> Result<Value> {
             }
             replace(&parent, name, &bytes, &expected)
         }
+        command @ (FileCommand::StageFileChunk { .. }
+        | FileCommand::CommitFile { .. }
+        | FileCommand::RemoveFile { .. }) => delivery::execute(&parent, name, command),
         FileCommand::ApplyPatch {
             old_text,
             new_text,

@@ -326,23 +326,73 @@ impl Engine {
         self: &Arc<Self>,
         request: areal_protocol::desktop::AgentSpawn,
     ) -> Result<(Thread, Turn)> {
+        self.spawn_configured_child_inner(request, None).await
+    }
+
+    pub(crate) async fn spawn_configured_model_child(
+        self: &Arc<Self>,
+        request: areal_protocol::desktop::AgentSpawn,
+        parent_turn: String,
+    ) -> Result<(Thread, Turn)> {
+        self.spawn_configured_child_inner(request, Some(parent_turn))
+            .await
+    }
+
+    async fn spawn_configured_child_inner(
+        self: &Arc<Self>,
+        request: areal_protocol::desktop::AgentSpawn,
+        model_parent_turn: Option<String>,
+    ) -> Result<(Thread, Turn)> {
         if request.workspace_mode.as_deref() == Some("isolatedWrite") {
             return Err(Error::Invalid("use spawn_agent for isolated writes".into()));
         }
+        let execution_policy = areal_protocol::delegation::ChildExecutionPolicy {
+            exclusive_write: request.workspace_mode.as_deref() == Some("sharedWrite"),
+        };
         self.mutate(move |engine| async move {
             engine
-                .spawn_child_inner(
+                .spawn_child_with_policy(
                     &request.parent_thread_id,
                     request.input.clone(),
                     false,
-                    None,
+                    model_parent_turn.as_deref(),
                     Some(&request),
                     None,
+                    execution_policy,
                 )
                 .await
         })
         .await
     }
+
+    pub(crate) async fn spawn_delegated_child(
+        self: &Arc<Self>,
+        request: areal_protocol::desktop::AgentSpawn,
+        parent_turn: String,
+        exclusive_write: bool,
+        max_model_rounds: Option<usize>,
+    ) -> Result<(Thread, Turn)> {
+        if request.workspace_mode.as_deref() == Some("isolatedWrite") {
+            return Err(Error::Invalid(
+                "shared child cannot use an isolated workspace".into(),
+            ));
+        }
+        self.mutate(move |engine| async move {
+            engine
+                .spawn_child_with_policy(
+                    &request.parent_thread_id,
+                    request.input.clone(),
+                    false,
+                    Some(&parent_turn),
+                    Some(&request),
+                    max_model_rounds,
+                    areal_protocol::delegation::ChildExecutionPolicy { exclusive_write },
+                )
+                .await
+        })
+        .await
+    }
+
     pub(super) async fn spawn_child_inner(
         self: &Arc<Self>,
         parent_id: &str,
@@ -351,6 +401,29 @@ impl Engine {
         model_parent_turn: Option<&str>,
         request: Option<&areal_protocol::desktop::AgentSpawn>,
         max_model_rounds: Option<usize>,
+    ) -> Result<(Thread, Turn)> {
+        self.spawn_child_with_policy(
+            parent_id,
+            input,
+            research,
+            model_parent_turn,
+            request,
+            max_model_rounds,
+            Default::default(),
+        )
+        .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn spawn_child_with_policy(
+        self: &Arc<Self>,
+        parent_id: &str,
+        input: Vec<Input>,
+        research: bool,
+        model_parent_turn: Option<&str>,
+        request: Option<&areal_protocol::desktop::AgentSpawn>,
+        max_model_rounds: Option<usize>,
+        execution_policy: areal_protocol::delegation::ChildExecutionPolicy,
     ) -> Result<(Thread, Turn)> {
         let parent = self.cell(parent_id).await?;
         let mut state = parent.state.lock().await;
@@ -434,6 +507,7 @@ impl Engine {
                 },
                 configuration.map(|configuration| areal_protocol::desktop::DesktopState {
                     configuration,
+                    execution_policy,
                     ..Default::default()
                 }),
             )

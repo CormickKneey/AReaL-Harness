@@ -191,6 +191,7 @@ impl Engine {
             tool_calls: 0,
             started: std::time::Instant::now(),
             isolated_children: 0,
+            workspace_exclusive: false,
             _admission: admission,
             id: turn.id.clone(),
             cancel: cancel.clone(),
@@ -492,10 +493,25 @@ impl Engine {
                 None => std::future::pending::<()>().await,
             }
         };
+        let exclusive = cell
+            .state
+            .lock()
+            .await
+            .thread
+            .desktop
+            .as_ref()
+            .is_some_and(|d| d.execution_policy.exclusive_write);
+        let mut workspace_guard = None;
         let mut result = {
-            let generation =
-                std::panic::AssertUnwindSafe(self.generate(&cell, &cancel, &mut steer))
-                    .catch_unwind();
+            let generation = std::panic::AssertUnwindSafe(async {
+                if exclusive {
+                    let guard=tokio::select! {biased; _=cancel.cancelled()=>anyhow::bail!("cancelled before writer admission"), guard=self.workspace_gate.clone().write_owned()=>guard};
+                    self.ensure_workspace_processes_settled().await?;
+                    cell.state.lock().await.active.as_mut().unwrap().workspace_exclusive=true;
+                    workspace_guard=Some(guard);
+                }
+                self.generate(&cell, &cancel, &mut steer).await
+            }).catch_unwind();
             tokio::pin!(generation);
             let result = tokio::select! {
                 biased;
@@ -551,7 +567,10 @@ impl Engine {
             cleanup_failed = true;
             result = Err(anyhow::anyhow!("managed process cleanup failed: {error}"));
         }
-        if let Some(service) = self.workgroups.get() {
+        for service in [self.workgroups.get(), self.automatic_workgroups.get()]
+            .into_iter()
+            .flatten()
+        {
             let owner = {
                 let state = cell.state.lock().await;
                 format!("{}/{}", state.thread.id, state.active.as_ref().unwrap().id)
@@ -757,6 +776,8 @@ impl Engine {
                 "persist_failed",
             ));
         }
+        // 副作用与清理均已结束；必须先释放写租约，再发布资源已结算的观察结果。
+        drop(workspace_guard);
         let active = state.active.take().unwrap();
         if state.poisoned {
             state.quarantined_admission = Some(active._admission);

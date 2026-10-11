@@ -47,6 +47,12 @@ ASK_PERMISSIONS 自动允许内置工作区/scratch 读取、搜索和内部状�
 
 launcher 自动创建与 dataDir 同级的 `scratch/`，为每个 Thread 设置独立 `TMPDIR`；可用 `--scratch` 指定现有目录。目录与工作区/dataDir 不重叠，保留至部署数据被人工清理。只读/研究任务仍可写自己的 scratch。直接嵌入 Core 或运行 Runtime daemon 的默认边界保持受限；部署显式 `--sandbox-profile native` 可继续使用原有 write/network 开关，见 [Runtime 部署](runtime.md)。
 
+## 自动协作与兼容验收策略
+
+普通 Agent 协作无需额外功能开关，也无需用户指定共享或隔离模式。Core 根据任务要求及有效权限选择共享只读、共享独占写入或隔离候选执行。自动隔离还要求可用的独立 Runtime/文件助手以及满足快照约束的工作区；普通修改不具备隔离条件时可在启动前采用共享独占写入。明确要求候选补丁或可信验收的任务不能降低要求。
+
+宿主使用现有写授权和父任务限制构造内部执行边界。YOLO 不覆盖只读 Profile、工具拒绝或 Runtime 上限，项目里的说明或模型提供的计划不能新增授权。未配置可信检查时，自动隔离不宣称验收通过；现有 `--workgroup-policy` 继续表示由部署方提供的严格写范围和最终 checks，用于兼容 Workflow、显式工作组和要求可信验收的委派。普通使用不需要维护第二份策略 JSON，详见[执行选择](../design/multi-agent.md)与[兼容 Workgroup 配置](workgroups.md)。
+
 ## 模型与限额
 
 普通 Turn 没有组合墙钟超时；模型请求/流空闲、工具执行和清理沿用各自的超时，显式 Goal、研究 worker 和 Workgroup 预算仍有效。迁移时删除 `limits.turn_timeout_seconds`（旧 TOML 字段会被拒绝）和 `AREAL_HARNESS_TURN_TIMEOUT_SECONDS`（旧环境变量也会被拒绝）。`thread/configuration/read` 的 `limits` 不再包含 `turnTimeoutMs`。手动上下文压缩也只受模型超时与关闭取消约束。
@@ -194,7 +200,7 @@ target/debug/areal exec --desktop-config deployment.json --agent code-agent@v2 "
 }
 ```
 
-`tool-agent@v1` 可直接使用允许的工具，不需要 Workgroup；`code-agent@v2` 需要可信 `--workgroup-policy` 和 `--allow-write`，策略须授权 `src/main.rs` 并提供最终检查，详见 [Workgroup 指南](workgroups.md)。Workflow 计划由绑定 Profile 自动启动，`--prompt` 或 `exec` 的普通 Turn 是独立的用户交互。
+此示例是显式绑定 Workflow 的兼容部署：`tool-agent@v1` 可直接使用允许的工具；`code-agent@v2` 需要可信 `--workgroup-policy` 和 `--allow-write`，策略须授权 `src/main.rs` 并提供最终检查，详见 [Workgroup 指南](workgroups.md)。Workflow 计划由绑定 Profile 自动启动，`--prompt` 或 `exec` 的普通 Turn 是独立的用户交互。
 
 ### GUI 与 CLI 共享模型目录
 

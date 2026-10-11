@@ -10,6 +10,8 @@
 
 流水线执行 `make release`、生成完整 bundle 与逐文件 manifest、生成 tar.gz 和 SHA256，然后解压到含空格的新路径，以本地 HTTP 模型 fixture 验证真实命令写入与文件读取。Linux 执行安装器再验证安装入口，并验证原生工具；macOS 在临时 tap 安装本地同一归档，执行 `brew test` 和真实读写，再运行 release-profile 的 bundle 生命周期 soak。
 
+macOS 打包保留构建产物的签名与原始字节，并执行 `codesign --verify --strict`；签名缺失或无效时停止打包，需修复构建产物。打包不强制重签二进制，manifest 校验和对应实际复制的文件。
+
 `release-artifacts.py` 拒绝 dirty working tree 或非 release-profile 的 manifest。候选输出包括平台 tar.gz、manifest、SHA256 sidecar；macOS 另生成最终下载 URL 和真实归档 SHA256 的 `areal.rb`。不要手工编写占位 SHA256，也不要将 CI 候选发布为已验收正式版本。
 
 ## 发布步骤

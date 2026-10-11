@@ -191,6 +191,7 @@ impl Engine {
     }
     async fn goal_completion_ready(&self, cell: &Cell) -> Result<()> {
         self.task_workers_ready(cell, true).await?;
+        self.execution_completion_ready(cell).await?;
         let (children, owner) = {
             let state = cell.state.lock().await;
             let active = state.active.as_ref().ok_or(Error::Conflict)?;
@@ -296,6 +297,8 @@ impl Engine {
                 | "agent_wait_any"
                 | "agent_wait_all"
                 | "agent_report"
+                | "agent_artifact"
+                | "agent_cancel"
                 | "workgroup_read"
                 | "workgroup_wait"
                 | "workgroup_cancel"
@@ -337,7 +340,7 @@ impl Engine {
                     "GOAL_REPORT_PENDING: stop report accepted; finish with a tool-free final response, or use the allowed observation/cleanup tools",
                 );
                 error.details = Some(json!({"reason":"goalReportPending", "tool":name,
-                    "allowedTools":["goal_read","goal_update","agent_read","agent_wait","agent_wait_any","agent_wait_all","agent_report","workgroup_read","workgroup_wait","workgroup_cancel","read_process","read_tool_result","terminate_process","task_state","task_channel_read"]}));
+                    "allowedTools":["goal_read","goal_update","agent_read","agent_wait","agent_wait_any","agent_wait_all","agent_report","agent_artifact","agent_cancel","workgroup_read","workgroup_wait","workgroup_cancel","read_process","read_tool_result","terminate_process","task_state","task_channel_read"]}));
                 return Ok(Some(error));
             }
         }
@@ -444,8 +447,21 @@ mod completion_tests {
             .await
             .unwrap();
         let cell = engine.cell(&thread.id).await.unwrap();
+        let request: areal_protocol::delegation::DelegationRequest =
+            serde_json::from_value(json!({
+                "requestId":"must-not-delegate", "parentThreadId":thread.id,
+                "input":[{"type":"text","text":"inspect"}], "intent":"inspect", "delivery":"report"
+            }))
+            .unwrap();
         {
             let mut state = cell.state.lock().await;
+            state.thread.goals.goal.as_mut().unwrap().limits_pending = true;
+        }
+        let rejected = engine.delegate(request.clone()).await.unwrap_err();
+        assert!(rejected.to_string().contains("GOAL_LIMITS_PENDING"));
+        {
+            let mut state = cell.state.lock().await;
+            state.thread.goals.goal.as_mut().unwrap().limits_pending = false;
             state
                 .active
                 .as_mut()
@@ -461,6 +477,19 @@ mod completion_tests {
         })).await.unwrap_err();
         assert!(error.to_string().contains("GOAL_COMPLETION_PENDING"));
         assert!(error.to_string().contains("pendingVerifications"));
+        engine.goal_tool(&cell, "goal_update", &json!({
+            "expectedRevision":goal["revision"], "status":"blocked", "summary":"waiting for verification",
+            "evidence":[], "remaining":["unobserved check"], "blocker":"original process cannot be observed"
+        })).await.unwrap();
+        let rejected = engine.delegate(request).await.unwrap_err();
+        assert!(rejected.to_string().contains("GOAL_REPORT_PENDING"));
+        assert_eq!(
+            engine.execution_list(&thread.id, 0, 50).await.unwrap()["data"],
+            json!([])
+        );
+        for name in ["agent_artifact", "agent_cancel"] {
+            assert!(engine.goal_tool_guard(&cell, name).await.unwrap().is_none());
+        }
         assert!(
             engine
                 .goal_tool_guard(&cell, "task_state")

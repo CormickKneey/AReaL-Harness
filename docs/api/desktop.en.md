@@ -45,6 +45,7 @@ Compatibility: Bearer clients and the authentication file format are unchanged. 
 | process/start/list/get/read/wait/write/resize/closeStdin/terminate | observe / interact | Managed processes and shared terminals |
 | process/acknowledgeCleanup | manage | External cleanup evidence for old epochs, retaining UNKNOWN |
 | thread/closeResources | interact | Await managed resource cleanup |
+| agent/delegate, execution/list/read/wait/artifact/cancel/apply | observe / interact | Unified delegation and delivery; see [Core contract](core.en.md#agent-tools) |
 | agent/spawn/wait, workflow/list/read/start | observe / interact | Configured child tasks or Workgroups |
 | mcp/list/read/configure/connect/disconnect | manage | Separate configuration, connection and catalog revisions |
 | thread/inspect, context/read/compact | observe / interact | Authoritative execution view, pagination and idle compaction |

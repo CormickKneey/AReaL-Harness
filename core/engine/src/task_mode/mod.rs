@@ -1,5 +1,6 @@
 //! 任务身份与通信独立持久化；执行继续复用 Goal、Thread 和 Runtime 的准入边界。
 mod channel;
+mod delegations;
 mod scheduler;
 mod workers;
 use super::*;
@@ -38,14 +39,15 @@ impl Tasks {
             serde_json::from_slice(&std::fs::read(path)?)?
         } else {
             Snapshot {
-                version: 1,
+                version: 2,
                 ..Default::default()
             }
         };
         anyhow::ensure!(
-            state.version == 1 && state.tasks.len() <= MAX_TASKS,
+            matches!(state.version, 1 | 2) && state.tasks.len() <= MAX_TASKS,
             "unsupported task store"
         );
+        state.version = 2;
         for task in state.tasks.values_mut() {
             for run in &mut task.runs {
                 if matches!(
@@ -522,6 +524,32 @@ impl Engine {
             self.bind_goal_task(owner, "", goal).await?;
         }
         Ok(())
+    }
+
+    pub(crate) async fn task_goal_control_current(
+        &self,
+        task_id: &str,
+        revision: u64,
+        request: &GoalControl,
+        action: &str,
+    ) -> bool {
+        let state = self.task_modes.state.lock().await;
+        state.tasks.get(task_id).is_some_and(|task| {
+            task.revision == revision
+                && task.runs.last().is_some_and(|run| {
+                    run.thread_id.as_ref() == Some(&request.thread_id)
+                        && run.goal_id.as_ref() == Some(&request.goal_id)
+                        && match action {
+                            "pause" => task.paused || task.cancelled,
+                            "resume" => {
+                                !task.paused
+                                    && !task.cancelled
+                                    && run.reason.as_deref() == Some("resumeRequested")
+                            }
+                            _ => false,
+                        }
+                })
+        })
     }
 
     pub(crate) async fn task_goal_can_resume(&self, goal_id: &str) -> bool {

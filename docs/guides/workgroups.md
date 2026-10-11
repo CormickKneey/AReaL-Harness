@@ -2,7 +2,13 @@
 
 # Workgroup 使用
 
-Workgroup 为写任务和验证器创建独立工作区/Runtime，使用生产 Engine，最终组合检查通过才算完成。适用于 macOS 可信宿主；共享工作区委派见 [Agent](../design/multi-agent.md)。
+Workgroup 为写任务和验证器创建独立工作区/Runtime，使用生产 Engine。它是统一委派的内部隔离执行器；普通任务直接输入目标，Core 根据意图和运行条件选择执行方式，无需用户选择 Workgroup 或提供 policy JSON。共享与隔离的选择见 [Agent 委派](../design/multi-agent.md)。
+
+## 普通任务
+
+在 CLI/TUI、Web 或 GUI 的普通输入区提出分析或修改要求即可。“子任务”进度分别展示执行、验证和交付；分析可共享只读执行，修改可共享独占执行或隔离执行。自动隔离没有配置可信最终检查时标为未检查，不会自动从仓库脚本推导出可信验收。明确要求补丁制品或可信验收而条件不足时，Core 返回具体原因，不悄悄降低要求。
+
+请求交付改动时由 Core 在已有授权内预检原工作区基线并应用整组候选。已有用户修改造成冲突时保留冲突状态；候选完成不代表已经应用。以下子命令、JSON 计划和策略配置面向显式严格验收、嵌入部署与兼容使用，不是普通协作的前置步骤。
 
 ## Workgroup 子命令
 
@@ -62,9 +68,9 @@ writes 为精确相对文件名，不接受目录/glob/逃逸。depends 要求�
 
 TUI/server/launcher 可配置 `--workgroup-policy /absolute/policy.json --workgroup-toolchain /absolute/toolchain`，同时授权写入。策略包含 allowedWrites（或目录授权 allowedDirectories）、非空 checks，以及共享 workers/verifiers/activeGroups 和预算。模型不能修改该部署策略。
 
-服务开放 workgroup_start/read/wait/revise/cancel/artifact，TUI 使用 `/groups`、`/group ID`、`/group-start FILE`。requestId 去重，计划修改带 expectedRevision；重连不取消客户端组，重启不重跑旧组。artifact 最多返回 4096 字节文件块及基线/候选摘要，应用回原目录仍需条件检查。
+兼容服务开放 `areal/workgroup/*` RPC；普通模型工具只暴露统一 `agent_*` 委派，不同时展示 Workgroup 工具。高级 TUI 使用 `/groups`、`/group ID`、`/group-start FILE`。requestId 去重，计划修改带 expectedRevision；重连不取消客户端组，重启不重跑旧组。artifact 最多返回 4096 字节文件块及基线/候选摘要，应用回原目录仍需条件检查。
 
-桌面 Workflow 是版本化计划，可按阶段配置 Profile、模型、Skill、工具和 readOnly；也可以作为 Agent Profile 的 `workflow` 属性，在 `areal/thread/start` 时自动启动一次并记录到 Thread；isolatedWrite 子 Agent 复用此服务。契约见 [Core API](../api/core.md#workgroups)，机制见[调度设计](../design/workgroups.md)。
+桌面 Workflow 是版本化计划，可按阶段配置 Profile、模型、Skill、工具和 readOnly；也可以作为 Agent Profile 的 `workflow` 属性，在 `areal/thread/start` 时自动启动一次并记录到 Thread；旧 `isolatedWrite` 子 Agent 复用此严格服务；统一委派由 Core 选择严格或自动隔离执行。契约见 [Core API](../api/core.md#workgroups)，机制见[调度设计](../design/workgroups.md)。
 
 连续四个成功且输入、结果和源码均相同的工具边界会进入验证检查点；动态进程/游标标识与 remainingToolCalls 准入余量不参与重复结果比较。Goal 内的原生 Workgroup 与父 Turn 共享目标 token 预算，原有 Workgroup 限额继续生效。
 

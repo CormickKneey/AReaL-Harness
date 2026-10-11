@@ -45,6 +45,7 @@ function projectCoreCapabilities(binary, capabilities) {
       goals: supports('areal/goal/create', 'areal/goal/get'),
       tasks: supports('areal/task/create', 'areal/inbox/list'),
       processes: supports('areal/process/start', 'areal/process/list', 'areal/process/get', 'areal/process/read', 'areal/process/write', 'areal/process/closeStdin', 'areal/process/wait', 'areal/process/terminate', 'areal/process/resize'),
+      executions: supports('areal/agent/delegate', 'areal/execution/list', 'areal/execution/read'),
       workgroups: supports('areal/workgroup/start', 'areal/workgroup/list'),
     } : null,
   };

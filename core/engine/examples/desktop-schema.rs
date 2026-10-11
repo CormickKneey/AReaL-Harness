@@ -49,6 +49,10 @@ fn main() {
     add!("areal/interaction/respond", Respond);
     add!("areal/process/start", ProcessStart);
     add!("areal/agent/spawn", AgentSpawn);
+    add!(
+        "areal/agent/delegate",
+        areal_protocol::delegation::DelegationRequest
+    );
     add!("areal/profile/read", VersionRef);
     add!("areal/workflow/read", VersionRef);
     add!(
@@ -135,6 +139,30 @@ fn main() {
         ),
     );
     methods.insert("areal/skill/read".into(),object(json!({"threadId":string,"skill":schemars::schema_for!(VersionRef),"resource":string,"offset":integer,"maxBytes":{"type":"integer","minimum":1,"maximum":8192}}),vec!["threadId","skill"]));
+    methods.insert("areal/execution/list".into(), object(json!({"parentThreadId":string,"offset":integer,"limit":{"type":"integer","minimum":1,"maximum":100}}), vec!["parentThreadId"]));
+    methods.insert(
+        "areal/execution/read".into(),
+        object(
+            json!({"parentThreadId":string,"executionId":string,"offset":integer}),
+            vec!["parentThreadId", "executionId"],
+        ),
+    );
+    methods.insert(
+        "areal/execution/apply".into(),
+        object(
+            json!({"parentThreadId":string,"executionId":string}),
+            vec!["parentThreadId", "executionId"],
+        ),
+    );
+    methods.insert(
+        "areal/execution/artifact".into(),
+        object(
+            json!({"parentThreadId":string,"executionId":string,"path":string,"offset":integer}),
+            vec!["parentThreadId", "executionId"],
+        ),
+    );
+    methods.insert("areal/execution/wait".into(), object(json!({"parentThreadId":string,"executionId":string,"timeoutMs":{"type":"integer","minimum":0,"maximum":60000}}), vec!["parentThreadId", "executionId"]));
+    methods.insert("areal/execution/cancel".into(), object(json!({"parentThreadId":string,"executionId":string,"mode":{"enum":["graceful","force"]}}), vec!["parentThreadId", "executionId"]));
     methods.insert("areal/agent/wait".into(),object(json!({"parentThreadId":string,"threadIds":{"type":"array","items":string,"minItems":1,"maxItems":16,"uniqueItems":true},"timeoutMs":{"type":"integer","minimum":0,"maximum":60000}}),vec!["parentThreadId","threadIds"]));
     for action in ["update", "remove", "reorder", "pause", "resume"] {
         let required = match action {

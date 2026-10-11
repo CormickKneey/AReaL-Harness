@@ -52,6 +52,25 @@ pub enum FileCommand {
         data_base64: String,
         expected: ExpectedFile,
     },
+    StageFileChunk {
+        path: String,
+        upload_id: String,
+        offset: u64,
+        data_base64: String,
+    },
+    CommitFile {
+        path: String,
+        upload_id: String,
+        expected: ExpectedFile,
+        expected_executable: Option<bool>,
+        sha256: String,
+        executable: bool,
+    },
+    RemoveFile {
+        path: String,
+        expected_sha256: String,
+        expected_executable: bool,
+    },
     ApplyPatch {
         path: String,
         old_text: String,
@@ -72,6 +91,9 @@ impl FileCommand {
             | Self::Stat { path }
             | Self::List { path, .. }
             | Self::Write { path, .. }
+            | Self::StageFileChunk { path, .. }
+            | Self::CommitFile { path, .. }
+            | Self::RemoveFile { path, .. }
             | Self::ApplyPatch { path, .. }
             | Self::ApplyPatches { path, .. } => path,
         }
@@ -82,6 +104,9 @@ impl FileCommand {
             | Self::Stat { path }
             | Self::List { path, .. }
             | Self::Write { path, .. }
+            | Self::StageFileChunk { path, .. }
+            | Self::CommitFile { path, .. }
+            | Self::RemoveFile { path, .. }
             | Self::ApplyPatch { path, .. }
             | Self::ApplyPatches { path, .. } => path,
         }
@@ -89,7 +114,12 @@ impl FileCommand {
     pub fn writes(&self) -> bool {
         matches!(
             self,
-            Self::Write { .. } | Self::ApplyPatch { .. } | Self::ApplyPatches { .. }
+            Self::Write { .. }
+                | Self::StageFileChunk { .. }
+                | Self::CommitFile { .. }
+                | Self::RemoveFile { .. }
+                | Self::ApplyPatch { .. }
+                | Self::ApplyPatches { .. }
         )
     }
 }

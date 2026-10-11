@@ -398,8 +398,13 @@ async fn preflight(args: &Args) -> Result<(PathBuf, PathBuf, PathBuf)> {
         .context("preflight Core configuration")?;
     ensure!(
         output.status.success(),
-        "Core configuration failed: {}",
-        String::from_utf8_lossy(&output.stderr)
+        "Core configuration failed ({}): {}",
+        output.status,
+        if output.stderr.is_empty() {
+            "<no stderr>".into()
+        } else {
+            String::from_utf8_lossy(&output.stderr)
+        }
     );
     let config: serde_json::Value = serde_json::from_slice(&output.stdout)?;
     let data = config["server"]["data_dir"]

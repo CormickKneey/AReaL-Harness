@@ -149,7 +149,7 @@ JSONL 的 30 天期限按文件最后修改时间计算，不逐条检查行的�
 
 工具错误审计新增 `errorCode` 与 `toolCallError`：`invalid_tool_call_index` 附固定原因、协议、字段路径、从 1 开始的 SSE 数据事件序号、index JSON 类型及已缓冲调用数量；`tool_call_budget_exceeded` 附预算类别、上限和观测值。字段只含固定标签和有界数值，诊断不复制 SSE、参数、reasoning 或非法字段值，使用同一记录的本地 `requestId` 关联。`responseShape.toolArgumentBytes` 沿用旧名称，实际累计通过校验的 id/name/arguments 字节。
 
-快照写入格式 12，可读取 1–12；旧二进制不能读取新快照。可选 `historyArchive` 引用 `history/` 中的不可变 SHA-256 分段，包含 head、throughItemId、completedTurns、items、bytes；单分段最多 32 MiB。先同步分段，再提交引用它的快照。热快照保留近期条目和 checkpoint；完整 thread 读取还原原始 Turn/Item，并省略存储清单。`read_history` 按 item ID 分页，无需加载全部归档。GC 同时追踪热快照与冷分段引用。工具意图持久化与 UNKNOWN 恢复不变，不重放归档副作用。usage/duration 缺失表示未知，不是 0。
+快照写入格式 13，可读取 1–13；旧二进制不能读取新快照。可选 `historyArchive` 引用 `history/` 中的不可变 SHA-256 分段，包含 head、throughItemId、completedTurns、items、bytes；单分段最多 32 MiB。先同步分段，再提交引用它的快照。热快照保留近期条目和 checkpoint；完整 thread 读取还原原始 Turn/Item，并省略存储清单。`read_history` 按 item ID 分页，无需加载全部归档。GC 同时追踪热快照与冷分段引用。工具意图持久化与 UNKNOWN 恢复不变，不重放归档副作用。usage/duration 缺失表示未知，不是 0。
 
 `ToolExecution` 新增可选 `resultSnapshot: MediaRef` 与 `outputProjection` 度量对象，旧记录默认缺省。原文回取是模型 Core 工具 `read_tool_result`，不是新的 Runtime RPC；边界见[工具指南](../guides/tools.md)。模型请求审计另记 messageBlocks 的摘要/字节数、toolSchemaSha256 和 instructionsSha256，用于离线比较稳定前缀；不记录提示词正文，也不将前缀相同直接视为提供方缓存命中。`usageDetails` 记录提供方可选的缓存输入和推理 token；缺失时为 null，预算用量结构不变。
 
@@ -175,27 +175,47 @@ success/contentItems 必填；结构化成功结果按 outputSchema 校验，产
 <a id="agent-tools"></a>
 ## Agent 工具
 
+模型使用一个委派入口，说明工作意图和交付要求；Core 选择共享只读、共享独占作者或隔离工作区。用户不选择后端。只有明确需要隔离或可信检查时才把它作为不可降级的要求。
+
 | 工具 | 参数 |
 |---|---|
-| `agent_spawn` | `{prompt,maxModelRounds?}` |
-| `agent_read` | `{threadId,offset?:0}` |
-| `agent_wait` | `{threadId,timeoutMs?:10000}` |
-| `agent_wait_any` | `{threadIds,timeoutMs?:10000}` |
+| `agent_spawn` | `{prompt,intent:"inspect"\|"modify",delivery:"report"\|"changes"\|"patch",writes?,independent?,requiresCurrentEnvironment?,requireTrustedChecks?,maxModelRounds?}` |
+| `agent_read` | `{executionId,offset?:0}` |
+| `agent_wait` | `{executionId,timeoutMs?:10000}` |
+| `agent_wait_any` | `{executionIds,timeoutMs?:10000}` |
+| `agent_artifact` | `{executionId,path?,offset?:0}` |
 | `agent_report` | `{summary,evidence,remaining}` |
-| `agent_send_input` | `{threadId,prompt}` |
-| `agent_cancel` | `{threadId,mode?:"graceful"}` |
+| `agent_send_input` | `{executionId,prompt}` |
+| `agent_cancel` | `{executionId,mode?:"graceful"}` |
 
-prompt 非空，最多 32000 字符且受输入字节预算约束。maxModelRounds 为 1–1024，不能扩大父上限；最后一轮仅交接。wait 超时 0–60000 ms 不取消子任务；wait_any 接受 1–16 个不同直接子任务。report 仅限子 Agent：summary 最多 4096 字符，两个数组各 16 项/项 512 字符，总参数最多 16 KiB。
+prompt 必须非空，委派输入文本合计最多 32000 字节。inspect 仅交付 report，不可请求写入或可信源码验收；modify 交付 changes 或 patch。writes 为至多 256 个不同的工作区相对文件路径，隔离执行必须提供。maxModelRounds 为 1–1024，不能扩大父上限；最后一轮仅交接。wait 超时 0–60000 ms 不取消子任务；wait_any 接受 1–16 个不同执行。report 仍仅限子 Agent，字段边界不变。
 
-`agent_send_input` 持久化补充说明，并在同一子 Turn 重启生成。已发出的旧请求先只排空计量，过时工具不执行；因此它适合纠偏，可能废弃数分钟已生成工作，普通非紧急提醒宜在阶段交接时处理。等待响应头沿用该请求原有空闲期限，排空流按每次活动刷新 `stream_idle_timeout_seconds`，没有额外的 180 秒总截止。显式取消、原 Goal 剩余时间和研究 worker 期限仍可结束等待；真正空闲、断流或缺失用量仍保留 UNKNOWN，不自动清账或重试。
+Core 先检查父权限、Profile、写入授权、执行环境和源码快照能力。独立修改优先隔离；当前宿主环境依赖、紧耦合修改或可选隔离不可用时，选择共享独占作者。patch 或 requireTrustedChecks 不能因能力缺失变成共享写入。共享作者持有工作区独占租约，其他普通工具等待；它不能再次递归委派。隔离执行继承父工具和必须审批边界，采用 Headless，无法获得批准时拒绝执行。隔离源码快照、共享作者启动和交付都检查尚未结算的 Runtime 进程，不能把已返回句柄视作进程结束。
 
-快照含 status、settled、text、offset/nextOffset、source/sourceItemId、partial 和错误；text 每页最多 2048 UTF-8 字节，内容来源变化从 0 重读。settled 才表示任务和清理结算，失败状态不会被阶段报告改成成功。目标绑定父 Turn，禁止跨根/兄弟/祖先控制。
+`agent_send_input` 可纠正共享子任务；隔离任务契约已经冻结，需要先取消并确认结算，再提交新任务。取消会封闭共享子树准入并传播至后代；force 缩短收尾等待，不保证已发生的副作用回滚。
 
-模型派发正常结束前自动 join；`areal/agent/spawn {parentThreadId,input}` 的手工路径在父 Turn 结束时取消后代。`areal/agent/list` 分页观察。默认深度/扇出为 8/64；任一设 0 禁用工具。完整准入见[设计](../design/multi-agent.md)。
+### 统一客户端接口
 
-可选研究模式使用 `delegate_tasks`、`read_agent` 和 `cancel_agent` 替换默认模型 Agent 工具；配置、异步返回和报告契约见[研究工具](../guides/tools.md#research-agents)。它不改变客户端 `spawn_child` RPC。恢复时 `source=nativeResearchAgent` 重新应用只读源码权限与内置工具限制。
+`areal/agent/delegate` 接受 `{requestId,parentThreadId,input,intent?,delivery?,writes?,independent?,requiresCurrentEnvironment?,requireTrustedChecks?,maxModelRounds?,agentProfile?,instructions?,skills?,model?,toolAllowlist?}`，默认 inspect/report。必须有活跃父 Turn。父 Thread 内相同 requestId 和相同参数返回同一 executionId，参数不同拒绝；创建意图先持久化，未知结果不自动重派。历史最多 10000 个执行记录。
 
-嵌入式 `RuntimeConfig.command_scratch` 可指定独立目录，但不能包含 workspace 或 Core data；Runtime 必须显式授予 `workspace://scratch`。共享研究预算只覆盖一个 Engine 生命周期，重启开始新的预算周期。
+| 方法 | 参数与行为 |
+|---|---|
+| `areal/execution/list` | `{parentThreadId,offset?:0,limit?:50}`；limit 为 1–100，返回 data/nextOffset |
+| `areal/execution/read` | `{parentThreadId,executionId,offset?:0}`；读取权威投影，共享子任务正文以 offset/nextOffset 分页，保留 source/sourceItemId/textBytes |
+| `areal/execution/wait` | `{parentThreadId,executionId,timeoutMs?:10000}`；只读，settled 或 awaitingDelivery 时提前返回，超时不取消 |
+| `areal/execution/artifact` | `{parentThreadId,executionId,path?,offset?:0}`；读取候选文件列表或分块内容，返回 head 和 verified |
+| `areal/execution/cancel` | 上述定位参数加 `mode?:"graceful"`；请求取消，响应不表示清理已完成 |
+| `areal/execution/apply` | `{parentThreadId,executionId}`；通过 Core 的整组交付流程应用候选，活跃 Turn 承接权限与取消；空闲时返回 requiresActiveTurn |
+
+list/read/wait/artifact 需要 observe，delegate/cancel/apply 需要 interact，均校验 parentThreadId 可见性及 execution 归属。长等待与同连接取消使用独立、有界的并发槽。公共 wait 不触发写入；模型等待、Turn 收尾及 TaskRun 调度器负责已请求 changes 的自动交付。
+
+客户端委派与写回也遵守 Goal 的预算确认和停止报告门禁；预算待确认或停止报告已受理时，不再创建执行或写入。旧执行及交付回执仍可查询，取消和制品读取仍可用于收尾。隔离 worker 继承部署的 ask/deny 规则与父 Profile 的必须审批约束，不复制会话或项目授权记忆。
+
+投影分别返回 status、settled、resourcesReleased、verification 和 delivery。verification.status=notRun 不代表通过；严格模式使用可信部署检查，自动隔离不会伪造验收。delivery=candidate 只表示候选就绪，只有 applied 表示改动已交付当前工作区。交付日志保留原 sourceHead、实际组合 head、基线及逐操作回执；不相交的改动可以组合，严格模式对变化后的组合树重新验收。同文件变化拒绝覆盖，partial/unknown 不视作成功，也不自动重放。验证与应用是历史事实，后续工作区变化不撤销旧回执。
+
+执行归属于当前 Turn 或已有 TaskRun，复用原 Thread/Turn、Task/TaskRun 与 Goal 预算，不新增生命周期状态机。TaskRun worker 跨协调 Turn 存活；候选待写回时唤醒同一协调者，未交付或未确认清理不能完成 Goal。普通模型子任务结束前自动 join。兼容保留旧 prompt/threadId 工具调用及 `areal/agent/spawn`、Workgroup 高级 API；旧的手工 spawn 在父 Turn 结束时取消后代。旧记录从原历史入口查看，不伪造统一执行回执。
+
+可选研究模式保留 `delegate_tasks`、`read_agent`、`cancel_agent` 的部署接口，见[研究工具](../guides/tools.md#research-agents)。新统一工具不改变 Runtime 权限，也不把插件/MCP 等外部副作用纳入文件事务。
 
 <a id="workgroups"></a>
 ## Workgroup 与嵌入式接口
@@ -234,7 +254,7 @@ objective 为 1–4000 个 Unicode 字符且不能全空白。显式预算为正
 
 已设置跨 Run Token 总预算的周期 Task 不允许通过目标文本重新推断预算，继续由 Task 控制接口维护。
 
-GUI 仅提交目标文本及 inferLimits=true，不展示预算输入。create 的 inferLimits 不可和显式限制同时提交；update 的 inferLimits 要求 objective，清除旧限制并重新等待确认，保留 ID 和全部用量、不隐式启动。根 Agent 在执行工作前调用 goal_set_limits，解释用户明确指定的 token、轮次与活动时间（换算为秒）；没有指定的项不设限，任务正文中的数字不作为预算。推断请求及耗时也计入实际用量。模型至少需要三轮、allowlist 必须允许 goal_set_limits。旧数据中的数字限制保持原值；读取格式 1–12，旧 Core 不能读取格式 12。
+GUI 仅提交目标文本及 inferLimits=true，不展示预算输入。create 的 inferLimits 不可和显式限制同时提交；update 的 inferLimits 要求 objective，清除旧限制并重新等待确认，保留 ID 和全部用量、不隐式启动。根 Agent 在执行工作前调用 goal_set_limits，解释用户明确指定的 token、轮次与活动时间（换算为秒）；没有指定的项不设限，任务正文中的数字不作为预算。推断请求及耗时也计入实际用量。模型至少需要三轮、allowlist 必须允许 goal_set_limits。旧数据中的数字限制保持原值；读取格式 1–13，旧 Core 不能读取格式 13。
 
 resume 保留计量，不能使已经达到的限额失效；completed 不可恢复。resume 同时确认此前未知模型消费的保守预留，但不删除该预留，不将 accountingComplete 改回 true；工具 UNKNOWN 仍需独立检查与 acknowledge。普通 `thread/resume` 仍只恢复订阅和快照，不恢复 Goal 执行。暂停时保存原因，只有属于该次 Goal 暂停的队列暂停才可被 Goal resume 自动撤销。
 
@@ -282,7 +302,7 @@ goalId 和根线程身份由 Core 绑定，模型不能自报其他目标。summ
 
 Rust 嵌入式调用使用 `Limits.goals: goals::Policy` 及 `Engine::goal_get/goal_create/goal_control`。自定义 Model 的 `chat_limited` 必须显式接受逐请求输出上限，`share_context` 保留预算归因；内置 HTTP adapter 已支持。自定义 Workgroup Factory 需实现 `executor_for_goal` 并保留传入 Budget；默认实现对有 Goal 的调用明确报错。普通 Turn 和独立 Workgroup 沿用原行为。
 
-Goal 请求账本位于 `goals/<goal-id>.json`，发送前持久预留；主/子 Agent、原生 Workgroup、活动 Turn 摘要共享计量。确认结算的请求滚入不可变 `goals/requests/` 分段并汇总累计用量；热账本保留在途与未知请求，仍有 4 MiB 资源保护。默认没有累计请求次数预算。滚动不重置用量、不释放未知消费预留。clear 保留账本及归档，不提供自动账本 GC。API 仍为 areal.core.v1；快照格式 12 保存冷历史引用与有界 checkpoint 原文。
+Goal 请求账本位于 `goals/<goal-id>.json`，发送前持久预留；主/子 Agent、原生 Workgroup、活动 Turn 摘要共享计量。确认结算的请求滚入不可变 `goals/requests/` 分段并汇总累计用量；热账本保留在途与未知请求，仍有 4 MiB 资源保护。默认没有累计请求次数预算。滚动不重置用量、不释放未知消费预留。clear 保留账本及归档，不提供自动账本 GC。API 仍为 areal.core.v1；快照格式 13 保存冷历史引用与有界 checkpoint 原文。
 
 Task Mode 在 Goal 之上提供 foreground/scheduled/background 任务、TaskRun、独立 Channel 与 Inbox。Goal create 同时返回 taskId/runId；Goal 内的 ask_user_question 可选 mode=async，headless 不等待用户。接口、预算与恢复语义见 [Task 契约](tasks.md)。timeUsedSeconds 包含协调 Turn 与 TaskRun worker 活动时间的并集，纯异步用户等待不计入。
 

@@ -26,6 +26,12 @@ macOS 开发和安装版均需要可执行的 `/usr/bin/python3`，供 Runtime �
 
 图片显示缩略图，UTF-8 文本附件可通过“在文本框中显示”追加到正文。超过 200 字符或至少 5 行的粘贴折叠为文本卡片，展开上限为 1 MiB；文件与技能删除不影响正文。目标模式在原输入区编写，创建目标只消费正文，其余附件继续保留。`pnpm --dir clients/gui run test:composer` 使用隔离 Electron/Core/Runtime 验证这些路径。
 
+## 子任务与交付
+
+普通输入区直接描述目标，Core 自动安排子任务。侧面板的“子任务”统一显示执行进度、检查证据与交付状态；点击“查看过程”读取子任务历史，等待或停止操作继续由 Core 管理。检查通过但尚未应用、应用冲突、部分应用和结果未知会分别显示。 候选交付可分页预览文件并一次性应用全部改动；应用由 Core 统一管理。若原任务已不活跃，继续原任务后承接交付，界面不会把尚未应用的候选显示为成功。
+
+“高级：兼容委派与工作组历史”保留旧手工只读委派、显式计划和历史检查入口，不是普通任务的前置配置。旧 Core 未提供统一执行接口时，界面明确提示并保留兼容历史访问。
+
 ## 生命周期
 
 Renderer 仅通过窄 preload IPC 访问桌面适配器。独立适配器使用 `areal service ensure/restart/stop --json` 连接 Core，不直接管理 Core PID。退出 GUI 断开界面并结算 GUI 拥有的终端，Core Turn/Goal 和已配置的定时任务继续执行；重新打开按权威快照恢复，不自动重放提交。停止后台服务是显式操作，忙碌时拒绝安全停止。
@@ -43,6 +49,6 @@ make gui-smoke
 
 打包默认使用已构建的 debug Core。先 `make release` 并设置 `AREAL_CORE_PROFILE=release` 可使用 release Core。输出位于 `clients/gui/dist/local-*/`，包含可复制安装的 `.app`、ZIP、依赖清单与 Core 完整性清单；设置 `AREAL_GUI_PACKAGE_DIR` 可选择新输出目录。只面向本次 macOS arm64 本地验收，不执行 Developer ID 签名、公证或发布。应用与 Core 可执行文件使用本地 ad-hoc 签名；没有私有签名材料。旧安装升级与自动更新衔接不在本次范围内。
 
-`make gui-smoke` 使用真实 Electron/Core/Runtime 和确定性本地 HTTP 模型，原生沙箱保持启用；项目选择对话框注入临时工作区，测试目录隔离，截图及 `manifest.json` 留在命令打印的临时目录。安装包测试可设置 `AREAL_GUI_EXECUTABLE=/absolute/App.app/Contents/MacOS/AReaL\ Harness\ GUI`，此时不使用外部 Core 路径。实际账号登录、付费模型、其他操作系统和签名安装分发须单独验收。
+`make gui-smoke` 使用真实 Electron/Core/Runtime 和确定性本地 HTTP 模型，原生沙箱保持启用；项目选择对话框注入临时工作区，测试目录隔离。本地模型请求直连 loopback，测试保留并合并已有 `NO_PROXY` / `no_proxy` 条目。截图及 `manifest.json` 留在命令打印的临时目录，清单记录运行前后的 Core 二进制校验和及失败原因。安装包测试可设置 `AREAL_GUI_EXECUTABLE=/absolute/App.app/Contents/MacOS/AReaL\ Harness\ GUI`，此时不使用外部 Core 路径。实际账号登录、付费模型、其他操作系统和签名安装分发须单独验收。
 
 第三方归属见 [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES.md)。运行时图标沿用源仓库版本；不迁入采集档案、开发 Skills/AGENTS 或来源 Git 历史。

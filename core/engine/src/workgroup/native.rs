@@ -821,7 +821,15 @@ impl Executor for NativeExecutor {
                 let thread = if let Some(configuration)=&task.configuration {
                     let source=self.catalog.as_ref().and_then(std::sync::Weak::upgrade).context("task configuration requires a trusted catalog")?;
                     source.create_worker(&engine,configuration,workspace.to_string_lossy().into_owned()).await?
-                } else { engine.create(workspace.to_string_lossy().into_owned()).await? };
+                } else {
+                    if let Some(source) = self.catalog.as_ref().and_then(std::sync::Weak::upgrade) {
+                        engine.set_permissions(source.permission_config(), None)?;
+                    }
+                    let mut configuration = areal_protocol::desktop::EffectiveConfig::default();
+                    configuration.options.interaction_mode = areal_protocol::tasks::InteractionMode::Headless;
+                    engine.create_inner(workspace.to_string_lossy().into_owned(), None, None, vec![], None,
+                        Some(areal_protocol::desktop::DesktopState { configuration, ..Default::default() })).await?.0
+                };
                 let python = if self.toolchain.is_some() { workspace.join(".toolchain/bin/python3").display().to_string() } else { "python3".into() };
                 let mut prompt = format!("Implement this assigned task in the existing repository.\n{}\nAllowed source writes: {:?}. Other files are read-only task inputs. Preserve tests and unrelated code.\nBase artifact: {}. Generation: {}.\nEarlier verification feedback: {}\nWorkspace URI: workspace://repo. Actual working directory: {}. Python executable: {} (use -B). Every command starts in the repository. Commands receive TMPDIR pointing to a private per-thread directory under .scratch automatically. Use it for temporary files. Do not launch background processes. Implement the complete contract, batch independent inspections where practical, run relevant checks and finish when ready for independent integration. Do not repeat a failing command without changing its inputs. Peers may implement dependencies in isolated workspaces; preserve their responsibilities.\nLocal checks: {:?}", task.instruction, task.writes, digest(&base), generation, feedback, workspace.display(), python, task.checks);
                 let mut remaining = 16000;

@@ -258,13 +258,17 @@ impl Invocation<'_> {
             }
             Backend::Coordination => {
                 if self.call.name.starts_with("agent_") {
+                    let mut arguments = args.clone();
+                    if self.call.name == "agent_spawn" && arguments.get("intent").is_some() {
+                        arguments["requestId"] = serde_json::json!(self.call.id);
+                    }
                     return self
                         .engine
                         .coordinate_agent(
                             self.cell,
                             self.turn_id,
                             &self.call.name,
-                            args,
+                            &arguments,
                             self.cancel,
                         )
                         .await

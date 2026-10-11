@@ -26,6 +26,12 @@ New drafts and existing chats share the grouped action/Skills catalog and search
 
 Images show thumbnails. “Show in text box” appends UTF-8 text attachments to the body. Pasting more than 200 characters or at least five lines creates a text card; expansion is limited to 1 MiB. Removing files or skills preserves the body. Goal mode uses the same editor; goal creation consumes only the objective and leaves other attachments unsent. `pnpm --dir clients/gui run test:composer` verifies these paths with isolated Electron/Core/Runtime instances.
 
+## Subtasks and delivery
+
+Describe the objective in the ordinary composer; Core arranges child execution. The Subtasks panel presents progress, verification evidence, and delivery status together. Open a child's process to inspect its history; Core continues to own waits and cancellation. Passing checks, pending application, conflicts, partial application, and unknown outcomes remain distinct. Candidate deliveries support paginated file previews and whole-change application managed by Core. If the original task is no longer active, continue it to accept delivery; the interface never labels an unapplied candidate as success.
+
+Advanced legacy delegation and Workgroup history retains manual read-only delegation, explicit plans, and historical inspection. These controls are not prerequisites for ordinary tasks. When an older Core lacks the unified execution interface, the panel explains the limitation and keeps legacy history accessible.
+
 ## Lifecycle
 
 The renderer accesses the desktop adapter through narrow preload IPC. The independent adapter connects through `areal service ensure/restart/stop --json`, without managing Core PIDs. GUI exit disconnects the interface and settles GUI-owned terminals; Core Turn/Goal and configured scheduled tasks continue. Reopening restores authoritative snapshots without replaying submissions. Stopping the background service is explicit; safe stop rejects busy instances.
@@ -43,6 +49,6 @@ make gui-smoke
 
 Packaging defaults to the already-built debug Core. Run `make release` and set `AREAL_CORE_PROFILE=release` to package release Core. `clients/gui/dist/local-*/` contains a copy-installable `.app`, ZIP, dependency inventory, and Core integrity manifest. `AREAL_GUI_PACKAGE_DIR` selects a fresh output directory. This local acceptance target is macOS arm64; packaging performs no Developer ID signing, notarization, or publishing. The app and Core executables use local ad-hoc signatures without private signing materials. Existing installation upgrades and update-feed continuity are deferred.
 
-`make gui-smoke` runs real Electron/Core/Runtime against a deterministic local HTTP model with native sandboxing enabled. The project picker is injected with an isolated temporary workspace. Screenshots and `manifest.json` remain in the printed temporary directory. Set `AREAL_GUI_EXECUTABLE` to the absolute installed app executable for package testing; that mode uses bundled Core instead of an external binary. Real account login, paid models, other operating systems, and signed distribution require separate acceptance.
+`make gui-smoke` runs real Electron/Core/Runtime against a deterministic local HTTP model with native sandboxing enabled. The project picker is injected with an isolated temporary workspace. Local model requests connect directly over loopback, preserving and merging existing `NO_PROXY` / `no_proxy` entries. Screenshots and `manifest.json` remain in the printed temporary directory; the manifest records Core binary checksums before and after the run and any failure reason. Set `AREAL_GUI_EXECUTABLE` to the absolute installed app executable for package testing; that mode uses bundled Core instead of an external binary. Real account login, paid models, other operating systems, and signed distribution require separate acceptance.
 
 See [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES.md). Runtime icons retain the source repository's versions; capture archives, development Skills/AGENTS, and source Git history are excluded.

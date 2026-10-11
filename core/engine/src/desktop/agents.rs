@@ -16,7 +16,7 @@ impl Engine {
         if request
             .workspace_mode
             .as_deref()
-            .is_some_and(|mode| !matches!(mode, "sharedReadOnly" | "isolatedWrite"))
+            .is_some_and(|mode| !matches!(mode, "sharedReadOnly" | "sharedWrite" | "isolatedWrite"))
         {
             return Err(invalid("unsupported workspaceMode"));
         }
@@ -44,8 +44,27 @@ impl Engine {
             config.default_model_revision = previous.default_model_revision.clone();
         }
         config.options = previous.options.clone();
-        config.read_only |=
-            previous.read_only || request.workspace_mode.as_deref() != Some("isolatedWrite");
+        if let Some(profile) = &previous.profile
+            && config
+                .profile
+                .as_ref()
+                .is_none_or(|child| child.id != profile.id || child.revision != profile.revision)
+            && !profile.approval_tools.is_empty()
+        {
+            // 切换 Profile 不能丢失父任务的强制审批，也不能以旧预批准绕过它。
+            config
+                .options
+                .approval_tools
+                .extend(profile.approval_tools.clone());
+            config.options.approval_tools.sort();
+            config.options.approval_tools.dedup();
+            config.options.preapproved_tools.clear();
+        }
+        config.read_only |= previous.read_only
+            || !matches!(
+                request.workspace_mode.as_deref(),
+                Some("sharedWrite" | "isolatedWrite")
+            );
         if let Some(instructions) = &request.instructions {
             if instructions.len() > 16 * 1024 {
                 return Err(invalid("child instructions exceed 16 KiB"));
@@ -118,7 +137,7 @@ impl Engine {
             .thread
             .turns
             .last()
-            .map(|t| t.id.clone())
+            .map(|t| format!("{}/{}", parent_id, t.id))
             .ok_or(Error::Conflict)?;
         for id in ids.iter().filter(|id| id.starts_with("workgroup:")) {
             let service = self.workgroups().map_err(invalid)?;
@@ -204,6 +223,38 @@ impl Engine {
             configuration.default_model_revision = task.default_model_revision.clone();
         }
         configuration.read_only |= task.read_only;
+        if task.approval_tools.len() > 256
+            || task
+                .system_prompt
+                .as_ref()
+                .is_some_and(|text| text.len() > 32768)
+            || task.append_instructions.len() > 32768
+        {
+            return Err(invalid("worker inherited options exceed configured budget"));
+        }
+        // 隔离运行没有交互宿主；必须审批的操作直接拒绝，不能创建无人响应的审批。
+        configuration.options.interaction_mode = areal_protocol::tasks::InteractionMode::Headless;
+        configuration
+            .options
+            .approval_tools
+            .extend(task.approval_tools.clone());
+        configuration.options.approval_tools.sort();
+        configuration.options.approval_tools.dedup();
+        configuration.options.preapproved_tools.clear();
+        configuration.options.system_prompt = task.system_prompt.clone();
+        configuration.options.append_instructions = task.append_instructions.clone();
+        if let Some(rounds) = task.max_model_rounds {
+            if rounds == 0
+                || rounds > 1024
+                || configuration
+                    .options
+                    .max_model_rounds
+                    .is_some_and(|limit| rounds > limit)
+            {
+                return Err(invalid("worker model rounds exceed configured limit"));
+            }
+            configuration.options.max_model_rounds = Some(rounds);
+        }
         if let Some(skills) = &task.skills {
             if skills.iter().any(|s| {
                 !configuration
@@ -237,6 +288,10 @@ impl Engine {
         cwd: String,
     ) -> Result<Thread> {
         let configuration = self.worker_configuration(task)?;
+        // 隔离实例继承部署的 ask/deny 边界，不复制会话或项目授权记忆。
+        worker
+            .set_permissions(self.permission_config(), None)
+            .map_err(invalid)?;
         *worker.desktop.catalog.write().unwrap() = self.desktop.catalog.read().unwrap().clone();
         worker
             .desktop
@@ -255,15 +310,51 @@ impl Engine {
 
 impl Engine {
     pub async fn spawn_agent(self: &Arc<Self>, request: AgentSpawn) -> Result<Value> {
+        self.spawn_agent_inner(request, None).await
+    }
+
+    pub(crate) async fn spawn_agent_for_model(
+        self: &Arc<Self>,
+        request: AgentSpawn,
+        parent_turn: String,
+    ) -> Result<Value> {
+        self.spawn_agent_inner(request, Some(parent_turn)).await
+    }
+
+    async fn spawn_agent_inner(
+        self: &Arc<Self>,
+        request: AgentSpawn,
+        model_parent_turn: Option<String>,
+    ) -> Result<Value> {
+        let cell = self.cell(&request.parent_thread_id).await?;
+        if cell.exclusive_writer {
+            return Err(invalid(
+                "exclusive writers must return a handoff instead of recursively creating child executions",
+            ));
+        }
         if request.workspace_mode.as_deref() != Some("isolatedWrite") {
-            let (thread, turn) = self.spawn_configured_child(request).await?;
+            let (thread, turn) = if let Some(parent_turn) = model_parent_turn {
+                // 模型委派必须加入父轮次的结果汇总；手工 RPC 保持原有寿命。
+                self.spawn_configured_model_child(request, parent_turn)
+                    .await?
+            } else {
+                self.spawn_configured_child(request).await?
+            };
             return Ok(
                 json!({"thread":thread,"turn":turn,"threadId":thread.id,"turnId":turn.id,"configuration":turn.configuration.as_ref().map(|c|json!({"revision":c.revision,"profile":c.profile.as_ref().map(|p|json!({"id":p.id,"revision":p.revision})),"model":c.model,"readOnly":c.read_only}))}),
             );
         }
-        let cell = self.cell(&request.parent_thread_id).await?;
         let mut state = cell.state.lock().await;
-        let active = state.active.as_ref().ok_or(Error::Conflict)?;
+        let active = state
+            .active
+            .as_ref()
+            .filter(|active| {
+                !active.sealed
+                    && model_parent_turn
+                        .as_ref()
+                        .is_none_or(|turn| *turn == active.id)
+            })
+            .ok_or(Error::Conflict)?;
         if cell.depth >= self.limits.max_agent_depth
             || active.children.len() + active.isolated_children >= self.limits.max_children_per_turn
         {
@@ -314,6 +405,10 @@ impl Engine {
                 skills: configuration.selected_skills,
                 tool_allowlist: configuration.tool_allowlist,
                 read_only: false,
+                max_model_rounds: configuration.options.max_model_rounds,
+                approval_tools: configuration.options.approval_tools,
+                system_prompt: configuration.options.system_prompt,
+                append_instructions: configuration.options.append_instructions,
             }),
         };
         state.active.as_mut().unwrap().isolated_children += 1;
@@ -327,6 +422,7 @@ impl Engine {
             workers: Some(1),
             admission: crate::workgroup::Admission::Fixed,
         };
+        let _workspace = self.workspace_snapshot_guard(&cancel).await?;
         let result = self
             .workgroups()
             .map_err(invalid)?
@@ -341,5 +437,263 @@ impl Engine {
         Ok(
             json!({"agentId":format!("workgroup:{}",result["id"].as_str().unwrap()),"workspaceMode":"isolatedWrite","workgroup":crate::workgroup::tools::summary(&result)}),
         )
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    use crate::model::{Message, Model, ModelEvent, ModelStream};
+    use async_trait::async_trait;
+    use tokio::sync::Semaphore;
+
+    struct ApprovalWorker;
+
+    #[async_trait]
+    impl Model for ApprovalWorker {
+        fn name(&self) -> &str {
+            "isolated-approval-worker"
+        }
+
+        async fn stream(&self, messages: Vec<Message>) -> anyhow::Result<ModelStream> {
+            let event = if messages.iter().any(|message| message.role == "tool") {
+                assert!(messages.iter().any(|message| {
+                    message
+                        .text_content()
+                        .contains("NON_INTERACTIVE_APPROVAL_REQUIRED")
+                }));
+                ModelEvent::text("approval-required operation declined")
+            } else {
+                ModelEvent::ToolCall(crate::model::ToolCall {
+                    id:"plan".into(), name:"plan_update".into(),
+                    arguments:json!({"expectedRevision":0,"steps":[{"id":"one","text":"requires approval","status":"completed"}]}).to_string(),
+                })
+            };
+            Ok(Box::pin(futures_util::stream::iter([Ok(event)])))
+        }
+    }
+
+    #[tokio::test]
+    async fn isolated_workers_preserve_approval_and_prompt_boundaries_without_waiting_for_input() {
+        let root = tempfile::tempdir().unwrap();
+        let source = Engine::open(
+            &root.path().join("source"),
+            Arc::new(ApprovalWorker),
+            Limits::default(),
+        )
+        .unwrap();
+        let deployment = root.path().join("deployment.json");
+        std::fs::write(&deployment, serde_json::to_vec(&json!({"profiles":[
+            {"id":"parent","revision":"v1","displayName":"parent","instructions":"","approvalTools":["plan_update"]},
+            {"id":"worker","revision":"v1","displayName":"worker","instructions":"","approvalTools":["goal_update"],"toolAllowlist":["plan_update"]}
+        ]})).unwrap()).unwrap();
+        source.install_deployment(&deployment).unwrap();
+        source
+            .set_permissions(
+                areal_config::PermissionConfig {
+                    deny: vec!["fs_write".into()],
+                    ask: vec!["run_command".into()],
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+        let parent_ref = VersionRef {
+            id: "parent".into(),
+            revision: "v1".into(),
+        };
+        let mut previous = source
+            .resolve_config(Some(parent_ref), None, Default::default(), 1)
+            .unwrap();
+        previous.options.approval_tools = vec!["fs_write".into()];
+        previous.options.preapproved_tools = vec!["*".into()];
+        previous.options.system_prompt = Some("trusted inherited system prompt".into());
+        previous.options.append_instructions = "preserve the requested constraints".into();
+        previous.options.max_model_rounds = Some(3);
+        let mut parent = source.create("/workspace".into()).await.unwrap();
+        parent
+            .desktop
+            .get_or_insert_with(Default::default)
+            .configuration = previous;
+        let request = serde_json::from_value(json!({
+            "parentThreadId":parent.id,"input":[{"type":"text","text":"work"}],
+            "workspaceMode":"isolatedWrite","agentProfile":{"id":"worker","revision":"v1"}
+        }))
+        .unwrap();
+        let child = source
+            .child_configuration(&parent, Some(&request))
+            .unwrap()
+            .unwrap();
+        assert!(crate::permissions::forced(
+            Some(&child),
+            "plan_update",
+            &json!({})
+        ));
+        assert!(crate::permissions::forced(
+            Some(&child),
+            "goal_update",
+            &json!({})
+        ));
+        let task = crate::workgroup::TaskConfiguration {
+            approval_tools: child.options.approval_tools,
+            system_prompt: child.options.system_prompt,
+            append_instructions: child.options.append_instructions,
+            max_model_rounds: child.options.max_model_rounds,
+            agent_profile: request.agent_profile,
+            tool_allowlist: child.tool_allowlist,
+            ..Default::default()
+        };
+        let configuration = source.worker_configuration(&task).unwrap();
+        assert_eq!(
+            configuration.options.interaction_mode,
+            areal_protocol::tasks::InteractionMode::Headless
+        );
+        assert!(configuration.options.preapproved_tools.is_empty());
+        assert_eq!(
+            configuration.options.system_prompt.as_deref(),
+            Some("trusted inherited system prompt")
+        );
+        assert_eq!(
+            configuration.options.append_instructions,
+            "preserve the requested constraints"
+        );
+        assert_eq!(configuration.options.max_model_rounds, Some(3));
+        for tool in ["plan_update", "goal_update", "fs_write"] {
+            assert!(crate::permissions::forced(
+                Some(&configuration),
+                tool,
+                &json!({})
+            ));
+        }
+        let mut expanded = task.clone();
+        expanded.tool_allowlist = Some(vec!["goal_update".into()]);
+        assert!(source.worker_configuration(&expanded).is_err());
+        let worker = Engine::open(
+            &root.path().join("worker"),
+            Arc::new(ApprovalWorker),
+            Limits::default(),
+        )
+        .unwrap();
+        let thread = source
+            .create_worker(&worker, &task, "/workspace".into())
+            .await
+            .unwrap();
+        let cell = worker.raw_cell(&thread.id).await.unwrap();
+        assert_eq!(
+            worker
+                .permission_action(
+                    &cell,
+                    "fs_write",
+                    &json!({"path":"result.txt","text":"unapproved"})
+                )
+                .await,
+            "deny"
+        );
+        assert_eq!(
+            worker
+                .permission_action(&cell, "run_command", &json!({"argv":["true"]}))
+                .await,
+            "ask"
+        );
+        worker
+            .start(&thread.id, vec![Input::text("try operation")])
+            .await
+            .unwrap();
+        let done = tokio::time::timeout(Duration::from_secs(5), worker.wait(&thread.id))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(done.turns[0].status, TurnStatus::Completed);
+        assert!(worker.plan(&thread.id).await.unwrap().steps.is_empty());
+        assert_eq!(
+            worker.interactions(&thread.id).await.unwrap()["data"],
+            json!([])
+        );
+        worker.shutdown().await;
+        source.shutdown().await;
+    }
+
+    struct ModelFixture {
+        parent_started: Semaphore,
+        parent_release: Semaphore,
+        child_started: Semaphore,
+        child_release: Semaphore,
+    }
+
+    #[async_trait]
+    impl Model for ModelFixture {
+        fn name(&self) -> &str {
+            "configured-child-lifetime"
+        }
+
+        async fn stream(&self, messages: Vec<Message>) -> anyhow::Result<ModelStream> {
+            let child = messages
+                .iter()
+                .any(|message| message.role == "user" && message.text_content() == "child");
+            let joined = messages
+                .iter()
+                .any(|message| message.text_content().contains("child-evidence"));
+            let text = if child {
+                self.child_started.add_permits(1);
+                self.child_release.acquire().await?.forget();
+                "child-evidence"
+            } else if joined {
+                "integrated-child-evidence"
+            } else {
+                self.parent_started.add_permits(1);
+                self.parent_release.acquire().await?.forget();
+                "parent-ready"
+            };
+            Ok(Box::pin(futures_util::stream::iter(vec![Ok(
+                ModelEvent::text(text),
+            )])))
+        }
+    }
+
+    #[tokio::test]
+    async fn model_configured_child_is_joined_before_parent_completion() {
+        let root = tempfile::tempdir().unwrap();
+        let model = Arc::new(ModelFixture {
+            parent_started: Semaphore::new(0),
+            parent_release: Semaphore::new(0),
+            child_started: Semaphore::new(0),
+            child_release: Semaphore::new(0),
+        });
+        let engine = Engine::open(root.path(), model.clone(), Limits::default()).unwrap();
+        let parent = engine.create("/workspace".into()).await.unwrap();
+        let turn = engine
+            .start(&parent.id, vec![Input::text("parent")])
+            .await
+            .unwrap();
+        model.parent_started.acquire().await.unwrap().forget();
+        let request = serde_json::from_value(json!({
+            "parentThreadId": parent.id,
+            "input": [{"type":"text","text":"child"}]
+        }))
+        .unwrap();
+        let child = engine
+            .spawn_agent_for_model(request, turn.id)
+            .await
+            .unwrap();
+        model.child_started.acquire().await.unwrap().forget();
+        model.parent_release.add_permits(1);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), engine.wait(&parent.id))
+                .await
+                .is_err()
+        );
+        model.child_release.add_permits(1);
+        let completed = tokio::time::timeout(Duration::from_secs(5), engine.wait(&parent.id))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(completed.turns[0].status, TurnStatus::Completed);
+        assert!(completed.turns[0].items.iter().any(|item| matches!(item, Item::AgentMessage { text, .. } if text == "integrated-child-evidence")));
+        let saved = engine
+            .read(child["threadId"].as_str().unwrap(), true)
+            .await
+            .unwrap();
+        assert_eq!(saved.turns[0].status, TurnStatus::Completed);
+        engine.shutdown().await;
     }
 }

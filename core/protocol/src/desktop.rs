@@ -17,6 +17,13 @@ pub const METHODS: &[&str] = &[
     "areal/capabilities",
     "areal/subscription/remove",
     "areal/agent/spawn",
+    "areal/agent/delegate",
+    "areal/execution/list",
+    "areal/execution/read",
+    "areal/execution/wait",
+    "areal/execution/cancel",
+    "areal/execution/apply",
+    "areal/execution/artifact",
     "areal/agent/list",
     "areal/tool/acknowledge",
 ];
@@ -274,6 +281,10 @@ pub struct PermissionGrant {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DesktopState {
+    #[serde(default)]
+    pub executions: Vec<crate::delegation::ExecutionRecord>,
+    #[serde(default)]
+    pub execution_policy: crate::delegation::ChildExecutionPolicy,
     #[serde(default)]
     pub permission_grants: Vec<PermissionGrant>,
     #[serde(default)]

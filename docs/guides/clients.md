@@ -9,7 +9,7 @@
 产品命令统一为 `areal`。源码构建后使用 `target/debug/areal`；发行包只把 `bin/areal` 加入 PATH。子命令的选项放在子命令之后。
 
 | 命令 | 行为 |
-|---|---|
+| --- | --- |
 | `areal [PROMPT]` | 打开 TUI；可选首条消息在会话就绪后提交一次 |
 | `areal version` / `areal --version` | 显示当前产品版本，不启动服务 |
 | `areal upgrade [--check]` | 检查或升级已安装的完整发行包；详见[安装指南](installation.md) |
@@ -65,7 +65,7 @@ TUI 顶部和 Web 显示 YOLO/ASK_PERMISSIONS，以 Core 状态为准。TUI 审�
 ## TUI 操作
 
 | 操作 | 行为 |
-|---|---|
+| --- | --- |
 | Enter | 空闲时开始 Turn；运行中追加指令 |
 | ←/→、Ctrl-A / Ctrl-E | 输入框内按完整字素移动光标、跳到当前行首 / 行尾 |
 | Ctrl-D / Delete、Backspace | 删除光标处 / 光标前的完整字素；空输入或相应边界不操作，不退出 |
@@ -76,14 +76,19 @@ TUI 顶部和 Web 显示 YOLO/ASK_PERMISSIONS，以 Core 状态为准。TUI 审�
 | F6、`/model` | 空闲时选择模型或恢复默认值 |
 | `/skills`、`/skill NAME` | 选择或按名称应用当前会话 Skill |
 | F2、`/theme` | 预览主题，Enter 保存，Esc 撤回 |
-| `/agents`、F3、`/topology` | 子任务树与根拓扑 |
-| `/spawn prompt` | 手工派发当前 Turn 的子任务 |
-| `/tasks`、`/groups` | 计划与 Workgroup |
+| `/agents`、`/executions`、F4 | 子任务进度、验证与交付 |
+| F3、`/topology` | 会话历史树与根拓扑 |
+| `/spawn prompt` | 通过统一委派入口手工派发当前 Turn 的只读分析子任务 |
+| `/tasks` | 当前任务计划 |
+| `/execution-cancel ID` | 停止子任务，等待 Core 结算与清理 |
+| `/groups`、`/group ID`、`/group-start FILE` | 高级兼容 Workgroup 历史与显式计划 |
 | PageUp/PageDown/Home、End | 阅读历史；End 恢复跟随 |
 | 点击历史摘要 | 展开组后，再展开指定记录；滚轮滚动历史 |
 | ↑/↓、Enter/Space、←/→ | 历史焦点下选择、切换、收起/展开；Esc 返回输入框 |
 | Ctrl-O、`/details` | 切换紧凑/详细历史，保留局部展开选择 |
 | `/restore-input` | 恢复提交失败或结果未确认时保留的输入 |
+
+子任务列表分页读取；TUI 用 `/more` 加载后续记录。等待或断开客户端不会重放子任务，停止操作由 Core 处理。手工 `/spawn` 默认为只读分析；实际开发任务直接在普通输入区提出，由协调 Agent 声明修改与交付意图。
 
 `--prompt` 只输出本次 Turn 的文本，Thread ID 写 stderr；失败返回非零，不读取 TUI 偏好。外观配置见[配置指南](configuration.md#tui)。
 
@@ -99,7 +104,7 @@ TUI 默认紧凑显示：连续工具调用、思考和过程正文合为一条 
 
 ## 历史、恢复与观测
 
-Core 保存原始历史、工具意图与结果；上下文压缩只改变后续模型视图。工作区根 `AGENTS.md` 通过 Runtime 读取（普通 UTF-8，最多 32 KiB），不自动递归加载子目录。默认 Agent 委派共享工作区，隔离写入用 [Workgroup](workgroups.md)。
+Core 保存原始历史、工具意图与结果；上下文压缩只改变后续模型视图。工作区根 `AGENTS.md` 通过 Runtime 读取（普通 UTF-8，最多 32 KiB），不自动递归加载子目录。普通任务通过统一委派入口组织子任务；Core 根据意图、依赖、有效权限与运行条件选择共享执行或隔离执行，用户无需选择工作区模式。GUI 的“子任务”、TUI 的 `/executions` 和 Web 的“子任务与交付”读取同一 Core 投影，分别展示执行、验证和交付状态。候选生成、检查通过、改动已应用是不同状态，冲突或部分应用不能显示为交付完成。高级入口保留[兼容 Workgroup](workgroups.md)与旧任务历史。 GUI 可预览候选文件并应用全部改动，后端统一校验与执行交付；原任务不活跃时需继续原任务承接候选，不支持逐文件应用。
 
 重启把未确认的工具/hooks 标为 UNKNOWN 并阻止新 Turn。检查实际文件与进程后，在 Web 中记录检查或调用 `areal/tool/acknowledge`，历史仍保留 unknown。它不是重放、审批或旧进程恢复。损坏快照不会被静默丢弃。
 
@@ -113,6 +118,7 @@ make server
 OTLP 仅支持 HTTP/protobuf；未设置 endpoint 不启用，`OTEL_SDK_DISABLED=true` 可关闭。轨迹记录实际模型输入输出、工具参数与结果，以及 ID、usage、状态和时长，不执行脱敏。上报失败不改变 Turn 结果；完整配置见[轨迹上报](configuration.md#opentelemetry-轨迹上报)。
 
 <a id="goals"></a>
+
 ## Goal 模式
 
 无需修改配置；交互式 TUI 输入 `/goal 完成模块迁移并通过相关测试` 创建并运行目标；`/goal` 查看当前状态。`/goal-pause` 暂停，等待活动 Turn 清理完毕后用 `/goal-resume` 恢复；`/goal-edit 新目标`、`/goal-budget 200000`（或 `none`）仅编辑已停止目标，保留累计用量。`/goal-clear` 清除已停止且队列与资源均已结算的目标。Web 的 Goal 面板提供对应操作。

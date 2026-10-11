@@ -612,6 +612,15 @@ fn request_with_policy(
     Ok(Request::File(command))
 }
 
+fn creates_child_execution(name: &str, backend: &Backend) -> bool {
+    match backend {
+        Backend::Coordination => matches!(name, "agent_spawn" | "workgroup_start"),
+        Backend::Core => matches!(name, "agent_spawn_configured" | "task_spawn"),
+        Backend::Agent => name == "delegate_tasks",
+        _ => false,
+    }
+}
+
 impl Engine {
     pub(super) async fn tool_output_budget(&self, cell: &Cell, call: &ToolCall) -> usize {
         let plugin_budget = if cell
@@ -739,13 +748,41 @@ impl Engine {
         cancel: &CancellationToken,
         call: ToolCall,
     ) -> anyhow::Result<usize> {
-        let goal_rejection = self.goal_tool_guard(cell, &call.name).await?;
+        let mut rejection = self.goal_tool_guard(cell, &call.name).await?;
         let bindings = cell.bindings.read().await.clone();
         let entry = bindings.registry.get(&call.name);
         let coordination = entry
             .as_ref()
             .is_ok_and(|e| matches!(e.backend, Backend::Coordination | Backend::Core));
-        let _permit = if coordination {
+        // 协调/等待不持工作区锁；独占子作者的工具复用整个Turn的写租约。
+        let exclusive = cell
+            .state
+            .lock()
+            .await
+            .active
+            .as_ref()
+            .is_some_and(|a| a.workspace_exclusive);
+        // 隐藏模型 schema 不构成执行门禁：旧调用仍可能进入同一后端。
+        // 写租约内递归创建会让父子相互等待；隔离 worker 的零子任务上限也不能绕过。
+        if (exclusive || cell.exclusive_writer || self.limits.max_children_per_turn == 0)
+            && entry
+                .as_ref()
+                .is_ok_and(|tool| creates_child_execution(&call.name, &tool.backend))
+        {
+            rejection = Some(rt::Error::new(
+                rt::ErrorCode::PermissionDenied,
+                "CHILD_EXECUTION_DISABLED: exclusive writers and bounded isolated workers must return a handoff instead of recursively creating child executions",
+            ));
+        }
+        let _workspace_guard = if coordination || exclusive || rejection.is_some() {
+            None
+        } else {
+            Some(tokio::select! {biased;
+                _=cancel.cancelled()=>anyhow::bail!("cancelled before workspace admission"),
+                guard=self.workspace_gate.clone().read_owned()=>guard,
+            })
+        };
+        let _permit = if coordination || rejection.is_some() {
             None
         } else {
             Some(tokio::select! {
@@ -754,7 +791,7 @@ impl Engine {
                 permit = self.tool_permits.acquire() => permit?,
             })
         };
-        let runtime = if coordination || goal_rejection.is_some() {
+        let runtime = if coordination || rejection.is_some() {
             None
         } else {
             self.runtime.as_ref()
@@ -817,7 +854,7 @@ impl Engine {
             execution: Box::new(ToolExecution {
                 result_snapshot: None,
                 output_projection: None,
-                backend: if goal_rejection.is_some() {
+                backend: if rejection.is_some() {
                     Some("core".into())
                 } else {
                     entry.as_ref().ok().map(|tool| {
@@ -864,9 +901,9 @@ impl Engine {
         }
         let intent_ms = started.elapsed().as_secs_f64() * 1000.0;
         let invocation_started = std::time::Instant::now();
-        let submitted = !cancel.is_cancelled() && goal_rejection.is_none();
+        let submitted = !cancel.is_cancelled() && rejection.is_none();
         let mut post_hook_failed = false;
-        let result = if let Some(error) = goal_rejection {
+        let result = if let Some(error) = rejection {
             Err(error)
         } else if let Err(error) = entry {
             Err(rt::Error::new(

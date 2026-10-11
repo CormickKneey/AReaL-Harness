@@ -43,9 +43,16 @@ const model = createServer(async (request, response) => {
       7000,
     );
     assert(!input.tools.some((t) => t.function.name === "workgroup_start"));
-    const worker = input.messages
-      .findLast((m) => m.role === "user")
-      .content.match(/WORKER:([ab])/)[1];
+    // Core 上下文可能以 user 消息传输；作者身份只从显式任务指令读取。
+    const instruction = input.messages.findLast(
+      (message) =>
+        message.role === "user" &&
+        typeof message.content === "string" &&
+        !message.content.startsWith("AReaL runtime context (not a user request):") &&
+        /WORKER:[ab]/.test(message.content),
+    );
+    assert(instruction, "worker task instruction is missing");
+    const worker = instruction.content.match(/WORKER:([ab])/)[1];
     const results = input.messages.filter((m) => m.role === "tool");
     const reply = () => {
       response.writeHead(200, { "content-type": "text/event-stream" });
@@ -88,7 +95,7 @@ const model = createServer(async (request, response) => {
       if (initial.length === 2) initial.forEach((send) => send());
     }
   } catch (error) {
-    modelFailure = error;
+    modelFailure ??= error;
     response.destroy(error);
   }
 });
@@ -242,6 +249,7 @@ try {
       afterRevision: view.record.revision,
       timeoutMs: 1000,
     });
+  assert.equal(modelFailure, undefined, modelFailure?.stack);
   assert.equal(view.record.status, "completed", JSON.stringify(view.record));
   assert.equal(view.record.cleanupConfirmed, true);
   assert.equal(view.record.finalCheck.passed, true);

@@ -77,7 +77,7 @@ import {
 } from "./settings/DisplaySettings.js";
 import { BrowserSettings } from "./settings/BrowserSettings.js";
 import { HooksSettings } from "./settings/HooksSettings.js";
-import { AgentsPane } from "./AgentsPane.js";
+import { ExecutionsPane } from "./ExecutionsPane.js";
 import { WorkgroupsPane } from "./WorkgroupsPane.js";
 import { ServiceStatusSettings } from "./settings/ServiceStatusSettings.js";
 import { CoreCapabilitiesSettings } from "./settings/CoreCapabilitiesSettings.js";
@@ -117,7 +117,6 @@ const panelList = [
   ["进程", null],
   ["预览", <Browser size={16} />],
   ["子任务", null],
-  ["工作组", null],
   ["队列", null],
   ["执行计划", null],
   ["上下文", null],
@@ -1002,7 +1001,7 @@ function AppContent({ services }: { services: PlatformServices }) {
         </div>
       );
     if (panel === "调用轨迹") return <ModelTrajectoryPane key={`${project.id}:${threadId}`} thread={thread} title={currentTitle} refresh={() => resourceAction("open", { projectId: project.id, threadId })} onClose={() => setPanel("")} />;
-    if (panel === "子任务") return <AgentsPane key={`${project.id}:${threadId}`} {...props} action={resourceAction} onOpen={(id) => void open(project.id, id)} />;
+    if (panel === "子任务") return <ExecutionsPane key={`${project.id}:${threadId}`} {...props} action={resourceAction} onOpen={(id) => void open(project.id, id)} />;
     if (panel === "用量") return <Usage thread={thread} />;
     if (panel === "队列")
       return queue ? (

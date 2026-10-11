@@ -1,3 +1,4 @@
+pub mod delegation;
 pub mod goals;
 pub mod service;
 pub mod tasks;

@@ -445,8 +445,9 @@ impl Model for ParentModel {
             )])));
         }
         let n = self.calls.fetch_add(1, Ordering::SeqCst);
+        // 遗留工具仍可执行，但普通模型只展示统一的委派入口。
         assert!(
-            tools
+            !tools
                 .iter()
                 .any(|t| t["function"]["name"] == "workgroup_start")
         );
@@ -875,4 +876,113 @@ async fn uncertain_cleanup_quarantines_shared_worker_slots_instead_of_oversubscr
     assert_eq!(settled(&service, id).await["record"]["status"], "cancelled");
     assert_eq!(fixture.calls.load(Ordering::SeqCst), 2);
     service.shutdown().await;
+}
+
+#[tokio::test]
+async fn automatic_artifact_is_readable_only_after_cleanup_and_never_claims_trusted_verification() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    std::fs::create_dir(&source).unwrap();
+    let fixture = Fixture::new();
+    let service = Service::open_automatic(
+        &temp.path().join("groups"),
+        &source,
+        Arc::new(FactoryImpl(fixture.clone())),
+        2,
+    )
+    .unwrap();
+    let group = service
+        .start(
+            "parent".into(),
+            request("automatic-artifact", vec![task("a", &[])]),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    let id = group["id"].as_str().unwrap();
+    bounded(fixture.started.acquire()).await.unwrap().forget();
+    assert!(service.artifact(id, Some("parent"), None, 0).await.is_err());
+    fixture.release.add_permits(1);
+    let group = settled(&service, id).await;
+    assert_eq!(group["record"]["status"], "completed");
+    assert_eq!(group["record"]["cleanupConfirmed"], true);
+    assert!(group["record"]["finalCheck"].is_null());
+    let artifact = service.artifact(id, Some("parent"), None, 0).await.unwrap();
+    assert_eq!(artifact["verified"], false);
+    assert_eq!(artifact["paths"][0], "a");
+    let content = service
+        .artifact(id, Some("parent"), Some("a".into()), 0)
+        .await
+        .unwrap();
+    assert_eq!(content["text"], "Implement a");
+    assert_eq!(content["verified"], false);
+    assert!(
+        service
+            .artifact(id, Some("other-parent"), None, 0)
+            .await
+            .is_err()
+    );
+    service.shutdown().await;
+}
+
+struct PendingConfiguredParent;
+#[async_trait]
+impl Model for PendingConfiguredParent {
+    fn name(&self) -> &str {
+        "pending-configured-parent"
+    }
+    async fn stream(&self, _: Vec<Message>) -> Result<ModelStream> {
+        Ok(Box::pin(futures_util::stream::pending()))
+    }
+}
+
+#[tokio::test]
+async fn configured_isolated_child_wait_uses_the_complete_parent_owner() {
+    let temp = tempfile::tempdir().unwrap();
+    let source = temp.path().join("source");
+    std::fs::create_dir(&source).unwrap();
+    let fixture = Fixture::new();
+    fixture.release.add_permits(1);
+    let engine = Engine::open(
+        &temp.path().join("engine"),
+        Arc::new(PendingConfiguredParent),
+        Limits::default(),
+    )
+    .unwrap();
+    let service = Service::open(
+        &temp.path().join("groups"),
+        &source,
+        policy(),
+        Arc::new(FactoryImpl(fixture)),
+    )
+    .unwrap();
+    engine.attach_workgroups(service).unwrap();
+    let parent = engine
+        .create(source.to_string_lossy().into_owned())
+        .await
+        .unwrap();
+    engine
+        .start(&parent.id, vec![Input::text("parent")])
+        .await
+        .unwrap();
+    let child = engine
+        .spawn_agent(
+            serde_json::from_value(serde_json::json!({
+                "parentThreadId":parent.id,"input":[{"type":"text","text":"implement a"}],
+                "workspaceMode":"isolatedWrite","writes":["a"]
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    let result = bounded(engine.wait_children(
+        &parent.id,
+        vec![child["agentId"].as_str().unwrap().into()],
+        5000,
+    ))
+    .await
+    .unwrap();
+    assert_eq!(result["data"][0]["result"]["status"], "completed");
+    assert_eq!(result["data"][0]["result"]["cleanupConfirmed"], true);
+    engine.shutdown().await;
 }

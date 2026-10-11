@@ -313,6 +313,7 @@ impl Engine {
         desktop_enabled: bool,
     ) -> Vec<Value> {
         let goal_enabled = cell.goal_role.load(Ordering::Acquire) != 0;
+        let exclusive = cell.exclusive_writer;
         let bindings = cell.bindings.read().await;
         let mut definitions = bindings.registry.definitions();
         let core_names: Vec<_> = crate::desktop::definitions()
@@ -326,7 +327,11 @@ impl Engine {
                     || cell.goal_role.load(Ordering::Acquire) == 1)
                 && (!name.starts_with("goal_")
                     || (goal_enabled && (!matches!(name, "goal_update" | "goal_set_limits") || cell.depth == 0)))
-                && (!name.starts_with("workgroup_") || self.workgroups.get().is_some())
+                // 普通模型只看到一套委派；旧RPC与显式旧工具调用保留兼容。
+                && !name.starts_with("workgroup_")
+                && !matches!(name,"agent_spawn_configured"|"agent_wait_all"|"task_spawn")
+                && (!exclusive
+                    || !matches!(name,"agent_spawn"|"delegate_tasks"))
                 && (!matches!(name, "agent_spawn" | "agent_spawn_configured")
                     || (cell.depth < self.limits.max_agent_depth
                         && self.limits.max_children_per_turn > 0))

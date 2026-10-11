@@ -9,7 +9,7 @@ Complete the [quickstart](quickstart.en.md) first. Clients share Core history; R
 The product command is `areal`. Use `target/debug/areal` after a source build; add only the bundle's `bin` directory to PATH. Place subcommand options after the subcommand.
 
 | Command | Behavior |
-|---|---|
+| --- | --- |
 | `areal [PROMPT]` | Open the TUI; submit an optional initial message once the session is ready |
 | `areal version` / `areal --version` | Show the product version without starting services |
 | `areal upgrade [--check]` | Check or upgrade a complete installed bundle; see [installation](installation.en.md) |
@@ -65,7 +65,7 @@ TUI headers and Web show YOLO/ASK_PERMISSIONS and Core remains authoritative. TU
 ## TUI controls
 
 | Control | Behavior |
-|---|---|
+| --- | --- |
 | Enter | Start a Turn when idle; steer while running |
 | ←/→, Ctrl-A / Ctrl-E | In the editor, move by grapheme or jump to the current line start / end |
 | Ctrl-D / Delete, Backspace | Delete the grapheme at / before the cursor; empty input or the corresponding boundary is a no-op, without exiting |
@@ -76,14 +76,19 @@ TUI headers and Web show YOLO/ASK_PERMISSIONS and Core remains authoritative. TU
 | F6, `/model` | Select a model or reset to default while idle |
 | `/skills`, `/skill NAME` | Choose or apply a Skill for the current session |
 | F2, `/theme` | Preview; Enter saves and Esc reverts |
-| `/agents`, F3, `/topology` | Child-task tree and root topology |
-| `/spawn prompt` | Manually spawn a child of the active Turn |
-| `/tasks`, `/groups` | Plan and Workgroups |
+| `/agents`, `/executions`, F4 | Subtask progress, verification, and delivery |
+| F3, `/topology` | Session history tree and root topology |
+| `/spawn prompt` | Delegate a read-only analysis child of the active Turn through the unified entry point |
+| `/tasks` | Current task plan |
+| `/execution-cancel ID` | Stop a subtask and let Core settle usage and resources |
+| `/groups`, `/group ID`, `/group-start FILE` | Advanced legacy Workgroup history and explicit plans |
 | PageUp/PageDown/Home, End | Read history; End resumes following |
 | Click a history summary | Expand the group, then an individual record; the wheel scrolls |
 | ↑/↓, Enter/Space, ←/→ | With history focused: select, toggle, collapse/expand; Esc returns to input |
 | Ctrl-O, `/details` | Toggle compact/detailed history, preserving local expansion choices |
 | `/restore-input` | Restore input retained after a failed or unconfirmed submission |
+
+Subtask lists are paginated; TUI `/more` loads later records. Waiting or disconnecting does not replay child execution, and Core owns cancellation. Manual `/spawn` defaults to read-only analysis. Submit development requests through the ordinary prompt so the coordinator can declare modification and delivery intent.
 
 `--prompt` emits only the current Turn's text, writes Thread ID to stderr and exits nonzero on failure. It skips TUI preferences. See [appearance configuration](configuration.en.md#tui).
 
@@ -99,7 +104,7 @@ Failure reasons persist beside the affected Turn, even after reconnect; empty Ag
 
 ## History, recovery and observability
 
-Core retains original history and tool intents/results; context compaction only changes future model input. Workspace-root `AGENTS.md` is read through Runtime (regular UTF-8 file, up to 32 KiB); nested instructions are not recursively loaded. Default delegation shares the workspace; use [Workgroups](workgroups.en.md) for isolated writes.
+Core retains original history and tool intents/results; context compaction only changes future model input. Workspace-root `AGENTS.md` is read through Runtime (regular UTF-8 file, up to 32 KiB); nested instructions are not recursively loaded. Ordinary tasks use one delegation entry point. Core chooses shared or isolated execution from the declared intent, dependencies, effective permissions, and runtime capabilities; users do not select a workspace mode. GUI Subtasks, TUI `/executions`, and Web Subtasks and Delivery read the same Core projection and distinguish execution, verification, and delivery. Producing a candidate, passing checks, and applying changes are separate states; conflicts or partial application do not mean delivery succeeded. Advanced controls retain [legacy Workgroups](workgroups.en.md) and historical tasks. GUI can preview candidate files and apply the complete change set; Core validates and executes delivery. Continue the original task to accept a candidate when it is no longer active. Per-file application is not offered.
 
 Restart marks unconfirmed tools/hooks UNKNOWN and blocks new Turns. Inspect actual files/processes, then record the inspection in Web or via `areal/tool/acknowledge`. History remains unknown. This neither replays operations nor approves permissions or restores old processes. Corrupt snapshots are not silently discarded.
 
@@ -113,6 +118,7 @@ make server
 OTLP supports HTTP/protobuf only. It is disabled without an endpoint and can be disabled with `OTEL_SDK_DISABLED=true`. Trajectories contain actual model inputs/outputs and tool arguments/results, together with IDs, usage, status and timing, without redaction. Export failure does not change Turn outcomes; see [reporting configuration](configuration.en.md#opentelemetry-trajectory-reporting).
 
 <a id="goals"></a>
+
 ## Goal mode
 
 No configuration change is needed. In TUI, `/goal Complete the module migration and pass its tests` creates and starts a Goal; `/goal` reads it. `/goal-pause` pauses; after Turn cleanup, `/goal-resume` resumes. `/goal-edit New objective` and `/goal-budget 200000` (or `none`) edit a stopped Goal while retaining usage. `/goal-clear` requires a stopped Goal with settled queues/resources. Web provides the same controls in its Goal panel.

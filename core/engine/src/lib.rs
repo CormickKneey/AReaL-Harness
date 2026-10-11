@@ -2,6 +2,7 @@ mod agents;
 pub mod concurrency;
 mod context;
 mod default_model;
+pub mod delegation;
 pub mod desktop;
 pub mod diagnostics;
 mod generation;
@@ -139,6 +140,7 @@ struct Active {
     tool_calls: usize,
     started: std::time::Instant,
     isolated_children: usize,
+    workspace_exclusive: bool,
     // Includes queued model work, tool waits and cleanup. Never wait for this
     // permit during admission: waiting parents must not deadlock their children.
     _admission: OwnedSemaphorePermit,
@@ -165,6 +167,7 @@ struct State {
     quarantined_admission: Option<OwnedSemaphorePermit>,
 }
 struct Cell {
+    exclusive_writer: bool,
     // 工具投影可能已持有会话锁，原子角色避免为读取 Goal 可见性再次加锁。
     goal_role: AtomicUsize,
     depth: usize,
@@ -184,6 +187,10 @@ struct Cell {
 impl Cell {
     fn new(thread: Thread, depth: usize, bindings: tools::Bindings) -> Arc<Self> {
         Arc::new(Self {
+            exclusive_writer: thread
+                .desktop
+                .as_ref()
+                .is_some_and(|d| d.execution_policy.exclusive_write),
             goal_role: AtomicUsize::new(if thread.goal_owner.is_some() { 2 } else { 0 }),
             depth,
             research: thread.source == "nativeResearchAgent",
@@ -231,6 +238,9 @@ pub struct Engine {
     agent_model_requests: AtomicUsize,
     agent_tool_calls: AtomicUsize,
     workgroups: std::sync::OnceLock<Arc<workgroup::service::Service>>,
+    automatic_workgroups: std::sync::OnceLock<Arc<workgroup::service::Service>>,
+    workspace_gate: Arc<RwLock<()>>,
+    delegation_creation: Mutex<()>,
     desktop: desktop::Desktop,
 }
 
@@ -511,6 +521,9 @@ impl Engine {
             agent_model_requests: AtomicUsize::new(0),
             agent_tool_calls: AtomicUsize::new(0),
             workgroups: std::sync::OnceLock::new(),
+            automatic_workgroups: std::sync::OnceLock::new(),
+            workspace_gate: Arc::new(RwLock::new(())),
+            delegation_creation: Mutex::new(()),
         }))
     }
     pub fn model_name(&self) -> String {
@@ -631,6 +644,9 @@ impl Engine {
     pub async fn shutdown(&self) {
         self.shutdown.cancel();
         if let Some(service) = self.workgroups.get() {
+            service.shutdown().await;
+        }
+        if let Some(service) = self.automatic_workgroups.get() {
             service.shutdown().await;
         }
         self.tasks.close();

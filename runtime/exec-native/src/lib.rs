@@ -121,6 +121,25 @@ impl Drop for NativeBackend {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn macos_command(execution: &Execution, sandbox_program: &str) -> Command {
+    // 内置搜索通过 process.start 进入，也必须复用部署助手的启动桥接。
+    // 只匹配部署给出的绝对路径；不解析调用方别名、不信任同目录的其他程序。
+    let builtin = execution.argv.first().is_some_and(|program| {
+        execution.builtin_executables.iter().any(|helper| {
+            helper.is_absolute() && helper.as_os_str() == std::ffi::OsStr::new(program)
+        })
+    });
+    if execution.trusted_executable.is_some() || builtin {
+        let mut command = Command::new("/usr/bin/python3");
+        command.args(["-I", "-S", "-c", "import os,signal,subprocess,sys; r=subprocess.run(sys.argv[1:]).returncode; signal.signal(-r,signal.SIG_DFL) if r<0 and -r not in (signal.SIGKILL,signal.SIGSTOP) else None; os.kill(os.getpid(),-r) if r<0 else None; sys.exit(r)"]);
+        command.arg(sandbox_program);
+        command
+    } else {
+        Command::new(sandbox_program)
+    }
+}
+
 #[async_trait]
 impl Backend for NativeBackend {
     fn sandbox_profile(&self) -> &'static str {
@@ -139,14 +158,7 @@ impl Backend for NativeBackend {
         // and pipes, waits for its child, and preserves signal exit facts.
         // Isolated Python cannot import code from the writable working directory.
         #[cfg(target_os = "macos")]
-        let mut command = if execution.trusted_executable.is_some() {
-            let mut command = Command::new("/usr/bin/python3");
-            command.args(["-I", "-S", "-c", "import os,signal,subprocess,sys; r=subprocess.run(sys.argv[1:]).returncode; signal.signal(-r,signal.SIG_DFL) if r<0 and -r not in (signal.SIGKILL,signal.SIGSTOP) else None; os.kill(os.getpid(),-r) if r<0 else None; sys.exit(r)"]);
-            command.arg(&argv[0]);
-            command
-        } else {
-            Command::new(&argv[0])
-        };
+        let mut command = macos_command(&execution, &argv[0]);
         #[cfg(all(not(target_os = "macos"), not(target_os = "linux")))]
         let mut command = Command::new(&argv[0]);
         #[cfg(target_os = "linux")]
