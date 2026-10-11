@@ -1012,7 +1012,7 @@ class CoreBackend {
           return result;
         }
         const result = await this.submit(project, 'areal/side/start', {
-          sourceThreadId: request.sourceThreadId, workspaceAccess: 'none',
+          sourceThreadId: request.sourceThreadId, workspaceAccess: request.workspaceAccess === 'readOnly' ? 'readOnly' : 'none',
           ...(request.selection ? { selection: request.selection } : {}),
           ...(request.anchor ? { anchor: request.anchor } : {}),
           input: [{ type: 'text', text: request.text }],

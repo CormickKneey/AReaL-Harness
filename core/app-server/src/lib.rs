@@ -767,7 +767,7 @@ impl Connection {
                     "notifications": NOTIFICATIONS, "serverRequests":["item/tool/call"],
                     "browserToolBundles":if can_attach_browser {json!([{"bundleId":areal_protocol::desktop::BROWSER_V1_BUNDLE,
                         "definition":areal_protocol::desktop::browser_v1_tool()}])} else {json!([])},
-                    "features":{"conversationDerivationV1":if desktop::fork_preview_enabled() { json!({"preview":true,"forkBoundaries":["after","before"],"workspaceModes":["sharedCurrent"],"sideWorkspaceAccess":["none"],"historyBytes":engine.fork_snapshot_limit()}) } else { Value::Null },"subscriptionRemoval":true,"atomicResume":true,"atomicObserve":true,"browserToolAttachment":can_attach_browser,
+                    "features":{"conversationDerivationV1":if desktop::fork_preview_enabled() { json!({"preview":true,"forkBoundaries":["after","before"],"workspaceModes":["sharedCurrent"],"sideWorkspaceAccess":if engine.side_workspace_read_available() {json!(["none","readOnly"])} else {json!(["none"])},"historyBytes":engine.fork_snapshot_limit()}) } else { Value::Null },"subscriptionRemoval":true,"atomicResume":true,"atomicObserve":true,"browserToolAttachment":can_attach_browser,
                         "taskModes":true,"taskChannels":true,"asyncQuestions":true,"headlessInteractions":true,"goals":true,"dynamicTools":true,"mediaOutput":true,"durableSubmissionDeduplication":true,"profiles":true,"skills":true,"plans":true,"interactions":true,"queue":true,"providerConfiguration":true,"modelReset":true,"toolMedia":true,"blobUpload":true},
                     "limits":{"frameBytes":MAX_FRAME_BYTES,"subscriptions":128,"sendQueue":256,"threadEventWindow":128},
                     "runtime":engine.runtime_capabilities()}))
