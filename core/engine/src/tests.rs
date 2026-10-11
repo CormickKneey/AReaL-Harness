@@ -893,3 +893,79 @@ async fn persistence_encoding_benchmark() {
     );
     engine.shutdown().await;
 }
+
+// 系统故障验收：真实 Store 已提交、激活尚未发生；复用既有持久化故障注入点。
+#[tokio::test]
+async fn side_committed_store_fault_recovers_one_unexecuted_interrupted_turn() {
+    struct CountModel(Arc<AtomicUsize>);
+    #[async_trait::async_trait]
+    impl model::Model for CountModel {
+        fn name(&self) -> &str {
+            "side-commit-fault"
+        }
+        async fn stream(&self, _: Vec<Message>) -> anyhow::Result<model::ModelStream> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::pin(futures_util::stream::iter([Ok(
+                model::ModelEvent::text("unexpected execution"),
+            )])))
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let engine = Engine::open(
+        dir.path(),
+        Arc::new(CountModel(calls.clone())),
+        Limits::default(),
+    )
+    .unwrap();
+    let source = engine.create("/fixture".into()).await.unwrap();
+    let request: areal_protocol::desktop::SideStart = serde_json::from_value(json!({
+        "requestId":"side-before-activation","sourceThreadId":source.id,"workspaceAccess":"none",
+        "input":[{"type":"text","text":"first question"}]}))
+    .unwrap();
+    engine
+        .store
+        .set_fork_fault(store::ForkFault::AfterPersistError);
+    assert!(matches!(
+        engine.side_start("owner".into(), request.clone()).await,
+        Err(Error::Storage(_))
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let receipts = engine
+        .find_request("owner", "side-before-activation")
+        .await
+        .unwrap();
+    assert_eq!(receipts["data"].as_array().unwrap().len(), 1);
+    let receipt = &receipts["data"][0]["result"];
+    let side_id = receipt["threadId"].as_str().unwrap().to_owned();
+    let first_id = receipt["turnId"].as_str().unwrap().to_owned();
+    let durable = engine.store.read_thread(&side_id).await.unwrap();
+    assert_eq!(durable.turns.len(), 1);
+    assert_eq!(durable.turns[0].id, first_id);
+    assert_eq!(durable.turns[0].status, TurnStatus::InProgress);
+    assert_eq!(durable.turns[0].items.len(), 1);
+    assert!(matches!(
+        engine
+            .start(&side_id, vec![Input::text("must not activate")])
+            .await,
+        Err(Error::Storage(_))
+    ));
+    engine.shutdown().await;
+    drop(engine);
+    let restored = Engine::open(
+        dir.path(),
+        Arc::new(CountModel(calls.clone())),
+        Limits::default(),
+    )
+    .unwrap();
+    let recovered = restored.read(&side_id, true).await.unwrap();
+    assert_eq!(recovered.turns[0].status, TurnStatus::Interrupted);
+    assert_eq!(recovered.turns[0].items.len(), 1);
+    let (replayed, turn) = restored.side_start("owner".into(), request).await.unwrap();
+    assert_eq!(replayed.id, side_id);
+    assert_eq!(turn.id, first_id);
+    assert_eq!(turn.status, TurnStatus::Interrupted);
+    assert_eq!(restored.list(None, 100, None).await.unwrap().0.len(), 2);
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    restored.shutdown().await;
+}

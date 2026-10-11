@@ -6,19 +6,26 @@ use areal_protocol::Modality;
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, tungstenite::Message as Wire};
 use tokio_util::sync::CancellationToken;
 
 type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
-struct FixedModel;
+struct FixedModel(Arc<AtomicUsize>);
 #[async_trait]
 impl Model for FixedModel {
     fn configure(
         &self,
         _: &areal_protocol::desktop::ModelParameters,
     ) -> anyhow::Result<Arc<dyn Model>> {
-        Ok(Arc::new(FixedModel))
+        Ok(Arc::new(FixedModel(self.0.clone())))
     }
     fn name(&self) -> &str {
         "fixed"
@@ -33,6 +40,7 @@ impl Model for FixedModel {
         }
     }
     async fn stream(&self, _: Vec<Message>) -> anyhow::Result<ModelStream> {
+        self.0.fetch_add(1, Ordering::SeqCst);
         Ok(Box::pin(futures_util::stream::iter([Ok(
             "fixed answer".into()
         )])))
@@ -40,6 +48,7 @@ impl Model for FixedModel {
 }
 struct Fixture {
     engine: Arc<Engine>,
+    model_calls: Arc<AtomicUsize>,
     stop: CancellationToken,
     server: tokio::task::JoinHandle<anyhow::Result<()>>,
     addr: std::net::SocketAddr,
@@ -49,7 +58,8 @@ impl Fixture {
         unsafe {
             std::env::set_var("AREAL_DEV_CONVERSATION_DERIVATION", "1");
         }
-        let engine = Engine::open(path, Arc::new(FixedModel), limits).unwrap();
+        let model_calls = Arc::new(AtomicUsize::new(0));
+        let engine = Engine::open(path, Arc::new(FixedModel(model_calls.clone())), limits).unwrap();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let stop = CancellationToken::new();
@@ -60,6 +70,7 @@ impl Fixture {
         ));
         Self {
             engine,
+            model_calls,
             stop,
             server,
             addr,
@@ -288,6 +299,59 @@ async fn reference_history_is_immutable_bounded_and_cursor_scoped() {
     assert!(first.get("result").is_some(), "{first}");
     let cursor = first["result"]["nextCursor"].clone();
     assert!(cursor.is_string(), "{first}");
+    // 合法游标本身不授予跨身份的目标读取权限。
+    use areal_app_server::auth::{Authentication, Permission, Principal};
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let token = "reference-outsider-token-123456789012345";
+    let auth = Authentication {
+        version: 1,
+        principals: vec![Principal {
+            id: "outsider".into(),
+            token: token.into(),
+            permissions: [Permission::Observe].into(),
+            thread_ids: Some([source.clone()].into()),
+        }],
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let auth_stop = CancellationToken::new();
+    let auth_server = tokio::spawn(areal_app_server::serve_authenticated(
+        listener,
+        fixture.engine.clone(),
+        auth_stop.clone(),
+        Some(auth),
+    ));
+    let mut request = format!("ws://{addr}").into_client_request().unwrap();
+    request
+        .headers_mut()
+        .insert("Authorization", format!("Bearer {token}").parse().unwrap());
+    let (mut outsider, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    call(
+        &mut outsider,
+        1,
+        "initialize",
+        json!({"clientInfo":{"name":"outsider","version":"1"}}),
+    )
+    .await;
+    outsider
+        .send(Wire::Text(
+            json!({"method":"initialized"}).to_string().into(),
+        ))
+        .await
+        .unwrap();
+    let denied = call(
+        &mut outsider,
+        2,
+        "areal/conversation/history",
+        json!({"threadId":sides[0],"view":"reference","cursor":cursor,"maxBytes":1024}),
+    )
+    .await;
+    assert_eq!(denied["error"]["code"], -32003, "{denied}");
+    assert!(denied.get("result").is_none());
+    close_socket(outsider).await;
+    auth_stop.cancel();
+    auth_server.await.unwrap().unwrap();
+
     for (target, view) in [
         (&sides[1], "reference"),
         (&sides[0], "inherited"),
@@ -331,5 +395,89 @@ async fn reference_history_is_immutable_bounded_and_cursor_scoped() {
     assert!(!content.contains("LATER_ONLY"));
     assert!(content.contains(&serde_json::to_string(&text).unwrap()));
     close_socket(socket).await;
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn side_lost_creation_response_reconciles_without_second_model_call() {
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = Fixture::open(dir.path(), Limits::default()).await;
+    let mut first_socket = fixture.socket().await;
+    let source = source(&mut first_socket).await;
+    let params = side_params(&source, "lost-side-reply");
+    // 首连接发送后不消费回复；另一连接观察已提交收据，随后丢弃首连接。
+    first_socket
+        .send(Wire::Text(
+            json!({"id":3,"method":"areal/side/start","params":params})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    let mut observer = fixture.socket().await;
+    let receipt = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let reply = call(
+                &mut observer,
+                4,
+                "areal/request/read",
+                json!({"requestId":"lost-side-reply"}),
+            )
+            .await;
+            if reply["result"]["data"]
+                .as_array()
+                .is_some_and(|items| !items.is_empty())
+            {
+                break reply["result"]["data"][0]["result"].clone();
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    drop(first_socket);
+    let id = receipt["threadId"].as_str().unwrap();
+    fixture.engine.wait(id).await.unwrap();
+    assert_eq!(fixture.model_calls.load(Ordering::SeqCst), 1);
+    for attempt in 0..2 {
+        let mut reconnected = fixture.socket().await;
+        let replay = call(
+            &mut reconnected,
+            10 + attempt,
+            "areal/side/start",
+            params.clone(),
+        )
+        .await;
+        assert_eq!(
+            replay["result"]["thread"]["id"], receipt["threadId"],
+            "{replay}"
+        );
+        assert_eq!(
+            replay["result"]["turn"]["id"], receipt["turnId"],
+            "{replay}"
+        );
+        close_socket(reconnected).await;
+    }
+    let listed = call(
+        &mut observer,
+        20,
+        "areal/conversation/list",
+        json!({"view":"side","sourceThreadId":source}),
+    )
+    .await;
+    assert_eq!(listed["result"]["data"].as_array().unwrap().len(), 1);
+    let read = call(
+        &mut observer,
+        21,
+        "thread/read",
+        json!({"threadId":id,"includeTurns":true}),
+    )
+    .await;
+    assert_eq!(
+        read["result"]["thread"]["turns"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(fixture.model_calls.load(Ordering::SeqCst), 1);
+    close_socket(observer).await;
     fixture.close().await;
 }
