@@ -313,7 +313,10 @@ class DesktopService {
     if (phase === 'prepare' && !action) throw new Error('Browser prepare is only for actions');
     const key = browserKey(projectId, threadId);
     const claim = this.browserClaims.get(key);
-    if (!claim || claim.socket.readyState !== 1) return browserFailure('host_unavailable', 'No authorized live desktop page');
+    // 已批准计划在派发前失去授权时，必须重新授权和观察；普通读取仍报告宿主不可用。
+    if (!claim || claim.socket.readyState !== 1) return action && phase === 'execute'
+      ? browserFailure('plan_stale', 'Approved page authorization changed; authorize the page and observe again before a new action')
+      : browserFailure('host_unavailable', 'No authorized live desktop page');
     if (claim.coreInstanceId !== coreInstanceId || claim.coreGeneration !== coreGeneration) {
       this.browserClaims.delete(key);
       return browserFailure('host_unavailable', 'Core deployment changed; authorize the page again');
