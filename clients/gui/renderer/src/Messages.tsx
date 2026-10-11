@@ -67,7 +67,11 @@ export function Messages({
   const latestTurnId = thread.turns?.at(-1)?.id;
   const [forking, setForking] = useState(false);
   const [forkError, setForkError] = useState<{ turnId: string; message: string } | null>(null);
-  const [selectedSideText, setSelectedSideText] = useState<{ text: string; turnId: string; itemId: string; startUtf8?: number; endUtf8?: number } | null>(null);
+  const selectionOwner = JSON.stringify([project.core?.instanceId, project.id, thread.id]);
+  const currentSelectionOwner = useRef(selectionOwner);
+  currentSelectionOwner.current = selectionOwner;
+  const [selectedSideText, setSelectedSideText] = useState<{ owner: string; text: string; turnId: string; itemId: string; startUtf8?: number; endUtf8?: number } | null>(null);
+  useLayoutEffect(() => { setSelectedSideText(null); }, [selectionOwner]);
   const captureSideSelection = () => {
     if (!onSideSelection) return;
     const selected = window.getSelection();
@@ -92,12 +96,12 @@ export function Messages({
       const prefix = range.cloneRange(); prefix.selectNodeContents(body); prefix.setEnd(range.startContainer, range.startOffset);
       const startUtf8 = new TextEncoder().encode(prefix.toString()).length;
       const endUtf8 = startUtf8 + new TextEncoder().encode(text).length;
-      setSelectedSideText({ text, turnId, itemId, startUtf8, endUtf8 });
-    } else setSelectedSideText({ text, turnId, itemId });
+      setSelectedSideText({ owner: selectionOwner, text, turnId, itemId, startUtf8, endUtf8 });
+    } else setSelectedSideText({ owner: selectionOwner, text, turnId, itemId });
   };
   const askAboutSelection = async () => {
     const chosen = selectedSideText;
-    if (!chosen || !onSideSelection) return;
+    if (!chosen || chosen.owner !== selectionOwner || !onSideSelection) return;
     let selection: Data = { kind: "userQuote", text: chosen.text, claimedTurnId: chosen.turnId, claimedItemId: chosen.itemId };
     if (chosen.startUtf8 !== undefined && chosen.endUtf8 !== undefined) {
       const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(chosen.text));
@@ -105,6 +109,8 @@ export function Messages({
         startUtf8: chosen.startUtf8, endUtf8: chosen.endUtf8,
         textSha256: Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("") };
     }
+    // 计算摘要期间也可能切换来源；旧回调不能把选区交给新会话。
+    if (currentSelectionOwner.current !== chosen.owner) return;
     const turn = (thread.turns ?? []).find((item: Data) => item.id === chosen.turnId);
     onSideSelection(selection, chosen.text, turn?.status === "completed" ? { kind: "turn", turnId: chosen.turnId, boundary: "after" } : undefined);
     setSelectedSideText(null);
@@ -425,7 +431,7 @@ export function Messages({
         <div ref={responseSpace} className="message-response-space" aria-hidden="true" />
       </div>
     </div>
-    {selectedSideText && <button type="button" className="side-selection-action" onClick={() => void askAboutSelection()}>在旁路中询问所选内容</button>}
+    {selectedSideText?.owner === selectionOwner && <button type="button" className="side-selection-action" onClick={() => void askAboutSelection()}>在旁路中询问所选内容</button>}
     {readingHistory && <TimelineBottomButton onClick={returnToBottom} />}
     </div>
   );

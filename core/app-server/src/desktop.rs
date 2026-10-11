@@ -196,7 +196,12 @@ async fn dispatch_inner(
             let request: SideStart = parse(params)?;
             let request_id = request.request_id.clone();
             match engine.side_start(identity.into(), request).await {
-                Ok((thread, turn)) => {
+                Ok((mut thread, mut turn)) => {
+                    // 创建和同键核对只返回摘要；完整历史仍从权威读取入口恢复。
+                    thread.turns.clear();
+                    thread.context_checkpoint = None;
+                    thread.history_archive = None;
+                    turn.items.clear();
                     Ok(json!({"thread":thread,"turn":turn,"requestId":request_id}))
                 }
                 Err(Error::Conflict) => {
@@ -247,7 +252,13 @@ async fn dispatch_inner(
             let request: ForkThread = parse(params)?;
             let request_id = request.request_id.clone();
             match engine.fork_thread(identity.into(), request).await {
-                Ok(thread) => Ok(json!({"thread":thread,"requestId":request_id})),
+                Ok(mut thread) => {
+                    // 目标之后可能已积累大历史，幂等响应保持与首次创建相同的摘要边界。
+                    thread.turns.clear();
+                    thread.context_checkpoint = None;
+                    thread.history_archive = None;
+                    Ok(json!({"thread":thread,"requestId":request_id}))
+                }
                 Err(Error::Conflict) => {
                     return Err(RpcError {
                         code: -32010,

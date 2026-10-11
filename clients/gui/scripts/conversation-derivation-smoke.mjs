@@ -459,7 +459,7 @@ try {
   checks.push("AC30: source run_command entered the real Core/Runtime process and remains held while Side begins");
   await shot("04-source-tool-running.png");
   // 通过真实消息选区界面选择首个持久轮次中的 Unicode 子串。
-  await page.evaluate(({ turnId, excerpt }) => {
+  const selectSideExcerpt = async () => page.evaluate(({ turnId, excerpt }) => {
     const turn = document.querySelector(`[data-turn-id="${CSS.escape(turnId)}"]`);
     const body = turn?.querySelector("[data-side-item-id] .conversation-markdown");
     if (!body) throw Error("source message body missing");
@@ -475,7 +475,14 @@ try {
     }
     throw Error("Unicode selection was not in one persisted text node");
   }, { turnId: anchorTurnId, excerpt: unicodeExcerpt });
+  await selectSideExcerpt();
   const sideTrigger = page.getByRole("button", { name: "在旁路中询问所选内容" });
+  await sideTrigger.waitFor();
+  await selectConversation(page, targetThreadId);
+  assert.equal(await sideTrigger.count(), 0, "来源 A 的选区不能在切换后的 B 会话显示或提交");
+  await selectConversation(page, sourceThreadId);
+  await selectSideExcerpt();
+  checks.push("AC55: switching the source Thread invalidates the prior Side selection owner");
   await sideTrigger.focus();
   await sideTrigger.evaluate(element => { window.__scfSideTrigger = element; });
   await sideTrigger.press("Enter");

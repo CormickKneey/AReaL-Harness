@@ -87,6 +87,15 @@ async fn default_capabilities_advertise_derivation_and_dispatch_routes() {
                 .await
                 .unwrap();
         } else if id == 1 {
+            let schemas: Value =
+                serde_json::from_str(include_str!("../../../schemas/areal-core-v1.json")).unwrap();
+            assert!(
+                jsonschema::is_valid(
+                    &schemas["responses"]["areal/capabilities"],
+                    &response["result"]
+                ),
+                "capabilities schema mismatch: {response}"
+            );
             let feature = &response["result"]["features"]["conversationDerivationV1"];
             assert_eq!(feature["preview"], false);
             assert_eq!(feature["methods"], json!(methods));

@@ -25796,7 +25796,7 @@
                       "type": "array"
                     },
                     "preview": {
-                      "const": true
+                      "const": false
                     },
                     "sideWorkspaceAccess": {
                       "items": {

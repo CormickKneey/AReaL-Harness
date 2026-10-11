@@ -998,11 +998,12 @@ class CoreBackend {
           const receipt = receipts.data?.find(item => item.method === 'areal/side/start');
           const id = receipt?.result?.threadId;
           if (!id) return { confirmed: false };
-          await this.openThread(project, id);
           await this.changeOutcomes(project, outcomes => ({ ...outcomes, [request.requestId]: {
             accepted: true, method: 'areal/side/start', sourceThreadId: request.sourceThreadId, threadId: id,
           } }));
           await this.changePending(project, pending => pending.filter(item => item.params.requestId !== request.requestId));
+          // 收据已确认；恢复投影失败不能推翻受理结果或留下待重发的首问。
+          try { await this.openThread(project, id); } catch { /* 可凭目标身份再次打开。 */ }
           return { confirmed: true, threadId: id };
         }
         if (request.operation === 'send') {
@@ -1010,7 +1011,8 @@ class CoreBackend {
           if (current?.conversation?.kind !== 'side') throw new Error('目标不是旁路讨论');
           const result = await this.submit(project, 'areal/turn/start', { threadId: request.threadId,
             input: [{ type: 'text', text: request.text }] });
-          await this.openThread(project, request.threadId);
+          // 追问已受理；快照读取失败只能通过重新打开恢复，不能重发输入。
+          try { await this.openThread(project, request.threadId); } catch { /* 保留明确受理结果。 */ }
           return result;
         }
         const result = await this.submit(project, 'areal/side/start', {
@@ -1019,8 +1021,9 @@ class CoreBackend {
           ...(request.anchor ? { anchor: request.anchor } : {}),
           input: [{ type: 'text', text: request.text }],
         }, { requestId: request.requestId });
-        await this.openThread(project, result.thread.id);
-        await this.listThreads(project);
+        // 与 Fork 一样，投影刷新不改变 Core 已确认的创建结果。
+        try { await this.openThread(project, result.thread.id); await this.listThreads(project); }
+        catch { /* 调用方仍可凭 threadId 打开已提交目标。 */ }
         return { threadId: result.thread.id, turnId: result.turn?.id, requestId: result.requestId };
       }
       case 'send': {

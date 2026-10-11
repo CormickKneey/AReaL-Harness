@@ -39,8 +39,25 @@ impl Model for FixedModel {
             output: vec![Modality::Text],
         }
     }
-    async fn stream(&self, _: Vec<Message>) -> anyhow::Result<ModelStream> {
+    async fn stream(&self, messages: Vec<Message>) -> anyhow::Result<ModelStream> {
         self.0.fetch_add(1, Ordering::SeqCst);
+        let input = messages
+            .iter()
+            .rev()
+            .find(|message| message.role == "user")
+            .map(Message::text_content)
+            .unwrap_or_default();
+        if input == "fixture fail" {
+            anyhow::bail!("fixture model failure");
+        }
+        if input == "fixture wait" {
+            return Ok(Box::pin(futures_util::stream::pending()));
+        }
+        if input == "fixture large" {
+            return Ok(Box::pin(futures_util::stream::iter([Ok("x"
+                .repeat(3 * 1024 * 1024)
+                .into())])));
+        }
         Ok(Box::pin(futures_util::stream::iter([Ok(
             "fixed answer".into()
         )])))
@@ -479,5 +496,128 @@ async fn side_lost_creation_response_reconciles_without_second_model_call() {
     );
     assert_eq!(fixture.model_calls.load(Ordering::SeqCst), 1);
     close_socket(observer).await;
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn side_after_accepts_failed_and_interrupted_but_rejects_active() {
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = Fixture::open(dir.path(), Limits::default()).await;
+    let mut socket = fixture.socket().await;
+    let source = source(&mut socket).await;
+    for (index, (text, expected)) in [("fixture fail", "failed"), ("fixture wait", "interrupted")]
+        .into_iter()
+        .enumerate()
+    {
+        let started = call(
+            &mut socket,
+            10,
+            "turn/start",
+            json!({"threadId":source,"input":[{"type":"text","text":text}]}),
+        )
+        .await;
+        let turn_id = started["result"]["turn"]["id"].as_str().unwrap();
+        let mut params = side_params(&source, &format!("terminal-side-{index}"));
+        params["anchor"] = json!({"kind":"turn","turnId":turn_id,"boundary":"after"});
+        if expected == "interrupted" {
+            let denied = call(&mut socket, 11, "areal/side/start", params.clone()).await;
+            assert_eq!(
+                denied["error"]["data"]["reason"], "TURN_NOT_TERMINAL",
+                "{denied}"
+            );
+            let stopped = call(
+                &mut socket,
+                12,
+                "turn/interrupt",
+                json!({"threadId":source,"turnId":turn_id}),
+            )
+            .await;
+            assert!(stopped["error"].is_null(), "{stopped}");
+        }
+        fixture.engine.wait(&source).await.unwrap();
+        let read = call(
+            &mut socket,
+            13,
+            "thread/read",
+            json!({"threadId":source,"includeTurns":true}),
+        )
+        .await;
+        assert_eq!(
+            read["result"]["thread"]["turns"]
+                .as_array()
+                .unwrap()
+                .last()
+                .unwrap()["status"],
+            expected
+        );
+        let side = call(&mut socket, 14, "areal/side/start", params).await;
+        assert!(side["result"].is_object(), "{side}");
+        let side_id = side["result"]["thread"]["id"].as_str().unwrap();
+        fixture.engine.wait(side_id).await.unwrap();
+        let history = call(
+            &mut socket,
+            15,
+            "areal/conversation/history",
+            json!({"threadId":side_id,"view":"reference"}),
+        )
+        .await;
+        assert!(history["result"]["data"].as_array().unwrap().iter().any(|item| item["sourceTurnId"] == turn_id && item["sourceTurnStatus"] == expected), "{history}");
+    }
+    close_socket(socket).await;
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn derivation_replay_returns_bounded_summaries_without_execution() {
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = Fixture::open(dir.path(), Limits::default()).await;
+    let mut socket = fixture.socket().await;
+    let source = source(&mut socket).await;
+    let anchor = turn(&mut socket, &source, 3, "source evidence").await;
+    let mut params = side_params(&source, "large-side");
+    params["input"] = json!([{"type":"text","text":"fixture large"}]);
+    let created = call(&mut socket, 4, "areal/side/start", params.clone()).await;
+    let side = created["result"]["thread"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let first = created["result"]["turn"]["id"].clone();
+    fixture.engine.wait(&side).await.unwrap();
+    let calls = fixture.model_calls.load(Ordering::SeqCst);
+    let replay = call(&mut socket, 5, "areal/side/start", params).await;
+    assert_eq!(replay["result"]["thread"]["id"], side);
+    assert_eq!(replay["result"]["turn"]["id"], first);
+    assert!(serde_json::to_vec(&replay).unwrap().len() < areal_protocol::MAX_FRAME_BYTES);
+    assert_eq!(replay["result"]["thread"]["turns"], json!([]));
+    assert_eq!(replay["result"]["turn"]["items"], json!([]));
+    assert_eq!(fixture.model_calls.load(Ordering::SeqCst), calls);
+    assert!(
+        fixture.engine.read(&side, true).await.unwrap().turns[0]
+            .items
+            .iter()
+            .any(|item| serde_json::to_vec(item).unwrap().len() >= 3 * 1024 * 1024)
+    );
+    let params = fork_params(&source, &anchor, "large-fork");
+    let created = call(&mut socket, 6, "areal/thread/fork", params.clone()).await;
+    let fork = created["result"]["thread"]["id"].as_str().unwrap();
+    for _ in 0..2 {
+        fixture
+            .engine
+            .start(fork, vec![areal_protocol::Input::text("fixture large")])
+            .await
+            .unwrap();
+        fixture.engine.wait(fork).await.unwrap();
+    }
+    let calls = fixture.model_calls.load(Ordering::SeqCst);
+    let replay = call(&mut socket, 7, "areal/thread/fork", params).await;
+    assert_eq!(replay["result"]["thread"]["id"], fork);
+    assert_eq!(replay["result"]["thread"]["turns"], json!([]));
+    assert!(serde_json::to_vec(&replay).unwrap().len() < areal_protocol::MAX_FRAME_BYTES);
+    assert_eq!(fixture.model_calls.load(Ordering::SeqCst), calls);
+    assert_eq!(
+        fixture.engine.read(fork, true).await.unwrap().turns.len(),
+        2
+    );
+    close_socket(socket).await;
     fixture.close().await;
 }

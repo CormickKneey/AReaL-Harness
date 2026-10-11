@@ -59,7 +59,48 @@ try {
   await rm(home, { recursive: true, force: true });
 }
 
-// Core -> service IPC -> main IPC must retain the scoped denial reason without forwarding private data.
+// Core 已受理后，即使本机投影失败，桌面命令也不能变成可重试提交。
+const sideHome = await mkdtemp(join(tmpdir(), 'areal-side-projection-'));
+try {
+  const backend = Object.create(CoreBackend.prototype);
+  Object.assign(backend, { home: sideHome, saves: new Map(), awaitingResponses: new WeakSet(),
+    onChange() {}, closing: false });
+  const mutations = [];
+  const accepted = { thread: { id: 'accepted-side' }, turn: { id: 'accepted-turn' }, requestId: '12345678-1234-1234-1234-123456789abc' };
+  const project = { id: 'side-project', pending: [], outcomes: {},
+    model: { state: { threads: { 'accepted-side': { conversation: { kind: 'side' } } } } },
+    client: { closed: false, capabilities: { methods: ['areal/side/start'] }, request: async (method, params) => {
+      if (method === 'areal/request/read') return { data: [{ method: 'areal/side/start', result: { threadId: accepted.thread.id } }] };
+      mutations.push([method, params]);
+      return accepted;
+    } } };
+  backend.start = async () => project;
+  for (const failure of ['open', 'list']) {
+    backend.openThread = async () => { if (failure === 'open') throw Error('projection unavailable'); };
+    backend.listThreads = async () => { if (failure === 'list') throw Error('list unavailable'); };
+    const created = await backend.executeCommand('side', { projectId: project.id, operation: 'start',
+      sourceThreadId: 'source', text: 'first question', requestId: accepted.requestId });
+    assert.equal(created.threadId, accepted.thread.id);
+    assert.equal(created.turnId, accepted.turn.id);
+    assert.equal(project.pending.length, 0);
+  }
+  backend.openThread = async () => { throw Error('projection unavailable'); };
+  assert.deepEqual(await backend.executeCommand('side', { projectId: project.id, operation: 'send',
+    threadId: accepted.thread.id, text: 'follow up' }), accepted);
+  assert.equal(project.pending.length, 0);
+  project.pending.push({ method: 'areal/side/start', params: { requestId: accepted.requestId, sourceThreadId: 'source' } });
+  const recovered = await backend.executeCommand('side', { projectId: project.id, operation: 'recover',
+    sourceThreadId: 'source', requestId: accepted.requestId });
+  assert.deepEqual(recovered, { confirmed: true, threadId: accepted.thread.id });
+  assert.equal(project.pending.length, 0);
+  assert.equal(project.outcomes[accepted.requestId].accepted, true);
+  assert.deepEqual(mutations.map(([method]) => method), ['areal/side/start', 'areal/side/start', 'areal/turn/start'],
+    '投影失败及收据核对都不得重放已受理的创建或追问');
+} finally {
+  await rm(sideHome, { recursive: true, force: true });
+}
+
+// Core → service IPC → main IPC 保留作用域拒绝原因，不转发私有数据。
 const coreError = new CoreRpcError('Side action denied', {
   code: -32010,
   method: 'areal/side/start',

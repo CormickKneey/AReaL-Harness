@@ -308,7 +308,7 @@ impl Engine {
                         .ok_or_else(|| invalid("ANCHOR_NOT_FOUND"))?;
                     match boundary.as_str() {
                         "before" => index,
-                        "after" if logical[index].status == TurnStatus::Completed => index + 1,
+                        "after" if logical[index].status != TurnStatus::InProgress => index + 1,
                         "after" => return Err(invalid("TURN_NOT_TERMINAL")),
                         _ => return Err(invalid("invalid Side boundary")),
                     }
