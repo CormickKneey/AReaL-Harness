@@ -2813,6 +2813,25 @@
       ],
       "type": "object"
     },
+    "areal/side/capacity": {
+      "additionalProperties": true,
+      "properties": {
+        "status": {
+          "enum": [
+            "waiting",
+            "available"
+          ]
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "threadId"
+      ],
+      "type": "object"
+    },
     "areal/task/updated": {
       "additionalProperties": true,
       "properties": {
@@ -3560,6 +3579,47 @@
       "required": [
         "configuration",
         "threadId"
+      ],
+      "type": "object"
+    },
+    "areal/thread/tools/attached": {
+      "additionalProperties": true,
+      "properties": {
+        "dynamicTools": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "inputSchema": true,
+              "name": {
+                "type": "string"
+              },
+              "outputSchema": true
+            },
+            "required": [
+              "name",
+              "description",
+              "inputSchema"
+            ],
+            "title": "ToolDefinition",
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "toolsetRevision": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "dynamicTools",
+        "threadId",
+        "toolsetRevision"
       ],
       "type": "object"
     },
