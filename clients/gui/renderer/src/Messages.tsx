@@ -42,10 +42,12 @@ export function Messages({
   beforeTurns,
   onAgent,
   onFork,
+  onSideSelection,
 }: {
   beforeTurns?: ReactNode;
   onAgent?: (id: string) => void;
   onFork?: (turnId: string, boundary: "before" | "after") => Promise<void>;
+  onSideSelection?: (selection: Data, text: string, anchor?: Data) => void;
   project: Data;
   thread: Data;
   action: Action;
@@ -63,6 +65,45 @@ export function Messages({
   const latestTurnId = thread.turns?.at(-1)?.id;
   const [forking, setForking] = useState(false);
   const [forkError, setForkError] = useState<{ turnId: string; message: string } | null>(null);
+  const [selectedSideText, setSelectedSideText] = useState<{ text: string; turnId: string; itemId: string; startUtf8?: number; endUtf8?: number } | null>(null);
+  const captureSideSelection = () => {
+    if (!onSideSelection) return;
+    const selected = window.getSelection();
+    if (!selected || selected.isCollapsed || selected.rangeCount !== 1) return;
+    const range = selected.getRangeAt(0);
+    const start = (range.startContainer.nodeType === Node.ELEMENT_NODE ? range.startContainer as Element : range.startContainer.parentElement)?.closest<HTMLElement>("[data-side-item-id]");
+    const end = (range.endContainer.nodeType === Node.ELEMENT_NODE ? range.endContainer as Element : range.endContainer.parentElement)?.closest<HTMLElement>("[data-side-item-id]");
+    if (!start || start !== end) return;
+    const text = selected.toString();
+    if (!text.trim()) return;
+    const turnId = start.closest<HTMLElement>("[data-turn-id]")?.dataset.turnId;
+    const itemId = start.dataset.sideItemId;
+    if (!turnId || !itemId) return;
+    const canonical = (thread.turns ?? []).find((turn: Data) => turn.id === turnId)?.items?.find((item: Data) => item.id === itemId);
+    const canonicalText = canonical?.type === "agentMessage" ? canonical.text : canonical?.type === "userMessage" && canonical.content?.length === 1 && canonical.content[0].type === "text" ? canonical.content[0].text :
+      canonical?.type === "dynamicToolCall" && canonical.success === true && canonical.contentItems?.length === 1 ? canonical.contentItems[0]?.text : undefined;
+    const body = canonical?.type === "dynamicToolCall" ? start.querySelector<HTMLElement>("[aria-label='工具结果']") : start.querySelector<HTMLElement>(".conversation-markdown");
+    if (canonicalText && body && body.textContent === canonicalText && body.contains(range.startContainer) && body.contains(range.endContainer)) {
+      const prefix = range.cloneRange(); prefix.selectNodeContents(body); prefix.setEnd(range.startContainer, range.startOffset);
+      const startUtf8 = new TextEncoder().encode(prefix.toString()).length;
+      const endUtf8 = startUtf8 + new TextEncoder().encode(text).length;
+      setSelectedSideText({ text, turnId, itemId, startUtf8, endUtf8 });
+    } else setSelectedSideText({ text, turnId, itemId });
+  };
+  const askAboutSelection = async () => {
+    const chosen = selectedSideText;
+    if (!chosen || !onSideSelection) return;
+    let selection: Data = { kind: "userQuote", text: chosen.text, claimedTurnId: chosen.turnId, claimedItemId: chosen.itemId };
+    if (chosen.startUtf8 !== undefined && chosen.endUtf8 !== undefined) {
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(chosen.text));
+      selection = { kind: "itemRange", turnId: chosen.turnId, itemId: chosen.itemId,
+        startUtf8: chosen.startUtf8, endUtf8: chosen.endUtf8,
+        textSha256: Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("") };
+    }
+    const turn = (thread.turns ?? []).find((item: Data) => item.id === chosen.turnId);
+    onSideSelection(selection, chosen.text, turn?.status === "completed" ? { kind: "turn", turnId: chosen.turnId, boundary: "after" } : undefined);
+    setSelectedSideText(null);
+  };
   const canFork = !!onFork && project.core?.features?.forkPreview === true
     && !thread.parentThreadId && !thread.desktop?.archived
     && (!thread.conversation || thread.conversation.kind === "fork");
@@ -125,7 +166,7 @@ export function Messages({
     container.current?.scrollTo({ top: container.current.scrollHeight });
     updateReading();
   };
-  const renderAgentMessage = (entry: Data, turn: Data, deferActions = false) => !entry.text?.trim() ? null : <div className={`assistant-message${deferActions ? " assistant-message-final" : ""}`} data-message-phase={entry.phase ?? "legacy"} key={entry.id}>
+  const renderAgentMessage = (entry: Data, turn: Data, deferActions = false) => !entry.text?.trim() ? null : <div className={`assistant-message${deferActions ? " assistant-message-final" : ""}`} data-message-phase={entry.phase ?? "legacy"} data-side-item-id={entry.id} key={entry.id}>
     <MessageResponse className="conversation-markdown" preserveLineBreaks streaming={turn.status === "inProgress"} theme={dark ? "dark" : "light"} onOpenExternalUrl={onLink} onOpenFileLink={onFile}>{entry.text}</MessageResponse>
     {!deferActions && entry.phase !== "commentary" && turn.status !== "inProgress" && <MessageActions text={entry.text} />}
   </div>;
@@ -224,6 +265,7 @@ export function Messages({
       className="messages"
       ref={container}
       onScroll={updateReading}
+      onMouseUp={captureSideSelection}
 
     >
       <div className="message-column">
@@ -299,7 +341,7 @@ export function Messages({
                 const feedback = sentReviewFeedback(text);
                 const attachments = content.filter((part: Data) => part.type !== "text");
                 return (
-                  <div className="user-message" key={item.id}>
+                  <div className="user-message" data-side-item-id={item.id} key={item.id}>
                     <div className="user-message-content">
                       <SentReviewComments comments={feedback.comments} />
                       {attachments.length > 0 ? <div className="user-attachments" data-testid="user-attachments">
@@ -323,7 +365,7 @@ export function Messages({
               return <TurnExecution key={item.id} active={index === segments.length - 1} items={item.items} turn={turn} project={project} threadId={thread.id}
                 hasTurnSummary={group.progress && turn.status === "completed" && hasReadingSummary}
                 renderItem={(entry: Data, disclosure) => {
-                  if (entry.type === "dynamicToolCall") return <ToolEvent key={entry.id} item={entry} {...disclosure} onFile={onFile} onAgent={onAgent} turnId={turn.id} action={action} projectId={project.id} threadId={thread.id} readTurnReview={turn.status === "completed" ? readTurnReview : undefined} />;
+                  if (entry.type === "dynamicToolCall") return <div data-side-item-id={entry.id} key={entry.id}><ToolEvent item={entry} {...disclosure} onFile={onFile} onAgent={onAgent} turnId={turn.id} action={action} projectId={project.id} threadId={thread.id} readTurnReview={turn.status === "completed" ? readTurnReview : undefined} /></div>;
                   if (entry.type === "modelContext") return null;
                   return <details className="tool-call" key={entry.id}><summary>{entry.type}</summary><pre>{JSON.stringify(entry, null, 2)}</pre></details>;
                 }} />;
@@ -375,6 +417,7 @@ export function Messages({
         <div ref={responseSpace} className="message-response-space" aria-hidden="true" />
       </div>
     </div>
+    {selectedSideText && <button type="button" className="side-selection-action" onClick={() => void askAboutSelection()}>在旁路中询问所选内容</button>}
     {readingHistory && <TimelineBottomButton onClick={returnToBottom} />}
     </div>
   );

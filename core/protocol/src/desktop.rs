@@ -98,10 +98,18 @@ pub struct SideStart {
     pub request_id: String,
     pub source_thread_id: String,
     pub anchor: Option<SideAnchor>,
+    pub selection: Option<SideSelection>,
     pub workspace_access: String,
     pub model: Option<ModelRef>,
     pub parameters: Option<ModelParameters>,
     pub input: Vec<super::Input>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase", deny_unknown_fields)]
+pub enum SideSelection {
+    ItemRange { turn_id: String, item_id: String, start_utf8: usize, end_utf8: usize, text_sha256: String },
+    UserQuote { text: String, claimed_turn_id: Option<String>, claimed_item_id: Option<String> },
 }
 pub const NOTIFICATIONS: &[&str] = &[
     "areal/goal/updated",

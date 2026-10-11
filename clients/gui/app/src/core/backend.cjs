@@ -977,6 +977,7 @@ class CoreBackend {
         if (request.operation === 'context') return project.client.request('areal/side/context/read', {
           threadId: request.threadId, ...(request.cursor ? { cursor: request.cursor } : {}),
           ...(request.evidenceRef ? { evidenceRef: request.evidenceRef } : {}),
+          ...(request.maxBytes ? { maxBytes: request.maxBytes } : {}),
         });
         if (request.operation === 'recover') {
           const receipts = await project.client.request('areal/request/read', { requestId: request.requestId });
@@ -1000,6 +1001,8 @@ class CoreBackend {
         }
         const result = await this.submit(project, 'areal/side/start', {
           sourceThreadId: request.sourceThreadId, workspaceAccess: 'none',
+          ...(request.selection ? { selection: request.selection } : {}),
+          ...(request.anchor ? { anchor: request.anchor } : {}),
           input: [{ type: 'text', text: request.text }],
         }, { requestId: request.requestId });
         await this.openThread(project, result.thread.id);

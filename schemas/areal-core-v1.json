@@ -5229,6 +5229,100 @@
                           ],
                           "type": "object"
                         },
+                        "selection": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "selection": {
+                                  "oneOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "endUtf8": {
+                                          "format": "uint",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "itemId": {
+                                          "type": "string"
+                                        },
+                                        "kind": {
+                                          "const": "itemRange",
+                                          "type": "string"
+                                        },
+                                        "startUtf8": {
+                                          "format": "uint",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "textSha256": {
+                                          "type": "string"
+                                        },
+                                        "turnId": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "turnId",
+                                        "itemId",
+                                        "startUtf8",
+                                        "endUtf8",
+                                        "textSha256"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "claimedItemId": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "claimedTurnId": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "kind": {
+                                          "const": "userQuote",
+                                          "type": "string"
+                                        },
+                                        "text": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "text"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ]
+                                },
+                                "text": {
+                                  "type": "string"
+                                },
+                                "verified": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "selection",
+                                "text",
+                                "verified"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "version": {
                           "format": "uint32",
                           "minimum": 0,
@@ -14465,6 +14559,83 @@
         "requestId": {
           "type": "string"
         },
+        "selection": {
+          "anyOf": [
+            {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "endUtf8": {
+                      "format": "uint",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "itemId": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "const": "itemRange",
+                      "type": "string"
+                    },
+                    "startUtf8": {
+                      "format": "uint",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "textSha256": {
+                      "type": "string"
+                    },
+                    "turnId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "turnId",
+                    "itemId",
+                    "startUtf8",
+                    "endUtf8",
+                    "textSha256"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "claimedItemId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "claimedTurnId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "kind": {
+                      "const": "userQuote",
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "text"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "sourceThreadId": {
           "type": "string"
         },
@@ -17294,6 +17465,100 @@
                               "logicalBytes"
                             ],
                             "type": "object"
+                          },
+                          "selection": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "selection": {
+                                    "oneOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "endUtf8": {
+                                            "format": "uint",
+                                            "minimum": 0,
+                                            "type": "integer"
+                                          },
+                                          "itemId": {
+                                            "type": "string"
+                                          },
+                                          "kind": {
+                                            "const": "itemRange",
+                                            "type": "string"
+                                          },
+                                          "startUtf8": {
+                                            "format": "uint",
+                                            "minimum": 0,
+                                            "type": "integer"
+                                          },
+                                          "textSha256": {
+                                            "type": "string"
+                                          },
+                                          "turnId": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "turnId",
+                                          "itemId",
+                                          "startUtf8",
+                                          "endUtf8",
+                                          "textSha256"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "claimedItemId": {
+                                            "type": [
+                                              "string",
+                                              "null"
+                                            ]
+                                          },
+                                          "claimedTurnId": {
+                                            "type": [
+                                              "string",
+                                              "null"
+                                            ]
+                                          },
+                                          "kind": {
+                                            "const": "userQuote",
+                                            "type": "string"
+                                          },
+                                          "text": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "text"
+                                        ],
+                                        "type": "object"
+                                      }
+                                    ]
+                                  },
+                                  "text": {
+                                    "type": "string"
+                                  },
+                                  "verified": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "selection",
+                                  "text",
+                                  "verified"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
                           },
                           "version": {
                             "format": "uint32",
@@ -20812,6 +21077,100 @@
                                 "logicalBytes"
                               ],
                               "type": "object"
+                            },
+                            "selection": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "selection": {
+                                      "oneOf": [
+                                        {
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "endUtf8": {
+                                              "format": "uint",
+                                              "minimum": 0,
+                                              "type": "integer"
+                                            },
+                                            "itemId": {
+                                              "type": "string"
+                                            },
+                                            "kind": {
+                                              "const": "itemRange",
+                                              "type": "string"
+                                            },
+                                            "startUtf8": {
+                                              "format": "uint",
+                                              "minimum": 0,
+                                              "type": "integer"
+                                            },
+                                            "textSha256": {
+                                              "type": "string"
+                                            },
+                                            "turnId": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "turnId",
+                                            "itemId",
+                                            "startUtf8",
+                                            "endUtf8",
+                                            "textSha256"
+                                          ],
+                                          "type": "object"
+                                        },
+                                        {
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "claimedItemId": {
+                                              "type": [
+                                                "string",
+                                                "null"
+                                              ]
+                                            },
+                                            "claimedTurnId": {
+                                              "type": [
+                                                "string",
+                                                "null"
+                                              ]
+                                            },
+                                            "kind": {
+                                              "const": "userQuote",
+                                              "type": "string"
+                                            },
+                                            "text": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "kind",
+                                            "text"
+                                          ],
+                                          "type": "object"
+                                        }
+                                      ]
+                                    },
+                                    "text": {
+                                      "type": "string"
+                                    },
+                                    "verified": {
+                                      "type": "boolean"
+                                    }
+                                  },
+                                  "required": [
+                                    "selection",
+                                    "text",
+                                    "verified"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
                             },
                             "version": {
                               "format": "uint32",
@@ -38811,6 +39170,100 @@
                           ],
                           "type": "object"
                         },
+                        "selection": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "selection": {
+                                  "oneOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "endUtf8": {
+                                          "format": "uint",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "itemId": {
+                                          "type": "string"
+                                        },
+                                        "kind": {
+                                          "const": "itemRange",
+                                          "type": "string"
+                                        },
+                                        "startUtf8": {
+                                          "format": "uint",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "textSha256": {
+                                          "type": "string"
+                                        },
+                                        "turnId": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "turnId",
+                                        "itemId",
+                                        "startUtf8",
+                                        "endUtf8",
+                                        "textSha256"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "claimedItemId": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "claimedTurnId": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "kind": {
+                                          "const": "userQuote",
+                                          "type": "string"
+                                        },
+                                        "text": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "text"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ]
+                                },
+                                "text": {
+                                  "type": "string"
+                                },
+                                "verified": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "selection",
+                                "text",
+                                "verified"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "version": {
                           "format": "uint32",
                           "minimum": 0,
@@ -43112,6 +43565,100 @@
                             "logicalBytes"
                           ],
                           "type": "object"
+                        },
+                        "selection": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "selection": {
+                                  "oneOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "endUtf8": {
+                                          "format": "uint",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "itemId": {
+                                          "type": "string"
+                                        },
+                                        "kind": {
+                                          "const": "itemRange",
+                                          "type": "string"
+                                        },
+                                        "startUtf8": {
+                                          "format": "uint",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "textSha256": {
+                                          "type": "string"
+                                        },
+                                        "turnId": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "turnId",
+                                        "itemId",
+                                        "startUtf8",
+                                        "endUtf8",
+                                        "textSha256"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "claimedItemId": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "claimedTurnId": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "kind": {
+                                          "const": "userQuote",
+                                          "type": "string"
+                                        },
+                                        "text": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "text"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ]
+                                },
+                                "text": {
+                                  "type": "string"
+                                },
+                                "verified": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "selection",
+                                "text",
+                                "verified"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "version": {
                           "format": "uint32",
@@ -51775,6 +52322,100 @@
                             ],
                             "type": "object"
                           },
+                          "selection": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "selection": {
+                                    "oneOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "endUtf8": {
+                                            "format": "uint",
+                                            "minimum": 0,
+                                            "type": "integer"
+                                          },
+                                          "itemId": {
+                                            "type": "string"
+                                          },
+                                          "kind": {
+                                            "const": "itemRange",
+                                            "type": "string"
+                                          },
+                                          "startUtf8": {
+                                            "format": "uint",
+                                            "minimum": 0,
+                                            "type": "integer"
+                                          },
+                                          "textSha256": {
+                                            "type": "string"
+                                          },
+                                          "turnId": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "turnId",
+                                          "itemId",
+                                          "startUtf8",
+                                          "endUtf8",
+                                          "textSha256"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "claimedItemId": {
+                                            "type": [
+                                              "string",
+                                              "null"
+                                            ]
+                                          },
+                                          "claimedTurnId": {
+                                            "type": [
+                                              "string",
+                                              "null"
+                                            ]
+                                          },
+                                          "kind": {
+                                            "const": "userQuote",
+                                            "type": "string"
+                                          },
+                                          "text": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "text"
+                                        ],
+                                        "type": "object"
+                                      }
+                                    ]
+                                  },
+                                  "text": {
+                                    "type": "string"
+                                  },
+                                  "verified": {
+                                    "type": "boolean"
+                                  }
+                                },
+                                "required": [
+                                  "selection",
+                                  "text",
+                                  "verified"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
                           "version": {
                             "format": "uint32",
                             "minimum": 0,
@@ -55280,6 +55921,100 @@
                             "logicalBytes"
                           ],
                           "type": "object"
+                        },
+                        "selection": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "selection": {
+                                  "oneOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "endUtf8": {
+                                          "format": "uint",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "itemId": {
+                                          "type": "string"
+                                        },
+                                        "kind": {
+                                          "const": "itemRange",
+                                          "type": "string"
+                                        },
+                                        "startUtf8": {
+                                          "format": "uint",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "textSha256": {
+                                          "type": "string"
+                                        },
+                                        "turnId": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "turnId",
+                                        "itemId",
+                                        "startUtf8",
+                                        "endUtf8",
+                                        "textSha256"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "claimedItemId": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "claimedTurnId": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "kind": {
+                                          "const": "userQuote",
+                                          "type": "string"
+                                        },
+                                        "text": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "text"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ]
+                                },
+                                "text": {
+                                  "type": "string"
+                                },
+                                "verified": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "selection",
+                                "text",
+                                "verified"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "version": {
                           "format": "uint32",
@@ -58807,6 +59542,100 @@
                             "logicalBytes"
                           ],
                           "type": "object"
+                        },
+                        "selection": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "selection": {
+                                  "oneOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "endUtf8": {
+                                          "format": "uint",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "itemId": {
+                                          "type": "string"
+                                        },
+                                        "kind": {
+                                          "const": "itemRange",
+                                          "type": "string"
+                                        },
+                                        "startUtf8": {
+                                          "format": "uint",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "textSha256": {
+                                          "type": "string"
+                                        },
+                                        "turnId": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "turnId",
+                                        "itemId",
+                                        "startUtf8",
+                                        "endUtf8",
+                                        "textSha256"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "claimedItemId": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "claimedTurnId": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "kind": {
+                                          "const": "userQuote",
+                                          "type": "string"
+                                        },
+                                        "text": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "text"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ]
+                                },
+                                "text": {
+                                  "type": "string"
+                                },
+                                "verified": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "selection",
+                                "text",
+                                "verified"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "version": {
                           "format": "uint32",
@@ -62342,6 +63171,100 @@
                             "logicalBytes"
                           ],
                           "type": "object"
+                        },
+                        "selection": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "selection": {
+                                  "oneOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "endUtf8": {
+                                          "format": "uint",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "itemId": {
+                                          "type": "string"
+                                        },
+                                        "kind": {
+                                          "const": "itemRange",
+                                          "type": "string"
+                                        },
+                                        "startUtf8": {
+                                          "format": "uint",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "textSha256": {
+                                          "type": "string"
+                                        },
+                                        "turnId": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "turnId",
+                                        "itemId",
+                                        "startUtf8",
+                                        "endUtf8",
+                                        "textSha256"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "claimedItemId": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "claimedTurnId": {
+                                          "type": [
+                                            "string",
+                                            "null"
+                                          ]
+                                        },
+                                        "kind": {
+                                          "const": "userQuote",
+                                          "type": "string"
+                                        },
+                                        "text": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "text"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ]
+                                },
+                                "text": {
+                                  "type": "string"
+                                },
+                                "verified": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "selection",
+                                "text",
+                                "verified"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "version": {
                           "format": "uint32",
@@ -67181,6 +68104,100 @@
                       "logicalBytes"
                     ],
                     "type": "object"
+                  },
+                  "selection": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "selection": {
+                            "oneOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "endUtf8": {
+                                    "format": "uint",
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "itemId": {
+                                    "type": "string"
+                                  },
+                                  "kind": {
+                                    "const": "itemRange",
+                                    "type": "string"
+                                  },
+                                  "startUtf8": {
+                                    "format": "uint",
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "textSha256": {
+                                    "type": "string"
+                                  },
+                                  "turnId": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "turnId",
+                                  "itemId",
+                                  "startUtf8",
+                                  "endUtf8",
+                                  "textSha256"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "claimedItemId": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "claimedTurnId": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "kind": {
+                                    "const": "userQuote",
+                                    "type": "string"
+                                  },
+                                  "text": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "text"
+                                ],
+                                "type": "object"
+                              }
+                            ]
+                          },
+                          "text": {
+                            "type": "string"
+                          },
+                          "verified": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "selection",
+                          "text",
+                          "verified"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "version": {
                     "format": "uint32",

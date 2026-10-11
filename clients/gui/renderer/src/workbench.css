@@ -1844,6 +1844,9 @@ body { font-family: var(--font-sans); }
 [data-testid="chat-send-button"], button[aria-label="停止"] { border-radius: 50%; }
 .messages-shell { display: flex; flex: 1; min-height: 0; min-width: 0; position: relative; }
 .messages-shell > .messages { min-width: 0; }
+.side-selection-action { position: absolute; z-index: 5; bottom: 16px; left: 50%; transform: translateX(-50%); padding: 8px 12px; border-radius: 9px; background: var(--color-surface); color: var(--color-foreground); border: 1px solid var(--color-border); box-shadow: 0 4px 16px #0002; white-space: nowrap; }
+.side-evidence { max-height: 320px; overflow: auto; }
+.side-evidence pre { overflow-wrap: anywhere; white-space: pre-wrap; }
 .timeline-bottom-button { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); z-index: 3; width: 32px; height: 32px; padding: 0; border-radius: 9999px; background: var(--color-background); color: var(--color-foreground); }
 .turn-navigation { position: absolute; inset-inline-start: 0; top: 50%; transform: translateY(-50%); width: 28px; z-index: 2; max-height: calc(100% - 32px); overflow-y: auto; scrollbar-width: none; opacity: 0; transition: opacity var(--motion-normal) ease; }
 .turn-navigation:hover, .turn-navigation:focus-within { opacity: 1; }

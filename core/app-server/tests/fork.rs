@@ -10,6 +10,93 @@ use tokio_util::sync::CancellationToken;
 type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
 #[tokio::test]
+async fn side_selection_is_exact_and_frozen_after_source_advances() {
+    unsafe { std::env::set_var("AREAL_DEV_CONVERSATION_DERIVATION", "1"); }
+    let dir = tempfile::tempdir().unwrap();
+    let model = Arc::new(TextModel(Mutex::new(Vec::new())));
+    let engine = Engine::open(dir.path(), model.clone(), Limits::default()).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let stop = CancellationToken::new();
+    let server = tokio::spawn(areal_app_server::serve(listener, engine.clone(), stop.clone()));
+    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}")).await.unwrap();
+    call(&mut socket, 1, "initialize", json!({"clientInfo":{"name":"test","version":"1"}})).await;
+    socket.send(Wire::Text(json!({"method":"initialized"}).to_string().into())).await.unwrap();
+    let source = call(&mut socket, 2, "thread/start", json!({"cwd":"/workspace"})).await;
+    let source_id = source["result"]["thread"]["id"].as_str().unwrap();
+    let source_text = format!("重复🙂重复🙂尾{}{}EVIDENCE_TAIL_830", "x".repeat(20_000), "\0".repeat(5_000));
+    call(&mut socket, 3, "turn/start", json!({"threadId":source_id,"input":[{"type":"text","text":source_text}]})).await;
+    completed(&mut socket, source_id).await;
+    let read = call(&mut socket, 4, "thread/read", json!({"threadId":source_id,"includeTurns":true})).await;
+    let turn_id = read["result"]["thread"]["turns"][0]["id"].as_str().unwrap();
+    let item_id = read["result"]["thread"]["turns"][0]["items"][0]["id"].as_str().unwrap();
+    call(&mut socket, 4, "turn/start", json!({"threadId":source_id,"input":[{"type":"text","text":"PREEXISTING_LATER_689"}]})).await;
+    completed(&mut socket, source_id).await;
+    let selection = json!({"kind":"itemRange","turnId":turn_id,"itemId":item_id,
+        "startUtf8":16,"endUtf8":20,"textSha256":"d06f1525f791397809f9bc98682b5c13318eca4c3123433467fd4dffda44fd14"});
+    let base = json!({"sourceThreadId":source_id,"workspaceAccess":"none","anchor":{"kind":"turn","turnId":turn_id,"boundary":"after"},"selection":selection,
+        "input":[{"type":"text","text":"Which occurrence?"}]});
+    for (key, offset) in [("stale-boundary", 17), ("stale-range", 99)] {
+        let mut bad = base.clone(); bad["requestId"] = json!(key); bad["selection"]["startUtf8"] = json!(offset);
+        let rejected = call(&mut socket, 5, "areal/side/start", bad).await;
+        assert_eq!(rejected["error"]["data"]["reason"], "STALE_SELECTION", "{rejected}");
+    }
+    let mut stale_digest = base.clone(); stale_digest["requestId"] = json!("stale-digest");
+    stale_digest["selection"]["textSha256"] = json!("0".repeat(64));
+    let rejected = call(&mut socket, 5, "areal/side/start", stale_digest).await;
+    assert_eq!(rejected["error"]["data"]["reason"], "STALE_SELECTION", "{rejected}");
+    let mut oversized = base.clone(); oversized["requestId"] = json!("oversized-selection");
+    oversized["selection"]["startUtf8"] = json!(23);
+    oversized["selection"]["endUtf8"] = json!(17_023);
+    oversized["selection"]["textSha256"] = json!("841fb2dbdc6be49db3c9df02b4c04bd5a859c6d36acb9b6fca930c28e6e86748");
+    let rejected = call(&mut socket, 5, "areal/side/start", oversized).await;
+    assert_eq!(rejected["error"]["data"]["reason"], "SELECTION_TOO_LARGE", "{rejected}");
+    let mut escaped_quote = base.clone(); escaped_quote["requestId"] = json!("escaped-quote");
+    escaped_quote["selection"] = json!({"kind":"userQuote","text":"\0".repeat(8_000)});
+    let rejected = call(&mut socket, 5, "areal/side/start", escaped_quote).await;
+    assert_eq!(rejected["error"]["data"]["reason"], "SELECTION_TOO_LARGE", "{rejected}");
+    let mut accepted = base; accepted["requestId"] = json!("valid-selection");
+    let side = call(&mut socket, 6, "areal/side/start", accepted).await;
+    assert!(side["result"]["thread"].is_object(), "{side}");
+    assert_eq!(side["result"]["thread"]["conversation"]["origin"]["sourceTurnId"], turn_id);
+    assert_eq!(side["result"]["thread"]["conversation"]["referenceSnapshot"]["turnCount"], 1);
+    let side_id = side["result"]["thread"]["id"].as_str().unwrap();
+    completed(&mut socket, side_id).await;
+    call(&mut socket, 7, "turn/start", json!({"threadId":source_id,"input":[{"type":"text","text":"FUTURE_SENTINEL_4721"}]})).await;
+    completed(&mut socket, source_id).await;
+    call(&mut socket, 8, "turn/start", json!({"threadId":side_id,"input":[{"type":"text","text":"Follow up"}]})).await;
+    completed(&mut socket, side_id).await;
+    let requests = model.0.lock().unwrap();
+    for request in requests.iter().skip(1).filter(|request| request.iter().any(|m| m.role == "system" && m.text_content().contains("independent read-only Side"))) {
+        let all = request.iter().map(|m| m.text_content()).collect::<String>();
+        assert!(!all.contains("PREEXISTING_LATER_689") && !all.contains("FUTURE_SENTINEL_4721"), "{all}");
+        assert!(all.contains("\"startUtf8\":16") && all.contains("\"endUtf8\":20"), "{all}");
+        assert!(serde_json::to_vec(&all).unwrap().len() <= 32 * 1024 && !all.contains("EVIDENCE_TAIL_830"), "Side context was not bounded");
+    }
+    drop(requests);
+    let mut cursor: Option<String> = None;
+    let mut retrieved = String::new();
+    let mut checked_escape_page = false;
+    for _ in 0..32 {
+        let page = call(&mut socket, 9, "areal/side/context/read", json!({"threadId":side_id,"cursor":cursor,"maxBytes":16384})).await;
+        assert!(!page.to_string().contains("PREEXISTING_LATER_689") && !page.to_string().contains("FUTURE_SENTINEL_4721"), "{page}");
+        assert!(serde_json::to_vec(&page["result"]).unwrap().len() <= 16384, "{page}");
+        if !checked_escape_page && page["result"]["evidence"][0]["text"].as_str().unwrap().contains("\\u0000") {
+            let small = call(&mut socket, 9, "areal/side/context/read", json!({"threadId":side_id,"cursor":cursor,"maxBytes":512})).await;
+            assert!(small["result"]["evidence"].is_array(), "{small}");
+            assert!(serde_json::to_vec(&small["result"]).unwrap().len() <= 512, "{small}");
+            checked_escape_page = true;
+        }
+        retrieved.push_str(page["result"]["evidence"][0]["text"].as_str().unwrap());
+        if page["result"]["complete"] == true { break; }
+        cursor = Some(page["result"]["nextCursor"].as_str().unwrap().into());
+    }
+    assert!(checked_escape_page, "escape-heavy evidence was not paged");
+    assert!(retrieved.contains("EVIDENCE_TAIL_830"), "evidence pages lost the tail");
+    socket.close(None).await.unwrap(); stop.cancel(); server.await.unwrap().unwrap(); engine.shutdown().await;
+}
+
+#[tokio::test]
 async fn side_first_question_is_one_durable_read_only_turn() {
     unsafe { std::env::set_var("AREAL_DEV_CONVERSATION_DERIVATION", "1"); }
     let dir = tempfile::tempdir().unwrap();
@@ -103,13 +190,18 @@ async fn side_snapshots_active_source_and_interrupts_independently() {
     let source_turn = call(&mut socket, 3, "turn/start", json!({"threadId":source_id,"input":[{"type":"text","text":"source is still running"}]})).await;
     let source_turn_id = source_turn["result"]["turn"]["id"].as_str().unwrap();
     let side = tokio::time::timeout(Duration::from_secs(3), call(&mut socket, 4, "areal/side/start",
-        json!({"requestId":"active-source","sourceThreadId":source_id,"workspaceAccess":"none","input":[{"type":"text","text":"What is known so far?"}]}))).await.unwrap();
+        json!({"requestId":"active-source","sourceThreadId":source_id,"workspaceAccess":"none",
+            "selection":{"kind":"userQuote","text":"uncommitted stream fragment","claimedTurnId":source_turn_id},
+            "input":[{"type":"text","text":"What is known so far?"}]}))).await.unwrap();
     assert!(side["result"]["thread"].is_object(), "{side}");
     let side_id = side["result"]["thread"]["id"].as_str().unwrap();
+    assert_eq!(side["result"]["thread"]["conversation"]["selection"]["verified"], false);
+    assert_eq!(side["result"]["thread"]["conversation"]["selection"]["text"], "uncommitted stream fragment");
     let side_turn_id = side["result"]["turn"]["id"].as_str().unwrap();
     let evidence = call(&mut socket, 5, "areal/side/context/read", json!({"threadId":side_id})).await;
     assert_eq!(evidence["result"]["evidence"][0]["sourceTurnStatus"], "inProgress");
     assert!(evidence["result"]["evidence"].to_string().contains("source is still running"));
+    assert!(!evidence["result"]["evidence"].to_string().contains("uncommitted stream fragment"));
     let interrupted = call(&mut socket, 6, "turn/interrupt", json!({"threadId":side_id,"turnId":side_turn_id})).await;
     assert!(interrupted["result"].is_object(), "{interrupted}");
     let source_read = call(&mut socket, 7, "thread/read", json!({"threadId":source_id,"includeTurns":true})).await;
