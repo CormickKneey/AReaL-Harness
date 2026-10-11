@@ -27,6 +27,7 @@ await mkdir(userHome);
 execFileSync("git", ["init", "-b", "main"], { cwd: workspace, stdio: "ignore" });
 const fixturePath = join(workspace, "shared.txt");
 await writeFile(fixturePath, "current shared workspace\n");
+await writeFile(join(workspace, "raw-result-evidence.txt"), Array.from({ length: 150 }, (_, row) => `finished raw evidence row ${row}\n`).join(""));
 execFileSync("git", ["add", "."], { cwd: workspace });
 execFileSync("git", ["-c", "user.name=Smoke", "-c", "user.email=smoke@example.invalid", "commit", "-m", "fixture"], { cwd: workspace, stdio: "ignore" });
 const hash = async path => createHash("sha256").update(await readFile(path)).digest("hex");
@@ -39,8 +40,13 @@ const activeQuestion = `SCF_ACTIVE_${randomUUID()}`;
 const unicodeExcerpt = `旁路选区🌊汉字_${randomUUID()}`;
 const sideQuestion = `SCF_SIDE_${randomUUID()}`;
 const sideFollowUp = `SCF_SIDE_FOLLOW_${randomUUID()}`;
+const sideFileQuestion = `SCF_SIDE_FILE_${randomUUID()}`;
 const lateSentinel = `SCF_LATE_${randomUUID()}`;
 const mainDraftSentinel = `SCF_MAIN_DRAFT_${randomUUID()}`;
+const capacitySourceQuestion = `SCF_CAPACITY_SOURCE_${randomUUID()}`;
+const capacitySideQuestion = `SCF_CAPACITY_SIDE_${randomUUID()}`;
+const streamExcerpt = `SCF_STREAM_${randomUUID()}`;
+const heldResponses = new Map();
 const toolStarted = join(workspace, "source-tool-started.txt");
 const toolRelease = join(workspace, "source-tool-release.txt");
 const requests = [];
@@ -51,7 +57,7 @@ const pageErrors = [];
 const electronStderr = [];
 let app, page, server, passed = false, failure;
 let sourceThreadId, targetThreadId, anchorTurnId, projectId, sandbox, sideThreadId, windowBounds, videoPath, restartVideoPath, firstMutations = [];
-let beforeThreadId, activeTurnId;
+let beforeThreadId, activeTurnId, nestedThreadId, rawThreadId, userQuoteSideId;
 
 const sse = answer => [
   { id: "scf-fixture", object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: answer }, finish_reason: null }] },
@@ -67,7 +73,7 @@ async function until(predicate, label) {
   const end = Date.now() + 45000;
   while (Date.now() < end) {
     const snapshot = await state();
-    if (predicate(snapshot)) return snapshot;
+    if (await predicate(snapshot)) return snapshot;
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   throw Error(`Timed out waiting for ${label}`);
@@ -81,14 +87,65 @@ async function untilFile(path, label) {
   throw Error(`Timed out waiting for ${label}`);
 }
 async function shot(name) {
+  if (name === "08b-archived-copyable-preview.png") {
+    const samples = await page.evaluate(async () => {
+      const side = document.querySelector(".side-chat-pane");
+      const panel = side?.closest(".panel-content");
+      const measure = element => element && ({ height: element.clientHeight, scrollHeight: element.scrollHeight,
+        scrollTop: element.scrollTop, top: element.getBoundingClientRect().top, inlineHeight: element.style.height });
+      const rows = [];
+      for (let i = 0; i < 3; i++) {
+        await new Promise(requestAnimationFrame);
+        const bounds = panel?.getBoundingClientRect();
+        rows.push({ panel: measure(panel), messages: measure(side?.querySelector(".messages")),
+          space: measure(side?.querySelector(".message-response-space")),
+          latest: measure(side?.querySelector('[data-latest-turn="true"]')),
+          preview: measure(side?.querySelector('[aria-label="带回预览"]')),
+          center: bounds && document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)?.className });
+      }
+      return rows;
+    });
+    events.push({ sideVisualGeometry: samples });
+    await writeFile(join(scratch, "side-visual-geometry.json"), JSON.stringify(samples, null, 2));
+    assert.ok(Math.abs(samples[2].space.height - samples[0].space.height) <= 1,
+      "Side response spacer must remain stable across animation frames");
+    await page.getByRole("region", { name: "带回预览" }).scrollIntoViewIfNeeded();
+  }
   await page.screenshot({ path: join(scratch, name), scale: "css", animations: "disabled" });
   frames.push(name);
+}
+async function composeText(input, text, label, append = false) {
+  const prefix = append ? await input.evaluate(element => element.isContentEditable ? element.innerText : element.value) : "";
+  if (!append) await input.fill("");
+  await input.focus();
+  if (append) await input.evaluate(element => {
+    const selection = window.getSelection();
+    selection.selectAllChildren(element);
+    selection.collapseToEnd();
+  });
+  const before = requests.length;
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.debugger.attach("1.3"));
+  const command = (method, params) => app.evaluate(async ({ BrowserWindow }, { method, params }) =>
+    BrowserWindow.getAllWindows()[0].webContents.debugger.sendCommand(method, params), { method, params });
+  try {
+    // Chromium 生成真实 composition 事件；候选确认键不应触发提交。
+    await command("Input.imeSetComposition", { text, selectionStart: text.length, selectionEnd: text.length });
+    await input.evaluate(element => element.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Enter", code: "Enter", keyCode: 229, isComposing: true, bubbles: true, cancelable: true,
+    })));
+    assert.equal(requests.length, before, `${label}: candidate Enter must not submit`);
+    await command("Input.insertText", { text });
+    assert.equal(await input.evaluate(element => element.isContentEditable ? element.innerText : element.value), prefix + text);
+    assert.ok(await input.evaluate(element => document.activeElement === element), `${label}: focus stays in editor`);
+  } finally {
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.debugger.detach());
+  }
 }
 async function send(text, threadId) {
   const previousCount = threadId ? (await state()).projects[0]?.state?.threads?.[threadId]?.turns?.length ?? 0 : 0;
   const previousRequests = requests.length;
   await page.getByTestId("chat-input").fill(text);
-  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await page.locator(".composer-dock").getByRole("button", { name: "发送", exact: true }).click();
   await page.waitForFunction(id => {
     const active = document.querySelector('[data-testid="areal-workbench"]')?.dataset.threadId;
     return active && (!id || active === id);
@@ -133,13 +190,13 @@ console.log("GUI evidence:", scratch);
 const env = {
   ...process.env,
   AREAL_GUI: "workbench", AREAL_BACKEND: "areal", AREAL_CORE_BIN: binary,
-  AREAL_DEV_CONVERSATION_DERIVATION: "1",
   AREAL_CORE_HOME: join(scratch, "core"), AREAL_CORE_USER_HOME: userHome,
   AREAL_HARNESS_SERVICE_HOME: serviceRegistry,
   AREAL_GUI_USER_DATA: join(scratch, "electron"),
 };
 delete env.AREAL_CORE_WORKSPACE;
 delete env.AREAL_HARNESS_HOME;
+delete env.AREAL_DEV_CONVERSATION_DERIVATION;
 try {
   server = createServer(async (req, res) => {
     try {
@@ -147,13 +204,34 @@ try {
       for await (const chunk of req) raw += chunk;
       const body = JSON.parse(raw);
       requests.push({ sequence: requests.length + 1, method: req.method, path: req.url, body });
-      const lastUser = body.messages?.findLast(message => message.role === "user");
+      const lastUser = body.messages?.findLast(message => message.role === "user"
+        && !(typeof message.content === "string" && message.content.startsWith("AReaL runtime context (not a user request):")));
       const answer = `FIXTURE_OK_${requests.length}: ${typeof lastUser?.content === "string" ? lastUser.content : "received"}`;
+      if ([capacitySourceQuestion, capacitySideQuestion].includes(lastUser?.content)) {
+        res.writeHead(200, { "Content-Type": "text/event-stream" });
+        if (lastUser.content === capacitySourceQuestion) {
+          res.write(`data: ${JSON.stringify({ id: "scf-held", object: "chat.completion.chunk", choices: [{ index: 0,
+            delta: { content: streamExcerpt }, finish_reason: null }] })}\n\n`);
+        }
+        heldResponses.set(lastUser.content, () => res.end(sse(answer)));
+        return;
+      }
+      if (lastUser?.content === sideFileQuestion && !body.messages.some(message => message.role === "tool")) {
+        res.writeHead(200, { "Content-Type": "text/event-stream" });
+        res.end(toolSse("fs_read", { path: "workspace://repo/shared.txt" }));
+        return;
+      }
       // 来源长工具必须由 Core/Runtime 真正执行，文件标记确认其已启动。
       if (lastUser?.content === activeQuestion && !body.messages.some(message => message.role === "tool")) {
         const command = `printf started > '${toolStarted}'; while [ ! -f '${toolRelease}' ]; do sleep 0.1; done; printf finished`;
         res.writeHead(200, { "Content-Type": "text/event-stream" });
         res.end(toolSse("run_command", { argv: ["/bin/sh", "-c", command], cwd: "workspace://repo", timeoutMs: 120000 }));
+        return;
+      }
+      if (lastUser?.content === activeQuestion && !body.messages.some(message =>
+        message.role === "assistant" && message.tool_calls?.some(call => call.function?.name === "read_file"))) {
+        res.writeHead(200, { "Content-Type": "text/event-stream" });
+        res.end(toolSse("read_file", { path: "workspace://repo/raw-result-evidence.txt", limit: 120 }));
         return;
       }
       if (body.stream === false) {
@@ -171,10 +249,15 @@ try {
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   const endpoint = `http://127.0.0.1:${server.address().port}/v1/chat/completions`;
   const config = join(scratch, "config.toml");
-  await writeFile(config, `schema_version=1\n[model]\nprovider="fixture"\nname="fixture"\n[model.providers.fixture]\nprotocol="chat-completions"\nendpoint=${JSON.stringify(endpoint)}\n`);
+  await writeFile(config, `schema_version=1\n[model]\nprovider="fixture"\nname="fixture"\n[model.providers.fixture]\nprotocol="chat-completions"\nendpoint=${JSON.stringify(endpoint)}\n[limits]\nmodel_concurrency=1\n`);
   env.AREAL_CORE_CONFIG = config;
   const deployment = join(scratch, "desktop.json");
-  await writeFile(deployment, JSON.stringify({ profiles: [{ id: "standard", revision: "v1", displayName: "标准", instructions: "Reply with plain text", allowThreadProcesses: true, approvalTools: [], skills: [] }] }));
+  await writeFile(deployment, JSON.stringify({ profiles: [
+    { id: "standard", revision: "v1", displayName: "标准", instructions: "Reply with plain text", allowThreadProcesses: true, approvalTools: [], skills: [] },
+    { id: "zz-scf-automatic", revision: "v1", displayName: "SCF Automatic", instructions: "", workflow: { id: "scf-flow", revision: "v1" } },
+  ], workflows: [{ id: "scf-flow", revision: "v1", displayName: "SCF Flow", plan: {
+    objective: "must not start", tasks: [{ id: "one", instruction: "must not execute", writes: [] }],
+  } }] }));
   env.AREAL_CORE_DESKTOP_CONFIG = deployment;
   const videoDir = join(scratch, "video");
   await mkdir(videoDir);
@@ -212,13 +295,38 @@ try {
       if (method !== "command") {
         return original.call(this, method, parameters, mutation);
       }
+      // 一次性修改出站参数，拒绝结果仍由真实 Core 产生。
+      const fixture = globalThis.__scfRejectNext;
+      if (fixture === "workflow" && parameters.name === "fork") {
+        parameters = { ...parameters, request: { ...parameters.request, target: { agentProfile: { id: "zz-scf-automatic", revision: "v1" } } } };
+        globalThis.__scfRejectNext = null;
+      } else if (fixture === "selection" && parameters.name === "side" && parameters.request.operation === "start") {
+        parameters = { ...parameters, request: { ...parameters.request, selection: { ...parameters.request.selection, textSha256: "0".repeat(64) } } };
+        globalThis.__scfRejectNext = null;
+      } else if (fixture === "workspace-read" && parameters.name === "side" && parameters.request.operation === "start") {
+        parameters = { ...parameters, request: { ...parameters.request, workspaceAccess: "readOnly" } };
+        globalThis.__scfRejectNext = null;
+      }
       const entry = { command: parameters.name, parameters: parameters.request, accepted: false };
+      if (fixture && !globalThis.__scfRejectNext) entry.fixture = fixture;
       globalThis.__scfMutations.push(entry);
       try {
         const result = await original.call(this, method, parameters, mutation);
         entry.accepted = true;
         entry.requestId = result?.requestId ?? parameters.request?.requestId ?? null;
         entry.resultThreadId = result?.threadId ?? result?.thread?.id ?? null;
+        if (parameters.name === "media" && result?.bytes) {
+          const bytes = Buffer.from(result.bytes, "base64");
+          entry.resultSha256 = process.getBuiltinModule("crypto").createHash("sha256").update(bytes).digest("hex");
+          entry.resultLength = bytes.length;
+        }
+        if (parameters.name === "fork" && globalThis.__scfLoseNextForkResponse) {
+          globalThis.__scfLoseNextForkResponse = false;
+          entry.fixture = "committed GUI response lost";
+          throw Object.assign(new Error("SCF fixture: committed GUI response lost"), {
+            submissionUnknown: true, requestId: entry.requestId,
+          });
+        }
         return result;
       } catch (error) { entry.error = error.message; throw error; }
     };
@@ -237,14 +345,35 @@ try {
   await anchor.getByRole("button", { name: /^轮次操作 / }).click();
   const forkButton = page.getByRole("menuitem", { name: "在此轮之后分支", exact: true });
   await forkButton.click();
-  const forkDialog = page.getByRole("dialog", { name: "创建独立分支", exact: true });
+  let forkDialog = page.getByRole("dialog", { name: "创建独立分支", exact: true });
   await forkDialog.waitFor();
+  const selectedTarget = await forkDialog.getByLabel("分支目标配置").inputValue();
+  await app.evaluate(() => { globalThis.__scfRejectNext = "workflow"; });
+  await forkDialog.getByRole("button", { name: "创建分支", exact: true }).click();
+  await forkDialog.getByRole("alert").filter({ hasText: "PROFILE_NOT_SUPPORTED" }).waitFor();
+  assert.equal(await forkDialog.getByLabel("分支目标配置").inputValue(), selectedTarget);
+  assert.equal(requests.length, beforeCreation.modelRequests);
+  assert.equal(Object.keys((await state()).projects[0].state.threads).length, 1);
+  await shot("01a-fork-config-refusal.png");
+  checks.push("AC15/61: actual Core rejects an outbound automatic Workflow target; Fork dialog preserves chosen config without a target or model request");
   const confirmation = await forkDialog.innerText();
   assert.match(confirmation, /共享当前工作区/);
   assert.match(confirmation, /文件不会回滚/);
   events.push({ confirmation });
   assert.equal(await forkDialog.getByLabel("分支目标配置").inputValue(), "inherit");
+  await app.evaluate(() => { globalThis.__scfLoseNextForkResponse = true; });
   await forkDialog.getByRole("button", { name: "创建分支", exact: true }).click();
+  await forkDialog.getByRole("button", { name: "核对受理结果", exact: true }).waitFor();
+  await forkDialog.getByRole("alert").filter({ hasText: "请先核对原提交" }).waitFor();
+  assert.equal(await forkDialog.getByRole("button", { name: "创建分支", exact: true }).count(), 0);
+  const lostResult = (await app.evaluate(() => globalThis.__scfMutations)).find(entry => entry.fixture === "committed GUI response lost");
+  assert.ok(lostResult?.accepted && lostResult.resultThreadId && lostResult.requestId);
+  assert.equal(requests.length, beforeCreation.modelRequests);
+  assert.equal(Object.keys((await state()).projects[0].state.threads).length, 2);
+  await shot("01b-fork-response-unknown.png");
+  await forkDialog.getByRole("button", { name: "取消", exact: true }).click();
+  await selectConversation(page, lostResult.resultThreadId);
+  checks.push("AC27: discarded GUI response after a real committed Fork shows reconciliation instead of resend; exactly one idle target exists and manual navigation opens it");
   await page.getByRole("region", { name: "继承的对话历史", exact: true }).waitFor();
   targetThreadId = await page.getByTestId("areal-workbench").getAttribute("data-thread-id");
   assert.ok(targetThreadId && targetThreadId !== sourceThreadId);
@@ -280,6 +409,24 @@ try {
   await selectConversation(page, targetThreadId);
 
   checks.push("AC01/02/06: older Turn GUI fork is idle, empty, source-owned, current shared workspace and bounded inherited history");
+  const expandNestedHistory = inherited.getByRole("button", { name: /^展开继承历史/ });
+  if (await expandNestedHistory.count()) await expandNestedHistory.click();
+  const requestsBeforeNested = requests.length;
+  await inherited.getByRole("button", { name: `继承轮次操作 ${anchorTurnId}`, exact: true }).click();
+  await page.getByRole("menuitem", { name: "在此轮之后分支", exact: true }).click();
+  await forkDialog.getByRole("button", { name: "创建分支", exact: true }).click();
+  await page.waitForFunction(id => {
+    const current = document.querySelector('[data-testid="areal-workbench"]')?.dataset.threadId;
+    return current && current !== id;
+  }, targetThreadId);
+  nestedThreadId = await page.getByTestId("areal-workbench").getAttribute("data-thread-id");
+  const nestedFork = (await state()).projects[0].state.threads[nestedThreadId];
+  assert.equal(nestedFork.conversation.origin.sourceThreadId, targetThreadId);
+  assert.equal(nestedFork.conversation.historySeed.turnCount, 1);
+  assert.equal(nestedFork.turns.length, 0);
+  assert.equal(requests.length, requestsBeforeNested);
+  await selectConversation(page, targetThreadId);
+  checks.push("AC09: inherited Turn menu creates one flattened logical prefix and an empty independent Fork without execution");
   await send(forkQuestion, targetThreadId);
   const branchRequest = requests.at(-1)?.body;
   const branchInput = JSON.stringify(branchRequest?.messages ?? []);
@@ -291,7 +438,7 @@ try {
   checks.push("AC06: actual model input excludes the future sentinel; explicit send leaves source Turn IDs and workspace bytes unchanged");
   await selectConversation(page, sourceThreadId);
   await page.getByTestId("chat-input").fill(activeQuestion);
-  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await page.locator(".composer-dock").getByRole("button", { name: "发送", exact: true }).click();
   const running = await until(s => {
     const turn = s.projects[0]?.state?.threads?.[sourceThreadId]?.turns?.at(-1);
     return turn && !sourceTurns.includes(turn.id) && turn.status === "inProgress"
@@ -311,7 +458,7 @@ try {
   assert.equal(running.projects[0].state.threads[sourceThreadId].turns.at(-1).status, "inProgress");
   checks.push("AC30: source run_command entered the real Core/Runtime process and remains held while Side begins");
   await shot("04-source-tool-running.png");
-  // Select a Unicode substring from the persisted first Turn, through the actual message selection UI.
+  // 通过真实消息选区界面选择首个持久轮次中的 Unicode 子串。
   await page.evaluate(({ turnId, excerpt }) => {
     const turn = document.querySelector(`[data-turn-id="${CSS.escape(turnId)}"]`);
     const body = turn?.querySelector("[data-side-item-id] .conversation-markdown");
@@ -328,21 +475,16 @@ try {
     }
     throw Error("Unicode selection was not in one persisted text node");
   }, { turnId: anchorTurnId, excerpt: unicodeExcerpt });
-  await page.getByRole("button", { name: "在旁路中询问所选内容" }).click();
+  const sideTrigger = page.getByRole("button", { name: "在旁路中询问所选内容" });
+  await sideTrigger.focus();
+  await sideTrigger.evaluate(element => { window.__scfSideTrigger = element; });
+  await sideTrigger.press("Enter");
   const sidePane = page.getByRole("region", { name: "旁路讨论" });
   await sidePane.locator("blockquote.notice").filter({ hasText: unicodeExcerpt }).waitFor();
   assert.match(await sidePane.innerText(), /已持久化选区/);
   await sidePane.getByLabel("文件访问范围").selectOption("none");
   assert.equal(await sidePane.getByLabel("文件访问范围").inputValue(), "none");
-  await sidePane.getByRole("textbox", { name: "旁路问题" }).fill(sideQuestion);
-  const composingRequests = requests.length;
-  await sidePane.getByRole("textbox", { name: "旁路问题" }).evaluate(element => {
-    element.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, isComposing: true }));
-  });
-  assert.equal(requests.length, composingRequests, "IME composition Enter must not submit Side");
-  assert.equal(await sidePane.getByRole("textbox", { name: "旁路问题" }).inputValue(), sideQuestion);
-  assert.ok(await sidePane.getByRole("textbox", { name: "旁路问题" }).evaluate(element => document.activeElement === element),
-    "composition must retain focus in Side editor");
+  await composeText(sidePane.getByRole("textbox", { name: "旁路问题" }), sideQuestion, "Side IME");
   const narrowBounds = await app.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.setSize(980, 800); return win.getBounds(); });
   events.push({ narrowBounds });
   assert.equal(narrowBounds.width, 980, "native window should reach its configured minimum width");
@@ -351,18 +493,32 @@ try {
   const narrowSideDraft = await sidePane.getByRole("textbox", { name: "旁路问题" }).inputValue();
   await sidePane.getByRole("button", { name: "返回主会话", exact: true }).click();
   assert.ok(await page.getByTestId("chat-input").isVisible());
+  await page.waitForFunction(() => document.activeElement === (window.__scfSideTrigger?.isConnected
+    ? window.__scfSideTrigger : document.querySelector('[data-testid="chat-input"]')));
   await page.getByRole("button", { name: "展开侧边面板", exact: true }).click();
   assert.equal(await sidePane.getByRole("textbox", { name: "旁路问题" }).inputValue(), narrowSideDraft);
   await page.waitForFunction(() => document.querySelector('[data-workspace-view]')?.dataset.workspaceView === "panel");
 
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 960));
   const sideStartRequests = requests.length;
+  await app.evaluate(() => { globalThis.__scfRejectNext = "selection"; });
+  await sidePane.getByRole("button", { name: "发送", exact: true }).click();
+  await sidePane.getByRole("alert").filter({ hasText: "STALE_SELECTION" }).waitFor();
+  assert.equal(await sidePane.getByRole("textbox", { name: "旁路问题" }).inputValue(), sideQuestion);
+  assert.equal(requests.length, sideStartRequests);
+  assert.ok(!Object.values((await state()).projects[0].state.threads).some(thread => thread.conversation?.kind === "side"));
+  await shot("04a-stale-selection.png");
+  checks.push("AC36/61: actual Core rejects a changed selection digest; Side keeps its question and creates no target or model request");
   await sidePane.getByRole("button", { name: "发送", exact: true }).click();
   const sideStarted = await until(s => Object.values(s.projects[0]?.state?.threads ?? {}).some(t =>
     t.conversation?.kind === "side" && t.conversation.origin?.sourceThreadId === sourceThreadId &&
     t.turns?.at(-1)?.status === "completed"), "Side first answer during source Runtime tool");
   const side = Object.values(sideStarted.projects[0].state.threads).find(t => t.conversation?.kind === "side" && t.conversation.origin?.sourceThreadId === sourceThreadId);
   sideThreadId = side.id;
+  assert.equal(await page.locator(`#areal-sidebar [data-thread-id="${sideThreadId}"]`).count(), 0,
+    "main navigation must exclude Side conversations");
+  assert.ok(await page.locator(`#areal-sidebar [data-thread-id="${targetThreadId}"]`).count(),
+    "main navigation must retain independent Fork conversations");
   assert.equal(side.conversation.policy?.workspaceAccess, "none", "frozen evidence journey uses session-only Side policy");
   assert.equal(side.conversation.selection?.text, unicodeExcerpt);
   assert.equal(side.conversation.selection?.verified, true);
@@ -392,26 +548,28 @@ try {
   assert.equal(await preview.getByRole("textbox", { name: "编辑带回文字" }).inputValue(), `${brought}\n保留的编辑`);
   assert.equal(await page.evaluate(() => Object.entries(localStorage).find(([key]) => key.endsWith(':bring-back'))?.[1]), previewIdentity,
     "switching Side must retain edited text, owner and insertionId");
-
+  const concurrentDraft = `${mainDraftSentinel}\n确认前的并发草稿修改`;
+  await page.getByTestId("chat-input").fill(concurrentDraft);
+  const commandsBeforeInsert = (await app.evaluate(() => globalThis.__scfMutations)).length;
   await preview.getByRole("button", { name: "确认插入主草稿" }).click();
-  await sidePane.getByText(/已插入主会话草稿/).waitFor();
+  await sidePane.getByText("已追加到更新后的主会话草稿；请检查再发送。", { exact: true }).waitFor();
   const mainDraft = await page.evaluate(key => localStorage.getItem(key), `areal-gui:draft:${projectId}:${sourceThreadId}`);
-  assert.ok(mainDraft?.includes(mainDraftSentinel) && mainDraft.includes(brought),
+  assert.ok(mainDraft?.includes(concurrentDraft) && mainDraft.includes(brought),
     "actual main Composer draft must retain its previous text and append the confirmed Side answer");
   assert.equal(requests.length, beforeBring.requests, "bring-back must not send or steer");
-  assert.equal((await app.evaluate(() => globalThis.__scfMutations)).length, beforeBring.commands,
-    "bring-back must not issue any Core command, including queue or steer");
+  const bringCommands = await app.evaluate(() => globalThis.__scfMutations);
+  assert.equal(bringCommands.length, commandsBeforeInsert,
+    "confirming bring-back must not issue any Core command, including queue or steer");
+  assert.ok(bringCommands.slice(beforeBring.commands).every(entry =>
+    entry.command === "side" && entry.parameters.operation === "list"),
+  "switching related discussions may only refresh the read-only list before insertion");
   assert.equal((await state()).projects[0].state.threads[sourceThreadId].turns.length, beforeBring.sourceTurns);
   assert.equal((await state()).projects[0].state.threads[sideThreadId].turns.length, beforeBring.sideTurns);
   assert.equal(await hash(fixturePath), beforeBring.workspaceSha256);
   await shot("06-bring-back-draft.png");
   await page.getByRole("button", { name: "关闭面板", exact: true }).click();
   await page.getByTestId("composer-attachments").getByText("main-attachment.txt").waitFor();
-  const mainImeRequests = requests.length;
-  await page.getByTestId("chat-input").evaluate(element => {
-    element.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, isComposing: true }));
-  });
-  assert.equal(requests.length, mainImeRequests, "IME composition Enter must not send, steer, or queue main draft");
+  await composeText(page.getByTestId("chat-input"), " 输入法确认🌊汉字", "main IME", true);
   assert.ok((await page.getByTestId("chat-input").innerText()).includes(brought));
   assert.equal(JSON.stringify((await state()).projects[0].configurations?.[sourceThreadId] ?? null), mainConfigBefore,
     "main model configuration must survive Side and bring-back");
@@ -419,7 +577,7 @@ try {
   await page.getByRole("button", { name: "展开侧边面板", exact: true }).click();
   await sidePane.getByRole("region", { name: "相关讨论" }).getByRole("button", { name: new RegExp(sideQuestion) }).waitFor();
   assert.equal((await state()).projects[0].state.threads[sideThreadId].id, sideThreadId);
-  checks.push("AC46/47/54: bring-back changed only the main local draft; hiding and reopening preserved the same Side identity");
+  checks.push("AC47/52/53/54/55/74: bring-back appends to the concurrent main draft with its attachment and model; edited preview survives Side switching; Chromium composition Enter submits neither editor; narrow return restores the original trigger or main editor fallback");
   const activeAnchor = page.locator(`[data-turn-id="${activeTurnId}"]`);
   await activeAnchor.getByRole("button", { name: /^轮次操作 / }).click();
   const afterActive = page.getByRole("menuitem", { name: "在此轮之后分支", exact: true });
@@ -445,6 +603,8 @@ try {
   assert.equal(beforeSnapshot.projects[0].state.threads[sourceThreadId].turns.at(-1).status, "inProgress");
   assert.equal(requests.length, requestsBeforeActiveFork);
   const beforeHistory = page.getByRole("region", { name: "继承的对话历史", exact: true });
+  const expandBeforeHistory = beforeHistory.getByRole("button", { name: /^展开继承历史/ });
+  if (await expandBeforeHistory.count()) await expandBeforeHistory.click();
   await beforeHistory.getByText(future, { exact: true }).waitFor();
   assert.equal(await beforeHistory.getByText(activeQuestion, { exact: false }).count(), 0);
   await shot("07-before-active.png");
@@ -454,6 +614,53 @@ try {
   assert.equal(await hash(fixturePath), workspaceBefore);
   checks.push("AC18/19: active Turn after is disabled, before creates an idle exact prefix, and the source completes independently");
   await selectConversation(page, sourceThreadId);
+  const completedTool = (await state()).projects[0].state.threads[sourceThreadId].turns
+    .find(turn => turn.id === activeTurnId).items.find(item => item.type === "dynamicToolCall" && item.execution?.resultSnapshot);
+  assert.match(completedTool.execution?.resultSnapshot?.uri ?? "", /^areal:\/\/blob\//);
+  const requestsBeforeRawFork = requests.length;
+  await activeAnchor.getByRole("button", { name: /^轮次操作 / }).click();
+  await page.getByRole("menuitem", { name: "在此轮之后分支", exact: true }).click();
+  await forkDialog.getByRole("button", { name: "创建分支", exact: true }).click();
+  await page.waitForFunction(id => document.querySelector('[data-testid="areal-workbench"]')?.dataset.threadId !== id, sourceThreadId);
+  rawThreadId = await page.getByTestId("areal-workbench").getAttribute("data-thread-id");
+  const rawHistory = page.getByRole("region", { name: "继承的对话历史", exact: true });
+  await rawHistory.getByRole("button", { name: /^展开继承历史/ }).click();
+  const rawDownload = rawHistory.getByRole("button", { name: "下载附件 原始结果", exact: true });
+  await rawDownload.waitFor();
+  assert.equal(await rawHistory.getByRole("button", { name: /^(批准|拒绝|停止|终止|重试)/ }).count(), 0);
+  const rawRead = (await app.evaluate(() => globalThis.__scfMutations)).find(entry => entry.command === "media"
+    && entry.parameters.threadId === rawThreadId && entry.parameters.uri === completedTool.execution.resultSnapshot.uri && entry.accepted);
+  assert.ok(rawRead?.resultSha256 && rawRead.resultLength > 0);
+  const rawPath = join(scratch, "inherited-raw-result.json");
+  await app.evaluate(({ BrowserWindow }, path) => {
+    globalThis.__scfDownload = null;
+    BrowserWindow.getAllWindows()[0].webContents.session.once("will-download", (_event, item) => {
+      item.setSavePath(path);
+      item.once("done", (_event, state) => { globalThis.__scfDownload = { state, path: item.getSavePath() }; });
+    });
+  }, rawPath);
+  await rawDownload.click();
+  await until(async () => (await app.evaluate(() => globalThis.__scfDownload))?.state === "completed", "native raw-result download");
+  assert.equal(await hash(rawPath), rawRead.resultSha256);
+  assert.ok(Object.keys(JSON.parse(await readFile(rawPath, "utf8"))).length);
+  assert.equal((await state()).projects[0].state.threads[rawThreadId].turns.length, 0);
+  assert.equal(requests.length, requestsBeforeRawFork);
+  await shot("07b-inherited-raw-result.png");
+  checks.push("AC13/16: inherited raw Runtime result is read under the target identity and downloaded byte-for-byte; history has no source controls and the Fork has no local execution");
+  await selectConversation(page, sourceThreadId);
+  const beforeFileRefusal = { requests: requests.length,
+    turns: (await state()).projects[0].state.threads[sourceThreadId].turns.length };
+  await page.getByTestId("chat-input").fill(lateSentinel);
+  await page.locator(".composer-dock").getByRole("button", { name: "发送", exact: true }).click();
+  await page.getByText("model does not support File input", { exact: true }).first().waitFor();
+  assert.equal(requests.length, beforeFileRefusal.requests);
+  assert.equal((await state()).projects[0].state.threads[sourceThreadId].turns.length, beforeFileRefusal.turns);
+  assert.equal(await page.getByTestId("chat-input").innerText(), lateSentinel);
+  assert.ok(!(await sidePane.innerText()).includes("model does not support File input"));
+  await page.getByTestId("composer-attachments").getByText("main-attachment.txt").waitFor();
+  await shot("07a-main-error-isolated.png");
+  await page.getByRole("button", { name: "移除附件 main-attachment.txt", exact: true }).click();
+  checks.push("AC74: real Core modality refusal preserves the main draft and attachment without a Turn/request; Side history and error state remain independent");
   const late = await send(lateSentinel, sourceThreadId);
   assert.ok(late.turnId);
   assert.match(await sidePane.innerText(), /来源已推进/);
@@ -473,19 +680,146 @@ try {
   checks.push("AC39: later source sentinel is excluded from old Side follow-up model request and paged frozen evidence");
   const related = sidePane.getByRole("region", { name: "相关讨论" });
   await related.getByRole("button", { name: "刷新" }).click();
+  await sidePane.getByRole("button", { name: "带回整条回复" }).first().click();
+  await preview.getByRole("status").filter({ hasText: "来源在旁路创建后已推进" }).waitFor();
+  const editedOldReference = `${await preview.getByRole("textbox", { name: "编辑带回文字" }).inputValue()}\n有用的结论仍保留 [旧引用](areal://missing-reference)`;
+  await preview.getByRole("textbox", { name: "编辑带回文字" }).fill(editedOldReference);
+  const draftBeforeArchivedInsert = await page.getByTestId("chat-input").innerText();
   await app.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 1 }); });
   await related.getByRole("button", { name: "归档", exact: true }).click();
   await until(s => s.projects[0]?.state?.threads?.[sideThreadId]?.desktop?.archived === true, "Side archived");
   assert.ok(await sidePane.getByRole("textbox", { name: "旁路问题" }).isDisabled());
+  await preview.getByRole("button", { name: "确认插入主草稿" }).click();
+  await sidePane.getByText("来源或目标已变化，未写入草稿。可复制预览文字。", { exact: true }).waitFor();
+  assert.equal(await page.getByTestId("chat-input").innerText(), draftBeforeArchivedInsert);
+  assert.equal(await preview.getByRole("textbox", { name: "编辑带回文字" }).inputValue(), editedOldReference);
+  const priorClipboard = await app.evaluate(({ clipboard }) => clipboard.readText());
+  await app.evaluate(({ app, BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0];
+    window.show(); app.focus({ steal: true }); window.focus();
+  });
+  await preview.getByRole("button", { name: "复制文字", exact: true }).click();
+  await sidePane.getByText("已复制带回文字。", { exact: true }).waitFor();
+  assert.equal(await app.evaluate(({ clipboard }) => clipboard.readText()), editedOldReference);
+  await app.evaluate(({ clipboard }, value) => clipboard.writeText(value), priorClipboard);
+  await shot("08b-archived-copyable-preview.png");
+  checks.push("AC40/55/56: old snapshot warning survives source progress; archived Side cannot insert, edited useful text and invalid link remain copyable through the real clipboard");
   await related.getByRole("checkbox", { name: "包含已归档" }).check();
   await related.getByRole("button", { name: /已归档/ }).waitFor();
   await related.getByRole("button", { name: "恢复", exact: true }).click();
   await until(s => s.projects[0]?.state?.threads?.[sideThreadId]?.desktop?.archived === false, "Side unarchived");
   assert.equal((await state()).projects[0].state.threads[sideThreadId].turns.length, previousSideTurns + 1);
   checks.push("AC48/51: archived Side is listed under related discussions and explicitly restored without a new Turn");
+  await sidePane.getByRole("button", { name: "新讨论", exact: true }).click();
+  if (env.AREAL_CORE_SANDBOX_PROFILE === "native") {
+    assert.equal((await state()).projects[0].core?.features?.sideWorkspaceRead, true,
+      "explicit native deployment must expose verified Side workspace read");
+  }
+  if ((await state()).projects[0].core?.features?.sideWorkspaceRead === true) {
+  await sidePane.getByLabel("文件访问范围").selectOption("readOnly");
+  await sidePane.getByRole("textbox", { name: "旁路问题" }).fill(sideFileQuestion);
+  await sidePane.getByRole("button", { name: "发送", exact: true }).click();
+  const fileSideState = await until(s => Object.values(s.projects[0].state.threads).some(thread =>
+    thread.conversation?.kind === "side" && thread.conversation.policy?.workspaceAccess === "readOnly"
+    && thread.turns?.at(-1)?.status === "completed"), "native read-only Side completion");
+  const fileSide = Object.values(fileSideState.projects[0].state.threads).find(thread => thread.conversation?.kind === "side"
+    && thread.conversation.policy?.workspaceAccess === "readOnly");
+  const fileResult = fileSide.turns.at(-1).items.find(item => item.type === "dynamicToolCall" && item.tool === "fs_read");
+  assert.equal(JSON.parse(fileResult.contentItems.find(item => item.type === "inputText").text).source, "currentWorkspace");
+  await sidePane.getByText(/可只读查询当前工作区；文件内容可能与历史锚点不同/).waitFor();
+  assert.equal(await hash(fixturePath), workspaceBefore);
+  await shot("08c-side-current-workspace.png");
+  checks.push("AC41/46: explicit readOnly Side performs real native fs_read with currentWorkspace provenance and current-file UI notice; explicit none journey remains separate and file bytes are unchanged");
+  } else {
+    const question = "工作区只读不可用时，只讨论冻结会话证据";
+    const before = { count: Object.keys((await state()).projects[0].state.threads).length, requests: requests.length };
+    await sidePane.getByText(/当前 Core 未提供经过验证的工作区只读能力/).waitFor();
+    await sidePane.getByRole("textbox", { name: "旁路问题" }).fill(question);
+    await app.evaluate(() => { globalThis.__scfRejectNext = "workspace-read"; });
+    await sidePane.getByRole("button", { name: "发送", exact: true }).click();
+    await sidePane.getByRole("alert").filter({ hasText: "WORKSPACE_READ_UNAVAILABLE" }).waitFor();
+    assert.equal(await sidePane.getByRole("textbox", { name: "旁路问题" }).inputValue(), question);
+    assert.equal(Object.keys((await state()).projects[0].state.threads).length, before.count);
+    assert.equal(requests.length, before.requests);
+    await sidePane.getByLabel("文件访问范围").selectOption("none");
+    await sidePane.getByRole("button", { name: "发送", exact: true }).click();
+    await until(s => Object.values(s.projects[0].state.threads).some(thread => thread.conversation?.kind === "side"
+      && thread.preview === question && thread.turns?.at(-1)?.status === "completed"), "explicit evidence-only Side after read-only refusal");
+    await shot("08d-side-workspace-unavailable.png");
+    checks.push("AC46: unavailable native workspace read is explicitly refused by Core, GUI retains question, explicit none creates an evidence-only Side with no silent fallback");
+  }
+  await related.getByRole("button", { name: new RegExp(sideQuestion) }).click();
+  // 单模型名额由真实 HTTP 流占用；验证两边的停止都不取消另一会话。
+  await page.getByTestId("chat-input").fill(capacitySourceQuestion);
+  await page.locator(".composer-dock").getByRole("button", { name: "发送", exact: true }).click();
+  await until(s => heldResponses.has(capacitySourceQuestion)
+    && s.projects[0]?.state?.threads?.[sourceThreadId]?.turns?.at(-1)?.status === "inProgress", "source owns the single model slot");
+  const streamingTurnId = (await state()).projects[0].state.threads[sourceThreadId].turns.at(-1).id;
+  await page.locator(`[data-turn-id="${streamingTurnId}"] .assistant-message .conversation-markdown`).getByText(streamExcerpt, { exact: true }).waitFor();
+  await page.evaluate(({ turnId, excerpt }) => {
+    const body = document.querySelector(`[data-turn-id="${CSS.escape(turnId)}"] .assistant-message .conversation-markdown`);
+    const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      const start = node.textContent.indexOf(excerpt);
+      if (start < 0) continue;
+      const range = document.createRange(); range.setStart(node, start); range.setEnd(node, start + excerpt.length);
+      const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+      body.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      return;
+    }
+    throw Error("streamed source text missing");
+  }, { turnId: streamingTurnId, excerpt: streamExcerpt });
+  await page.getByRole("button", { name: "在旁路中询问所选内容" }).click();
+  await sidePane.locator("blockquote.notice").filter({ hasText: "用户引文，来源未确认" }).waitFor();
+  await sidePane.getByLabel("文件访问范围").selectOption("none");
+  await sidePane.getByRole("textbox", { name: "旁路问题" }).fill("等待模型名额的旁路问题");
+  await sidePane.getByRole("button", { name: "发送", exact: true }).click();
+  const quoteState = await until(s => Object.values(s.projects[0].state.threads).some(thread =>
+    thread.conversation?.selection?.text === streamExcerpt && thread.desktop?.sideCapacityStatus === "waiting"), "Side waits for model capacity");
+  const quotedSide = Object.values(quoteState.projects[0].state.threads).find(thread => thread.conversation?.selection?.text === streamExcerpt);
+  userQuoteSideId = quotedSide.id;
+  assert.equal(quotedSide.conversation.selection.verified, false);
+  assert.equal(quotedSide.conversation.selection.selection.kind, "userQuote");
+  const persistedQuote = JSON.parse(await readFile(join(scratch, "core", projectId, "state", `${userQuoteSideId}.json`), "utf8"));
+  assert.deepEqual(persistedQuote.thread.conversation.selection, quotedSide.conversation.selection);
+  await sidePane.getByRole("button", { name: "查看冻结证据", exact: true }).click();
+  const quoteEvidence = sidePane.getByRole("region", { name: "冻结证据", exact: true });
+  await quoteEvidence.waitFor();
+  while (await quoteEvidence.getByRole("button", { name: "继续加载证据", exact: true }).count()) {
+    await quoteEvidence.getByRole("button", { name: "继续加载证据", exact: true }).click();
+    await until(async () => !await quoteEvidence.getByRole("button", { name: "继续加载证据", exact: true }).isDisabled().catch(() => false), "frozen evidence page");
+  }
+  const quotedEvidenceText = await quoteEvidence.innerText();
+  assert.ok(quotedEvidenceText.includes(capacitySourceQuestion) && quotedEvidenceText.includes("inProgress"));
+  assert.ok(!quotedEvidenceText.includes(streamExcerpt), "unpersisted streamed text is only a user quote, not frozen source evidence");
+  await shot("08e-streaming-user-quote.png");
+  checks.push("AC37: actual streamed plain text is an unverified userQuote; durable Side selection preserves the text while frozen inProgress evidence excludes the unpersisted delta");
+  await sidePane.getByRole("status").filter({ hasText: "等待模型容量" }).waitFor();
+  await shot("08a-side-waiting-capacity.png");
+  await sidePane.getByRole("button", { name: "停止旁路", exact: true }).click();
+  await until(s => s.projects[0]?.state?.threads?.[userQuoteSideId]?.turns?.at(-1)?.status === "interrupted", "waiting Side stops independently");
+  assert.equal((await state()).projects[0].state.threads[sourceThreadId].turns.at(-1).status, "inProgress");
+  heldResponses.get(capacitySourceQuestion)(); heldResponses.delete(capacitySourceQuestion);
+  await until(s => s.projects[0]?.state?.threads?.[sourceThreadId]?.turns?.at(-1)?.status === "completed", "source retains and releases its model slot");
+  await related.getByRole("button", { name: new RegExp(sideQuestion) }).click();
+  await sidePane.getByRole("textbox", { name: "旁路问题" }).fill(capacitySideQuestion);
+  await sidePane.getByRole("button", { name: "发送", exact: true }).click();
+  await until(s => heldResponses.has(capacitySideQuestion)
+    && s.projects[0]?.state?.threads?.[sideThreadId]?.desktop?.sideCapacityStatus === "available", "Side owns the single model slot");
+  await page.getByTestId("chat-input").fill("等待模型名额的来源问题");
+  await page.locator(".composer-dock").getByRole("button", { name: "发送", exact: true }).click();
+  await until(s => s.projects[0]?.state?.threads?.[sourceThreadId]?.turns?.at(-1)?.status === "inProgress", "source waits while Side runs");
+  await page.getByRole("button", { name: "停止", exact: true }).click();
+  await until(s => s.projects[0]?.state?.threads?.[sourceThreadId]?.turns?.at(-1)?.status === "interrupted", "source stops independently");
+  assert.equal((await state()).projects[0].state.threads[sideThreadId].turns.at(-1).status, "inProgress");
+  heldResponses.get(capacitySideQuestion)(); heldResponses.delete(capacitySideQuestion);
+  await until(s => s.projects[0]?.state?.threads?.[sideThreadId]?.turns?.at(-1)?.status === "completed", "Side completes after source Stop");
+  checks.push("AC34/50/72: visible single-slot waiting, independent Side Stop and source Stop, no deadlock or cancellation cascade");
   const beforeDisconnect = (await state()).projects[0];
   await app.evaluate(() => globalThis.__scfConnection.socket.terminate());
   await until(s => s.connection?.state === "unavailable", "GUI-to-Core transport disconnect");
+  await sidePane.getByText(/^来源：.*来源当前状态未知/).waitFor();
   await page.getByRole("button", { name: "重新连接后台" }).click();
   const reconnected = await until(s => s.connection?.state === "ready" && s.projects[0]?.state?.connected &&
     s.projects[0]?.state?.threads?.[sourceThreadId]?.turns?.length === beforeDisconnect.state.threads[sourceThreadId].turns.length &&
@@ -494,33 +828,82 @@ try {
   assert.equal(reconnected.projects[0].state.threads[sideThreadId].conversation.origin.sourceThreadId, sourceThreadId);
   assert.equal(reconnected.projects[0].state.threads[sourceThreadId].conversation?.kind ?? "main", "main");
   checks.push("AC49: real GUI transport disconnect/reconnect restored distinct source and Side identities without duplicate Turns");
-  // Restart is a second, explicitly identified video segment using the same isolated state roots.
+  // 重启使用同一隔离状态目录，并另行标记第二段连续录屏。
   const preRestart = { sourceTurns: (await state()).projects[0].state.threads[sourceThreadId].turns.length,
     sideTurns: (await state()).projects[0].state.threads[sideThreadId].turns.length, requests: requests.length };
   firstMutations = await app.evaluate(() => globalThis.__scfMutations);
   const forkResults = firstMutations.filter(entry => entry.command === "fork" && entry.accepted);
-  assert.deepEqual(forkResults.map(entry => entry.resultThreadId), [targetThreadId, beforeThreadId]);
+  assert.deepEqual(forkResults.map(entry => entry.resultThreadId), [targetThreadId, nestedThreadId, beforeThreadId, rawThreadId]);
   assert.ok(forkResults.every(entry => typeof entry.requestId === "string" && entry.requestId.length > 0));
-  assert.equal(new Set(forkResults.map(entry => entry.requestId)).size, 2);
+  assert.equal(new Set(forkResults.map(entry => entry.requestId)).size, 4);
   videoPath = await page.video()?.path();
   await app.close();
+  await stopService(env);
+  // 复用持久状态故障接缝：只在隔离 Core 安全停止后标记既有来源工具为 UNKNOWN。
+  const sourceRecordPath = join(scratch, "core", projectId, "state", `${sourceThreadId}.json`);
+  const sourceRecord = JSON.parse(await readFile(sourceRecordPath, "utf8"));
+  const unknownItem = sourceRecord.thread.turns.find(turn => turn.id === activeTurnId).items
+    .find(item => item.type === "dynamicToolCall" && item.tool === "run_command");
+  assert.equal(unknownItem.execution.outcome, "succeeded");
+  unknownItem.execution.outcome = "unknown";
+  delete unknownItem.execution.inspection;
+  await writeFile(sourceRecordPath, JSON.stringify(sourceRecord));
+  events.push({ persistedUnknownFixture: { sourceThreadId, turnId: activeTurnId, itemId: unknownItem.id,
+    seam: "existing completed tool record altered only after safe Core stop; no real crash claim" } });
   app = await electron.launch(launchOptions);
   page = await app.firstWindow();
   page.setDefaultTimeout(15000);
   page.on("pageerror", error => pageErrors.push(error.message));
+  forkDialog = page.getByRole("dialog", { name: "创建独立分支", exact: true });
   await page.getByTestId("areal-workbench").waitFor({ timeout: 120000 });
   await until(s => s.projects.some(project => project.id === projectId && project.state?.connected), "restarted Core connection");
   await selectConversation(page, sourceThreadId);
+  await page.getByRole("button", { name: "任务操作", exact: true }).click();
+  await page.getByRole("menuitem", { name: "旁路讨论", exact: true }).click();
+  await page.getByRole("region", { name: "旁路讨论" }).getByRole("region", { name: "相关讨论" })
+    .getByRole("button", { name: new RegExp(sideQuestion) }).click();
   const restored = await until(s => s.projects[0]?.state?.threads?.[sourceThreadId]?.turns?.length === preRestart.sourceTurns &&
     s.projects[0]?.state?.threads?.[sideThreadId]?.turns?.length === preRestart.sideTurns, "restarted source and Side identity");
-  await page.getByRole("tab", { name: "旁路讨论" }).click();
-  await page.getByRole("region", { name: "旁路讨论" }).getByRole("region", { name: "相关讨论" })
-    .getByRole("button", { name: new RegExp(sideQuestion) }).waitFor();
   assert.equal(restored.projects[0].state.threads[sideThreadId].conversation.origin.sourceThreadId, sourceThreadId);
   assert.equal(requests.length, preRestart.requests, "restart must not repeat unknown Side submission");
   restartVideoPath = await page.video()?.path();
   await shot("09-restarted-identities.png");
   checks.push("AC47: Electron restart restored the same sent Side and source Turn IDs without another model request");
+  const unknownDraft = "保持草稿，先检查来源未知结果";
+  await page.getByTestId("chat-input").fill(unknownDraft);
+  await page.locator(`[data-turn-id="${activeTurnId}"]`).getByRole("button", { name: /^轮次操作 / }).click();
+  assert.ok(await page.getByRole("menuitem", { name: "在此轮之后分支", exact: true }).isDisabled());
+  await page.getByText("历史包含未结算或未核查的操作；请在来源核查或选择更早边界", { exact: true }).waitFor();
+  await page.getByRole("menuitem", { name: "查看来源轮次的核查入口", exact: true }).waitFor();
+  assert.equal(await page.getByTestId("chat-input").innerText(), unknownDraft);
+  await shot("10-unknown-source-refusal.png");
+  await page.getByRole("menuitem", { name: "在此轮之前分支", exact: true }).click();
+  await forkDialog.getByText(/此轮之前冻结历史/).waitFor();
+  await forkDialog.getByRole("button", { name: "取消", exact: true }).click();
+  assert.equal(requests.length, preRestart.requests);
+  checks.push("AC21: real restarted Core restores persisted UNKNOWN; GUI disables the unsafe boundary, offers source inspection, retains the draft and leaves the earlier boundary available without execution");
+  await selectConversation(page, rawThreadId);
+  await page.getByTestId("chat-input").fill("冷历史损坏时保留这份草稿");
+  const corruptHistory = page.getByRole("region", { name: "继承的对话历史", exact: true });
+  await corruptHistory.getByRole("button", { name: /^展开继承历史/ }).click();
+  await corruptHistory.getByRole("button", { name: `继承轮次操作 ${activeTurnId}`, exact: true }).click();
+  await page.getByRole("menuitem", { name: "在此轮之后分支", exact: true }).click();
+  const rawSnapshot = (await state()).projects[0].state.threads[rawThreadId].conversation.historySeed.snapshotId;
+  const snapshotPath = join(scratch, "core", projectId, "state", "history", rawSnapshot);
+  const validSnapshotBytes = await readFile(snapshotPath);
+  const countBeforeCorruptFork = Object.keys((await state()).projects[0].state.threads).length;
+  try {
+    await writeFile(snapshotPath, "SCF isolated corrupt snapshot fixture\n");
+    await forkDialog.getByRole("button", { name: "创建分支", exact: true }).click();
+    await forkDialog.getByRole("alert").waitFor();
+    assert.equal(await page.getByTestId("chat-input").innerText(), "冷历史损坏时保留这份草稿");
+    assert.equal(Object.keys((await state()).projects[0].state.threads).length, countBeforeCorruptFork);
+    assert.equal(requests.length, preRestart.requests);
+    await shot("11-corrupt-history-refusal.png");
+    events.push({ corruptSnapshotFixture: { path: snapshotPath, error: await forkDialog.getByRole("alert").innerText(), restored: true } });
+  } finally { await writeFile(snapshotPath, validSnapshotBytes); }
+  await forkDialog.getByRole("button", { name: "取消", exact: true }).click();
+  checks.push("AC11: actual frozen-history corruption is refused in the Fork dialog without a target or execution; source draft survives and original snapshot bytes are restored");
   assert.deepEqual(pageErrors, []);
   passed = true;
 } catch (error) {
@@ -531,6 +914,8 @@ try {
   process.exitCode = 1;
 } finally {
   await writeFile(toolRelease, "cleanup\n");
+  for (const release of heldResponses.values()) release();
+  heldResponses.clear();
   if (app) {
     if (!firstMutations.length) try { firstMutations = await app.evaluate(() => globalThis.__scfMutations ?? []); } catch (error) { events.push({ requestCaptureError: error.message }); }
     try {
@@ -558,25 +943,39 @@ try {
     passed, failure, checks, events, pageErrors, electronStderr, frames, sourceCommit,
     command: "pnpm --dir clients/gui run test:conversation-derivation",
     runtime: "source Electron renderer + Rust Core + actual Runtime run_command + deterministic local HTTP/SSE model",
-    limitations: ["local fixture model, not a real provider", "source build, not a copied installed package", "native project chooser and archive confirmation are fixtures and have no native-dialog acceptance claim", "Browser preview is outside this journey", "IME is a synthetic composition key event, not a physical input method"],
+    limitations: ["local fixture model, not a real provider", "source build, not a copied installed package", "native project chooser, archive confirmation and download save location are fixtures and have no native-dialog acceptance claim", "Browser preview is outside this journey", "IME uses Chromium CDP composition and a candidate Enter event, not a physical input method", "UNKNOWN uses a persisted test record after safe Core stop, not an induced process crash"],
     operatingSystem: { platform: process.platform, release: (await import("node:os")).release(), architecture: process.arch },
     windowBounds, videoPath, videoSegments: [{ path: videoPath, process: "initial Electron run", continuous: true },
       { path: restartVideoPath, process: "restarted Electron run", continuous: true }],
     framePredicates: {
       "01-source.png": "two completed source Turns with persisted head and future",
+      "01a-fork-config-refusal.png": "real Core Workflow rejection stays in the Fork dialog without a target or model request",
+      "01b-fork-response-unknown.png": "one real committed Fork survives lost GUI response; dialog offers receipt reconciliation and no resend",
       "02-fork-empty.png": "idle Fork with inherited prefix and no future Turn",
       "03-fork-sent.png": "Fork explicit answer; model input excludes future",
       "04-source-tool-running.png": "Core/Runtime command marker exists and source Turn remains inProgress",
+      "04a-stale-selection.png": "real Core stale-selection rejection retains the Side question without creating a Side",
       "05-side-answered-frozen.png": "Side first answer completed while source tool remains active; Unicode selection verified",
       "06-bring-back-draft.png": "preview confirmed; local main draft includes Side text and no Core command was issued",
       "07-before-active.png": "before-active Fork has idle bounded inherited history",
+      "07a-main-error-isolated.png": "Core refuses unsupported main attachment without sending or losing its draft; Side has no main Composer error",
+      "07b-inherited-raw-result.png": "target-owned inherited raw result is displayed and downloaded with no source controls or local execution",
       "08-side-after-source-progress.png": "old Side model request and frozen evidence exclude later source sentinel",
+      "08a-side-waiting-capacity.png": "Side visibly waits behind the source's single model slot and its Stop remains available",
+      "08b-archived-copyable-preview.png": "archived Side refuses insertion while preserving edited old-snapshot text and a copy action",
+      "08c-side-current-workspace.png": "a distinct readOnly Side reads current workspace bytes through native Runtime with explicit provenance",
+      "08d-side-workspace-unavailable.png": "Core read-only refusal preserves the question before an explicit evidence-only Side succeeds",
+      "08e-streaming-user-quote.png": "a real streamed plain-text selection remains an unverified user quote outside the frozen inProgress evidence",
       "09-restarted-identities.png": "second Electron process restored source and Side identities without a new model request",
+      "10-unknown-source-refusal.png": "persisted UNKNOWN restores from real Core; GUI blocks its boundary and offers source inspection without losing the main draft",
+      "11-corrupt-history-refusal.png": "real Core rejects corrupt frozen history with no new target, no model request and intact main draft",
     },
     sourceDirtyStatus: sourceStatus, sourceDiffSha256: createHash("sha256").update(sourceDiff).digest("hex"),
-    sandbox, binary, binarySha256: await hash(binary).catch(() => null),
+    sandbox, requestedRuntimeSandboxProfile: env.AREAL_CORE_SANDBOX_PROFILE || "full-access",
+    developmentCapabilityFlag: env.AREAL_DEV_CONVERSATION_DERIVATION ?? null,
+    binary, binarySha256: await hash(binary).catch(() => null),
     smokeScriptSha256: await hash(fileURLToPath(import.meta.url)),
-    sourceThreadId, targetThreadId, beforeThreadId, sideThreadId, anchorTurnId, activeTurnId, projectId, serviceRegistry,
+    sourceThreadId, targetThreadId, nestedThreadId, beforeThreadId, rawThreadId, sideThreadId, userQuoteSideId, anchorTurnId, activeTurnId, projectId, serviceRegistry,
     fixture: { head, future, forkQuestion, activeQuestion, unicodeExcerpt, sideQuestion, sideFollowUp, lateSentinel, mainDraftSentinel,
       workspace, workspaceSha256Before: workspaceBefore, workspaceSha256After: await hash(fixturePath), toolStarted, toolRelease },
     requests, mutations: firstMutations,
