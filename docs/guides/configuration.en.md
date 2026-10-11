@@ -49,6 +49,12 @@ Memory binds the tool, normalized arguments, Host generation, workspace and perm
 
 The launcher creates `scratch/` beside dataDir and sets an individual Thread `TMPDIR`; `--scratch` can select an existing directory. It must not overlap workspace/dataDir and remains until deployment data is manually cleaned. Read-only/research tasks may still write their own scratch. Direct Core embedding and standalone Runtime daemon defaults remain restricted. An explicit launcher `--sandbox-profile native` retains the previous write/network switches; see [Runtime deployment](runtime.en.md).
 
+## Automatic collaboration and compatibility verification policy
+
+Ordinary Agent collaboration needs no additional feature switch or shared/isolated mode selection. Core chooses shared read-only execution, a shared exclusive writer, or an isolated candidate from task requirements and effective permissions. Automatic isolation also requires independent Runtime/file helpers and a snapshot-compatible workspace. Ordinary modification may select a shared exclusive writer before starting if isolation is unavailable; candidate-only patches or explicitly required trusted verification cannot silently lose those guarantees.
+
+The host constructs internal execution boundaries from existing write authorization and parent restrictions. YOLO cannot override read-only Profiles, denied tools, or Runtime limits, and project instructions or model plans cannot create grants. Without trusted checks, automatic isolation does not claim verification passed. Existing `--workgroup-policy` continues to provide deployment-controlled strict write paths and final checks for legacy Workflows, explicit groups, and delegations requiring trusted verification. Ordinary usage needs no second policy JSON. See [execution selection](../design/multi-agent.en.md) and [legacy Workgroup configuration](workgroups.en.md).
+
 ## Models and limits
 
 Ordinary Turns have no aggregate wall-clock timeout. Model request/stream idle, tool execution and cleanup timeouts still apply, as do explicit Goal, research-worker and Workgroup budgets. Remove `limits.turn_timeout_seconds` (old TOML fields are rejected) and `AREAL_HARNESS_TURN_TIMEOUT_SECONDS` (old environment variables are also rejected) when migrating. The `limits` object in `thread/configuration/read` no longer includes `turnTimeoutMs`. Manual context compaction also relies on model timeouts and shutdown cancellation.
@@ -197,7 +203,7 @@ In `deployment.json`, bind tools and a Workflow to a Profile. The same file can 
 }
 ```
 
-`tool-agent@v1` can use its permitted tools without a Workgroup. `code-agent@v2` needs a trusted `--workgroup-policy` and `--allow-write`; the policy must authorize `src/main.rs` and provide final checks (see the [Workgroup guide](workgroups.en.md)). The bound Profile starts the Workflow plan automatically. A regular Turn from `--prompt` or `exec` is a separate user interaction.
+This example is an explicit legacy Workflow deployment: `tool-agent@v1` can use its permitted tools, while `code-agent@v2` needs a trusted `--workgroup-policy` and `--allow-write`; the policy must authorize `src/main.rs` and provide final checks (see the [Workgroup guide](workgroups.en.md)). The bound Profile starts the Workflow plan automatically. A regular Turn from `--prompt` or `exec` is a separate user interaction.
 
 ### Shared GUI and CLI model catalog
 

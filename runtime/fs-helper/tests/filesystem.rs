@@ -354,3 +354,149 @@ fn long_escaped_directory_names_preserve_bounded_pages_and_lossless_cursors() {
     }
     assert_eq!(actual, expected);
 }
+
+#[test]
+fn staged_delivery_supports_large_binary_creation_modes_and_conditional_delete() {
+    let f = Fixture::new();
+    let upload_id = uuid::Uuid::new_v4().to_string();
+    let bytes = vec![0xff; 150_000];
+    for (i, chunk) in bytes.chunks(MAX_FILE_CHUNK).enumerate() {
+        f.run(FileCommand::StageFileChunk {
+            path: "new/bin/data".into(),
+            upload_id: upload_id.clone(),
+            offset: (i * MAX_FILE_CHUNK) as u64,
+            data_base64: STANDARD.encode(chunk),
+        })
+        .unwrap();
+    }
+    assert!(!f.0.path().join("new/bin/data").exists());
+    use sha2::{Digest, Sha256};
+    let digest = format!("{:x}", Sha256::digest(&bytes));
+    f.run(FileCommand::CommitFile {
+        path: "new/bin/data".into(),
+        upload_id,
+        expected: ExpectedFile::Absent,
+        expected_executable: None,
+        sha256: digest.clone(),
+        executable: true,
+    })
+    .unwrap();
+    assert_eq!(fs::read(f.0.path().join("new/bin/data")).unwrap(), bytes);
+    assert_eq!(f.read("new/bin/data").unwrap()["executable"], true);
+    assert_eq!(
+        f.run(FileCommand::RemoveFile {
+            path: "new/bin/data".into(),
+            expected_sha256: digest.clone(),
+            expected_executable: false,
+        })
+        .unwrap_err()
+        .code,
+        ErrorCode::Conflict
+    );
+    f.run(FileCommand::RemoveFile {
+        path: "new/bin/data".into(),
+        expected_sha256: digest,
+        expected_executable: true,
+    })
+    .unwrap();
+    assert!(!f.0.path().join("new/bin/data").exists());
+    assert_eq!(fs::read_dir(f.0.path().join("new/bin")).unwrap().count(), 0);
+}
+
+#[test]
+fn staged_delivery_rejects_stale_baseline_tampered_upload_and_symlink_parent() {
+    let f = Fixture::new();
+    let old = f.write("file", b"old", ExpectedFile::Absent).unwrap();
+    let upload_id = uuid::Uuid::new_v4().to_string();
+    f.run(FileCommand::StageFileChunk {
+        path: "file".into(),
+        upload_id: upload_id.clone(),
+        offset: 0,
+        data_base64: STANDARD.encode(b"new"),
+    })
+    .unwrap();
+    let command = |sha256: String| FileCommand::CommitFile {
+        path: "file".into(),
+        upload_id: upload_id.clone(),
+        expected: ExpectedFile::Sha256 {
+            value: old["sha256"].as_str().unwrap().into(),
+        },
+        expected_executable: Some(false),
+        sha256,
+        executable: false,
+    };
+    assert_eq!(
+        f.run(command("0".repeat(64))).unwrap_err().code,
+        ErrorCode::Conflict
+    );
+    fs::write(f.0.path().join("file"), b"external").unwrap();
+    use sha2::{Digest, Sha256};
+    assert_eq!(
+        f.run(command(format!("{:x}", Sha256::digest(b"new"))))
+            .unwrap_err()
+            .code,
+        ErrorCode::Conflict
+    );
+    assert_eq!(fs::read(f.0.path().join("file")).unwrap(), b"external");
+    symlink(f.0.path(), f.0.path().join("redirect")).unwrap();
+    assert!(
+        f.run(FileCommand::StageFileChunk {
+            path: "redirect/file".into(),
+            upload_id,
+            offset: 0,
+            data_base64: STANDARD.encode(b"bad")
+        })
+        .is_err()
+    );
+}
+
+#[test]
+fn staged_content_delivery_never_broadens_existing_read_write_permissions() {
+    use sha2::{Digest, Sha256};
+    for (before, executable, after) in [
+        (0o600, false, 0o600),
+        (0o600, true, 0o700),
+        (0o640, true, 0o750),
+        (0o751, true, 0o751),
+        (0o750, false, 0o640),
+    ] {
+        let f = Fixture::new();
+        let original = f.write("private", b"old", ExpectedFile::Absent).unwrap();
+        fs::set_permissions(
+            f.0.path().join("private"),
+            fs::Permissions::from_mode(before),
+        )
+        .unwrap();
+        let upload_id = uuid::Uuid::new_v4().to_string();
+        f.run(FileCommand::StageFileChunk {
+            path: "private".into(),
+            upload_id: upload_id.clone(),
+            offset: 0,
+            data_base64: STANDARD.encode(b"new content"),
+        })
+        .unwrap();
+        f.run(FileCommand::CommitFile {
+            path: "private".into(),
+            upload_id,
+            expected: ExpectedFile::Sha256 {
+                value: original["sha256"].as_str().unwrap().into(),
+            },
+            expected_executable: Some(before & 0o111 != 0),
+            sha256: format!("{:x}", Sha256::digest(b"new content")),
+            executable,
+        })
+        .unwrap();
+        assert_eq!(
+            fs::read(f.0.path().join("private")).unwrap(),
+            b"new content"
+        );
+        assert_eq!(
+            fs::metadata(f.0.path().join("private"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            after
+        );
+    }
+}

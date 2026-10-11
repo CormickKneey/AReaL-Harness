@@ -14,9 +14,13 @@ UTF-8 JSONL 请求 `{id,method,params}`，响应回显 id 和 result/error，诊
 
 握手返回 protocolVersion、connectionId、runtimeEpoch、rootScopeId、capabilities，版本必须精确匹配。初始化前其他方法 UNAUTHENTICATED。帧最多 128 KiB，规范载荷通常 64 KiB；fs.execute/process.write 编码后最多 124 KiB。
 
+Runtime 装配失败时，完成启动回滚后通过 `connection.open` 返回原始错误，`error.details` 包含 `initializationFailed=true` 和 `cleanupConfirmed`。仅明确确认回滚且进程正常退出的失败可视为隔离不可用；`CLEANUP_FAILED`、无回执 EOF 或异常退出不能用于安全降级。该失败握手最多等待 4 秒，不接受任务请求。Rust Client 在系统拒绝创建进程、尚未启动 Runtime 时也返回已确认无资源的初始化失败；普通运行中的关闭与 UNKNOWN 语义不变。
+
 capabilities 描述实际 sandbox、fullAccess、rootNetwork、方法和 processLimits；不授予新权限。coreHostIsolated/processTreeCleanupVerified/directoryObjectIsolation/sandboxDenialAttribution 为 false。旧 Runtime 缺少 rootNetwork 时 Core 保守视为无网络。
 
 标准部署的 capabilities.builtinTools.searchFiles 返回可信文件助手路径。Runtime 文件助手直接链接 ripgrep 搜索库，不读取宿主 rg 配置。Core 的 search_files 在现有 Runtime Scope 内调用该助手；旧外部 Runtime 未提供该能力时返回 UNSUPPORTED 并要求升级。
+
+macOS 的内置搜索助手与 fs.execute 复用系统 Python 启动桥接，再执行原有沙箱命令。process.start 仅在首个命令参数与部署配置的助手绝对路径完全一致时选择该桥接；这不会扩大 Scope 或助手所在目录的访问权限。
 
 ## 方法
 
@@ -83,6 +87,10 @@ fs.execute 仅在配置可信 helper 时可用；command.kind：
 | write | `path,dataBase64,expected` | `sha256,size` |
 | applyPatch | `path,oldText,newText,expectedSha256` | `sha256,size` |
 | applyPatches | `path,patches[{oldText,newText}],expectedSha256` | `sha256,size` |
+
+交付大文件时可使用 `stageFileChunk {path,uploadId,offset,dataBase64}`（每块最多 64 KiB，总计最多 8 MiB），再调用 `commitFile {path,uploadId,expected,expectedExecutable,sha256,executable}`。`uploadId` 为 UUID；首块 offset=0 创建私有 staging，后续 offset 必须匹配已存字节数。staging 位于目标目录，缺失父目录按 0755 创建；目标文件在 commit 之前不变。commit 核对完整内容摘要、原文件摘要与可执行位，再条件替换。新文件使用 0644/0755；现有文件保留读写权限，保持可执行时保留原执行位，新增执行时按已有读位设置并至少允许 owner 执行；不复制特殊权限位。提交前再次核对完整原权限，拒绝并发 chmod。新建文件的 expectedExecutable 为 null。`removeFile {path,expectedSha256,expectedExecutable}` 只删除摘要与可执行位匹配的普通文件。三种操作均要求目标路径写授权；路径遍历继续拒绝链接。`read` 额外返回 executable；握手 filesystem.artifactDelivery=true 表示支持这些命令。
+
+staging 和 commit 是独立、可审计操作，不是跨文件事务。断连、未知结果和提交后清理失败不能换 operationId 重放；遗留 staging 保留供核查。条件替换与删除不保证对不参与 Runtime 锁的外部进程进行原子 CAS。
 
 expected 为 `{kind:"absent"}` 或 `{kind:"sha256",value:"digest"}`。read 的 sha256 总是完整文件摘要，offset 为字节；单文件最多 8 MiB，read/write 最多 64 KiB，patch 旧/新文本合计 64 KiB 且旧文本非空唯一匹配。applyPatch 是保留的单条兼容入口，与单元素 applyPatches 共用实现。applyPatches 一次最多 32 个替换，所有替换均唯一匹配后才条件写入；陈旧摘要/已存在/歧义返回 CONFLICT。
 

@@ -2,7 +2,13 @@
 
 # Using Workgroups
 
-Workgroups give writing tasks and verifiers private workspaces/Runtimes through the production Engine. Completion requires final combined checks. They target trusted macOS hosts; see [agents](../design/multi-agent.en.md) for shared-workspace delegation.
+Workgroups give writing tasks and verifiers private workspaces/Runtimes through the production Engine. They are the internal isolated executor for unified delegation: ordinary tasks describe an objective, and Core selects execution from intent and available capabilities without a Workgroup choice or policy JSON. See [Agent delegation](../design/multi-agent.en.md) for shared versus isolated selection.
+
+## Ordinary tasks
+
+Submit an analysis or modification request through the normal CLI/TUI, Web, or GUI input. Subtask progress distinguishes execution, verification, and delivery. Analysis can run shared and read-only; modification can use a shared exclusive writer or isolation. Automatic isolation without trusted final checks reports checks as not run, and does not treat discovered repository scripts as trusted verification. If candidate-only delivery or trusted verification is explicitly required but unavailable, Core reports why without silently lowering the requirement.
+
+When changes are requested, Core preflights the original workspace and applies the whole candidate within existing authorization. Concurrent user edits retain a conflict state; a finished candidate does not imply it was applied. The following commands, JSON plans, and policy configuration support explicit strict verification, embedding, and compatibility, and are not prerequisites for ordinary collaboration.
 
 ## Workgroup subcommand
 
@@ -62,9 +68,9 @@ Limits are 64 tasks, 16 MiB/10000 source files, 2 MiB per file and 128 MiB artif
 
 TUI/server/launcher accept `--workgroup-policy /absolute/policy.json --workgroup-toolchain /absolute/toolchain` with explicit write grants. Policy includes allowedWrites (or allowedDirectories), nonempty checks, shared workers/verifiers/activeGroups and budgets. Models cannot modify deployment policy.
 
-The service exposes workgroup_start/read/wait/revise/cancel/artifact. TUI uses `/groups`, `/group ID` and `/group-start FILE`. requestId deduplicates; revisions require expectedRevision. Reconnect does not cancel client groups; restart does not rerun old groups. artifact returns file chunks up to 4096 bytes with base/candidate digests; applying them to the original tree still requires conditional checks.
+The compatibility service exposes `areal/workgroup/*` RPCs. Ordinary model tools expose unified `agent_*` delegation without a second Workgroup tool family. Advanced TUI controls use `/groups`, `/group ID` and `/group-start FILE`. requestId deduplicates; revisions require expectedRevision. Reconnect does not cancel client groups; restart does not rerun old groups. artifact returns file chunks up to 4096 bytes with base/candidate digests; applying them to the original tree still requires conditional checks.
 
-Desktop Workflows are versioned plans with per-stage Profile, model, Skill, tool and readOnly settings. A Workflow can also be the `workflow` property of an Agent Profile; `areal/thread/start` starts it once and records the run on the Thread. isolatedWrite child agents reuse this service. See [Core API](../api/core.en.md#workgroups) and [scheduling design](../design/workgroups.en.md).
+Desktop Workflows are versioned plans with per-stage Profile, model, Skill, tool and readOnly settings. A Workflow can also be the `workflow` property of an Agent Profile; `areal/thread/start` starts it once and records the run on the Thread. Legacy `isolatedWrite` child agents reuse this strict service; unified delegation lets Core select strict or automatic isolated execution. See [Core API](../api/core.en.md#workgroups) and [scheduling design](../design/workgroups.en.md).
 
 Four consecutive successful tool boundaries with identical input, results and source enter a verification checkpoint. Dynamic process/cursor identifiers and remainingToolCalls admission capacity are excluded from repeated-result comparison. Native Workgroups within a Goal share the parent Turn’s token budget while retaining existing Workgroup limits.
 

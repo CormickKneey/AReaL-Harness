@@ -152,10 +152,30 @@ pub struct TaskRun {
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskWorker {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub thread_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub turn_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<crate::delegation::ExecutionRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_id: Option<String>,
     pub status: String,
     pub settled: bool,
+}
+
+impl TaskWorker {
+    /// 旧快照只有 Thread/Turn；新执行引用不另存后端状态。
+    pub fn execution_ref(&self) -> Option<crate::delegation::ExecutionRef> {
+        self.execution.clone().or_else(|| {
+            (!self.thread_id.is_empty() && !self.turn_id.is_empty()).then(|| {
+                crate::delegation::ExecutionRef::Thread {
+                    thread_id: self.thread_id.clone(),
+                    turn_id: self.turn_id.clone(),
+                }
+            })
+        })
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
@@ -178,4 +198,45 @@ pub struct Task {
     pub max_active_seconds: Option<u64>,
     pub runs: Vec<TaskRun>,
     pub messages: Vec<ChannelMessage>,
+}
+
+#[cfg(test)]
+mod worker_compatibility_tests {
+    use super::TaskWorker;
+    use crate::delegation::ExecutionRef;
+    use serde_json::json;
+
+    #[test]
+    fn old_worker_snapshots_retain_their_execution_identity() {
+        let worker: TaskWorker = serde_json::from_value(json!({
+            "threadId":"thread", "turnId":"turn", "status":"running", "settled":false
+        }))
+        .unwrap();
+        assert_eq!(
+            worker.execution_ref(),
+            Some(ExecutionRef::Thread {
+                thread_id: "thread".into(),
+                turn_id: "turn".into()
+            })
+        );
+    }
+
+    #[test]
+    fn isolated_worker_reference_does_not_fabricate_thread_ids() {
+        let worker: TaskWorker = serde_json::from_value(json!({
+            "execution":{"kind":"workgroup","workgroupId":"group","automatic":true},
+            "executionId":"execution", "status":"running", "settled":false
+        }))
+        .unwrap();
+        assert_eq!(
+            worker.execution_ref(),
+            Some(ExecutionRef::Workgroup {
+                workgroup_id: "group".into(),
+                automatic: true
+            })
+        );
+        let saved = serde_json::to_value(worker).unwrap();
+        assert!(saved.get("threadId").is_none());
+        assert!(saved.get("turnId").is_none());
+    }
 }

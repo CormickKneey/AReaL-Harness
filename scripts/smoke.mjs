@@ -171,8 +171,19 @@ try {
     requests[1].messages.slice(0, requests[0].messages.length),
     requests[0].messages,
   );
-  assert.match(requests[1].messages[0].content, /Multi-agent delegation is available by default/);
-  assert(requests[1].tools.some((tool) => tool.function.name === "agent_spawn"));
+  const delegation = requests[1].tools.find((tool) => tool.function.name === "agent_spawn");
+  assert(delegation);
+  assert.deepEqual(delegation.function.parameters.properties.intent.enum, ["inspect", "modify"]);
+  assert.deepEqual(delegation.function.parameters.properties.delivery.enum, [
+    "report",
+    "changes",
+    "patch",
+  ]);
+  assert(
+    !requests[1].tools.some((tool) =>
+      ["agent_spawn_configured", "workgroup_start"].includes(tool.function.name),
+    ),
+  );
   const management = await connect(server.endpoint, join(directory, "security/auth.json"));
   await management.call("areal/provider/upsert", {
     expectedRevision: 0,

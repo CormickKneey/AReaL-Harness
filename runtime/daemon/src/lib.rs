@@ -52,6 +52,58 @@ struct OperationId {
 #[serde(deny_unknown_fields)]
 struct Empty {}
 
+/// 启动回滚后仍通过握手返回原因；不能把没有清理回执的 EOF 当作可安全降级。
+pub async fn reject_startup<R, W>(read: R, mut write: W, mut error: Error) -> Result<()>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let cleaned = error.code != ErrorCode::CleanupFailed;
+    error.details = Some(json!({"initializationFailed":true,"cleanupConfirmed":cleaned}));
+    let reported = tokio::time::timeout(Duration::from_secs(4), async {
+        let mut frames = FramedRead::new(read, LinesCodec::new_with_max_length(MAX_FRAME_BYTES));
+        let frame = frames
+            .next()
+            .await
+            .ok_or_else(|| Error::new(ErrorCode::Unavailable, "Runtime startup transport closed"))?
+            .map_err(|_| Error::new(ErrorCode::InvalidRequest, "invalid startup frame"))?;
+        let request: Request = serde_json::from_str(&frame)
+            .map_err(|_| Error::new(ErrorCode::InvalidRequest, "invalid startup request"))?;
+        let valid_id = request
+            .id
+            .as_str()
+            .is_some_and(|s| !s.is_empty() && s.len() <= 128)
+            || request.id.is_i64()
+            || request.id.is_u64();
+        let open: Open = serde_json::from_value(request.params)
+            .map_err(|_| Error::new(ErrorCode::InvalidRequest, "expected connection.open"))?;
+        if !valid_id || request.method != "connection.open" || open.protocol_version != VERSION {
+            return Err(Error::new(
+                ErrorCode::InvalidRequest,
+                "expected a valid connection.open",
+            ));
+        }
+        let mut bytes = serde_json::to_vec(&response(request.id, Err(error.clone()))).unwrap();
+        bytes.push(b'\n');
+        write
+            .write_all(&bytes)
+            .await
+            .map_err(|_| Error::new(ErrorCode::Unavailable, "Runtime startup response failed"))?;
+        write
+            .flush()
+            .await
+            .map_err(|_| Error::new(ErrorCode::Unavailable, "Runtime startup response failed"))
+    })
+    .await
+    .map_err(|_| {
+        Error::new(
+            ErrorCode::Unavailable,
+            "Runtime startup handshake timed out",
+        )
+    })?;
+    if cleaned { reported } else { Err(error) }
+}
+
 pub async fn serve<R, W>(
     read: R,
     write: W,

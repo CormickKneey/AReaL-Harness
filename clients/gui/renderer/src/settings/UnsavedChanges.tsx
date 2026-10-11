@@ -4,7 +4,7 @@ import { Feedback, SettingsDialog } from "./common.js";
 
 type DraftBlocker = { label: string; dirty: boolean; busy: boolean; save: () => Promise<void>; discard: () => void };
 type Navigation = () => void;
-type Guard = { register: (blocker: DraftBlocker) => () => void; request: (navigation: Navigation) => void };
+type Guard = { busy: boolean; register: (blocker: DraftBlocker) => () => void; request: (navigation: Navigation) => void };
 const Context = createContext<Guard | null>(null);
 
 /** Guards in-app navigation; draft values and credentials stay with the editor. */
@@ -13,11 +13,13 @@ export function UnsavedChangesProvider({ children }: { children: ReactNode }) {
   const pending = useRef<Navigation | null>(null);
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [busy, setBusy] = useState(false);
   const savingRef = useRef(false);
   const [error, setError] = useState("");
   const register = useCallback((next: DraftBlocker) => {
     blocker.current = next;
-    return () => { if (blocker.current === next) blocker.current = null; };
+    setBusy(next.busy);
+    return () => { if (blocker.current === next) { blocker.current = null; setBusy(false); } };
   }, []);
   const request = useCallback((navigation: Navigation) => {
     if (blocker.current?.busy || savingRef.current || pending.current) return;
@@ -39,7 +41,7 @@ export function UnsavedChangesProvider({ children }: { children: ReactNode }) {
     } catch (cause) { setError(cause instanceof Error ? cause.message : "保存失败，请重试。"); }
     finally { savingRef.current = false; setSaving(false); }
   };
-  return <Context.Provider value={{ register, request }}>
+  return <Context.Provider value={{ register, request, busy: busy || saving }}>
     {children}
     {open && <SettingsDialog className="sm:max-w-md" title={`${blocker.current?.label ?? "设置"}有未保存的修改`} description="离开前，是否保存本次修改？" onClose={cancel} busy={saving}>
       <Feedback error={error} />
@@ -55,6 +57,12 @@ export function useGuardedNavigation() {
   const guard = useContext(Context);
   if (!guard) throw new Error("Settings navigation requires UnsavedChangesProvider");
   return guard.request;
+}
+// 导航按钮与实际准入使用同一 busy 状态，避免显示可点击却丢弃请求。
+export function useNavigationBusy() {
+  const guard = useContext(Context);
+  if (!guard) throw new Error("Settings navigation requires UnsavedChangesProvider");
+  return guard.busy;
 }
 export function useDraftBlocker(blocker: DraftBlocker) {
   const guard = useContext(Context);

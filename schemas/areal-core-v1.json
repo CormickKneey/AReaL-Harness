@@ -1913,6 +1913,77 @@
       ],
       "type": "object"
     },
+    "areal/model/completionDiscarded": {
+      "additionalProperties": true,
+      "properties": {
+        "itemIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "retry": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "retryKind": {
+          "enum": [
+            "network",
+            "completion"
+          ]
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "itemIds",
+        "retry",
+        "retryKind",
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "areal/model/watchdogRetry": {
+      "additionalProperties": true,
+      "properties": {
+        "delayMs": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "purpose": {
+          "enum": [
+            "solve",
+            "summary"
+          ]
+        },
+        "retry": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "delayMs",
+        "purpose",
+        "retry",
+        "threadId",
+        "turnId"
+      ],
+      "type": "object"
+    },
     "areal/plan/updated": {
       "additionalProperties": true,
       "properties": {
@@ -3019,6 +3090,65 @@
                     "default": [],
                     "items": {
                       "properties": {
+                        "execution": {
+                          "anyOf": [
+                            {
+                              "oneOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "kind": {
+                                      "const": "thread",
+                                      "type": "string"
+                                    },
+                                    "threadId": {
+                                      "type": "string"
+                                    },
+                                    "turnId": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "threadId",
+                                    "turnId"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "automatic": {
+                                      "default": false,
+                                      "type": "boolean"
+                                    },
+                                    "kind": {
+                                      "const": "workgroup",
+                                      "type": "string"
+                                    },
+                                    "workgroupId": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "workgroupId"
+                                  ],
+                                  "type": "object"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "executionId": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
                         "settled": {
                           "type": "boolean"
                         },
@@ -3033,8 +3163,6 @@
                         }
                       },
                       "required": [
-                        "threadId",
-                        "turnId",
                         "status",
                         "settled"
                       ],
@@ -5499,6 +5627,181 @@
                         "revision"
                       ],
                       "type": "object"
+                    },
+                    "executionPolicy": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "exclusiveWrite": {
+                          "default": false,
+                          "type": "boolean"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "executions": {
+                      "default": [],
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "cancelRequested": {
+                            "default": false,
+                            "description": "取消是持久、单向的交付门禁；执行器终态不能抹掉尚未交付候选的取消。",
+                            "type": "boolean"
+                          },
+                          "delivery": {
+                            "enum": [
+                              "report",
+                              "changes",
+                              "patch"
+                            ],
+                            "type": "string"
+                          },
+                          "error": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "execution": {
+                            "anyOf": [
+                              {
+                                "oneOf": [
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "kind": {
+                                        "const": "thread",
+                                        "type": "string"
+                                      },
+                                      "threadId": {
+                                        "type": "string"
+                                      },
+                                      "turnId": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "threadId",
+                                      "turnId"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "automatic": {
+                                        "default": false,
+                                        "type": "boolean"
+                                      },
+                                      "kind": {
+                                        "const": "workgroup",
+                                        "type": "string"
+                                      },
+                                      "workgroupId": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "workgroupId"
+                                    ],
+                                    "type": "object"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "创建前先记录意图；没有后端引用的旧意图不得自动重派。"
+                          },
+                          "executionId": {
+                            "type": "string"
+                          },
+                          "owner": {
+                            "oneOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "kind": {
+                                    "const": "turn",
+                                    "type": "string"
+                                  },
+                                  "threadId": {
+                                    "type": "string"
+                                  },
+                                  "turnId": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "threadId",
+                                  "turnId"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "goalId": {
+                                    "type": "string"
+                                  },
+                                  "kind": {
+                                    "const": "taskRun",
+                                    "type": "string"
+                                  },
+                                  "runId": {
+                                    "type": "string"
+                                  },
+                                  "taskId": {
+                                    "type": "string"
+                                  },
+                                  "threadId": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "taskId",
+                                  "runId",
+                                  "threadId",
+                                  "goalId"
+                                ],
+                                "type": "object"
+                              }
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "requestHash": {
+                            "type": "string"
+                          },
+                          "requestId": {
+                            "type": "string"
+                          },
+                          "strategy": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "executionId",
+                          "requestId",
+                          "requestHash",
+                          "owner",
+                          "title",
+                          "delivery",
+                          "strategy",
+                          "reason"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
                     },
                     "interactionRevision": {
                       "format": "uint64",
@@ -11430,6 +11733,311 @@
     "type": "object"
   },
   "requests": {
+    "areal/agent/delegate": {
+      "additionalProperties": false,
+      "properties": {
+        "agentProfile": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "revision": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "revision"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "delivery": {
+          "enum": [
+            "report",
+            "changes",
+            "patch"
+          ],
+          "type": "string"
+        },
+        "independent": {
+          "default": false,
+          "type": "boolean"
+        },
+        "input": {
+          "items": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "text_elements": {
+                    "default": [],
+                    "items": true,
+                    "type": "array"
+                  },
+                  "type": {
+                    "const": "text",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "text"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "detail": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "auto",
+                          "low",
+                          "high",
+                          "original"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "type": {
+                    "const": "image",
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "url"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "detail": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "auto",
+                          "low",
+                          "high",
+                          "original"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "localImage",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "path"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "audio",
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "url"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "localAudio",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "path"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "mime_type": {
+                    "default": null,
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "name": {
+                    "default": null,
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "type": {
+                    "const": "file",
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "url"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "instructions": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "intent": {
+          "enum": [
+            "inspect",
+            "modify"
+          ],
+          "type": "string"
+        },
+        "maxModelRounds": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "model": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "modelId": {
+                  "type": "string"
+                },
+                "providerId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "providerId",
+                "modelId"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parentThreadId": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "requireTrustedChecks": {
+          "default": false,
+          "type": "boolean"
+        },
+        "requiresCurrentEnvironment": {
+          "default": false,
+          "type": "boolean"
+        },
+        "skills": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "revision": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "revision"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "toolAllowlist": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "writes": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "requestId",
+        "parentThreadId",
+        "input"
+      ],
+      "title": "DelegationRequest",
+      "type": "object"
+    },
     "areal/agent/list": {
       "additionalProperties": false,
       "properties": {
@@ -11880,6 +12488,129 @@
       },
       "required": [
         "threadId"
+      ],
+      "type": "object"
+    },
+    "areal/execution/apply": {
+      "additionalProperties": false,
+      "properties": {
+        "executionId": {
+          "type": "string"
+        },
+        "parentThreadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "parentThreadId",
+        "executionId"
+      ],
+      "type": "object"
+    },
+    "areal/execution/artifact": {
+      "additionalProperties": false,
+      "properties": {
+        "executionId": {
+          "type": "string"
+        },
+        "offset": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "parentThreadId": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "parentThreadId",
+        "executionId"
+      ],
+      "type": "object"
+    },
+    "areal/execution/cancel": {
+      "additionalProperties": false,
+      "properties": {
+        "executionId": {
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "graceful",
+            "force"
+          ]
+        },
+        "parentThreadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "parentThreadId",
+        "executionId"
+      ],
+      "type": "object"
+    },
+    "areal/execution/list": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "offset": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "parentThreadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "parentThreadId"
+      ],
+      "type": "object"
+    },
+    "areal/execution/read": {
+      "additionalProperties": false,
+      "properties": {
+        "executionId": {
+          "type": "string"
+        },
+        "offset": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "parentThreadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "parentThreadId",
+        "executionId"
+      ],
+      "type": "object"
+    },
+    "areal/execution/wait": {
+      "additionalProperties": false,
+      "properties": {
+        "executionId": {
+          "type": "string"
+        },
+        "parentThreadId": {
+          "type": "string"
+        },
+        "timeoutMs": {
+          "maximum": 60000,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "parentThreadId",
+        "executionId"
       ],
       "type": "object"
     },
@@ -13691,6 +14422,38 @@
       ],
       "type": "object"
     },
+    "areal/queue/steer": {
+      "additionalProperties": false,
+      "description": "把一个 pending 排队项一次受理到指定活动轮次；不允许客户端拼接 remove/steer。",
+      "properties": {
+        "expectedRevision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "expectedTurnId": {
+          "type": "string"
+        },
+        "queueItemId": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "threadId",
+        "expectedRevision",
+        "queueItemId",
+        "expectedTurnId"
+      ],
+      "title": "QueueSteer",
+      "type": "object"
+    },
     "areal/queue/update": {
       "additionalProperties": false,
       "properties": {
@@ -15283,9 +16046,26 @@
                               }
                             ]
                           },
+                          "appendInstructions": {
+                            "type": "string"
+                          },
+                          "approvalTools": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
                           "defaultModelRevision": {
                             "type": [
                               "string",
+                              "null"
+                            ]
+                          },
+                          "maxModelRounds": {
+                            "format": "uint",
+                            "minimum": 0,
+                            "type": [
+                              "integer",
                               "null"
                             ]
                           },
@@ -15335,6 +16115,12 @@
                             },
                             "type": [
                               "array",
+                              "null"
+                            ]
+                          },
+                          "systemPrompt": {
+                            "type": [
+                              "string",
                               "null"
                             ]
                           },
@@ -15472,9 +16258,26 @@
                               }
                             ]
                           },
+                          "appendInstructions": {
+                            "type": "string"
+                          },
+                          "approvalTools": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
                           "defaultModelRevision": {
                             "type": [
                               "string",
+                              "null"
+                            ]
+                          },
+                          "maxModelRounds": {
+                            "format": "uint",
+                            "minimum": 0,
+                            "type": [
+                              "integer",
                               "null"
                             ]
                           },
@@ -15524,6 +16327,12 @@
                             },
                             "type": [
                               "array",
+                              "null"
+                            ]
+                          },
+                          "systemPrompt": {
+                            "type": [
+                              "string",
                               "null"
                             ]
                           },
@@ -16145,41 +16954,221 @@
         "input"
       ],
       "type": "object"
-    },
-    "areal/queue/steer": {
-      "additionalProperties": false,
-      "description": "把一个 pending 排队项一次受理到指定活动轮次；不允许客户端拼接 remove/steer。",
-      "properties": {
-        "expectedRevision": {
-          "format": "uint64",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "expectedTurnId": {
-          "type": "string"
-        },
-        "queueItemId": {
-          "type": "string"
-        },
-        "requestId": {
-          "type": "string"
-        },
-        "threadId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "requestId",
-        "threadId",
-        "expectedRevision",
-        "queueItemId",
-        "expectedTurnId"
-      ],
-      "title": "QueueSteer",
-      "type": "object"
     }
   },
   "responses": {
+    "areal/agent/delegate": {
+      "additionalProperties": true,
+      "properties": {
+        "artifact": {
+          "additionalProperties": true,
+          "properties": {
+            "head": {
+              "type": "string"
+            },
+            "workgroupId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "head",
+            "workgroupId"
+          ],
+          "type": "object"
+        },
+        "delivery": {
+          "additionalProperties": true,
+          "properties": {
+            "status": {
+              "enum": [
+                "notRequired",
+                "pending",
+                "candidate",
+                "preparing",
+                "applying",
+                "applied",
+                "conflict",
+                "partial",
+                "unknown",
+                "failed",
+                "requiresActiveTurn",
+                "cancelled"
+              ]
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executionId": {
+          "type": "string"
+        },
+        "nextOffset": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "offset": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "owner": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "turn",
+                  "type": "string"
+                },
+                "threadId": {
+                  "type": "string"
+                },
+                "turnId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "threadId",
+                "turnId"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "goalId": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "taskRun",
+                  "type": "string"
+                },
+                "runId": {
+                  "type": "string"
+                },
+                "taskId": {
+                  "type": "string"
+                },
+                "threadId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "taskId",
+                "runId",
+                "threadId",
+                "goalId"
+              ],
+              "type": "object"
+            }
+          ],
+          "title": "ExecutionOwner"
+        },
+        "parentThreadId": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "resourcesReleased": {
+          "type": "boolean"
+        },
+        "settled": {
+          "type": "boolean"
+        },
+        "source": {
+          "type": "string"
+        },
+        "sourceItemId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "stopRequested": {
+          "type": "boolean"
+        },
+        "strategy": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "textBytes": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        },
+        "verification": {
+          "additionalProperties": true,
+          "properties": {
+            "head": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "none",
+                "project",
+                "trusted"
+              ]
+            },
+            "status": {
+              "enum": [
+                "notRun",
+                "passed",
+                "failed"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "status"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "delivery",
+        "error",
+        "executionId",
+        "parentThreadId",
+        "resourcesReleased",
+        "settled",
+        "status",
+        "text",
+        "title",
+        "verification"
+      ],
+      "type": "object"
+    },
     "areal/agent/list": {
       "additionalProperties": true,
       "properties": {
@@ -16862,6 +17851,181 @@
                           "revision"
                         ],
                         "type": "object"
+                      },
+                      "executionPolicy": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "exclusiveWrite": {
+                            "default": false,
+                            "type": "boolean"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "executions": {
+                        "default": [],
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "cancelRequested": {
+                              "default": false,
+                              "description": "取消是持久、单向的交付门禁；执行器终态不能抹掉尚未交付候选的取消。",
+                              "type": "boolean"
+                            },
+                            "delivery": {
+                              "enum": [
+                                "report",
+                                "changes",
+                                "patch"
+                              ],
+                              "type": "string"
+                            },
+                            "error": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "execution": {
+                              "anyOf": [
+                                {
+                                  "oneOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "kind": {
+                                          "const": "thread",
+                                          "type": "string"
+                                        },
+                                        "threadId": {
+                                          "type": "string"
+                                        },
+                                        "turnId": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "threadId",
+                                        "turnId"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "automatic": {
+                                          "default": false,
+                                          "type": "boolean"
+                                        },
+                                        "kind": {
+                                          "const": "workgroup",
+                                          "type": "string"
+                                        },
+                                        "workgroupId": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "workgroupId"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ],
+                              "description": "创建前先记录意图；没有后端引用的旧意图不得自动重派。"
+                            },
+                            "executionId": {
+                              "type": "string"
+                            },
+                            "owner": {
+                              "oneOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "kind": {
+                                      "const": "turn",
+                                      "type": "string"
+                                    },
+                                    "threadId": {
+                                      "type": "string"
+                                    },
+                                    "turnId": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "threadId",
+                                    "turnId"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "goalId": {
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "const": "taskRun",
+                                      "type": "string"
+                                    },
+                                    "runId": {
+                                      "type": "string"
+                                    },
+                                    "taskId": {
+                                      "type": "string"
+                                    },
+                                    "threadId": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "taskId",
+                                    "runId",
+                                    "threadId",
+                                    "goalId"
+                                  ],
+                                  "type": "object"
+                                }
+                              ]
+                            },
+                            "reason": {
+                              "type": "string"
+                            },
+                            "requestHash": {
+                              "type": "string"
+                            },
+                            "requestId": {
+                              "type": "string"
+                            },
+                            "strategy": {
+                              "type": "string"
+                            },
+                            "title": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "executionId",
+                            "requestId",
+                            "requestHash",
+                            "owner",
+                            "title",
+                            "delivery",
+                            "strategy",
+                            "reason"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       },
                       "interactionRevision": {
                         "format": "uint64",
@@ -20198,6 +21362,181 @@
                             "revision"
                           ],
                           "type": "object"
+                        },
+                        "executionPolicy": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "exclusiveWrite": {
+                              "default": false,
+                              "type": "boolean"
+                            }
+                          },
+                          "type": "object"
+                        },
+                        "executions": {
+                          "default": [],
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "cancelRequested": {
+                                "default": false,
+                                "description": "取消是持久、单向的交付门禁；执行器终态不能抹掉尚未交付候选的取消。",
+                                "type": "boolean"
+                              },
+                              "delivery": {
+                                "enum": [
+                                  "report",
+                                  "changes",
+                                  "patch"
+                                ],
+                                "type": "string"
+                              },
+                              "error": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "execution": {
+                                "anyOf": [
+                                  {
+                                    "oneOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "kind": {
+                                            "const": "thread",
+                                            "type": "string"
+                                          },
+                                          "threadId": {
+                                            "type": "string"
+                                          },
+                                          "turnId": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "threadId",
+                                          "turnId"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "automatic": {
+                                            "default": false,
+                                            "type": "boolean"
+                                          },
+                                          "kind": {
+                                            "const": "workgroup",
+                                            "type": "string"
+                                          },
+                                          "workgroupId": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "kind",
+                                          "workgroupId"
+                                        ],
+                                        "type": "object"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ],
+                                "description": "创建前先记录意图；没有后端引用的旧意图不得自动重派。"
+                              },
+                              "executionId": {
+                                "type": "string"
+                              },
+                              "owner": {
+                                "oneOf": [
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "kind": {
+                                        "const": "turn",
+                                        "type": "string"
+                                      },
+                                      "threadId": {
+                                        "type": "string"
+                                      },
+                                      "turnId": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "threadId",
+                                      "turnId"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "goalId": {
+                                        "type": "string"
+                                      },
+                                      "kind": {
+                                        "const": "taskRun",
+                                        "type": "string"
+                                      },
+                                      "runId": {
+                                        "type": "string"
+                                      },
+                                      "taskId": {
+                                        "type": "string"
+                                      },
+                                      "threadId": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "taskId",
+                                      "runId",
+                                      "threadId",
+                                      "goalId"
+                                    ],
+                                    "type": "object"
+                                  }
+                                ]
+                              },
+                              "reason": {
+                                "type": "string"
+                              },
+                              "requestHash": {
+                                "type": "string"
+                              },
+                              "requestId": {
+                                "type": "string"
+                              },
+                              "strategy": {
+                                "type": "string"
+                              },
+                              "title": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "executionId",
+                              "requestId",
+                              "requestHash",
+                              "owner",
+                              "title",
+                              "delivery",
+                              "strategy",
+                              "reason"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
                         },
                         "interactionRevision": {
                           "format": "uint64",
@@ -25082,6 +26421,1213 @@
         "systemInstructionsIncluded",
         "threadId",
         "view"
+      ],
+      "type": "object"
+    },
+    "areal/execution/apply": {
+      "additionalProperties": true,
+      "properties": {
+        "artifact": {
+          "additionalProperties": true,
+          "properties": {
+            "head": {
+              "type": "string"
+            },
+            "workgroupId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "head",
+            "workgroupId"
+          ],
+          "type": "object"
+        },
+        "delivery": {
+          "additionalProperties": true,
+          "properties": {
+            "status": {
+              "enum": [
+                "notRequired",
+                "pending",
+                "candidate",
+                "preparing",
+                "applying",
+                "applied",
+                "conflict",
+                "partial",
+                "unknown",
+                "failed",
+                "requiresActiveTurn",
+                "cancelled"
+              ]
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executionId": {
+          "type": "string"
+        },
+        "nextOffset": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "offset": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "owner": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "turn",
+                  "type": "string"
+                },
+                "threadId": {
+                  "type": "string"
+                },
+                "turnId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "threadId",
+                "turnId"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "goalId": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "taskRun",
+                  "type": "string"
+                },
+                "runId": {
+                  "type": "string"
+                },
+                "taskId": {
+                  "type": "string"
+                },
+                "threadId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "taskId",
+                "runId",
+                "threadId",
+                "goalId"
+              ],
+              "type": "object"
+            }
+          ],
+          "title": "ExecutionOwner"
+        },
+        "parentThreadId": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "resourcesReleased": {
+          "type": "boolean"
+        },
+        "settled": {
+          "type": "boolean"
+        },
+        "source": {
+          "type": "string"
+        },
+        "sourceItemId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "stopRequested": {
+          "type": "boolean"
+        },
+        "strategy": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "textBytes": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        },
+        "verification": {
+          "additionalProperties": true,
+          "properties": {
+            "head": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "none",
+                "project",
+                "trusted"
+              ]
+            },
+            "status": {
+              "enum": [
+                "notRun",
+                "passed",
+                "failed"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "status"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "delivery",
+        "error",
+        "executionId",
+        "parentThreadId",
+        "resourcesReleased",
+        "settled",
+        "status",
+        "text",
+        "title",
+        "verification"
+      ],
+      "type": "object"
+    },
+    "areal/execution/artifact": {
+      "oneOf": [
+        {
+          "additionalProperties": true,
+          "properties": {
+            "complete": {
+              "type": "boolean"
+            },
+            "head": {
+              "type": "string"
+            },
+            "nextOffset": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "paths": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "complete",
+            "head",
+            "nextOffset",
+            "paths"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": true,
+          "properties": {
+            "baseSha256": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "bytes": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "complete": {
+              "type": "boolean"
+            },
+            "dataBase64": {
+              "type": "string"
+            },
+            "executable": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "exists": {
+              "type": "boolean"
+            },
+            "head": {
+              "type": "string"
+            },
+            "nextOffset": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "offset": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "path": {
+              "type": "string"
+            },
+            "sha256": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "text": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "baseSha256",
+            "bytes",
+            "complete",
+            "dataBase64",
+            "executable",
+            "exists",
+            "head",
+            "nextOffset",
+            "offset",
+            "path",
+            "sha256",
+            "text"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "areal/execution/cancel": {
+      "additionalProperties": true,
+      "properties": {
+        "artifact": {
+          "additionalProperties": true,
+          "properties": {
+            "head": {
+              "type": "string"
+            },
+            "workgroupId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "head",
+            "workgroupId"
+          ],
+          "type": "object"
+        },
+        "delivery": {
+          "additionalProperties": true,
+          "properties": {
+            "status": {
+              "enum": [
+                "notRequired",
+                "pending",
+                "candidate",
+                "preparing",
+                "applying",
+                "applied",
+                "conflict",
+                "partial",
+                "unknown",
+                "failed",
+                "requiresActiveTurn",
+                "cancelled"
+              ]
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executionId": {
+          "type": "string"
+        },
+        "nextOffset": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "offset": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "owner": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "turn",
+                  "type": "string"
+                },
+                "threadId": {
+                  "type": "string"
+                },
+                "turnId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "threadId",
+                "turnId"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "goalId": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "taskRun",
+                  "type": "string"
+                },
+                "runId": {
+                  "type": "string"
+                },
+                "taskId": {
+                  "type": "string"
+                },
+                "threadId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "taskId",
+                "runId",
+                "threadId",
+                "goalId"
+              ],
+              "type": "object"
+            }
+          ],
+          "title": "ExecutionOwner"
+        },
+        "parentThreadId": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "resourcesReleased": {
+          "type": "boolean"
+        },
+        "settled": {
+          "type": "boolean"
+        },
+        "source": {
+          "type": "string"
+        },
+        "sourceItemId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "stopRequested": {
+          "type": "boolean"
+        },
+        "strategy": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "textBytes": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        },
+        "verification": {
+          "additionalProperties": true,
+          "properties": {
+            "head": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "none",
+                "project",
+                "trusted"
+              ]
+            },
+            "status": {
+              "enum": [
+                "notRun",
+                "passed",
+                "failed"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "status"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "delivery",
+        "error",
+        "executionId",
+        "parentThreadId",
+        "resourcesReleased",
+        "settled",
+        "status",
+        "text",
+        "title",
+        "verification"
+      ],
+      "type": "object"
+    },
+    "areal/execution/list": {
+      "additionalProperties": true,
+      "properties": {
+        "data": {
+          "items": {
+            "additionalProperties": true,
+            "properties": {
+              "artifact": {
+                "additionalProperties": true,
+                "properties": {
+                  "head": {
+                    "type": "string"
+                  },
+                  "workgroupId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "head",
+                  "workgroupId"
+                ],
+                "type": "object"
+              },
+              "delivery": {
+                "additionalProperties": true,
+                "properties": {
+                  "status": {
+                    "enum": [
+                      "notRequired",
+                      "pending",
+                      "candidate",
+                      "preparing",
+                      "applying",
+                      "applied",
+                      "conflict",
+                      "partial",
+                      "unknown",
+                      "failed",
+                      "requiresActiveTurn",
+                      "cancelled"
+                    ]
+                  }
+                },
+                "required": [
+                  "status"
+                ],
+                "type": "object"
+              },
+              "error": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "executionId": {
+                "type": "string"
+              },
+              "nextOffset": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "offset": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "owner": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "const": "turn",
+                        "type": "string"
+                      },
+                      "threadId": {
+                        "type": "string"
+                      },
+                      "turnId": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "threadId",
+                      "turnId"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "goalId": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "const": "taskRun",
+                        "type": "string"
+                      },
+                      "runId": {
+                        "type": "string"
+                      },
+                      "taskId": {
+                        "type": "string"
+                      },
+                      "threadId": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "taskId",
+                      "runId",
+                      "threadId",
+                      "goalId"
+                    ],
+                    "type": "object"
+                  }
+                ],
+                "title": "ExecutionOwner"
+              },
+              "parentThreadId": {
+                "type": "string"
+              },
+              "reason": {
+                "type": "string"
+              },
+              "resourcesReleased": {
+                "type": "boolean"
+              },
+              "settled": {
+                "type": "boolean"
+              },
+              "source": {
+                "type": "string"
+              },
+              "sourceItemId": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "stopRequested": {
+                "type": "boolean"
+              },
+              "strategy": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "textBytes": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "threadId": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "turnId": {
+                "type": "string"
+              },
+              "verification": {
+                "additionalProperties": true,
+                "properties": {
+                  "head": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "none",
+                      "project",
+                      "trusted"
+                    ]
+                  },
+                  "status": {
+                    "enum": [
+                      "notRun",
+                      "passed",
+                      "failed"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "status"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "delivery",
+              "error",
+              "executionId",
+              "parentThreadId",
+              "resourcesReleased",
+              "settled",
+              "status",
+              "text",
+              "title",
+              "verification"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "nextOffset": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "data",
+        "nextOffset"
+      ],
+      "type": "object"
+    },
+    "areal/execution/read": {
+      "additionalProperties": true,
+      "properties": {
+        "artifact": {
+          "additionalProperties": true,
+          "properties": {
+            "head": {
+              "type": "string"
+            },
+            "workgroupId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "head",
+            "workgroupId"
+          ],
+          "type": "object"
+        },
+        "delivery": {
+          "additionalProperties": true,
+          "properties": {
+            "status": {
+              "enum": [
+                "notRequired",
+                "pending",
+                "candidate",
+                "preparing",
+                "applying",
+                "applied",
+                "conflict",
+                "partial",
+                "unknown",
+                "failed",
+                "requiresActiveTurn",
+                "cancelled"
+              ]
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executionId": {
+          "type": "string"
+        },
+        "nextOffset": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "offset": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "owner": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "turn",
+                  "type": "string"
+                },
+                "threadId": {
+                  "type": "string"
+                },
+                "turnId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "threadId",
+                "turnId"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "goalId": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "taskRun",
+                  "type": "string"
+                },
+                "runId": {
+                  "type": "string"
+                },
+                "taskId": {
+                  "type": "string"
+                },
+                "threadId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "taskId",
+                "runId",
+                "threadId",
+                "goalId"
+              ],
+              "type": "object"
+            }
+          ],
+          "title": "ExecutionOwner"
+        },
+        "parentThreadId": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "resourcesReleased": {
+          "type": "boolean"
+        },
+        "settled": {
+          "type": "boolean"
+        },
+        "source": {
+          "type": "string"
+        },
+        "sourceItemId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "stopRequested": {
+          "type": "boolean"
+        },
+        "strategy": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "textBytes": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        },
+        "verification": {
+          "additionalProperties": true,
+          "properties": {
+            "head": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "none",
+                "project",
+                "trusted"
+              ]
+            },
+            "status": {
+              "enum": [
+                "notRun",
+                "passed",
+                "failed"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "status"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "delivery",
+        "error",
+        "executionId",
+        "parentThreadId",
+        "resourcesReleased",
+        "settled",
+        "status",
+        "text",
+        "title",
+        "verification"
+      ],
+      "type": "object"
+    },
+    "areal/execution/wait": {
+      "additionalProperties": true,
+      "properties": {
+        "artifact": {
+          "additionalProperties": true,
+          "properties": {
+            "head": {
+              "type": "string"
+            },
+            "workgroupId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "head",
+            "workgroupId"
+          ],
+          "type": "object"
+        },
+        "delivery": {
+          "additionalProperties": true,
+          "properties": {
+            "status": {
+              "enum": [
+                "notRequired",
+                "pending",
+                "candidate",
+                "preparing",
+                "applying",
+                "applied",
+                "conflict",
+                "partial",
+                "unknown",
+                "failed",
+                "requiresActiveTurn",
+                "cancelled"
+              ]
+            }
+          },
+          "required": [
+            "status"
+          ],
+          "type": "object"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "executionId": {
+          "type": "string"
+        },
+        "nextOffset": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "offset": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "owner": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "turn",
+                  "type": "string"
+                },
+                "threadId": {
+                  "type": "string"
+                },
+                "turnId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "threadId",
+                "turnId"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "goalId": {
+                  "type": "string"
+                },
+                "kind": {
+                  "const": "taskRun",
+                  "type": "string"
+                },
+                "runId": {
+                  "type": "string"
+                },
+                "taskId": {
+                  "type": "string"
+                },
+                "threadId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "kind",
+                "taskId",
+                "runId",
+                "threadId",
+                "goalId"
+              ],
+              "type": "object"
+            }
+          ],
+          "title": "ExecutionOwner"
+        },
+        "parentThreadId": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "resourcesReleased": {
+          "type": "boolean"
+        },
+        "settled": {
+          "type": "boolean"
+        },
+        "source": {
+          "type": "string"
+        },
+        "sourceItemId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "stopRequested": {
+          "type": "boolean"
+        },
+        "strategy": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "textBytes": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "timedOut": {
+          "type": "boolean"
+        },
+        "title": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        },
+        "verification": {
+          "additionalProperties": true,
+          "properties": {
+            "head": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "none",
+                "project",
+                "trusted"
+              ]
+            },
+            "status": {
+              "enum": [
+                "notRun",
+                "passed",
+                "failed"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "status"
+          ],
+          "type": "object"
+        }
+      },
+      "required": [
+        "delivery",
+        "error",
+        "executionId",
+        "parentThreadId",
+        "resourcesReleased",
+        "settled",
+        "status",
+        "text",
+        "title",
+        "verification",
+        "timedOut"
       ],
       "type": "object"
     },
@@ -32541,6 +35087,31 @@
       "title": "Queue",
       "type": "object"
     },
+    "areal/queue/steer": {
+      "additionalProperties": true,
+      "properties": {
+        "itemId": {
+          "type": "string"
+        },
+        "queueItemId": {
+          "type": "string"
+        },
+        "queueRevision": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "itemId",
+        "queueItemId",
+        "queueRevision",
+        "turnId"
+      ],
+      "type": "object"
+    },
     "areal/queue/update": {
       "additionalProperties": false,
       "properties": {
@@ -34154,6 +36725,65 @@
                 "default": [],
                 "items": {
                   "properties": {
+                    "execution": {
+                      "anyOf": [
+                        {
+                          "oneOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "const": "thread",
+                                  "type": "string"
+                                },
+                                "threadId": {
+                                  "type": "string"
+                                },
+                                "turnId": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "threadId",
+                                "turnId"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "automatic": {
+                                  "default": false,
+                                  "type": "boolean"
+                                },
+                                "kind": {
+                                  "const": "workgroup",
+                                  "type": "string"
+                                },
+                                "workgroupId": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "workgroupId"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "executionId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "settled": {
                       "type": "boolean"
                     },
@@ -34168,8 +36798,6 @@
                     }
                   },
                   "required": [
-                    "threadId",
-                    "turnId",
                     "status",
                     "settled"
                   ],
@@ -34434,6 +37062,65 @@
                 "default": [],
                 "items": {
                   "properties": {
+                    "execution": {
+                      "anyOf": [
+                        {
+                          "oneOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "const": "thread",
+                                  "type": "string"
+                                },
+                                "threadId": {
+                                  "type": "string"
+                                },
+                                "turnId": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "threadId",
+                                "turnId"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "automatic": {
+                                  "default": false,
+                                  "type": "boolean"
+                                },
+                                "kind": {
+                                  "const": "workgroup",
+                                  "type": "string"
+                                },
+                                "workgroupId": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "workgroupId"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "executionId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "settled": {
                       "type": "boolean"
                     },
@@ -34448,8 +37135,6 @@
                     }
                   },
                   "required": [
-                    "threadId",
-                    "turnId",
                     "status",
                     "settled"
                   ],
@@ -34718,6 +37403,65 @@
                       "default": [],
                       "items": {
                         "properties": {
+                          "execution": {
+                            "anyOf": [
+                              {
+                                "oneOf": [
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "kind": {
+                                        "const": "thread",
+                                        "type": "string"
+                                      },
+                                      "threadId": {
+                                        "type": "string"
+                                      },
+                                      "turnId": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "threadId",
+                                      "turnId"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "automatic": {
+                                        "default": false,
+                                        "type": "boolean"
+                                      },
+                                      "kind": {
+                                        "const": "workgroup",
+                                        "type": "string"
+                                      },
+                                      "workgroupId": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "workgroupId"
+                                    ],
+                                    "type": "object"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "executionId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
                           "settled": {
                             "type": "boolean"
                           },
@@ -34732,8 +37476,6 @@
                           }
                         },
                         "required": [
-                          "threadId",
-                          "turnId",
                           "status",
                           "settled"
                         ],
@@ -35017,6 +37759,65 @@
                 "default": [],
                 "items": {
                   "properties": {
+                    "execution": {
+                      "anyOf": [
+                        {
+                          "oneOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "const": "thread",
+                                  "type": "string"
+                                },
+                                "threadId": {
+                                  "type": "string"
+                                },
+                                "turnId": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "threadId",
+                                "turnId"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "automatic": {
+                                  "default": false,
+                                  "type": "boolean"
+                                },
+                                "kind": {
+                                  "const": "workgroup",
+                                  "type": "string"
+                                },
+                                "workgroupId": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "workgroupId"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "executionId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "settled": {
                       "type": "boolean"
                     },
@@ -35031,8 +37832,6 @@
                     }
                   },
                   "required": [
-                    "threadId",
-                    "turnId",
                     "status",
                     "settled"
                   ],
@@ -35297,6 +38096,65 @@
                 "default": [],
                 "items": {
                   "properties": {
+                    "execution": {
+                      "anyOf": [
+                        {
+                          "oneOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "const": "thread",
+                                  "type": "string"
+                                },
+                                "threadId": {
+                                  "type": "string"
+                                },
+                                "turnId": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "threadId",
+                                "turnId"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "automatic": {
+                                  "default": false,
+                                  "type": "boolean"
+                                },
+                                "kind": {
+                                  "const": "workgroup",
+                                  "type": "string"
+                                },
+                                "workgroupId": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "workgroupId"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "executionId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "settled": {
                       "type": "boolean"
                     },
@@ -35311,8 +38169,6 @@
                     }
                   },
                   "required": [
-                    "threadId",
-                    "turnId",
                     "status",
                     "settled"
                   ],
@@ -35577,6 +38433,65 @@
                 "default": [],
                 "items": {
                   "properties": {
+                    "execution": {
+                      "anyOf": [
+                        {
+                          "oneOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "const": "thread",
+                                  "type": "string"
+                                },
+                                "threadId": {
+                                  "type": "string"
+                                },
+                                "turnId": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "threadId",
+                                "turnId"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "automatic": {
+                                  "default": false,
+                                  "type": "boolean"
+                                },
+                                "kind": {
+                                  "const": "workgroup",
+                                  "type": "string"
+                                },
+                                "workgroupId": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "workgroupId"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "executionId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "settled": {
                       "type": "boolean"
                     },
@@ -35591,8 +38506,6 @@
                     }
                   },
                   "required": [
-                    "threadId",
-                    "turnId",
                     "status",
                     "settled"
                   ],
@@ -35857,6 +38770,65 @@
                 "default": [],
                 "items": {
                   "properties": {
+                    "execution": {
+                      "anyOf": [
+                        {
+                          "oneOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "const": "thread",
+                                  "type": "string"
+                                },
+                                "threadId": {
+                                  "type": "string"
+                                },
+                                "turnId": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "threadId",
+                                "turnId"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "automatic": {
+                                  "default": false,
+                                  "type": "boolean"
+                                },
+                                "kind": {
+                                  "const": "workgroup",
+                                  "type": "string"
+                                },
+                                "workgroupId": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "workgroupId"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "executionId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "settled": {
                       "type": "boolean"
                     },
@@ -35871,8 +38843,6 @@
                     }
                   },
                   "required": [
-                    "threadId",
-                    "turnId",
                     "status",
                     "settled"
                   ],
@@ -36149,6 +39119,65 @@
                 "default": [],
                 "items": {
                   "properties": {
+                    "execution": {
+                      "anyOf": [
+                        {
+                          "oneOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "const": "thread",
+                                  "type": "string"
+                                },
+                                "threadId": {
+                                  "type": "string"
+                                },
+                                "turnId": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "threadId",
+                                "turnId"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "automatic": {
+                                  "default": false,
+                                  "type": "boolean"
+                                },
+                                "kind": {
+                                  "const": "workgroup",
+                                  "type": "string"
+                                },
+                                "workgroupId": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "workgroupId"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "executionId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "settled": {
                       "type": "boolean"
                     },
@@ -36163,8 +39192,6 @@
                     }
                   },
                   "required": [
-                    "threadId",
-                    "turnId",
                     "status",
                     "settled"
                   ],
@@ -38180,6 +41207,181 @@
                         "revision"
                       ],
                       "type": "object"
+                    },
+                    "executionPolicy": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "exclusiveWrite": {
+                          "default": false,
+                          "type": "boolean"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "executions": {
+                      "default": [],
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "cancelRequested": {
+                            "default": false,
+                            "description": "取消是持久、单向的交付门禁；执行器终态不能抹掉尚未交付候选的取消。",
+                            "type": "boolean"
+                          },
+                          "delivery": {
+                            "enum": [
+                              "report",
+                              "changes",
+                              "patch"
+                            ],
+                            "type": "string"
+                          },
+                          "error": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "execution": {
+                            "anyOf": [
+                              {
+                                "oneOf": [
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "kind": {
+                                        "const": "thread",
+                                        "type": "string"
+                                      },
+                                      "threadId": {
+                                        "type": "string"
+                                      },
+                                      "turnId": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "threadId",
+                                      "turnId"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "automatic": {
+                                        "default": false,
+                                        "type": "boolean"
+                                      },
+                                      "kind": {
+                                        "const": "workgroup",
+                                        "type": "string"
+                                      },
+                                      "workgroupId": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "workgroupId"
+                                    ],
+                                    "type": "object"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "创建前先记录意图；没有后端引用的旧意图不得自动重派。"
+                          },
+                          "executionId": {
+                            "type": "string"
+                          },
+                          "owner": {
+                            "oneOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "kind": {
+                                    "const": "turn",
+                                    "type": "string"
+                                  },
+                                  "threadId": {
+                                    "type": "string"
+                                  },
+                                  "turnId": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "threadId",
+                                  "turnId"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "goalId": {
+                                    "type": "string"
+                                  },
+                                  "kind": {
+                                    "const": "taskRun",
+                                    "type": "string"
+                                  },
+                                  "runId": {
+                                    "type": "string"
+                                  },
+                                  "taskId": {
+                                    "type": "string"
+                                  },
+                                  "threadId": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "taskId",
+                                  "runId",
+                                  "threadId",
+                                  "goalId"
+                                ],
+                                "type": "object"
+                              }
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "requestHash": {
+                            "type": "string"
+                          },
+                          "requestId": {
+                            "type": "string"
+                          },
+                          "strategy": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "executionId",
+                          "requestId",
+                          "requestHash",
+                          "owner",
+                          "title",
+                          "delivery",
+                          "strategy",
+                          "reason"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
                     },
                     "interactionRevision": {
                       "format": "uint64",
@@ -42057,9 +45259,26 @@
                                     }
                                   ]
                                 },
+                                "appendInstructions": {
+                                  "type": "string"
+                                },
+                                "approvalTools": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
                                 "defaultModelRevision": {
                                   "type": [
                                     "string",
+                                    "null"
+                                  ]
+                                },
+                                "maxModelRounds": {
+                                  "format": "uint",
+                                  "minimum": 0,
+                                  "type": [
+                                    "integer",
                                     "null"
                                   ]
                                 },
@@ -42109,6 +45328,12 @@
                                   },
                                   "type": [
                                     "array",
+                                    "null"
+                                  ]
+                                },
+                                "systemPrompt": {
+                                  "type": [
+                                    "string",
                                     "null"
                                   ]
                                 },
@@ -42251,9 +45476,26 @@
                               }
                             ]
                           },
+                          "appendInstructions": {
+                            "type": "string"
+                          },
+                          "approvalTools": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
                           "defaultModelRevision": {
                             "type": [
                               "string",
+                              "null"
+                            ]
+                          },
+                          "maxModelRounds": {
+                            "format": "uint",
+                            "minimum": 0,
+                            "type": [
+                              "integer",
                               "null"
                             ]
                           },
@@ -42303,6 +45545,12 @@
                             },
                             "type": [
                               "array",
+                              "null"
+                            ]
+                          },
+                          "systemPrompt": {
+                            "type": [
+                              "string",
                               "null"
                             ]
                           },
@@ -42741,9 +45989,26 @@
                                   }
                                 ]
                               },
+                              "appendInstructions": {
+                                "type": "string"
+                              },
+                              "approvalTools": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              },
                               "defaultModelRevision": {
                                 "type": [
                                   "string",
+                                  "null"
+                                ]
+                              },
+                              "maxModelRounds": {
+                                "format": "uint",
+                                "minimum": 0,
+                                "type": [
+                                  "integer",
                                   "null"
                                 ]
                               },
@@ -42793,6 +46058,12 @@
                                 },
                                 "type": [
                                   "array",
+                                  "null"
+                                ]
+                              },
+                              "systemPrompt": {
+                                "type": [
+                                  "string",
                                   "null"
                                 ]
                               },
@@ -42872,6 +46143,10 @@
                 "type": "object"
               },
               "type": "array"
+            },
+            "trustedChecks": {
+              "default": true,
+              "type": "boolean"
             },
             "version": {
               "format": "uint32",
@@ -43397,9 +46672,26 @@
                                   }
                                 ]
                               },
+                              "appendInstructions": {
+                                "type": "string"
+                              },
+                              "approvalTools": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              },
                               "defaultModelRevision": {
                                 "type": [
                                   "string",
+                                  "null"
+                                ]
+                              },
+                              "maxModelRounds": {
+                                "format": "uint",
+                                "minimum": 0,
+                                "type": [
+                                  "integer",
                                   "null"
                                 ]
                               },
@@ -43449,6 +46741,12 @@
                                 },
                                 "type": [
                                   "array",
+                                  "null"
+                                ]
+                              },
+                              "systemPrompt": {
+                                "type": [
+                                  "string",
                                   "null"
                                 ]
                               },
@@ -43528,6 +46826,10 @@
                 "type": "object"
               },
               "type": "array"
+            },
+            "trustedChecks": {
+              "default": true,
+              "type": "boolean"
             },
             "version": {
               "format": "uint32",
@@ -44075,9 +47377,26 @@
                                   }
                                 ]
                               },
+                              "appendInstructions": {
+                                "type": "string"
+                              },
+                              "approvalTools": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              },
                               "defaultModelRevision": {
                                 "type": [
                                   "string",
+                                  "null"
+                                ]
+                              },
+                              "maxModelRounds": {
+                                "format": "uint",
+                                "minimum": 0,
+                                "type": [
+                                  "integer",
                                   "null"
                                 ]
                               },
@@ -44127,6 +47446,12 @@
                                 },
                                 "type": [
                                   "array",
+                                  "null"
+                                ]
+                              },
+                              "systemPrompt": {
+                                "type": [
+                                  "string",
                                   "null"
                                 ]
                               },
@@ -44206,6 +47531,10 @@
                 "type": "object"
               },
               "type": "array"
+            },
+            "trustedChecks": {
+              "default": true,
+              "type": "boolean"
             },
             "version": {
               "format": "uint32",
@@ -44612,9 +47941,26 @@
                                   }
                                 ]
                               },
+                              "appendInstructions": {
+                                "type": "string"
+                              },
+                              "approvalTools": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              },
                               "defaultModelRevision": {
                                 "type": [
                                   "string",
+                                  "null"
+                                ]
+                              },
+                              "maxModelRounds": {
+                                "format": "uint",
+                                "minimum": 0,
+                                "type": [
+                                  "integer",
                                   "null"
                                 ]
                               },
@@ -44664,6 +48010,12 @@
                                 },
                                 "type": [
                                   "array",
+                                  "null"
+                                ]
+                              },
+                              "systemPrompt": {
+                                "type": [
+                                  "string",
                                   "null"
                                 ]
                               },
@@ -44743,6 +48095,10 @@
                 "type": "object"
               },
               "type": "array"
+            },
+            "trustedChecks": {
+              "default": true,
+              "type": "boolean"
             },
             "version": {
               "format": "uint32",
@@ -45149,9 +48505,26 @@
                                   }
                                 ]
                               },
+                              "appendInstructions": {
+                                "type": "string"
+                              },
+                              "approvalTools": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              },
                               "defaultModelRevision": {
                                 "type": [
                                   "string",
+                                  "null"
+                                ]
+                              },
+                              "maxModelRounds": {
+                                "format": "uint",
+                                "minimum": 0,
+                                "type": [
+                                  "integer",
                                   "null"
                                 ]
                               },
@@ -45201,6 +48574,12 @@
                                 },
                                 "type": [
                                   "array",
+                                  "null"
+                                ]
+                              },
+                              "systemPrompt": {
+                                "type": [
+                                  "string",
                                   "null"
                                 ]
                               },
@@ -45280,6 +48659,10 @@
                 "type": "object"
               },
               "type": "array"
+            },
+            "trustedChecks": {
+              "default": true,
+              "type": "boolean"
             },
             "version": {
               "format": "uint32",
@@ -45686,9 +49069,26 @@
                                   }
                                 ]
                               },
+                              "appendInstructions": {
+                                "type": "string"
+                              },
+                              "approvalTools": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              },
                               "defaultModelRevision": {
                                 "type": [
                                   "string",
+                                  "null"
+                                ]
+                              },
+                              "maxModelRounds": {
+                                "format": "uint",
+                                "minimum": 0,
+                                "type": [
+                                  "integer",
                                   "null"
                                 ]
                               },
@@ -45738,6 +49138,12 @@
                                 },
                                 "type": [
                                   "array",
+                                  "null"
+                                ]
+                              },
+                              "systemPrompt": {
+                                "type": [
+                                  "string",
                                   "null"
                                 ]
                               },
@@ -45817,6 +49223,10 @@
                 "type": "object"
               },
               "type": "array"
+            },
+            "trustedChecks": {
+              "default": true,
+              "type": "boolean"
             },
             "version": {
               "format": "uint32",
@@ -46660,6 +50070,181 @@
                           "revision"
                         ],
                         "type": "object"
+                      },
+                      "executionPolicy": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "exclusiveWrite": {
+                            "default": false,
+                            "type": "boolean"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "executions": {
+                        "default": [],
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "cancelRequested": {
+                              "default": false,
+                              "description": "取消是持久、单向的交付门禁；执行器终态不能抹掉尚未交付候选的取消。",
+                              "type": "boolean"
+                            },
+                            "delivery": {
+                              "enum": [
+                                "report",
+                                "changes",
+                                "patch"
+                              ],
+                              "type": "string"
+                            },
+                            "error": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "execution": {
+                              "anyOf": [
+                                {
+                                  "oneOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "kind": {
+                                          "const": "thread",
+                                          "type": "string"
+                                        },
+                                        "threadId": {
+                                          "type": "string"
+                                        },
+                                        "turnId": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "threadId",
+                                        "turnId"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "automatic": {
+                                          "default": false,
+                                          "type": "boolean"
+                                        },
+                                        "kind": {
+                                          "const": "workgroup",
+                                          "type": "string"
+                                        },
+                                        "workgroupId": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "workgroupId"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ],
+                              "description": "创建前先记录意图；没有后端引用的旧意图不得自动重派。"
+                            },
+                            "executionId": {
+                              "type": "string"
+                            },
+                            "owner": {
+                              "oneOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "kind": {
+                                      "const": "turn",
+                                      "type": "string"
+                                    },
+                                    "threadId": {
+                                      "type": "string"
+                                    },
+                                    "turnId": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "threadId",
+                                    "turnId"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "goalId": {
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "const": "taskRun",
+                                      "type": "string"
+                                    },
+                                    "runId": {
+                                      "type": "string"
+                                    },
+                                    "taskId": {
+                                      "type": "string"
+                                    },
+                                    "threadId": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "taskId",
+                                    "runId",
+                                    "threadId",
+                                    "goalId"
+                                  ],
+                                  "type": "object"
+                                }
+                              ]
+                            },
+                            "reason": {
+                              "type": "string"
+                            },
+                            "requestHash": {
+                              "type": "string"
+                            },
+                            "requestId": {
+                              "type": "string"
+                            },
+                            "strategy": {
+                              "type": "string"
+                            },
+                            "title": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "executionId",
+                            "requestId",
+                            "requestHash",
+                            "owner",
+                            "title",
+                            "delivery",
+                            "strategy",
+                            "reason"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       },
                       "interactionRevision": {
                         "format": "uint64",
@@ -49984,6 +53569,181 @@
                         "revision"
                       ],
                       "type": "object"
+                    },
+                    "executionPolicy": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "exclusiveWrite": {
+                          "default": false,
+                          "type": "boolean"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "executions": {
+                      "default": [],
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "cancelRequested": {
+                            "default": false,
+                            "description": "取消是持久、单向的交付门禁；执行器终态不能抹掉尚未交付候选的取消。",
+                            "type": "boolean"
+                          },
+                          "delivery": {
+                            "enum": [
+                              "report",
+                              "changes",
+                              "patch"
+                            ],
+                            "type": "string"
+                          },
+                          "error": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "execution": {
+                            "anyOf": [
+                              {
+                                "oneOf": [
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "kind": {
+                                        "const": "thread",
+                                        "type": "string"
+                                      },
+                                      "threadId": {
+                                        "type": "string"
+                                      },
+                                      "turnId": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "threadId",
+                                      "turnId"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "automatic": {
+                                        "default": false,
+                                        "type": "boolean"
+                                      },
+                                      "kind": {
+                                        "const": "workgroup",
+                                        "type": "string"
+                                      },
+                                      "workgroupId": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "workgroupId"
+                                    ],
+                                    "type": "object"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "创建前先记录意图；没有后端引用的旧意图不得自动重派。"
+                          },
+                          "executionId": {
+                            "type": "string"
+                          },
+                          "owner": {
+                            "oneOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "kind": {
+                                    "const": "turn",
+                                    "type": "string"
+                                  },
+                                  "threadId": {
+                                    "type": "string"
+                                  },
+                                  "turnId": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "threadId",
+                                  "turnId"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "goalId": {
+                                    "type": "string"
+                                  },
+                                  "kind": {
+                                    "const": "taskRun",
+                                    "type": "string"
+                                  },
+                                  "runId": {
+                                    "type": "string"
+                                  },
+                                  "taskId": {
+                                    "type": "string"
+                                  },
+                                  "threadId": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "taskId",
+                                  "runId",
+                                  "threadId",
+                                  "goalId"
+                                ],
+                                "type": "object"
+                              }
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "requestHash": {
+                            "type": "string"
+                          },
+                          "requestId": {
+                            "type": "string"
+                          },
+                          "strategy": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "executionId",
+                          "requestId",
+                          "requestHash",
+                          "owner",
+                          "title",
+                          "delivery",
+                          "strategy",
+                          "reason"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
                     },
                     "interactionRevision": {
                       "format": "uint64",
@@ -53329,6 +57089,181 @@
                         "revision"
                       ],
                       "type": "object"
+                    },
+                    "executionPolicy": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "exclusiveWrite": {
+                          "default": false,
+                          "type": "boolean"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "executions": {
+                      "default": [],
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "cancelRequested": {
+                            "default": false,
+                            "description": "取消是持久、单向的交付门禁；执行器终态不能抹掉尚未交付候选的取消。",
+                            "type": "boolean"
+                          },
+                          "delivery": {
+                            "enum": [
+                              "report",
+                              "changes",
+                              "patch"
+                            ],
+                            "type": "string"
+                          },
+                          "error": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "execution": {
+                            "anyOf": [
+                              {
+                                "oneOf": [
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "kind": {
+                                        "const": "thread",
+                                        "type": "string"
+                                      },
+                                      "threadId": {
+                                        "type": "string"
+                                      },
+                                      "turnId": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "threadId",
+                                      "turnId"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "automatic": {
+                                        "default": false,
+                                        "type": "boolean"
+                                      },
+                                      "kind": {
+                                        "const": "workgroup",
+                                        "type": "string"
+                                      },
+                                      "workgroupId": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "workgroupId"
+                                    ],
+                                    "type": "object"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "创建前先记录意图；没有后端引用的旧意图不得自动重派。"
+                          },
+                          "executionId": {
+                            "type": "string"
+                          },
+                          "owner": {
+                            "oneOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "kind": {
+                                    "const": "turn",
+                                    "type": "string"
+                                  },
+                                  "threadId": {
+                                    "type": "string"
+                                  },
+                                  "turnId": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "threadId",
+                                  "turnId"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "goalId": {
+                                    "type": "string"
+                                  },
+                                  "kind": {
+                                    "const": "taskRun",
+                                    "type": "string"
+                                  },
+                                  "runId": {
+                                    "type": "string"
+                                  },
+                                  "taskId": {
+                                    "type": "string"
+                                  },
+                                  "threadId": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "taskId",
+                                  "runId",
+                                  "threadId",
+                                  "goalId"
+                                ],
+                                "type": "object"
+                              }
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "requestHash": {
+                            "type": "string"
+                          },
+                          "requestId": {
+                            "type": "string"
+                          },
+                          "strategy": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "executionId",
+                          "requestId",
+                          "requestHash",
+                          "owner",
+                          "title",
+                          "delivery",
+                          "strategy",
+                          "reason"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
                     },
                     "interactionRevision": {
                       "format": "uint64",
@@ -56682,6 +60617,181 @@
                         "revision"
                       ],
                       "type": "object"
+                    },
+                    "executionPolicy": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "exclusiveWrite": {
+                          "default": false,
+                          "type": "boolean"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "executions": {
+                      "default": [],
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "cancelRequested": {
+                            "default": false,
+                            "description": "取消是持久、单向的交付门禁；执行器终态不能抹掉尚未交付候选的取消。",
+                            "type": "boolean"
+                          },
+                          "delivery": {
+                            "enum": [
+                              "report",
+                              "changes",
+                              "patch"
+                            ],
+                            "type": "string"
+                          },
+                          "error": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "execution": {
+                            "anyOf": [
+                              {
+                                "oneOf": [
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "kind": {
+                                        "const": "thread",
+                                        "type": "string"
+                                      },
+                                      "threadId": {
+                                        "type": "string"
+                                      },
+                                      "turnId": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "threadId",
+                                      "turnId"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "automatic": {
+                                        "default": false,
+                                        "type": "boolean"
+                                      },
+                                      "kind": {
+                                        "const": "workgroup",
+                                        "type": "string"
+                                      },
+                                      "workgroupId": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "workgroupId"
+                                    ],
+                                    "type": "object"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "创建前先记录意图；没有后端引用的旧意图不得自动重派。"
+                          },
+                          "executionId": {
+                            "type": "string"
+                          },
+                          "owner": {
+                            "oneOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "kind": {
+                                    "const": "turn",
+                                    "type": "string"
+                                  },
+                                  "threadId": {
+                                    "type": "string"
+                                  },
+                                  "turnId": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "threadId",
+                                  "turnId"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "goalId": {
+                                    "type": "string"
+                                  },
+                                  "kind": {
+                                    "const": "taskRun",
+                                    "type": "string"
+                                  },
+                                  "runId": {
+                                    "type": "string"
+                                  },
+                                  "taskId": {
+                                    "type": "string"
+                                  },
+                                  "threadId": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "taskId",
+                                  "runId",
+                                  "threadId",
+                                  "goalId"
+                                ],
+                                "type": "object"
+                              }
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "requestHash": {
+                            "type": "string"
+                          },
+                          "requestId": {
+                            "type": "string"
+                          },
+                          "strategy": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "executionId",
+                          "requestId",
+                          "requestHash",
+                          "owner",
+                          "title",
+                          "delivery",
+                          "strategy",
+                          "reason"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
                     },
                     "interactionRevision": {
                       "format": "uint64",
@@ -60495,31 +64605,6 @@
         "turnId"
       ],
       "type": "object"
-    },
-    "areal/queue/steer": {
-      "additionalProperties": true,
-      "properties": {
-        "itemId": {
-          "type": "string"
-        },
-        "queueItemId": {
-          "type": "string"
-        },
-        "queueRevision": {
-          "minimum": 0,
-          "type": "integer"
-        },
-        "turnId": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "itemId",
-        "queueItemId",
-        "queueRevision",
-        "turnId"
-      ],
-      "type": "object"
     }
   },
   "serverRequests": {
@@ -61319,6 +65404,181 @@
                   "revision"
                 ],
                 "type": "object"
+              },
+              "executionPolicy": {
+                "additionalProperties": false,
+                "properties": {
+                  "exclusiveWrite": {
+                    "default": false,
+                    "type": "boolean"
+                  }
+                },
+                "type": "object"
+              },
+              "executions": {
+                "default": [],
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "cancelRequested": {
+                      "default": false,
+                      "description": "取消是持久、单向的交付门禁；执行器终态不能抹掉尚未交付候选的取消。",
+                      "type": "boolean"
+                    },
+                    "delivery": {
+                      "enum": [
+                        "report",
+                        "changes",
+                        "patch"
+                      ],
+                      "type": "string"
+                    },
+                    "error": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "execution": {
+                      "anyOf": [
+                        {
+                          "oneOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "const": "thread",
+                                  "type": "string"
+                                },
+                                "threadId": {
+                                  "type": "string"
+                                },
+                                "turnId": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "threadId",
+                                "turnId"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "automatic": {
+                                  "default": false,
+                                  "type": "boolean"
+                                },
+                                "kind": {
+                                  "const": "workgroup",
+                                  "type": "string"
+                                },
+                                "workgroupId": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "workgroupId"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "创建前先记录意图；没有后端引用的旧意图不得自动重派。"
+                    },
+                    "executionId": {
+                      "type": "string"
+                    },
+                    "owner": {
+                      "oneOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "kind": {
+                              "const": "turn",
+                              "type": "string"
+                            },
+                            "threadId": {
+                              "type": "string"
+                            },
+                            "turnId": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "threadId",
+                            "turnId"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "goalId": {
+                              "type": "string"
+                            },
+                            "kind": {
+                              "const": "taskRun",
+                              "type": "string"
+                            },
+                            "runId": {
+                              "type": "string"
+                            },
+                            "taskId": {
+                              "type": "string"
+                            },
+                            "threadId": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "taskId",
+                            "runId",
+                            "threadId",
+                            "goalId"
+                          ],
+                          "type": "object"
+                        }
+                      ]
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "requestHash": {
+                      "type": "string"
+                    },
+                    "requestId": {
+                      "type": "string"
+                    },
+                    "strategy": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "executionId",
+                    "requestId",
+                    "requestHash",
+                    "owner",
+                    "title",
+                    "delivery",
+                    "strategy",
+                    "reason"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
               },
               "interactionRevision": {
                 "format": "uint64",
@@ -65149,9 +69409,26 @@
                             }
                           ]
                         },
+                        "appendInstructions": {
+                          "type": "string"
+                        },
+                        "approvalTools": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
                         "defaultModelRevision": {
                           "type": [
                             "string",
+                            "null"
+                          ]
+                        },
+                        "maxModelRounds": {
+                          "format": "uint",
+                          "minimum": 0,
+                          "type": [
+                            "integer",
                             "null"
                           ]
                         },
@@ -65201,6 +69478,12 @@
                           },
                           "type": [
                             "array",
+                            "null"
+                          ]
+                        },
+                        "systemPrompt": {
+                          "type": [
+                            "string",
                             "null"
                           ]
                         },

@@ -128,26 +128,30 @@ fn run_linux_preflight() -> Result<()> {
         "--proc",
         "/proc",
     ]);
-    for path in ["/usr", "/lib", "/lib64"] {
+    // BusyBox 系统只有 /bin/true；与实际 native 命令一致，绑定其可执行文件及解释器。
+    for path in ["/bin", "/usr", "/lib", "/lib64"] {
         if Path::new(path).exists() {
             command.args(["--ro-bind", path, path]);
         }
     }
-    command.args(["--", "/usr/bin/true"]);
+    command.args(["--", "/bin/true"]);
     command.stdout(std::process::Stdio::null());
-    command.stderr(std::process::Stdio::null());
-    let status = command.status().map_err(|error| {
+    let output = command.output().map_err(|error| {
         Error::new(
             ErrorCode::Unsupported,
             format!("cannot run Linux Bubblewrap preflight: {error}"),
         )
     })?;
-    if status.success() {
+    if output.status.success() {
         Ok(())
     } else {
         Err(Error::new(
             ErrorCode::Unsupported,
-            "Linux Bubblewrap cannot create the required user/mount/PID namespaces",
+            format!(
+                "Linux Bubblewrap preflight failed ({}): {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
         ))
     }
 }
@@ -552,6 +556,12 @@ pub fn seccomp(
 mod policy_tests {
     use super::*;
     use std::{collections::BTreeMap, path::PathBuf};
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn native_preflight_runs_the_command_inside_its_system_mounts() {
+        run_linux_preflight().expect("native container must support the Runtime preflight");
+    }
 
     #[test]
     fn linux_public_input_ancestors_are_pinned_inside_narrow_write_roots() {

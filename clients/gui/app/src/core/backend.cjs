@@ -66,7 +66,7 @@ class CoreBackend {
     await this.library.init();
     await this.projectless.init();
     await this.analytics.init();
-    inspectCoreCapabilities(this.binary);
+    await inspectCoreCapabilities(this.binary);
     await this.providers.init();
     await this.resources.init();
   }

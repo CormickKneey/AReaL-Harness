@@ -153,6 +153,22 @@ def run(binary, root):
     (workspace / "allowed.txt").write_text("allowed fixture\n")
     outside = root / "forbidden.txt"
     outside.write_text("outside-secret-fixture\n")
+    # 执行器先启动、Supervisor 配置失败：握手须确认整个装配已回滚。
+    rejected = Runtime(binary, workspace, ("--max-scopes", "0"))
+    try:
+        try:
+            rejected.call("connection.open", {"protocolVersion": "areal.runtime.v0"})
+        except RpcError as error:
+            assert error.value["code"] == "UNAVAILABLE", error.value
+            assert error.value["details"] == {
+                "initializationFailed": True,
+                "cleanupConfirmed": True,
+            }, error.value
+        else:
+            raise AssertionError("invalid deployment unexpectedly initialized")
+        assert rejected.process.wait(timeout=8) == 0
+    finally:
+        rejected.close()
     runtime = Runtime(binary, workspace)
     leader = None
     try:
@@ -461,7 +477,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="areal-runtime-smoke-") as directory:
         run(args.runtime.resolve(), Path(directory).resolve())
     print(
-        "Runtime smoke passed: filesystem/network denial, concurrent root replacement, deduplication, cursors, budgets, cancellation, EOF, SIGTERM and full-pipe cleanup"
+        "Runtime smoke passed: startup rollback receipt, filesystem/network denial, concurrent root replacement, deduplication, cursors, budgets, cancellation, EOF, SIGTERM and full-pipe cleanup"
     )
 
 

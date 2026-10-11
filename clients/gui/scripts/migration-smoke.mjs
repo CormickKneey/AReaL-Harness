@@ -17,6 +17,9 @@ const binary = process.env.AREAL_GUI_EXECUTABLE
   ? resolve(dirname(process.env.AREAL_GUI_EXECUTABLE), "../Resources/areal-core/bin/areal")
   : process.env.AREAL_CORE_BIN || join(root, "target/debug/areal");
 assert.ok(binary, "AREAL_CORE_BIN must point to the actual built Core");
+const binarySha256AtStart = createHash("sha256")
+  .update(await readFile(binary))
+  .digest("hex");
 const scratch = await mkdtemp("/private/tmp/areal-gui-");
 const workspace = join(scratch, "workspace");
 await mkdir(workspace);
@@ -159,8 +162,8 @@ const server = createServer(async (req, res) => {
         id: `child-${index}`,
         type: "function",
         function: {
-          name: "agent_spawn_configured",
-          arguments: JSON.stringify({ input: [{ type: "text", text: prompt }], workspaceMode: "sharedReadOnly" }),
+          name: "agent_spawn",
+          arguments: JSON.stringify({ prompt, intent: "inspect", delivery: "report" }),
         },
       })),
     });
@@ -185,8 +188,20 @@ await writeFile(
   config,
   `schema_version=1\n[model]\nprovider="fixture"\nname="fixture"\n[model.providers.fixture]\nprotocol="chat-completions"\nendpoint=${JSON.stringify(endpoint)}\n`,
 );
+// 本地 SSE fixture 必须直连；保留宿主已有排除项并同步两种大小写。
+const noProxy = [
+  ...new Set(
+    [process.env.NO_PROXY, process.env.no_proxy, "127.0.0.1,localhost,::1"]
+      .filter(Boolean)
+      .flatMap((value) => value.split(","))
+      .map((value) => value.trim())
+      .filter(Boolean),
+  ),
+].join(",");
 const env = {
   ...process.env,
+  NO_PROXY: noProxy,
+  no_proxy: noProxy,
   AREAL_GUI: "workbench",
   AREAL_BACKEND: "areal",
   AREAL_CORE_BIN: binary,
@@ -201,7 +216,8 @@ delete env.AREAL_CORE_WORKSPACE;
 if (process.env.AREAL_GUI_EXECUTABLE) delete env.AREAL_CORE_BIN;
 let app,
   page,
-  passed = false;
+  passed = false,
+  failure = null;
 const errors = [],
   frames = [],
   checks = [];
@@ -223,6 +239,14 @@ async function until(predicate, label) {
     await new Promise((r) => setTimeout(r, 80));
   }
   throw Error("Timeout: " + label);
+}
+async function waitForPopupMotion(selector) {
+  // Base UI 先移除起始样式，之后才创建过渡；此前 getAnimations() 可能为空。
+  await page.locator(`${selector}:not([data-starting-style]):not([data-ending-style])`).waitFor();
+  await page.locator(selector).evaluate(async el => {
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    await Promise.all(el.getAnimations().map(animation => animation.finished));
+  });
 }
 async function shot(name) {
   await page.screenshot({
@@ -266,6 +290,7 @@ async function quit() {
   app = null;
 }
 console.log("GUI evidence:", scratch);
+console.log("Core binary SHA-256 at start:", binarySha256AtStart);
 try {
   await launch();
   const sandbox = await app.evaluate(({ BrowserWindow }) => {
@@ -341,9 +366,7 @@ try {
   assert.equal(await resources.getByRole("button", { name: /子对话$/ }).count(), 3);
   assert.equal(await page.locator("[data-testid=chat-view]").evaluate(el => el.getBoundingClientRect().width), mainWidth);
   // 等待入场缩放结束再检查最终宽度，避免把动画中的 98% 尺寸当成布局回归。
-  await page.locator(".task-resources-popup").evaluate(async el => {
-    await Promise.all(el.getAnimations().map(animation => animation.finished));
-  });
+  await waitForPopupMotion(".task-resources-popup");
   assert.equal(await page.locator(".task-resources-popup").evaluate(el => el.getBoundingClientRect().width), 332);
   await page.keyboard.press("Escape");
   await resources.waitFor({ state: "hidden" });
@@ -353,18 +376,14 @@ try {
   await resources.getByRole("button", { name: "预览图片 消息图片", exact: true }).click();
   await page.getByRole("button", { name: "关闭图片预览", exact: true }).waitFor();
   await page.waitForFunction(() => document.activeElement?.closest('[data-slot="dialog-content"]'));
-  await page.locator('[data-slot="dialog-content"]').evaluate(async el => {
-    await Promise.all(el.getAnimations().map(animation => animation.finished));
-  });
+  await waitForPopupMotion('[data-slot="dialog-content"]');
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "关闭图片预览", exact: true }).waitFor({ state: "hidden" });
   await resources.waitFor();
   await resources.getByRole("button", { name: /变更.*个文件/ }).waitFor();
   assert.ok(await resources.getByRole("button", { name: /变更.*1 个文件/ }).count());
   await resources.getByRole("heading", { name: "workspace", exact: true }).click();
-  await page.locator(".task-resources-popup").evaluate(async el => {
-    await Promise.all(el.getAnimations().map(animation => animation.finished));
-  });
+  await waitForPopupMotion(".task-resources-popup");
   await writeFile(join(scratch, "resource-layout.json"), JSON.stringify(await page.locator(".task-resources-popup").evaluate(el => ({
     width: el.getBoundingClientRect().width, background: getComputedStyle(el).backgroundColor, backgroundImage: getComputedStyle(el).backgroundImage,
     token: getComputedStyle(el).getPropertyValue("--color-popover"),
@@ -423,6 +442,29 @@ try {
   await input().fill("");
   await call("manage", { projectId: pid, threadId: tid, operation: "processTerminate", id: backgroundProcess.id });
   checks.push("Core children: compact 332px four-group resources, Escape/focus, running/completed/interrupted side conversations, switching/closing preserve parent and composer draft");
+  const executionList = await call("manage", {
+    projectId: pid,
+    parentThreadId: tid,
+    operation: "executions",
+    offset: 0,
+    limit: 50,
+  });
+  const execution = executionList.data.find((item) => item.threadId === doneChild.id);
+  assert.ok(execution?.executionId);
+  assert.equal(execution.settled, true);
+  assert.equal(execution.verification.status, "notRun");
+  assert.equal(execution.delivery.status, "notRequired");
+  await openPanel("子任务");
+  const executionCard = page.getByTestId(`execution-${execution.executionId}`);
+  await executionCard.waitFor();
+  assert.match(await executionCard.innerText(), /未运行检查/);
+  assert.match(await executionCard.innerText(), /报告交付/);
+  assert.equal(await button("创建子任务").isVisible(), false);
+  await shot("02-subtask-delivery");
+  await button("关闭面板").click();
+  checks.push(
+    "unified agent delegation; one subtask panel; verification and delivery stay distinct",
+  );
   // 已有完整验收通过后，视觉行文修正只重跑其真实资源/事件路径。
   if (!process.env.AREAL_GUI_RESOURCE_SMOKE_ONLY) {
   await send("审批写入");
@@ -663,6 +705,7 @@ try {
   passed = true;
   console.log(JSON.stringify({ passed, scratch, checks }));
 } catch (error) {
+  failure = error.stack || error.message;
   console.error("renderer errors", errors);
   console.error(await page?.locator("body").innerText());
   await shot("failure").catch(() => {});
@@ -725,7 +768,10 @@ try {
       .update(await readFile(join(root, path)))
       .digest("hex");
   }
-  const diff = execFileSync("git", ["diff", "--binary", "HEAD"], { cwd: root });
+  const diff = execFileSync("git", ["diff", "--binary", "HEAD"], {
+    cwd: root,
+    maxBuffer: 32 * 1024 * 1024,
+  });
   await writeFile(
     join(scratch, "manifest.json"),
     JSON.stringify(
@@ -733,11 +779,17 @@ try {
         passed,
         commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root }).toString().trim(),
         sourceFiles,
+        binarySha256AtStart,
         binarySha256: createHash("sha256")
           .update(await readFile(binary))
           .digest("hex"),
         diffSha256: createHash("sha256").update(diff).digest("hex"),
         binary,
+        controller: {
+          node: process.version,
+          executable: process.execPath,
+          sha256: createHash("sha256").update(await readFile(process.execPath)).digest("hex"),
+        },
         platform: process.platform,
         arch: process.arch,
         runtime: "real Electron + real Rust Core/Runtime + deterministic local HTTP/SSE model",
@@ -746,6 +798,7 @@ try {
         frames,
         checks,
         errors,
+        failure,
       },
       null,
       2,

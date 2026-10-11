@@ -140,6 +140,8 @@ pub struct App {
     pub freshness: BTreeMap<String, Instant>,
     pub observed: BTreeMap<String, Instant>,
     pub groups: Vec<Value>,
+    pub execution_view: bool,
+    pub execution_next_offset: Option<u64>,
     pub group: Option<Value>,
     pub group_id: Option<String>,
     pub group_scroll: usize,
@@ -207,6 +209,8 @@ impl App {
             freshness: BTreeMap::new(),
             observed: BTreeMap::new(),
             groups: Vec::new(),
+            execution_view: false,
+            execution_next_offset: None,
             group: None,
             group_id: None,
             group_scroll: 0,
@@ -638,12 +642,36 @@ impl App {
         let Some(id) = self.group_id.clone() else {
             return Ok(());
         };
-        if self
-            .pending
-            .values()
-            .chain(self.outbox.iter())
-            .any(|r| r.method == "areal/workgroup/wait")
-        {
+        if self.pending.values().chain(self.outbox.iter()).any(|r| {
+            matches!(
+                r.method.as_str(),
+                "areal/workgroup/wait" | "areal/execution/wait" | "areal/execution/read"
+            )
+        }) {
+            return Ok(());
+        }
+        if self.execution_view {
+            if let Some(execution) = &self.group
+                && execution["executionId"].as_str() == Some(&id)
+                && execution["settled"] == false
+            {
+                let parent = self.selected.clone().context("Select a task first")?;
+                if execution["status"] == "awaitingDelivery" {
+                    // 只读等待在候选就绪时提前返回；交付阶段按间隔刷新，避免紧循环。
+                    self.group_retry = Instant::now() + Duration::from_secs(2);
+                    self.queue(
+                        "areal/execution/read",
+                        json!({"parentThreadId":parent,"executionId":id}),
+                        Purpose::Group(self.group_generation),
+                    )?;
+                } else {
+                    self.queue(
+                        "areal/execution/wait",
+                        json!({"parentThreadId":parent,"executionId":id,"timeoutMs":3000}),
+                        Purpose::Group(self.group_generation),
+                    )?;
+                }
+            }
             return Ok(());
         }
         if let Some(group) = &self.group
@@ -659,11 +687,37 @@ impl App {
         }
         Ok(())
     }
+    fn show_executions(&mut self) -> Result<()> {
+        ensure!(
+            self.capabilities.is_empty() || self.capabilities.contains("areal/execution/list"),
+            "This Core does not provide unified subtask execution; legacy history is available with /groups"
+        );
+        let parent = self.selected.clone().context("Select a task first")?;
+        self.view = View::Groups;
+        self.groups.clear();
+        self.execution_next_offset = None;
+        self.execution_view = true;
+        self.focus = Focus::Navigation;
+        self.group = None;
+        self.group_id = None;
+        self.group_generation += 1;
+        self.queue(
+            "areal/execution/list",
+            json!({"parentThreadId":parent,"offset":0,"limit":50}),
+            Purpose::Group(self.group_generation),
+        )
+    }
     fn show_groups(&mut self) -> Result<()> {
         ensure!(
             self.capabilities.is_empty() || self.capabilities.contains("areal/workgroup/list"),
             "This Core has no Workgroup service configured"
         );
+        if self.execution_view {
+            self.groups.clear();
+            self.group = None;
+            self.group_id = None;
+        }
+        self.execution_view = false;
         self.view = View::Groups;
         self.focus = Focus::Navigation;
         self.group_generation += 1;
@@ -680,11 +734,16 @@ impl App {
         self.group_scroll = 0;
         self.nav_selected = Some(NavTarget::Group(id.into()));
         self.group_generation += 1;
-        self.queue(
-            "areal/workgroup/read",
-            json!({"id":id}),
-            Purpose::Group(self.group_generation),
-        )
+        let (method, params) = if self.execution_view {
+            let parent = self.selected.clone().context("Select a task first")?;
+            (
+                "areal/execution/read",
+                json!({"parentThreadId":parent,"executionId":id}),
+            )
+        } else {
+            ("areal/workgroup/read", json!({"id":id}))
+        };
+        self.queue(method, params, Purpose::Group(self.group_generation))
     }
     pub fn submit(&mut self) -> Result<bool> {
         let input = self.input.trim().to_owned();
@@ -741,7 +800,7 @@ impl App {
                 self.prepare_context()?;
                 self.sync_subscriptions()?;
             }
-            "/agents" => self.topology(true)?,
+            "/agents" | "/executions" => self.show_executions()?,
             "/topology" => self.topology(false)?,
             "/groups" => self.show_groups()?,
             "/help" => self.view = View::Help,
@@ -758,6 +817,16 @@ impl App {
                 self.input_cursor = self.input.len();
                 self.completion_dismissed = true;
                 return Ok(false);
+            }
+            "/more" if self.view == View::Groups && self.execution_view => {
+                let parent = self.selected.clone().context("Select a task first")?;
+                if let Some(offset) = self.execution_next_offset {
+                    self.queue(
+                        "areal/execution/list",
+                        json!({"parentThreadId":parent,"offset":offset,"limit":50}),
+                        Purpose::Group(self.group_generation),
+                    )?;
+                }
             }
             "/more" => {
                 let parent = if self.agent_panel() {
@@ -806,8 +875,8 @@ impl App {
                 } else if let Some(prompt) = input.strip_prefix("/spawn ") {
                     let parent = self.selected.as_ref().context("Create a thread first")?;
                     self.queue(
-                        "areal/agent/spawn",
-                        json!({"parentThreadId":parent,"input":[{"type":"text","text":prompt}]}),
+                        "areal/agent/delegate",
+                        json!({"requestId":crate::goal_request_id(),"parentThreadId":parent,"input":[{"type":"text","text":prompt}]}),
                         Purpose::Ordinary,
                     )?;
                 } else if let Some(path) = input
@@ -821,9 +890,21 @@ impl App {
                     };
                     let params = serde_json::from_slice(&std::fs::read(path.trim())?)?;
                     self.view = View::Groups;
+                    self.execution_view = false;
                     self.group_generation += 1;
                     self.queue(method, params, Purpose::Group(self.group_generation))?;
+                } else if let Some(id) = input.strip_prefix("/execution-cancel ") {
+                    let parent = self.selected.clone().context("Select a task first")?;
+                    self.execution_view = true;
+                    self.view = View::Groups;
+                    self.group_generation += 1;
+                    self.queue(
+                        "areal/execution/cancel",
+                        json!({"parentThreadId":parent,"executionId":id.trim(),"mode":"graceful"}),
+                        Purpose::Group(self.group_generation),
+                    )?;
                 } else if let Some(id) = input.strip_prefix("/group-cancel ") {
+                    self.execution_view = false;
                     self.group_generation += 1;
                     self.group_id = Some(id.trim().into());
                     self.group = None;
@@ -834,6 +915,7 @@ impl App {
                         Purpose::Group(self.group_generation),
                     )?;
                 } else if let Some(id) = input.strip_prefix("/group ") {
+                    self.execution_view = false;
                     self.open_group(id.trim())?;
                 } else if input.starts_with('/') {
                     bail!("Unknown command. Use /help.");
@@ -1452,7 +1534,7 @@ impl App {
             KeyCode::F(1) => self.view = View::Help,
             KeyCode::F(2) => self.theme_original = Some(self.prefs.theme),
             KeyCode::F(3) => self.topology(false)?,
-            KeyCode::F(4) => self.show_groups()?,
+            KeyCode::F(4) => self.show_executions()?,
             KeyCode::F(5) => {
                 self.picker = Some(Picker::new(PickerKind::Sessions));
                 self.load_page(None, true)?;
@@ -1622,7 +1704,11 @@ impl App {
             }
             KeyCode::Char('r') => {
                 if self.view == View::Groups {
-                    self.show_groups()?;
+                    if self.execution_view {
+                        self.show_executions()?;
+                    } else {
+                        self.show_groups()?;
+                    }
                 } else {
                     let parent = if self.agent_panel() {
                         match &rows[index].target {
@@ -1645,7 +1731,7 @@ impl App {
             return self
                 .groups
                 .iter()
-                .filter_map(|g| g["id"].as_str())
+                .filter_map(|g| g["executionId"].as_str().or_else(|| g["id"].as_str()))
                 .map(|id| NavRow {
                     target: NavTarget::Group(id.into()),
                     depth: 0,
@@ -1982,11 +2068,35 @@ impl App {
                     }
                 }
                 Purpose::Group(generation) => {
+                    if request.method.starts_with("areal/execution/")
+                        && request.params["parentThreadId"].as_str() != self.selected.as_deref()
+                    {
+                        return Ok(());
+                    }
                     if generation != self.group_generation {
                         return Ok(());
                     }
                     if let Some(data) = result["data"].as_array() {
-                        self.groups = data.clone();
+                        if request.method == "areal/execution/list"
+                            && request.params["offset"].as_u64().unwrap_or(0) > 0
+                        {
+                            for item in data {
+                                if !self
+                                    .groups
+                                    .iter()
+                                    .any(|old| old["executionId"] == item["executionId"])
+                                {
+                                    self.groups.push(item.clone());
+                                }
+                            }
+                        } else {
+                            self.groups = data.clone();
+                        }
+                        self.execution_next_offset = result["nextOffset"].as_u64();
+                    }
+                    if result["executionId"].is_string() {
+                        self.group_id = result["executionId"].as_str().map(str::to_owned);
+                        self.group = Some(result.clone());
                     }
                     if result["record"].is_object() {
                         self.group_id = result["id"].as_str().map(str::to_owned);
@@ -2014,6 +2124,36 @@ impl App {
                                 t.goals.event_sequence = sequence;
                                 t.goals.goal = serde_json::from_value(result["goal"].clone())?;
                                 self.histories.entry(id.into()).or_default().invalidate();
+                            }
+                        }
+                    }
+                    "areal/agent/delegate" => {
+                        // 创建回包可能晚于用户后续导航，不能切换面板或重置选中项。
+                        if let Some(id) = result["threadId"].as_str()
+                            && !self.in_flight("thread/read", "threadId", id)
+                        {
+                            self.queue(
+                                "thread/read",
+                                json!({"threadId":id,"includeTurns":false}),
+                                Purpose::Summary(id.into()),
+                            )?;
+                        }
+                        if request.params["parentThreadId"].as_str() == self.selected.as_deref() {
+                            self.status = format!(
+                                "Subtask {}: {} · /executions for progress",
+                                safe_text(result["title"].as_str().unwrap_or("created")),
+                                result["status"].as_str().unwrap_or("unknown")
+                            );
+                            if self.view == View::Groups && self.execution_view {
+                                if let Some(item) = self
+                                    .groups
+                                    .iter_mut()
+                                    .find(|item| item["executionId"] == result["executionId"])
+                                {
+                                    *item = result.clone();
+                                } else {
+                                    self.groups.push(result.clone());
+                                }
                             }
                         }
                     }
@@ -3016,6 +3156,35 @@ pub(crate) mod tests {
         assert_eq!(app.outbox[0].params["threadId"], "child");
     }
     #[test]
+    fn delegation_reply_preserves_later_navigation_and_loads_child_history() {
+        let mut app = App::new(Preferences::default());
+        app.selected = Some("parent".into());
+        app.view = View::Agents;
+        app.focus = Focus::Navigation;
+        app.nav_selected = Some(NavTarget::Thread("parent".into()));
+        app.pending.insert(
+            1,
+            Request {
+                method: "areal/agent/delegate".into(),
+                params: json!({"parentThreadId":"parent"}),
+                purpose: Purpose::Ordinary,
+                submitted_input: None,
+            },
+        );
+        app.receive(json!({"id":1,"result":{"executionId":"execution","parentThreadId":"parent","threadId":"child","title":"child task","status":"running"}})).unwrap();
+        assert_eq!(app.view, View::Agents);
+        assert_eq!(app.focus, Focus::Navigation);
+        assert_eq!(app.nav_selected, Some(NavTarget::Thread("parent".into())));
+        assert!(app.outbox.iter().any(
+            |request| request.method == "thread/read" && request.params["threadId"] == "child"
+        ));
+        assert!(
+            !app.outbox
+                .iter()
+                .any(|request| request.method == "areal/execution/list")
+        );
+    }
+    #[test]
     fn resume_replaces_old_history_without_switching_selection() {
         let mut app = App::new(Preferences::default());
         app.selected = Some("parent".into());
@@ -3192,6 +3361,71 @@ pub(crate) mod tests {
             !app.outbox
                 .iter()
                 .any(|r| r.method == "areal/workgroup/wait")
+        );
+    }
+    #[test]
+    fn unified_execution_commands_keep_owner_and_stop_waiting_after_settlement() {
+        let mut app = App::new(Preferences::default());
+        app.selected = Some("parent".into());
+        app.show_executions().unwrap();
+        let list = app.outbox.pop_front().unwrap();
+        assert_eq!(list.method, "areal/execution/list");
+        assert_eq!(list.params["parentThreadId"], "parent");
+        app.pending.insert(1, list);
+        app.receive(json!({"id":1,"result":{"data":[{"executionId":"child","status":"running"}],"nextOffset":50}})).unwrap();
+        assert_eq!(app.nav_rows()[0].target, NavTarget::Group("child".into()));
+        assert_eq!(app.execution_next_offset, Some(50));
+        app.open_group("child").unwrap();
+        let index = app
+            .outbox
+            .iter()
+            .position(|request| request.method == "areal/execution/read")
+            .unwrap();
+        let read = app.outbox.remove(index).unwrap();
+        assert_eq!(read.method, "areal/execution/read");
+        assert_eq!(read.params["parentThreadId"], "parent");
+        app.pending.insert(2, read);
+        app.receive(
+            json!({"id":2,"result":{"executionId":"child","status":"running","settled":false}}),
+        )
+        .unwrap();
+        app.watch_group().unwrap();
+        let index = app
+            .outbox
+            .iter()
+            .position(|request| request.method == "areal/execution/wait")
+            .unwrap();
+        let wait = app.outbox.remove(index).unwrap();
+        assert_eq!(wait.method, "areal/execution/wait");
+        assert_eq!(wait.params["executionId"], "child");
+        assert!(wait.params.get("afterRevision").is_none());
+        app.pending.insert(3, wait);
+        app.receive(json!({"id":3,"result":{"executionId":"child","status":"completed","settled":true,"delivery":{"status":"conflict"}}})).unwrap();
+        app.watch_group().unwrap();
+        assert!(
+            !app.outbox
+                .iter()
+                .any(|request| request.method == "areal/execution/wait")
+        );
+        assert_eq!(
+            app.group.as_ref().unwrap()["delivery"]["status"],
+            "conflict"
+        );
+        app.group =
+            Some(json!({"executionId":"child","status":"awaitingDelivery","settled":false}));
+        app.watch_group().unwrap();
+        app.watch_group().unwrap();
+        assert_eq!(
+            app.outbox
+                .iter()
+                .filter(|request| request.method == "areal/execution/read")
+                .count(),
+            1
+        );
+        assert!(
+            !app.outbox
+                .iter()
+                .any(|request| request.method == "areal/execution/wait")
         );
     }
 }

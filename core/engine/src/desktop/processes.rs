@@ -8,6 +8,11 @@ impl Engine {
         request: ProcessStart,
     ) -> Result<Value> {
         self.mutate(move|engine|async move{
+            // 启动与交付使用同一准入门；已启动进程仍由 Runtime 计数与收尾证明。
+            let _workspace=tokio::select!{biased;
+                _=engine.shutdown.cancelled()=>return Err(Error::Closed),
+                guard=engine.workspace_gate.clone().read_owned()=>guard,
+            };
             let admission = engine.desktop.lifecycle.gate.lock().await;
             if !engine.accepting_work(){return Err(Error::Closed);}
             let runtime=engine.runtime.as_ref().ok_or_else(||invalid("Runtime is not configured"))?;

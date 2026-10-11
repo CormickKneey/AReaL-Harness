@@ -5,6 +5,7 @@
 mod admission;
 mod context;
 mod control;
+mod delivery;
 pub mod service;
 pub(crate) mod tools;
 pub use admission::AdmissionDecision;
@@ -34,6 +35,14 @@ use tree::{Tree, compose, digest, materialize};
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TaskConfiguration {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub approval_tools: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub append_instructions: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_model_rounds: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model_revision: Option<String>,
     pub agent_profile: Option<areal_protocol::desktop::VersionRef>,
@@ -277,6 +286,8 @@ pub struct Record {
     pub cleanup_confirmed: Option<bool>,
     #[serde(default)]
     pub cleanup_error: Option<String>,
+    #[serde(default = "strict_checks")]
+    pub trusted_checks: bool,
     pub final_check: Option<Check>,
     #[serde(default)]
     pub final_checks: Vec<Check>,
@@ -287,6 +298,10 @@ pub struct Record {
     #[serde(default)]
     pub admission: AdmissionStats,
     pub wall_seconds: f64,
+}
+
+fn strict_checks() -> bool {
+    true
 }
 
 fn bounded(text: &str) -> String {
@@ -626,6 +641,7 @@ impl Workgroup {
             error: None,
             cleanup_confirmed: None,
             cleanup_error: None,
+            trusted_checks: true,
             final_check: None,
             final_checks: vec![],
             attempts: 0,
@@ -862,7 +878,7 @@ impl Workgroup {
         options: Options,
         stop: CancellationToken,
     ) -> Result<Record> {
-        validate_commands(&checks, true)?;
+        validate_commands(&checks, self.record.trusted_checks)?;
         ensure!(
             (1..=32).contains(&options.workers)
                 && options.initial_workers <= 32
@@ -1138,6 +1154,8 @@ impl Workgroup {
                 }
                 self.save_async().await?;
             }
+            // 自动隔离可以只交付候选；没有检查不能产生通过回执。
+            if checks.is_empty() { return Ok(()); }
             let final_tree = head.clone(); let final_executor = executor.clone(); let token = cancel.child_token();
             let commands = checks.clone();
             jobs.spawn(async move { Event::FinalVerification(final_executor.verify(final_tree, commands, token).await) });

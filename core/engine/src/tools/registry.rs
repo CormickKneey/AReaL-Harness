@@ -155,6 +155,13 @@ pub(crate) struct RegisteredTool {
 
 impl RegisteredTool {
     pub fn validate_input(&self, arguments: &Value) -> anyhow::Result<()> {
+        // 旧回放参数只兼容内置协调后端；同名外部工具仍严格使用自身 schema。
+        if matches!(self.backend, Backend::Coordination)
+            && let Some(result) =
+                crate::agents::validate_legacy_arguments(&self.definition.name, arguments)
+        {
+            return result;
+        }
         self.input
             .validate(arguments)
             .map_err(|e| anyhow::anyhow!("invalid tool arguments at {}: {}", e.instance_path, e))
@@ -443,6 +450,70 @@ impl ToolExtensions {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn legacy_coordination_arguments_are_bounded_and_never_relax_external_schemas() {
+        let registry = Registry::new(true, &ToolExtensions::default())
+            .unwrap()
+            .with_agents(true)
+            .unwrap();
+        for (name, args) in [
+            (
+                "agent_spawn",
+                json!({"prompt":"inspect","maxModelRounds":2}),
+            ),
+            ("agent_read", json!({"threadId":"child","offset":3})),
+            ("agent_wait", json!({"threadId":"child","timeoutMs":0})),
+            (
+                "agent_wait_any",
+                json!({"threadIds":["child"],"timeoutMs":1}),
+            ),
+            (
+                "agent_send_input",
+                json!({"threadId":"child","prompt":"update"}),
+            ),
+            ("agent_cancel", json!({"threadId":"child","mode":"force"})),
+        ] {
+            registry.get(name).unwrap().validate_input(&args).unwrap();
+        }
+        for (name, args) in [
+            (
+                "agent_spawn",
+                json!({"prompt":"inspect","maxModelRounds":0}),
+            ),
+            (
+                "agent_spawn",
+                json!({"prompt":"inspect","delivery":"patch"}),
+            ),
+            ("agent_read", json!({"threadId":"child","offset":-1})),
+            (
+                "agent_read",
+                json!({"threadId":"child","prompt":"unexpected"}),
+            ),
+            ("agent_wait", json!({"threadId":"child","timeoutMs":60001})),
+            ("agent_wait_any", json!({"threadIds":["child","child"]})),
+            ("agent_send_input", json!({"threadId":"child"})),
+            ("agent_cancel", json!({"threadId":"child","mode":"other"})),
+        ] {
+            assert!(
+                registry.get(name).unwrap().validate_input(&args).is_err(),
+                "{name}: {args}"
+            );
+        }
+        let definition = registry.get("agent_spawn").unwrap().definition.clone();
+        assert_eq!(
+            definition.input_schema["required"],
+            json!(["prompt", "intent", "delivery"])
+        );
+        let mut external = Registry::default();
+        external.insert(definition, Backend::Client).unwrap();
+        assert!(
+            external
+                .get("agent_spawn")
+                .unwrap()
+                .validate_input(&json!({"prompt":"inspect"}))
+                .is_err()
+        );
+    }
     #[test]
     fn research_can_retrieve_its_own_results_without_other_desktop_tools() {
         let registry = Registry::new(true, &ToolExtensions::default())

@@ -1,5 +1,5 @@
 'use strict';
-const { execFileSync } = require('node:child_process');
+const { executeCore } = require('./core-process.cjs');
 const { statSync } = require('node:fs');
 
 const requiredCoreCommands = Object.freeze([
@@ -7,22 +7,21 @@ const requiredCoreCommands = Object.freeze([
   Object.freeze(['config', 'models', 'write']),
 ]);
 
-function coreCommandHelp(binary, args) {
+async function coreCommandHelp(binary, args) {
   try {
-    return execFileSync(binary, [...args, '--help'], {
-      encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    return (await executeCore(binary, [...args, '--help'], { timeout: 5000 })).stdout;
   } catch (error) {
     return `${error.stdout ?? ''}\n${error.stderr ?? ''}`;
   }
 }
 
-function inspectCoreCapabilities(binary) {
-  const missing = requiredCoreCommands.filter(args => /unrecognized subcommand/.test(coreCommandHelp(binary, args.slice(0, -1))));
+async function inspectCoreCapabilities(binary) {
+  const help = await Promise.all(requiredCoreCommands.map(args => coreCommandHelp(binary, args.slice(0, -1))));
+  const missing = requiredCoreCommands.filter((args, index) => /unrecognized subcommand/.test(help[index]));
   if (!missing.length) return;
   let identity = binary;
   try {
-    const version = execFileSync(binary, ['--version'], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+    const version = (await executeCore(binary, ['--version'], { timeout: 5000 })).stdout.trim();
     const built = statSync(binary).mtime.toISOString();
     identity = `${binary}（${version}，构建时间 ${built}）`;
   } catch { /* 版本信息只用于诊断，缺少它不影响拒绝结果。 */ }
@@ -45,6 +44,7 @@ function projectCoreCapabilities(binary, capabilities) {
       goals: supports('areal/goal/create', 'areal/goal/get'),
       tasks: supports('areal/task/create', 'areal/inbox/list'),
       processes: supports('areal/process/start', 'areal/process/list', 'areal/process/get', 'areal/process/read', 'areal/process/write', 'areal/process/closeStdin', 'areal/process/wait', 'areal/process/terminate', 'areal/process/resize'),
+      executions: supports('areal/agent/delegate', 'areal/execution/list', 'areal/execution/read'),
       workgroups: supports('areal/workgroup/start', 'areal/workgroup/list'),
     } : null,
   };

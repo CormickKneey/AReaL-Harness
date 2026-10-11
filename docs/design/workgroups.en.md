@@ -8,11 +8,17 @@ Workgroups execute bounded DAGs through the production Engine, with private Runt
 
 [Source](diagrams/workgroup-architecture.drawio) · [Concurrency diagram](diagrams/workgroup-concurrency.svg) · [Concurrency source](diagrams/workgroup-concurrency.drawio)
 
+## Relationship to unified delegation
+
+Workgroup is the isolated executor within unified Agent collaboration. Core selects it for ordinary tasks, without a separate user feature switch or plan JSON. Shared delegation handles lightweight analysis, current-environment operations, and serial modification; isolation handles bounded candidate changes. Unified delegation owns execution identity, ownership, cancellation, budgets, and delivery; this module remains authoritative for DAG and artifact state.
+
+Automatic isolation and explicit trusted verification share execution capabilities but provide different verification guarantees. The automatic service can omit final checks, in which case it records the candidate and actual evidence and projects `notRun`, never `passed`. Explicit `--workgroup-policy` retains nonempty trusted checks, authorized write paths, and strict completion semantics. The diagram and final-verification flow describe strict mode; missing checks cannot obtain equivalent guarantees through an empty command.
+
 ## Scheduling and artifacts
 
 Plans declare exact writes, execution dependencies `depends` and verification dependencies `integrationDepends`; their union must be acyclic. Tasks sharing writes may be packed together while independent branches retain concurrency. Task packing and execution admission are separate controls.
 
-Workers submit source changes only within allowed paths. Verification uses a trusted toolchain and the exact candidate tree, checking that verification itself did not alter it. Local passes allow incremental integration; final combined checks establish completion. Receipts bind tree hashes and generations, so old results cannot authorize new artifacts.
+Workers submit source changes only within allowed paths. Verification uses a trusted toolchain and the exact candidate tree, checking that verification itself did not alter it. Local passes allow incremental integration; final combined checks establish completion in strict mode. Receipts bind tree hashes and generations, so old results cannot authorize new artifacts.
 
 ## Concurrency
 

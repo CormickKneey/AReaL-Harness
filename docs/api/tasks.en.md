@@ -96,7 +96,7 @@ pause durably stops dispatch and cancels current coordinator/workers. cancel als
 
 `desktop/task-mode.json` stores Tasks, Channels and idempotency receipts. Limits are 1024 Tasks, 8192 receipts and 32 MiB per deployment, plus 128 Runs and 1024 messages per Task. Capacity exhaustion rejects or pauses work without deleting history. Running or suspended Runs pause after a Core restart and require explicit resume; schedules that have not fired remain registered. Unknown tool effects are not replayed. server/drain pauses Tasks and time triggers. server/status.activeTasks includes pending timestamps, so ifIdle does not treat them as idle.
 
-Thread snapshot version is 12; the API remains areal.core.v1. Old Threads/Goals remain readable; legacy Goals register a Task on their first resume. Older binaries cannot read new snapshots. Embedded hosts call `Engine::start_task_scheduler()` after model/tool assembly; app-server calls it automatically.
+Thread snapshot version is 13; the API remains areal.core.v1. Old Threads/Goals remain readable; legacy Goals register a Task on their first resume. Older binaries cannot read new snapshots. Embedded hosts call `Engine::start_task_scheduler()` after model/tool assembly; app-server calls it automatically.
 
 For a scheduled Task with a total Token cap, updating or resuming its Goal checks the per-Run limit against the total minus confirmed and reserved usage of other Runs. The per-Run limit cannot be removed. Exceeding it returns `TASK_TOKEN_BUDGET` as an invalid-arguments error without saving the update or resuming execution. There is currently no public operation to change a scheduled Task total cap; additional total allowance requires explicitly creating a new Task.
 
@@ -135,3 +135,5 @@ Example schedule:
 ```
 
 Task worker model rounds are unlimited when neither caller nor parent config supplies a limit; explicit limits remain inherited and enforced. A deployment Goal ceiling of 0 means unlimited, not a zero-call allowance. Task/Channel record capacities below remain separate service resource limits.
+
+Task storage writes version 2 and reads version 1. TaskWorker preserves legacy threadId/turnId and adds optional execution/executionId for shared and isolated workers. Models use agent_spawn; legacy task_spawn remains callable but hidden. Undelivered candidates cannot complete a Run. When no Turn is active, Core wakes the original coordinator without repeating execution.

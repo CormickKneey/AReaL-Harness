@@ -15,9 +15,12 @@ LAUNCHER = Path(__file__).resolve().parents[1] / "launch.py"
 
 class LauncherTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="areal-launch-test-")
+        # 真实服务使用 Unix socket；系统默认 TMPDIR 在 macOS 上可能超出路径长度上限。
+        self.temporary = tempfile.TemporaryDirectory(
+            prefix="areal-launch-test-", dir="/tmp" if os.name == "posix" else None
+        )
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        self.root = Path(self.temporary.name).resolve()
         self.bin = self.root / "bin"
         self.bin.mkdir()
         self.workspace = self.root / "workspace"

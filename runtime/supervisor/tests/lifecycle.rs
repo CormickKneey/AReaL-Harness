@@ -1395,6 +1395,85 @@ fn cumulative_output_cannot_be_less_than_a_single_process() {
 }
 
 #[tokio::test]
+async fn artifact_commands_require_write_authority_and_keep_operation_receipts() {
+    let directory = tempfile::tempdir().unwrap();
+    let executor = Executor::new(false);
+    let mut config = Config::read_only(directory.path().into());
+    config.writable = true;
+    config.file_helper = Some(std::env::current_exe().unwrap());
+    let runtime = Supervisor::new(config, executor.clone()).unwrap();
+    let root = runtime.connection_info().root_scope_id;
+    assert_eq!(
+        runtime.connection_info().capabilities["filesystem"]["artifactDelivery"],
+        true
+    );
+    let mut child = child(&runtime, &root);
+    child.permissions.write_roots = Some(vec![]);
+    let readonly = runtime.create_scope(child).unwrap();
+    let commands = [
+        FileCommand::StageFileChunk {
+            path: "workspace://repo/code".into(),
+            upload_id: uuid::Uuid::new_v4().to_string(),
+            offset: 0,
+            data_base64: STANDARD.encode(b"source"),
+        },
+        FileCommand::CommitFile {
+            path: "workspace://repo/code".into(),
+            upload_id: uuid::Uuid::new_v4().to_string(),
+            expected: ExpectedFile::Absent,
+            expected_executable: None,
+            sha256: "a".repeat(64),
+            executable: true,
+        },
+        FileCommand::RemoveFile {
+            path: "workspace://repo/code".into(),
+            expected_sha256: "a".repeat(64),
+            expected_executable: true,
+        },
+    ];
+    for command in commands {
+        let denied = FileRequest {
+            operation_id: op(&runtime),
+            scope_id: readonly.scope_id.clone(),
+            command: command.clone(),
+        };
+        assert_eq!(
+            runtime.filesystem(denied).await.unwrap_err().code,
+            ErrorCode::PermissionDenied
+        );
+        let request = FileRequest {
+            operation_id: op(&runtime),
+            scope_id: root.clone(),
+            command,
+        };
+        let call = {
+            let runtime = runtime.clone();
+            let request = request.clone();
+            tokio::spawn(async move { runtime.filesystem(request).await })
+        };
+        bounded(executor.entered()).await;
+        let id = executor
+            .executions
+            .lock()
+            .unwrap()
+            .last()
+            .unwrap()
+            .process_id
+            .clone();
+        executor
+            .finish(&id, br#"{"result":{"confirmed":true}}"#)
+            .await;
+        assert_eq!(bounded(call).await.unwrap().unwrap()["confirmed"], true);
+        let starts = executor.starts.load(Ordering::SeqCst);
+        assert_eq!(
+            runtime.filesystem(request).await.unwrap()["confirmed"],
+            true
+        );
+        assert_eq!(executor.starts.load(Ordering::SeqCst), starts);
+    }
+}
+
+#[tokio::test]
 async fn deployment_public_inputs_reject_writes_replacement_and_permission_expansion() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().canonicalize().unwrap();

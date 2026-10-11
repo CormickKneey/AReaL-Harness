@@ -113,7 +113,7 @@ function client(options = {}) {
     },
     requestAnimationFrame: (callback) => callback(),
     setInterval: () => 0,
-    setTimeout: () => 0,
+    setTimeout: options.setTimeout ?? (() => 0),
     clearTimeout: () => {},
     Date: class extends Date {
       static now() {
@@ -551,4 +551,121 @@ test("ordinary visits and reloads connect with the cookie without minting creden
     c.startup.map((event) => event.type),
     ["socket"],
   );
+});
+
+test("unified subtasks keep verification and delivery distinct and ignore another task's late list", async () => {
+  const c = client();
+  c.run("executionsSupported = true");
+  const listing = c.run("listExecutions()");
+  const request = c.requests.at(-1);
+  assert.equal(request.method, "areal/execution/list");
+  assert.equal(request.params.parentThreadId, "thread");
+  const execution = {
+    executionId: "execution-1",
+    parentThreadId: "thread",
+    title: "修改解析器",
+    status: "completed",
+    settled: true,
+    resourcesReleased: true,
+    text: "候选已验证",
+    error: null,
+    verification: { status: "passed", kind: "trusted" },
+    delivery: { status: "conflict" },
+  };
+  c.run(
+    `pending.get(${request.id}).resolve(${JSON.stringify({ data: [execution], nextOffset: null })})`,
+  );
+  await listing;
+  const text = c
+    .get("groups")
+    .children[0].children.map((child) => child.textContent)
+    .join(" ");
+  assert.match(text, /检查通过/);
+  assert.match(text, /交付存在冲突/);
+  assert.doesNotMatch(text, /改动已应用/);
+  const cancelled = c.run(
+    `executionCard(${JSON.stringify({ ...execution, status: "cancelled", delivery: { status: "cancelled" } })}, "thread", groupObservation)`,
+  );
+  const cancelledText = cancelled.children.map((child) => child.textContent).join(" ");
+  assert.match(cancelledText, /已取消.*交付已取消/);
+  assert.doesNotMatch(cancelledText, /改动已应用|等待结果|停止子任务/);
+  const stale = c.run("listExecutions()");
+  const staleRequest = c.requests.at(-1);
+  c.run('thread = {id:"another",turns:[]}');
+  c.run(
+    `pending.get(${staleRequest.id}).resolve(${JSON.stringify({ data: [execution], nextOffset: null })})`,
+  );
+  await stale;
+  assert.equal(c.get("groups").children.length, 0);
+});
+
+test("subtask cancellation stays bound to its owner and an uncertain reply is not retried", async () => {
+  const c = client();
+  c.run("executionsSupported = true");
+  const listing = c.run("listExecutions()");
+  const request = c.requests.at(-1);
+  const execution = {
+    executionId: "execution-2",
+    parentThreadId: "thread",
+    status: "running",
+    settled: false,
+    resourcesReleased: false,
+    text: "",
+    error: null,
+    verification: { status: "notRun", kind: "none" },
+    delivery: { status: "pending" },
+  };
+  c.run(
+    `pending.get(${request.id}).resolve(${JSON.stringify({ data: [execution], nextOffset: null })})`,
+  );
+  await listing;
+  const cancel = c
+    .get("groups")
+    .children[0].children.find((child) => child.textContent === "停止子任务");
+  c.run('thread = {id:"another",turns:[]}');
+  const stopping = cancel.onclick();
+  const stopRequest = c.requests.at(-1);
+  assert.equal(stopRequest.method, "areal/execution/cancel");
+  assert.deepEqual(stopRequest.params, {
+    parentThreadId: "thread",
+    executionId: "execution-2",
+    mode: "graceful",
+  });
+  c.run(`pending.get(${stopRequest.id}).reject(Error("connection lost"))`);
+  await stopping;
+  assert.equal(c.requests.filter((item) => item.method === "areal/execution/cancel").length, 1);
+  assert.match(c.get("notice").textContent, /不会自动重发/);
+});
+
+test("candidate delivery refreshes on an interval without busy-waiting or writing", async () => {
+  const timers = [];
+  const c = client({
+    setTimeout: (callback, delay) => {
+      timers.push({ callback, delay });
+      return 0;
+    },
+  });
+  const showing = c.run('showExecution("candidate", "thread", groupObservation)');
+  const request = c.requests.at(-1);
+  const execution = {
+    executionId: "candidate",
+    parentThreadId: "thread",
+    status: "awaitingDelivery",
+    settled: false,
+    resourcesReleased: true,
+    text: "",
+    error: null,
+    verification: { status: "notRun", kind: "none" },
+    delivery: { status: "candidate" },
+  };
+  c.run(`pending.get(${request.id}).resolve(${JSON.stringify(execution)})`);
+  await new Promise(setImmediate);
+  assert.equal(c.requests.filter((item) => item.method === "areal/execution/wait").length, 0);
+  assert.equal(c.requests.filter((item) => item.method === "areal/execution/read").length, 1);
+  const refresh = timers.find((timer) => timer.delay === 2000);
+  assert.ok(refresh);
+  c.run('thread = {id:"another",turns:[]}');
+  refresh.callback();
+  await showing;
+  assert.equal(c.requests.filter((item) => item.method.startsWith("areal/execution/")).length, 1);
 });

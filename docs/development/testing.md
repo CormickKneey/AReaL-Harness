@@ -6,7 +6,7 @@
 
 | 入口 | 范围 |
 |---|---|
-| `make verify` | Cordis pin、格式、静态检查、Rust workspace、两套 SDK、Python、文档和 TUI smoke |
+| `make verify` | Cordis pin、格式、静态检查、Rust workspace、两套 SDK、Python、文档、TUI 与统一委派 smoke |
 | `make script-test` | 启动器、Web 思考/等待/取消投影、perf 统计/证据与文档链接/语言配对 |
 | `make test-core` / `make test-protocol` | Engine / app-server |
 | `make test-concurrency` | 并发原语 |
@@ -15,6 +15,7 @@
 | `make verify-native` | macOS 原生后端测试与 Harness 集成 smoke；通用回归由 `make verify` 覆盖 |
 | `make examples-desktop-api` | [直接 API、CLI、Skill 与搬迁打包产物](../examples/desktop-api.md) |
 | `make workgroup-smoke` | 独立 Runtime 写入、组合验收、命令期限与失败后结算 |
+| `make unified-execution-smoke` | 统一模型工具、并行隔离候选、组合交付、所有权检查、取消与重启恢复 |
 
 快照格式变更须运行 `make verify-harness`：Harness 与插件 smoke 核对写入版本，桌面搬迁测试同时核对发行 manifest、`areal/server/status.stateVersion` 与实际快照版本一致。
 

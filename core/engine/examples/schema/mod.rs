@@ -302,9 +302,59 @@ pub fn projections() -> (Value, Value) {
     );
     insert(&["workgroup/list"], data(group_entry));
     insert(
-        &["workgroup/artifact"],
+        &["workgroup/artifact", "execution/artifact"],
         json!({"oneOf":[object(json!({"head":string,"paths":array(string.clone()),"nextOffset":number,"complete":boolean})),object(json!({"head":string,"path":string,"exists":boolean,"baseSha256":nullable(string.clone()),"sha256":nullable(string.clone()),"executable":nullable(boolean.clone()),"bytes":number,"offset":number,"nextOffset":number,"complete":boolean,"dataBase64":string,"text":nullable(string.clone())}))]}),
     );
+    let mut execution = object(json!({
+        "executionId":string,"parentThreadId":string,"title":string,"status":string,
+        "settled":boolean,"resourcesReleased":boolean,"text":string,"error":nullable(string.clone()),
+        "verification":object(json!({"status":{"enum":["notRun","passed","failed"]},"kind":{"enum":["none","project","trusted"]}})),
+        "delivery":object(json!({"status":{"enum":["notRequired","pending","candidate","preparing","applying","applied","conflict","partial","unknown","failed","requiresActiveTurn","cancelled"]}}))
+    }));
+    execution["properties"]["verification"]["properties"]["head"] = string.clone();
+    // 后端句柄与选择原因仅用于可选诊断，不成为调用方判断完成的依据。
+    for (name, value) in [
+        ("threadId", string.clone()),
+        ("turnId", string.clone()),
+        ("strategy", string.clone()),
+        ("reason", string.clone()),
+        ("offset", number.clone()),
+        ("nextOffset", nullable(number.clone())),
+        ("textBytes", number.clone()),
+        ("source", string.clone()),
+        ("sourceItemId", string.clone()),
+        ("stopRequested", boolean.clone()),
+        (
+            "owner",
+            schema::<areal_protocol::delegation::ExecutionOwner>(),
+        ),
+        (
+            "artifact",
+            object(json!({"head":string,"workgroupId":string})),
+        ),
+    ] {
+        execution["properties"][name] = value;
+    }
+    insert(
+        &[
+            "agent/delegate",
+            "execution/read",
+            "execution/cancel",
+            "execution/apply",
+        ],
+        execution.clone(),
+    );
+    insert(
+        &["execution/list"],
+        object(json!({"data":array(execution.clone()),"nextOffset":nullable(number.clone())})),
+    );
+    let mut execution_wait = execution;
+    execution_wait["properties"]["timedOut"] = boolean.clone();
+    execution_wait["required"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("timedOut"));
+    insert(&["execution/wait"], execution_wait);
     insert(
         &["agent/list"],
         object(json!({"data":array(thread.clone()),"nextCursor":nullable(string.clone())})),
@@ -374,6 +424,14 @@ pub fn projections() -> (Value, Value) {
         object(json!({"threadId":string,"turnId":string,"itemId":string,"summaryIndex":{"type":"integer","minimum":0},"delta":string})),
     );
     notifications.insert("areal/context/compacted".into(),object(json!({"threadId":string,"beforeBytes":number,"afterBytes":number,"durationMs":number,"usage":nullable(schema::<ModelUsage>())})));
+    notifications.insert(
+        "areal/model/completionDiscarded".into(),
+        object(json!({"threadId":string,"itemIds":array(string.clone()),"retry":{"type":"integer","minimum":1},"retryKind":{"enum":["network","completion"]}})),
+    );
+    notifications.insert(
+        "areal/model/watchdogRetry".into(),
+        object(json!({"threadId":string,"turnId":nullable(string.clone()),"purpose":{"enum":["solve","summary"]},"retry":{"type":"integer","minimum":1},"delayMs":number})),
+    );
     notifications.insert(
         "areal/tool/cancelled".into(),
         object(json!({"requestId":{"type":["string","integer"]}})),

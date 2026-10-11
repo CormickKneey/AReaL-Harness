@@ -40,11 +40,8 @@ def main():
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source / name, target)
         if platform.system() == "Darwin":
-            subprocess.run(
-                ["/usr/bin/codesign", "--force", "--sign", "-", str(target)],
-                check=True,
-                capture_output=True,
-            )
+            # 保留构建产物的有效签名和字节，不能隐式改变已验收二进制的代码身份。
+            # 缺失或损坏的签名必须由构建流程修复，打包阶段不能掩盖它们。
             subprocess.run(
                 ["/usr/bin/codesign", "--verify", "--strict", str(target)],
                 check=True,
@@ -61,7 +58,7 @@ def main():
         "workingTree": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=root)),
         "profile": args.profile,
         "apiVersion": "areal.core.v1",
-        "stateVersion": 12,
+        "stateVersion": 13,
         "platform": target_platform,
         "files": files,
         "prerequisites": [

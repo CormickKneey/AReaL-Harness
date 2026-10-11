@@ -205,7 +205,7 @@
             aria-controls="workgroups"
             tabindex="-1"
           >
-            协同任务与验收
+            子任务与交付
           </button>
           <button
             id="tasks-tab"
@@ -298,19 +298,25 @@
       <section id="workgroups" role="tabpanel" aria-labelledby="groups-tab" tabindex="0" hidden>
         <div class="panel-heading">
           <div>
-            <h2>协同任务与验收</h2>
-            <p class="muted">查看执行进度、调整计划与检查验收结果。</p>
+            <h2>子任务与交付</h2>
+            <p class="muted">Core 自动安排子任务；在这里查看进度、验证与最终交付。</p>
           </div>
           <button id="groups-refresh" type="button" class="secondary">
-            <svg aria-hidden="true"><use href="#icon-refresh"></use></svg>刷新协同任务
+            <svg aria-hidden="true"><use href="#icon-refresh"></use></svg>刷新子任务
           </button>
         </div>
-        <form id="group-start">
-          <label for="group-plan">执行计划（JSON，包含 requestId、plan、workers）</label>
-          <textarea id="group-plan" rows="7" spellcheck="false" required></textarea>
-          <button type="submit">开始协同任务</button>
-        </form>
-        <section id="groups" aria-label="协同任务列表"></section>
+        <details>
+          <summary>高级：兼容工作组计划与历史</summary>
+          <button id="legacy-groups-refresh" type="button" class="secondary">
+            读取兼容工作组历史
+          </button>
+          <form id="group-start">
+            <label for="group-plan">执行计划（JSON，包含 requestId、plan、workers）</label>
+            <textarea id="group-plan" rows="7" spellcheck="false" required></textarea>
+            <button type="submit">开始协同任务</button>
+          </form>
+        </details>
+        <section id="groups" aria-label="子任务与交付列表"></section>
       </section>
       <section id="task-center" role="tabpanel" aria-labelledby="tasks-tab" hidden>
         <div class="panel-heading">

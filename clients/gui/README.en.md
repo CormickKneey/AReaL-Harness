@@ -6,7 +6,7 @@ The complete desktop client contains a React renderer, Electron native adapter, 
 
 ## Development
 
-Run from the repository root with Node.js 22.19+, pnpm 11.7.0 and the repository Rust toolchain:
+Run from the repository root with Node.js 22.19+, pnpm 11.7.0 and the repository Rust toolchain. Use the same Node.js 22 LTS version as CI for both packaging and validation:
 
 ```sh
 make build
@@ -24,7 +24,7 @@ Both development and installed macOS builds require a working `/usr/bin/python3`
 
 ## Composer
 
-Model settings separately show saved enablement, Core credential source (environment, securely stored, or no authentication), readiness, and pending/applied configuration, with a separate indication for unsaved changes. Saving leaves running projects unchanged; applying refreshes Composer's model catalog. See the [configuration guide](../../docs/guides/configuration.en.md#shared-gui-and-cli-model-catalog) for states and the shared interface.
+Model settings separately show saved enablement, Core credential source (environment, securely stored, or no authentication), readiness, and pending/applied configuration, with a separate indication for unsaved changes. Saving leaves running projects unchanged; applying refreshes Composer's model catalog. Settings back and category buttons remain disabled until saving or applying finishes, then become available so navigation clicks are not silently discarded. See the [configuration guide](../../docs/guides/configuration.en.md#shared-gui-and-cli-model-catalog) for states and the shared interface.
 
 New drafts and existing chats share the grouped action/Skills catalog and search through `+` and `/`. Arrow keys select, Enter confirms, and Esc closes it. Skills attach to the current message; Core reads their content before sending, and failures preserve the draft and tags. An available selected model opens effort first, then the actual catalog; a missing or unavailable selection opens the catalog directly. Core supplies effort values and availability. Models with missing credentials retain their names and show “Missing API Key” as disabled options. “Configure models” opens model settings; the empty catalog's configuration control is also clickable. `pnpm --dir clients/gui run test:model-selection` uses isolated Electron/Core instances to verify the catalog, settings entry, credential save and apply, and model execution. Remote provider support needs separate verification.
 
@@ -34,15 +34,23 @@ A new send or steer clears the previous operation's UI error. A failed attempt s
 
 Images show thumbnails. “Show in text box” appends UTF-8 text attachments to the body. Pasting more than 200 characters or at least five lines creates a text card; expansion is limited to 1 MiB. Removing files or skills preserves the body. Goal mode uses the same editor; goal creation consumes only the objective and leaves other attachments unsent. `pnpm --dir clients/gui run test:composer` verifies these paths with isolated Electron/Core/Runtime instances.
 
+## Subtasks and delivery
+
+Describe the objective in the ordinary composer; Core arranges child execution. The Subtasks panel presents progress, verification evidence, and delivery status together. Open a child's process to inspect its history; Core continues to own waits and cancellation. Passing checks, pending application, conflicts, partial application, and unknown outcomes remain distinct. Candidate deliveries support paginated file previews and whole-change application managed by Core. If the original task is no longer active, continue it to accept delivery; the interface never labels an unapplied candidate as success.
+
+Advanced legacy delegation and Workgroup history retains manual read-only delegation, explicit plans, and historical inspection. These controls are not prerequisites for ordinary tasks. When an older Core lacks the unified execution interface, the panel explains the limitation and keeps legacy history accessible.
+
 ## Conversation resources
 
 The conversation header's “Task resources” opens a compact popover below the header icon with workspace changes, direct Core child agents, managed background processes, and user attachments and verified file-read sources. Git workspaces retain a review entry when the change count is zero; other empty resource groups are omitted. Changes and processes open the existing review and process panels.
 
-Child-agent creation records in the conversation and entries in the resource list open a right-side child conversation. It reads real history through the same message and tool components. Avatars are generated locally from the authoritative Core Thread ID without an external image service. Child tabs support switching and closing; closing a reading view does not stop the task, and reopening restores from Core. The main conversation and input draft keep their existing owner. Ordinary child conversations and isolated Workgroup writers retain their respective existing entry points.
+Child-agent creation records in the conversation and entries in the resource list open a right-side child conversation. It reads real history through the same message and tool components. Avatars are generated locally from the authoritative Core Thread ID without an external image service. Child tabs support switching and closing; closing a reading view does not stop the task, and reopening restores from Core. The main conversation and input draft keep their existing owner. The unified Subtasks panel continues to present execution, verification, and delivery state; the advanced section retains compatible history access.
 
 ## Lifecycle
 
-The renderer accesses the desktop adapter through narrow preload IPC. The independent adapter connects through `areal service ensure/restart/stop --json`, without managing Core PIDs. GUI exit disconnects the interface and settles GUI-owned terminals; Core Turn/Goal and configured scheduled tasks continue. Reopening restores authoritative snapshots without replaying submissions. Stopping the background service is explicit; safe stop rejects busy instances.
+On macOS, the desktop adapter retains system `/usr/bin/python3` as the parent of trusted Core commands, matching Runtime’s native launch approach. Arguments, environment, and standard streams are preserved. Timeouts, cancellation, and forced termination target the actual Core child; adapter or bridge exit cleans up its still-running direct child. This path never replays writes or terminates persistent services already established by Core. `pnpm --dir clients/gui run test:core-process` verifies signal exits, timeout escalation, cancellation, output limits, and process cleanup.
+
+The renderer accesses the desktop adapter through narrow preload IPC. The independent adapter connects through `areal service ensure/restart/stop --json`, without managing persistent Core service PIDs. GUI exit disconnects the interface and settles GUI-owned terminals; Core Turn/Goal and configured scheduled tasks continue. Reopening restores authoritative snapshots without replaying submissions. Stopping the background service is explicit; safe stop rejects busy instances.
 
 When a Core observation connection closes unexpectedly, its project owner retries with backoff from 500ms to 30s, discovers a compatible running instance through `service status --instance`, and restores Thread/Task snapshots, subscriptions and notification baselines. `thread/resume` also restores tool-host binding. Recovery does not submit tasks again, synchronize Provider/MCP configuration or execute configuration revision barriers. Retired connections lose permission to update projections through messages or asynchronous results. Explicit stop, adapter shutdown, a stopping Core or an incompatible deployment fingerprint blocks automatic recovery; reconnection requires an explicit action.
 
@@ -66,7 +74,9 @@ pnpm --dir clients/gui run sign:mac --app "/absolute/new-package/package/mac-arm
 
 `gui-package` only stages a macOS arm64 candidate, defaulting to the already-built debug Core; installation packages use release Core as shown above. Candidate outputs include an `.app`, ad-hoc ZIP, dependency inventory and Core integrity manifest, and do not establish package acceptance. `sign:mac` uses an independent copy for Developer ID signing, app/DMG Apple notarization, stapling, Gatekeeper, and general desktop plus model-selection acceptance. Deliver its final ZIP/DMG after those checks pass. Use fresh output directories and bind the bundled Core revision to the final fix commit. Candidates have no automatic-update configuration; signing and notarization do not publish. See the [release guide](../../docs/development/releasing.en.md#gui-releases) for production publication and the update channel.
 
-`make gui-smoke` runs real Electron/Core/Runtime against a deterministic local HTTP model with native sandboxing enabled. The project picker is injected with an isolated temporary workspace. Screenshots and `manifest.json` remain in the printed temporary directory. Set `AREAL_GUI_EXECUTABLE` to the absolute installed app executable for package testing; that mode uses bundled Core instead of an external binary. Real account login, paid models, other operating systems, and signed distribution require separate acceptance.
+When staging a candidate package, `AREAL_GUI_CORE_BUNDLE=/absolute/core-bundle` can reuse a frozen Core bundle. Packaging still verifies embedded component hashes, and releases require a `release` Core. This setting only selects packaging input.
+
+`make gui-smoke` runs real Electron/Core/Runtime against a deterministic local HTTP model with native sandboxing enabled. The project picker is injected with an isolated temporary workspace. Local model requests connect directly over loopback, preserving and merging existing `NO_PROXY` / `no_proxy` entries. Screenshots and `manifest.json` remain in the printed temporary directory; the manifest records Core binary checksums before and after the run and any failure reason. Set `AREAL_GUI_EXECUTABLE` to the absolute installed app executable for package testing; that mode uses bundled Core instead of an external binary. Real account login, paid models, other operating systems, and signed distribution require separate acceptance.
 
 Finish Core builds before starting desktop smoke tests that use that binary, and do not relink it during acceptance. Model-selection smoke waits for saving and the Core model-selection state before the next action; GUI CI runs it and uploads logs, screenshots and manifests. On Core model-configuration child-process failure, the background service log preserves the operation, exit code, signal and timeout classification without recording secrets or the full environment.
 

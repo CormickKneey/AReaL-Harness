@@ -545,6 +545,26 @@ async fn serve(
                 factory,
             )?)?;
         }
+        // 自动隔离沿用宿主的工作区写授权；没有部署验收时只报告候选和实际检查证据。
+        if args.allow_write && runtime.is_some() && limits.max_children_per_turn > 0 {
+            use areal_engine::workgroup::service::{NativeFactory, Service};
+            let executable = std::env::current_exe()?;
+            let bin = executable.parent().context("executable directory missing")?;
+            let packaged = bin.join("../libexec/areal");
+            let directory = if packaged.is_dir() { packaged } else { bin.to_owned() };
+            let binary = args.runtime.clone().unwrap_or_else(|| directory.join("areal-runtime"));
+            let helper = args.file_helper.clone().unwrap_or_else(|| binary.with_file_name("areal-runtime-fs"));
+            if let (Ok(binary), Ok(helper)) = (binary.canonicalize(), helper.canonicalize()) {
+                let workspace = workspace.canonicalize()?;
+                if !binary.starts_with(&workspace) && !helper.starts_with(&workspace) {
+                    let factory = Arc::new(NativeFactory { worker_limits: limits.clone(), watchdog_disable: config.watchdog_disable,
+                        tool_call_limits: areal_engine::model::ToolCallLimits { max_calls: config.max_response_tool_calls, max_buffer_bytes: config.max_tool_buffer_bytes },
+                        catalog: Some(Arc::downgrade(&engine)), model: model.clone(), runtime: binary, file_helper: helper,
+                        toolchain: args.workgroup_toolchain.clone() });
+                    engine.attach_automatic_workgroups(Service::open_automatic(&config.data_dir.join("executions"), &workspace, factory, limits.model_concurrency)?)?;
+                }
+            }
+        }
         let auth_path = args.auth_file.clone().unwrap_or_else(|| config.data_dir.join("security/auth.json"));
         if args.auth_file.is_none() && !auth_path.exists() {
             use std::io::Write;

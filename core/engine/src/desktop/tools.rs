@@ -37,8 +37,20 @@ impl Engine {
             "agent_spawn_configured" => {
                 let mut request = args.clone();
                 request["parentThreadId"] = json!(thread_id);
+                let turn_id = cell
+                    .state
+                    .lock()
+                    .await
+                    .active
+                    .as_ref()
+                    .ok_or(Error::Conflict)?
+                    .id
+                    .clone();
                 let mut result = self
-                    .spawn_agent(serde_json::from_value(request).map_err(invalid)?)
+                    .spawn_agent_for_model(
+                        serde_json::from_value(request).map_err(invalid)?,
+                        turn_id,
+                    )
                     .await?;
                 result.as_object_mut().unwrap().remove("thread");
                 result.as_object_mut().unwrap().remove("turn");

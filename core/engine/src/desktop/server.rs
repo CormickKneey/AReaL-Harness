@@ -77,15 +77,33 @@ impl Engine {
             },
             None => Value::Null,
         };
-        let groups = if let Some(service) = self.workgroups.get() {
-            service.list().await
-        } else {
-            json!([])
-        };
-        let unsettled = groups.as_array().is_some_and(|g| {
-            g.iter()
-                .any(|g| g["status"] == "running" || g["cleanupConfirmed"] != true)
-        });
+        let mut groups = Vec::new();
+        let mut unsettled = false;
+        for (automatic, service) in [
+            (false, self.workgroups.get()),
+            (true, self.automatic_workgroups.get()),
+        ] {
+            let Some(service) = service else {
+                continue;
+            };
+            for mut group in service.list().await.as_array().cloned().unwrap_or_default() {
+                unsettled |= group["status"] == "running" || group["cleanupConfirmed"] != true;
+                if let Some(id) = group["id"].as_str() {
+                    match self.workgroup_delivery_status(id, automatic).await {
+                        Ok(delivery) if !delivery.is_null() => {
+                            unsettled |= matches!(
+                                delivery["status"].as_str(),
+                                Some("unknown" | "preparing" | "applying")
+                            );
+                            group["deliveryStatus"] = delivery["status"].clone();
+                        }
+                        Err(_) => unsettled = true,
+                        _ => {}
+                    }
+                }
+                groups.push(group);
+            }
+        }
         json!({"configuration":self.configuration_status.read().unwrap().clone(),"activeTasks":active_tasks,"activeGoals":active_goals,"pendingQueueItems":pending_queue_items,"compactions":compacting,"workgroups":groups,"apiVersion":API_VERSION,"stateVersion":crate::store::STATE_VERSION,"productVersion":env!("CARGO_PKG_VERSION"),"draining":self.desktop.lifecycle.draining.load(Ordering::Acquire),"closed":self.is_closed(),"acceptingWork":self.accepting_work(),"activeTurns":active,"resources":resources,"unresolvedTools":unknown,"runtime":runtime,"capacity":{"threads":cells.len(),"maxThreads":self.limits.max_threads,"activeTurns":self.limits.max_active_turns-self.active_turns.available_permits(),"maxActiveTurns":self.limits.max_active_turns,"historyBytesPerThread":self.limits.max_history_bytes,"blobBytes":512*1024*1024u64},"restartSafe":active.is_empty()&&resources.is_empty()&&unknown.is_empty()&&compacting.is_empty()&&!unsettled})
     }
     pub async fn drain(self: &Arc<Self>, strategy: String, timeout_ms: u64) -> Result<Value> {
@@ -166,7 +184,10 @@ impl Engine {
                 }
             }
             if strategy == "cancel" {
-                if let Some(service) = engine.workgroups.get() {
+                for service in [engine.workgroups.get(), engine.automatic_workgroups.get()]
+                    .into_iter()
+                    .flatten()
+                {
                     let _ = tokio::time::timeout_at(deadline, service.shutdown()).await;
                 }
                 for cell in &cells {

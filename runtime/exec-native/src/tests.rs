@@ -27,6 +27,57 @@ fn execution(root: &Path, code: &str) -> Execution {
         network: areal_runtime_protocol::NetworkRequest::Deny,
     }
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn builtin_launcher_requires_the_exact_deployment_executable() {
+    let mut exec = execution(Path::new("/workspace"), "unused");
+    exec.builtin_executables = vec!["/deployment/areal-runtime-fs".into()];
+    for (program, trusted) in [
+        ("/deployment/areal-runtime-fs", true),
+        ("/deployment/other", false),
+        ("/deployment/areal-runtime-fs-sibling", false),
+        ("/deployment/./areal-runtime-fs", false),
+        ("areal-runtime-fs", false),
+        ("/bin/sh", false),
+    ] {
+        exec.argv = vec![program.into(), "--search".into(), "{}".into()];
+        let mut command = macos_command(&exec, "/usr/bin/sandbox-exec");
+        command.args(["-p", "fixed-policy", program, "--search", "{}"]);
+        let command = command.as_std();
+        assert_eq!(
+            command.get_program(),
+            if trusted {
+                "/usr/bin/python3"
+            } else {
+                "/usr/bin/sandbox-exec"
+            },
+            "{program}"
+        );
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(
+            &args[args.len() - 5..],
+            ["-p", "fixed-policy", program, "--search", "{}"],
+            "启动桥接必须保留沙箱策略与原始命令"
+        );
+    }
+    exec.argv = vec!["relative-helper".into()];
+    exec.builtin_executables = vec!["relative-helper".into()];
+    assert_eq!(
+        macos_command(&exec, "/usr/bin/sandbox-exec")
+            .as_std()
+            .get_program(),
+        "/usr/bin/sandbox-exec"
+    );
+    exec.trusted_executable = Some("/deployment/other-helper".into());
+    assert_eq!(
+        macos_command(&exec, "/usr/bin/sandbox-exec")
+            .as_std()
+            .get_program(),
+        "/usr/bin/python3"
+    );
+}
+
 async fn collect(
     rx: &mut mpsc::Receiver<Event>,
     backend: &NativeBackend,

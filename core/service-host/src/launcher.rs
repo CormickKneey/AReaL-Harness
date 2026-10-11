@@ -1,5 +1,6 @@
 //! 可信本地启动器；只管理独立 Core/Runtime 进程，不拥有其业务状态。
 use anyhow::{Context, Result, bail, ensure};
+use areal_local_service::native_process::{TrustedChild as Child, TrustedCommand};
 use clap::Parser;
 use std::{
     ffi::OsString,
@@ -10,7 +11,7 @@ use std::{
     process::Stdio,
     time::Duration,
 };
-use tokio::{process::Child, time::Instant};
+use tokio::time::Instant;
 
 #[derive(Parser)]
 #[command(name = "areal launcher", disable_help_flag = false)]
@@ -394,16 +395,21 @@ async fn preflight(args: &Args) -> Result<(PathBuf, PathBuf, PathBuf)> {
         .map_or_else(std::env::current_dir, |p| Ok(p.clone()))?
         .canonicalize()?;
     ensure!(workspace.is_dir(), "workspace must be a directory");
-    let mut check = tokio::process::Command::new(&binary);
+    let mut check = TrustedCommand::supervised(&binary, &[])?;
     check.args(["config", "show"]).args(args.core_overrides());
     let output = check
-        .output()
+        .output(Duration::from_secs(15))
         .await
         .context("preflight Core configuration")?;
     ensure!(
         output.status.success(),
-        "Core configuration failed: {}",
-        String::from_utf8_lossy(&output.stderr)
+        "Core configuration failed ({}): {}",
+        output.status,
+        if output.stderr.is_empty() {
+            "<no stderr>".into()
+        } else {
+            String::from_utf8_lossy(&output.stderr)
+        }
     );
     let config: serde_json::Value = serde_json::from_slice(&output.stdout)?;
     let data = config["server"]["data_dir"]
@@ -616,7 +622,8 @@ async fn launch(
         .stdin(Stdio::from(request_read))
         .stdout(Stdio::from(response_write))
         .stderr(stderr(&diagnostic)?);
-    let mut runtime_child = runtime_command.spawn().context("start Runtime")?;
+    let mut core_command = TrustedCommand::supervised(binary, &[supervisor_fd])?;
+    let mut runtime_child = Child::direct(runtime_command.spawn().context("start Runtime")?);
     drop(runtime_command);
     eprintln!(
         "AReaL launcher {} PID: {}",
@@ -627,7 +634,6 @@ async fn launch(
         },
         runtime_child.id().unwrap_or_default()
     );
-    let mut core_command = tokio::process::Command::new(binary);
     core_command
         .arg("app-server")
         .arg("--runtime-stdio")
@@ -675,16 +681,8 @@ async fn launch(
         .stdin(Stdio::from(response_read))
         .stdout(Stdio::from(request_write))
         .stderr(stderr(&diagnostic)?);
-    // Core 必须继承专用生命周期描述符；父端由 launcher 持有至退出。
-    unsafe {
-        core_command.pre_exec(move || {
-            if libc::fcntl(supervisor_fd, libc::F_SETFD, 0) < 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
-    let started_core = core_command.spawn();
+    // TrustedCommand 只转交专用生命周期描述符；父端仍由 launcher 持有至退出。
+    let started_core = core_command.spawn().await;
     drop(core_command);
     match started_core {
         Ok(mut core_child) => {
@@ -832,7 +830,7 @@ async fn supervise(
         if let Some(value) = &args.initial_prompt {
             command.arg("--").arg(value);
         }
-        Some(command.spawn().context("start TUI")?)
+        Some(Child::direct(command.spawn().context("start TUI")?))
     } else {
         None
     };

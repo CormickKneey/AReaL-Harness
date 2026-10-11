@@ -18,6 +18,10 @@ capabilities reports actual sandbox, fullAccess, rootNetwork, methods and proces
 
 Standard deployments expose capabilities.builtinTools.searchFiles with a trusted file-helper path. The Runtime file helper links ripgrep search libraries directly and does not consult host rg configuration. Core search_files invokes it inside the existing Runtime Scope; older external Runtimes without this capability receive UNSUPPORTED with upgrade guidance.
 
+On macOS, embedded search and fs.execute share the system Python launch bridge, which runs the original sandbox command. process.start selects this bridge only when its first command argument exactly matches the deployment-configured absolute helper path; this does not expand Scope permissions or access to the helper's parent directory.
+
+If Runtime assembly fails, `connection.open` reports the original error after startup rollback, with `initializationFailed=true` and `cleanupConfirmed` in `error.details`. Only a failure with confirmed rollback and a normal process exit may be treated as unavailable isolation. `CLEANUP_FAILED`, EOF without a receipt, and abnormal exits do not authorize a safe fallback. This failure handshake waits at most four seconds and accepts no task requests. The Rust Client also marks initialization as clean when the operating system refuses process creation before any Runtime starts. Normal shutdown and UNKNOWN semantics remain unchanged.
+
 ## Methods
 
 | Method | params |
@@ -83,6 +87,10 @@ fs.execute is available only with a trusted helper. command.kind selects:
 | write | `path,dataBase64,expected` | `sha256,size` |
 | applyPatch | `path,oldText,newText,expectedSha256` | `sha256,size` |
 | applyPatches | `path,patches[{oldText,newText}],expectedSha256` | `sha256,size` |
+
+Large artifact delivery uses `stageFileChunk {path,uploadId,offset,dataBase64}` (at most 64 KiB per chunk, 8 MiB total), followed by `commitFile {path,uploadId,expected,expectedExecutable,sha256,executable}`. The upload ID is a UUID; offset=0 creates private staging and later offsets must match its current size. Staging lives beside the destination; missing parent directories are created with mode 0755. The target remains unchanged until commit. Commit checks the complete content hash, baseline hash, and executable bit before conditional replacement. New files use mode 0644/0755. Existing files retain read/write permissions; unchanged executable intent preserves execute bits, while newly enabled execution follows existing read bits and always enables owner execution. Special permission bits are not copied. Publication rechecks the complete original mode and rejects concurrent chmod. New files use null expectedExecutable. `removeFile {path,expectedSha256,expectedExecutable}` deletes only a matching regular file. All three operations require write authority for the target; descriptor traversal continues to reject links. `read` additionally returns executable; filesystem.artifactDelivery=true in the handshake advertises support.
+
+Staging and commit are separately auditable operations, not a multi-file transaction. Disconnection, unknown results, or post-commit cleanup failure must not be replayed with a new operation ID; abandoned staging remains available for inspection. Conditional replacement and removal do not provide atomic CAS against external processes outside Runtime locking.
 
 expected is `{kind:"absent"}` or `{kind:"sha256",value:"digest"}`. read sha256 always covers the complete file; offsets are bytes. Files are limited to 8 MiB, reads/writes to 64 KiB, and combined patch old/new text to 64 KiB with a nonempty unique match. applyPatch remains a compatibility entry point sharing the one-element applyPatches implementation. applyPatches accepts at most 32 replacements and writes only after every replacement matches uniquely against the conditional version. Stale digests, existing create targets and ambiguous patches return CONFLICT.
 

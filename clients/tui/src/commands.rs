@@ -37,10 +37,24 @@ commands![
     ("/skills", "", "Choose a skill for this session"),
     ("/skill", "NAME", "Choose a skill by name"),
     ("/new", "", "Start a new session"),
-    ("/agents", "", "Inspect this session's child agents"),
+    (
+        "/agents",
+        "",
+        "Inspect subtask progress, checks and delivery"
+    ),
+    (
+        "/executions",
+        "",
+        "Inspect subtask progress, checks and delivery"
+    ),
+    (
+        "/execution-cancel",
+        "ID",
+        "Stop a subtask and wait for cleanup"
+    ),
     ("/topology", "", "Inspect the full parent/child tree"),
     ("/tasks", "", "Browse the session plan"),
-    ("/groups", "", "Browse Workgroups in the side panel"),
+    ("/groups", "", "Advanced: browse legacy Workgroup history"),
     ("/theme", "", "Preview and save a theme"),
     (
         "/details",
@@ -54,16 +68,16 @@ commands![
     ),
     ("/open", "ID", "Open a session by ID or unique prefix"),
     ("/spawn", "PROMPT", "Delegate work under the active Turn"),
-    ("/group", "ID", "Inspect a Workgroup"),
+    ("/group", "ID", "Advanced: inspect a legacy Workgroup"),
     (
         "/group-start",
         "JSON_FILE",
-        "Start a Workgroup from a request file"
+        "Advanced: start a legacy Workgroup from a request file"
     ),
     (
         "/group-revise",
         "JSON_FILE",
-        "Revise a Workgroup from a request file"
+        "Advanced: revise a legacy Workgroup from a request file"
     ),
     ("/group-cancel", "ID", "Cancel a Workgroup"),
     ("/more", "", "Load another page of agents"),

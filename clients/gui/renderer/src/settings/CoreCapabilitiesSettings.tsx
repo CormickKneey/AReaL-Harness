@@ -21,7 +21,7 @@ export function CoreCapabilitiesSettings({ projects, connected }: { projects: Da
             <SettingsRow control={null} label="持续目标" description={core.features.goals ? "持续目标可用" : "当前 Core 未提供持续目标能力。"} />
             <SettingsRow control={null} label="任务与收件箱" description={core.features.tasks ? "任务与收件箱可用" : "当前 Core 未提供任务与收件箱能力。"} />
             <SettingsRow control={null} label="受管进程与终端" description={core.features.processes ? "受管进程与终端可用" : core.runtimeAvailable === false ? "当前 Core 未连接 Runtime，受管进程与终端不可用。" : "当前 Core 未提供完整的受管进程能力，请使用支持此功能的 Core。"} />
-            <SettingsRow control={null} label="隔离工作组" description={core.features.workgroups ? "工作组执行可用" : "当前部署未启用工作组执行。"} />
+            <SettingsRow control={null} label="子任务执行" description={core.features.executions ? "Core 自动安排子任务，统一返回进度与交付结果。" : "当前 Core 未提供统一子任务接口，可读取兼容任务历史。"} />
           </>}
         </SettingsGroupCard>;
       })}

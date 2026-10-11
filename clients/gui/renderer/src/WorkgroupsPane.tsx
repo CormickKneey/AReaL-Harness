@@ -36,7 +36,7 @@ export function WorkgroupsPane({ project, action }: { project: Data; action: Act
   const artifactKey = `${storageKey}:artifact-pending`;
   const [artifactPending, setArtifactPending] = useState(() => pendingArtifact(artifactKey));
   const [applyError, setApplyError] = useState("");
-  const [applyState, setApplyState] = useState<string | null>(null), [confirmApply, setConfirmApply] = useState(false);
+  const [applyState, setApplyState] = useState<string | null>(null);
   const [paths, setPaths] = useState<Data | null>(null), [file, setFile] = useState<Data | null>(null);
   const [planEditor, setPlanEditor] = useState<{ id?: string; initial?: WorkgroupPlan } | null>(null);
   const mounted = useRef(true), locked = useRef(false), fileGeneration = useRef(0), listRequest = useRef<Promise<void> | null>(null);
@@ -119,7 +119,7 @@ export function WorkgroupsPane({ project, action }: { project: Data; action: Act
   }, [workflowKey, request, workflows]);
   useEffect(() => {
     let live = true, timer: ReturnType<typeof setTimeout>;
-    setDetail(null); setPaths(null); setFile(null); setApplyState(null); setApplyError(""); setConfirmApply(false); setDetailError(""); fileGeneration.current++; setConfirmCancel(false);
+    setDetail(null); setPaths(null); setFile(null); setApplyState(null); setApplyError(""); setDetailError(""); fileGeneration.current++; setConfirmCancel(false);
     const tick = async () => {
       if (!selected || !connected) return;
       try { const value = await request("workgroup", { id: selected }); if (live) { acceptDetail(value); setDetailError(""); } }
@@ -203,7 +203,7 @@ export function WorkgroupsPane({ project, action }: { project: Data; action: Act
   const readFile = async (path: string, more = false) => {
     if (!detail || locked.current) return;
     const stamp = ++fileGeneration.current; locked.current = true; setBusy(true); setError("");
-    if (!more) { setFile(null); setApplyState(null); setApplyError(""); setConfirmApply(false); }
+    if (!more) { setFile(null); setApplyState(null); setApplyError(""); }
     try {
       const value = await request("workgroupArtifact", { id: detail.id, path, offset: more ? file?.nextOffset : 0 });
       if (mounted.current && fileGeneration.current === stamp) {
@@ -221,19 +221,17 @@ export function WorkgroupsPane({ project, action }: { project: Data; action: Act
     } catch (cause) { if (mounted.current && fileGeneration.current === stamp) setError((cause as Error).message); }
     finally { locked.current = false; if (mounted.current) setBusy(false); }
   };
-  const applyFile = async (apply: boolean) => {
-    if (!detail || !file || locked.current || (apply && artifactPending)) return;
+  const inspectFile = async () => {
+    if (!detail || !file || locked.current) return;
     const params = { id: detail.id, path: file.path, head: file.head };
     const stamp = fileGeneration.current;
-    locked.current = true; setBusy(true); setError(""); setConfirmApply(false); setApplyState(null); setApplyError("");
-    if (apply) storeArtifactPending(params);
+    locked.current = true; setBusy(true); setError(""); setApplyState(null); setApplyError("");
     try {
-      const value = await request(apply ? "workgroupApplyArtifact" : "workgroupArtifactStatus", params);
+      const value = await request("workgroupArtifactStatus", params);
       const pending = pendingArtifact(artifactKey);
       if (pending && pending.id === params.id && pending.path === params.path && pending.head === params.head) storeArtifactPending(null);
       if (mounted.current && fileGeneration.current === stamp) setApplyState(value.state);
     } catch (cause) {
-      if (apply && !(cause as Error & { submissionUnknown?: boolean }).submissionUnknown) storeArtifactPending(null);
       if (mounted.current && fileGeneration.current === stamp) setApplyError((cause as Error).message);
     } finally { locked.current = false; if (mounted.current) setBusy(false); }
   };
@@ -291,10 +289,10 @@ export function WorkgroupsPane({ project, action }: { project: Data; action: Act
             {applyError && <p role="alert" className="text-destructive">{applyError}</p>}
             {artifactPending && !busy && <p role="alert">应用结果待核对：{artifactPending.path}。请核对该文件的当前状态，不会自动重发。</p>}
             {applyState === "matches" && <p role="status">当前文件与此产物一致。</p>}
-            {applyState === "ready" && <p role="status">当前文件符合工作组基线，可以应用。</p>}
+            {applyState === "ready" && <p role="status">当前文件符合工作组基线。</p>}
             {applyState === "conflict" && <p role="alert">文件已变化，与工作组基线不一致；请先处理冲突。</p>}
-            <div className="flex flex-wrap gap-2"><Button size="sm" variant="outline" disabled={busy || !connected || !!artifactPending || applyState === "matches"} onClick={() => setConfirmApply(true)}>应用此文件到项目</Button><Button size="sm" variant="ghost" disabled={busy || !connected} onClick={() => void applyFile(false)}>核对文件状态</Button></div>
-            {confirmApply && <div role="group" aria-label="应用产物确认" className="rounded-control border border-border p-2"><p>{file.exists ? `将${file.baseSha256 === null ? "创建" : "替换"}项目中的 ${file.path}。` : `将删除项目中的 ${file.path}。`}</p><p className="text-foreground-subtle">仅当当前文件符合原始基线时应用此文件；其他文件不会一起改变。</p><Button size="sm" variant="ghost" onClick={() => setConfirmApply(false)}>暂不应用</Button><Button size="sm" disabled={busy || !connected || !!artifactPending} onClick={() => void applyFile(true)}>确认应用文件</Button></div>}
+            <p className="text-foreground-subtle">兼容产物只提供查看和基线核对。新的修改任务在普通输入区提交，由 Core 验证并交付整组改动。</p>
+            <Button size="sm" variant="ghost" disabled={busy || !connected} onClick={() => void inspectFile()}>核对文件状态</Button>
           </div><p>{file.path} · {file.bytes}字节{file.exists ? "" : " · 已删除"}</p><details><summary>文件校验值</summary><p className="break-all">原文件：{file.baseSha256 ?? "不存在"}</p><p className="break-all">产物：{file.sha256 ?? "不存在"}</p></details>{file.preview === null ? <p>二进制内容不支持文本预览。</p> : <pre data-testid="workgroup-artifact-text" className="whitespace-pre-wrap break-words">{file.preview}</pre>}{!file.complete && <Button size="sm" disabled={busy} onClick={() => void readFile(file.path, true)}>继续读取文件</Button>}</div>}
         </div>}
       </>}

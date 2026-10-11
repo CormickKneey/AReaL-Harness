@@ -129,6 +129,17 @@ export type FileCommand =
   | { kind: "stat"; path: string }
   | { kind: "list"; path: string; after?: string | null; limit: number }
   | { kind: "write"; path: string; dataBase64: string; expected: ExpectedFile }
+  | { kind: "stageFileChunk"; path: string; uploadId: string; offset: number; dataBase64: string }
+  | {
+      kind: "commitFile";
+      path: string;
+      uploadId: string;
+      expected: ExpectedFile;
+      expectedExecutable: boolean | null;
+      sha256: string;
+      executable: boolean;
+    }
+  | { kind: "removeFile"; path: string; expectedSha256: string; expectedExecutable: boolean }
   | {
       kind: "applyPatch";
       path: string;
@@ -143,6 +154,7 @@ export interface FileRequest<C extends FileCommand = FileCommand> {
   command: C;
 }
 export interface FileRead {
+  executable?: boolean;
   dataBase64: string;
   sha256: string;
   size: number;
@@ -164,4 +176,10 @@ export type FileResult<C extends FileCommand> = C extends { kind: "read" }
     ? FileList
     : C extends { kind: "stat" }
       ? { kind: FileKind; size: number }
-      : FileWrite;
+      : C extends { kind: "stageFileChunk" }
+        ? { uploadId: string; nextOffset: number }
+        : C extends { kind: "removeFile" }
+          ? { removed: true }
+          : C extends { kind: "commitFile" }
+            ? FileWrite & { executable: boolean }
+            : FileWrite;

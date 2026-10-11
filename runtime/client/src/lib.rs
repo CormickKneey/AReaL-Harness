@@ -99,9 +99,12 @@ impl Client {
         if writable {
             command.arg("--allow-write");
         }
-        let mut child = command
-            .spawn()
-            .map_err(|_| unavailable("cannot launch Runtime"))?;
+        let mut child = command.spawn().map_err(|_| {
+            let mut error = unavailable("cannot launch Runtime");
+            // spawn 未成功，没有已经启动的 Runtime 需要清理。
+            error.details = Some(json!({"initializationFailed":true,"cleanupConfirmed":true}));
+            error
+        })?;
         Self::attach(
             child.stdout.take().unwrap(),
             child.stdin.take().unwrap(),

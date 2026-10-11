@@ -68,15 +68,21 @@ impl Model for Delegating {
         let results: Vec<_> = messages.iter().filter(|m| m.role == "tool").collect();
         if results.is_empty() {
             return Ok(stream(vec![
-                call("agent_spawn", json!({"prompt":"child"})),
-                call("agent_spawn", json!({"prompt":"child"})),
+                call(
+                    "agent_spawn",
+                    json!({"prompt":"child","intent":"inspect","delivery":"report"}),
+                ),
+                call(
+                    "agent_spawn",
+                    json!({"prompt":"child","intent":"inspect","delivery":"report"}),
+                ),
             ]));
         }
         if self.wait_tool && results.len() == 2 {
             let first: Value = serde_json::from_str(&results[0].text_content())?;
             return Ok(stream(vec![call(
                 "agent_wait",
-                json!({"threadId":first["threadId"],"timeoutMs":60000}),
+                json!({"executionId":first["executionId"],"timeoutMs":60000}),
             )]));
         }
         let summarized = messages
@@ -282,7 +288,10 @@ impl Model for Disabled {
             Ok(stream(vec![ModelEvent::text("single")]))
         } else {
             // A hallucinated call must fail execution too, not only be hidden.
-            Ok(stream(vec![call("agent_spawn", json!({"prompt":"child"}))]))
+            Ok(stream(vec![call(
+                "agent_spawn",
+                json!({"prompt":"child","intent":"inspect","delivery":"report"}),
+            )]))
         }
     }
 }
@@ -390,20 +399,26 @@ impl Model for UnevenChildren {
         let results: Vec<_> = messages.iter().filter(|m| m.role == "tool").collect();
         if results.is_empty() {
             return Ok(stream(vec![
-                call("agent_spawn", json!({"prompt":"slow"})),
-                call("agent_spawn", json!({"prompt":"fast"})),
+                call(
+                    "agent_spawn",
+                    json!({"prompt":"slow","intent":"inspect","delivery":"report"}),
+                ),
+                call(
+                    "agent_spawn",
+                    json!({"prompt":"fast","intent":"inspect","delivery":"report"}),
+                ),
             ]));
         }
         if self.explicit_wait && results.len() == 2 {
             let ids: Vec<Value> = results
                 .iter()
                 .map(|m| {
-                    serde_json::from_str::<Value>(&m.text_content()).unwrap()["threadId"].clone()
+                    serde_json::from_str::<Value>(&m.text_content()).unwrap()["executionId"].clone()
                 })
                 .collect();
             return Ok(stream(vec![call(
                 "agent_wait_any",
-                json!({"threadIds":ids,"timeoutMs":60000}),
+                json!({"executionIds":ids,"timeoutMs":60000}),
             )]));
         }
         let has_fast = messages
@@ -544,14 +559,14 @@ impl Model for ReportingChild {
         if results.is_empty() {
             return Ok(stream(vec![call(
                 "agent_spawn",
-                json!({"prompt":"child","maxModelRounds":if self.fail {4} else {2}}),
+                json!({"prompt":"child","intent":"inspect","delivery":"report","maxModelRounds":if self.fail {4} else {2}}),
             )]));
         }
         if results.len() == 1 {
             let child: Value = serde_json::from_str(&results[0].text_content())?;
             return Ok(stream(vec![call(
                 "agent_wait",
-                json!({"threadId":child["threadId"],"timeoutMs":60000}),
+                json!({"executionId":child["executionId"],"timeoutMs":60000}),
             )]));
         }
         let report: Value = serde_json::from_str(&results[1].text_content())?;
@@ -670,7 +685,7 @@ impl Model for IgnoresRoundLimit {
         assert!(tools.is_empty());
         Ok(stream(vec![call(
             "agent_spawn",
-            json!({"prompt":"must not start"}),
+            json!({"prompt":"must not start","intent":"inspect","delivery":"report"}),
         )]))
     }
 }

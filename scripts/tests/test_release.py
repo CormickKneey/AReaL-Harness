@@ -10,6 +10,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -25,6 +26,7 @@ def load(name, filename):
 
 installer = load("release_installer", "install.py")
 release = load("release_artifacts", "release-artifacts.py")
+package = load("release_package", "package.py")
 
 
 class ReleaseTests(unittest.TestCase):
@@ -147,6 +149,62 @@ class ReleaseTests(unittest.TestCase):
         with patch.object(installer.urllib.request, "urlopen", return_value=Invalid()):
             with self.assertRaises(ValueError):
                 installer.latest_version()
+
+    def test_macos_package_preserves_valid_build_signatures_and_rejects_invalid_ones(self):
+        repository = self.root / "repository"
+        source = repository / "target/debug"
+        source.mkdir(parents=True)
+        (repository / "LICENSE").write_text("fixture license")
+        names = ["areal", "areal-runtime", "areal-runtime-fs"]
+        for name in names:
+            (source / name).write_bytes(b"signed build artifact: " + name.encode())
+
+        def metadata(command, **kwargs):
+            if command[-1] == "--version":
+                return "areal 0.1.3\n"
+            result = "fixture-revision\n" if command[1] == "rev-parse" else ""
+            return result if kwargs.get("text") else result.encode()
+
+        for valid in [True, False]:
+            destination = self.root / ("valid-package" if valid else "invalid-package")
+            calls = []
+
+            def verify(command, **kwargs):
+                calls.append(command)
+                self.assertEqual(command[:3], ["/usr/bin/codesign", "--verify", "--strict"])
+                self.assertTrue(kwargs["check"])
+                if not valid:
+                    raise subprocess.CalledProcessError(1, command, stderr=b"invalid signature")
+                return subprocess.CompletedProcess(command, 0)
+
+            with (
+                patch.object(package, "__file__", str(repository / "scripts/package.py")),
+                patch.object(package.platform, "system", return_value="Darwin"),
+                patch.object(package.platform, "machine", return_value="arm64"),
+                patch.object(package.subprocess, "run", side_effect=verify),
+                patch.object(package.subprocess, "check_output", side_effect=metadata),
+                patch.object(
+                    sys, "argv", ["package.py", "--profile", "debug", "--output", str(destination)]
+                ),
+                redirect_stdout(io.StringIO()),
+                self.subTest(valid=valid),
+            ):
+                if valid:
+                    package.main()
+                    manifest = json.loads((destination / "manifest.json").read_text())
+                    self.assertEqual(len(calls), len(names))
+                    for name in names:
+                        relative = Path("bin" if name == "areal" else "libexec/areal") / name
+                        original = (source / name).read_bytes()
+                        self.assertEqual((destination / relative).read_bytes(), original)
+                        self.assertEqual(
+                            manifest["files"][str(relative)], hashlib.sha256(original).hexdigest()
+                        )
+                else:
+                    with self.assertRaises(subprocess.CalledProcessError):
+                        package.main()
+                    self.assertEqual(len(calls), 1)
+                    self.assertFalse((destination / "manifest.json").exists())
 
     @unittest.skipUnless(
         (platform.system() == "Darwin" and platform.machine() == "arm64")

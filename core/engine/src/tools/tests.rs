@@ -271,8 +271,12 @@ async fn process_fixture_output(
             let method = req["method"].as_str().unwrap();
             let result = match method {
                 "connection.open" => {
-                    json!({"protocolVersion":rt::VERSION,"runtimeEpoch":"epoch","connectionId":"fixture","rootScopeId":"scope","capabilities":{}})
+                    json!({"protocolVersion":rt::VERSION,"runtimeEpoch":"epoch","connectionId":"fixture","rootScopeId":"scope","capabilities":{"methods":["fs.execute"]}})
                 }
+                "scope.create" | "scope.get" | "scope.revoke" | "scope.waitClosed" => {
+                    json!({"scopeId":"scope","parentScopeId":null,"state":if method=="scope.waitClosed"{"closed"}else{"active"},"owner":{"taskId":"fixture"},"readRoots":["workspace://repo"],"writeRoots":["workspace://repo"],"network":"deny","limits":{"wallTimeMs":10000,"outputBytes":8388608,"maxProcesses":4},"activeProcesses":0,"outputBytes":0,"cleanupError":null})
+                }
+                "process.write" => json!({"accepted":true}),
                 "process.start" => {
                     started = Instant::now();
                     json!({"processId":"process","scopeId":"scope"})
@@ -930,4 +934,516 @@ fn pending_verification_pages_recover_handles_hidden_by_ordinary_snapshot() {
     let page = handles.pending_verification_page(Some("p0000000000000085"));
     assert_eq!(page["count"], 86);
     assert!(page["items"].as_array().unwrap().is_empty());
+}
+
+struct PendingExecutionGuard;
+#[async_trait::async_trait]
+impl Model for PendingExecutionGuard {
+    fn name(&self) -> &str {
+        "pending-execution-guard"
+    }
+    async fn stream(&self, _: Vec<model::Message>) -> anyhow::Result<model::ModelStream> {
+        Ok(Box::pin(futures_util::stream::pending()))
+    }
+}
+
+#[tokio::test]
+async fn research_wait_releases_workspace_and_tool_capacity() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = Engine::open(
+        dir.path(),
+        Arc::new(PendingExecutionGuard),
+        Limits::default(),
+    )
+    .unwrap();
+    let parent = engine.create("/workspace".into()).await.unwrap();
+    engine
+        .start(&parent.id, vec![Input::text("parent")])
+        .await
+        .unwrap();
+    let (child, _) = engine
+        .spawn_child_inner(
+            &parent.id,
+            vec![Input::text("research")],
+            false,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let parent = engine.cell(&parent.id).await.unwrap();
+    for definition in agents::definitions() {
+        parent
+            .bindings
+            .write()
+            .await
+            .registry
+            .insert(definition, Backend::Agent)
+            .unwrap();
+    }
+    let cancel = CancellationToken::new();
+    let wait = tokio::spawn({
+        let engine = engine.clone();
+        let parent = parent.clone();
+        let cancel = cancel.clone();
+        async move {
+            engine
+                .tool(
+                    &parent,
+                    &cancel,
+                    ToolCall {
+                        id: "research-wait".into(),
+                        name: "read_agent".into(),
+                        arguments: json!({"threadId":child.id,"waitMs":60000}).to_string(),
+                    },
+                    usize::MAX,
+                )
+                .await
+        }
+    });
+    // 观察已提交的调用意图，确保等待工具已经通过准入；不依赖任意 sleep。
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            if parent.state.lock().await.thread.turns.last().unwrap().items.iter().any(|item|matches!(item,Item::DynamicToolCall{call_id,..} if call_id=="research-wait")) { break; }
+            tokio::task::yield_now().await;
+        }
+    }).await.unwrap();
+    let writer_admitted = engine.workspace_gate.clone().try_write_owned().is_ok();
+    let permits = engine.tool_permits.available_permits();
+    cancel.cancel();
+    wait.await.unwrap().unwrap();
+    engine.shutdown().await;
+    assert!(
+        writer_admitted,
+        "a research wait held the workspace read lease, blocking an independent writer and its queued child tools"
+    );
+    assert_eq!(permits, 4, "research waiting retained execution capacity");
+}
+
+#[tokio::test]
+async fn research_hooks_keep_workspace_admission_and_can_cancel_while_waiting() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path().join("repo");
+    std::fs::create_dir(&workspace).unwrap();
+    let workspace = workspace.canonicalize().unwrap();
+    let client =
+        process_fixture_output(0, Some(0), None, false, r#"{"decision":"allow"}"#.into()).await;
+    let engine = Engine::open_with_extensions(
+        &dir.path().join("state"),
+        Arc::new(PendingExecutionGuard),
+        Limits::default(),
+        Some(RuntimeConfig {
+            client: client.clone(),
+            workspace: workspace.clone(),
+            writable: true,
+            command_scope: None,
+            command_scratch: None,
+        }),
+        ToolExtensions {
+            hooks: vec![HookEvent::PreToolUse, HookEvent::PostToolUse]
+                .into_iter()
+                .map(|event| HookDefinition {
+                    name: event.as_str().into(),
+                    event,
+                    matcher: "read_agent".into(),
+                    argv: vec!["fixture-hook".into()],
+                    timeout_ms: 1000,
+                })
+                .collect(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let parent = engine
+        .create(workspace.to_string_lossy().into())
+        .await
+        .unwrap();
+    engine
+        .start(&parent.id, vec![Input::text("parent")])
+        .await
+        .unwrap();
+    let (child, _) = engine
+        .spawn_child_inner(
+            &parent.id,
+            vec![Input::text("research")],
+            false,
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    let parent = engine.cell(&parent.id).await.unwrap();
+    for definition in agents::definitions() {
+        parent
+            .bindings
+            .write()
+            .await
+            .registry
+            .insert(definition, Backend::Agent)
+            .unwrap();
+    }
+    for stop in [false, true] {
+        let writer = engine.workspace_gate.clone().write_owned().await;
+        let call_id = if stop {
+            "cancel-hook-wait"
+        } else {
+            "complete-hooks"
+        };
+        let cancel = CancellationToken::new();
+        let wait = tokio::spawn({
+            let engine = engine.clone();
+            let parent = parent.clone();
+            let cancel = cancel.clone();
+            let child = child.id.clone();
+            async move {
+                engine
+                    .tool(
+                        &parent,
+                        &cancel,
+                        ToolCall {
+                            id: call_id.into(),
+                            name: "read_agent".into(),
+                            arguments: json!({"threadId":child,"waitMs":0}).to_string(),
+                        },
+                        usize::MAX,
+                    )
+                    .await
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if let Some(Item::DynamicToolCall { execution, .. }) = parent
+                    .state
+                    .lock()
+                    .await
+                    .thread
+                    .turns
+                    .last()
+                    .unwrap()
+                    .items
+                    .iter()
+                    .find(|item| matches!(item,Item::DynamicToolCall{call_id:id,..} if id==call_id))
+                {
+                    assert!(
+                        execution.hooks.is_empty(),
+                        "hook bypassed the existing writer"
+                    );
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        if stop {
+            cancel.cancel();
+            // 仍持有作者租约，取消必须能结束等待，不能依赖作者先退出。
+            tokio::time::timeout(Duration::from_secs(3), wait)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            drop(writer);
+        } else {
+            drop(writer);
+            tokio::time::timeout(Duration::from_secs(3), wait)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+        }
+        let state = parent.state.lock().await;
+        let Some(Item::DynamicToolCall { execution, .. }) = state
+            .thread
+            .turns
+            .last()
+            .unwrap()
+            .items
+            .iter()
+            .find(|item| matches!(item,Item::DynamicToolCall{call_id:id,..} if id==call_id))
+        else {
+            panic!("missing hook call receipt")
+        };
+        if stop {
+            assert!(execution.hooks.is_empty());
+        } else {
+            assert_eq!(execution.hooks.len(), 2);
+            assert!(
+                execution
+                    .hooks
+                    .iter()
+                    .all(|hook| hook.outcome == ToolOutcome::Succeeded)
+            );
+        }
+    }
+    engine.shutdown().await;
+    client.shutdown().await.unwrap();
+}
+
+struct ExternalAgentNamedHost {
+    gate: Arc<tokio::sync::RwLock<()>>,
+    saw_read_lease: Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[async_trait::async_trait]
+impl DynamicToolHost for ExternalAgentNamedHost {
+    fn id(&self) -> &str {
+        "external-agent-name"
+    }
+    fn is_closed(&self) -> bool {
+        false
+    }
+    async fn call(
+        &self,
+        _: Value,
+        _: CancellationToken,
+    ) -> anyhow::Result<areal_protocol::DynamicToolResponse> {
+        self.saw_read_lease
+            .store(self.gate.try_write().is_err(), Ordering::Release);
+        Ok(areal_protocol::DynamicToolResponse {
+            success: true,
+            content_items: vec![],
+            structured_content: None,
+        })
+    }
+}
+
+#[tokio::test]
+async fn same_named_external_agent_tool_keeps_workspace_admission() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = Engine::open(
+        dir.path(),
+        Arc::new(PendingExecutionGuard),
+        Limits::default(),
+    )
+    .unwrap();
+    let saw_read_lease = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let host = Arc::new(ExternalAgentNamedHost {
+        gate: engine.workspace_gate.clone(),
+        saw_read_lease: saw_read_lease.clone(),
+    });
+    let definition = agents::definitions()
+        .into_iter()
+        .find(|definition| definition.name == "read_agent")
+        .unwrap();
+    let thread = engine
+        .create_with_tools("/workspace".into(), vec![definition], host)
+        .await
+        .unwrap();
+    engine
+        .start(&thread.id, vec![Input::text("parent")])
+        .await
+        .unwrap();
+    let cell = engine.cell(&thread.id).await.unwrap();
+    engine
+        .tool(
+            &cell,
+            &CancellationToken::new(),
+            ToolCall {
+                id: "external-read-agent".into(),
+                name: "read_agent".into(),
+                arguments: json!({"threadId":"external"}).to_string(),
+            },
+            usize::MAX,
+        )
+        .await
+        .unwrap();
+    engine.shutdown().await;
+    assert!(
+        saw_read_lease.load(Ordering::Acquire),
+        "tool name granted an external backend a coordination exemption"
+    );
+}
+
+async fn assert_child_creation_gate(exclusive: bool) {
+    let dir = tempfile::tempdir().unwrap();
+    let limits = if exclusive {
+        Limits::default()
+    } else {
+        Limits {
+            max_children_per_turn: 0,
+            ..Limits::default()
+        }
+    };
+    let engine = Engine::open(dir.path(), Arc::new(PendingExecutionGuard), limits).unwrap();
+    let parent = engine.create("/workspace".into()).await.unwrap();
+    let parent_turn = engine
+        .start(&parent.id, vec![Input::text("parent")])
+        .await
+        .unwrap();
+    let thread_id = if exclusive {
+        engine.spawn_delegated_child(
+            serde_json::from_value(json!({"parentThreadId":parent.id,"input":[{"type":"text","text":"writer"}],"workspaceMode":"sharedWrite"})).unwrap(),
+            parent_turn.id,
+            true,
+            None,
+        ).await.unwrap().0.id
+    } else {
+        parent.id.clone()
+    };
+    let cell = engine.cell(&thread_id).await.unwrap();
+    if exclusive {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if cell
+                    .state
+                    .lock()
+                    .await
+                    .active
+                    .as_ref()
+                    .unwrap()
+                    .workspace_exclusive
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+    {
+        let mut bindings = cell.bindings.write().await;
+        if bindings.registry.get("workgroup_start").is_err() {
+            bindings.registry = bindings.registry.clone().with_workgroups(true).unwrap();
+        }
+        if bindings.registry.get("agent_spawn").is_err() {
+            bindings.registry = bindings.registry.clone().with_agents(true).unwrap();
+        }
+        for definition in agents::definitions() {
+            bindings
+                .registry
+                .insert(definition, Backend::Agent)
+                .unwrap();
+        }
+    }
+    for (name, args) in [
+        ("agent_spawn", json!({"prompt":"nested child"})),
+        (
+            "agent_spawn_configured",
+            json!({"input":[{"type":"text","text":"nested configured child"}]}),
+        ),
+        ("task_spawn", json!({"prompt":"nested task worker"})),
+        (
+            "delegate_tasks",
+            json!({"tasks":["nested research"],"wait":true}),
+        ),
+        (
+            "workgroup_start",
+            json!({"requestId":"nested-group","plan":{"objective":"nested work","tasks":[{"id":"child","instruction":"implement","writes":["result.txt"]}]}}),
+        ),
+    ] {
+        cell.bindings
+            .read()
+            .await
+            .registry
+            .get(name)
+            .unwrap()
+            .validate_input(&args)
+            .unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            engine.tool(
+                &cell,
+                &CancellationToken::new(),
+                ToolCall {
+                    id: name.into(),
+                    name: name.into(),
+                    arguments: args.to_string(),
+                },
+                usize::MAX,
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let state = cell.state.lock().await;
+        let item = state
+            .thread
+            .turns
+            .last()
+            .unwrap()
+            .items
+            .iter()
+            .find(|item| matches!(item, Item::DynamicToolCall { call_id, .. } if call_id == name))
+            .unwrap();
+        let Item::DynamicToolCall {
+            success,
+            content_items,
+            ..
+        } = item
+        else {
+            panic!("missing tool receipt")
+        };
+        assert_eq!(*success, Some(false), "{name}");
+        assert!(
+            serde_json::to_string(content_items)
+                .unwrap()
+                .contains("CHILD_EXECUTION_DISABLED"),
+            "{name}: {content_items:?}"
+        );
+        assert!(state.active.as_ref().unwrap().children.is_empty());
+    }
+    if exclusive {
+        let error = tokio::time::timeout(Duration::from_secs(2), engine.spawn_agent(
+            serde_json::from_value(json!({"parentThreadId":thread_id,"input":[{"type":"text","text":"nested RPC child"}]})).unwrap()
+        )).await.unwrap().unwrap_err();
+        assert!(error.to_string().contains("exclusive writers"));
+    }
+    engine
+        .tool(
+            &cell,
+            &CancellationToken::new(),
+            ToolCall {
+                id: "plan-read".into(),
+                name: "plan_read".into(),
+                arguments: "{}".into(),
+            },
+            usize::MAX,
+        )
+        .await
+        .unwrap();
+    assert!(cell.state.lock().await.thread.turns.last().unwrap().items.iter().any(|item|
+        matches!(item, Item::DynamicToolCall { call_id, success: Some(true), .. } if call_id == "plan-read")
+    ));
+    engine.shutdown().await;
+}
+
+#[tokio::test]
+async fn exclusive_writer_rejects_legacy_child_creation_without_deadlocking() {
+    assert_child_creation_gate(true).await;
+}
+
+#[tokio::test]
+async fn bounded_isolated_worker_cannot_bypass_its_zero_child_limit() {
+    assert_child_creation_gate(false).await;
+}
+
+#[test]
+fn child_creation_classification_is_bound_to_the_actual_backend() {
+    for name in [
+        "agent_spawn",
+        "agent_spawn_configured",
+        "task_spawn",
+        "delegate_tasks",
+        "workgroup_start",
+    ] {
+        assert!(!creates_child_execution(name, &Backend::Client));
+        assert!(!creates_child_execution(name, &Backend::Builtin));
+    }
+    for name in [
+        "agent_read",
+        "agent_wait",
+        "agent_cancel",
+        "agent_report",
+        "workgroup_read",
+        "workgroup_wait",
+        "workgroup_cancel",
+    ] {
+        assert!(!creates_child_execution(name, &Backend::Coordination));
+    }
+    assert!(!creates_child_execution("plan_read", &Backend::Core));
+    assert!(!creates_child_execution("read_agent", &Backend::Agent));
 }

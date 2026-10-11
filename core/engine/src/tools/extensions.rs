@@ -258,13 +258,17 @@ impl Invocation<'_> {
             }
             Backend::Coordination => {
                 if self.call.name.starts_with("agent_") {
+                    let mut arguments = args.clone();
+                    if self.call.name == "agent_spawn" && arguments.get("intent").is_some() {
+                        arguments["requestId"] = serde_json::json!(self.call.id);
+                    }
                     return self
                         .engine
                         .coordinate_agent(
                             self.cell,
                             self.turn_id,
                             &self.call.name,
-                            args,
+                            &arguments,
                             self.cancel,
                         )
                         .await
@@ -515,6 +519,32 @@ impl Invocation<'_> {
         result: Option<&Value>,
     ) -> rt::Result<HookResponse> {
         self.engine.approval(self.cell, &self.call.id, &format!("hook:{}",hook.name), &json!({"argv":hook.argv,"event":hook.event,"tool":self.call.name,"arguments":args}),self.cancel).await?;
+        let agent_control = matches!(self.entry.backend, Backend::Agent);
+        let exclusive = self
+            .cell
+            .state
+            .lock()
+            .await
+            .active
+            .as_ref()
+            .is_some_and(|active| active.workspace_exclusive);
+        // Agent 主体仅协调子任务；hook 可能写源码，必须单独参与工作区互斥。
+        let _workspace = if agent_control && !exclusive {
+            Some(tokio::select! {biased;
+                _ = self.cancel.cancelled() => return Err(rt::Error::new(rt::ErrorCode::ScopeClosed, "cancelled before hook workspace admission")),
+                guard = self.engine.workspace_gate.clone().read_owned() => guard,
+            })
+        } else {
+            None
+        };
+        let _permit = if agent_control {
+            Some(tokio::select! {biased;
+                _ = self.cancel.cancelled() => return Err(rt::Error::new(rt::ErrorCode::ScopeClosed, "cancelled before hook execution admission")),
+                permit = self.engine.tool_permits.acquire() => permit.map_err(unknown)?,
+            })
+        } else {
+            None
+        };
         let runtime = self.engine.runtime.as_ref().expect("hooks require Runtime");
         let operation = runtime.client.operation_id();
         self.edit(|execution, _| {

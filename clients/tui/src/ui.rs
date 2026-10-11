@@ -476,65 +476,75 @@ fn navigation_view(frame: &mut Frame, area: Rect, app: &mut App, p: Palette) {
         | View::Help
         | View::Tasks
         | View::Permissions => " Agents · session tree ",
-        View::Groups => " Workgroups ",
+        View::Groups => {
+            if app.execution_view {
+                " Subtasks and delivery "
+            } else {
+                " Legacy Workgroups "
+            }
+        }
     };
-    let items: Vec<_> = rows
-        .iter()
-        .map(|row| match &row.target {
-            NavTarget::More(_) => ListItem::new(Line::styled(
-                format!("{}Load more…", row.prefix),
-                p.style(Role::Accent),
-            )),
-            NavTarget::Group(id) => {
-                let group = app.groups.iter().find(|g| g["id"].as_str() == Some(id));
-                ListItem::new(vec![
-                    Line::raw(short(id)),
-                    Line::styled(
-                        safe_text(
-                            group
-                                .and_then(|g| g["objective"].as_str())
-                                .unwrap_or("Workgroup"),
+    let items: Vec<_> =
+        rows.iter()
+            .map(|row| match &row.target {
+                NavTarget::More(_) => ListItem::new(Line::styled(
+                    format!("{}Load more…", row.prefix),
+                    p.style(Role::Accent),
+                )),
+                NavTarget::Group(id) => {
+                    let group = app.groups.iter().find(|g| {
+                        g["executionId"].as_str().or_else(|| g["id"].as_str()) == Some(id)
+                    });
+                    ListItem::new(vec![
+                        Line::raw(short(id)),
+                        Line::styled(
+                            safe_text(
+                                group
+                                    .and_then(|g| {
+                                        g["title"].as_str().or_else(|| g["objective"].as_str())
+                                    })
+                                    .unwrap_or("Subtask"),
+                            ),
+                            p.style(Role::Muted),
                         ),
-                        p.style(Role::Muted),
-                    ),
-                ])
-            }
-            NavTarget::Thread(id) => {
-                let expanded = app.expanded.contains(id);
-                let mark = if app.view != View::Groups {
-                    if expanded { "[-] " } else { "[+] " }
-                } else {
-                    ""
-                };
-                let label = app.threads.get(id).map_or_else(
-                    || "Loading…".into(),
-                    |t| format!("{} {}", short(id), safe_text(&t.preview)),
-                );
-                let status = app.node_status(id);
-                let role = status_role(status);
-                let live = app.connected && app.subscriptions.contains(id);
-                ListItem::new(vec![
-                    Line::styled(
-                        format!("{}{mark}{label}", row.prefix),
-                        p.style(if Some(id) == app.selected.as_ref() {
-                            Role::Accent
-                        } else {
-                            Role::Text
-                        }),
-                    ),
-                    Line::styled(
-                        format!(
-                            "{}{} · {}",
-                            " ".repeat((row.depth * 3).min(30)),
-                            status,
-                            if live { "live" } else { "snapshot" }
+                    ])
+                }
+                NavTarget::Thread(id) => {
+                    let expanded = app.expanded.contains(id);
+                    let mark = if app.view != View::Groups {
+                        if expanded { "[-] " } else { "[+] " }
+                    } else {
+                        ""
+                    };
+                    let label = app.threads.get(id).map_or_else(
+                        || "Loading…".into(),
+                        |t| format!("{} {}", short(id), safe_text(&t.preview)),
+                    );
+                    let status = app.node_status(id);
+                    let role = status_role(status);
+                    let live = app.connected && app.subscriptions.contains(id);
+                    ListItem::new(vec![
+                        Line::styled(
+                            format!("{}{mark}{label}", row.prefix),
+                            p.style(if Some(id) == app.selected.as_ref() {
+                                Role::Accent
+                            } else {
+                                Role::Text
+                            }),
                         ),
-                        p.style(role),
-                    ),
-                ])
-            }
-        })
-        .collect();
+                        Line::styled(
+                            format!(
+                                "{}{} · {}",
+                                " ".repeat((row.depth * 3).min(30)),
+                                status,
+                                if live { "live" } else { "snapshot" }
+                            ),
+                            p.style(role),
+                        ),
+                    ])
+                }
+            })
+            .collect();
     let mut state = ListState::default()
         .with_offset(app.nav_offset)
         .with_selected(if rows.is_empty() {
@@ -719,7 +729,74 @@ fn execution_status(app: &App) -> String {
 
 fn group_view(frame: &mut Frame, area: Rect, app: &mut App, p: Palette) {
     let mut lines = Vec::new();
-    if let Some(group) = &app.group {
+    if app.execution_view {
+        if let Some(execution) = &app.group {
+            let status = execution["status"].as_str().unwrap_or("unknown");
+            lines.push(Line::styled(
+                safe_text(
+                    execution["title"]
+                        .as_str()
+                        .or_else(|| execution["objective"].as_str())
+                        .unwrap_or("Subtask"),
+                ),
+                p.style(Role::Accent),
+            ));
+            let delivery = execution["delivery"]["status"]
+                .as_str()
+                .unwrap_or("unknown");
+            // 执行结束不能把冲突、未知交付或尚待承接的候选渲染为成功。
+            let delivery_role = match delivery {
+                "failed" | "conflict" | "partial" | "unknown" => Role::Error,
+                "notRequired" | "applied" => status_role(status),
+                _ => Role::Warning,
+            };
+            let delivery_label = if delivery == "requiresActiveTurn" {
+                "continue the original task to apply"
+            } else {
+                delivery
+            };
+            lines.push(Line::styled(
+                format!("{status} · Delivery: {delivery_label}"),
+                p.style(delivery_role),
+            ));
+            lines.push(Line::raw(format!(
+                "Verification: {} ({}) · Resources: {}",
+                execution["verification"]["status"]
+                    .as_str()
+                    .unwrap_or("notRun"),
+                execution["verification"]["kind"].as_str().unwrap_or("none"),
+                if execution["resourcesReleased"] == true {
+                    "released"
+                } else {
+                    "pending"
+                }
+            )));
+            if let Some(error) = execution["error"].as_str() {
+                lines.push(Line::styled(safe_text(error), p.style(Role::Error)));
+            }
+            if let Some(text) = execution["text"].as_str() {
+                for line in text.lines() {
+                    lines.push(Line::raw(safe_text(line)));
+                }
+            }
+            if let Some(thread) = execution["threadId"].as_str() {
+                lines.push(Line::raw(format!("History: /open {thread}")));
+            }
+            if execution["settled"] == false {
+                lines.push(Line::raw(format!(
+                    "Stop: /execution-cancel {}",
+                    execution["executionId"].as_str().unwrap_or("?")
+                )));
+            }
+        } else {
+            lines.push(Line::raw(
+                "Select a subtask and press Enter. Core manages execution and delivery.",
+            ));
+        }
+        if app.execution_next_offset.is_some() {
+            lines.push(Line::raw("More subtasks are available: /more"));
+        }
+    } else if let Some(group) = &app.group {
         let record = &group["record"];
         let tasks = record["tasks"].as_array().map(Vec::as_slice).unwrap_or(&[]);
         let integrated = tasks.iter().filter(|t| t["status"] == "integrated").count();
@@ -785,7 +862,15 @@ fn group_view(frame: &mut Frame, area: Rect, app: &mut App, p: Palette) {
             "Select a Workgroup and press Enter, or /group ID.",
         ));
     }
-    let block = panel(" Workgroup tasks ", app.focus == Focus::Content, p);
+    let block = panel(
+        if app.execution_view {
+            " Subtask progress and delivery "
+        } else {
+            " Legacy Workgroup tasks "
+        },
+        app.focus == Focus::Content,
+        p,
+    );
     let inner = block.inner(area);
     let lines = wrap_context(lines, inner.width);
     // 任务表按行裁剪，避免超长反馈把偏移截断为 u16；完整制品仍通过既有接口读取。
@@ -1050,7 +1135,7 @@ fn theme_picker(frame: &mut Frame, area: Rect, app: &App, p: Palette) {
     );
 }
 fn help_page(frame: &mut Frame, area: Rect, p: Palette) {
-    let text = "F1 /help: help · F2 /theme: theme picker\nF3 /topology: agents · F4 /groups: workgroups\nF5 /sessions: switch session · F6 /model: switch model\n/skills: choose skill · /skill NAME: apply by name\n/goal OBJECTIVE · /goal-pause · /goal-resume · /goal-clear\n/goal-edit OBJECTIVE · /goal-budget TOKENS|none\n/new · /tasks · /sessions · /open ID · /spawn PROMPT · /agents\n/group ID · /group-start JSON_FILE · /group-revise JSON_FILE\n/group-cancel ID · /welcome · /quit\n\n/: command suggestions · ↑↓ select · Tab complete\nTab / Shift-Tab: input, right panel, history focus\nInput: ←→ move · Option+←/→ word · Ctrl-A/E line start/end\nCtrl-D/Delete: delete next · Backspace: delete previous\nNavigation: arrows select/expand, Enter open, r refresh\nHistory: ↑↓ select, Enter/Space expand, ←→ collapse/expand\nPgUp/PgDn scroll, Home/End; --mouse=true enables clicking summaries\nCtrl-O /details: compact or detailed records\n/restore-input: restore failed submission\nMouse: --mouse=false enables native drag selection and terminal Copy\nCtrl-C: interrupt the input target's active Turn\nCtrl-R: reconnect · Ctrl-Q: quit\n\nRead % describes loaded history; session plan counts are separate.\nTask trees include historical child sessions. Snapshot nodes can lag.\nApprovals: use the terminal dialog. /permissions: inspect rules. Questions: respond in Web.\nEsc: return to input";
+    let text = "F1 /help: help · F2 /theme: theme picker\nF3 /topology: history · F4 /executions: subtasks and delivery\nF5 /sessions: switch session · F6 /model: switch model\n/skills: choose skill · /skill NAME: apply by name\n/goal OBJECTIVE · /goal-pause · /goal-resume · /goal-clear\n/goal-edit OBJECTIVE · /goal-budget TOKENS|none\n/new · /tasks · /sessions · /open ID · /spawn PROMPT · /agents\n/executions · /execution-cancel ID · /welcome · /quit\nAdvanced compatibility: /groups · /group ID\n/group-start JSON_FILE · /group-revise JSON_FILE · /group-cancel ID\n\n/: command suggestions · ↑↓ select · Tab complete\nTab / Shift-Tab: input, right panel, history focus\nInput: ←→ move · Option+←/→ word · Ctrl-A/E line start/end\nCtrl-D/Delete: delete next · Backspace: delete previous\nNavigation: arrows select/expand, Enter open, r refresh\nHistory: ↑↓ select, Enter/Space expand, ←→ collapse/expand\nPgUp/PgDn scroll, Home/End; --mouse=true enables clicking summaries\nCtrl-O /details: compact or detailed records\n/restore-input: restore failed submission\nMouse: --mouse=false enables native drag selection and terminal Copy\nCtrl-C: interrupt the input target's active Turn\nCtrl-R: reconnect · Ctrl-Q: quit\n\nRead % describes loaded history; session plan counts are separate.\nTask trees include historical child sessions. Snapshot nodes can lag.\nApprovals: use the terminal dialog. /permissions: inspect rules. Questions: respond in Web.\nEsc: return to input";
     frame.render_widget(
         Paragraph::new(text)
             .wrap(Wrap { trim: false })
@@ -1374,6 +1459,42 @@ mod tests {
                 app.completion_index = 17;
                 terminal.draw(|f| draw(f, &mut app)).unwrap();
             }
+        }
+    }
+    #[test]
+    fn completed_execution_does_not_style_unresolved_delivery_as_success() {
+        let palette = Palette::new(Theme::Dark, true, true);
+        let mut app = App::new(Preferences::default());
+        app.execution_view = true;
+        let mut terminal = Terminal::new(TestBackend::new(100, 12)).unwrap();
+        for (delivery, expected) in [
+            ("unknown", Role::Error),
+            ("failed", Role::Error),
+            ("conflict", Role::Error),
+            ("partial", Role::Error),
+            ("requiresActiveTurn", Role::Warning),
+            ("candidate", Role::Warning),
+            ("applied", Role::Success),
+        ] {
+            app.group = Some(
+                serde_json::json!({"title":"Unit","status":"completed","settled":true,"resourcesReleased":true,"delivery":{"status":delivery}}),
+            );
+            terminal
+                .draw(|frame| group_view(frame, frame.area(), &mut app, palette))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let line = buffer
+                .content
+                .chunks(100)
+                .find(|row| {
+                    row.iter()
+                        .map(|cell| cell.symbol())
+                        .collect::<String>()
+                        .contains("Delivery:")
+                })
+                .unwrap();
+            let cell = line.iter().find(|cell| cell.symbol() == "D").unwrap();
+            assert_eq!(cell.fg, palette.style(expected).fg.unwrap(), "{delivery}");
         }
     }
     #[test]

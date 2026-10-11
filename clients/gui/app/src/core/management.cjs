@@ -34,6 +34,10 @@ const reads = {
   permissions: ['areal/permissions/read', ['threadId']],
   interactions: ['areal/interaction/list', ['threadId']],
   processOutput: ['areal/process/read', ['threadId', 'id', 'after', 'maxBytes', 'waitMs']],
+  executions: ['areal/execution/list', ['parentThreadId', 'offset', 'limit']],
+  execution: ['areal/execution/read', ['parentThreadId', 'executionId', 'offset']],
+  executionArtifact: ['areal/execution/artifact', ['parentThreadId', 'executionId', 'path', 'offset']],
+  executionWait: ['areal/execution/wait', ['parentThreadId', 'executionId', 'timeoutMs']],
   agents: ['areal/agent/list', ['parentThreadId', 'cursor', 'limit']],
   agentWait: ['areal/agent/wait', ['parentThreadId', 'threadIds', 'timeoutMs']],
   workflows: ['areal/workflow/list', []], server: ['areal/server/status', []],
@@ -45,6 +49,9 @@ const reads = {
 const pick = (value, keys) => Object.fromEntries(keys.filter(key => value[key] !== undefined).map(key => [key, value[key]]));
 async function manage(backend, project, request) {
   const { operation } = request;
+  if (operation === 'executionCancel') return project.client.request('areal/execution/cancel', pick(request, ['parentThreadId', 'executionId', 'mode']));
+  // Core 管理整组交付与未知结果恢复，客户端不会自动重放写入。
+  if (operation === 'executionApply') return project.client.request('areal/execution/apply', pick(request, ['parentThreadId', 'executionId']));
   if (operation === 'serverDrain' || operation === 'serverGc') {
     // These Core methods have no receipt. Never use the receipt-based submission journal.
     try {

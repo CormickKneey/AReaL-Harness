@@ -11,6 +11,7 @@ let skills = [],
   slashIndex = 0;
 const pending = new Map();
 let interactionDisplayed = null;
+let executionsSupported = false;
 let goalsSupported = false,
   displayedGoal = null;
 let tasksSupported = false,
@@ -119,7 +120,10 @@ function showView(view) {
   }
 }
 $("history-tab").onclick = () => showView(false);
-$("groups-tab").onclick = () => showView(true);
+$("groups-tab").onclick = () => {
+  showView(true);
+  listExecutions().catch(notice);
+};
 $("tasks-tab").onclick = () => {
   showView("tasks");
   listTasks().catch(notice);
@@ -644,6 +648,7 @@ async function removeArchivedSession(id) {
 async function select(id) {
   const result = await call("thread/resume", { threadId: id });
   thread = result.thread;
+  ++groupObservation;
   renderPermissions(result);
   render();
   showView(false);
@@ -969,6 +974,7 @@ async function connect() {
   });
   socket.send(JSON.stringify({ method: "initialized", params: {} }));
   const capabilities = await call("areal/capabilities", {});
+  executionsSupported = capabilities.methods?.includes("areal/execution/list") === true;
   goalsSupported = capabilities.features?.goals === true;
   tasksSupported = capabilities.features?.taskModes === true;
   $("tasks-tab").hidden = !tasksSupported;
@@ -1044,6 +1050,137 @@ startConnection().catch((error) => {
 // Core owns execution across disconnects. Cursor waits avoid busy polling;
 // a stopped observer never cancels the actual workgroup.
 let groupObservation = 0;
+const executionStatus = {
+  inProgress: "执行中",
+  running: "执行中",
+  awaitingDelivery: "正在交付",
+  queued: "等待执行",
+  completed: "执行已结束",
+  interrupted: "已中断",
+  cancelled: "已取消",
+  failed: "执行失败",
+  unknown: "执行结果待确认",
+};
+const deliveryStatus = {
+  notRequired: "报告交付",
+  pending: "等待交付",
+  candidate: "候选改动已生成",
+  cancelled: "交付已取消",
+  requiresActiveTurn: "请继续任务以应用",
+  preparing: "正在准备交付",
+  applying: "正在应用改动",
+  failed: "交付失败",
+  applied: "改动已应用",
+  conflict: "交付存在冲突",
+  partial: "改动部分应用",
+  unknown: "交付结果待确认",
+};
+const verificationStatus = { notRun: "未运行检查", passed: "检查通过", failed: "检查失败" };
+const verificationKind = { none: "", project: "项目检查", trusted: "可信验收" };
+function executionCard(value, parentThreadId, observation) {
+  const card = node("article", undefined, "item");
+  card.append(
+    node("h3", value.title || value.objective || `子任务 ${value.executionId.slice(0, 8)}`),
+  );
+  card.append(
+    node(
+      "p",
+      `${executionStatus[value.status] ?? value.status} · ${deliveryStatus[value.delivery.status] ?? value.delivery.status}`,
+    ),
+  );
+  card.append(
+    node(
+      "p",
+      `${verificationKind[value.verification.kind] || "验证"} · ${verificationStatus[value.verification.status] ?? value.verification.status}`,
+    ),
+  );
+  if (value.settled && !value.resourcesReleased) card.append(node("p", "资源仍待清理"));
+  if (value.error) card.append(node("pre", value.error));
+  if (value.text) card.append(node("pre", value.text));
+  if (value.threadId) {
+    const open = node("button", "查看过程", "secondary");
+    open.onclick = () => select(value.threadId).catch(notice);
+    card.append(open);
+  }
+  if (!value.settled) {
+    const watch = node("button", "等待结果", "secondary");
+    watch.onclick = () =>
+      showExecution(value.executionId, parentThreadId, ++groupObservation).catch(notice);
+    const cancel = node("button", "停止子任务", "secondary");
+    cancel.onclick = async () => {
+      cancel.disabled = true;
+      try {
+        const result = await call("areal/execution/cancel", {
+          parentThreadId,
+          executionId: value.executionId,
+          mode: "graceful",
+        });
+        if (observation === groupObservation && thread?.id === parentThreadId)
+          card.replaceWith(executionCard(result, parentThreadId, observation));
+      } catch (error) {
+        notice(Error(`操作结果待确认，请刷新状态；不会自动重发。${error.message}`));
+      }
+    };
+    card.append(watch, cancel);
+  }
+  return card;
+}
+async function showExecution(executionId, parentThreadId, observation) {
+  let value = await call("areal/execution/read", { parentThreadId, executionId });
+  while (
+    observation === groupObservation &&
+    connected &&
+    thread?.id === parentThreadId &&
+    !$("workgroups").hidden
+  ) {
+    $("groups").replaceChildren(executionCard(value, parentThreadId, observation));
+    if (value.settled) return;
+    if (value.status === "awaitingDelivery") {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      if (
+        observation !== groupObservation ||
+        !connected ||
+        thread?.id !== parentThreadId ||
+        $("workgroups").hidden
+      )
+        return;
+      value = await call("areal/execution/read", { parentThreadId, executionId });
+    } else {
+      value = await call("areal/execution/wait", { parentThreadId, executionId, timeoutMs: 10000 });
+    }
+  }
+}
+async function listExecutions(offset = 0) {
+  const observation = offset ? groupObservation : ++groupObservation,
+    parentThreadId = thread?.id;
+  if (!offset) $("groups").replaceChildren();
+  if (!parentThreadId || !executionsSupported) {
+    $("groups").append(
+      node(
+        "p",
+        !parentThreadId
+          ? "请先选择任务。"
+          : "当前 Core 未提供统一子任务接口，可在高级视图读取兼容历史。",
+        "muted",
+      ),
+    );
+    return;
+  }
+  const result = await call("areal/execution/list", { parentThreadId, offset, limit: 50 });
+  if (observation !== groupObservation || thread?.id !== parentThreadId) return;
+  if (!offset && !result.data.length)
+    $("groups").append(node("p", "此任务尚无子任务，执行过程会在这里显示。", "muted"));
+  for (const value of result.data)
+    $("groups").append(executionCard(value, parentThreadId, observation));
+  if (result.nextOffset !== null) {
+    const more = node("button", "加载更多子任务", "secondary");
+    more.onclick = () => {
+      more.remove();
+      listExecutions(result.nextOffset).catch(notice);
+    };
+    $("groups").append(more);
+  }
+}
 async function showGroup(id, observation) {
   let view = await call("areal/workgroup/read", { id });
   while (observation === groupObservation && connected) {
@@ -1121,7 +1258,8 @@ async function listGroups() {
     $("groups").append(button);
   }
 }
-$("groups-refresh").onclick = () => listGroups().catch(notice);
+$("groups-refresh").onclick = () => listExecutions().catch(notice);
+$("legacy-groups-refresh").onclick = () => listGroups().catch(notice);
 $("group-start").onsubmit = async (event) => {
   event.preventDefault();
   try {

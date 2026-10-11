@@ -6,7 +6,7 @@ Install dependencies using the [development guide](README.en.md). Regular tests 
 
 | Entry point | Coverage |
 |---|---|
-| `make verify` | Cordis pin, formatting, static checks, Rust workspace, both SDKs, Python, documentation and TUI smoke |
+| `make verify` | Cordis pin, formatting, static checks, Rust workspace, both SDKs, Python, documentation, TUI and unified delegation smoke |
 | `make script-test` | Launcher, Web reasoning/wait/cancel projections, benchmark statistics/evidence and documentation links/language pairs |
 | `make test-core` / `make test-protocol` | Engine / app-server |
 | `make test-concurrency` | Concurrency primitives |
@@ -15,6 +15,7 @@ Install dependencies using the [development guide](README.en.md). Regular tests 
 | `make verify-native` | macOS native backend tests and Harness integration smoke; common checks are covered by `make verify` |
 | `make examples-desktop-api` | [Direct API, CLI, Skills and relocated packaged binaries](../examples/desktop-api.en.md) |
 | `make workgroup-smoke` | Private Runtime writes, combined verification, command deadlines and failure settlement |
+| `make unified-execution-smoke` | Unified model tools, parallel isolated candidates, composed delivery, ownership checks, cancellation and restart recovery |
 
 Snapshot format changes require `make verify-harness`: Harness and plugin smoke check the written version, and desktop relocation tests compare the release manifest, `areal/server/status.stateVersion`, and actual snapshot versions.
 

@@ -320,8 +320,40 @@ impl Engine {
         request: GoalControl,
         update: Option<GoalUpdate>,
     ) -> Result<Value> {
+        self.goal_control_inner(identity, action, request, update, None)
+            .await
+    }
+
+    pub(crate) async fn goal_control_for_task(
+        self: &Arc<Self>,
+        identity: String,
+        action: String,
+        request: GoalControl,
+        task: (String, u64),
+    ) -> Result<Value> {
+        self.goal_control_inner(identity, action, request, None, Some(task))
+            .await
+    }
+
+    async fn goal_control_inner(
+        self: &Arc<Self>,
+        identity: String,
+        action: String,
+        request: GoalControl,
+        update: Option<GoalUpdate>,
+        expected_task: Option<(String, u64)>,
+    ) -> Result<Value> {
         self.mutate(move |engine| async move {
             let _gate = engine.desktop.lifecycle.gate.lock().await;
+            // Task 和 Goal 的用户控制共享此锁；旧调度快照不能撤销刚受理的控制。
+            // 检查返回即释放 Task 锁，之后仍按既有顺序获取 Thread/Task 锁。
+            if let Some((task_id, revision)) = &expected_task
+                && !engine
+                    .task_goal_control_current(task_id, *revision, &request, &action)
+                    .await
+            {
+                return Err(Error::Conflict);
+            }
             let cell = engine.cell(&request.thread_id).await?;
             let mut state = cell.state.lock().await;
             let method = format!("areal/goal/{action}");

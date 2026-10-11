@@ -1,5 +1,6 @@
 pub mod auth;
 mod browser_auth;
+mod delegations;
 mod desktop;
 mod dynamic_tools;
 mod processes;
@@ -435,7 +436,9 @@ async fn connection(
         // Long waits and snapshot creation must not block cancellation/steering
         // on this same WebSocket. Bound independently from subscriptions.
         if conn.ready
-            && (method.starts_with("areal/workgroup/")
+            && (method.starts_with("areal/execution/")
+                || method == "areal/agent/delegate"
+                || method.starts_with("areal/workgroup/")
                 || processes::METHODS.contains(&method)
                 || method == "areal/provider/probe"
                 || method.starts_with("areal/workflow/")
@@ -446,7 +449,10 @@ async fn connection(
         {
             let control = matches!(
                 method,
-                "areal/workgroup/cancel"
+                "areal/execution/cancel"
+                    | "areal/execution/read"
+                    | "areal/execution/list"
+                    | "areal/workgroup/cancel"
                     | "areal/workgroup/read"
                     | "areal/workgroup/list"
                     | "areal/workgroup/policy"
@@ -480,7 +486,7 @@ async fn connection(
             conn.tasks.spawn(async move {
                 let _permit = permit;
                 let result = tokio::select! { biased; _=stop.cancelled()=>return,
-                value=async { if processes::METHODS.contains(&method.as_str()) { processes::dispatch(&engine,&identity,&method,params).await } else if desktop::METHODS.contains(&method.as_str()) { desktop::dispatch(&engine,&identity,&method,params).await } else { workgroups::dispatch(engine,&identity,&method,params).await } }=>value };
+                value=async { if delegations::METHODS.contains(&method.as_str()) { delegations::dispatch(&engine,&method,params).await } else if processes::METHODS.contains(&method.as_str()) { processes::dispatch(&engine,&identity,&method,params).await } else if desktop::METHODS.contains(&method.as_str()) { desktop::dispatch(&engine,&identity,&method,params).await } else { workgroups::dispatch(engine,&identity,&method,params).await } }=>value };
                 if tx.try_send(response(id, result)).is_err() {
                     stop.cancel();
                 }
