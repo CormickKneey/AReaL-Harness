@@ -2273,7 +2273,8 @@ class CorePreview {
       key = pageKey(this.coreIdentity(request.projectId), request.projectId, request.threadId, id);
       page = this.create(key, request.projectId, request.threadId, { id });
     }
-    if (page && ['show', 'navigate', 'reload'].includes(request.operation) && !page.view.webContents.getURL()) {
+    if (page && ['show', 'navigate', 'reload'].includes(request.operation)
+      && !page.view.webContents.getURL() && !page.view.webContents.isLoadingMainFrame()) {
       const restored = request.operation !== 'navigate' && restoreUrl ? webUrl(restoreUrl) : null;
       if (restored) {
         page.url = restored;
