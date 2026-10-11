@@ -24,6 +24,8 @@ Core 提供固定 Codex app-server 0.145.0 的子集与 AReaL 扩展，不代表
 
 Core 拥有 Thread/Turn/Item 的稳定 ID 与历史。read 不订阅，resume 原子读取快照并建立增量边界，先返回基线再发事件。每连接最多 128 订阅，发送队列 256、Thread 事件窗口 128；落后时断连，重连后重新 resume。普通观察断连不取消任务。
 
+`areal/thread/fork` 的 `anchor:{turnId,boundary}` 必须明确选择 `before` 或 `after`，并使用 `workspaceMode:"sharedCurrent"`。`before` 排除所选轮次及之后的全部历史，包括活动轮次；`after` 只接受已终结轮次。纳入前缀中的失败、中断状态按原样保留；未结算工具或 hook、未经来源核查的工具、hook 或插件 UNKNOWN 返回 `HISTORY_UNRESOLVED`。核查只记录事实，历史 UNKNOWN 不改写为成功。锚点不存在返回 `ANCHOR_NOT_FOUND`，委派 Worker 或 Side 来源返回 `SOURCE_KIND_UNSUPPORTED`，活动轮次的 `after` 返回 `TURN_NOT_TERMINAL`；错误的 `data.reason` 可用于呈现恢复路径。分支只继承对话历史，项目文件仍是当前共享工作区。完整请求与来源元数据见[桌面 API](desktop.md)。
+
 input 为有序 text/image/audio/file 等内容，UTF-8 文本合计最多 1 MiB，仍受历史预算约束；认证客户端上传媒体 Blob，不传宿主 localImage/localAudio 路径。模态由 adapter/模型能力校验。原有 thread/start 的 model 需匹配服务默认；产品模型选择使用 areal/thread/start/configure。
 
 事件包括 thread/started、turn/started/completed、item/started/completed、item/agentMessage/delta；AReaL 媒体通知为 areal/item/agentMedia/available。终态 completed/interrupted/failed 在保存后发布。steer 保留已输出文本，取消当前模型请求后在同一 Turn 继续。
