@@ -309,7 +309,7 @@ pub fn projections() -> (Value, Value) {
         "executionId":string,"parentThreadId":string,"title":string,"status":string,
         "settled":boolean,"resourcesReleased":boolean,"text":string,"error":nullable(string.clone()),
         "verification":object(json!({"status":{"enum":["notRun","passed","failed"]},"kind":{"enum":["none","project","trusted"]}})),
-        "delivery":object(json!({"status":{"enum":["notRequired","pending","candidate","preparing","applying","applied","conflict","partial","unknown","failed","requiresActiveTurn"]}}))
+        "delivery":object(json!({"status":{"enum":["notRequired","pending","candidate","preparing","applying","applied","conflict","partial","unknown","failed","requiresActiveTurn","cancelled"]}}))
     }));
     execution["properties"]["verification"]["properties"]["head"] = string.clone();
     // 后端句柄与选择原因仅用于可选诊断，不成为调用方判断完成的依据。
@@ -323,6 +323,7 @@ pub fn projections() -> (Value, Value) {
         ("textBytes", number.clone()),
         ("source", string.clone()),
         ("sourceItemId", string.clone()),
+        ("stopRequested", boolean.clone()),
         (
             "owner",
             schema::<areal_protocol::delegation::ExecutionOwner>(),

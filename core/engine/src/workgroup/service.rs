@@ -242,6 +242,8 @@ struct Entry {
     intent: Intent,
     control: Control,
     cancel: CancellationToken,
+    // 正常 Turn 收尾会取消执行 token；已完成 patch 仍可在后续 Turn 显式交付。
+    delivery_cancel: CancellationToken,
 }
 
 pub struct Service {
@@ -348,6 +350,7 @@ impl Service {
                     intent,
                     control,
                     cancel: CancellationToken::new(),
+                    delivery_cancel: CancellationToken::new(),
                 },
             );
             ensure!(entries.len() <= 1024, "workgroup history capacity exceeded");
@@ -558,6 +561,7 @@ impl Service {
                             intent,
                             control: control.clone(),
                             cancel,
+                            delivery_cancel: CancellationToken::new(),
                         },
                     );
                     return Ok(service.view(&id, &control.read()));
@@ -582,6 +586,7 @@ impl Service {
                     intent,
                     control: control.clone(),
                     cancel: cancel.clone(),
+                    delivery_cancel: CancellationToken::new(),
                 },
             );
             let response = service.view(&id, &control.read());
@@ -642,7 +647,7 @@ impl Service {
         expected_head: &str,
         allow_unverified: bool,
     ) -> Result<super::delivery::Bundle> {
-        let (record, owner) = {
+        let (record, owner, cancel) = {
             let entries = self.entries.lock().await;
             let entry = entries.get(id).context("workgroup not found")?;
             if self.is_strict() {
@@ -652,7 +657,11 @@ impl Service {
                     &self.policy.allowed_directories,
                 )?;
             }
-            (entry.control.read(), entry.intent.owner.clone())
+            (
+                entry.control.read(),
+                entry.intent.owner.clone(),
+                entry.delivery_cancel.clone(),
+            )
         };
         ensure!(
             record.status == "completed" && record.cleanup_confirmed == Some(true),
@@ -687,6 +696,7 @@ impl Service {
                 candidate,
                 verified,
                 strict,
+                cancel,
             })
         })
         .await?
@@ -801,7 +811,15 @@ impl Service {
         Ok(self.view(id, control.wait(after, timeout).await.as_ref()))
     }
     pub async fn cancel(&self, id: &str, owner: Option<&str>) -> Result<Value> {
-        self.get(id, owner).await?.1.cancel();
+        let (_, cancel) = self.get(id, owner).await?;
+        self.entries
+            .lock()
+            .await
+            .get(id)
+            .unwrap()
+            .delivery_cancel
+            .cancel();
+        cancel.cancel();
         self.read(id, owner).await
     }
     pub async fn revise(

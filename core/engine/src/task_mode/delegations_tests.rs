@@ -357,6 +357,7 @@ async fn fixture() -> (
                 reason: "fixture".into(),
                 execution: Some(reference.clone()),
                 error: None,
+                cancel_requested: false,
             });
         engine.persist(&candidate).await.unwrap();
         state.thread = candidate;

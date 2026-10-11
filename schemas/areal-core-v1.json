@@ -5643,6 +5643,11 @@
                       "items": {
                         "additionalProperties": false,
                         "properties": {
+                          "cancelRequested": {
+                            "default": false,
+                            "description": "取消是持久、单向的交付门禁；执行器终态不能抹掉尚未交付候选的取消。",
+                            "type": "boolean"
+                          },
                           "delivery": {
                             "enum": [
                               "report",
@@ -16986,7 +16991,8 @@
                 "partial",
                 "unknown",
                 "failed",
-                "requiresActiveTurn"
+                "requiresActiveTurn",
+                "cancelled"
               ]
             }
           },
@@ -17098,6 +17104,9 @@
         },
         "status": {
           "type": "string"
+        },
+        "stopRequested": {
+          "type": "boolean"
         },
         "strategy": {
           "type": "string"
@@ -17858,6 +17867,11 @@
                         "items": {
                           "additionalProperties": false,
                           "properties": {
+                            "cancelRequested": {
+                              "default": false,
+                              "description": "取消是持久、单向的交付门禁；执行器终态不能抹掉尚未交付候选的取消。",
+                              "type": "boolean"
+                            },
                             "delivery": {
                               "enum": [
                                 "report",
@@ -21364,6 +21378,11 @@
                           "items": {
                             "additionalProperties": false,
                             "properties": {
+                              "cancelRequested": {
+                                "default": false,
+                                "description": "取消是持久、单向的交付门禁；执行器终态不能抹掉尚未交付候选的取消。",
+                                "type": "boolean"
+                              },
                               "delivery": {
                                 "enum": [
                                   "report",
@@ -26439,7 +26458,8 @@
                 "partial",
                 "unknown",
                 "failed",
-                "requiresActiveTurn"
+                "requiresActiveTurn",
+                "cancelled"
               ]
             }
           },
@@ -26551,6 +26571,9 @@
         },
         "status": {
           "type": "string"
+        },
+        "stopRequested": {
+          "type": "boolean"
         },
         "strategy": {
           "type": "string"
@@ -26766,7 +26789,8 @@
                 "partial",
                 "unknown",
                 "failed",
-                "requiresActiveTurn"
+                "requiresActiveTurn",
+                "cancelled"
               ]
             }
           },
@@ -26879,6 +26903,9 @@
         "status": {
           "type": "string"
         },
+        "stopRequested": {
+          "type": "boolean"
+        },
         "strategy": {
           "type": "string"
         },
@@ -26978,7 +27005,8 @@
                       "partial",
                       "unknown",
                       "failed",
-                      "requiresActiveTurn"
+                      "requiresActiveTurn",
+                      "cancelled"
                     ]
                   }
                 },
@@ -27090,6 +27118,9 @@
               },
               "status": {
                 "type": "string"
+              },
+              "stopRequested": {
+                "type": "boolean"
               },
               "strategy": {
                 "type": "string"
@@ -27206,7 +27237,8 @@
                 "partial",
                 "unknown",
                 "failed",
-                "requiresActiveTurn"
+                "requiresActiveTurn",
+                "cancelled"
               ]
             }
           },
@@ -27318,6 +27350,9 @@
         },
         "status": {
           "type": "string"
+        },
+        "stopRequested": {
+          "type": "boolean"
         },
         "strategy": {
           "type": "string"
@@ -27414,7 +27449,8 @@
                 "partial",
                 "unknown",
                 "failed",
-                "requiresActiveTurn"
+                "requiresActiveTurn",
+                "cancelled"
               ]
             }
           },
@@ -27526,6 +27562,9 @@
         },
         "status": {
           "type": "string"
+        },
+        "stopRequested": {
+          "type": "boolean"
         },
         "strategy": {
           "type": "string"
@@ -41184,6 +41223,11 @@
                       "items": {
                         "additionalProperties": false,
                         "properties": {
+                          "cancelRequested": {
+                            "default": false,
+                            "description": "取消是持久、单向的交付门禁；执行器终态不能抹掉尚未交付候选的取消。",
+                            "type": "boolean"
+                          },
                           "delivery": {
                             "enum": [
                               "report",
@@ -50042,6 +50086,11 @@
                         "items": {
                           "additionalProperties": false,
                           "properties": {
+                            "cancelRequested": {
+                              "default": false,
+                              "description": "取消是持久、单向的交付门禁；执行器终态不能抹掉尚未交付候选的取消。",
+                              "type": "boolean"
+                            },
                             "delivery": {
                               "enum": [
                                 "report",
@@ -53536,6 +53585,11 @@
                       "items": {
                         "additionalProperties": false,
                         "properties": {
+                          "cancelRequested": {
+                            "default": false,
+                            "description": "取消是持久、单向的交付门禁；执行器终态不能抹掉尚未交付候选的取消。",
+                            "type": "boolean"
+                          },
                           "delivery": {
                             "enum": [
                               "report",
@@ -57051,6 +57105,11 @@
                       "items": {
                         "additionalProperties": false,
                         "properties": {
+                          "cancelRequested": {
+                            "default": false,
+                            "description": "取消是持久、单向的交付门禁；执行器终态不能抹掉尚未交付候选的取消。",
+                            "type": "boolean"
+                          },
                           "delivery": {
                             "enum": [
                               "report",
@@ -60574,6 +60633,11 @@
                       "items": {
                         "additionalProperties": false,
                         "properties": {
+                          "cancelRequested": {
+                            "default": false,
+                            "description": "取消是持久、单向的交付门禁；执行器终态不能抹掉尚未交付候选的取消。",
+                            "type": "boolean"
+                          },
                           "delivery": {
                             "enum": [
                               "report",
@@ -65356,6 +65420,11 @@
                 "items": {
                   "additionalProperties": false,
                   "properties": {
+                    "cancelRequested": {
+                      "default": false,
+                      "description": "取消是持久、单向的交付门禁；执行器终态不能抹掉尚未交付候选的取消。",
+                      "type": "boolean"
+                    },
                     "delivery": {
                       "enum": [
                         "report",

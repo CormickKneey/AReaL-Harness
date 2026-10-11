@@ -105,6 +105,9 @@ pub struct ExecutionRecord {
     /// 创建前先记录意图；没有后端引用的旧意图不得自动重派。
     pub execution: Option<ExecutionRef>,
     pub error: Option<String>,
+    /// 取消是持久、单向的交付门禁；执行器终态不能抹掉尚未交付候选的取消。
+    #[serde(default)]
+    pub cancel_requested: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, schemars::JsonSchema)]

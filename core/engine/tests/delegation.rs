@@ -11,6 +11,7 @@ use areal_engine::{
 use areal_protocol::{Input, delegation::DelegationRequest};
 use areal_runtime_client::Client;
 use async_trait::async_trait;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 use std::{
     path::Path,
@@ -128,25 +129,61 @@ impl Executor for WorkerFixture {
     }
 }
 
-async fn runtime() -> (Arc<Client>, tokio::task::JoinHandle<()>) {
+async fn runtime(workspace: std::path::PathBuf) -> (Arc<Client>, tokio::task::JoinHandle<()>) {
     let (pipe, peer) = tokio::io::duplex(65536);
     let (read, write) = tokio::io::split(pipe);
     let (reader, mut writer) = tokio::io::split(peer);
     let task = tokio::spawn(async move {
         let epoch = uuid::Uuid::new_v4().to_string();
         let root = format!("{epoch}:scope:{}", uuid::Uuid::new_v4());
+        let mut staged = std::collections::HashMap::<String, Vec<u8>>::new();
         let mut lines = BufReader::new(reader).lines();
         while let Some(line) = lines.next_line().await.unwrap() {
             let request: Value = serde_json::from_str(&line).unwrap();
             let method = request["method"].as_str().unwrap();
             let result = match method {
                 "connection.open" => {
-                    json!({"protocolVersion":"areal.runtime.v0","runtimeEpoch":epoch,"connectionId":"fixture","rootScopeId":root,"capabilities":{"methods":["fs.execute"]}})
+                    json!({"protocolVersion":"areal.runtime.v0","runtimeEpoch":epoch,"connectionId":"fixture","rootScopeId":root,"capabilities":{"methods":["fs.execute"],"filesystem":{"artifactDelivery":true}}})
                 }
                 "scope.create" | "scope.get" | "scope.revoke" | "scope.waitClosed" => {
                     json!({"scopeId":root,"parentScopeId":null,"state":if method=="scope.waitClosed"{"closed"}else{"active"},"owner":{"taskId":"fixture"},"readRoots":["workspace://repo"],"writeRoots":["workspace://repo"],"network":"deny","limits":{"wallTimeMs":10000,"outputBytes":8388608,"maxProcesses":4},"activeProcesses":0,"outputBytes":0,"cleanupError":null})
                 }
                 "connection.close" => json!({"closed":true}),
+                "fs.execute" => {
+                    use areal_runtime_protocol::{FileCommand, FileRequest};
+                    let request: FileRequest =
+                        serde_json::from_value(request["params"].clone()).unwrap();
+                    let path = workspace.join(
+                        request
+                            .command
+                            .path()
+                            .strip_prefix("workspace://repo/")
+                            .unwrap(),
+                    );
+                    match request.command {
+                        FileCommand::StageFileChunk {
+                            upload_id,
+                            offset,
+                            data_base64,
+                            ..
+                        } => {
+                            let bytes = staged.entry(upload_id.clone()).or_default();
+                            assert_eq!(bytes.len() as u64, offset);
+                            bytes.extend(STANDARD.decode(data_base64).unwrap());
+                            json!({"uploadId":upload_id,"nextOffset":bytes.len()})
+                        }
+                        FileCommand::CommitFile {
+                            upload_id,
+                            sha256,
+                            executable,
+                            ..
+                        } => {
+                            std::fs::write(path, staged.remove(&upload_id).unwrap()).unwrap();
+                            json!({"sha256":sha256,"executable":executable})
+                        }
+                        _ => panic!("unexpected file command"),
+                    }
+                }
                 _ => panic!("unexpected runtime request {method}"),
             };
             writer
@@ -175,7 +212,7 @@ impl Fixture {
         let root = tempfile::tempdir().unwrap();
         let workspace = root.path().join("repo");
         std::fs::create_dir(&workspace).unwrap();
-        let (runtime, peer) = runtime().await;
+        let (runtime, peer) = runtime(workspace.clone()).await;
         let model = Arc::new(ModelFixture {
             reject_work: AtomicBool::new(false),
             started: Semaphore::new(0),
@@ -571,6 +608,154 @@ async fn automatic_isolation_without_checks_never_claims_trusted_verification() 
     required.writes = vec!["result.txt".into()];
     required.require_trusted_checks = true;
     assert!(fixture.engine.delegate(required).await.is_err());
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn cancelling_a_completed_candidate_prevents_delivery_and_survives_restart() {
+    let fixture = Fixture::open(Some(false)).await;
+    let mut request = fixture.request("cancel-candidate", "modify", "changes");
+    request.independent = true;
+    request.writes = vec!["result.txt".into()];
+    let started = fixture.engine.delegate(request.clone()).await.unwrap();
+    let done = fixture.wait(&started).await;
+    assert_eq!(done["status"], "awaitingDelivery");
+    let execution = started["executionId"].as_str().unwrap();
+    let stopped = fixture
+        .engine
+        .execution_cancel(&fixture.parent, execution, false)
+        .await
+        .unwrap();
+    assert_eq!(stopped["status"], "cancelled");
+    assert_eq!(stopped["stopRequested"], true);
+    assert_eq!(stopped["settled"], true);
+    assert_eq!(stopped["delivery"]["status"], "cancelled");
+    assert_eq!(fixture.wait(&started).await["status"], "cancelled");
+    assert_eq!(
+        fixture
+            .engine
+            .execution_apply(&fixture.parent, execution)
+            .await
+            .unwrap()["delivery"]["status"],
+        "cancelled"
+    );
+    assert_eq!(
+        fixture.engine.delegate(request).await.unwrap()["executionId"],
+        started["executionId"]
+    );
+    // Turn 正常收尾不能重新应用已经取消的 changes 候选。
+    fixture.model.release.add_permits(32);
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        fixture.engine.wait(&fixture.parent),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(!fixture.root.path().join("repo/result.txt").exists());
+    fixture.engine.shutdown().await;
+    let Fixture {
+        root,
+        engine,
+        model,
+        worker,
+        parent,
+        runtime,
+        peer,
+    } = fixture;
+    drop(engine);
+    // 服务恢复会创建新 token，持久执行记录仍必须挡住手动及自动交付。
+    let restored = Engine::open_with_runtime(
+        &root.path().join("data"),
+        model,
+        Limits::default(),
+        RuntimeConfig {
+            client: runtime.clone(),
+            workspace: root.path().join("repo"),
+            writable: true,
+            command_scope: None,
+            command_scratch: None,
+        },
+    )
+    .unwrap();
+    restored
+        .attach_automatic_workgroups(
+            Service::open_automatic(
+                &root.path().join("automatic"),
+                &root.path().join("repo"),
+                Arc::new(FactoryFixture(worker.clone())),
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        restored.execution_read(&parent, execution).await.unwrap()["status"],
+        "cancelled"
+    );
+    assert_eq!(
+        restored.execution_apply(&parent, execution).await.unwrap()["delivery"]["status"],
+        "cancelled"
+    );
+    assert!(!root.path().join("repo/result.txt").exists());
+    assert_eq!(worker.attempts.load(Ordering::SeqCst), 1);
+    restored.shutdown().await;
+    runtime.shutdown().await.unwrap();
+    peer.await.unwrap();
+}
+
+#[tokio::test]
+async fn normal_turn_settlement_keeps_an_uncancelled_patch_deliverable_in_a_later_turn() {
+    let fixture = Fixture::open(Some(false)).await;
+    fixture
+        .engine
+        .set_permissions(
+            areal_config::PermissionConfig {
+                mode: areal_config::PermissionMode::Yolo,
+                ..Default::default()
+            },
+            None,
+        )
+        .unwrap();
+    let mut request = fixture.request("later-patch", "modify", "patch");
+    request.writes = vec!["result.txt".into()];
+    let started = fixture.engine.delegate(request).await.unwrap();
+    assert_eq!(
+        fixture.wait(&started).await["delivery"]["status"],
+        "candidate"
+    );
+    fixture.model.release.add_permits(32);
+    tokio::time::timeout(
+        Duration::from_secs(10),
+        fixture.engine.wait(&fixture.parent),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(!fixture.root.path().join("repo/result.txt").exists());
+    let unused = fixture.model.release.available_permits() as u32;
+    fixture
+        .model
+        .release
+        .acquire_many(unused)
+        .await
+        .unwrap()
+        .forget();
+    fixture
+        .engine
+        .start(&fixture.parent, vec![Input::text("root")])
+        .await
+        .unwrap();
+    let applied = fixture
+        .engine
+        .execution_apply(&fixture.parent, started["executionId"].as_str().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(applied["delivery"]["status"], "applied");
+    assert_eq!(
+        std::fs::read(fixture.root.path().join("repo/result.txt")).unwrap(),
+        b"candidate"
+    );
     fixture.close().await;
 }
 

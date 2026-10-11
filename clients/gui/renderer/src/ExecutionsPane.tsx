@@ -57,6 +57,7 @@ const deliveryLabels: Record<string, string> = {
     notRequired: "报告交付",
     pending: "等待交付",
     candidate: "候选改动已生成",
+    cancelled: "交付已取消",
     requiresActiveTurn: "请继续任务以应用",
     preparing: "正在准备交付",
     applying: "正在应用改动",

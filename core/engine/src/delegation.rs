@@ -120,7 +120,7 @@ impl Engine {
         Ok(false)
     }
 
-    async fn save_execution(&self, parent: &str, record: ExecutionRecord) -> Result<()> {
+    async fn save_execution(&self, parent: &str, mut record: ExecutionRecord) -> Result<()> {
         let cell = self.cell(parent).await?;
         let mut state = cell.state.lock().await;
         let mut candidate = state.thread.clone();
@@ -132,6 +132,8 @@ impl Engine {
             .iter_mut()
             .find(|r| r.execution_id == record.execution_id)
         {
+            // 创建回执可能晚于取消落盘，后到的旧副本不能重新打开交付。
+            record.cancel_requested |= previous.cancel_requested;
             *previous = record;
         } else {
             if records.len() >= 10000 {
@@ -160,6 +162,19 @@ impl Engine {
             .and_then(|d| d.executions.iter().find(|r| r.execution_id == execution_id))
             .cloned()
             .ok_or(Error::NotFound)
+    }
+
+    pub(crate) async fn execution_group_cancel_requested(
+        &self,
+        parent: &str,
+        group: &str,
+        automatic: bool,
+    ) -> Result<bool> {
+        let cell = self.cell(parent).await?;
+        let state = cell.state.lock().await;
+        Ok(state.thread.desktop.as_ref().is_some_and(|data| data.executions.iter().any(|record| {
+            record.cancel_requested && matches!(&record.execution, Some(ExecutionRef::Workgroup { workgroup_id, automatic: mode }) if workgroup_id == group && *mode == automatic)
+        })))
     }
 
     pub(crate) async fn validate_execution_owner(
@@ -406,6 +421,7 @@ impl Engine {
             reason,
             execution: None,
             error: None,
+            cancel_requested: false,
         };
         // 创建意图先落盘，丢失响应时只读取原执行，不再派发。
         self.save_execution(&request.parent_thread_id, record.clone())
@@ -520,6 +536,17 @@ impl Engine {
                     .start_with_goal(key, start, token, budget)
                     .await
                     .map_err(invalid)?;
+                if self
+                    .execution_record(&request.parent_thread_id, &record.execution_id)
+                    .await?
+                    .cancel_requested
+                    && let ExecutionRef::Workgroup { workgroup_id, .. } = &reference
+                {
+                    service
+                        .cancel(workgroup_id, Some(&owner_key(&owner)))
+                        .await
+                        .map_err(invalid)?;
+                }
                 Ok(reference)
             } else if matches!(owner, ExecutionOwner::TaskRun { .. }) {
                 let mut args = serde_json::to_value(&request).map_err(invalid)?;
@@ -620,7 +647,7 @@ impl Engine {
         }
         let mut value = json!({"executionId":record.execution_id,"parentThreadId":parent_id(&record.owner),"owner":record.owner,
             "title":record.title,"strategy":record.strategy,"reason":record.reason,"status":"unknown","settled":false,"resourcesReleased":false,
-            "text":"","error":record.error,"verification":{"status":"notRun","kind":"none"},"delivery":{"status":"notRequired"}});
+            "text":"","error":record.error,"stopRequested":record.cancel_requested,"verification":{"status":"notRun","kind":"none"},"delivery":{"status":"notRequired"}});
         if let Some(error) = &record.error
             && record.execution.is_none()
         {
@@ -759,6 +786,12 @@ impl Engine {
                         value["error"] = value["delivery"]["error"].clone();
                     }
                 }
+                // 取消候选与交付回执分开：已发生的 applied/partial/unknown 不可被取消覆盖。
+                if record.cancel_requested && value["delivery"]["status"] == "candidate" {
+                    value["status"] = json!("cancelled");
+                    value["settled"] = json!(state["cleanupConfirmed"] == true);
+                    value["delivery"]["status"] = json!("cancelled");
+                }
             }
             None => {
                 value["error"] = json!(
@@ -836,7 +869,26 @@ impl Engine {
         execution_id: &str,
         force: bool,
     ) -> Result<Value> {
-        let record = self.execution_record(parent, execution_id).await?;
+        let parent = parent.to_owned();
+        let execution_id = execution_id.to_owned();
+        self.mutate(move |engine| async move {
+            engine
+                .execution_cancel_inner(&parent, &execution_id, force)
+                .await
+        })
+        .await
+    }
+    async fn execution_cancel_inner(
+        self: &Arc<Self>,
+        parent: &str,
+        execution_id: &str,
+        force: bool,
+    ) -> Result<Value> {
+        let mut record = self.execution_record(parent, execution_id).await?;
+        if record.execution.is_some() {
+            record.cancel_requested = true;
+            self.save_execution(parent, record.clone()).await?;
+        }
         match &record.execution {
             Some(ExecutionRef::Thread { thread_id, turn_id }) => {
                 let cell = self.cell(thread_id).await?;
@@ -981,7 +1033,7 @@ impl Engine {
         execution_id: &str,
     ) -> Result<()> {
         let record = self.execution_record(parent, execution_id).await?;
-        if record.delivery != Delivery::Changes {
+        if record.delivery != Delivery::Changes || record.cancel_requested {
             return Ok(());
         }
         if let Some(ExecutionRef::Workgroup {

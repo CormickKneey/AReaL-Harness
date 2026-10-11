@@ -22,6 +22,7 @@ pub(super) struct Bundle {
     pub candidate: Tree,
     pub verified: bool,
     pub strict: bool,
+    pub cancel: tokio_util::sync::CancellationToken,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -207,7 +208,7 @@ async fn execute(
     command: rt::FileCommand,
     cancel: Option<&tokio_util::sync::CancellationToken>,
 ) -> Result<bool> {
-    if cancel.is_some_and(|token| token.is_cancelled()) {
+    if bundle.cancel.is_cancelled() || cancel.is_some_and(|token| token.is_cancelled()) {
         journal.status = "partial".into();
         journal.error = Some(
             "delivery cancelled after settling prior operations; no further writes started".into(),
@@ -420,9 +421,17 @@ async fn deliver(
     }
     save(&bundle.journal, &journal).await?;
     if needs_verification {
-        let check = verifier
-            .verify(candidate.clone(), cancel.cloned().unwrap_or_default())
-            .await;
+        let verification_cancel = cancel.map(|token| token.child_token()).unwrap_or_default();
+        let verification = verifier.verify(candidate.clone(), verification_cancel.clone());
+        tokio::pin!(verification);
+        // 取消组合树验收仍等待执行器清理，不能丢弃 future 后宣称资源已释放。
+        let check = tokio::select! { biased;
+            _ = bundle.cancel.cancelled() => {
+                verification_cancel.cancel();
+                verification.await
+            },
+            result = &mut verification => result,
+        };
         match check {
             Ok(Some(check)) if check.passed && check.tree_hash == journal.head => {
                 journal.verified = true;
@@ -457,6 +466,7 @@ async fn deliver(
         candidate,
         verified: journal.verified,
         strict: bundle.strict,
+        cancel: bundle.cancel.clone(),
     };
     let bundle = &prepared;
     if !snapshot(&bundle.workspace)
@@ -608,6 +618,9 @@ impl crate::Engine {
                     return inspect(&bundle, journal, &thread_id, &group_id).await.map_err(invalid);
                 }
             }
+            if bundle.cancel.is_cancelled() || engine.execution_group_cancel_requested(&thread_id, &group_id, automatic).await? {
+                return Ok(json!({"status":"cancelled","applied":false,"groupId":group_id,"head":expected_head}));
+            }
             let Some((turn_id, cancel)) = active else {
                 return Ok(json!({"status":"requiresActiveTurn","applied":false,"groupId":group_id,"head":expected_head}));
             };
@@ -631,6 +644,14 @@ impl crate::Engine {
             engine.approval(&cell, &format!("delivery-{group_id}"), "fs_write", &approval, &cancel)
                 .await.map_err(invalid)?;
             let _guard = delivery_guard(&engine, Some(&cancel)).await?;
+            // 取消可能在审批/写租约等待期间落盘；最终准入以最新持久事实为准。
+            // 已有交付日志仍由 deliver 回读；后续每步检查专用组取消 token。
+            if bundle.cancel.is_cancelled() || engine.execution_group_cancel_requested(&thread_id, &group_id, automatic).await? {
+                if let Some(journal) = load(&bundle.journal).await.map_err(invalid)? {
+                    return inspect(&bundle, journal, &thread_id, &group_id).await.map_err(invalid);
+                }
+                return Ok(json!({"status":"cancelled","applied":false,"groupId":group_id,"head":expected_head}));
+            }
             if cancel.is_cancelled() { return Err(crate::Error::Closed); }
             if cell.state.lock().await.active.as_ref().is_none_or(|active| active.id != turn_id) {
                 return Err(crate::Error::Conflict);
@@ -681,6 +702,7 @@ mod tests {
         calls: AtomicUsize,
         fail_at: Option<usize>,
         lose_commit_receipt: bool,
+        cancel_after_commit: Option<tokio_util::sync::CancellationToken>,
     }
     #[async_trait]
     impl Files for FilesFixture {
@@ -730,6 +752,9 @@ mod tests {
                         std::fs::Permissions::from_mode(if executable { 0o755 } else { 0o644 }),
                     )
                     .unwrap();
+                    if let Some(cancel) = &self.cancel_after_commit {
+                        cancel.cancel();
+                    }
                     if self.lose_commit_receipt {
                         return Err(rt::Error::new(
                             rt::ErrorCode::Unavailable,
@@ -770,6 +795,7 @@ mod tests {
             candidate,
             verified: true,
             strict: true,
+            cancel: tokio_util::sync::CancellationToken::new(),
         };
         let files = FilesFixture {
             workspace,
@@ -777,6 +803,7 @@ mod tests {
             calls: AtomicUsize::new(0),
             fail_at: None,
             lose_commit_receipt: false,
+            cancel_after_commit: None,
         };
         (root, bundle, files)
     }
@@ -1097,6 +1124,89 @@ mod tests {
         assert_eq!(files.calls.load(Ordering::SeqCst), 0);
         assert_eq!(tree::snapshot(&bundle.workspace).unwrap(), bundle.base);
     }
+
+    #[tokio::test]
+    async fn group_cancellation_settles_the_started_commit_without_replaying_or_removing_more_files()
+     {
+        for lose_receipt in [false, true] {
+            let (_root, bundle, mut files) = fixture();
+            files.cancel_after_commit = Some(bundle.cancel.clone());
+            files.lose_commit_receipt = lose_receipt;
+            let result = deliver(
+                &files,
+                "scope",
+                &bundle,
+                "parent",
+                "group",
+                None,
+                &NeverVerify,
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                result["status"],
+                if lose_receipt { "unknown" } else { "partial" }
+            );
+            assert_eq!(
+                result["lastOperation"]["state"],
+                if lose_receipt { "unknown" } else { "succeeded" }
+            );
+            assert_eq!(result["appliedFiles"], if lose_receipt { 0 } else { 1 });
+            assert_eq!(std::fs::read(bundle.workspace.join("old")).unwrap(), b"old");
+            assert_eq!(
+                std::fs::read(bundle.workspace.join("new/script")).unwrap(),
+                vec![42; 150_000]
+            );
+            let calls = files.calls.load(Ordering::SeqCst);
+            let repeated = deliver(
+                &files,
+                "scope",
+                &bundle,
+                "parent",
+                "group",
+                None,
+                &NeverVerify,
+            )
+            .await
+            .unwrap();
+            assert_eq!(repeated["status"], result["status"]);
+            assert_eq!(files.calls.load(Ordering::SeqCst), calls);
+        }
+    }
+
+    #[tokio::test]
+    async fn cancellation_after_complete_delivery_preserves_the_applied_receipt() {
+        let (_root, bundle, files) = fixture();
+        assert_eq!(
+            deliver(
+                &files,
+                "scope",
+                &bundle,
+                "parent",
+                "group",
+                None,
+                &NeverVerify
+            )
+            .await
+            .unwrap()["status"],
+            "applied"
+        );
+        bundle.cancel.cancel();
+        let calls = files.calls.load(Ordering::SeqCst);
+        let repeated = deliver(
+            &files,
+            "scope",
+            &bundle,
+            "parent",
+            "group",
+            None,
+            &NeverVerify,
+        )
+        .await
+        .unwrap();
+        assert_eq!(repeated["status"], "applied");
+        assert_eq!(files.calls.load(Ordering::SeqCst), calls);
+    }
     struct ExpectedVerifier {
         expected: Tree,
         passed: bool,
@@ -1129,6 +1239,7 @@ mod tests {
             candidate,
             verified: first.verified,
             strict: first.strict,
+            cancel: tokio_util::sync::CancellationToken::new(),
         }
     }
     #[tokio::test]

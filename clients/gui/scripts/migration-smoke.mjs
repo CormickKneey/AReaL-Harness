@@ -240,6 +240,14 @@ async function until(predicate, label) {
   }
   throw Error("Timeout: " + label);
 }
+async function waitForPopupMotion(selector) {
+  // Base UI 先移除起始样式，之后才创建过渡；此前 getAnimations() 可能为空。
+  await page.locator(`${selector}:not([data-starting-style]):not([data-ending-style])`).waitFor();
+  await page.locator(selector).evaluate(async el => {
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    await Promise.all(el.getAnimations().map(animation => animation.finished));
+  });
+}
 async function shot(name) {
   await page.screenshot({
     path: join(scratch, name + ".png"),
@@ -358,9 +366,7 @@ try {
   assert.equal(await resources.getByRole("button", { name: /子对话$/ }).count(), 3);
   assert.equal(await page.locator("[data-testid=chat-view]").evaluate(el => el.getBoundingClientRect().width), mainWidth);
   // 等待入场缩放结束再检查最终宽度，避免把动画中的 98% 尺寸当成布局回归。
-  await page.locator(".task-resources-popup").evaluate(async el => {
-    await Promise.all(el.getAnimations().map(animation => animation.finished));
-  });
+  await waitForPopupMotion(".task-resources-popup");
   assert.equal(await page.locator(".task-resources-popup").evaluate(el => el.getBoundingClientRect().width), 332);
   await page.keyboard.press("Escape");
   await resources.waitFor({ state: "hidden" });
@@ -370,18 +376,14 @@ try {
   await resources.getByRole("button", { name: "预览图片 消息图片", exact: true }).click();
   await page.getByRole("button", { name: "关闭图片预览", exact: true }).waitFor();
   await page.waitForFunction(() => document.activeElement?.closest('[data-slot="dialog-content"]'));
-  await page.locator('[data-slot="dialog-content"]').evaluate(async el => {
-    await Promise.all(el.getAnimations().map(animation => animation.finished));
-  });
+  await waitForPopupMotion('[data-slot="dialog-content"]');
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "关闭图片预览", exact: true }).waitFor({ state: "hidden" });
   await resources.waitFor();
   await resources.getByRole("button", { name: /变更.*个文件/ }).waitFor();
   assert.ok(await resources.getByRole("button", { name: /变更.*1 个文件/ }).count());
   await resources.getByRole("heading", { name: "workspace", exact: true }).click();
-  await page.locator(".task-resources-popup").evaluate(async el => {
-    await Promise.all(el.getAnimations().map(animation => animation.finished));
-  });
+  await waitForPopupMotion(".task-resources-popup");
   await writeFile(join(scratch, "resource-layout.json"), JSON.stringify(await page.locator(".task-resources-popup").evaluate(el => ({
     width: el.getBoundingClientRect().width, background: getComputedStyle(el).backgroundColor, backgroundImage: getComputedStyle(el).backgroundImage,
     token: getComputedStyle(el).getPropertyValue("--color-popover"),
