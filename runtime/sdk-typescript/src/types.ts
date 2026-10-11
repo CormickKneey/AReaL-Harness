@@ -128,7 +128,14 @@ export type FileCommand =
   | { kind: "read"; path: string; offset?: number; maxBytes: number }
   | { kind: "stat"; path: string }
   | { kind: "list"; path: string; after?: string | null; limit: number }
-  | { kind: "search"; path: string; pattern: string; glob?: string | null; context: number; limit: number }
+  | {
+      kind: "search";
+      path: string;
+      pattern: string;
+      glob?: string | null;
+      context: number;
+      limit: number;
+    }
   | { kind: "write"; path: string; dataBase64: string; expected: ExpectedFile }
   | {
       kind: "applyPatch";
@@ -164,7 +171,11 @@ export type FileResult<C extends FileCommand> = C extends { kind: "read" }
   : C extends { kind: "list" }
     ? FileList
     : C extends { kind: "search" }
-      ? { matches: { path: string; line: number | null; text: string | null; kind: string }[]; limited: boolean; guidance: string }
-    : C extends { kind: "stat" }
-      ? { kind: FileKind; size: number }
-      : FileWrite;
+      ? {
+          matches: { path: string; line: number | null; text: string | null; kind: string }[];
+          limited: boolean;
+          guidance: string;
+        }
+      : C extends { kind: "stat" }
+        ? { kind: FileKind; size: number }
+        : FileWrite;
