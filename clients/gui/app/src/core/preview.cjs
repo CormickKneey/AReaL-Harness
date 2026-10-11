@@ -2298,7 +2298,7 @@ class CorePreview {
     });
     c.on('before-input-event', (event, input) => {
       if (!this.pageStillOwned(page)) { event.preventDefault(); return; }
-      // Human focus may leave only the current visible page in the foreground window.
+      // 仅当前台窗口中当前可见页面由人工控制时，才允许将焦点移回应用。
       if (input.type === 'keyDown' && input.key === 'F6' && !input.isAutoRepeat
         && page.control === 'human' && this.owns(projectId, threadId)
         && this.owner === pageKey(page.coreInstanceId, projectId, threadId, page.id)

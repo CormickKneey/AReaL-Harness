@@ -266,7 +266,7 @@ export function Preview({
       if (keyboard) {
         capture = await services.preview({ operation: 'captureRegion', projectId, threadId, pageId }) as RegionDraft['capture'];
         if (!mounted.current || current.current !== owner) throw new Error('选择所属聊天已变化');
-        // Pin the captured viewport while the local picker overlays the native page.
+        // 本地选择器覆盖原生页面期间，保持截图对应的视口不变。
         keyboardCaptureRef.current = capture;
         await services.preview({ operation: 'hide', projectId, threadId, pageId, captureId: capture.captureId });
         if (!mounted.current || current.current !== owner) throw new Error('选择所属聊天已变化');
@@ -319,7 +319,7 @@ export function Preview({
         keyboardCaptureRef.current = null;
         setKeyboardCapture(null);
         if (!point) styleFocusOwner.current = owner;
-        // The hidden picker pinned the old display signature; force a visibility refresh.
+        // 选择器期间保留了旧显示签名，此处强制刷新可见状态。
         window.dispatchEvent(new Event('resize'));
       }
     } catch (e) {
