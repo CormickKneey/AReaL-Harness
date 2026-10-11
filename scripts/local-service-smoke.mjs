@@ -47,7 +47,7 @@ const model = createServer(async (req, res) => {
         message.content.startsWith("AReaL runtime context (not a user request):")
       ),
   ).content;
-  requests.push({ model: request.model, text });
+  requests.push({ model: request.model, text, authorization: req.headers.authorization });
   res.writeHead(200, { "Content-Type": "text/event-stream" });
   res.write(
     `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: "reply:" + text }, finish_reason: null }] })}\n\n`,
@@ -366,6 +366,11 @@ try {
   await writeFile(config, "schema_version = 1\n[model\n");
   await until(async () => (await hot.call("areal/server/status", {})).configuration.error);
   assert((await hot.call("areal/model/list", {})).data.some((m) => m.modelId === "fixture-new"));
+  await rejected(() => ensure(), /Parse/);
+  assert.equal(
+    (await cli(["service", "status", "--workspace", workspace])).generation,
+    current.generation,
+  );
   await writeFile(config, hotConfig("fixture-new"));
   await until(async () => !(await hot.call("areal/server/status", {})).configuration.error);
   // 暂停队列跨重启恢复，仍使用提交时的默认模型版本。
@@ -393,6 +398,49 @@ try {
   await until(() => requests.some((r) => r.text === "queued-across-restart"));
   assert.equal(requests.find((r) => r.text === "queued-across-restart").model, "fixture-new");
   await until(async () => (await restored.call("areal/server/status", {})).restartSafe);
+  // 新凭据仅存在于客户端环境时，先保留忙碌服务，空闲后由 ensure 自动继承。
+  await restored.call("areal/turn/start", {
+    requestId: crypto.randomUUID(),
+    threadId: hotThread.id,
+    input: [{ type: "text", text: "hang" }],
+  });
+  await until(() => held.length > 0);
+  await writeFile(
+    config,
+    hotConfig("fixture-credentials", 'api_key_env = "TEST_MODEL_ROTATED_KEY"\n'),
+  );
+  await until(async () => {
+    const { configuration } = await restored.call("areal/server/status", {});
+    return configuration.restartRequired && configuration.error;
+  });
+  await rejected(() => ensure(), /credential must be set/);
+  env.TEST_MODEL_ROTATED_KEY = "fixture-rotated-key";
+  await rejected(() => ensure(), /service is busy/);
+  assert.equal((await restored.call("areal/server/status", {})).acceptingWork, true);
+  assert.equal(
+    (await cli(["service", "status", "--workspace", workspace])).generation,
+    current.generation,
+  );
+  held.shift()();
+  await until(async () => (await restored.call("areal/server/status", {})).restartSafe);
+  const beforeCredentialRestart = current;
+  const applied = await Promise.all([ensure(), ensure()]);
+  current = applied[0];
+  assert.notEqual(current.generation, beforeCredentialRestart.generation);
+  assert.equal(applied[1].generation, current.generation);
+  const refreshed = await client(current);
+  await refreshed.call("thread/resume", { threadId: hotThread.id });
+  await refreshed.call("areal/turn/start", {
+    requestId: crypto.randomUUID(),
+    threadId: hotThread.id,
+    input: [{ type: "text", text: "after-credential-restart" }],
+  });
+  await until(() => requests.some((r) => r.text === "after-credential-restart"));
+  const authenticated = requests.find((r) => r.text === "after-credential-restart");
+  assert.equal(authenticated.model, "fixture-credentials");
+  assert.equal(authenticated.authorization, "Bearer fixture-rotated-key");
+  await until(async () => (await refreshed.call("areal/server/status", {})).restartSafe);
+  assert.equal((await ensure()).generation, current.generation);
   // 不可热更新的限额由 ensure 在空闲时自动重启，保留会话。
   await writeFile(config, hotConfig("fixture-third", "[limits]\nmax_threads = 1234\n"));
   const previousGeneration = current.generation;

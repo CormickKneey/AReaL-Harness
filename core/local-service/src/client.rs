@@ -51,7 +51,7 @@ async fn ensure_inner(
             "data directory is bound to a different workspace"
         );
         if restart.is_none() && check_compatible(spec, &service, &directory).is_ok() {
-            // 等待文件监听完成一次更新；CLI/环境覆盖变化仍需要重启继承新上下文。
+            // 优先等待热更新；超时后只为有效配置走既有的空闲重启流程。
             let deadline = Instant::now() + Duration::from_secs(3);
             loop {
                 let state = rpc(&service, "areal/server/status", json!({})).await?;
@@ -61,10 +61,16 @@ async fn ensure_inner(
                     return Ok(service);
                 }
                 if Instant::now() >= deadline {
-                    bail!(
-                        "model configuration has not been applied; the running service is unchanged. Inspect its configuration error or run `{}` to inherit updated credentials",
-                        spec.restart_command()
+                    check_model_restart(&state)?;
+                    // 重连可持有旧 LaunchSpec；停止前重新校验文件和当前环境，避免停掉可用服务。
+                    let current = LaunchSpec::in_bin(&spec.args, spec.bin_dir.clone())?;
+                    ensure!(
+                        current.service_id == spec.service_id
+                            && current.fingerprint == spec.fingerprint
+                            && current.components == spec.components,
+                        "configuration changed while waiting for model reload; the running service is unchanged; retry with the current configuration"
                     );
+                    break;
                 }
                 tokio::time::sleep(Duration::from_millis(200)).await;
             }
@@ -165,6 +171,17 @@ async fn ensure_inner(
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+}
+
+fn check_model_restart(state: &Value) -> Result<()> {
+    // 缺失凭据由服务明确标记为需重启；解析、归档和持久化错误不能靠重启掩盖。
+    if let Some(error) = state["configuration"]["error"].as_str() {
+        ensure!(
+            state["configuration"]["restartRequired"] == true,
+            "model configuration has not been applied; the running service is unchanged: {error}"
+        );
+    }
+    Ok(())
 }
 
 async fn startup_lock(directory: &Path) -> Result<std::fs::File> {
@@ -528,4 +545,35 @@ pub async fn bind(root: &Path, workspace: &Path, data: &Path) -> Result<PathBuf>
     storage::bind_workspace(&data, &workspace)?;
     storage::write(&mapping, &data)?;
     Ok(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn model_restart_preserves_nonrecoverable_reload_errors() {
+        for error in [
+            "invalid TOML",
+            "model configuration archive is full",
+            "disk full",
+        ] {
+            let state = json!({"configuration":{"error":error,"restartRequired":false}});
+            let diagnostic = check_model_restart(&state).unwrap_err().to_string();
+            assert!(diagnostic.contains(error));
+            assert!(diagnostic.contains("running service is unchanged"));
+        }
+        assert!(
+            check_model_restart(&json!({"configuration":{
+                "error":"missing credential", "restartRequired":true
+            }}))
+            .is_ok()
+        );
+        assert!(
+            check_model_restart(&json!({"configuration":{
+                "error":null, "restartRequired":false
+            }}))
+            .is_ok()
+        );
+    }
 }

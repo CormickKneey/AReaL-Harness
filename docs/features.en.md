@@ -6,10 +6,12 @@ This page describes implemented behavior. Compilation, mechanism tests and real-
 
 | Capability | Implementation and entry point |
 |---|---|
+| Project instructions | Load `AGENTS.md` from workspace root to session cwd, with closer-directory precedence, per-Turn refresh and bounded Runtime reads. [Clients](guides/clients.en.md) |
 | Task Mode and channels | foreground/scheduled/background, durable TaskRuns, independent Inbox replies, headless without human waits, and unified TaskRun workers surviving coordinator Turns under shared budgets. Web includes task controls, schedule creation and an independent Inbox. [API](api/tasks.en.md) |
 | Sessions and models | Persistent Threads/Turns, streaming text, Chat Completions reasoning and Responses reasoning summary/text events, steering, cancellation and resume; Chat Completions / Responses, with modalities constrained by adapter and model. [Clients](guides/clients.en.md) |
 | Files and processes | Conditional writes, commands, stdin, PTYs, bounded output, narrowing Scopes and cleanup. [Runtime](api/runtime.en.md) |
 | Tool results | Bundled pinned rg, paged original historical results, and configurable search grouping/exact repeated-line views, defaulting to observe. [Tools](guides/tools.en.md) |
+| Public multimodal input | Arena task entries/read-only assets; on-demand PNG/JPEG/WebP/GIF views and independent model request byte limits. [Evaluation inputs](benchmarks/README.en.md#arena-lazy-public-inputs) |
 | Tool extensions | Command tools, hooks, client callbacks, MCP stdio/Streamable HTTP and trusted Node plugin Hosts. [Tools](guides/tools.en.md) |
 | Network proxies | HTTP/HTTPS/SOCKS5 proxies, authentication and NO_PROXY for models, HTTP MCP and OTLP; trusted stdio MCP/plugin Hosts inherit proxy variables. [Configuration](guides/configuration.en.md#proxies) |
 | Unified child work | One model delegation surface; Core selects shared read-only, shared exclusive or isolated execution with unified waiting, cancellation, artifacts and delivery. [Agent design](design/multi-agent.en.md) |
@@ -20,7 +22,7 @@ This page describes implemented behavior. Compilation, mechanism tests and real-
 | Clients | Unified `areal` command (default TUI, exec, version, upgrade, app-server, config, workgroup, service, web) and local Web; TUI has Unicode cursor editing and common input shortcuts, persistent errors, grouped traces collapsed by default, mouse/keyboard expansion and commentary/final phases; selected Claude Code noninteractive arguments and messages. [CLI contract](api/claude-cli.en.md) |
 | Skills | Discovery and explicit Profiles share metadata registration and on-demand body/attachment reads; invalid individual global Skills are isolated with warnings, without content snapshots. [Skill guide](guides/skills.en.md) |
 | Persistent Goals | Explicit creation through `/goal` or other clients, with no configuration toggle; automatic continuation across Turns, pause/resume/edit/clear and user-input priority; root/child Agents, Workgroups and summaries share accounting. [Client guide](guides/clients.en.md#goals) · [API](api/core.en.md#goals) |
-| Shared local services | Multiple TUI windows and Web reuse one Core/Runtime; local Web launches sign in automatically with one-time codes; public JSON discovery/control for Desktop Main, workspace isolation, model configuration reload, safe idle restart, explicit stop and crash cleanup. [Contract](api/local-service.en.md) |
+| Shared local services | Multiple TUI windows and Web reuse one Core/Runtime; local Web launches sign in automatically with one-time codes; public JSON discovery/control for Desktop Main, workspace isolation, model configuration reload, safe idle restart for unapplied updates (including new credentials), explicit stop and crash cleanup. [Contract](api/local-service.en.md) |
 | SDKs | Private in-repository `@areal/runtime` and `@areal/plugins` packages; Node.js 22.19.0+. [SDK contracts](api/typescript-sdk.en.md) |
 | Observability and validation | Standard OpenTelemetry Traces and Events/Logs, full trajectory export through standard OTEL configuration (OTLP HTTP/protobuf); deterministic regression tests, native smoke tests and Docker lite/pro benchmarks. [Configuration](guides/configuration.en.md) · [Testing](development/testing.en.md) |
 

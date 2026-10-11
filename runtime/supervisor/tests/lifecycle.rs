@@ -1472,3 +1472,60 @@ async fn artifact_commands_require_write_authority_and_keep_operation_receipts()
         assert_eq!(executor.starts.load(Ordering::SeqCst), starts);
     }
 }
+
+#[tokio::test]
+async fn deployment_public_inputs_reject_writes_replacement_and_permission_expansion() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().canonicalize().unwrap();
+    let public = root.join("public");
+    std::fs::create_dir(&public).unwrap();
+    let executor = Executor::new(false);
+    let mut config = Config::read_only(root.clone());
+    config.writable = true;
+    config.file_helper = Some("/bin/true".into());
+    config.read_only_paths = vec![public.clone()];
+    let runtime = Supervisor::new(config.clone(), executor.clone()).unwrap();
+    let scope = runtime.connection_info().root_scope_id;
+    for path in ["workspace://repo/public/new", "workspace://repo"] {
+        let error = runtime
+            .filesystem(FileRequest {
+                operation_id: op(&runtime),
+                scope_id: scope.clone(),
+                command: FileCommand::Write {
+                    path: path.into(),
+                    data_base64: STANDARD.encode("changed"),
+                    expected: ExpectedFile::Absent,
+                },
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::PermissionDenied);
+    }
+    assert_eq!(executor.starts.load(Ordering::SeqCst), 0);
+    let child = runtime.create_scope(child(&runtime, &scope)).unwrap();
+    let started = runtime
+        .start(process(&runtime, &child.scope_id))
+        .await
+        .unwrap();
+    assert_eq!(
+        executor.executions.lock().unwrap()[0].read_only_paths,
+        vec![public.clone()]
+    );
+    executor.finish(&started.process_id, &[]).await;
+    std::fs::rename(&public, root.join("original")).unwrap();
+    std::fs::create_dir(&public).unwrap();
+    let error = runtime
+        .filesystem(FileRequest {
+            operation_id: op(&runtime),
+            scope_id: scope,
+            command: FileCommand::Stat {
+                path: "workspace://repo/public".into(),
+            },
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::PermissionDenied);
+    runtime.shutdown().await.unwrap();
+    config.read_only_paths = vec![root.parent().unwrap().into()];
+    assert!(Supervisor::new(config, Executor::new(false)).is_err());
+}

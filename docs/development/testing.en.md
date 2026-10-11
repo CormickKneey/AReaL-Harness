@@ -19,9 +19,19 @@ Install dependencies using the [development guide](README.en.md). Regular tests 
 
 Snapshot format changes require `make verify-harness`: Harness and plugin smoke check the written version, and desktop relocation tests compare the release manifest, `areal/server/status.stateVersion`, and actual snapshot versions.
 
+Real PTY smoke tests reconstruct incremental output with a terminal-cell emulator. Wide characters also overwrite the adjacent cell so stale characters cannot produce false Unicode-editing failures. Script unit tests cover this redraw boundary.
+
 macOS native smoke tests require Seatbelt; Linux native smoke tests require `/usr/bin/bwrap` and user namespaces. Neither platform may substitute unsandboxed execution when the capability is missing. `outer-container-perf` remains validated in controlled containers. Default `cargo test` excludes explicitly ignored native Workgroup and capacity cases.
 
 Linux host checks use `make verify CARGO_TEST_ARGS='--exclude areal-runtime-exec-native'`. Native backend tests require `/usr/bin/bwrap` and user namespaces; a separate CI job builds the Dockerfile's `runtime-tests` target and runs every backend test, including `outer-container-perf`, inside the controlled Bubblewrap container. Excluding the backend alone does not complete validation.
+
+## GUI and desktop route gates
+
+`cargo test --locked -p areal-app-server --lib desktop_registered_methods_have_dispatch_routes` sends non-object parameters for every registered desktop RPC through the real connection dispatcher and requires an invalid-parameters error rather than method-not-found. It includes `areal/thread/start`, handled separately by the connection. The check runs with `make test-protocol`, `make test` and CI without starting model requests or creating Threads.
+
+[GUI CI](../../.github/workflows/gui.yml) runs on GUI, Core, Runtime, schema and related build configuration changes. It installs frozen dependencies, checks GUI types and public boundaries, builds Core/GUI, checks routes, and runs the existing `make gui-smoke`, `test:composer` and `test:queue`. The three smoke scripts run sequentially with isolated directories and deterministic local models. Logs, screenshots and source manifests are uploaded as CI artifacts; they do not establish real-provider or packaged-app acceptance.
+
+Composer and queue smoke share navigation and narrow-window steps in `clients/gui/scripts/smoke-navigation.mjs`: hover the project before creating a conversation, return through a stable task ID, and collapse the sidebar before resizing and waiting for the editor. Failures retain a full-window `failure-window.png` and `failure-state.json` with the original error, viewport, selected project/Thread and visible text. Unavailable pages or screenshots are recorded as capture errors without replacing the original test failure.
 
 ## Python and scratch
 
@@ -47,6 +57,8 @@ python3 scripts/native-agents-smoke.py --bin-dir target/debug --sandbox-profile 
 ```
 
 Native tools/agent smoke tests use a local fixed-response HTTP model, the standard launcher and temporary workspaces without external model services. They cover file CAS, search, verification receipts, images, no delegation, a single Worker, synchronous waits, budget failures, parent cancellation and default asynchronous dispatch. The asynchronous case requires parent progress before three Worker requests finish and checks parent/child sampling parameters. Stream tests cover same-frame/tail length usage, EOF/cancellation, no UNKNOWN replay, post-compaction handles and cross-Turn boundaries.
+
+`make harness-smoke` also runs `python3 scripts/arena-input-smoke.py --bin-dir target/debug`. The real launcher, CLI, Core and Runtime verify that a task larger than 2 MiB starts through a short bootstrap; task text, manifest, PNG and selected GIF frames are read on demand; images reach the local model request; public inputs reject writes and retain their integrity. Directly oversized CLI input produces a structured error before any model request. This does not evaluate a real model. Engine unit tests separately cover serialized byte boundaries and successful WebSocket deltas whose full replay would exceed the wire budget.
 
 Request-budget tests cover `MAX_MODEL_ROUNDS` classification when Chat Completions or Responses returns tools in the final round, with no tool execution or retries and the original budget audit preserved. Ordinary tool-call budget exhaustion and invalid indices must retain their own classifications. Desktop CLI acceptance also checks the corresponding `error_max_turns` result. Goal HTTP regressions verify that output-token caps and tool count/buffer budgets survive shared pools, while unknown usage from failed requests prevents retries and tool execution.
 
@@ -79,9 +91,13 @@ Outer-container relaxations apply only to the explicitly selected controlled pro
 
 ## CI and contracts
 
+macOS and Linux host checks share one matrix definition. `fail-fast: false` ensures a failure on one platform does not cancel coverage on the other. macOS uses `make setup-node` for native smoke and SDK Node dependencies; Linux `make setup` continues to install all locked formatting tools. Native validation runs Runtime, Harness, desktop API and Workgroup smoke in one child Make invocation, sharing one workspace build. Docker copies only the required CLI/TUI/Web clients and excludes GUI from its build context. All existing checks and tests remain.
+
+`harness-smoke.mjs` checks root/nested `AGENTS.md` ordering, unrelated-directory isolation, missing files, per-Turn refresh, the 32 KiB boundary, UTF-8 and symlink rejection through real Core/Runtime model requests.
+
 [CI](../../.github/workflows/ci.yml) runs native Harness checks on macOS, portable regression and Docker sandbox/file-ownership checks on Linux, and separate Rust/npm advisory checks. Actions are pinned by commit, repository permissions are read-only, and failures retain logs. Consult the run for the relevant commit for actual results.
 
-Pull requests, pushes to `main`, and manual dispatch run the full checks, avoiding duplicate push and PR runs for feature branches. Linux portable and container checks run in parallel, and formatting, static analysis, Rust/SDK/script checks inside the portable regression run in parallel as well. The existing `Linux checks and container Runtime` check remains as an aggregate gate that requires both jobs to succeed. macOS runs `make verify-native` for native backend and Harness integration coverage that Linux does not provide.
+Pull requests, pushes to `main`, and manual dispatch run the full checks, avoiding duplicate push and PR runs for feature branches. Linux portable and container checks run in parallel, with formatting, SDK and script checks in parallel inside portable regression, followed by static analysis, Rust tests and TUI smoke. The existing `Linux checks and container Runtime` check remains as an aggregate gate that requires both the host matrix and the container job to succeed. macOS runs `make verify-native` for native backend and Harness integration coverage that Linux does not provide.
 
 Host jobs cache Cargo dependency artifacts, npm downloads and uv packages; container tests also reuse the Runtime image build layers through BuildKit's GitHub Actions cache. Cache hits still execute tests. Rust caches are separated by platform, toolchain and dependency manifests. CI disables debug symbols and incremental compilation to reduce artifact size. Only the pinned `cargo-audit` binary is cached; every run still reads advisories and audits the lockfile.
 

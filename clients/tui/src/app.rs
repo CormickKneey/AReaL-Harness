@@ -1200,6 +1200,16 @@ impl App {
             .next()
             .map_or(self.input.len(), |g| self.input_cursor + g.len())
     }
+    /// Codex insert-mode `move_word_left`（Option+← / Alt+b）：跳过光标前的空白，落到上一词开头。
+    ///
+    /// 词按 Unicode 词边界再按标点拆开；连续标点算同一个词。光标只落在完整字素上。
+    fn previous_input_word(&self) -> usize {
+        word_boundary(&self.input, self.input_cursor, false)
+    }
+    /// Codex insert-mode `move_word_right`（Option+→ / Alt+f）：跳过光标后的空白，落到下一词结尾。
+    fn next_input_word(&self) -> usize {
+        word_boundary(&self.input, self.input_cursor, true)
+    }
     fn input_changed(&mut self) {
         // 插入或删除可能合并相邻字素，光标必须重新对齐到完整字素之后。
         self.input_cursor = self
@@ -1597,15 +1607,33 @@ impl App {
             }
             KeyCode::Enter if self.focus == Focus::Input => return self.submit(),
             KeyCode::Left if self.focus == Focus::Input => {
-                self.input_cursor = self.previous_input_boundary();
+                self.input_cursor = if key.modifiers.contains(KeyModifiers::ALT) {
+                    self.previous_input_word()
+                } else {
+                    self.previous_input_boundary()
+                };
             }
             KeyCode::Right if self.focus == Focus::Input => {
-                self.input_cursor = self.next_input_boundary();
+                self.input_cursor = if key.modifiers.contains(KeyModifiers::ALT) {
+                    self.next_input_word()
+                } else {
+                    self.next_input_boundary()
+                };
             }
             KeyCode::Backspace if self.focus == Focus::Input => {
                 self.delete_input(true);
             }
             KeyCode::Delete if self.focus == Focus::Input => self.delete_input(false),
+            // macOS Option 在非 Kitty 键盘协议下常把 Option+←/→ 发成 Alt+b / Alt+f。
+            KeyCode::Char('b' | 'f')
+                if self.focus == Focus::Input && key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                self.input_cursor = if key.code == KeyCode::Char('b') {
+                    self.previous_input_word()
+                } else {
+                    self.next_input_word()
+                };
+            }
             KeyCode::Char(c) if self.focus == Focus::Input => {
                 self.insert_input(c.encode_utf8(&mut [0; 4]));
             }
@@ -2435,6 +2463,99 @@ pub fn thread_status(thread: &Thread) -> &'static str {
     }
 }
 
+/// Codex 词分隔符。空白已由外层跳过，这里只拆标点与普通字符。
+const WORD_SEPARATORS: &str = "`~!@#$%^&*()-=+[{]}\\|;:'\",.<>/?";
+fn is_word_separator(ch: char) -> bool {
+    WORD_SEPARATORS.contains(ch)
+}
+/// 先按 Unicode 词边界切段，再在段内按分隔符性质切开。连续同类字符保持一段。
+fn split_word_pieces(run: &str) -> Vec<(usize, &str)> {
+    let mut pieces = Vec::new();
+    for (segment_start, segment) in run.split_word_bound_indices() {
+        let mut piece_start = 0;
+        let mut chars = segment.char_indices();
+        let Some((_, first_char)) = chars.next() else {
+            continue;
+        };
+        let mut in_separator = is_word_separator(first_char);
+        for (idx, ch) in chars {
+            let is_separator = is_word_separator(ch);
+            if is_separator == in_separator {
+                continue;
+            }
+            pieces.push((segment_start + piece_start, &segment[piece_start..idx]));
+            piece_start = idx;
+            in_separator = is_separator;
+        }
+        pieces.push((segment_start + piece_start, &segment[piece_start..]));
+    }
+    pieces
+}
+/// `forward` 为下一词结尾（insert-mode Alt+f），否则为上一词开头（Alt+b）。
+fn word_boundary(text: &str, cursor: usize, forward: bool) -> usize {
+    if forward {
+        end_of_next_word(text, cursor)
+    } else {
+        beginning_of_previous_word(text, cursor)
+    }
+}
+fn beginning_of_previous_word(text: &str, cursor: usize) -> usize {
+    let prefix = &text[..cursor];
+    let Some((first_non_ws_idx, ch)) = prefix
+        .char_indices()
+        .rev()
+        .find(|&(_, ch)| !ch.is_whitespace())
+    else {
+        return 0;
+    };
+    let run_start = prefix[..first_non_ws_idx]
+        .char_indices()
+        .rev()
+        .find(|&(_, ch)| ch.is_whitespace())
+        .map_or(0, |(idx, ch)| idx + ch.len_utf8());
+    let run_end = first_non_ws_idx + ch.len_utf8();
+    let pieces = split_word_pieces(&prefix[run_start..run_end]);
+    let mut pieces = pieces.into_iter().rev().peekable();
+    let Some((piece_start, piece)) = pieces.next() else {
+        return run_start;
+    };
+    let mut start = run_start + piece_start;
+    if piece.chars().all(is_word_separator) {
+        while let Some((idx, piece)) = pieces.peek() {
+            if !piece.chars().all(is_word_separator) {
+                break;
+            }
+            start = run_start + *idx;
+            pieces.next();
+        }
+    }
+    start
+}
+fn end_of_next_word(text: &str, cursor: usize) -> usize {
+    let suffix = &text[cursor..];
+    let Some(first_non_ws) = suffix.find(|ch: char| !ch.is_whitespace()) else {
+        return text.len();
+    };
+    let run = &suffix[first_non_ws..];
+    let run = &run[..run.find(char::is_whitespace).unwrap_or(run.len())];
+    let mut pieces = split_word_pieces(run).into_iter().peekable();
+    let Some((start, piece)) = pieces.next() else {
+        return cursor + first_non_ws;
+    };
+    let word_start = cursor + first_non_ws + start;
+    let mut end = word_start + piece.len();
+    if piece.chars().all(is_word_separator) {
+        while let Some((idx, piece)) = pieces.peek() {
+            if !piece.chars().all(is_word_separator) {
+                break;
+            }
+            end = cursor + first_non_ws + *idx + piece.len();
+            pieces.next();
+        }
+    }
+    end
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -2629,6 +2750,103 @@ pub(crate) mod tests {
         app.key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE))
             .unwrap();
         assert!(app.input.is_empty());
+    }
+    #[test]
+    fn option_arrows_move_by_codex_word_boundaries() {
+        let mut app = App::new(Preferences::default());
+        app.paste("  alpha  beta   gamma");
+        let after_alpha = "  alpha".len();
+        app.input_cursor = after_alpha;
+        app.key(KeyEvent::new(KeyCode::Left, KeyModifiers::ALT))
+            .unwrap();
+        assert_eq!(app.input_cursor, 2);
+        app.key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::ALT))
+            .unwrap();
+        assert_eq!(app.input_cursor, after_alpha);
+        app.key(KeyEvent::new(KeyCode::Right, KeyModifiers::ALT))
+            .unwrap();
+        assert_eq!(app.input_cursor, "  alpha  beta".len());
+        app.key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT))
+            .unwrap();
+        assert_eq!(app.input_cursor, "  alpha  ".len());
+        assert_eq!(app.input, "  alpha  beta   gamma");
+
+        // 撇号、句点属于 Codex 分隔符，can't / 32.3 / foo.bar 都会被切开。
+        let mut app = App::new(Preferences::default());
+        app.paste("can't 32.3 foo.bar");
+        for (cursor, expected) in [(5, 4), (4, 3), (10, 9), (18, 15)] {
+            app.input_cursor = cursor;
+            app.key(KeyEvent::new(KeyCode::Left, KeyModifiers::ALT))
+                .unwrap();
+            assert_eq!(app.input_cursor, expected, "left from {cursor}");
+        }
+        app.input_cursor = 0;
+        app.key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::ALT))
+            .unwrap();
+        assert_eq!(app.input_cursor, "can".len());
+        app.key(KeyEvent::new(KeyCode::Right, KeyModifiers::ALT))
+            .unwrap();
+        assert_eq!(app.input_cursor, "can'".len());
+        app.key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::ALT))
+            .unwrap();
+        assert_eq!(app.input_cursor, "can't".len());
+        assert_eq!(app.input, "can't 32.3 foo.bar");
+
+        let mut app = App::new(Preferences::default());
+        app.paste("你好世界");
+        app.key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT))
+            .unwrap();
+        assert_eq!(app.input_cursor, "你好世".len());
+        app.key(KeyEvent::new(KeyCode::Right, KeyModifiers::ALT))
+            .unwrap();
+        assert_eq!(app.input_cursor, app.input.len());
+
+        // Unicode 词边界把汉字逐字切开，hello你好 是 hello | 你 | 好。
+        let mut app = App::new(Preferences::default());
+        app.paste("hello你好");
+        app.key(KeyEvent::new(KeyCode::Left, KeyModifiers::ALT))
+            .unwrap();
+        assert_eq!(app.input_cursor, "hello你".len());
+        app.key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT))
+            .unwrap();
+        assert_eq!(app.input_cursor, "hello".len());
+        app.key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT))
+            .unwrap();
+        assert_eq!(app.input_cursor, 0);
+        app.key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::ALT))
+            .unwrap();
+        assert_eq!(app.input_cursor, "hello".len());
+        app.key(KeyEvent::new(KeyCode::Right, KeyModifiers::ALT))
+            .unwrap();
+        assert_eq!(app.input_cursor, "hello你".len());
+        assert_eq!(app.input, "hello你好");
+
+        for grapheme in ["中", "e\u{301}", "👩‍💻", "🇨🇳"] {
+            let mut app = App::new(Preferences::default());
+            app.paste(&format!("a {grapheme} z"));
+            let text = app.input.clone();
+            // 行尾回退先落到空白前，再回到字素开头；前进跳过空白落到字素结尾。
+            app.key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT))
+                .unwrap();
+            assert_eq!(app.input_cursor, text.len() - 1);
+            app.key(KeyEvent::new(KeyCode::Left, KeyModifiers::ALT))
+                .unwrap();
+            assert_eq!(app.input_cursor, 2);
+            app.key(KeyEvent::new(KeyCode::Right, KeyModifiers::ALT))
+                .unwrap();
+            assert_eq!(app.input_cursor, 2 + grapheme.len());
+            assert!(app.input.is_char_boundary(app.input_cursor));
+        }
+
+        let mut app = App::new(Preferences::default());
+        app.paste("draft");
+        app.focus = Focus::Content;
+        app.key(KeyEvent::new(KeyCode::Left, KeyModifiers::ALT))
+            .unwrap();
+        app.key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT))
+            .unwrap();
+        assert_eq!(app.input, "draft");
+        assert_eq!(app.input_cursor, 5);
     }
     #[test]
     fn input_line_shortcuts_and_newline_deletion_handle_pasted_text() {

@@ -1,3 +1,4 @@
+import { captureSmokeFailure, resizeConversation } from "./smoke-navigation.mjs";
 import assert from "node:assert/strict";
 
 import { createRequire } from "node:module";
@@ -243,6 +244,127 @@ try {
       "send completed",
     );
   };
+  // 由 Chromium 驱动真实组词事件；候选中间态不能保存到草稿或触发发送。
+  const checkComposition = async (draftKey, label) => {
+    await input().fill("");
+    await input().focus();
+    await page.evaluate((key) => {
+      window.composerInputProbe = { writes: [], restore: Storage.prototype.setItem };
+      Storage.prototype.setItem = function (name, value) {
+        if (name === key) window.composerInputProbe.writes.push(value);
+        return window.composerInputProbe.restore.call(this, name, value);
+      };
+    }, draftKey);
+    await app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].webContents.debugger.attach("1.3"),
+    );
+    const command = (method, params) =>
+      app.evaluate(
+        async ({ BrowserWindow }, { method, params }) =>
+          BrowserWindow.getAllWindows()[0].webContents.debugger.sendCommand(method, params),
+        { method, params },
+      );
+    const compose = (text) =>
+      command("Input.imeSetComposition", {
+        text,
+        selectionStart: text.length,
+        selectionEnd: text.length,
+      });
+    const writes = () => page.evaluate(() => window.composerInputProbe.writes);
+    const requestCount = received.length;
+    try {
+      for (const text of ["n", "ni", "nihao", "你好"]) {
+        await compose(text);
+        await page.waitForFunction(
+          (text) =>
+            document
+              .querySelector('[data-testid="chat-input"]')
+              .textContent.replaceAll("\u200b", "") === text,
+          text,
+        );
+      }
+      assert.deepEqual(await writes(), [], `${label}: unconfirmed candidates stay in editor`);
+      await input().evaluate((element) =>
+        element.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "Enter",
+            code: "Enter",
+            keyCode: 229,
+            isComposing: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        ),
+      );
+      assert.equal(received.length, requestCount, `${label}: candidate Enter does not send`);
+      await command("Input.insertText", { text: "你好" });
+      await page.waitForFunction((key) => localStorage.getItem(key) === "你好", draftKey);
+      assert.deepEqual(
+        await writes(),
+        ["你好"],
+        `${label}: commit publishes once even when candidate text is unchanged`,
+      );
+      assert.equal(await input().textContent(), "你好");
+      assert.deepEqual(
+        await input().evaluate((element) => {
+          const selection = getSelection();
+          return {
+            inside: element.contains(selection.anchorNode),
+            offset: selection.anchorOffset,
+            collapsed: selection.isCollapsed,
+          };
+        }),
+        { inside: true, offset: 2, collapsed: true },
+      );
+      assert.equal(
+        await input().evaluate((element) => {
+          const style = getComputedStyle(element);
+          return style.caretColor === style.color;
+        }),
+        true,
+        `${label}: caret follows foreground color`,
+      );
+      await shot(`${label}-ime-committed`);
+      await compose("mei");
+      await page.waitForFunction(() =>
+        document.querySelector('[data-testid="chat-input"]').textContent.includes("mei"),
+      );
+      assert.deepEqual(await writes(), ["你好"]);
+      await compose("");
+      await page.waitForFunction(
+        () => document.querySelector('[data-testid="chat-input"]').textContent === "你好",
+      );
+      assert.equal(await page.evaluate((key) => localStorage.getItem(key), draftKey), "你好");
+      assert.deepEqual(
+        await writes(),
+        ["你好"],
+        `${label}: canceled composition preserves committed draft`,
+      );
+      await input().press("Shift+Enter");
+      await page.keyboard.type("a");
+      await page.waitForFunction((key) => localStorage.getItem(key)?.endsWith("a"), draftKey);
+      assert.match(await page.evaluate((key) => localStorage.getItem(key), draftKey), /^你好\n+a$/);
+      assert.equal(received.length, requestCount);
+      assert.equal(await button("发送").isEnabled(), true);
+      checks.push(
+        `${label}: native Chromium composition stays local; one final draft write; cancel, caret, Enter guard and newline remain correct`,
+      );
+    } finally {
+      await page.evaluate(() => {
+        Storage.prototype.setItem = window.composerInputProbe.restore;
+        delete window.composerInputProbe;
+      });
+      await app.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows()[0].webContents.debugger.detach(),
+      );
+    }
+    await input().fill("");
+    await page.keyboard.type("a");
+    await page.waitForFunction((key) => localStorage.getItem(key) === "a", draftKey);
+    assert.equal(await button("发送").isEnabled(), true, `${label}: first character enables send`);
+    await input().fill("");
+  };
+  await checkComposition(`areal-gui:draft:${pid}:new`, "draft");
   // 草稿目录不创建 Thread，+/slash 同视图并保留正文与同名来源。
   await input().fill("正文保留");
   await chooseFirst();
@@ -377,6 +499,7 @@ try {
   checks.push(
     "real paged Core Skill read (multibyte >8192 bytes) reaches model request; two-tier real model/effort selection reaches provider",
   );
+  await checkComposition(`areal-gui:draft:${pid}:${tid}`, "chat");
   // 已有聊天发送前读取失败不丢标签或正文，不发缺失技能请求。
   await chooseFirst();
   await input().fill("技能失败保留草稿");
@@ -445,12 +568,7 @@ try {
   checks.push(
     "new draft inline Goal uses Core creation; objective consumed while skills and file remain unsent",
   );
-  await button("收起侧栏").click();
-  await app.evaluate(({ BrowserWindow }) => {
-    const window = BrowserWindow.getAllWindows()[0];
-    window.setMinimumSize(640, 480);
-    window.setSize(720, 760);
-  });
+  await resizeConversation(app, page, 720, 760);
   await openCatalog();
   await shot("05-narrow-catalog");
   const catalogBox = await page.getByTestId("composer-catalog").boundingBox();
@@ -478,8 +596,9 @@ try {
   console.log(JSON.stringify({ passed, scratch, checks }));
 } catch (error) {
   console.error("renderer errors", errors);
-  console.error(await page?.locator("body").innerText());
-  await shot("failure").catch(() => {});
+  frames.push(
+    ...(await captureSmokeFailure(page, scratch, error)).filter((file) => file.endsWith(".png")),
+  );
   throw error;
 } finally {
   await quit();
