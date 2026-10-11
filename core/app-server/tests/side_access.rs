@@ -361,5 +361,20 @@ async fn authenticated_side_access_and_legacy_routes_preserve_policy() {
     drop(target);
     stop.cancel();
     server.await.unwrap().unwrap();
+    engine.wait(&side_id).await.unwrap();
     engine.shutdown().await;
+    drop(engine);
+    let path = dir.path().join(format!("{side_id}.json"));
+    let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(record["version"], 14);
+    assert_eq!(record["thread"]["conversation"]["kind"], "side");
+    record["version"] = json!(13);
+    std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+    let refusal = Engine::open(dir.path(), Arc::new(TextModel), Limits::default())
+        .err()
+        .expect("version 13 Side record loaded as an ordinary conversation");
+    assert!(
+        refusal.to_string().contains("unsupported Side policy"),
+        "{refusal}"
+    );
 }

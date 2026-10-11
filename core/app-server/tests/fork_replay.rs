@@ -232,6 +232,20 @@ async fn fork_keeps_inherited_media_readable_without_copying_execution() {
             if url.starts_with("data:image/png;base64,"))
             )
     );
+    let side = call(&mut socket, 9, "areal/side/start", json!({"requestId":"image-side-a",
+        "sourceThreadId":source_id,"workspaceAccess":"none","input":[{"type":"text","text":"Describe the retained image"}]})).await;
+    let side_id = side["result"]["thread"]["id"]
+        .as_str()
+        .expect(&side.to_string())
+        .to_owned();
+    engine.wait(&side_id).await.unwrap();
+    let other_side = call(&mut socket, 10, "areal/side/start", json!({"requestId":"image-side-b",
+        "sourceThreadId":source_id,"workspaceAccess":"none","input":[{"type":"text","text":"Describe it again"}]})).await;
+    let other_side_id = other_side["result"]["thread"]["id"]
+        .as_str()
+        .expect(&other_side.to_string())
+        .to_owned();
+    engine.wait(&other_side_id).await.unwrap();
     let archived = call(
         &mut socket,
         6,
@@ -271,4 +285,47 @@ async fn fork_keeps_inherited_media_readable_without_copying_execution() {
     assert_eq!(foreign.status(), reqwest::StatusCode::NOT_FOUND);
     stop.cancel();
     server.await.unwrap().unwrap();
+    let target_token = "side-image-target-token-1234567890123";
+    let target_auth = Authentication {
+        version: 1,
+        principals: vec![Principal {
+            id: "target-only".into(),
+            token: target_token.into(),
+            permissions: [Permission::Observe].into(),
+            thread_ids: Some([side_id.clone()].into()),
+        }],
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let target_addr = listener.local_addr().unwrap();
+    let target_stop = CancellationToken::new();
+    let target_server = tokio::spawn(areal_app_server::serve_authenticated(
+        listener,
+        engine.clone(),
+        target_stop.clone(),
+        Some(target_auth),
+    ));
+    let target_url = |id: &str| format!("http://{target_addr}/areal/blobs/{blob}?threadId={id}");
+    let target_read = client
+        .get(target_url(&side_id))
+        .bearer_auth(target_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(target_read.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        target_read.bytes().await.unwrap().len() as u64,
+        media["media"]["sizeBytes"]
+    );
+    for denied in [source_id, other_side_id.as_str()] {
+        let response = client
+            .get(target_url(denied))
+            .bearer_auth(target_token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::FORBIDDEN);
+    }
+    target_stop.cancel();
+    target_server.await.unwrap().unwrap();
+    engine.shutdown().await;
 }
