@@ -502,7 +502,9 @@ pub struct Thread {
     pub toolset_revision: u64,
 }
 
-fn is_zero(value: &u64) -> bool { *value == 0 }
+fn is_zero(value: &u64) -> bool {
+    *value == 0
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RpcError {

@@ -6,8 +6,8 @@ import { insertSideAnswer, makeBringBackPreview } from "./side-bring-back.js";
 import type { Action, Data } from "./services.js";
 
 // 编辑器按服务、来源和具体草稿或 Side 隔离；切换目标会卸载旧编辑器。
-export function SideChatPane({ project, source, action, dark }: {
-  project: Data; source: Data; action: Action; dark: boolean;
+export function SideChatPane({ project, source, action, dark, onReturn }: {
+  project: Data; source: Data; action: Action; dark: boolean; onReturn: () => void;
 }) {
   const workspace = useMemo(() => new SideDraftWorkspace(localStorage, {
     instanceId: project.core?.instanceId ?? "unknown", projectId: project.id, sourceThreadId: source.id, randomId: () => crypto.randomUUID(),
@@ -26,7 +26,7 @@ export function SideChatPane({ project, source, action, dark }: {
     return () => { window.removeEventListener("areal-side-draft", receive); window.removeEventListener("areal-side-selection", receive); };
   }, [workspace]);
   return <section className="side-chat-pane" aria-label="旁路讨论">
-    <div className="panel-header"><strong>旁路讨论</strong><span className="text-foreground-subtle">只读 · 独立会话</span></div>
+    <div className="panel-header"><button type="button" onClick={onReturn}>返回主会话</button><strong>旁路讨论</strong><span className="text-foreground-subtle">只读 · 独立会话</span></div>
     <div className="utility-content">
       <RelatedSideChats project={project} sourceId={source.id} selectedId={selected.kind === "side" ? selected.id : ""} action={action}
         onSelect={id => choose(id ? workspace.selectSide(id) : workspace.newDraft())} />
@@ -55,7 +55,7 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
   const [workspaceAccess, setWorkspaceAccess] = useState<"none" | "readOnly">(() => workspaceReadAvailable ? "readOnly" : "none");
   const [pendingId, setPendingId] = useState(() => localStorage.getItem(pendingKey) ?? "");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState(() => localStorage.getItem(`${owner}:error`) ?? "");
   const [loading, setLoading] = useState(false);
   const [selection, setSelection] = useState<Data | null>(() => { try { return JSON.parse(localStorage.getItem(selectionKey) ?? "null"); } catch { return null; } });
   const [anchor, setAnchor] = useState<Data | null>(() => { try { return JSON.parse(localStorage.getItem(anchorKey) ?? "null"); } catch { return null; } });
@@ -64,7 +64,11 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
   const [evidenceCursor, setEvidenceCursor] = useState<string | null>(null);
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [evidenceBusy, setEvidenceBusy] = useState(false);
-  const [bringPreview, setBringPreview] = useState<ReturnType<typeof makeBringBackPreview> | null>(null);
+  const [bringPreview, updateBringPreview] = useState<ReturnType<typeof makeBringBackPreview> | null>(() => workspace.bringBack(selected));
+  const setBringPreview = (preview: ReturnType<typeof makeBringBackPreview> | null) => {
+    workspace.saveBringBack(selected, preview); updateBringPreview(preview);
+  };
+  useEffect(() => { localStorage.setItem(`${owner}:error`, error); }, [owner, error]);
   const [bringResult, setBringResult] = useState("");
   const mounted = useRef(true);
   const side = sideId ? project.state?.threads?.[sideId] : undefined;
@@ -199,6 +203,7 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
       </select></label>}
       {!sideId && !workspaceReadAvailable && <p className="text-foreground-subtle">当前 Core 未提供经过验证的工作区只读能力；可使用仅会话证据。</p>}
       {selection && !sideId && <blockquote className="notice">{selection.kind === "itemRange" ? "已持久化选区；发送时验证原文位置。" : "用户引文，来源未确认。"}<br />{selectionPreview || selection.text}</blockquote>}
+      {validSide && <p role="status">模型：{project.configurations?.[sideId]?.model?.modelId || side.model?.modelId || source.model?.modelId || "当前配置"} · {active ? side.desktop?.sideCapacityStatus === "waiting" ? "等待模型容量" : "正在生成" : "空闲"}</p>}
       {validSide && <p className="text-foreground-subtle">冻结锚点：{side.conversation.origin?.boundary} · {side.conversation.origin?.sourceTurnId || "空历史"}</p>}
       {validSide && side.conversation.selection && <blockquote className="notice">{side.conversation.selection.verified ? "已验证来源片段" : "用户引文，来源未确认"}：{side.conversation.selection.text}</blockquote>}
       {validSide && <div className="utility-actions"><button type="button" onClick={() => void loadEvidence()} disabled={evidenceBusy}>查看冻结证据</button></div>}

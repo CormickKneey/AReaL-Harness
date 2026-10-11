@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
-import { mkdtemp, mkdir, readFile, writeFile, readdir, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, readdir, stat, cp, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { captureSmokeFailure, selectConversation } from "./smoke-navigation.mjs";
@@ -18,6 +18,8 @@ const binary = process.env.AREAL_CORE_BIN || join(root, "target/debug/areal");
 const evidenceRoot = join(root, ".scratch", "gui-evidence");
 await mkdir(evidenceRoot, { recursive: true });
 const scratch = await mkdtemp(join(evidenceRoot, "conversation-derivation-"));
+// Unix socket 注册路径使用短的隔离目录；录屏和日志仍留在持久证据目录。
+const serviceRegistry = await mkdtemp("/private/tmp/scf-svc-");
 const workspace = join(scratch, "workspace");
 const userHome = join(scratch, "user-home");
 await mkdir(workspace);
@@ -133,10 +135,11 @@ const env = {
   AREAL_GUI: "workbench", AREAL_BACKEND: "areal", AREAL_CORE_BIN: binary,
   AREAL_DEV_CONVERSATION_DERIVATION: "1",
   AREAL_CORE_HOME: join(scratch, "core"), AREAL_CORE_USER_HOME: userHome,
-  AREAL_HARNESS_HOME: join(scratch, "runtime"),
+  AREAL_HARNESS_SERVICE_HOME: serviceRegistry,
   AREAL_GUI_USER_DATA: join(scratch, "electron"),
 };
 delete env.AREAL_CORE_WORKSPACE;
+delete env.AREAL_HARNESS_HOME;
 try {
   server = createServer(async (req, res) => {
     try {
@@ -253,13 +256,29 @@ try {
   assert.equal(target.conversation?.origin?.sourceTurnId, anchorTurnId);
   assert.equal(target.turns?.length, 0, "target starts with empty local turns");
   const inherited = page.getByRole("region", { name: "继承的对话历史", exact: true });
+  const expandHistory = inherited.getByRole("button", { name: /^展开继承历史/ });
+  assert.equal(await expandHistory.getAttribute("aria-expanded"), "false");
+  await expandHistory.click();
   // 用户原文与模型回显都含 head；只断言持久来源用户消息这一项。
   await inherited.locator(".fork-history-item").filter({ has: page.getByText("原提问", { exact: true }) })
     .locator("[data-inherited-content]").getByText(`${head} ${unicodeExcerpt}`, { exact: true }).waitFor();
   assert.equal(await inherited.getByText(future, { exact: false }).count(), 0, "future source Turn must not appear in inherited history");
-  assert.match(await inherited.innerText(), /共享工作区/);
+  assert.match(await inherited.innerText(), /当前共享工作区/);
+  assert.match(await inherited.innerText(), /第 1 轮之后/);
+  const inheritedBeforeCollapse = await inherited.locator('[data-inherited-content]').allTextContents();
+  await inherited.getByRole("button", { name: /^收起继承历史/ }).click();
+  assert.ok(await inherited.getByText("当前共享工作区", { exact: false }).isVisible());
+  await inherited.getByRole("button", { name: /^展开继承历史/ }).click();
+  assert.deepEqual(await inherited.locator('[data-inherited-content]').allTextContents(), inheritedBeforeCollapse,
+    "collapsing inherited history must preserve the frozen prefix");
   assert.equal((await page.getByTestId("chat-input").innerText()).trim(), "");
   await shot("02-fork-empty.png");
+  const sourceTitle = (await state()).projects[0].state.threads[sourceThreadId].preview;
+  await inherited.getByRole("button", { name: sourceTitle, exact: true }).click();
+  await page.waitForFunction(id => document.querySelector('[data-testid="areal-workbench"]')?.dataset.threadId === id, sourceThreadId);
+  assert.ok(await page.locator(`[data-turn-id="${anchorTurnId}"]`).isVisible());
+  await selectConversation(page, targetThreadId);
+
   checks.push("AC01/02/06: older Turn GUI fork is idle, empty, source-owned, current shared workspace and bounded inherited history");
   await send(forkQuestion, targetThreadId);
   const branchRequest = requests.at(-1)?.body;
@@ -328,6 +347,14 @@ try {
   events.push({ narrowBounds });
   assert.equal(narrowBounds.width, 980, "native window should reach its configured minimum width");
   assert.ok(await sidePane.getByRole("textbox", { name: "旁路问题" }).isVisible());
+  await page.waitForFunction(() => document.querySelector('[data-workspace-view]')?.dataset.workspaceView === "panel");
+  const narrowSideDraft = await sidePane.getByRole("textbox", { name: "旁路问题" }).inputValue();
+  await sidePane.getByRole("button", { name: "返回主会话", exact: true }).click();
+  assert.ok(await page.getByTestId("chat-input").isVisible());
+  await page.getByRole("button", { name: "展开侧边面板", exact: true }).click();
+  assert.equal(await sidePane.getByRole("textbox", { name: "旁路问题" }).inputValue(), narrowSideDraft);
+  await page.waitForFunction(() => document.querySelector('[data-workspace-view]')?.dataset.workspaceView === "panel");
+
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 960));
   const sideStartRequests = requests.length;
   await sidePane.getByRole("button", { name: "发送", exact: true }).click();
@@ -356,6 +383,16 @@ try {
   await preview.waitFor();
   const brought = await preview.getByRole("textbox", { name: "编辑带回文字" }).inputValue();
   assert.ok(brought.includes(sideQuestion));
+  await preview.getByRole("textbox", { name: "编辑带回文字" }).fill(`${brought}\n保留的编辑`);
+  const previewIdentity = await page.evaluate(() => Object.entries(localStorage).find(([key]) => key.endsWith(':bring-back'))?.[1]);
+  await sidePane.getByRole("button", { name: "新讨论", exact: true }).click();
+  assert.equal(await sidePane.getByRole("region", { name: "带回预览" }).count(), 0);
+  await sidePane.getByRole("region", { name: "相关讨论" }).getByRole("button", { name: new RegExp(sideQuestion) }).click();
+  await preview.waitFor();
+  assert.equal(await preview.getByRole("textbox", { name: "编辑带回文字" }).inputValue(), `${brought}\n保留的编辑`);
+  assert.equal(await page.evaluate(() => Object.entries(localStorage).find(([key]) => key.endsWith(':bring-back'))?.[1]), previewIdentity,
+    "switching Side must retain edited text, owner and insertionId");
+
   await preview.getByRole("button", { name: "确认插入主草稿" }).click();
   await sidePane.getByText(/已插入主会话草稿/).waitFor();
   const mainDraft = await page.evaluate(key => localStorage.getItem(key), `areal-gui:draft:${projectId}:${sourceThreadId}`);
@@ -507,6 +544,8 @@ try {
     }
   }
   await stopService(env);
+  await cp(serviceRegistry, join(scratch, "service-registry"), { recursive: true }).catch(error => events.push({ registryEvidenceCopyError: error.message }));
+  await rm(serviceRegistry, { recursive: true, force: true });
   if (server) {
     server.closeAllConnections();
     await new Promise(resolve => server.close(resolve));
@@ -519,7 +558,7 @@ try {
     passed, failure, checks, events, pageErrors, electronStderr, frames, sourceCommit,
     command: "pnpm --dir clients/gui run test:conversation-derivation",
     runtime: "source Electron renderer + Rust Core + actual Runtime run_command + deterministic local HTTP/SSE model",
-    limitations: ["local fixture model, not a real provider", "source build, not a copied installed package", "native project chooser and archive confirmation are fixtures and have no native-dialog acceptance claim", "Browser preview is outside this journey", "IME is a synthetic composition key event, not a physical input method", "Electron minimum window width is 980px, so the 900px layout breakpoint is not exercised"],
+    limitations: ["local fixture model, not a real provider", "source build, not a copied installed package", "native project chooser and archive confirmation are fixtures and have no native-dialog acceptance claim", "Browser preview is outside this journey", "IME is a synthetic composition key event, not a physical input method"],
     operatingSystem: { platform: process.platform, release: (await import("node:os")).release(), architecture: process.arch },
     windowBounds, videoPath, videoSegments: [{ path: videoPath, process: "initial Electron run", continuous: true },
       { path: restartVideoPath, process: "restarted Electron run", continuous: true }],
@@ -537,7 +576,7 @@ try {
     sourceDirtyStatus: sourceStatus, sourceDiffSha256: createHash("sha256").update(sourceDiff).digest("hex"),
     sandbox, binary, binarySha256: await hash(binary).catch(() => null),
     smokeScriptSha256: await hash(fileURLToPath(import.meta.url)),
-    sourceThreadId, targetThreadId, beforeThreadId, sideThreadId, anchorTurnId, activeTurnId, projectId,
+    sourceThreadId, targetThreadId, beforeThreadId, sideThreadId, anchorTurnId, activeTurnId, projectId, serviceRegistry,
     fixture: { head, future, forkQuestion, activeQuestion, unicodeExcerpt, sideQuestion, sideFollowUp, lateSentinel, mainDraftSentinel,
       workspace, workspaceSha256Before: workspaceBefore, workspaceSha256After: await hash(fixturePath), toolStarted, toolRelease },
     requests, mutations: firstMutations,

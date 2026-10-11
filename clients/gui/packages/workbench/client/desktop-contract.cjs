@@ -42,7 +42,7 @@ function validateCommand(name, params, { serviceOnly = false } = {}) {
   if (scope === 'thread' && !identifier(params.threadId)) invalid();
   if (name === 'create' && params.browserEnabled !== undefined && typeof params.browserEnabled !== 'boolean') invalid();
   if (name === 'fork' && (!identifier(params.sourceThreadId) || !record(params.anchor)
-    || !identifier(params.anchor.turnId) || params.anchor.boundary !== 'after'
+    || !identifier(params.anchor.turnId) || !['before', 'after'].includes(String(params.anchor.boundary))
     || params.workspaceMode !== 'sharedCurrent')) invalid();
   if (name === 'side' && (!['start', 'recover', 'send', 'context', 'list'].includes(String(params.operation))
     || (params.operation === 'start' && (!identifier(params.sourceThreadId) || typeof params.text !== 'string' || !params.text.trim()))

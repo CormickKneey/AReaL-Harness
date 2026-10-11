@@ -68,6 +68,14 @@ target/debug/areal service bind --workspace /absolute/workspace \
 
 兼容性将部署身份与默认模型版本分开。模型热更新完整校验 TOML，失败时保留旧配置。限额、权限、运行时预算、部署清单/工具扩展/Workgroup policy 和二进制内容仍保留重启边界。模型凭据值不写入摘要或登记；服务继承首次启动的环境。模型版本在等待热更新 3 秒后仍不一致时，客户端尝试安全重启；普通加载错误直接返回具体原因。旧服务缺失新凭据时会标记 `restartRequired=true`，客户端配置解析已校验当前环境的凭据后，可通过空闲重启继承它。忙碌服务保留原 generation 和任务，待结算后重试；不会自动取消。仅轮换同名凭据值或修改其他环境仍需显式重启。运行中的 Provider/Thread 配置仍由 Core 管理，不属于客户端窗口状态。
 
+### 派生会话开发预览与数据兼容性
+
+`AREAL_DEV_CONVERSATION_DERIVATION=1` 是 Core 进程启动时的开发开关。只有开启时，`areal/capabilities.features.conversationDerivationV1` 返回 `preview:true`、实际方法集合、Fork 边界、`sharedCurrent`、可用的 Side `workspaceAccess` 和有效限额；关闭时该 feature 为 null，不据此启用创建 UI。修改环境后须在任务结算后显式重启服务，现有窗口不会改变运行中 Core 的环境。
+
+该 feature 的 `historyBytes` 是 Engine 的派生快照上限（配置 `max_history_bytes` 与 64 MiB 的较小值，配置为 0 时使用 64 MiB）。`limits` 返回 `maxThreads`、`maxActiveTurns`、`maxSideTurnsPerSource`、`maxSideTurnsPerDeployment`、`maxSideModelRounds`、`maxSideToolCalls`、`maxSideTurnSeconds`；值来自此服务实际 Engine 配置，Side 工具上限还取非零全局工具预算的较小值。它们是部署上限而非当前可用余量，单轮配置仍可进一步收窄；共享 Core 对全部窗口统一准入。`readOnly` 仅在当前 Runtime 满足原生只读边界时公布，客户端不得静默替换为 `none`。完整方法及恢复契约见[桌面 API](desktop.md#side-chat-开发预览)。
+
+Store 当前写入版本、`areal/server/status.stateVersion` 与发行 `manifest.json.stateVersion` 均为 14；API 仍为 `areal.core.v1`，服务发现协议仍为 1。无派生元数据的旧记录可读取并在下一次写入升级；Fork/Side 记录必须具有受支持的会话版本和版本 14 的权限语义，不能仅降低记录版本来交给旧二进制。服务重启不重放创建或首问，结果不确定时先查 `areal/request/read`。开发预览不表示原生桌面、完整 Side/Fork P0、安装包或真实供应商已验收。
+
 ## 生命周期与恢复
 
 关闭窗口只断开连接；活动 Turn/Goal 可继续，多个窗口可订阅同一 Thread。相同 Thread 的并发写入仍遵循 Core 的准入、CAS、队列及 requestId 规则。显式取消与关闭窗口是不同操作。

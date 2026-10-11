@@ -33,7 +33,15 @@ def core_outcome(threads, entry_thread_id=None):
     return None
 
 
-def finalize(result, threads=(), *, timed_out=False, interrupted=False, adapter_error=False, entry_thread_id=None):
+def finalize(
+    result,
+    threads=(),
+    *,
+    timed_out=False,
+    interrupted=False,
+    adapter_error=False,
+    entry_thread_id=None,
+):
     if result["status"] == "OK":
         outcome = runner_outcome("AGENT_COMPLETED", "runner", "completed", "success")
     elif adapter_error:
@@ -62,7 +70,8 @@ def finalize(result, threads=(), *, timed_out=False, interrupted=False, adapter_
                     "status": turn.get("status"),
                     "error": turn.get("error"),
                 }
-                for thread in threads if entry_thread_id is None or thread.get("id") == entry_thread_id
+                for thread in threads
+                if entry_thread_id is None or thread.get("id") == entry_thread_id
                 for turn in thread.get("turns", [])
                 if turn.get("status") == "failed"
             ]

@@ -2,57 +2,113 @@ use super::*;
 
 impl Engine {
     pub fn fork_snapshot_limit(&self) -> usize {
-        if self.limits.max_history_bytes == 0 { 64 * 1024 * 1024 }
-        else { self.limits.max_history_bytes.min(64 * 1024 * 1024) }
+        if self.limits.max_history_bytes == 0 {
+            64 * 1024 * 1024
+        } else {
+            self.limits.max_history_bytes.min(64 * 1024 * 1024)
+        }
+    }
+
+    /// 能力声明读取部署实际限额；Side 工具预算仍受全局预算收窄。
+    pub fn conversation_derivation_limits(&self) -> Value {
+        let side_tool_calls = if self.limits.max_tool_calls == 0 {
+            self.limits.max_side_tool_calls
+        } else {
+            self.limits
+                .max_side_tool_calls
+                .min(self.limits.max_tool_calls)
+        };
+        json!({
+            "maxThreads": self.limits.max_threads,
+            "maxActiveTurns": self.limits.max_active_turns,
+            "maxSideTurnsPerSource": self.limits.max_side_turns_per_source,
+            "maxSideTurnsPerDeployment": self.limits.max_side_turns_per_deployment,
+            "maxSideModelRounds": self.limits.max_side_model_rounds,
+            "maxSideToolCalls": side_tool_calls,
+            "maxSideTurnSeconds": self.limits.max_side_turn_seconds,
+        })
     }
 
     /// Fork 持有已提交前缀的不可变副本；创建不激活 Turn，也不继承来源执行绑定。
-    pub async fn fork_thread(self: &Arc<Self>, identity: String, request: ForkThread) -> Result<Thread> {
+    pub async fn fork_thread(
+        self: &Arc<Self>,
+        identity: String,
+        request: ForkThread,
+    ) -> Result<Thread> {
         self.mutate(move |engine| async move {
             let _serial = engine.desktop.creation.lock().await;
             let hash = digest(&request)?;
             let method = "areal/thread/fork";
             if !valid_id(&request.request_id) {
-                return Err(invalid("requestId must be 1..128 ASCII identifier characters"));
+                return Err(invalid(
+                    "requestId must be 1..128 ASCII identifier characters",
+                ));
             }
             let cells: Vec<_> = engine.threads.read().await.values().cloned().collect();
             for cell in cells {
                 let state = cell.state.lock().await;
-                if let Some(data) = &state.thread.desktop {
-                    if let Some(found) = data.receipts.iter().find(|record| {
-                        record.identity == identity && record.request_id == request.request_id && record.method == method
-                    }) {
-                        if found.digest != hash { return Err(Error::Conflict); }
-                        return Ok(state.thread.clone());
+                if let Some(data) = &state.thread.desktop
+                    && let Some(found) = data.receipts.iter().find(|record| {
+                        record.identity == identity
+                            && record.request_id == request.request_id
+                            && record.method == method
+                    })
+                {
+                    if found.digest != hash {
+                        return Err(Error::Conflict);
                     }
+                    return Ok(state.thread.clone());
                 }
             }
             if request.workspace_mode != "sharedCurrent"
-                || !matches!(request.anchor.boundary.as_str(), "before" | "after") {
-                return Err(invalid("boundary must be before or after; workspaceMode must be sharedCurrent"));
+                || !matches!(request.anchor.boundary.as_str(), "before" | "after")
+            {
+                return Err(invalid(
+                    "boundary must be before or after; workspaceMode must be sharedCurrent",
+                ));
             }
             let source_cell = engine.raw_cell(&request.source_thread_id).await?;
             let source_state = source_cell.state.lock().await;
             if source_state.thread.parent_thread_id.is_some()
-                || source_state.thread.conversation.as_ref().is_some_and(|conversation| !matches!(conversation, areal_protocol::Conversation::Fork { .. }))
-                || source_state.thread.desktop.as_ref().is_some_and(|d| d.workflow_run.is_some() || d.archived) {
+                || source_state
+                    .thread
+                    .conversation
+                    .as_ref()
+                    .is_some_and(|conversation| {
+                        !matches!(conversation, areal_protocol::Conversation::Fork { .. })
+                    })
+                || source_state
+                    .thread
+                    .desktop
+                    .as_ref()
+                    .is_some_and(|d| d.workflow_run.is_some() || d.archived)
+            {
                 return Err(invalid("SOURCE_KIND_UNSUPPORTED"));
             }
             let source_cwd = source_state.thread.cwd.clone();
             drop(source_state);
             // 固定读取一份已提交记录；流式状态和来源 checkpoint 不进入历史种子。
-            let source = engine.store.read_thread(&request.source_thread_id).await
+            let source = engine
+                .store
+                .read_thread(&request.source_thread_id)
+                .await
                 .map_err(|e| Error::Storage(e.to_string()))?;
             // 只合并目标持有的继承快照与本地账本；不沿来源链递归读取。
             let (mut logical, mut source_ids) = match &source.conversation {
-                Some(areal_protocol::Conversation::Fork { history_seed, .. }) => engine.store.read_fork_snapshot_with_sources(&history_seed.snapshot_id)
+                Some(areal_protocol::Conversation::Fork { history_seed, .. }) => engine
+                    .store
+                    .read_fork_snapshot_with_sources(&history_seed.snapshot_id)
                     .map_err(|e| Error::Storage(e.to_string()))?,
                 None => (Vec::new(), Vec::new()),
-                Some(areal_protocol::Conversation::Side { .. }) => return Err(invalid("SOURCE_KIND_UNSUPPORTED")),
+                Some(areal_protocol::Conversation::Side { .. }) => {
+                    return Err(invalid("SOURCE_KIND_UNSUPPORTED"));
+                }
             };
             source_ids.extend(std::iter::repeat_n(source.id.clone(), source.turns.len()));
             logical.extend(source.turns.iter().cloned());
-            let anchor_index = logical.iter().position(|turn| turn.id == request.anchor.turn_id)
+            let anchor_index = logical
+                .iter()
+                .position(|turn| turn.id == request.anchor.turn_id)
                 .ok_or_else(|| invalid("ANCHOR_NOT_FOUND"))?;
             let anchor = &logical[anchor_index];
             if request.anchor.boundary == "after" && anchor.status == TurnStatus::InProgress {
@@ -60,55 +116,115 @@ impl Engine {
             }
             let end = anchor_index + usize::from(request.anchor.boundary == "after");
             let prefix = &logical[..end];
-            if prefix.iter().any(|turn| turn.status == TurnStatus::InProgress) {
+            if prefix
+                .iter()
+                .any(|turn| turn.status == TurnStatus::InProgress)
+            {
                 return Err(invalid("HISTORY_UNRESOLVED"));
             }
             let mut turn_ids = std::collections::HashSet::new();
             let mut item_ids = std::collections::HashSet::new();
-            if prefix.iter().any(|turn| !turn_ids.insert(turn.id.as_str())
-                || turn.items.iter().any(|item| !item_ids.insert(item.id()))) {
+            if prefix.iter().any(|turn| {
+                !turn_ids.insert(turn.id.as_str())
+                    || turn.items.iter().any(|item| !item_ids.insert(item.id()))
+            }) {
                 return Err(invalid("HISTORY_INTEGRITY"));
             }
             // 前缀内每个工具及钩子都要结算；UNKNOWN 仅由来源人工检查解锁，历史结果不改写。
             if prefix.iter().flat_map(|t| &t.items).any(|item| match item {
-                Item::DynamicToolCall { status, execution, .. } => {
+                Item::DynamicToolCall {
+                    status, execution, ..
+                } => {
                     *status == areal_protocol::ToolStatus::InProgress
                         || execution.outcome == areal_protocol::ToolOutcome::Running
-                        || execution.hooks.iter().any(|h| h.outcome == areal_protocol::ToolOutcome::Running)
-                        || execution.plugin.as_ref().is_some_and(|p| p.operations.iter().any(|o| o.outcome == areal_protocol::ToolOutcome::Running))
-                        || (execution.inspection.is_none() && (execution.outcome == areal_protocol::ToolOutcome::Unknown
-                            || execution.hooks.iter().any(|h| h.outcome == areal_protocol::ToolOutcome::Unknown)
-                            || execution.plugin.as_ref().is_some_and(|p| p.operations.iter().any(|o| o.outcome == areal_protocol::ToolOutcome::Unknown))))
+                        || execution
+                            .hooks
+                            .iter()
+                            .any(|h| h.outcome == areal_protocol::ToolOutcome::Running)
+                        || execution.plugin.as_ref().is_some_and(|p| {
+                            p.operations
+                                .iter()
+                                .any(|o| o.outcome == areal_protocol::ToolOutcome::Running)
+                        })
+                        || (execution.inspection.is_none()
+                            && (execution.outcome == areal_protocol::ToolOutcome::Unknown
+                                || execution
+                                    .hooks
+                                    .iter()
+                                    .any(|h| h.outcome == areal_protocol::ToolOutcome::Unknown)
+                                || execution.plugin.as_ref().is_some_and(|p| {
+                                    p.operations
+                                        .iter()
+                                        .any(|o| o.outcome == areal_protocol::ToolOutcome::Unknown)
+                                })))
                 }
                 _ => false,
             }) {
                 return Err(invalid("HISTORY_UNRESOLVED"));
             }
             // 历史锚点不能继承来源在后续轮次修改的配置。
-            let anchor_config = prefix.last().and_then(|turn| turn.configuration.clone()).unwrap_or_default();
+            let anchor_config = prefix
+                .last()
+                .and_then(|turn| turn.configuration.clone())
+                .unwrap_or_default();
             // 显式 target 是全新的普通配置选择；空对象表示当前部署默认模型。
             let config = if let Some(target) = &request.target {
-                engine.resolve_config(target.agent_profile.clone(), target.model.clone(),
-                    target.parameters.clone().unwrap_or_default(), 0)?
-            } else { anchor_config };
+                engine.resolve_config(
+                    target.agent_profile.clone(),
+                    target.model.clone(),
+                    target.parameters.clone().unwrap_or_default(),
+                    0,
+                )?
+            } else {
+                anchor_config
+            };
             let config = engine.freeze_configuration(config);
-            if config.profile.as_ref().is_some_and(|p| p.workflow.is_some()) { return Err(invalid("PROFILE_NOT_SUPPORTED")); }
-            let model = engine.configured_model(&config).map_err(|_| invalid("MODEL_CONTEXT_INCOMPATIBLE"))?;
-            if !model.capabilities().supports_input(areal_protocol::Modality::Text) { return Err(invalid("MODEL_CONTEXT_INCOMPATIBLE")); }
+            if config
+                .profile
+                .as_ref()
+                .is_some_and(|p| p.workflow.is_some())
+            {
+                return Err(invalid("PROFILE_NOT_SUPPORTED"));
+            }
+            let model = engine
+                .configured_model(&config)
+                .map_err(|_| invalid("MODEL_CONTEXT_INCOMPATIBLE"))?;
+            if !model
+                .capabilities()
+                .supports_input(areal_protocol::Modality::Text)
+            {
+                return Err(invalid("MODEL_CONTEXT_INCOMPATIBLE"));
+            }
             engine.validate_fork_replay(prefix, model.as_ref()).await?;
             let item_count = prefix.iter().map(|t| t.items.len()).sum();
             let turn_count = prefix.len();
             let snapshot_limit = engine.fork_snapshot_limit();
             #[cfg(test)]
-            engine.store.check_fork_fault(crate::store::ForkFault::BeforeSnapshot)?;
-            let (snapshot_id, logical_bytes) = engine.store.write_fork_snapshot(prefix.to_vec(), source_ids[..end].to_vec(), snapshot_limit).await
+            engine
+                .store
+                .check_fork_fault(crate::store::ForkFault::BeforeSnapshot)?;
+            let (snapshot_id, logical_bytes) = engine
+                .store
+                .write_fork_snapshot(prefix.to_vec(), source_ids[..end].to_vec(), snapshot_limit)
+                .await
                 .map_err(|e| Error::Storage(e.to_string()))?;
             #[cfg(test)]
-            engine.store.check_fork_fault(crate::store::ForkFault::AfterSnapshot)?;
+            engine
+                .store
+                .check_fork_fault(crate::store::ForkFault::AfterSnapshot)?;
             let thread_id = id();
-            let mut data = DesktopState { configuration: config, ..Default::default() };
-            remember(&mut data, &identity, &request.request_id, method, hash.clone(),
-                json!({"threadId":thread_id}));
+            let mut data = DesktopState {
+                configuration: config,
+                ..Default::default()
+            };
+            remember(
+                &mut data,
+                &identity,
+                &request.request_id,
+                method,
+                hash.clone(),
+                json!({"threadId":thread_id}),
+            );
             let thread = Thread {
                 conversation: Some(areal_protocol::Conversation::Fork {
                     version: 1,
@@ -118,62 +234,110 @@ impl Engine {
                         boundary: request.anchor.boundary,
                         snapshot_id: snapshot_id.clone(),
                     },
-                    history_seed: areal_protocol::HistorySeed { snapshot_id, turn_count, item_count, logical_bytes },
+                    history_seed: areal_protocol::HistorySeed {
+                        snapshot_id,
+                        turn_count,
+                        item_count,
+                        logical_bytes,
+                    },
                     workspace_mode: "sharedCurrent".into(),
                 }),
-                goals: Default::default(), goal_owner: None, desktop: Some(data),
-                id: thread_id.clone(), session_id: thread_id.clone(), parent_thread_id: None,
-                preview: format!("分支 · {}", source.preview), model_provider: engine.model_provider(),
-                created_at: now(), updated_at: now(), status: ThreadStatus::Idle,
-                cwd: source_cwd, cli_version: env!("CARGO_PKG_VERSION").into(), source: "appServer".into(),
-                ephemeral: false, turns: Vec::new(), history_archive: None, context_checkpoint: None,
-                dynamic_tools: Vec::new(), toolset_revision: 0,
+                goals: Default::default(),
+                goal_owner: None,
+                desktop: Some(data),
+                id: thread_id.clone(),
+                session_id: thread_id.clone(),
+                parent_thread_id: None,
+                preview: format!("分支 · {}", source.preview),
+                model_provider: engine.model_provider(),
+                created_at: now(),
+                updated_at: now(),
+                status: ThreadStatus::Idle,
+                cwd: source_cwd,
+                cli_version: env!("CARGO_PKG_VERSION").into(),
+                source: "appServer".into(),
+                ephemeral: false,
+                turns: Vec::new(),
+                history_archive: None,
+                context_checkpoint: None,
+                dynamic_tools: Vec::new(),
+                toolset_revision: 0,
             };
-            let cell = Cell::new(thread.clone(), 0, crate::tools::Bindings { registry: engine.registry.clone(), host: None });
+            let cell = Cell::new(
+                thread.clone(),
+                0,
+                crate::tools::Bindings {
+                    registry: engine.registry.clone(),
+                    host: None,
+                },
+            );
             // 容量锁跨越持久提交；read/list 只会看见已经同步完成的目标。
             let mut threads = engine.threads.write().await;
-            if threads.len() >= engine.limits.max_threads { return Err(Error::Exhausted("thread capacity reached".into())); }
+            if threads.len() >= engine.limits.max_threads {
+                return Err(Error::Exhausted("thread capacity reached".into()));
+            }
             if let Err(error) = engine.persist(&thread).await {
                 // rename 已完成而目录同步失败时，磁盘可能已有目标。先注册可核对的
                 // 完整记录，避免同进程的同键请求再创建第二个目标；原错误仍保持 UNKNOWN。
-                if let Ok(saved) = engine.store.read_thread(&thread_id).await {
-                    if saved.desktop.as_ref().is_some_and(|data| {
+                if let Ok(saved) = engine.store.read_thread(&thread_id).await
+                    && saved.desktop.as_ref().is_some_and(|data| {
                         receipt(data, &identity, &request.request_id, method, &hash)
-                            .ok().flatten().is_some()
-                    }) {
-                        cell.state.lock().await.poisoned = true;
-                        threads.insert(thread_id, cell);
-                    }
+                            .ok()
+                            .flatten()
+                            .is_some()
+                    })
+                {
+                    cell.state.lock().await.poisoned = true;
+                    threads.insert(thread_id, cell);
                 }
                 return Err(error);
             }
             #[cfg(test)]
-            engine.store.check_fork_fault(crate::store::ForkFault::AfterTarget)?;
+            engine
+                .store
+                .check_fork_fault(crate::store::ForkFault::AfterTarget)?;
             threads.insert(thread_id, cell);
             Ok(thread)
-        }).await
+        })
+        .await
     }
 
-    pub async fn fork_history(&self, thread_id: &str, cursor: Option<String>, max_bytes: Option<usize>) -> Result<Value> {
+    pub async fn fork_history(
+        &self,
+        thread_id: &str,
+        cursor: Option<String>,
+        max_bytes: Option<usize>,
+    ) -> Result<Value> {
         let max_bytes = max_bytes.unwrap_or(65536);
-        if !(1..=262144).contains(&max_bytes) { return Err(invalid("maxBytes must be 1..262144")); }
+        if !(1..=262144).contains(&max_bytes) {
+            return Err(invalid("maxBytes must be 1..262144"));
+        }
         let thread = self.read(thread_id, false).await?;
-        let Some(areal_protocol::Conversation::Fork { history_seed, .. }) = thread.conversation else {
+        let Some(areal_protocol::Conversation::Fork { history_seed, .. }) = thread.conversation
+        else {
             return Err(invalid("inherited history requires a Fork"));
         };
         let (index, offset) = match cursor {
             Some(value) => {
-                let (prefix, tail) = value.rsplit_once(':').ok_or_else(|| invalid("invalid history cursor"))?;
+                let (prefix, tail) = value
+                    .rsplit_once(':')
+                    .ok_or_else(|| invalid("invalid history cursor"))?;
                 let (id, index, offset) = if let Some((id, index)) = prefix.rsplit_once(':') {
                     (id, index, tail.parse::<usize>().map_err(invalid)?)
-                } else { (prefix, tail, 0) };
-                if id != history_seed.snapshot_id { return Err(invalid("invalid history cursor")); }
+                } else {
+                    (prefix, tail, 0)
+                };
+                if id != history_seed.snapshot_id {
+                    return Err(invalid("invalid history cursor"));
+                }
                 (index.parse::<usize>().map_err(invalid)?, offset)
             }
             None => (0, 0),
         };
         let mut entries = Vec::new();
-        let (turns, source_ids) = self.store.read_fork_snapshot_with_sources(&history_seed.snapshot_id)
+        let (turns, source_ids) = self
+            .store
+            .read_fork_snapshot_with_sources(&history_seed.snapshot_id)
             .map_err(|e| Error::Storage(e.to_string()))?;
         for (turn, source_thread_id) in turns.into_iter().zip(source_ids) {
             for item in turn.items {
@@ -181,26 +345,49 @@ impl Engine {
                     "sourceTurnId":turn.id,"sourceItemId":item.id(),"item":item}));
             }
         }
-        if index > entries.len() || index == entries.len() && offset != 0 { return Err(invalid("invalid history cursor")); }
-        let page_for = |data: Vec<Value>, next: Option<String>| json!({
-            "snapshotId":history_seed.snapshot_id,"data":data,"complete":next.is_none(),"nextCursor":next
-        });
+        if index > entries.len() || index == entries.len() && offset != 0 {
+            return Err(invalid("invalid history cursor"));
+        }
+        let page_for = |data: Vec<Value>, next: Option<String>| {
+            json!({
+                "snapshotId":history_seed.snapshot_id,"data":data,"complete":next.is_none(),"nextCursor":next
+            })
+        };
         let mut data = Vec::new();
         for (position, entry) in entries.iter().enumerate().skip(index) {
             let serialized = serde_json::to_string(entry).map_err(invalid)?;
-            let next = (position + 1 < entries.len()).then(|| format!("{}:{}", history_seed.snapshot_id, position + 1));
-            if position == index && offset > 0 || page_for(vec![entry.clone()], next.clone()).to_string().len() > max_bytes {
-                if offset > serialized.len() || !serialized.is_char_boundary(offset) { return Err(invalid("invalid history cursor")); }
+            let next = (position + 1 < entries.len())
+                .then(|| format!("{}:{}", history_seed.snapshot_id, position + 1));
+            if position == index && offset > 0
+                || page_for(vec![entry.clone()], next.clone())
+                    .to_string()
+                    .len()
+                    > max_bytes
+            {
+                if offset > serialized.len() || !serialized.is_char_boundary(offset) {
+                    return Err(invalid("invalid history cursor"));
+                }
                 // 分片覆盖完整条目 JSON；按整个响应的编码字节数预算，避免转义字符放大帧。
                 let remaining = &serialized[offset..];
                 let fragment_page = |part: &str| {
                     let next_offset = offset + part.len();
-                    let next = if next_offset < serialized.len() { Some(format!("{}:{}:{}", history_seed.snapshot_id, position, next_offset)) }
-                        else if position + 1 < entries.len() { Some(format!("{}:{}", history_seed.snapshot_id, position + 1)) } else { None };
-                    page_for(vec![json!({"sourceThreadId":entry["sourceThreadId"],
-                        "sourceTurnId":entry["sourceTurnId"],"sourceItemId":entry["sourceItemId"],"fragment":{
-                        "text":part,"offsetUtf8":offset,"nextOffsetUtf8":next_offset,"totalBytes":serialized.len()
-                    }})], next)
+                    let next = if next_offset < serialized.len() {
+                        Some(format!(
+                            "{}:{}:{}",
+                            history_seed.snapshot_id, position, next_offset
+                        ))
+                    } else if position + 1 < entries.len() {
+                        Some(format!("{}:{}", history_seed.snapshot_id, position + 1))
+                    } else {
+                        None
+                    };
+                    page_for(
+                        vec![json!({"sourceThreadId":entry["sourceThreadId"],
+                            "sourceTurnId":entry["sourceTurnId"],"sourceItemId":entry["sourceItemId"],"fragment":{
+                            "text":part,"offsetUtf8":offset,"nextOffsetUtf8":next_offset,"totalBytes":serialized.len()
+                        }})],
+                        next,
+                    )
                 };
                 let mut low = 0;
                 let mut high = remaining.len().min(max_bytes);
@@ -208,27 +395,43 @@ impl Engine {
                 while low <= high {
                     let mid = low + (high - low) / 2;
                     let mut end = mid;
-                    while !remaining.is_char_boundary(end) { end -= 1; }
+                    while !remaining.is_char_boundary(end) {
+                        end -= 1;
+                    }
                     let page = fragment_page(&remaining[..end]);
                     if page.to_string().len() <= max_bytes {
                         best = Some((page, end));
                         low = mid + 1;
-                    } else if mid == 0 { break; } else { high = mid - 1; }
+                    } else if mid == 0 {
+                        break;
+                    } else {
+                        high = mid - 1;
+                    }
                 }
-                let (page, consumed) = best.ok_or_else(|| invalid("history page budget too small"))?;
-                if consumed == 0 && !remaining.is_empty() { return Err(invalid("history page budget too small")); }
-                if data.is_empty() { return Ok(page); }
+                let (page, consumed) =
+                    best.ok_or_else(|| invalid("history page budget too small"))?;
+                if consumed == 0 && !remaining.is_empty() {
+                    return Err(invalid("history page budget too small"));
+                }
+                if data.is_empty() {
+                    return Ok(page);
+                }
                 break;
             }
             let mut candidate = data.clone();
             candidate.push(entry.clone());
-            if page_for(candidate, next).to_string().len() > max_bytes { break; }
+            if page_for(candidate, next).to_string().len() > max_bytes {
+                break;
+            }
             data.push(entry.clone());
         }
         let next = index + data.len();
-        let cursor = (next < entries.len()).then(||format!("{}:{}",history_seed.snapshot_id,next));
+        let cursor =
+            (next < entries.len()).then(|| format!("{}:{}", history_seed.snapshot_id, next));
         let page = page_for(data, cursor);
-        if page.to_string().len() > max_bytes { return Err(invalid("history page budget too small")); }
+        if page.to_string().len() > max_bytes {
+            return Err(invalid("history page budget too small"));
+        }
         Ok(page)
     }
     /// 空闲旧会话只追加部署固定 Browser 包，受理回执与工具表同一快照提交。
@@ -290,7 +493,7 @@ impl Engine {
             let mut candidate = state.thread.clone();
             let mut registry = bindings.registry.clone();
             if present.is_none() {
-                registry = registry.with_dynamic(&[tool.clone()]).map_err(invalid)?;
+                registry = registry.with_dynamic(std::slice::from_ref(&tool)).map_err(invalid)?;
                 candidate.dynamic_tools.push(tool);
                 candidate.toolset_revision = candidate.toolset_revision.checked_add(1)
                     .ok_or(Error::Conflict)?;
@@ -456,22 +659,33 @@ impl Engine {
         self.mutate(move |engine| async move {
             let cell = engine.cell(&request.thread_id).await?;
             let is_side = cell.state.lock().await.thread.is_side();
-            if !is_side { engine.refresh_managed_tools(&cell).await.map_err(invalid)?; }
+            if !is_side {
+                engine.refresh_managed_tools(&cell).await.map_err(invalid)?;
+            }
             let mut state = cell.state.lock().await;
             if state.active.is_some() || state.compacting {
                 return Err(Error::Conflict);
             }
             let previous = desktop(&state.thread).configuration;
             if is_side {
-                if request.options.is_some() || request.agent_profile.is_some() || request.reset_model
-                    || request.selected_skills.is_some() || previous.profile.is_some()
-                    || (request.model.is_none() && request.parameters.is_none()) {
+                if request.options.is_some()
+                    || request.agent_profile.is_some()
+                    || request.reset_model
+                    || request.selected_skills.is_some()
+                    || previous.profile.is_some()
+                    || (request.model.is_none() && request.parameters.is_none())
+                {
                     return Err(invalid("SIDE_POLICY_VIOLATION"));
                 }
-                if previous.revision != request.expected_revision { return Err(Error::Conflict); }
-                let mut configuration = engine.resolve_config(None,
+                if previous.revision != request.expected_revision {
+                    return Err(Error::Conflict);
+                }
+                let mut configuration = engine.resolve_config(
+                    None,
                     request.model.or(previous.model.clone()),
-                    request.parameters.unwrap_or(previous.parameters.clone()), previous.revision + 1)?;
+                    request.parameters.unwrap_or(previous.parameters.clone()),
+                    previous.revision + 1,
+                )?;
                 configuration.options = previous.options;
                 configuration.selected_skills = previous.selected_skills;
                 configuration.instructions = previous.instructions;
@@ -480,15 +694,26 @@ impl Engine {
                 if configuration.model.is_none() {
                     configuration.default_model_revision = previous.default_model_revision;
                 }
-                let model = engine.configured_model(&configuration).map_err(|_| invalid("MODEL_CONTEXT_INCOMPATIBLE"))?;
-                if !model.capabilities().supports_input(areal_protocol::Modality::Text) {
+                let model = engine
+                    .configured_model(&configuration)
+                    .map_err(|_| invalid("MODEL_CONTEXT_INCOMPATIBLE"))?;
+                if !model
+                    .capabilities()
+                    .supports_input(areal_protocol::Modality::Text)
+                {
                     return Err(invalid("MODEL_CONTEXT_INCOMPATIBLE"));
                 }
                 let mut candidate = state.thread.clone();
-                candidate.desktop.get_or_insert_with(Default::default).configuration = configuration.clone();
+                candidate
+                    .desktop
+                    .get_or_insert_with(Default::default)
+                    .configuration = configuration.clone();
                 engine.persist(&candidate).await?;
                 state.thread = candidate;
-                cell.emit("areal/thread/configured", json!({"threadId":request.thread_id,"configuration":configuration}));
+                cell.emit(
+                    "areal/thread/configured",
+                    json!({"threadId":request.thread_id,"configuration":configuration}),
+                );
                 return Ok(configuration);
             }
             if previous.revision != request.expected_revision {
@@ -608,7 +833,9 @@ impl Engine {
             .await
     }
     pub(super) async fn update_plan_inner(&self, request: PlanUpdate) -> Result<Plan> {
-        if self.read(&request.thread_id, false).await?.is_side() { return Err(invalid("SIDE_POLICY_VIOLATION")); }
+        if self.read(&request.thread_id, false).await?.is_side() {
+            return Err(invalid("SIDE_POLICY_VIOLATION"));
+        }
         let mut ids = HashSet::new();
         if request.steps.len() > 64
             || request.steps.iter().any(|s| {
@@ -761,7 +988,9 @@ impl Engine {
         &self,
         cell: &Cell,
     ) -> anyhow::Result<areal_runtime_protocol::PermissionRequest> {
-        if !cell.state.lock().await.thread.is_side() && let Some(scratch) = self.command_scratch(cell) {
+        if !cell.state.lock().await.thread.is_side()
+            && let Some(scratch) = self.command_scratch(cell)
+        {
             // 目录由可信 Core 创建，Runtime 再绑定和校验目录身份。
             std::fs::create_dir_all(scratch).context("cannot create task scratch")?;
         }

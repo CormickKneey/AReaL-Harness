@@ -255,7 +255,9 @@ impl Engine {
 
 impl Engine {
     pub async fn spawn_agent(self: &Arc<Self>, request: AgentSpawn) -> Result<Value> {
-        if self.read(&request.parent_thread_id, false).await?.is_side() { return Err(invalid("SIDE_POLICY_VIOLATION")); }
+        if self.read(&request.parent_thread_id, false).await?.is_side() {
+            return Err(invalid("SIDE_POLICY_VIOLATION"));
+        }
         if request.workspace_mode.as_deref() != Some("isolatedWrite") {
             let (thread, turn) = self.spawn_configured_child(request).await?;
             return Ok(

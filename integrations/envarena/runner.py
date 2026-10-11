@@ -525,9 +525,15 @@ def main():
                             process.wait()
                         threads = project(data, trajectory, seen)
                         if entry_thread_id is None:
-                            candidates = [t for t in threads if not t.get("parentThreadId") and not t.get("conversation")]
+                            candidates = [
+                                t
+                                for t in threads
+                                if not t.get("parentThreadId") and not t.get("conversation")
+                            ]
                             if candidates:
-                                entry_thread_id = min(candidates, key=lambda t: t.get("createdAt", ""))["id"]
+                                entry_thread_id = min(
+                                    candidates, key=lambda t: t.get("createdAt", "")
+                                )["id"]
                     finally:
                         if process.poll() is None:
                             process.terminate()
@@ -644,25 +650,44 @@ def main():
                     for key in ("inputTokens", "outputTokens", "cachedInputTokens")
                 }
                 deployment_usage = {
-                    key: sum((turn.get("usage") or {}).get(key, 0)
-                             for thread in threads for turn in thread.get("turns", []))
+                    key: sum(
+                        (turn.get("usage") or {}).get(key, 0)
+                        for thread in threads
+                        for turn in thread.get("turns", [])
+                    )
                     for key in ("inputTokens", "outputTokens", "cachedInputTokens")
                 }
                 # 来源快照只记录继承事实；目标用量来自各自新受理的 Turn。
-                write_json(output / "thread-provenance.json", {
-                    "entryThreadId": entry_thread_id,
-                    "threads": [{
-                        "threadId": thread["id"],
-                        "kind": (thread.get("conversation") or {}).get("kind", "main"),
-                        "origin": (thread.get("conversation") or {}).get("origin"),
-                        "inheritedRange": (thread.get("conversation") or {}).get("historySeed")
-                            or (thread.get("conversation") or {}).get("referenceSnapshot"),
-                        "newTurnIds": [turn["id"] for turn in thread.get("turns", [])],
-                        "newUsage": {key: sum((turn.get("usage") or {}).get(key, 0) for turn in thread.get("turns", []))
-                                     for key in ("inputTokens", "outputTokens", "cachedInputTokens")},
-                        "newUsageKnown": all(turn.get("usage") is not None for turn in thread.get("turns", [])),
-                    } for thread in threads],
-                })
+                write_json(
+                    output / "thread-provenance.json",
+                    {
+                        "entryThreadId": entry_thread_id,
+                        "threads": [
+                            {
+                                "threadId": thread["id"],
+                                "kind": (thread.get("conversation") or {}).get("kind", "main"),
+                                "origin": (thread.get("conversation") or {}).get("origin"),
+                                "inheritedRange": (thread.get("conversation") or {}).get(
+                                    "historySeed"
+                                )
+                                or (thread.get("conversation") or {}).get("referenceSnapshot"),
+                                "newTurnIds": [turn["id"] for turn in thread.get("turns", [])],
+                                "newUsage": {
+                                    key: sum(
+                                        (turn.get("usage") or {}).get(key, 0)
+                                        for turn in thread.get("turns", [])
+                                    )
+                                    for key in ("inputTokens", "outputTokens", "cachedInputTokens")
+                                },
+                                "newUsageKnown": all(
+                                    turn.get("usage") is not None
+                                    for turn in thread.get("turns", [])
+                                ),
+                            }
+                            for thread in threads
+                        ],
+                    },
+                )
                 result = {
                     "status": "OK" if success else "ERROR",
                     "implementation": "rust-core-runtime",
@@ -672,8 +697,11 @@ def main():
                     "usage": usage,
                     "usage_known": all(turn.get("usage") is not None for turn in turns),
                     "deployment_usage": deployment_usage,
-                    "deployment_usage_known": all(turn.get("usage") is not None
-                                                   for thread in threads for turn in thread.get("turns", [])),
+                    "deployment_usage_known": all(
+                        turn.get("usage") is not None
+                        for thread in threads
+                        for turn in thread.get("turns", [])
+                    ),
                     "image_count": len(images),
                     "continuations": continuations,
                     "duration_ms": int((time.monotonic() - started) * 1000),
@@ -696,7 +724,13 @@ def main():
                         "status": receipt["status"],
                         "file_count": receipt["file_count"],
                     }
-                finalize(result, threads, timed_out=timed_out, interrupted=stopping, entry_thread_id=entry_thread_id)
+                finalize(
+                    result,
+                    threads,
+                    timed_out=timed_out,
+                    interrupted=stopping,
+                    entry_thread_id=entry_thread_id,
+                )
                 trajectory.write(
                     json.dumps(
                         {
@@ -718,7 +752,14 @@ def main():
         adapter_error = True
         result["status"] = "ERROR"
         result["error"] = str(error)
-        finalize(result, threads, timed_out=timed_out, interrupted=stopping, adapter_error=True, entry_thread_id=entry_thread_id)
+        finalize(
+            result,
+            threads,
+            timed_out=timed_out,
+            interrupted=stopping,
+            adapter_error=True,
+            entry_thread_id=entry_thread_id,
+        )
         print(str(error), file=sys.stderr, flush=True)
         with trajectory_path.open("a") as trajectory:
             trajectory.write(
@@ -730,7 +771,12 @@ def main():
     finally:
         result["duration_ms"] = int((time.monotonic() - started) * 1000)
         marker = finalize(
-            result, threads, timed_out=timed_out, interrupted=stopping, adapter_error=adapter_error, entry_thread_id=entry_thread_id
+            result,
+            threads,
+            timed_out=timed_out,
+            interrupted=stopping,
+            adapter_error=adapter_error,
+            entry_thread_id=entry_thread_id,
         )
         print(marker, flush=True)
         write_json(output / "native-receipt.json", result)

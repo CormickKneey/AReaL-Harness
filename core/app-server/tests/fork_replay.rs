@@ -236,14 +236,14 @@ async fn fork_keeps_inherited_media_readable_without_copying_execution() {
         "sourceThreadId":source_id,"workspaceAccess":"none","input":[{"type":"text","text":"Describe the retained image"}]})).await;
     let side_id = side["result"]["thread"]["id"]
         .as_str()
-        .expect(&side.to_string())
+        .unwrap_or_else(|| panic!("{}", side))
         .to_owned();
     engine.wait(&side_id).await.unwrap();
     let other_side = call(&mut socket, 10, "areal/side/start", json!({"requestId":"image-side-b",
         "sourceThreadId":source_id,"workspaceAccess":"none","input":[{"type":"text","text":"Describe it again"}]})).await;
     let other_side_id = other_side["result"]["thread"]["id"]
         .as_str()
-        .expect(&other_side.to_string())
+        .unwrap_or_else(|| panic!("{}", other_side))
         .to_owned();
     engine.wait(&other_side_id).await.unwrap();
     let archived = call(

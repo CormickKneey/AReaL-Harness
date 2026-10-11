@@ -30,7 +30,12 @@ pub struct Store {
 
 #[cfg(test)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ForkFault { BeforeSnapshot, AfterSnapshot, AfterTarget, AfterPersistError }
+pub(crate) enum ForkFault {
+    BeforeSnapshot,
+    AfterSnapshot,
+    AfterTarget,
+    AfterPersistError,
+}
 
 impl Store {
     pub fn open(root: &Path) -> Result<Self> {
@@ -64,7 +69,9 @@ impl Store {
         let mut fault = self.fork_fault.lock().unwrap();
         if *fault == Some(stage) {
             *fault = None;
-            return Err(crate::Error::Storage("injected fork persistence fault".into()));
+            return Err(crate::Error::Storage(
+                "injected fork persistence fault".into(),
+            ));
         }
         Ok(())
     }
@@ -102,11 +109,14 @@ impl Store {
                         .history_archive
                         .as_ref()
                         .map_or(0, |a| a.bytes)
-                    .saturating_add(match &record.thread.conversation {
-                        Some(areal_protocol::Conversation::Fork { history_seed, .. }) => history_seed.logical_bytes as u64,
-                        Some(areal_protocol::Conversation::Side { reference_snapshot, .. }) => reference_snapshot.logical_bytes as u64,
-                        _ => 0,
-                    })
+                        .saturating_add(match &record.thread.conversation {
+                            Some(areal_protocol::Conversation::Fork { history_seed, .. }) =>
+                                history_seed.logical_bytes as u64,
+                            Some(areal_protocol::Conversation::Side {
+                                reference_snapshot, ..
+                            }) => reference_snapshot.logical_bytes as u64,
+                            _ => 0,
+                        })
                         .saturating_add(std::fs::metadata(&path)?.len())
                         <= max_bytes as u64,
                 "stored thread exceeds configured history limit"
@@ -120,45 +130,137 @@ impl Store {
             if let Some(reference) = &record.thread.history_archive {
                 archive::read_segment(&self.root, &reference.head)?;
             }
-            if let Some(areal_protocol::Conversation::Fork { version, origin, history_seed, .. }) = &record.thread.conversation {
-                anyhow::ensure!(*version == 1 && record.version >= 14, "unsupported fork conversation version");
-                anyhow::ensure!(origin.snapshot_id == history_seed.snapshot_id, "fork snapshot reference mismatch");
+            if let Some(areal_protocol::Conversation::Fork {
+                version,
+                origin,
+                history_seed,
+                ..
+            }) = &record.thread.conversation
+            {
+                anyhow::ensure!(
+                    *version == 1 && record.version >= 14,
+                    "unsupported fork conversation version"
+                );
+                anyhow::ensure!(
+                    origin.snapshot_id == history_seed.snapshot_id,
+                    "fork snapshot reference mismatch"
+                );
                 let segment = archive::read_segment(&self.root, &history_seed.snapshot_id)?;
-                anyhow::ensure!(segment.previous.is_none(), "fork snapshot contains archive chain");
-                anyhow::ensure!(std::fs::metadata(self.root.join("history").join(&history_seed.snapshot_id))?.len() == history_seed.logical_bytes as u64,
-                    "fork snapshot size mismatch");
-                anyhow::ensure!(segment.turns.len() == history_seed.turn_count
-                    && segment.turns.iter().map(|turn| turn.items.len()).sum::<usize>() == history_seed.item_count,
-                    "fork snapshot manifest mismatch");
-                anyhow::ensure!(segment.source_thread_ids.len() == segment.turns.len()
-                    && segment.source_thread_ids.iter().all(|id| uuid::Uuid::parse_str(id).is_ok()),
-                    "fork snapshot provenance mismatch");
+                anyhow::ensure!(
+                    segment.previous.is_none(),
+                    "fork snapshot contains archive chain"
+                );
+                anyhow::ensure!(
+                    std::fs::metadata(self.root.join("history").join(&history_seed.snapshot_id))?
+                        .len()
+                        == history_seed.logical_bytes as u64,
+                    "fork snapshot size mismatch"
+                );
+                anyhow::ensure!(
+                    segment.turns.len() == history_seed.turn_count
+                        && segment
+                            .turns
+                            .iter()
+                            .map(|turn| turn.items.len())
+                            .sum::<usize>()
+                            == history_seed.item_count,
+                    "fork snapshot manifest mismatch"
+                );
+                anyhow::ensure!(
+                    segment.source_thread_ids.len() == segment.turns.len()
+                        && segment
+                            .source_thread_ids
+                            .iter()
+                            .all(|id| uuid::Uuid::parse_str(id).is_ok()),
+                    "fork snapshot provenance mismatch"
+                );
                 if origin.boundary == "after" {
-                    anyhow::ensure!(segment.turns.last().is_some_and(|turn| turn.id == origin.source_turn_id),
-                        "fork snapshot anchor mismatch");
+                    anyhow::ensure!(
+                        segment
+                            .turns
+                            .last()
+                            .is_some_and(|turn| turn.id == origin.source_turn_id),
+                        "fork snapshot anchor mismatch"
+                    );
                 }
             }
-            if let Some(areal_protocol::Conversation::Side { version, origin, reference_snapshot, policy, .. }) = &record.thread.conversation {
-                anyhow::ensure!(*version == 1 && record.version >= 14 && policy.kind == "sideReadOnlyV1"
-                    && matches!(policy.workspace_access.as_str(), "none" | "readOnly"), "unsupported Side policy");
-                anyhow::ensure!(record.thread.parent_thread_id.is_none() && record.thread.session_id == record.thread.id
-                    && record.thread.goal_owner.is_none() && record.thread.goals.is_empty()
-                    && record.thread.dynamic_tools.is_empty(), "Side execution authority mismatch");
-                anyhow::ensure!(record.thread.desktop.as_ref().is_some_and(|d| d.queue.items.is_empty() && d.processes.is_empty()
-                    && d.configuration.read_only && d.configuration.tool_allowlist.as_ref().is_some_and(|tools| {
-                        let expected: &[&str] = if policy.workspace_access == "readOnly" {
-                            &["side_context_read", "fs_read", "fs_list", "fs_stat", "search_files"]
-                        } else { &["side_context_read"] };
-                        tools.iter().map(String::as_str).eq(expected.iter().copied())
-                    })),
-                    "Side configuration authority mismatch");
-                anyhow::ensure!(origin.snapshot_id == reference_snapshot.snapshot_id, "Side snapshot reference mismatch");
+            if let Some(areal_protocol::Conversation::Side {
+                version,
+                origin,
+                reference_snapshot,
+                policy,
+                ..
+            }) = &record.thread.conversation
+            {
+                anyhow::ensure!(
+                    *version == 1
+                        && record.version >= 14
+                        && policy.kind == "sideReadOnlyV1"
+                        && matches!(policy.workspace_access.as_str(), "none" | "readOnly"),
+                    "unsupported Side policy"
+                );
+                anyhow::ensure!(
+                    record.thread.parent_thread_id.is_none()
+                        && record.thread.session_id == record.thread.id
+                        && record.thread.goal_owner.is_none()
+                        && record.thread.goals.is_empty()
+                        && record.thread.dynamic_tools.is_empty(),
+                    "Side execution authority mismatch"
+                );
+                anyhow::ensure!(
+                    record
+                        .thread
+                        .desktop
+                        .as_ref()
+                        .is_some_and(|d| d.queue.items.is_empty()
+                            && d.processes.is_empty()
+                            && d.configuration.read_only
+                            && d.configuration
+                                .tool_allowlist
+                                .as_ref()
+                                .is_some_and(|tools| {
+                                    let expected: &[&str] = if policy.workspace_access == "readOnly"
+                                    {
+                                        &[
+                                            "side_context_read",
+                                            "fs_read",
+                                            "fs_list",
+                                            "fs_stat",
+                                            "search_files",
+                                        ]
+                                    } else {
+                                        &["side_context_read"]
+                                    };
+                                    tools
+                                        .iter()
+                                        .map(String::as_str)
+                                        .eq(expected.iter().copied())
+                                })),
+                    "Side configuration authority mismatch"
+                );
+                anyhow::ensure!(
+                    origin.snapshot_id == reference_snapshot.snapshot_id,
+                    "Side snapshot reference mismatch"
+                );
                 let segment = archive::read_segment(&self.root, &reference_snapshot.snapshot_id)?;
-                anyhow::ensure!(segment.previous.is_none() && segment.turns.len() == reference_snapshot.turn_count
-                    && segment.turns.iter().map(|t| t.items.len()).sum::<usize>() == reference_snapshot.item_count
-                    && segment.source_thread_ids.len() == segment.turns.len(), "Side snapshot manifest mismatch");
-                anyhow::ensure!(std::fs::metadata(self.root.join("history").join(&reference_snapshot.snapshot_id))?.len() == reference_snapshot.logical_bytes as u64,
-                    "Side snapshot size mismatch");
+                anyhow::ensure!(
+                    segment.previous.is_none()
+                        && segment.turns.len() == reference_snapshot.turn_count
+                        && segment.turns.iter().map(|t| t.items.len()).sum::<usize>()
+                            == reference_snapshot.item_count
+                        && segment.source_thread_ids.len() == segment.turns.len(),
+                    "Side snapshot manifest mismatch"
+                );
+                anyhow::ensure!(
+                    std::fs::metadata(
+                        self.root
+                            .join("history")
+                            .join(&reference_snapshot.snapshot_id)
+                    )?
+                    .len()
+                        == reference_snapshot.logical_bytes as u64,
+                    "Side snapshot size mismatch"
+                );
             }
             let mut repaired = false;
             if let Some(goal) = &mut record.thread.goals.goal {

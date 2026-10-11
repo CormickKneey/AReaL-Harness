@@ -33,7 +33,15 @@ impl Engine {
     ) -> Result<Value> {
         let thread_id = cell.state.lock().await.thread.id.clone();
         match tool {
-            "side_context_read" => self.side_context_read(&thread_id, args["evidenceRef"].as_str().map(str::to_owned), args["cursor"].as_str().map(str::to_owned), args["maxBytes"].as_u64().map(|n| n as usize)).await,
+            "side_context_read" => {
+                self.side_context_read(
+                    &thread_id,
+                    args["evidenceRef"].as_str().map(str::to_owned),
+                    args["cursor"].as_str().map(str::to_owned),
+                    args["maxBytes"].as_u64().map(|n| n as usize),
+                )
+                .await
+            }
             "read_history" => self.read_history(cell, args).await.map_err(invalid),
             "read_tool_result" => self.read_tool_result(cell, args).await.map_err(invalid),
             "development_service_inspect" => {
