@@ -25,6 +25,7 @@ class AppHooks {
         env: { ...this.environment(), ...(path ? { AREAL_HARNESS_TOOL_EXTENSIONS: path } : {}) } });
       return operation === 'show' ? JSON.parse(stdout) : null;
     } catch (error) {
+      console.error('Core 配置校验子进程失败', { operation, code: error.code, signal: error.signal, killed: error.killed });
       throw new Error(`Core 配置校验失败：${this.backend.providers.redact(error.stderr || error.message).slice(0, 2048)}`);
     }
   }
