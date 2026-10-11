@@ -253,7 +253,9 @@ try {
   assert.equal(target.conversation?.origin?.sourceTurnId, anchorTurnId);
   assert.equal(target.turns?.length, 0, "target starts with empty local turns");
   const inherited = page.getByRole("region", { name: "继承的对话历史", exact: true });
-  await inherited.getByText(new RegExp(head)).waitFor();
+  // 用户原文与模型回显都含 head；只断言持久来源用户消息这一项。
+  await inherited.locator(".fork-history-item").filter({ has: page.getByText("原提问", { exact: true }) })
+    .locator("[data-inherited-content]").getByText(`${head} ${unicodeExcerpt}`, { exact: true }).waitFor();
   assert.equal(await inherited.getByText(future, { exact: false }).count(), 0, "future source Turn must not appear in inherited history");
   assert.match(await inherited.innerText(), /共享工作区/);
   assert.equal((await page.getByTestId("chat-input").innerText()).trim(), "");
@@ -278,7 +280,12 @@ try {
   }, "source active Turn at model barrier");
   activeTurnId = running.projects[0].state.threads[sourceThreadId].turns.at(-1).id;
   await untilFile(toolStarted, "Core/Runtime source command marker");
-  const mainConfigBefore = JSON.stringify((await state()).projects[0].configurations?.[sourceThreadId] ?? null);
+  const sourceProject = (await state()).projects[0];
+  const sourceConfig = sourceProject.configurations?.[sourceThreadId];
+  assert.ok(Number.isInteger(sourceConfig?.revision) && sourceConfig.revision > 0,
+    "source must have an actual Core configuration before retention check");
+  assert.equal(requests.at(-1)?.body?.model, "fixture", "the running source request must use the configured fixture model");
+  const mainConfigBefore = JSON.stringify(sourceConfig);
   await page.getByTestId("chat-input").fill(mainDraftSentinel);
   await page.locator('.composer-dock input[type="file"]').setInputFiles({ name: "main-attachment.txt", mimeType: "text/plain", buffer: Buffer.from("keep this main attachment") });
   await page.getByTestId("composer-attachments").getByText("main-attachment.txt").waitFor();
@@ -304,7 +311,7 @@ try {
   }, { turnId: anchorTurnId, excerpt: unicodeExcerpt });
   await page.getByRole("button", { name: "在旁路中询问所选内容" }).click();
   const sidePane = page.getByRole("region", { name: "旁路讨论" });
-  await sidePane.getByText(unicodeExcerpt, { exact: false }).waitFor();
+  await sidePane.locator("blockquote.notice").filter({ hasText: unicodeExcerpt }).waitFor();
   assert.match(await sidePane.innerText(), /已持久化选区/);
   await sidePane.getByLabel("文件访问范围").selectOption("none");
   assert.equal(await sidePane.getByLabel("文件访问范围").inputValue(), "none");
@@ -338,7 +345,7 @@ try {
   assert.ok(sideModelInput.includes(sideQuestion) && sideModelInput.includes(unicodeExcerpt));
   assert.ok(!sideModelInput.includes(lateSentinel));
   await sidePane.getByRole("button", { name: "查看冻结证据" }).click();
-  await sidePane.getByRole("region", { name: "冻结证据" }).getByText(unicodeExcerpt, { exact: false }).waitFor();
+  await sidePane.getByRole("region", { name: "冻结证据" }).locator("pre").filter({ hasText: unicodeExcerpt }).first().waitFor();
   await shot("05-side-answered-frozen.png");
   checks.push("AC30/39: Side answers during a live source Runtime command; Unicode source selection is verified and frozen evidence is visible");
   const beforeBring = { requests: requests.length, commands: (await app.evaluate(() => globalThis.__scfMutations)).length,
@@ -373,7 +380,7 @@ try {
     "main model configuration must survive Side and bring-back");
   await page.getByRole("button", { name: "打开侧边面板标签页" }).click();
   await page.getByRole("menuitem", { name: "旁路讨论" }).click();
-  await sidePane.getByText(sideQuestion, { exact: false }).first().waitFor();
+  await sidePane.getByRole("region", { name: "相关讨论" }).getByRole("button", { name: new RegExp(sideQuestion) }).waitFor();
   assert.equal((await state()).projects[0].state.threads[sideThreadId].id, sideThreadId);
   checks.push("AC46/47/54: bring-back changed only the main local draft; hiding and reopening preserved the same Side identity");
   const activeAnchor = page.locator(`[data-turn-id="${activeTurnId}"]`);
@@ -470,7 +477,8 @@ try {
   const restored = await until(s => s.projects[0]?.state?.threads?.[sourceThreadId]?.turns?.length === preRestart.sourceTurns &&
     s.projects[0]?.state?.threads?.[sideThreadId]?.turns?.length === preRestart.sideTurns, "restarted source and Side identity");
   await page.getByRole("tab", { name: "旁路讨论" }).click();
-  await page.getByRole("region", { name: "旁路讨论" }).getByText(sideQuestion, { exact: false }).first().waitFor();
+  await page.getByRole("region", { name: "旁路讨论" }).getByRole("region", { name: "相关讨论" })
+    .getByRole("button", { name: new RegExp(sideQuestion) }).waitFor();
   assert.equal(restored.projects[0].state.threads[sideThreadId].conversation.origin.sourceThreadId, sourceThreadId);
   assert.equal(requests.length, preRestart.requests, "restart must not repeat unknown Side submission");
   restartVideoPath = await page.video()?.path();
