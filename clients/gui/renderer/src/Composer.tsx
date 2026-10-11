@@ -142,7 +142,7 @@ export function Composer({
     const refreshDraft = (event: Event) => {
       if ((event as CustomEvent<string>).detail !== key || sending.has(key)) return;
       const draft = localStorage.getItem(key) ?? "";
-      api.current?.setText(draft); setText(draft); api.current?.focus();
+      api.current?.setText(draft); setText(draft); setFiles(attachmentDrafts.get(key) ?? []); api.current?.focus();
     };
     window.addEventListener("areal-draft-change", refreshDraft);
     return () => window.removeEventListener("areal-draft-change", refreshDraft);
