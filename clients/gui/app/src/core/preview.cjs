@@ -2005,7 +2005,7 @@ class CorePreview {
         this.selected.set(workspaceKey(page.coreInstanceId, projectId, threadId), child.id);
       child.url = url;
       void child.view.webContents.loadURL(url).catch(error => {
-        if (this.pageStillOwned(child) && error.code !== 'ERR_ABORTED') child.error = error.message;
+        if (this.pageStillOwned(child) && error.code !== 'ERR_ABORTED' && error.errno !== -3) child.error = error.message;
       });
       this.changed(child);
       return { action: 'deny' };
@@ -2278,7 +2278,7 @@ class CorePreview {
       if (restored) {
         page.url = restored;
         void page.view.webContents.loadURL(restored).catch(error => {
-          if (this.pageStillOwned(page) && error.code !== 'ERR_ABORTED') page.error = error.message;
+          if (this.pageStillOwned(page) && error.code !== 'ERR_ABORTED' && error.errno !== -3) page.error = error.message;
         });
       }
     }
@@ -2372,7 +2372,7 @@ class CorePreview {
       case 'navigate':
         page.url = target; page.error = '';
         void c.loadURL(target).catch(error => {
-          if (this.pageStillOwned(page) && error.code !== 'ERR_ABORTED' && page.url === target) page.error = error.message;
+          if (this.pageStillOwned(page) && error.code !== 'ERR_ABORTED' && error.errno !== -3 && page.url === target) page.error = error.message;
         });
         break;
       case 'back': if (c.navigationHistory.canGoBack()) c.navigationHistory.goBack(); break;
@@ -2381,7 +2381,7 @@ class CorePreview {
         page.error = '';
         if (c.getURL()) c.reload();
         else if (page.url) void c.loadURL(page.url).catch(error => {
-          if (this.pageStillOwned(page) && error.code !== 'ERR_ABORTED') page.error = error.message;
+          if (this.pageStillOwned(page) && error.code !== 'ERR_ABORTED' && error.errno !== -3) page.error = error.message;
         });
         break;
       case 'stop': c.stop(); break;
