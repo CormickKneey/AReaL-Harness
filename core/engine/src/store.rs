@@ -139,12 +139,18 @@ impl Store {
                 }
             }
             if let Some(areal_protocol::Conversation::Side { version, origin, reference_snapshot, policy, .. }) = &record.thread.conversation {
-                anyhow::ensure!(*version == 1 && record.version >= 14 && policy.kind == "sideReadOnlyV1" && policy.workspace_access == "none", "unsupported Side policy");
+                anyhow::ensure!(*version == 1 && record.version >= 14 && policy.kind == "sideReadOnlyV1"
+                    && matches!(policy.workspace_access.as_str(), "none" | "readOnly"), "unsupported Side policy");
                 anyhow::ensure!(record.thread.parent_thread_id.is_none() && record.thread.session_id == record.thread.id
                     && record.thread.goal_owner.is_none() && record.thread.goals.is_empty()
                     && record.thread.dynamic_tools.is_empty(), "Side execution authority mismatch");
                 anyhow::ensure!(record.thread.desktop.as_ref().is_some_and(|d| d.queue.items.is_empty() && d.processes.is_empty()
-                    && d.configuration.read_only && d.configuration.tool_allowlist.as_ref().is_some_and(|tools| tools == &["side_context_read"])),
+                    && d.configuration.read_only && d.configuration.tool_allowlist.as_ref().is_some_and(|tools| {
+                        let expected: &[&str] = if policy.workspace_access == "readOnly" {
+                            &["side_context_read", "fs_read", "fs_list", "fs_stat", "search_files"]
+                        } else { &["side_context_read"] };
+                        tools.iter().map(String::as_str).eq(expected.iter().copied())
+                    })),
                     "Side configuration authority mismatch");
                 anyhow::ensure!(origin.snapshot_id == reference_snapshot.snapshot_id, "Side snapshot reference mismatch");
                 let segment = archive::read_segment(&self.root, &reference_snapshot.snapshot_id)?;

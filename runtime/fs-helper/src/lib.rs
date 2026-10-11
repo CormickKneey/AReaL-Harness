@@ -179,6 +179,14 @@ pub fn execute(request: FileHelperRequest) -> Result<Value> {
             };
             Ok(json!({"entries":page,"nextCursor":cursor}))
         }
+        FileCommand::Search { pattern, glob, context, limit, .. } => {
+            let stat = fs::statat(&parent, name, AtFlags::SYMLINK_NOFOLLOW).map_err(io)?;
+            if fs::FileType::from_raw_mode(stat.st_mode) == fs::FileType::Symlink {
+                return Err(invalid("search path cannot be a symlink"));
+            }
+            search::execute_scoped(&request.root, &path, pattern, glob, context, limit)
+                .map_err(|message| invalid(&message))
+        }
         FileCommand::Write {
             data_base64,
             expected,

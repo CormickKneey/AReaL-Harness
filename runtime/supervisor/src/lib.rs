@@ -212,7 +212,7 @@ impl Supervisor {
                 .as_array_mut()
                 .unwrap()
                 .push(json!("fs.execute"));
-            info.capabilities["filesystem"] = json!({"maxChunkBytes":MAX_FILE_CHUNK,"maxEditFileBytes":MAX_EDIT_FILE,"symlinks":"reject","writeSerialization":if self.config.concurrent_writes { "filePaths" } else { "conflictingPaths" },"externalConcurrentCAS":false});
+            info.capabilities["filesystem"] = json!({"maxChunkBytes":MAX_FILE_CHUNK,"maxEditFileBytes":MAX_EDIT_FILE,"symlinks":"reject","search":"scopedNativeV1","writeSerialization":if self.config.concurrent_writes { "filePaths" } else { "conflictingPaths" },"externalConcurrentCAS":false});
         }
         if let Some(helper) = &self.config.file_helper {
             info.capabilities["builtinTools"] = json!({"searchFiles":{"path":helper,"version":1}});
