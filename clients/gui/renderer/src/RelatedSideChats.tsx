@@ -21,7 +21,7 @@ export function RelatedSideChats({ project, sourceId, selectedId, onSelect, acti
       .catch((cause: Error) => { if (current && generation.current === requestGeneration) setError(cause.message); })
       .finally(() => { if (current && generation.current === requestGeneration) setBusy(false); });
     return () => { current = false; generation.current++; };
-  }, [project.id, project.state?.connected, sourceId, archived, selectedId, revision, action]);
+  }, [project.id, project.state?.connected, sourceId, archived, selectedId, revision, project.core?.connectionGeneration, action]);
   const more = async () => {
     if (!cursor || busy) return;
     const expected = cursor;

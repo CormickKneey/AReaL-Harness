@@ -82,6 +82,7 @@ import { BrowserSettings } from "./settings/BrowserSettings.js";
 import { HooksSettings } from "./settings/HooksSettings.js";
 import { AgentConversationPane } from "./AgentConversationPane.js";
 import { SideChatPane } from "./SideChatPane.js";
+import { SideDraftWorkspace } from "./side-draft-owner.js";
 import { agentName } from "./AgentIdentity.js";
 import { AgentsPane } from "./AgentsPane.js";
 import { WorkgroupsPane } from "./WorkgroupsPane.js";
@@ -947,7 +948,7 @@ function AppContent({ services }: { services: PlatformServices }) {
     if (!project) return null;
     const props = { project, thread, action };
     if (panel === "旁路讨论" && thread && project.core?.features?.sidePreview === true && !thread.parentThreadId && thread.conversation?.kind !== "side") {
-      return <SideChatPane key={`${project.id}:${thread.id}:side`} project={project} source={thread} action={resourceAction} dark={dark} />;
+      return <SideChatPane key={`${project.core?.instanceId}:${project.id}:${thread.id}:side`} project={project} source={thread} action={resourceAction} dark={dark} />;
     }
     if (panel.startsWith("agent:") && thread) {
       const childId = panel.slice(6);
@@ -1094,12 +1095,13 @@ function AppContent({ services }: { services: PlatformServices }) {
   };
   const openSideSelection = (selection: Data, excerpt: string, anchor?: Data) => {
     if (!project || !thread) return;
-    const owner = `${project.id}:${thread.id}:side`;
-    localStorage.setItem(`areal-gui:side:selection:${owner}`, JSON.stringify(selection));
-    localStorage.setItem(`areal-gui:side:selection-preview:${owner}`, excerpt);
-    if (anchor) localStorage.setItem(`areal-gui:side:anchor:${owner}`, JSON.stringify(anchor));
-    else localStorage.removeItem(`areal-gui:side:anchor:${owner}`);
-    localStorage.removeItem(`areal-gui:side:thread:${owner}`);
+    const workspace = new SideDraftWorkspace(localStorage, { instanceId: project.core?.instanceId ?? "unknown",
+      projectId: project.id, sourceThreadId: thread.id, randomId: () => crypto.randomUUID() });
+    const draft = workspace.newDraft();
+    const owner = workspace.owner(draft);
+    localStorage.setItem(`${owner}:selection`, JSON.stringify(selection));
+    localStorage.setItem(`${owner}:selection-preview`, excerpt);
+    if (anchor) localStorage.setItem(`${owner}:anchor`, JSON.stringify(anchor));
     setWorkspaceView(mode => matchMedia("(max-width: 900px)").matches ? "panel" : mode === "split" ? mode : "panel");
     setPanel("旁路讨论");
     setPanelTabs(tabs => tabs.includes("旁路讨论") ? tabs : [...tabs, "旁路讨论"]);
@@ -1441,8 +1443,12 @@ function AppContent({ services }: { services: PlatformServices }) {
                           readAction={resourceAction}
                           onPanel={showPanel}
                           onSide={project.core?.features?.sidePreview === true && !thread.desktop?.archived && !thread.parentThreadId && thread.conversation?.kind !== "side" ? draft => {
-                            const owner = `${project.id}:${thread.id}:side`;
-                            const key = `areal-gui:side:draft:${owner}`;
+                            const workspace = new SideDraftWorkspace(localStorage, { instanceId: project.core?.instanceId ?? "unknown",
+                              projectId: project.id, sourceThreadId: thread.id, randomId: () => crypto.randomUUID() });
+                            const current = workspace.current();
+                            const selected = current.kind === "side" || localStorage.getItem(workspace.pendingKey(current)) ? workspace.newDraft() : current;
+                            const owner = workspace.owner(selected);
+                            const key = workspace.draftKey(selected);
                             const existing = localStorage.getItem(key) ?? "";
                             if (draft.trim()) localStorage.setItem(key, existing ? `${existing}\n${draft}` : draft);
                             setWorkspaceView(mode => matchMedia("(max-width: 900px)").matches ? "panel" : mode === "split" ? mode : "panel");
