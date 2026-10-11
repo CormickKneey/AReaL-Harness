@@ -72,7 +72,7 @@ async fn call(socket: &mut Socket, id: u64, method: &str, params: Value) -> Valu
     }
 }
 
-// Run explicitly after `make build`; this executes the installed native Seatbelt/Bubblewrap profile.
+// 先构建 areal-runtime-fs，再显式运行此测试；它使用真实 Seatbelt/Bubblewrap 沙箱。
 #[tokio::test]
 #[ignore = "requires built areal-runtime-fs and native sandbox availability"]
 async fn side_read_only_is_native_scoped_and_reports_current_file_changes() {
