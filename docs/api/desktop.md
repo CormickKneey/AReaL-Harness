@@ -125,3 +125,9 @@ features.goals=true 表示服务支持 Goal，无需单独配置开关；Goal �
 `areal/thread/fork` 接受 `{requestId,sourceThreadId,anchor:{turnId,boundary:"after"},workspaceMode:"sharedCurrent"}`。Core 从已提交来源记录冻结完整纯文本前缀，持久化目标自有快照和创建收据，再公开一个空闲的独立 Thread/Session；目标本地 `turns` 起初为空，来源 Goal、队列、审批和执行宿主均不继承。创建不启动模型或工具，不修改工作区文件。相同业务键和参数返回同一目标，参数冲突的 `error.data.reason` 是 `REQUEST_CONFLICT`。目标 `conversation.kind=fork`、`origin` 和 `historySeed` 是内容来源，不是 `parentThreadId` 委派关系。
 
 `areal/conversation/history {threadId,view:"inherited",cursor?,maxBytes?}` 按目标授权读取继承项，默认页预算 64 KiB、最大 256 KiB。此开发切片只接受能完整装入单页的纯文本 Item；过大项会明确拒绝，后续切片加入片段分页。`areal/context/read` 和目标后续模型请求从持久快照与本地 Turn 构造逻辑历史，不再读取来源实时会话。当前限制为一个 32 MiB 不可变段；复杂、冷历史和 before 锚点由后续切片处理。旧记录缺少 `conversation` 时仍按普通主会话读取；未知 kind 或不支持的版本拒绝恢复。
+
+## Side Chat 开发预览
+
+同一开发开关还启用 `areal/side/start` 的 `workspaceAccess:"none"` 子集。请求 `{requestId,sourceThreadId,anchor?,workspaceAccess:"none",input:[{type:"text",text}]}`；`anchor` 可为 `latestCommitted` 或 `{kind:"turn",turnId,boundary:"before"|"after"}`，省略时选取首问受理时最后一个已提交 Turn。空面板不创建 Thread。首问将目标独立 Session、不可变参考快照、首个 Turn 和业务收据一起提交，然后启动模型；同键重复请求返回同一个目标与首轮。提交后响应丢失时用 `areal/request/read {requestId}` 查找，不能改键重试。重启时已提交但尚未完成的轮次明确中断，不会重发首问。
+
+Side 的 `conversation.kind=side` 与 `policy.kind=sideReadOnlyV1` 是持久角色，当前仅允许 `workspaceAccess:none`。它没有 Goal、自动 Workflow、文件/进程/委派或动态工具权限；模型只能调用 Core 固定的 `side_context_read`，历史中的指令和工具输出都是参考数据。`areal/side/context/read {threadId,evidenceRef?,cursor?,maxBytes?}` 受目标身份授权读取冻结证据，最大 16 KiB；`evidenceRef` 与 `cursor` 不能同时传。旧执行入口不能改变 Side 角色或扩权，`thread/list` 默认任务列表排除 Side。`turn/start` 和 `areal/turn/start` 仅接受文本追问，`turn/interrupt` 只停止 Side 当前 Turn；关闭 GUI 面板不发送中断。此预览不表示完整 Side/Fork P0 已验收。

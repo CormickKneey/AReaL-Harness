@@ -292,7 +292,9 @@ fn restore_cells(
         .into_iter()
         .map(|(id, thread)| {
             let bindings = tools::Bindings {
-                registry: if thread.source == "nativeResearchAgent" {
+                registry: if thread.is_side() {
+                    registry.clone().side_only()
+                } else if thread.source == "nativeResearchAgent" {
                     registry.clone().research_only()
                 } else {
                     registry.with_dynamic(&thread.dynamic_tools)?
@@ -599,6 +601,7 @@ impl Engine {
                 .saturating_add(thread.history_archive.as_ref().map_or(0, |a| a.bytes))
                 .saturating_add(match &thread.conversation {
                     Some(areal_protocol::Conversation::Fork { history_seed, .. }) => history_seed.logical_bytes as u64,
+                    Some(areal_protocol::Conversation::Side { reference_snapshot, .. }) => reference_snapshot.logical_bytes as u64,
                     _ => 0,
                 })
                 > self.limits.max_history_bytes as u64

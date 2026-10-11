@@ -104,6 +104,7 @@ impl Store {
                         .map_or(0, |a| a.bytes)
                     .saturating_add(match &record.thread.conversation {
                         Some(areal_protocol::Conversation::Fork { history_seed, .. }) => history_seed.logical_bytes as u64,
+                        Some(areal_protocol::Conversation::Side { reference_snapshot, .. }) => reference_snapshot.logical_bytes as u64,
                         _ => 0,
                     })
                         .saturating_add(std::fs::metadata(&path)?.len())
@@ -136,6 +137,22 @@ impl Store {
                     anyhow::ensure!(segment.turns.last().is_some_and(|turn| turn.id == origin.source_turn_id),
                         "fork snapshot anchor mismatch");
                 }
+            }
+            if let Some(areal_protocol::Conversation::Side { version, origin, reference_snapshot, policy }) = &record.thread.conversation {
+                anyhow::ensure!(*version == 1 && record.version >= 14 && policy.kind == "sideReadOnlyV1" && policy.workspace_access == "none", "unsupported Side policy");
+                anyhow::ensure!(record.thread.parent_thread_id.is_none() && record.thread.session_id == record.thread.id
+                    && record.thread.goal_owner.is_none() && record.thread.goals.is_empty()
+                    && record.thread.dynamic_tools.is_empty(), "Side execution authority mismatch");
+                anyhow::ensure!(record.thread.desktop.as_ref().is_some_and(|d| d.queue.items.is_empty() && d.processes.is_empty()
+                    && d.configuration.read_only && d.configuration.tool_allowlist.as_ref().is_some_and(|tools| tools == &["side_context_read"])),
+                    "Side configuration authority mismatch");
+                anyhow::ensure!(origin.snapshot_id == reference_snapshot.snapshot_id, "Side snapshot reference mismatch");
+                let segment = archive::read_segment(&self.root, &reference_snapshot.snapshot_id)?;
+                anyhow::ensure!(segment.previous.is_none() && segment.turns.len() == reference_snapshot.turn_count
+                    && segment.turns.iter().map(|t| t.items.len()).sum::<usize>() == reference_snapshot.item_count
+                    && segment.source_thread_ids.len() == segment.turns.len(), "Side snapshot manifest mismatch");
+                anyhow::ensure!(std::fs::metadata(self.root.join("history").join(&reference_snapshot.snapshot_id))?.len() == reference_snapshot.logical_bytes as u64,
+                    "Side snapshot size mismatch");
             }
             let mut repaired = false;
             if let Some(goal) = &mut record.thread.goals.goal {

@@ -221,13 +221,18 @@ impl Engine {
         .await
     }
     pub(crate) async fn refresh_managed_tools(&self, cell: &Cell) -> anyhow::Result<()> {
-        let definitions = cell.state.lock().await.thread.dynamic_tools.clone();
+        let state = cell.state.lock().await;
+        let side = state.thread.is_side();
+        let definitions = state.thread.dynamic_tools.clone();
+        drop(state);
         let registry = self
             .registry
             .clone()
             .with_mcp(self.desktop.mcp.tools())?
             .with_dynamic(&definitions)?;
-        cell.bindings.write().await.registry = if cell.research {
+        cell.bindings.write().await.registry = if side {
+            registry.side_only()
+        } else if cell.research {
             registry.research_only()
         } else {
             registry
