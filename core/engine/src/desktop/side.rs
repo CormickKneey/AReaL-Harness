@@ -34,6 +34,27 @@ fn resolve_selection(selection: &SideSelection, prefix: &[Turn]) -> Result<areal
 }
 
 impl Engine {
+    pub(crate) async fn check_side_capacity(&self, source_id: &str, exclude_thread_id: Option<&str>) -> Result<()> {
+        let cells: Vec<_> = self.threads.read().await.values().cloned().collect();
+        let mut deployment = 0;
+        let mut source = 0;
+        for cell in cells {
+            if exclude_thread_id == Some(cell.id.as_str()) { continue; }
+            let state = cell.state.lock().await;
+            if state.active.is_none() { continue; }
+            if let Some(areal_protocol::Conversation::Side { origin, .. }) = &state.thread.conversation {
+                deployment += 1;
+                if origin.source_thread_id == source_id { source += 1; }
+            }
+        }
+        if source >= self.limits.max_side_turns_per_source {
+            return Err(Error::Exhausted("SIDE_SOURCE_CAPACITY_REACHED".into()));
+        }
+        if deployment >= self.limits.max_side_turns_per_deployment {
+            return Err(Error::Exhausted("SIDE_DEPLOYMENT_CAPACITY_REACHED".into()));
+        }
+        Ok(())
+    }
     pub async fn side_context_read(&self, thread_id: &str, evidence_ref: Option<String>, cursor: Option<String>, max_bytes: Option<usize>) -> Result<Value> {
         if evidence_ref.is_some() && cursor.is_some() { return Err(invalid("evidenceRef and cursor are mutually exclusive")); }
         let max_bytes = max_bytes.unwrap_or(8192);
@@ -102,6 +123,7 @@ impl Engine {
     pub async fn side_start(self: &Arc<Self>, identity: String, request: SideStart) -> Result<(Thread, Turn)> {
         self.mutate(move |engine| async move {
             let _serial = engine.desktop.creation.lock().await;
+            let _admission_gate = engine.desktop.lifecycle.gate.lock().await;
             let hash = digest(&request)?;
             let method = "areal/side/start";
             if !valid_id(&request.request_id) { return Err(invalid("invalid requestId")); }
@@ -163,6 +185,8 @@ impl Engine {
             config.instructions.clear();
             config.options.system_prompt = None;
             config.options.append_instructions.clear();
+            config.options.max_model_rounds = Some(config.options.max_model_rounds
+                .unwrap_or(engine.limits.max_side_model_rounds).min(engine.limits.max_side_model_rounds));
             let model = engine.configured_model(&config).map_err(|_| invalid("MODEL_CONTEXT_INCOMPATIBLE"))?;
             if !model.capabilities().supports_input(areal_protocol::Modality::Text) { return Err(invalid("MODEL_CONTEXT_INCOMPATIBLE")); }
             let limit = if engine.limits.max_history_bytes == 0 { 64 * 1024 * 1024 } else { engine.limits.max_history_bytes.min(64 * 1024 * 1024) };
@@ -192,6 +216,7 @@ impl Engine {
                 dynamic_tools: Vec::new(), toolset_revision: 0,
             };
             let (thread, turn) = engine.prepare_turn(&base, request.input)?;
+            engine.check_side_capacity(&source.id, None).await?;
             let admission = engine.reserve_active_turn()?;
             let cell = Cell::new(thread.clone(), 0, crate::tools::Bindings { registry: engine.registry.clone().side_only(), host: None });
             let mut threads = engine.threads.write().await;

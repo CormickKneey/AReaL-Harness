@@ -205,6 +205,7 @@ async fn side_first_question_is_one_durable_read_only_turn() {
     for (method, params) in [
         ("areal/process/start", json!({"threadId":side_id,"requestId":"bad","argv":["echo","bad"]})),
         ("areal/goal/create", json!({"threadId":side_id,"requestId":"bad","expectedRevision":0,"objective":"write"})),
+        ("areal/context/compact", json!({"threadId":side_id})),
         ("areal/thread/configure", json!({"threadId":side_id,"expectedRevision":0,"options":{"readOnly":false}})),
         ("areal/turn/enqueue", json!({"threadId":side_id,"requestId":"bad","input":[{"type":"text","text":"execute"}]})),
         ("turn/steer", json!({"threadId":side_id,"expectedTurnId":"bad","input":[{"type":"text","text":"execute"}]})),
@@ -231,7 +232,8 @@ async fn side_first_question_is_one_durable_read_only_turn() {
 async fn side_snapshots_active_source_and_interrupts_independently() {
     unsafe { std::env::set_var("AREAL_DEV_CONVERSATION_DERIVATION", "1"); }
     let dir = tempfile::tempdir().unwrap();
-    let engine = Engine::open(dir.path(), Arc::new(SlowModel), Limits::default()).unwrap();
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let engine = Engine::open(dir.path(), Arc::new(SlowModel(entered.clone())), Limits { model_concurrency: 1, max_side_turns_per_source: 1, ..Limits::default() }).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let stop = CancellationToken::new();
@@ -243,6 +245,7 @@ async fn side_snapshots_active_source_and_interrupts_independently() {
     let source_id = source["result"]["thread"]["id"].as_str().unwrap();
     let source_turn = call(&mut socket, 3, "turn/start", json!({"threadId":source_id,"input":[{"type":"text","text":"source is still running"}]})).await;
     let source_turn_id = source_turn["result"]["turn"]["id"].as_str().unwrap();
+    tokio::time::timeout(Duration::from_secs(3), entered.notified()).await.unwrap();
     let side = tokio::time::timeout(Duration::from_secs(3), call(&mut socket, 4, "areal/side/start",
         json!({"requestId":"active-source","sourceThreadId":source_id,"workspaceAccess":"none",
             "selection":{"kind":"userQuote","text":"uncommitted stream fragment","claimedTurnId":source_turn_id},
@@ -252,12 +255,28 @@ async fn side_snapshots_active_source_and_interrupts_independently() {
     assert_eq!(side["result"]["thread"]["conversation"]["selection"]["verified"], false);
     assert_eq!(side["result"]["thread"]["conversation"]["selection"]["text"], "uncommitted stream fragment");
     let side_turn_id = side["result"]["turn"]["id"].as_str().unwrap();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let read = call(&mut socket, 99, "thread/read", json!({"threadId":side_id,"includeTurns":true})).await;
+            if read["result"]["thread"]["desktop"]["sideCapacityStatus"] == "waiting" { break; }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }).await.unwrap();
+    let over_capacity = call(&mut socket, 98, "areal/side/start", json!({"requestId":"side-over-capacity","sourceThreadId":source_id,"workspaceAccess":"none","input":[{"type":"text","text":"second side"}]})).await;
+    assert!(over_capacity["error"].to_string().contains("SIDE_SOURCE_CAPACITY_REACHED"), "{over_capacity}");
     let evidence = call(&mut socket, 5, "areal/side/context/read", json!({"threadId":side_id})).await;
     assert_eq!(evidence["result"]["evidence"][0]["sourceTurnStatus"], "inProgress");
     assert!(evidence["result"]["evidence"].to_string().contains("source is still running"));
     assert!(!evidence["result"]["evidence"].to_string().contains("uncommitted stream fragment"));
     let interrupted = call(&mut socket, 6, "turn/interrupt", json!({"threadId":side_id,"turnId":side_turn_id})).await;
     assert!(interrupted["result"].is_object(), "{interrupted}");
+    tokio::time::timeout(Duration::from_secs(3), engine.wait(side_id)).await.unwrap().unwrap();
+    let another = call(&mut socket, 97, "areal/side/start", json!({"requestId":"side-after-stop","sourceThreadId":source_id,"workspaceAccess":"none","input":[{"type":"text","text":"another side"}]})).await;
+    assert!(another["result"]["thread"].is_object(), "{another}");
+    let another_id = another["result"]["thread"]["id"].as_str().unwrap();
+    let followup = call(&mut socket, 96, "turn/start", json!({"threadId":side_id,"input":[{"type":"text","text":"follow up"}]})).await;
+    assert!(followup["error"].to_string().contains("SIDE_SOURCE_CAPACITY_REACHED"), "{followup}");
+    call(&mut socket, 95, "turn/interrupt", json!({"threadId":another_id,"turnId":another["result"]["turn"]["id"]})).await;
     let source_read = call(&mut socket, 7, "thread/read", json!({"threadId":source_id,"includeTurns":true})).await;
     assert_eq!(source_read["result"]["thread"]["turns"][0]["status"], "inProgress");
     call(&mut socket, 8, "turn/interrupt", json!({"threadId":source_id,"turnId":source_turn_id})).await;
@@ -267,12 +286,13 @@ async fn side_snapshots_active_source_and_interrupts_independently() {
     engine.shutdown().await;
 }
 
-struct SlowModel;
+struct SlowModel(Arc<tokio::sync::Notify>);
 #[async_trait]
 impl Model for SlowModel {
     fn name(&self) -> &str { "slow-test" }
     fn capabilities(&self) -> ModelCapabilities { ModelCapabilities { context_window_tokens: None, max_output_tokens: None, summary_output_tokens: None, input: vec![Modality::Text], output: vec![Modality::Text] } }
     async fn stream(&self, _messages: Vec<Message>) -> anyhow::Result<ModelStream> {
+        self.0.notify_one();
         Ok(Box::pin(futures_util::stream::once(async {
             tokio::time::sleep(Duration::from_secs(30)).await;
             Ok("answer".into())

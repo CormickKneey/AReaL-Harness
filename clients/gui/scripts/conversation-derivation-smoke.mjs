@@ -169,8 +169,9 @@ try {
   await until(s => s.projects[0]?.state?.connected, "project connection");
   projectId = (await state()).projects[0].id;
   // 共享后台独立运行；在真实连接的返回边界记录 Core 已确认的创建键。
-  await app.evaluate((_electron, connectionPath) => {
-    const { ServiceConnection } = require(connectionPath);
+  await app.evaluate(({ app }, connectionPath) => {
+    const read = process.getBuiltinModule("module").createRequire(app.getAppPath() + "/package.json");
+    const { ServiceConnection } = read(connectionPath);
     const original = ServiceConnection.prototype.request;
     globalThis.__scfMutations = [];
     ServiceConnection.prototype.request = async function (method, parameters, mutation) {

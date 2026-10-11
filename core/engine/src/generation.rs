@@ -106,15 +106,33 @@ impl Engine {
             self.persist(&candidate).await?;
             state.thread = candidate;
         }
-        let max_rounds = cell
-            .state
-            .lock()
-            .await
-            .thread
-            .turns
-            .last()
-            .and_then(|t| t.configuration.as_ref())
-            .and_then(|c| c.options.max_model_rounds);
+        let (max_rounds, tool_limit) = {
+            let state = cell.state.lock().await;
+            let configured = state
+                .thread
+                .turns
+                .last()
+                .and_then(|t| t.configuration.as_ref())
+                .and_then(|c| c.options.max_model_rounds);
+            if state.thread.is_side() {
+                (
+                    Some(
+                        configured
+                            .unwrap_or(self.limits.max_side_model_rounds)
+                            .min(self.limits.max_side_model_rounds),
+                    ),
+                    if self.limits.max_tool_calls == 0 {
+                        self.limits.max_side_tool_calls
+                    } else {
+                        self.limits
+                            .max_tool_calls
+                            .min(self.limits.max_side_tool_calls)
+                    },
+                )
+            } else {
+                (configured, self.limits.max_tool_calls)
+            }
+        };
         let mut model_rounds = 0;
         'restart: loop {
             if self.task_wait_requested(cell).await {
@@ -146,8 +164,35 @@ impl Engine {
                 }
             }
             model_rounds += 1;
-            // 只在模型请求期间持有许可；等待子任务或消息不占模型配额。
-            let permit = self.permits.acquire().await?;
+            // 只在模型请求期间持有许可；等待与停止不占其他会话的模型名额。
+            let side_thread_id = {
+                let state = cell.state.lock().await;
+                state.thread.is_side().then(|| state.thread.id.clone())
+            };
+            let permit = match self.permits.try_acquire() {
+                Ok(permit) => permit,
+                Err(_) => {
+                    if let Some(thread_id) = &side_thread_id {
+                        if let Some(active) = cell.state.lock().await.active.as_mut() {
+                            active.waiting_for_model_capacity = true;
+                        }
+                        cell.emit("areal/side/capacity", json!({"threadId":thread_id,"status":"waiting"}));
+                    }
+                    tokio::select! {
+                        _ = cancel.cancelled() => anyhow::bail!("cancelled"),
+                        permit = self.permits.acquire() => permit?,
+                    }
+                }
+            };
+            if let Some(thread_id) = &side_thread_id {
+                if let Some(active) = cell.state.lock().await.active.as_mut() {
+                    active.waiting_for_model_capacity = false;
+                }
+                cell.emit(
+                    "areal/side/capacity",
+                    json!({"threadId":thread_id,"status":"available"}),
+                );
+            }
             while steer.try_recv().is_ok() {}
             let (configuration, desktop_enabled) = {
                 let state = cell.state.lock().await;
@@ -176,8 +221,10 @@ impl Engine {
                     .map_or(0, |s| context::text_tokens(s))
                 + instructions.as_ref().map_or(0, |s| context::text_tokens(s))
                 + 512;
-            self.compact_context(cell, cancel, overhead, previous_usage, false)
-                .await?;
+            if side_thread_id.is_none() {
+                self.compact_context(cell, cancel, overhead, previous_usage, false)
+                    .await?;
+            }
 
             let goal_instructions = self.goal_instructions(cell).await?;
             let (messages, thread_id, session_id, turn_id, turn_number) = {
@@ -270,12 +317,11 @@ impl Engine {
                     messages.insert(0, Message::text("system", instructions));
                 }
                 if !tool_definitions.is_empty()
-                    && self
-                        .limits
-                        .remaining_tool_calls(tool_count)
+                    && (tool_limit > 0)
+                        .then(|| tool_limit.saturating_sub(tool_count))
                         .is_some_and(|remaining| remaining <= 32)
                 {
-                    live_context.insert(0, Message::text("system", format!("Tool budget: {} of {} calls remain in this Turn. Prioritize the original failing assertion and final relevant check; preserve the last verified candidate. Do not start unrelated exploration or repeat unchanged successful checks without a concrete unresolved concern. Budget exhaustion does not mean success.", self.limits.max_tool_calls.saturating_sub(tool_count), self.limits.max_tool_calls)));
+                    live_context.insert(0, Message::text("system", format!("Tool budget: {} of {} calls remain in this Turn. Prioritize the original failing assertion and final relevant check; preserve the last verified candidate. Do not start unrelated exploration or repeat unchanged successful checks without a concrete unresolved concern. Budget exhaustion does not mean success.", tool_limit.saturating_sub(tool_count), tool_limit)));
                 }
                 if let Some(hint) = self.agent_budget_hint(cell) {
                     live_context.insert(0, Message::text("system", hint));
@@ -350,6 +396,7 @@ impl Engine {
             if context_budget.window > 0 && request_estimate > context_budget.input_limit {
                 if self.limits.context_compaction_enabled
                     && self.limits.context_auto_compaction
+                    && side_thread_id.is_none()
                     && preflight_compactions < 2
                 {
                     preflight_compactions += 1;
@@ -370,8 +417,8 @@ impl Engine {
             let tools_enabled = !final_round && !output_handoff && !tool_definitions.is_empty();
             let tool_limits = model::ToolCallLimits {
                 max_calls: if tools_enabled {
-                    self.limits
-                        .remaining_tool_calls(tool_count)
+                    (tool_limit > 0)
+                        .then(|| tool_limit.saturating_sub(tool_count))
                         .unwrap_or(usize::MAX)
                         .min(self.limits.max_response_tool_calls)
                 } else {
@@ -670,8 +717,7 @@ impl Engine {
                             cell.state.lock().await.active.as_mut().unwrap().tool_calls =
                                 tool_count;
                             anyhow::ensure!(
-                                self.limits.max_tool_calls == 0
-                                    || tool_count <= self.limits.max_tool_calls,
+                                tool_limit == 0 || tool_count <= tool_limit,
                                 "turn tool-call limit exceeded"
                             );
                             text_output_bytes += self.tool(cell, cancel, call, remaining).await?;
@@ -697,6 +743,7 @@ impl Engine {
                                 && calls.is_empty()
                                 && self.limits.context_compaction_enabled
                                 && self.limits.context_auto_compaction
+                                && side_thread_id.is_none()
                                 && model::terminal_outcome(&error).is_some_and(|outcome| {
                                     outcome.code == "LLM_CONTEXT_WINDOW_EXCEEDED"
                                 })
