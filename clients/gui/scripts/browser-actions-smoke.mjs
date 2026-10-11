@@ -9,6 +9,8 @@ import { createHash } from 'node:crypto';
 import { selectConversation, captureSmokeFailure } from './smoke-navigation.mjs';
 
 // B-10–B-13: public GUI/Core approval and actual native input against a synthetic site.
+const capacityMode = process.argv[2] ?? 'act';
+assert.ok(['act', 'batch'].includes(capacityMode));
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const root = resolve(gui, '../..');
 const require = createRequire(join(gui, 'app/package.json'));
@@ -181,6 +183,54 @@ try {
       return send(method, params);
     };
   }, nativeId);
+  await app.evaluate((_electron, { modulePath, capacityMode }) => {
+    const { CorePreview } = process.getBuiltinModule('module').createRequire(modulePath)(modulePath);
+    const execute = CorePreview.prototype.execute, target = CorePreview.prototype.actionTarget;
+    const prepare = CorePreview.prototype.prepare;
+    CorePreview.prototype.prepare = async function(request) {
+      const original = await prepare.call(this, request);
+      if (!globalThis.__planBudgetOnce) return original;
+      globalThis.__planBudgetOnce = false;
+      const page = this.page(request.projectId, request.threadId, request.pageId);
+      const facts = () => ({ plans: page.plans.size, outstanding: this.workspaceOutstanding(request.projectId, request.threadId),
+        activeRead: !!page.activeRead, activePrepare: !!page.activePrepare, activeAction: !!page.activeAction,
+        pageGeneration: page.pageGeneration, documentEpoch: page.documentGeneration, controlEpoch: page.controlEpoch });
+      const first = facts(), samples = [first];
+      const limit = capacityMode === 'batch' ? 15 : 16;
+      for (let index = 1; index < limit; index++) {
+        const result = await prepare.call(this, { ...request, requestId: request.requestId + 100000 + index,
+          callId: request.callId + '-main-budget-' + index });
+        samples.push({ ...facts(), preparedActionId: result.plan.preparedActionId });
+      }
+      const beforeExtra = facts(), started = Date.now();
+      const extra = await prepare.call(this, { ...request, requestId: request.requestId + 200000,
+        callId: request.callId + '-main-budget-extra', ...(capacityMode === 'batch' ? { operation: 'runBatch',
+          parameters: { pageId: request.pageId, snapshotId: request.parameters.snapshotId, steps: [{ operation: 'act', snapshotId: request.parameters.snapshotId, action: request.parameters.action }], timeoutMs: 2000 } } : {}) }).then(() => ({ accepted: true }),
+        error => ({ accepted: false, error: error.message }));
+      globalThis.__planBudgetManager = this;
+      globalThis.__planBudgetRequest = request;
+      globalThis.__planBudgetFacts = { capacityMode, first, samples, beforeExtra, extra, afterExtra: facts(), elapsedMs: Date.now() - started,
+        boundary: 'Original Core plan unchanged; fifteen additional real Main prepares are admission probes and do not fabricate Core approval/history.' };
+      return original;
+    };
+    CorePreview.prototype.execute = async function(request) {
+      const moving = globalThis.__unstableActionOnce === true && request.operation === 'act';
+      if (!moving) return execute.call(this, request);
+      globalThis.__unstableActionOnce = false; globalThis.__unstableActionActive = true;
+      try { return await execute.call(this, request); }
+      finally { globalThis.__unstableActionActive = false; }
+    };
+    CorePreview.prototype.actionTarget = async function(...args) {
+      const result = await target.apply(this, args);
+      if (globalThis.__unstableActionActive) {
+        globalThis.__actionTargetReadPositions.push({ x: result.x, y: result.y, backendNodeId: result.backendNodeId });
+        // 两次真实目标采样之间移动页面元素；保留原始读取结果。
+        if (globalThis.__actionTargetReadPositions.length === 1)
+          await args[1].executeJavaScript(`document.querySelector('#submit').style.transform='translateX(24px)'`);
+      }
+      return result;
+    };
+  }, { modulePath: join(gui, 'app/src/core/preview.cjs'), capacityMode });
   let completedTurns = 0;
   async function scenario(next, choice = null) {
     mode = next;
@@ -193,6 +243,14 @@ try {
       assert.match(await panel.innerText(), /Submit action|Draft/);
       if (next === 'stale') await app.evaluate(({ webContents }, id) =>
         webContents.fromId(id).executeJavaScript(`{const old=document.querySelector('#submit');old.replaceWith(old.cloneNode(true))}`), nativeId);
+      if (next === 'hidden' || next === 'covered') await app.evaluate(({ webContents }, { id, next }) =>
+        webContents.fromId(id).executeJavaScript(next === 'hidden'
+          ? `document.querySelector('#submit').style.display='none'`
+          : `(()=>{const r=document.querySelector('#submit').getBoundingClientRect(), cover=document.createElement('div');
+            cover.id='fixture-cover';cover.style.cssText='position:fixed;z-index:999999;background:#ccc';
+            Object.assign(cover.style,{left:r.left+'px',top:r.top+'px',width:r.width+'px',height:r.height+'px'});
+            document.body.append(cover)})()`), { id: nativeId, next });
+      if (next === 'unstable') await app.evaluate(() => { globalThis.__unstableActionOnce = true; globalThis.__actionTargetReadPositions = []; });
       await panel.getByRole('button', { name: choice }).click();
     }
     const turn = await terminalTurn(completedTurns);
@@ -225,6 +283,26 @@ try {
   assert.equal(forged.success, false);
   assert.equal(siteFacts.posts, 1);
   checks.push('B-12: model-supplied approval field cannot authorize action');
+  for (const next of ['hidden', 'covered', 'unstable']) {
+    await app.evaluate(() => { globalThis.__actionInputs = []; });
+    const refused = await scenario(next, '允许一次');
+    assert.equal(refused.success, false);
+    assert.match(JSON.stringify(refused.contentItems), /not_sent|target_unavailable|plan_stale/);
+    assert.equal(siteFacts.posts, 1);
+    const inputs = await app.evaluate(() => globalThis.__actionInputs);
+    assert.equal(inputs.length, 0, `${next} fails before input dispatch`);
+    if (next === 'unstable') {
+      const samples = await app.evaluate(() => globalThis.__actionTargetReadPositions);
+      assert.equal(samples.length, 2);
+      assert.equal(samples[0].backendNodeId, samples[1].backendNodeId);
+      assert.equal(samples[1].x - samples[0].x, 24);
+      events[next].samples = samples;
+    }
+    events[next].inputTrace = inputs;
+    await app.evaluate(({ webContents }, id) => webContents.fromId(id).executeJavaScript(
+      `document.querySelector('#submit').style.cssText='';document.querySelector('#fixture-cover')?.remove()`), nativeId);
+    checks.push(`B-13: approved ${next} target is refused by actual Native actionability checks with zero input or additional POST`);
+  }
   const filled = await scenario('fill', '允许一次');
   assert.equal(filled.success, true);
   assert.equal((await nativeFacts()).draft, 'DRAFT_INPUT_04');
@@ -252,6 +330,35 @@ try {
     events[next].inputTrace = trace;
     checks.push(`B-13: Ref ${key} focuses the actual button and dispatches only the approved key; site effects=${expectedPosts}`);
   }
+  await page.evaluate(({ projectId, threadId, pageId }) => window.arealDesktop.preview({ operation: 'takeover', projectId, threadId, pageId }), { projectId, threadId, pageId });
+  await until(async () => (await page.evaluate(({ projectId, threadId }) => window.arealDesktop.preview({ operation: 'state', projectId, threadId }), { projectId, threadId })).browser.control === 'human', 'plan-budget Human convergence');
+  await page.evaluate(({ projectId, threadId, pageId }) => window.arealDesktop.preview({ operation: 'claim', projectId, threadId, pageId }), { projectId, threadId, pageId });
+  await app.evaluate(() => { globalThis.__planBudgetOnce = true; globalThis.__actionInputs = []; });
+  const capacity = await scenario('capacity', '拒绝');
+  assert.equal(capacity.success, false);
+  const budget = await app.evaluate(() => globalThis.__planBudgetFacts);
+  events.capacity.budget = budget;
+  assert.equal(budget.first.plans, 1);
+  const limit = capacityMode === 'batch' ? 15 : 16;
+  assert.deepEqual(budget.samples.map(row => row.plans), Array.from({ length: limit }, (_, index) => index + 1));
+  assert.equal(budget.beforeExtra.outstanding, limit);
+  assert.equal(budget.beforeExtra.activeRead || budget.beforeExtra.activePrepare || budget.beforeExtra.activeAction, false);
+  assert.equal(budget.extra.accepted, false); assert.match(budget.extra.error, /not_sent/);
+  assert.equal(budget.afterExtra.plans, limit); assert.equal(budget.afterExtra.outstanding, limit);
+  for (const field of ['pageGeneration', 'documentEpoch', 'controlEpoch'])
+    assert.equal(budget.first[field], budget.afterExtra[field]);
+  assert.ok(budget.elapsedMs < 1000);
+  assert.equal(siteFacts.posts, 3); assert.equal((await app.evaluate(() => globalThis.__actionInputs)).length, 0);
+  await page.evaluate(({ projectId, threadId, pageId }) => window.arealDesktop.preview({ operation: 'takeover', projectId, threadId, pageId }), { projectId, threadId, pageId });
+  await until(async () => (await page.evaluate(({ projectId, threadId }) => window.arealDesktop.preview({ operation: 'state', projectId, threadId }), { projectId, threadId })).browser.control === 'human', 'budget plans cleared by takeover');
+  const cleared = await app.evaluate(() => {
+    const request = globalThis.__planBudgetRequest, manager = globalThis.__planBudgetManager;
+    return { plans: manager.page(request.projectId, request.threadId, request.pageId).plans.size,
+      outstanding: manager.workspaceOutstanding(request.projectId, request.threadId) };
+  });
+  assert.equal(cleared.plans, 0); assert.equal(cleared.outstanding, 0);
+  events.capacity.budget = budget; events.capacity.cleared = cleared;
+  checks.push(`09c5 Main ${capacityMode}: actual prepared plans exhaust the workspace budget including the outer batch plan; extra original Main prepare is promptly refused without input, epoch drift or Core history fabrication; takeover clears all plans`);
   assert.deepEqual(errors, []);
   passed = true;
 } catch (error) {

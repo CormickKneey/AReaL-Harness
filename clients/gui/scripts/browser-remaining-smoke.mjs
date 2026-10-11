@@ -10,7 +10,7 @@ import { selectConversation, captureSmokeFailure } from './smoke-navigation.mjs'
 
 // Remaining M1 synthetic Native boundaries: popup, storage, policy, and quota.
 const mode = process.argv[2] ?? 'full';
-assert.ok(['full', 'projection', 'background', 'lifecycle', 'download', 'windowClose', 'policy', 'agentPages'].includes(mode));
+assert.ok(['full', 'projection', 'background', 'lifecycle', 'download', 'windowClose', 'policy', 'agentPages', 'captureBounds', 'budget', 'classification', 'restart', 'ownerRace', 'controlOps'].includes(mode));
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const root = resolve(gui, '../..');
 const require = createRequire(join(gui, 'app/package.json'));
@@ -88,6 +88,7 @@ const site = createServer(async (request, response) => {
     <h1>HUMAN_BOUNDARY_05</h1>
     <button id="effect" onclick="fetch('/effect',{method:'POST'})">Submit once</button>
     <button id="same-origin-popup" onclick="window.open('/?marker=first&amp;popup=1','_blank')">Open sibling</button>
+    <button id="delayed-popup" onclick="setTimeout(()=>window.open('/?marker=first&popup=unknown','_blank'),400)">Open delayed sibling</button>
     <button id="cross-origin-popup" onclick="window.open('${forbiddenUrl}','_blank')">Open denied</button>
     <a id="slow-download" href="/slow-download" download>Download synthetic stream</a>
     <label>Password <input id="password" type="password"></label>
@@ -146,9 +147,30 @@ const model = createServer(async (request, response) => {
   await until(() => pageId, 'claimed page');
   response.writeHead(200, { 'Content-Type': 'text/event-stream' });
   const send = (delta, finish_reason = null) => response.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
-  if (!issued) {
+  if (mode === 'classification') { send({ content: 'Task complete; delivered Browser pages remain with Human.' }); send({}, 'stop');
+  } else if (mode === 'controlOps') {
+    if (last?.role === 'tool') { send({ content: 'Unauthorized control request refused.' }); send({}, 'stop'); }
+    else {
+      const operation = JSON.stringify(body.messages.findLast(message => message.role === 'user')?.content).match(/CONTROL_OP:([a-zA-Z]+)/)?.[1];
+      assert.ok(operation);
+      send({ tool_calls: [{ index: 0, id: `control-${operation}`, type: 'function', function: {
+        name: 'browser_v1', arguments: JSON.stringify({ operation, parameters: { pageId } }) } }] });
+      send({}, 'tool_calls');
+    }
+  } else if (mode === 'budget') {
+    if (last?.role === 'tool') { send({ content: 'Bounded Native read completed' }); send({}, 'stop'); }
+    else {
+      const target = JSON.stringify(body.messages).match(/BUDGET_READ:([a-f0-9-]{36})/)?.[1];
+      assert.ok(target, 'budget request names its actual Page');
+      send({ tool_calls: [{ index: 0, id: `budget-${target}`, type: 'function', function: {
+        name: 'browser_v1', arguments: JSON.stringify({ operation: 'observe', parameters: { pageId: target } }) } }] });
+      send({}, 'tool_calls');
+    }
+  } else if (!issued) {
     issued = true;
-    const args = ['agentNavigate', 'beforeObserveNavigate', 'beforeObserveNewPage', 'agentNewPage'].includes(phase)
+    const args = phase.startsWith('capture')
+      ? { operation: 'capture', parameters: { pageId, scope: 'viewport' } }
+      : ['agentNavigate', 'beforeObserveNavigate', 'beforeObserveNewPage', 'agentNewPage'].includes(phase)
       ? { operation: ['beforeObserveNewPage', 'agentNewPage'].includes(phase) ? 'newPage' : 'navigate', parameters: { pageId, url: navigateTarget } }
       : phase === 'childDiagnostics' ? { operation: 'diagnostics', parameters: { pageId, kind: 'console' } }
       : ['click', 'noClaimAct'].includes(phase)
@@ -166,10 +188,11 @@ const deployment = join(scratch, 'desktop.json');
 await writeFile(deployment, JSON.stringify({ profiles: [{ id: 'fixture', revision: 'v1', displayName: 'Fixture', instructions: 'Use requested tools.' }] }));
 const env = { ...process.env, AREAL_GUI_USER_DATA: join(scratch, 'electron'), AREAL_CORE_HOME: join(scratch, 'core'),
   AREAL_CORE_USER_HOME: userHome, AREAL_HARNESS_SERVICE_HOME: join(scratch, 'registry'),
+  AREAL_BROWSER_READ_TEST_TRACE: join(scratch, 'browser-trace.jsonl'),
   AREAL_CORE_DESKTOP_CONFIG: deployment, AREAL_CORE_BIN: process.env.AREAL_CORE_BIN || resolve(root, 'target/debug/areal') };
 for (const key of ['AREAL_CORE_WORKSPACE', 'AREAL_CORE_CONFIG', 'AREAL_HARNESS_HOME', 'AREAL_HARNESS_CONFIG']) delete env[key];
 const startedAt = new Date().toISOString(), events = {}, checks = [], errors = [];
-let app, page, passed = false, projectId, threadId, nativeId;
+let app, secondApp, page, passed = false, projectId, threadId, nativeId;
 async function snapshot() { return page.evaluate(() => window.arealDesktop.snapshot()); }
 async function command(name, params) {
   const result = await page.evaluate(({ name, params }) => window.arealDesktop.command(name, params), { name, params });
@@ -313,7 +336,335 @@ try {
   assert.equal(firstLoad.idb.before,null);
   assert.equal(firstLoad.swBefore,0);
   events.firstLoad=firstLoad;
-  if (mode === 'policy') {
+  if (mode === 'classification') {
+    const original = await controlState();
+    await nativeClick(nativeId, '#delayed-popup');
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.focus());
+    const unknown = await until(async () => {
+      const state = await controlState(); return state.workspace.pages.find(item => item.openerId === pageId && item.origin === 'unknown');
+    }, 'real delayed popup from a now-unfocused Native opener');
+    assert.equal(unknown.control, 'human');
+    assert.equal(unknown.coreInstanceId, original.workspace.pages[0].coreInstanceId);
+    assert.ok(original.workspace.workspaceId.includes(projectId) && original.workspace.workspaceId.includes(threadId));
+    const afterPopup = await controlState(); assert.equal(afterPopup.workspace.pages.length, 2);
+    assert.equal(afterPopup.browser.pageId, pageId, 'unfocused unknown popup does not switch the selected Page');
+    assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length), 1);
+    await assert.rejects(() => pv(threadId, { operation: 'release', pageId: unknown.pageId }), /明确用户操作|无效桌面操作或参数/);
+    assert.ok((await controlState()).workspace.pages.some(item => item.pageId === unknown.pageId));
+    await command('send', { projectId, threadId, text: 'Complete the task and leave both delivered Browser pages with the user.' });
+    const completed = await terminalTurn(0); assert.equal(completed.status, 'completed');
+    const afterTask = await controlState();
+    assert.deepEqual(afterTask.workspace.pages.map(item => item.pageId).sort(), afterPopup.workspace.pages.map(item => item.pageId).sort());
+    assert.equal(await nativeCount(), 2);
+    await pv(threadId, { operation: 'release', pageId: unknown.pageId, userIntent: true });
+    assert.equal((await controlState()).workspace.pages.length, 1);
+    assert.equal(await app.evaluate(({ webContents }, id) => !webContents.fromId(id).isDestroyed(), nativeId), true);
+    events.classification = { original, unknown, afterPopup, taskTurnId: completed.id, afterTask, explicitClose: true };
+    checks.push('07c1: delayed same-origin popup after actual Native input and focus return to Main is classified unknown/Human, keeps opener and owning Workspace, without a new top-level window or selection theft');
+    checks.push('07c4: actual completed Core task retains delivered Human/unknown Pages; only explicit userIntent closes unknown Page while original Human Page remains alive');
+  } else if (mode === 'controlOps') {
+    const before = await controlState(), gets = siteFacts.documentGets;
+    const attempts = []; events.controlOps = { before, attempts };
+    for (const operation of ['claim', 'claim', 'takeover', 'takeOver']) {
+      await command('send', { projectId, threadId, text: `CONTROL_OP:${operation}` });
+      const turn = await terminalTurn(attempts.length);
+      const item = turn.items.find(item => item.tool === 'browser_v1' && item.callId === `control-${operation}`);
+      assert.ok(item); assert.equal(item.success, false);
+      assert.match(JSON.stringify(item.contentItems), /invalid|unsupported|unknown|operation|无效/i);
+      assert.notEqual(item.execution?.outcome, 'unknown');
+      attempts.push({ operation, turnId: turn.id, item });
+      const current = await controlState();
+      assert.equal(current.browser.control, 'human');
+      assert.equal(current.workspace.pages.find(item => item.pageId === pageId).controlEpoch, before.workspace.pages.find(item => item.pageId === pageId).controlEpoch);
+      assert.equal(current.browser.pageId, before.browser.pageId);
+    }
+    assert.equal(siteFacts.documentGets, gets); assert.equal(siteFacts.posts, 0);
+    events.controlOps = { before, attempts, after: await controlState() };
+    checks.push('05c6: repeated actual model claim/takeover variants are refused by Core with no automatic giveback, epoch change, navigation or site effect');
+  } else if (mode === 'restart') {
+    const before = await controlState();
+    await app.close(); app = null;
+    app = await electron.launch({ executablePath: require('electron'), args: [join(gui, 'app')], env, timeout: 120000 });
+    page = await app.firstWindow(); page.setDefaultTimeout(15000);
+    page.on('pageerror', error => errors.push(error.message));
+    await page.getByTestId('areal-workbench').waitFor({ timeout: 120000 });
+    await until(async () => (await snapshot()).connection?.state === 'ready', 'restarted GUI uses original adapter');
+    await selectConversation(page, threadId); await page.keyboard.press('Meta+t'); await page.locator('.preview-panel').waitFor();
+    const warning = page.getByText('临时登录只在当前浏览工作区使用；关闭工作区或重启后可能需要重新登录。', { exact: true });
+    await warning.waitFor();
+    await app.evaluate(({ dialog, BrowserWindow, app }, origin) => {
+      dialog.showMessageBox = async (...args) => {
+        const options = args.at(-1);
+        if (options?.title === '允许本地开发站点' && options.message === `允许此浏览工作区访问 ${origin}？`) return { response: 1, checkboxChecked: false };
+        throw new Error('Unexpected dialog in restart fixture');
+      };
+      const win = BrowserWindow.getAllWindows()[0]; win.setSize(1440, 960); win.show(); app.focus({ steal: true }); win.focus();
+    }, new URL(siteUrl).origin);
+    await until(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isFocused()), 'restart Origin prompt focused');
+    const restarted = await controlState(); assert.notEqual(restarted.browser.pageId, before.browser.pageId);
+    await pv(threadId, { operation: 'navigate', pageId: restarted.browser.pageId, url: `${siteUrl}&restart=1` });
+    const restartedId = await wcByUrl(`${siteUrl}&restart=1`), status = await siteStatus(`${siteUrl}&restart=1`);
+    assert.equal(status.beforeLocal, null); assert.equal(status.idb.before, null); assert.equal(status.swBefore, 0);
+    assert.equal(siteFacts.cookieOnGets.at(-1), false);
+    const sessionFacts = await app.evaluate(({ webContents }, id) => ({ storagePath: webContents.fromId(id).session.storagePath }), restartedId);
+    assert.equal(sessionFacts.storagePath, null);
+    await page.screenshot({ path: join(scratch, 'restart-temporary-login-warning.png') });
+    events.restart = { before, after: await controlState(), status, sessionFacts, warning: await warning.innerText(),
+      sameGuiUserData: env.AREAL_GUI_USER_DATA, sameCoreHome: env.AREAL_CORE_HOME, lastRequestCookie: siteFacts.cookieOnGets.at(-1) };
+    checks.push('08c4: actual GUI restart shows temporary-login warning; new Native Page/temporary Session has no previous cookie/localStorage/IndexedDB/worker state and no persistent Session directory');
+  } else if (mode === 'ownerRace') {
+    await app.evaluate(({ dialog }, origin) => {
+      const original = dialog.showMessageBox;
+      dialog.showMessageBox = async (...args) => args.at(-1)?.message === '归档此会话？' ? { response: 1, checkboxChecked: false } : original(...args);
+    }, new URL(siteUrl).origin);
+    const results = [];
+    for (const operation of ['archive', 'hideProject']) {
+      const ownerThread = operation === 'archive' ? threadId
+        : (await command('create', { projectId, browserEnabled: true, profile: { id: 'fixture', revision: 'v1' } })).threadId;
+      if (operation !== 'archive') {
+        await selectConversation(page, ownerThread); await page.keyboard.press('Meta+t'); await page.locator('.preview-panel').waitFor();
+        const blank = await until(async () => (await stateFor(ownerThread)).browser?.pageId, 'hide-project Page');
+        await makePinned(ownerThread, blank, `${siteUrl}&owner=hide`);
+        await pv(ownerThread, { operation: 'takeover', pageId: blank });
+        await until(async () => (await stateFor(ownerThread)).browser.control === 'human', 'owner-race Human');
+      }
+      const current = await stateFor(ownerThread), id = current.browser.pageId;
+      const wc = await wcByUrl(current.url);
+      await app.evaluate((_electron, { modulePath, wc, suffix }) => {
+        const { CorePreview } = process.getBuiltinModule('module').createRequire(modulePath)(modulePath);
+        const command = CorePreview.prototype.command;
+        globalThis.__ownerDelayedShow = null; globalThis.__ownerLoadStarted = false;
+        CorePreview.prototype.command = async function(request) {
+          if (globalThis.__ownerDelayShow && request.operation === 'show' && request.bounds?.x === 987) {
+            globalThis.__ownerDelayShow = false;
+            await new Promise(resolve => { globalThis.__ownerDelayedShow = resolve; });
+          }
+          return command.call(this, request);
+        };
+        const c = process.getBuiltinModule('module').createRequire(modulePath)('electron').webContents.fromId(wc);
+        const load = c.loadURL.bind(c);
+        c.loadURL = async url => {
+          if (!url.includes(suffix)) return load(url);
+          return load(url).then(value => new Promise(resolve => {
+            globalThis.__ownerLoadStarted = true; globalThis.__ownerLateLoad = () => resolve(value);
+          }));
+        };
+      }, { modulePath: join(gui, 'app/src/core/preview.cjs'), wc, suffix: `owner-race=${operation}` });
+      await pv(ownerThread, { operation: 'navigate', pageId: id, url: `${siteUrl}&owner-race=${operation}` });
+      await until(() => app.evaluate(() => globalThis.__ownerLoadStarted), 'actual Native load fulfilled and its original receipt held');
+      await app.evaluate(() => { globalThis.__ownerDelayShow = true; });
+      const lateShow = pv(ownerThread, { operation: 'show', pageId: id, bounds: { x: 987, y: 200, width: 400, height: 500 } }).then(value => ({ accepted: true, value }), error => ({ accepted: false, error: error.message }));
+      await until(() => app.evaluate(() => !!globalThis.__ownerDelayedShow), 'actual trusted show request held');
+      if (operation === 'archive') await command('manage', { projectId, threadId: ownerThread, operation: 'archive' });
+      else await command('library', { projectId, operation: 'hideProject', hidden: true });
+      await until(() => app.evaluate(({ webContents }, id) => !webContents.fromId(id) || webContents.fromId(id).isDestroyed(), wc), 'owner revoked and Native destroyed before late receipts');
+      await app.evaluate(async () => { globalThis.__ownerDelayedShow(); globalThis.__ownerLateLoad(); });
+      const show = await lateShow; assert.equal(show.accepted, false);
+      await new Promise(resolve => setTimeout(resolve, 300));
+      const ended = await stateFor(ownerThread); assert.equal(ended.workspace.pages.length, 0);
+      assert.equal(await nativeCount(), 0);
+      assert.equal(siteFacts.getRequests.filter(row => row.url.includes(`owner-race=${operation}`)).length, 1, 'late real load receipt does not issue a second GET');
+      results.push({ operation, threadId: ownerThread, pageId: id, nativeId: wc, lateShow: show, ended });
+    }
+    events.ownerRace = results;
+    checks.push('09c3: real archive and hideProject commands revoke ownership and destroy Native before delayed trusted show and fulfilled Native load receipt resume; late requests cannot allocate or navigate an orphan Page');
+  } else if (mode === 'budget') {
+    const jobs = [{ projectId, threadId, pageId, nativeId }];
+    await pv(threadId, { operation: 'claim', pageId });
+    for (let index = 1; index < 8; index++) {
+      if (index === 4) {
+        // 每个 Core 的轮次并发有上限；两个隔离项目共同填满适配器八槽。
+        const secondWorkspace = join(scratch, 'workspace-second'); await mkdir(secondWorkspace);
+        execFileSync('git', ['init', '-b', 'main'], { cwd: secondWorkspace, stdio: 'ignore' });
+        await app.evaluate(({ dialog }, path) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] }); }, secondWorkspace);
+        await page.evaluate(() => window.arealDesktop.chooseProject());
+        const secondProject = await until(async () => (await snapshot()).projects.find(item => item.root === secondWorkspace && item.state?.connected), 'second independent frozen Core project');
+        projectId = secondProject.id;
+      }
+      const created = await command('create', { projectId, browserEnabled: true, profile: { id: 'fixture', revision: 'v1' } });
+      await selectConversation(page, created.threadId);
+      await page.keyboard.press('Meta+t'); await page.locator('.preview-panel').waitFor();
+      const current = await until(async () => {
+        const value = await stateFor(created.threadId);
+        return value.workspace.pages.length === 1 ? value : null;
+      }, `budget Workspace ${index}`);
+      const pinned = await makePinned(created.threadId, current.browser.pageId, `${siteUrl}&budget=${index}`);
+      jobs.push({ projectId, threadId: created.threadId, pageId: pinned.id, nativeId: pinned.wc });
+    }
+    assert.equal(await nativeCount(), 8);
+    const adapterBeforeSecond = JSON.parse(await readFile(join(scratch, 'core', 'service.json'), 'utf8'));
+    const thirdWorkspace = join(scratch, 'workspace-third'); await mkdir(thirdWorkspace);
+    execFileSync('git', ['init', '-b', 'main'], { cwd: thirdWorkspace, stdio: 'ignore' });
+    // 第二个 Main 复用同一后台服务与冻结二进制；仅 GUI userData 使用独立路径。
+    secondApp = await electron.launch({ executablePath: require('electron'), args: [join(gui, 'app')],
+      env: { ...env, AREAL_GUI_USER_DATA: join(scratch, 'electron-second') }, timeout: 120000 });
+    const secondPage = await secondApp.firstWindow(); secondPage.setDefaultTimeout(15000);
+    secondPage.on('pageerror', error => errors.push(error.message));
+    await secondPage.getByTestId('areal-workbench').waitFor({ timeout: 120000 });
+    await until(async () => (await secondPage.evaluate(() => window.arealDesktop.snapshot())).connection?.state === 'ready', 'second Main shared service ready');
+    await secondApp.evaluate(({ dialog, BrowserWindow, app }, { path, origin, modulePath }) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] });
+      const original = dialog.showMessageBox;
+      dialog.showMessageBox = async (...args) => {
+        const options = args.at(-1);
+        if (options?.title === '允许本地开发站点' && options.message === `允许此浏览工作区访问 ${origin}？`)
+          return { response: 1, checkboxChecked: false };
+        return original(...args);
+      };
+      const { CorePreview } = process.getBuiltinModule('module').createRequire(modulePath)(modulePath);
+      const claim = CorePreview.prototype.claim, observe = CorePreview.prototype.observe;
+      globalThis.__ninthCallbacks = [];
+      CorePreview.prototype.claim = async function(...args) {
+        const result = await claim.apply(this, args);
+        globalThis.__ninthIdentity = { browserHostId: this.browserHostId, hostGeneration: this.hostGeneration,
+          projectId: args[0], threadId: args[1], pageId: args[2] };
+        return result;
+      };
+      CorePreview.prototype.observe = function(request) {
+        globalThis.__ninthCallbacks.push({ requestId: request.requestId, callId: request.callId });
+        return observe.call(this, request);
+      };
+      const win = BrowserWindow.getAllWindows()[0]; win.setSize(1440, 960); win.show(); app.focus({ steal: true }); win.focus();
+    }, { path: thirdWorkspace, origin: new URL(siteUrl).origin, modulePath: join(gui, 'app/src/core/preview.cjs') });
+    await secondPage.evaluate(() => window.arealDesktop.chooseProject());
+    const thirdProject = await until(async () => (await secondPage.evaluate(() => window.arealDesktop.snapshot())).projects.find(item => item.root === thirdWorkspace && item.state?.connected), 'third isolated Core project');
+    const secondCommand = async (name, params) => {
+      const result = await secondPage.evaluate(({ name, params }) => window.arealDesktop.command(name, params), { name, params });
+      assert.equal(result.ok, true, JSON.stringify(result)); return result.value;
+    };
+    const ninthThread = await secondCommand('create', { projectId: thirdProject.id, browserEnabled: true, profile: { id: 'fixture', revision: 'v1' } });
+    await selectConversation(secondPage, ninthThread.threadId);
+    await secondPage.keyboard.press('Meta+t'); await secondPage.locator('.preview-panel').waitFor();
+    const secondPv = request => secondPage.evaluate(({ projectId, threadId, request }) => window.arealDesktop.preview({ ...request, projectId, threadId }),
+      { projectId: thirdProject.id, threadId: ninthThread.threadId, request });
+    const ninthPage = await until(async () => {
+      const state = await secondPv({ operation: 'state' }); return state.browser?.pageId ? state.browser.pageId : null;
+    }, 'ninth actual Native Page');
+    await until(() => secondApp.evaluate(({ app, BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows()[0]; app.focus({ steal: true }); win.focus(); return win.isFocused();
+    }), 'second Main exact Origin prompt focus');
+    await secondPv({ operation: 'navigate', pageId: ninthPage, url: `${siteUrl}&budget=9` });
+    await until(() => secondApp.evaluate(({ webContents }, url) => webContents.getAllWebContents().some(c => c.getURL() === url && !c.isLoading()), `${siteUrl}&budget=9`), 'ninth Native document loaded');
+    await secondPv({ operation: 'claim', pageId: ninthPage });
+    const ninthIdentity = await secondApp.evaluate(() => globalThis.__ninthIdentity);
+    const adapterAfterSecond = JSON.parse(await readFile(join(scratch, 'core', 'service.json'), 'utf8'));
+    assert.equal(adapterAfterSecond.pid, adapterBeforeSecond.pid, 'both Main instances share the same actual adapter PID');
+    assert.equal(JSON.stringify(adapterAfterSecond.identity), JSON.stringify(adapterBeforeSecond.identity));
+    events.secondMain = { appPid: secondApp.process()?.pid, adapterPid: adapterAfterSecond.pid, ninthIdentity,
+      boundary: 'Separate GUI userData only; original Core/registry/config/deployment paths and adapter identity retained.' };
+    await app.evaluate((_electron, { modulePath, jobs }) => {
+      const { CorePreview } = process.getBuiltinModule('module').createRequire(modulePath)(modulePath);
+      globalThis.__budgetHeld = []; globalThis.__budgetCancels = []; globalThis.__budgetProbes = [];
+      const observe = CorePreview.prototype.observe, cancel = CorePreview.prototype.cancelRead;
+      CorePreview.prototype.cancelRead = function(request) {
+        globalThis.__budgetCancels.push({ requestId: request.requestId, at: Date.now() });
+        return cancel.call(this, request);
+      };
+      CorePreview.prototype.observe = async function(request) {
+        const job = jobs.find(job => job.pageId === request.pageId);
+        if (!job || request.operation !== 'observe' || job.started) return observe.call(this, request);
+        job.started = true; job.manager = this; job.request = request;
+        const c = this.page(request.projectId, request.threadId, request.pageId).view.webContents;
+        const original = c.debugger.sendCommand.bind(c.debugger);
+        c.debugger.sendCommand = (method, params) => method === 'Accessibility.getFullAXTree'
+          ? original(method, params).then(value => new Promise(resolve => {
+            globalThis.__budgetHeld.push({ pageId: job.pageId, requestId: request.requestId, resume: () => resolve(value) });
+          })) : original(method, params);
+        const pending = observe.call(this, request);
+        if (job.pageId === jobs[0].pageId) {
+          // 真实 Core 读取占用页面后，额外操作与截图请求必须立即拒绝。
+          globalThis.__budgetProbes = await Promise.all(Array.from({ length: 24 }, (_, index) =>
+            observe.call(this, { ...request, requestId: request.requestId + 100000 + index,
+              operation: index % 2 ? 'capture' : 'observe', parameters: { pageId: request.pageId, ...(index % 2 ? { scope: 'viewport' } : {}) } })
+              .then(() => ({ accepted: true }), error => ({ accepted: false, error: error.message }))));
+        }
+        return pending;
+      };
+      globalThis.__budgetJobs = jobs;
+    }, { modulePath: join(gui, 'app/src/core/preview.cjs'), jobs });
+    await Promise.all(jobs.map(job => command('send', { projectId: job.projectId, threadId: job.threadId, text: `BUDGET_READ:${job.pageId}` })));
+    await until(() => app.evaluate(() => globalThis.__budgetHeld.length === 8), 'eight real Core callbacks holding actual Native AX receipts');
+    const before = await app.evaluate(() => ({ held: globalThis.__budgetHeld.map(({ pageId, requestId }) => ({ pageId, requestId })),
+      hosts: globalThis.__budgetJobs.map(job => job.request.browserHostId), probes: globalThis.__budgetProbes, active: globalThis.__budgetJobs.map(job => !!job.manager.page(job.request.projectId, job.threadId, job.pageId).activeRead) }));
+    events.budget = { jobs, before, sitePosts: siteFacts.posts };
+    assert.equal(before.probes.length, 24);
+    assert.ok(before.probes.every(item => !item.accepted && /busy/.test(item.error)));
+    assert.ok(before.active.every(Boolean));
+    const traceBefore = (await readFile(join(scratch, 'browser-trace.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+    assert.equal(traceBefore.filter(row => row.phase === 'pending').length, 8);
+    assert.equal(traceBefore.filter(row => row.phase === 'finished').length, 0);
+    assert.ok(before.hosts.every(id => id === before.hosts[0]));
+    assert.notEqual(ninthIdentity.browserHostId, before.hosts[0], 'ninth Core is bound to the independent second Main');
+    const ninthStarted = Date.now();
+    await secondCommand('send', { projectId: thirdProject.id, threadId: ninthThread.threadId, text: `BUDGET_READ:${ninthPage}` });
+    const ninthTurn = await until(async () => {
+      const value = await secondPage.evaluate(() => window.arealDesktop.snapshot());
+      const turn = value.projects.find(item => item.id === thirdProject.id).state.threads[ninthThread.threadId].turns.at(-1);
+      return ['completed', 'failed', 'interrupted'].includes(turn?.status) ? turn : null;
+    }, 'actual ninth Core tool rejected at adapter capacity', 3000);
+    const ninthItem = ninthTurn.items.find(item => item.tool === 'browser_v1' && item.callId === `budget-${ninthPage}`);
+    assert.ok(ninthItem); assert.equal(ninthItem.success, false);
+    assert.match(JSON.stringify(ninthItem), /host_busy/);
+    assert.notEqual(ninthItem.execution?.outcome, 'unknown');
+    const ninthCallbacks = await secondApp.evaluate(() => globalThis.__ninthCallbacks);
+    assert.equal(ninthCallbacks.length, 0, 'adapter refuses ninth Core read before second Main callback');
+    const traceAfterNinth = (await readFile(join(scratch, 'browser-trace.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+    assert.equal(traceAfterNinth.filter(row => row.phase === 'pending').length, 8);
+    assert.equal(traceAfterNinth.filter(row => row.phase === 'finished').length, 0);
+    events.secondMain.ninth = { turnId: ninthTurn.id, item: ninthItem, callbacks: ninthCallbacks, elapsedMs: Date.now() - ninthStarted, trace: traceAfterNinth };
+    checks.push('09c5 adapter: ninth actual Core read on a second Main and third isolated Core is host_busy with zero second-Main callbacks; eight original adapter slots remain pending');
+    const canceledAt = Date.now();
+    await command('stop', { projectId: jobs[0].projectId, threadId: jobs[0].threadId });
+    await until(() => app.evaluate(() => !globalThis.__budgetJobs[0].manager.page(
+      globalThis.__budgetJobs[0].request.projectId, globalThis.__budgetJobs[0].threadId, globalThis.__budgetJobs[0].pageId).activeRead), 'priority cancel reaches Native while remaining seven callbacks are held');
+    const elapsedMs = Date.now() - canceledAt;
+    assert.ok(elapsedMs < 3000, `priority cancellation ${elapsedMs}ms`);
+    const afterFirst = await app.evaluate(() => ({ cancels: globalThis.__budgetCancels,
+      active: globalThis.__budgetJobs.map(job => !!job.manager.page(job.request.projectId, job.threadId, job.pageId).activeRead) }));
+    assert.equal(afterFirst.active.filter(Boolean).length, 7);
+    assert.ok(afterFirst.cancels.some(row => row.requestId === before.held[0].requestId || row.requestId === before.held.find(row => row.pageId === jobs[0].pageId).requestId));
+    await Promise.all(jobs.slice(1).map(job => command('stop', { projectId: job.projectId, threadId: job.threadId })));
+    const settled = await until(async () => {
+      const value = (await snapshot()).projects;
+      const turns = jobs.map(job => value.find(item => item.id === job.projectId).state.threads[job.threadId].turns.at(-1));
+      return turns.every(turn => ['completed', 'failed', 'interrupted'].includes(turn?.status)) ? turns : null;
+    }, 'all eight interrupted Core histories settled');
+    for (const [index, job] of jobs.entries()) {
+      const expected = settled[index].items.filter(item => item.tool === 'browser_v1' && item.callId === `budget-${job.pageId}`);
+      assert.equal(expected.length, 1, 'each real Core read retains its exact call identity');
+      assert.equal(expected[0].arguments.operation, 'observe');
+      assert.equal(expected[0].execution.outcome, 'unknown', 'canceled dispatched read must stay UNKNOWN');
+    }
+    const beforeLate = JSON.stringify(settled);
+    await app.evaluate(() => { for (const held of globalThis.__budgetHeld) held.resume(); });
+    await new Promise(resolve => setTimeout(resolve, 300));
+    const afterLate = (await snapshot()).projects;
+    assert.equal(JSON.stringify(jobs.map(job => afterLate.find(item => item.id === job.projectId).state.threads[job.threadId].turns.at(-1))), beforeLate, 'late actual AX receipts cannot rewrite settled Core histories');
+    assert.equal(siteFacts.posts, 0);
+    events.budget = { jobs, before, afterFirst, elapsedMs, traceBefore, settled, sitePosts: siteFacts.posts,
+      boundary: 'Eight actual Core-to-adapter-to-Main-to-Native callbacks; extra Main read/capture probes are admission checks, not extra Core history calls.' };
+    checks.push('09c5 bounded: eight actual Core callbacks occupy adapter pending capacity; twenty-four extra Main read/capture requests fail busy without another Native dispatch');
+    checks.push('09c5: actual Core interrupt reaches Native cancellation in under3s while seven other callbacks stay held; late AX receipts cannot rewrite settled histories');
+    const inspections = [];
+    for (const job of jobs) {
+      const turn = afterLate.find(item => item.id === job.projectId).state.threads[job.threadId].turns.at(-1);
+      for (const item of turn.items.filter(item => item.execution?.outcome === 'unknown' && !item.execution.inspection)) {
+        assert.equal(item.tool, 'browser_v1'); assert.equal(item.arguments.operation, 'observe');
+        assert.ok(traceBefore.some(row => row.threadId === job.threadId && row.callId === item.callId));
+        await command('manage', { projectId: job.projectId, threadId: job.threadId, operation: 'toolAcknowledge', itemId: item.id,
+          inspection: 'Inspected actual Core history, held Native AX receipt identities, and synthetic server counters: only observe was dispatched, site POST count is zero, canceled reads remain UNKNOWN. Late receipts were released and did not rewrite history; no call was replayed.' });
+        inspections.push({ projectId: job.projectId, threadId: job.threadId, itemId: item.id, originalOutcome: item.execution.outcome });
+      }
+    }
+    assert.equal(inspections.length, 8, 'all eight UNKNOWN reads received an explicit actual inspection');
+    const inspected = (await snapshot()).projects;
+    for (const row of inspections) {
+      const item = inspected.find(project => project.id === row.projectId).state.threads[row.threadId].turns.at(-1).items.find(item => item.id === row.itemId);
+      assert.equal(item.execution.outcome, 'unknown'); assert.ok(item.execution.inspection);
+    }
+    events.budget.inspections = inspections;
+    checks.push('09c5 cleanup: explicit inspection records actual read-only facts for canceled UNKNOWN tools without changing outcomes or replaying requests');
+  } else if (mode === 'policy') {
     const entries=await readdir(join(scratch,'registry','services'));
     const service=JSON.parse(await readFile(join(scratch,'registry','services',entries[0],'service.json'),'utf8'));
     const adapter=JSON.parse(await readFile(join(scratch,'core','service.json'),'utf8'));
@@ -414,6 +765,110 @@ try {
     },'fresh Native Page after Window.show');
     events.windowClose.recovered=recovered;
     checks.push('B-09: public Window.show restores creation of a fresh Page and Native View');
+  } else if (mode === 'captureBounds') {
+    await app.evaluate(({ webContents }, id) => webContents.fromId(id).executeJavaScript(
+      'document.querySelector("#password").parentElement.remove();document.querySelectorAll("iframe").forEach(node=>node.remove())'), nativeId);
+    await page.getByRole('button', { name: '让 Agent 检查当前页' }).click();
+    assert.equal(browserItem(await terminalTurn(0)).success, true);
+    let turns = 1;
+    async function captureStep(next, expected) {
+      phase = next; issued = false;
+      await command('send', { projectId, threadId, text: `Capture current Native viewport: ${next}` });
+      const item = browserItem(await terminalTurn(turns++));
+      events[next] = { item, geometry: await app.evaluate(({ BrowserWindow, webContents }, id) => {
+        const win = BrowserWindow.getAllWindows()[0], view = win.contentView.children.find(view => view.webContents?.id === id);
+        return { minimized: win.isMinimized(), visible: win.isVisible(), viewVisible: view.getVisible(), bounds: view.getBounds() };
+      }, nativeId) };
+      assert.equal(item.success, expected);
+      if (!expected) {
+        assert.match(JSON.stringify(item.contentItems), /page_unavailable|evidence_unavailable/);
+        assert.ok(item.contentItems.every(part => part.type !== 'arealMedia'), 'failed capture returns no previous image');
+      }
+      return item;
+    }
+    const visible = await captureStep('captureVisible', true);
+    assert.ok(visible.contentItems.some(part => part.type === 'arealMedia' && part.modality === 'image'));
+    await pv(threadId, { operation: 'hide', pageId });
+    await captureStep('captureHidden', false);
+    await pv(threadId, { operation: 'show', pageId, visible: true, bounds: { x: 935, y: 397, width: 501, height: 559 } });
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].minimize());
+    await until(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMinimized()), 'actual window minimized');
+    await captureStep('captureMinimized', false);
+    await app.evaluate(({ app, BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.restore(); win.show(); app.focus({ steal: true }); win.focus(); });
+    await until(() => app.evaluate(({ BrowserWindow }) => !BrowserWindow.getAllWindows()[0].isMinimized()), 'actual window restored');
+    await app.evaluate((_electron, modulePath) => {
+      const { CorePreview } = process.getBuiltinModule('module').createRequire(modulePath)(modulePath);
+      const observe = CorePreview.prototype.observe;
+      CorePreview.prototype.observe = async function(request) {
+        if (request.operation !== 'capture' || !globalThis.__zeroCaptureOnce) return observe.call(this, request);
+        globalThis.__zeroCaptureOnce = false;
+        const view = this.page(request.projectId, request.threadId, request.pageId).view, bounds = view.getBounds();
+        view.setBounds({ ...bounds, width: 0, height: 0 });
+        globalThis.__zeroCaptureBounds = view.getBounds();
+        try { return await observe.call(this, request); }
+        finally { view.setBounds(bounds); }
+      };
+      globalThis.__zeroCaptureOnce = true;
+    }, join(gui, 'app/src/core/preview.cjs'));
+    await captureStep('captureZeroNativeBounds', false);
+    events.captureZeroNativeBounds.zeroBounds = await app.evaluate(() => globalThis.__zeroCaptureBounds);
+    assert.equal(events.captureZeroNativeBounds.zeroBounds.width, 0);
+    assert.equal(events.captureZeroNativeBounds.zeroBounds.height, 0);
+    assert.equal((await captureStep('captureRestoredVisible', true)).success, true);
+    await app.evaluate((_electron, modulePath) => {
+      const { CorePreview } = process.getBuiltinModule('module').createRequire(modulePath)(modulePath);
+      const observe = CorePreview.prototype.observe;
+      CorePreview.prototype.observe = async function(request) {
+        if (request.operation !== 'capture' || !globalThis.__oversizeCaptureOnce) return observe.call(this, request);
+        globalThis.__oversizeCaptureOnce = false;
+        const view = this.page(request.projectId, request.threadId, request.pageId).view, bounds = view.getBounds(), c = view.webContents;
+        const capture = c.capturePage.bind(c);
+        c.capturePage = async (...args) => { const image = await capture(...args); globalThis.__oversizeBitmap = image.getSize(); return image; };
+        view.setBounds({ ...bounds, width: 2100, height: 1000 });
+        try { return await observe.call(this, request); }
+        finally { view.setBounds(bounds); c.capturePage = capture; }
+      };
+      globalThis.__oversizeCaptureOnce = true;
+    }, join(gui, 'app/src/core/preview.cjs'));
+    await captureStep('capturePixelBudget', false);
+    const bitmap = await app.evaluate(() => globalThis.__oversizeBitmap);
+    assert.ok(bitmap && (bitmap.width * bitmap.height > 8_000_000 || bitmap.width > 4096 || bitmap.height > 4096));
+    events.capturePixelBudget.bitmap = bitmap;
+    checks.push('09c5: actual oversized Native bitmap is rejected by screenshot pixel budget without returning old media');
+    checks.push('13c5: actual hidden, minimized and zero-bound Native view capture requests fail without stale image; restored visible capture succeeds');
+
+    await pv(threadId, { operation: 'takeover', pageId });
+    async function humanRefusal(name) {
+      const outcome = await pv(threadId, { operation: 'captureRegion', pageId })
+        .then(() => ({ accepted: true }), error => ({ accepted: false, error: error.message }));
+      assert.equal(outcome.accepted, false);
+      assert.match(outcome.error, /显示当前页面/);
+      events[name] = outcome;
+    }
+    await pv(threadId, { operation: 'hide', pageId });
+    await humanRefusal('humanHiddenCapture');
+    await pv(threadId, { operation: 'show', pageId, visible: true, bounds: { x: 935, y: 397, width: 501, height: 559 } });
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].minimize());
+    await until(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMinimized()), 'Human window minimized');
+    await humanRefusal('humanMinimizedCapture');
+    await app.evaluate(({ app, BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.restore(); win.show(); app.focus({ steal: true }); win.focus(); });
+    await until(() => app.evaluate(({ BrowserWindow }) => !BrowserWindow.getAllWindows()[0].isMinimized()), 'Human window restored');
+    await app.evaluate((_electron, modulePath) => {
+      const { CorePreview } = process.getBuiltinModule('module').createRequire(modulePath)(modulePath);
+      const capture = CorePreview.prototype.captureRegion;
+      CorePreview.prototype.captureRegion = async function(projectId, threadId, pageId) {
+        const view = this.page(projectId, threadId, pageId).view, bounds = view.getBounds();
+        view.setBounds({ ...bounds, width: 0, height: 0 });
+        globalThis.__zeroHumanBounds = view.getBounds();
+        try { return await capture.call(this, projectId, threadId, pageId); }
+        finally { view.setBounds(bounds); }
+      };
+    }, join(gui, 'app/src/core/preview.cjs'));
+    await humanRefusal('humanZeroBoundsCapture');
+    events.humanZeroBoundsCapture.bounds = await app.evaluate(() => globalThis.__zeroHumanBounds);
+    assert.equal(events.humanZeroBoundsCapture.bounds.width, 0);
+    assert.equal(siteFacts.posts, 0);
+    checks.push('13c5: trusted GUI captureRegion errors require a visible current page for hidden/minimized/zero-bound states; no old capture returned');
   } else if (mode === 'agentPages') {
     const parentPageId = pageId, parentNativeId = nativeId;
     await page.getByRole('button', { name: '让 Agent 检查当前页' }).click();
@@ -876,6 +1331,7 @@ try {
   if (page) await captureSmokeFailure(page, scratch, error);
   throw error;
 } finally {
+  if (secondApp) await secondApp.close();
   if (app) await app.close();
   site.closeAllConnections(); model.closeAllConnections(); forbidden.closeAllConnections();
   await Promise.all([new Promise(resolve => site.close(resolve)), new Promise(resolve => model.close(resolve)),
@@ -884,7 +1340,7 @@ try {
     'renderer/src/Preview.tsx', 'renderer/src/UnknownToolInspection.tsx', 'scripts/browser-remaining-smoke.mjs'];
   const hashes = Object.fromEntries(await Promise.all(files.map(async file =>
     [file, createHash('sha256').update(await readFile(join(gui, file))).digest('hex')])));
-  await writeFile(join(scratch, 'run-manifest.json'), JSON.stringify({ passed, checks, errors, events, modelCalls,
+  await writeFile(join(scratch, 'run-manifest.json'), JSON.stringify({ passed, checks, errors, events, modelCalls, siteFacts,
     startedAt, endedAt: new Date().toISOString(), mode, sourceHead: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
     diffSHA256: createHash('sha256').update(execFileSync('git', ['diff', 'HEAD'], { cwd: root })).digest('hex'),
     hashes, coreBinary: env.AREAL_CORE_BIN,

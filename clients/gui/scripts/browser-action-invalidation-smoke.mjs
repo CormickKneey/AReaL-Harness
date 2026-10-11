@@ -8,7 +8,9 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { selectConversation, captureSmokeFailure } from './smoke-navigation.mjs';
 
-// B-11: invalidate prepared native action plans before public Core approval.
+// B-11：公开审批前改变真实视口、文档或精确 Origin，验证旧计划拒绝派发。
+const actionMode = process.argv[2] ?? 'ref';
+if (!['ref', 'coordinates', 'origin', 'external', 'externalFixture'].includes(actionMode)) throw Error('Unknown invalidation mode');
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const root = resolve(gui, '../..');
 const require = createRequire(join(gui, 'app/package.json'));
@@ -18,7 +20,7 @@ const workspace = join(scratch, 'workspace'), userHome = join(scratch, 'user');
 await mkdir(workspace); await mkdir(join(userHome, '.areal'), { recursive: true });
 execFileSync('git', ['init', '-b', 'main'], { cwd: workspace, stdio: 'ignore' });
 const siteFacts = { gets: 0, posts: 0 };
-const site = createServer(async (request, response) => {
+const siteHandler = async (request, response) => {
   if (request.method === 'POST') {
     siteFacts.posts++;
     for await (const _chunk of request) { /* consume fixture request without logging values */ }
@@ -38,9 +40,15 @@ const site = createServer(async (request, response) => {
       window.keyFacts.submits++;
       event.preventDefault();fetch('/effect',{method:'POST',body:document.querySelector('#draft').value});
     });</script>`);
-});
+};
+const site = createServer(siteHandler), otherSite = actionMode === 'origin' ? createServer(siteHandler) : null;
 await new Promise(resolve => site.listen(0, '127.0.0.1', resolve));
 const siteUrl = `http://127.0.0.1:${site.address().port}/`;
+if (otherSite) await new Promise(resolve => otherSite.listen(0, '127.0.0.1', resolve));
+const otherUrl = otherSite ? `http://127.0.0.1:${otherSite.address().port}/` : null;
+const externalAction = ['external', 'externalFixture'].includes(actionMode);
+const initialUrl = actionMode === 'external' ? 'https://example.com/'
+  : actionMode === 'externalFixture' ? siteUrl.replace('127.0.0.1', 'browser-synthetic.localhost') : siteUrl;
 let pageId, mode = 'viewport';
 let modelStage = 0;
 const modelCalls = [];
@@ -51,7 +59,7 @@ const observationFrom = (value, depth = 0) => {
   }
   if (Array.isArray(value)) return value.map(item => observationFrom(item, depth + 1)).find(Boolean) ?? null;
   if (typeof value !== 'object') return null;
-  if (value.observationId && Array.isArray(value.nodes)) return value;
+  if (value.observationId && (Array.isArray(value.nodes) || value.viewport?.bitmapWidth)) return value;
   return Object.values(value).map(item => observationFrom(item, depth + 1)).find(Boolean) ?? null;
 };
 const model = createServer(async (request, response) => {
@@ -67,19 +75,21 @@ const model = createServer(async (request, response) => {
   await until(() => pageId, 'claimed native page');
   if (modelStage === 0) {
     modelStage = 1;
-    tool(`observe-${mode}`, { operation: 'observe', parameters: { pageId } });
+    tool(`observe-${mode}`, { operation: actionMode === 'coordinates' ? 'capture' : 'observe', parameters: { pageId, ...(actionMode === 'coordinates' ? { scope: 'viewport' } : {}) } });
   } else if (modelStage === 1) {
-    const observation = observationFrom(last.content);
+    const observation = observationFrom(body.messages.findLast(message => message.role === 'tool' && message.tool_call_id === `observe-${mode}`)?.content);
     if (!observation) { send({ content: `Action ${mode} reviewed` }); send({}, 'stop'); }
     else {
       const name = mode === 'disabled' ? 'Disabled action' : ['fill', 'press'].includes(mode) ? 'Draft' : 'Submit action';
-      const ref = observation.nodes.find(node => node.name?.trim() === name && node.ref)?.ref;
-      if (!ref) { send({ content: `No target ${name}` }); send({}, 'stop'); }
+      const ref = observation.nodes?.find(node => node.ref && (externalAction ? ['link', 'button'].includes(node.role) : node.name?.trim() === name))?.ref;
+      if (!ref && actionMode !== 'coordinates') { send({ content: `No target ${name}` }); send({}, 'stop'); }
       else {
-        const action = mode === 'fill' ? { kind: 'fill', ref, value: 'DRAFT_INPUT_04' }
+        const action = actionMode === 'coordinates' ? { kind: 'clickAt', x: Math.floor(20 * observation.viewport.bitmapWidth / observation.viewport.width), y: Math.floor(18 * observation.viewport.bitmapHeight / observation.viewport.height) }
+          : mode === 'fill' ? { kind: 'fill', ref, value: 'DRAFT_INPUT_04' }
           : mode === 'press' ? { kind: 'press', ref, key: 'Enter' } : { kind: 'click', ref };
         const input = { operation: 'act', parameters: { pageId, snapshotId: observation.observationId, action } };
         if (mode === 'forged') input.browserApproval = { decision: 'allowOnce' };
+        modelCalls.push({ mode, actionMode, observationId: observation.observationId, viewport: observation.viewport, action });
         modelStage = 2;
         tool(`act-${mode}`, input);
       }
@@ -136,19 +146,19 @@ try {
     chromium: process.versions.chrome, node: process.versions.node }));
   await page.getByTestId('areal-workbench').waitFor({ timeout: 120000 });
   await until(async () => (await snapshot()).connection?.state === 'ready', 'desktop ready');
-  await app.evaluate(({ dialog, BrowserWindow }, { path, origin }) => {
+  await app.evaluate(({ dialog, BrowserWindow }, { path, origins }) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] });
     const original = dialog.showMessageBox;
     dialog.showMessageBox = async (...args) => {
       const options = args.at(-1);
-      if (options?.title === '允许本地开发站点' && options.message === `允许此浏览工作区访问 ${origin}？`) {
-        globalThis.__m1OriginPrompt = { origin, title: options.title, count: (globalThis.__m1OriginPrompt?.count ?? 0) + 1 };
+      if (options?.title === '允许本地开发站点' && origins.some(origin => options.message === `允许此浏览工作区访问 ${origin}？`)) {
+        globalThis.__m1OriginPrompt = { origin: options.message, title: options.title, count: (globalThis.__m1OriginPrompt?.count ?? 0) + 1 };
         return { response: 1, checkboxChecked: false };
       }
       return original(...args);
     };
     BrowserWindow.getAllWindows()[0].setSize(1440, 960);
-  }, { path: workspace, origin: new URL(siteUrl).origin });
+  }, { path: workspace, origins: [new URL(initialUrl).origin, ...(otherUrl ? [new URL(otherUrl).origin] : [])] });
   await page.evaluate(() => window.arealDesktop.chooseProject());
   const project = await until(async () => (await snapshot()).projects.find(item => item.root === workspace && item.state?.connected), 'project ready');
   projectId = project.id;
@@ -162,18 +172,37 @@ try {
   console.log(JSON.stringify({ diagnostic:'awaiting-focus', appPid:app.process()?.pid }));
   await until(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isFocused()), 'focused Main Origin prompt', 120000);
   await page.evaluate(({ projectId, threadId, url }) => window.arealDesktop.preview({ operation: 'navigate', projectId, threadId, url }),
-    { projectId, threadId, url: siteUrl });
+    { projectId, threadId, url: initialUrl });
   events.developmentOriginPrompt = await app.evaluate(() => globalThis.__m1OriginPrompt);
-  assert.equal(events.developmentOriginPrompt?.count, 1, 'exact-Origin Main prompt occurred once');
-  events.developmentOriginPrompt.response = 'fixture-stub-allow-exact-origin';
+  if (actionMode !== 'external') {
+    assert.equal(events.developmentOriginPrompt?.count, 1, 'exact-Origin Main prompt occurred once');
+    events.developmentOriginPrompt.response = 'fixture-stub-allow-exact-origin';
+  }
   nativeId = await until(() => app.evaluate(({ webContents }, url) =>
-    webContents.getAllWebContents().find(c => c.getURL() === url)?.id, siteUrl), 'native page');
+    webContents.getAllWebContents().find(c => c.getURL() === url)?.id, initialUrl), 'native page');
+  if (otherUrl) {
+    for (const url of [otherUrl, siteUrl]) {
+      await page.evaluate(({ projectId, threadId, url }) => window.arealDesktop.preview({ operation: 'navigate', projectId, threadId, url }), { projectId, threadId, url });
+      await until(() => app.evaluate(({ webContents }, { id, url }) => webContents.fromId(id).getURL() === url && !webContents.fromId(id).isLoading(), { id: nativeId, url }), 'exact Origin authorized through public user navigation');
+    }
+    events.authorizedOrigins = [new URL(siteUrl).origin, new URL(otherUrl).origin];
+  }
   await page.getByRole('button', { name: '让 Agent 检查当前页' }).click();
   pageId = (await until(async () => {
     const value = await page.evaluate(({ projectId, threadId }) =>
       window.arealDesktop.preview({ operation: 'state', projectId, threadId }), { projectId, threadId });
     return value.browser?.control === 'agent' ? value : null;
   }, 'claim')).browser.pageId;
+  if (externalAction) await app.evaluate(({ webContents }, id) => {
+    const c = webContents.fromId(id), original = c.sendInputEvent.bind(c);
+    globalThis.__externalNativeInputs = [];
+    c.sendInputEvent = event => { globalThis.__externalNativeInputs.push({ type: event.type }); return original(event); };
+    const send = c.debugger.sendCommand.bind(c.debugger);
+    c.debugger.sendCommand = (method, params) => {
+      if (method.startsWith('Input.')) globalThis.__externalNativeInputs.push({ method });
+      return send(method, params);
+    };
+  }, nativeId);
   let completedTurns = 0;
   async function scenario(next, choice = null) {
     mode = next;
@@ -183,7 +212,7 @@ try {
     if (choice) {
       const panel = page.locator('[data-interaction="approval"]');
       await panel.waitFor({ timeout: 60000 });
-      assert.match(await panel.innerText(), /Submit action|Draft/);
+      assert.match(await panel.innerText(), actionMode === 'coordinates' ? /clickAt|坐标|点击/ : /Submit action|Draft/);
       if (next === 'viewport') {
         const before = await page.evaluate(({ projectId, threadId, pageId }) =>
           window.arealDesktop.preview({ operation: 'state', projectId, threadId })
@@ -203,6 +232,13 @@ try {
         await until(() => siteFacts.gets > before, 'user reload document GET');
         events.document = { getsBefore: before, getsAfter: siteFacts.gets };
       }
+      if (next === 'origin') {
+        const before = await app.evaluate(({ webContents }, id) => webContents.fromId(id).getURL(), nativeId);
+        await page.evaluate(({ projectId, threadId, url }) => window.arealDesktop.preview({ operation: 'navigate', projectId, threadId, url }), { projectId, threadId, url: otherUrl });
+        await until(() => app.evaluate(({ webContents }, { id, url }) => webContents.fromId(id).getURL() === url && !webContents.fromId(id).isLoading(), { id: nativeId, url: otherUrl }), 'actual approved target Origin changed');
+        events.origin = { before, after: await app.evaluate(({ webContents }, id) => webContents.fromId(id).getURL(), nativeId), authorizedOrigins: events.authorizedOrigins };
+        assert.notEqual(new URL(events.origin.before).origin, new URL(events.origin.after).origin);
+      }
       await panel.getByRole('button', { name: choice }).click();
     }
     const turn = await terminalTurn(completedTurns);
@@ -212,16 +248,44 @@ try {
     console.error(`browser-actions: ${next} completed`);
     return item;
   }
-  const viewport = await scenario('viewport', '允许一次');
+  if (externalAction) {
+    const denied = await scenario('external');
+    assert.equal(denied.success, false); assert.match(JSON.stringify(denied.contentItems), /human_takeover_required/);
+    assert.equal(denied.execution?.outcome, 'failed');
+    const inputs = await app.evaluate(() => globalThis.__externalNativeInputs); assert.deepEqual(inputs, []);
+    assert.equal(await page.locator('[data-interaction="approval"]').count(), 0);
+    await page.getByRole('button', { name: '接管页面', exact: true }).click();
+    const state = await until(() => page.evaluate(({ projectId, threadId }) => window.arealDesktop.preview({ operation: 'state', projectId, threadId }).then(value => value.browser?.control === 'human' ? value : null), { projectId, threadId }), 'explicit external Human handoff');
+    for (const toggle of await page.locator('.turn-progress-summary[aria-expanded="false"]').all()) await toggle.click();
+    for (const toggle of await page.locator('.execution-summary[aria-expanded="false"]').all()) await toggle.click();
+    const row = page.locator(`[data-tool-id="${denied.id}"]`);
+    const toggle = row.locator('button.tool-summary-row');
+    if (await toggle.getAttribute('aria-expanded') !== 'true') await toggle.click();
+    assert.match(await row.innerText(), /human_takeover_required/);
+    await page.screenshot({ path: join(scratch, 'external-action-human-handoff.png') });
+    assert.equal(await app.evaluate(({ webContents }, id) => webContents.fromId(id).getURL(), nativeId), initialUrl);
+    assert.equal(siteFacts.posts, 0);
+    events.external = { ...events.external, refusal: denied, inputsBeforeHandoff: inputs, state, readonlyExternalUrl: initialUrl, targetKind: actionMode === 'externalFixture' ? 'synthetic HTTP .localhost outside action allowlist; not public HTTPS acceptance' : 'public HTTPS', noExternalActionDispatched: true };
+    checks.push('04c6 bounded: actual page outside narrow local-action allowlist reaches Core; its action is refused with human_takeover_required before approval or Native input, and existing GUI takeover returns the same page to Human');
+  } else if (actionMode === 'origin') {
+    const changed = await scenario('origin', '允许一次');
+    assert.equal(changed.success, false);
+    assert.match(JSON.stringify(changed.contentItems), /plan_stale/);
+    assert.match(JSON.stringify(changed.contentItems), /observe again/);
+    assert.equal(siteFacts.posts, 0);
+    checks.push('04c3: public user navigation changes actual authorized Origin while Core approval waits; old plan is refused without site input, replay or replacement target');
+  } else {
+    const viewport = await scenario('viewport', '允许一次');
   assert.equal(viewport.success, false);
   assert.match(JSON.stringify(viewport.contentItems), /plan_stale|not_sent|viewport/);
   assert.equal(siteFacts.posts, 0);
-  checks.push('B-11: public GUI resize invalidates prepared viewport plan before any site POST');
+  checks.push(`B-11: public GUI resize invalidates prepared ${actionMode} viewport plan before any site POST`);
   const document = await scenario('document', '允许一次');
   assert.equal(document.success, false);
   assert.match(JSON.stringify(document.contentItems), /plan_stale|not_sent|stale_ref|host_unavailable/);
   assert.equal(siteFacts.posts, 0);
   checks.push('B-11: user document reload invalidates prepared action without site POST');
+  }
   assert.deepEqual(errors, []);
   passed = true;
 } catch (error) {
@@ -230,8 +294,8 @@ try {
   throw error;
 } finally {
   if (app) await app.close();
-  site.closeAllConnections(); model.closeAllConnections();
-  await Promise.all([new Promise(resolve => site.close(resolve)), new Promise(resolve => model.close(resolve))]);
+  site.closeAllConnections(); otherSite?.closeAllConnections(); model.closeAllConnections();
+  await Promise.all([new Promise(resolve => site.close(resolve)), new Promise(resolve => model.close(resolve)), ...(otherSite ? [new Promise(resolve => otherSite.close(resolve))] : [])]);
   const files = ['app/src/core/browser-tool.cjs', 'app/src/core/preview.cjs', 'app/src/core/service-protocol.cjs',
     'renderer/src/ApprovalRequest.tsx', 'scripts/browser-action-invalidation-smoke.mjs'];
   const hashes = Object.fromEntries(await Promise.all(files.map(async file =>
