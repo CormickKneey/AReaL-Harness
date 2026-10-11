@@ -1112,7 +1112,7 @@ function AppContent({ services }: { services: PlatformServices }) {
                         </DropdownMenuItem>
                       )}
                       {panelList
-                        .filter(([name]) => name !== "终端" && (name !== "旁路讨论" || !!thread && !thread.parentThreadId && thread.conversation?.kind !== "side" && !thread.desktop?.archived && project?.core?.features?.sidePreview === true))
+                        .filter(([name]) => name !== "终端" && (name !== "旁路讨论" || !!thread && !thread.parentThreadId && thread.conversation?.kind !== "side" && project?.core?.features?.sidePreview === true))
                         .map(([name, icon]) => (
                           <DropdownMenuItem key={name} onClick={() => showPanel(name)}>
                             {icon ?? <span aria-hidden="true" className="size-4 shrink-0" />}

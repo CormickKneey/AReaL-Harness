@@ -4,7 +4,7 @@
 /** @template T @typedef {{ok:true,value:T}|{ok:false,error:DesktopError}} DesktopResult */
 /** @typedef {{id:string,revision:string}} ResourceRef */
 /** @typedef {{projectId:string,threadId:string,expectedRevision?:number,model?:{providerId:string,modelId:string}|null,profile?:ResourceRef,options?:Record<string,unknown>,parameters?:Record<string,unknown>,selectedSkills?:ResourceRef[]}} ConfigureRequest */
-/** @typedef {{projectId:string,operation:'start'|'recover'|'send'|'context',sourceThreadId?:string,threadId?:string,requestId?:string,text?:string,cursor?:string,evidenceRef?:string}} SideRequest */
+/** @typedef {{projectId:string,operation:'start'|'recover'|'send'|'context'|'list',sourceThreadId?:string,threadId?:string,requestId?:string,text?:string,cursor?:string,evidenceRef?:string,includeArchived?:boolean}} SideRequest */
 
 // 名称、作用域和执行层只维护一份；Main 专属能力不能从后台服务入口调用。
 const commandDefinitions = Object.freeze({
@@ -44,11 +44,12 @@ function validateCommand(name, params, { serviceOnly = false } = {}) {
   if (name === 'fork' && (!identifier(params.sourceThreadId) || !record(params.anchor)
     || !identifier(params.anchor.turnId) || params.anchor.boundary !== 'after'
     || params.workspaceMode !== 'sharedCurrent')) invalid();
-  if (name === 'side' && (!['start', 'recover', 'send', 'context'].includes(String(params.operation))
+  if (name === 'side' && (!['start', 'recover', 'send', 'context', 'list'].includes(String(params.operation))
     || (params.operation === 'start' && (!identifier(params.sourceThreadId) || typeof params.text !== 'string' || !params.text.trim()))
     || (params.operation === 'send' && (!identifier(params.threadId) || typeof params.text !== 'string' || !params.text.trim()))
     || (params.operation === 'recover' && !identifier(params.requestId))
-    || (params.operation === 'context' && !identifier(params.threadId)))) invalid();
+    || (params.operation === 'context' && !identifier(params.threadId))
+    || (params.operation === 'list' && (!identifier(params.sourceThreadId) || params.includeArchived !== undefined && typeof params.includeArchived !== 'boolean')))) invalid();
   if (name === 'attachBrowser' && (typeof params.expectedToolsetRevision !== 'number'
     || !Number.isSafeInteger(params.expectedToolsetRevision)
     || params.expectedToolsetRevision < 0)) invalid();

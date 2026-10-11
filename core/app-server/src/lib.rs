@@ -21,6 +21,8 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{HashMap, HashSet},
     net::SocketAddr,
@@ -442,7 +444,7 @@ async fn connection(
                 && !matches!(method,
                     "thread/read" | "thread/resume" | "areal/thread/observe" |
                     "turn/start" | "areal/turn/start" | "turn/interrupt" |
-                    "areal/side/context/read" | "areal/thread/archive" | "areal/request/read") {
+                    "areal/side/context/read" | "areal/thread/archive" | "areal/conversation/unarchive" | "areal/request/read") {
                 conn.send(response(id.unwrap(), Err(RpcError { code: -32010,
                     message: "Side conversations cannot use this method".into(),
                     data: Some(json!({"reason":"SIDE_POLICY_VIOLATION","retryable":false})) })));
@@ -523,6 +525,49 @@ async fn connection(
 }
 
 impl Connection {
+    async fn conversation_list(&self, engine: &Engine, params: Value) -> Result<Value, RpcError> {
+        let p: ConversationList = parse(params)?;
+        let view = p.view.as_deref().unwrap_or("main");
+        if !matches!(view, "main" | "side" | "all") { return Err(RpcError::invalid("view must be main, side or all")); }
+        let limit = p.limit.unwrap_or(30);
+        if !(1..=100).contains(&limit) { return Err(RpcError::invalid("limit must be 1..100")); }
+        if p.source_thread_id.is_some() && view == "main" { return Err(RpcError::invalid("sourceThreadId requires side or all view")); }
+        if let Some(source) = &p.source_thread_id {
+            if !self.principal.sees(source) { return Err(RpcError { code:-32003, message:"permission denied".into(), data:None }); }
+        }
+        let filter = format!("{}\0{}\0{}\0{}", self.principal.id, view, p.source_thread_id.as_deref().unwrap_or(""), p.include_archived.unwrap_or(false));
+        let digest = format!("{:x}", Sha256::digest(filter.as_bytes()));
+        let after: Option<(i64, String)> = p.cursor.as_deref().map(|cursor| {
+            let bytes = URL_SAFE_NO_PAD.decode(cursor).map_err(|_| RpcError::invalid("invalid conversation cursor"))?;
+            let saved: ConversationCursor = serde_json::from_slice(&bytes).map_err(|_| RpcError::invalid("invalid conversation cursor"))?;
+            if saved.filter != digest { return Err(RpcError::invalid("conversation cursor does not match filter or identity")); }
+            Ok((saved.created_at, saved.id))
+        }).transpose()?;
+        let mut data = Vec::new();
+        let mut cursor = None;
+        loop {
+            let (page, next) = engine.list(cursor.as_deref(), 100, None).await.map_err(map_error)?;
+            data.extend(page.into_iter().filter(|thread| {
+                self.principal.sees(&thread.id)
+                    && (p.include_archived.unwrap_or(false) || !thread.desktop.as_ref().is_some_and(|d| d.archived))
+                    && match view { "main" => thread.parent_thread_id.is_none() && !thread.is_side()
+                        && !matches!(thread.source.as_str(), "nativeTaskAgent" | "nativeResearchAgent"), "side" => thread.is_side(), _ => true }
+                    && p.source_thread_id.as_ref().is_none_or(|source| match &thread.conversation {
+                        Some(areal_protocol::Conversation::Side { origin, .. }) | Some(areal_protocol::Conversation::Fork { origin, .. }) => &origin.source_thread_id == source,
+                        _ => false,
+                    })
+            }));
+            match next { Some(next) => cursor = Some(next), None => break }
+        }
+        data.sort_by(|a,b| (a.created_at, &a.id).cmp(&(b.created_at, &b.id)));
+        if let Some(after) = after { data.retain(|thread| (thread.created_at, thread.id.clone()) > after); }
+        let has_more = data.len() > limit;
+        data.truncate(limit);
+        let next_cursor = if has_more { data.last().map(|thread| URL_SAFE_NO_PAD.encode(serde_json::to_vec(&ConversationCursor {
+            filter: digest, created_at: thread.created_at, id: thread.id.clone(),
+        }).expect("cursor serializes"))) } else { None };
+        Ok(json!({"data":data,"nextCursor":next_cursor}))
+    }
     fn send(&self, value: Value) {
         if value["method"]
             .as_str()
@@ -632,6 +677,10 @@ impl Connection {
             }
             return task_mode::dispatch(engine, &self.principal, method, params).await;
         }
+        if method == "areal/conversation/list" {
+            if !desktop::fork_preview_enabled() { return Err(RpcError::method()); }
+            return self.conversation_list(engine, params).await;
+        }
         if desktop::METHODS.contains(&method) && method != "areal/thread/start" {
             if matches!(method, "areal/turn/start" | "areal/turn/enqueue") {
                 let p: areal_protocol::desktop::TurnStart = parse(params.clone())?;
@@ -697,7 +746,7 @@ impl Connection {
                     && self.principal.thread_ids.is_none();
                 if !can_attach_browser { methods.retain(|method| *method != "areal/thread/tools/attach"); }
                 methods.extend_from_slice(desktop::METHODS);
-                if !desktop::fork_preview_enabled() { methods.retain(|method| !matches!(*method, "areal/thread/fork" | "areal/side/start")); }
+                if !desktop::fork_preview_enabled() { methods.retain(|method| !matches!(*method, "areal/thread/fork" | "areal/side/start" | "areal/conversation/list" | "areal/conversation/unarchive")); }
                 methods.extend_from_slice(task_mode::METHODS);
                 if !engine.runtime_capabilities().is_null() {
                     methods.extend_from_slice(processes::METHODS);
@@ -958,6 +1007,22 @@ struct ThreadList {
     cursor: Option<String>,
     limit: Option<usize>,
     parent_thread_id: Option<String>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ConversationList {
+    view: Option<String>,
+    source_thread_id: Option<String>,
+    include_archived: Option<bool>,
+    limit: Option<usize>,
+    cursor: Option<String>,
+}
+#[derive(serde::Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ConversationCursor {
+    filter: String,
+    created_at: i64,
+    id: String,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

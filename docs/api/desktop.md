@@ -131,3 +131,7 @@ features.goals=true 表示服务支持 Goal，无需单独配置开关；Goal �
 同一开发开关还启用 `areal/side/start` 的 `workspaceAccess:"none"` 子集。请求 `{requestId,sourceThreadId,anchor?,workspaceAccess:"none",input:[{type:"text",text}]}`；`anchor` 可为 `latestCommitted` 或 `{kind:"turn",turnId,boundary:"before"|"after"}`，省略时选取首问受理时最后一个已提交 Turn。空面板不创建 Thread。首问将目标独立 Session、不可变参考快照、首个 Turn 和业务收据一起提交，然后启动模型；同键重复请求返回同一个目标与首轮。提交后响应丢失时用 `areal/request/read {requestId}` 查找，不能改键重试。重启时已提交但尚未完成的轮次明确中断，不会重发首问。
 
 Side 的 `conversation.kind=side` 与 `policy.kind=sideReadOnlyV1` 是持久角色，当前仅允许 `workspaceAccess:none`。它没有 Goal、自动 Workflow、文件/进程/委派或动态工具权限；模型只能调用 Core 固定的 `side_context_read`，历史中的指令和工具输出都是参考数据。`areal/side/context/read {threadId,evidenceRef?,cursor?,maxBytes?}` 受目标身份授权读取冻结证据，最大 16 KiB；`evidenceRef` 与 `cursor` 不能同时传。旧执行入口不能改变 Side 角色或扩权，`thread/list` 默认任务列表排除 Side。`turn/start` 和 `areal/turn/start` 仅接受文本追问，`turn/interrupt` 只停止 Side 当前 Turn；关闭 GUI 面板不发送中断。此预览不表示完整 Side/Fork P0 已验收。
+
+`areal/conversation/list {view?,sourceThreadId?,includeArchived?,limit?,cursor?}` 按 `main`（默认）、`side` 或 `all` 分类，默认不含归档，`limit` 为 1–100（默认 30）。`main` 只含普通主会话和 Fork，不含委派 Worker 或 Side；`sourceThreadId` 仅适用于 `side`/`all`。按 `createdAt,id` 稳定排序，游标绑定身份与筛选条件，跨筛选使用会拒绝。旧 `thread/list` 合同不变；GUI 主任务列表使用新接口并显式包含归档以支持归档视图，相关讨论面板按来源分页读取，手动刷新可发现其他客户端新建的讨论。
+
+空闲 Side 可用 `areal/thread/archive {threadId}` 持久归档；活动轮次归档会拒绝。`areal/conversation/unarchive {requestId,threadId}` 幂等恢复已归档 Side 和完整历史，不自动发问。读取或订阅归档 Side 不会恢复它，归档期间发送仍被拒绝。来源 Stop 或归档不级联停止或删除 Side；关闭相关讨论面板只隐藏视图。已发送内容由 Core 在 GUI 或 Core 重启后恢复，未发送草稿不承诺跨进程保存。

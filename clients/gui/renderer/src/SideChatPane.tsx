@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Messages } from "./Messages.js";
+import { RelatedSideChats } from "./RelatedSideChats.js";
 import type { Action, Data } from "./services.js";
 
 // 旁路草稿和业务键只属于明确来源；关闭面板不会取消已受理的 Turn。
@@ -56,7 +57,7 @@ export function SideChatPane({ project, source, action, dark }: {
   useEffect(() => { if (pendingId && project.state?.connected) void recover(); }, [project.state?.connected]);
   const submit = async () => {
     const question = text.trim();
-    if (!question || busy || pendingId || active || !project.state?.connected || sideId && !validSide) return;
+    if (!question || busy || pendingId || active || !project.state?.connected || sideId && (!validSide || side.desktop?.archived)) return;
     setBusy(true); setError("");
     try {
       if (sideId) {
@@ -84,8 +85,13 @@ export function SideChatPane({ project, source, action, dark }: {
   return <section className="side-chat-pane" aria-label="旁路讨论">
     <div className="panel-header"><strong>旁路讨论</strong><span className="text-foreground-subtle">只读 · 独立会话</span></div>
     <div className="utility-content">
+      <RelatedSideChats project={project} sourceId={source.id} selectedId={sideId} action={action} onSelect={id => {
+        if (id) localStorage.setItem(threadKey, id); else localStorage.removeItem(threadKey);
+        setSideId(id); setError("");
+      }} />
       <p className="text-foreground-subtle">来源：{source.preview || source.id}。{validSide ? "基于创建时快照。" : "首问发送时冻结已提交的会话证据。"}不会执行来源任务。</p>
       {sideId && !validSide && <p role="status">{side ? "旁路归属与当前来源不一致。" : loading ? "正在恢复旁路讨论…" : "正在核对旁路归属…"}</p>}
+      {validSide && side.desktop?.archived && <p role="status">这段讨论已归档；请在相关讨论中显式恢复后继续。</p>}
       {validSide && <Messages key={`${owner}:${sideId}`} project={project} thread={side} action={action} dark={dark}
         onLink={() => setError("旁路不提供链接预览；可复制链接后从主会话打开。")}
         onFile={() => setError("旁路尚未开放工作区文件读取。")}
@@ -97,9 +103,9 @@ export function SideChatPane({ project, source, action, dark }: {
           setText(event.target.value); localStorage.setItem(draftKey, event.target.value);
         }} onKeyDown={event => {
           if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); }
-        }} placeholder="向旁路提问（仅会话证据）" disabled={!project.state?.connected || !!sideId && !validSide} />
+        }} placeholder="向旁路提问（仅会话证据）" disabled={!project.state?.connected || !!sideId && (!validSide || side.desktop?.archived)} />
         <div className="utility-actions">
-          <button type="submit" disabled={!text.trim() || busy || !!pendingId || !!active || !!sideId && !validSide}>发送</button>
+          <button type="submit" disabled={!text.trim() || busy || !!pendingId || !!active || !!sideId && (!validSide || side.desktop?.archived)}>发送</button>
           {active && <button type="button" onClick={stop}>停止旁路</button>}
         </div>
       </form>

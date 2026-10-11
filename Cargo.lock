@@ -121,6 +121,7 @@ dependencies = [
  "areal-protocol",
  "async-trait",
  "axum",
+ "base64 0.22.1",
  "futures-util",
  "jsonschema",
  "reqwest 0.12.28",

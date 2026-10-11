@@ -75,6 +75,7 @@ export class CoreTaskModel {
       return;
     }
     if (method === 'areal/thread/archived') { this.replace({ ...thread, desktop: { ...thread.desktop, archived: true } }); return; }
+    if (method === 'areal/thread/unarchived') { this.replace({ ...thread, desktop: { ...thread.desktop, archived: false } }); return; }
     const turns = [...thread.turns ?? []];
     // Core 丢弃的是一次模型响应，不是整个 Turn；已执行工具与用户输入必须保留。
     if (method === 'areal/model/completionDiscarded') {
