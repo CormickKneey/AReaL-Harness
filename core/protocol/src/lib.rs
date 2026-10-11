@@ -415,6 +415,26 @@ pub enum Conversation {
         #[serde(rename = "workspaceMode")]
         workspace_mode: String,
     },
+    Side {
+        version: u32,
+        origin: ConversationOrigin,
+        #[serde(rename = "referenceSnapshot")]
+        reference_snapshot: HistorySeed,
+        policy: SidePolicy,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SidePolicy {
+    pub kind: String,
+    pub workspace_access: String,
+}
+
+impl Thread {
+    pub fn is_side(&self) -> bool {
+        matches!(self.conversation, Some(Conversation::Side { .. }))
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]

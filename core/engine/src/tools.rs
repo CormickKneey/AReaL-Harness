@@ -742,6 +742,10 @@ impl Engine {
         let goal_rejection = self.goal_tool_guard(cell, &call.name).await?;
         let bindings = cell.bindings.read().await.clone();
         let entry = bindings.registry.get(&call.name);
+        if cell.state.lock().await.thread.is_side()
+            && !(call.name == "side_context_read" && entry.as_ref().is_ok_and(|e| matches!(e.backend, Backend::Core))) {
+            anyhow::bail!("SIDE_POLICY_VIOLATION");
+        }
         let coordination = entry
             .as_ref()
             .is_ok_and(|e| matches!(e.backend, Backend::Coordination | Backend::Core));

@@ -48,6 +48,7 @@ impl Engine {
                 Some(areal_protocol::Conversation::Fork { history_seed, .. }) => engine.store.read_fork_snapshot_with_sources(&history_seed.snapshot_id)
                     .map_err(|e| Error::Storage(e.to_string()))?,
                 None => (Vec::new(), Vec::new()),
+                Some(areal_protocol::Conversation::Side { .. }) => return Err(invalid("SOURCE_KIND_UNSUPPORTED")),
             };
             source_ids.extend(std::iter::repeat_n(source.id.clone(), source.turns.len()));
             logical.extend(source.turns.iter().cloned());
@@ -221,6 +222,7 @@ impl Engine {
             }
             let cell = engine.cell(&request.thread_id).await?;
             let mut state = cell.state.lock().await;
+            if state.thread.is_side() { return Err(invalid("SIDE_POLICY_VIOLATION")); }
             let mut data = desktop(&state.thread);
             if let Some(result) = receipt(&data, &identity, &request.request_id, method, &hash)? {
                 return Ok(result);
@@ -415,6 +417,7 @@ impl Engine {
     ) -> Result<EffectiveConfig> {
         self.mutate(move |engine| async move {
             let cell = engine.cell(&request.thread_id).await?;
+            if cell.state.lock().await.thread.is_side() { return Err(invalid("SIDE_POLICY_VIOLATION")); }
             engine.refresh_managed_tools(&cell).await.map_err(invalid)?;
             let mut state = cell.state.lock().await;
             if state.active.is_some() || state.compacting {
@@ -538,6 +541,7 @@ impl Engine {
             .await
     }
     pub(super) async fn update_plan_inner(&self, request: PlanUpdate) -> Result<Plan> {
+        if self.read(&request.thread_id, false).await?.is_side() { return Err(invalid("SIDE_POLICY_VIOLATION")); }
         let mut ids = HashSet::new();
         if request.steps.len() > 64
             || request.steps.iter().any(|s| {

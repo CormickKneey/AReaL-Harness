@@ -40,6 +40,9 @@ impl Engine {
         if state.active.is_some() || state.compacting {
             return Err(Error::Conflict);
         }
+        if state.thread.is_side() && (input.len() != 1 || !matches!(&input[0], Input::Text { .. })) {
+            return Err(Error::Invalid("SIDE_POLICY_VIOLATION".into()));
+        }
         if !state.thread.dynamic_tools.is_empty()
             && cell
                 .bindings
@@ -240,6 +243,7 @@ impl Engine {
     ) -> Result<()> {
         let thread_id = thread_id.to_owned();
         let turn_id = turn_id.to_owned();
+        if self.read(&thread_id, false).await?.is_side() { return Err(Error::Invalid("SIDE_POLICY_VIOLATION".into())); }
         self.mutate(move |engine| async move {
             engine.steer_inner(&thread_id, &turn_id, input, false).await
         })

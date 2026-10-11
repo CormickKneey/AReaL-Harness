@@ -391,6 +391,11 @@ class CoreBackend {
       this.onChange();
       return;
     }
+    if (resumed.thread?.conversation?.kind === 'side') {
+      project.configurations[threadId] = resumed.thread.desktop?.configuration;
+      this.onChange();
+      return;
+    }
     await Promise.all([
       client.request('areal/interaction/list', { threadId }, {
         onResult: result => { if (this.currentConnection(project, client)) project.model.setInteractions(threadId, result); },
@@ -633,7 +638,7 @@ class CoreBackend {
   }
 
   async submit(project, method, parameters, { requestId } = {}) {
-    if (requestId !== undefined && (!(workgroupMutationMethods.has(method) || taskMutationMethods.has(method) || ['areal/agent/spawn', 'areal/process/start', 'areal/thread/start', 'areal/thread/fork', 'areal/thread/tools/attach', ...['update','remove','reorder','pause','resume','steer'].map(name => `areal/queue/${name}`)].includes(method)) || typeof requestId !== 'string' || !/^[0-9a-f-]{36}$/.test(requestId))) throw new Error('无效请求标识');
+    if (requestId !== undefined && (!(workgroupMutationMethods.has(method) || taskMutationMethods.has(method) || ['areal/agent/spawn', 'areal/process/start', 'areal/thread/start', 'areal/thread/fork', 'areal/side/start', 'areal/thread/tools/attach', ...['update','remove','reorder','pause','resume','steer'].map(name => `areal/queue/${name}`)].includes(method)) || typeof requestId !== 'string' || !/^[0-9a-f-]{36}$/.test(requestId))) throw new Error('无效请求标识');
     const params = { ...parameters, requestId: requestId ?? randomUUID() };
     const entry = { method, params };
     // 活跃请求仅保存在内存；重启后仍在恢复日志中的请求应显示为结果未知。
@@ -645,7 +650,7 @@ class CoreBackend {
         if (project.configurationChanges?.has(parameters.threadId)) {
           throw new Error('会话配置正在更新，请稍后再发送任务');
         }
-        const conflicting = method === 'areal/thread/fork'
+        const conflicting = ['areal/thread/fork', 'areal/side/start'].includes(method)
           ? pending.find(value => value.method === method && value.params.sourceThreadId === parameters.sourceThreadId)
           : pending.find(value => value.params.threadId === parameters.threadId);
         if (conflicting) {
@@ -720,16 +725,16 @@ class CoreBackend {
       return await project.client.request(method, method === 'areal/agent/spawn' ? spawn : method === 'turn/steer' ? steer : params);
     }
     catch (error) {
-      if (method === 'areal/thread/fork' && (error.code === -32603 || typeof error.code !== 'number')) {
+      if (['areal/thread/fork', 'areal/side/start'].includes(method) && (error.code === -32603 || typeof error.code !== 'number')) {
         try {
           const receipts = await project.client.request('areal/request/read', { requestId: params.requestId });
           const receipt = receipts.data.find(item => item.method === method);
           if (typeof receipt?.result?.threadId === 'string') {
             const result = await project.client.request('thread/read', { threadId: receipt.result.threadId, includeTurns: false });
-            return { thread: result.thread, requestId: params.requestId };
+            return { thread: result.thread, turn: result.thread.turns?.[0], requestId: params.requestId };
           }
         } catch { /* 保留原业务键，供用户显式核对。 */ }
-        throw Object.assign(new Error('分支创建结果待核对；不会自动重试'), { submissionUnknown: true, requestId: params.requestId });
+        throw Object.assign(new Error('会话创建结果待核对；不会自动重试'), { submissionUnknown: true, requestId: params.requestId });
       }
       // Task receipts and Agent spawn receipts are not publicly queryable. An
       // internal error may follow a durable write; retain the journal entry.
@@ -816,7 +821,7 @@ class CoreBackend {
         } }));
       }
       const threadId = entry.params.threadId ?? receipt.threadId ?? receipt.result?.threadId ?? receipt.result?.thread?.id;
-      if (entry.method === 'areal/thread/fork' && threadId) {
+      if (['areal/thread/fork', 'areal/side/start'].includes(entry.method) && threadId) {
         // 创建收据属于新目标；保留结果给发起端的显式核对路径。
         await this.changeOutcomes(project, outcomes => ({ ...outcomes, [entry.params.requestId]: {
           accepted: true, method: entry.method, sourceThreadId: entry.params.sourceThreadId, threadId,
@@ -962,9 +967,44 @@ class CoreBackend {
           sourceThreadId: request.sourceThreadId, anchor: request.anchor, workspaceMode: 'sharedCurrent',
           ...(request.target ? { target: request.target } : {}),
         }, { requestId: request.requestId });
-        await this.openThread(project, result.thread.id);
-        await this.listThreads(project);
+        // The creation receipt is authoritative. A later projection failure
+        // must not turn this committed creation into an apparent retryable error.
+        try { await this.openThread(project, result.thread.id); await this.listThreads(project); }
+        catch { /* The caller can reopen the committed target by threadId. */ }
         return { threadId: result.thread.id, requestId: result.requestId };
+      }
+      case 'side': {
+        if (!project.client.capabilities?.methods?.includes('areal/side/start')) throw new Error('当前 Core 不支持旁路讨论');
+        if (request.operation === 'context') return project.client.request('areal/side/context/read', {
+          threadId: request.threadId, ...(request.cursor ? { cursor: request.cursor } : {}),
+          ...(request.evidenceRef ? { evidenceRef: request.evidenceRef } : {}),
+        });
+        if (request.operation === 'recover') {
+          const receipts = await project.client.request('areal/request/read', { requestId: request.requestId });
+          const receipt = receipts.data?.find(item => item.method === 'areal/side/start');
+          const id = receipt?.result?.threadId;
+          if (!id) return { confirmed: false };
+          await this.openThread(project, id);
+          await this.changeOutcomes(project, outcomes => ({ ...outcomes, [request.requestId]: {
+            accepted: true, method: 'areal/side/start', sourceThreadId: request.sourceThreadId, threadId: id,
+          } }));
+          await this.changePending(project, pending => pending.filter(item => item.params.requestId !== request.requestId));
+          return { confirmed: true, threadId: id };
+        }
+        if (request.operation === 'send') {
+          const current = project.model.state.threads[request.threadId];
+          if (current?.conversation?.kind !== 'side') throw new Error('目标不是旁路讨论');
+          const result = await this.submit(project, 'areal/turn/start', { threadId: request.threadId,
+            input: [{ type: 'text', text: request.text }] });
+          await this.openThread(project, request.threadId);
+          return result;
+        }
+        const result = await this.submit(project, 'areal/side/start', {
+          sourceThreadId: request.sourceThreadId, workspaceAccess: 'none',
+          input: [{ type: 'text', text: request.text }],
+        }, { requestId: request.requestId });
+        await this.openThread(project, result.thread.id);
+        return { threadId: result.thread.id, turnId: result.turn?.id, requestId: result.requestId };
       }
       case 'send': {
         const input = messageInput(this, request);

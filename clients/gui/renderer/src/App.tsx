@@ -81,6 +81,7 @@ import {
 import { BrowserSettings } from "./settings/BrowserSettings.js";
 import { HooksSettings } from "./settings/HooksSettings.js";
 import { AgentConversationPane } from "./AgentConversationPane.js";
+import { SideChatPane } from "./SideChatPane.js";
 import { agentName } from "./AgentIdentity.js";
 import { AgentsPane } from "./AgentsPane.js";
 import { WorkgroupsPane } from "./WorkgroupsPane.js";
@@ -122,6 +123,7 @@ const panelList = [
   ["进程", null],
   ["预览", <Browser size={16} />],
   ["子任务", null],
+  ["旁路讨论", null],
   ["工作组", null],
   ["队列", null],
   ["执行计划", null],
@@ -620,7 +622,7 @@ function AppContent({ services }: { services: PlatformServices }) {
     setPanel(create ? addTerminal(owner) : ensureTerminal(owner));
   };
   const showPanel = (name: string) => {
-    setWorkspaceView(mode => mode === "split" ? mode : "panel");
+    setWorkspaceView(mode => name === "旁路讨论" && matchMedia("(max-width: 900px)").matches ? "panel" : mode === "split" ? mode : "panel");
     if (["编辑目标", "执行计划", "上下文", "已保存授权", "进程"].includes(name)) {
       setPanel(name);
       return;
@@ -944,6 +946,9 @@ function AppContent({ services }: { services: PlatformServices }) {
     const panel = panelName;
     if (!project) return null;
     const props = { project, thread, action };
+    if (panel === "旁路讨论" && thread && project.core?.features?.sidePreview === true && !thread.parentThreadId && thread.conversation?.kind !== "side") {
+      return <SideChatPane key={`${project.id}:${thread.id}:side`} project={project} source={thread} action={resourceAction} dark={dark} />;
+    }
     if (panel.startsWith("agent:") && thread) {
       const childId = panel.slice(6);
       return <AgentConversationPane key={`${project.id}:${childId}`} project={project} parentId={project.state?.threads[childId]?.parentThreadId ?? thread.id} childId={childId} action={resourceAction} dark={dark} onLink={onLink} onFile={openFile}
@@ -1107,7 +1112,7 @@ function AppContent({ services }: { services: PlatformServices }) {
                         </DropdownMenuItem>
                       )}
                       {panelList
-                        .filter(([name]) => name !== "终端")
+                        .filter(([name]) => name !== "终端" && (name !== "旁路讨论" || !!thread && !thread.parentThreadId && thread.conversation?.kind !== "side" && !thread.desktop?.archived && project?.core?.features?.sidePreview === true))
                         .map(([name, icon]) => (
                           <DropdownMenuItem key={name} onClick={() => showPanel(name)}>
                             {icon ?? <span aria-hidden="true" className="size-4 shrink-0" />}
@@ -1420,6 +1425,16 @@ function AppContent({ services }: { services: PlatformServices }) {
                           action={action}
                           readAction={resourceAction}
                           onPanel={showPanel}
+                          onSide={project.core?.features?.sidePreview === true && !thread.desktop?.archived && !thread.parentThreadId && thread.conversation?.kind !== "side" ? draft => {
+                            const owner = `${project.id}:${thread.id}:side`;
+                            const key = `areal-gui:side:draft:${owner}`;
+                            const existing = localStorage.getItem(key) ?? "";
+                            if (draft.trim()) localStorage.setItem(key, existing ? `${existing}\n${draft}` : draft);
+                            setWorkspaceView(mode => matchMedia("(max-width: 900px)").matches ? "panel" : mode === "split" ? mode : "panel");
+                            setPanel("旁路讨论");
+                            setPanelTabs(tabs => tabs.includes("旁路讨论") ? tabs : [...tabs, "旁路讨论"]);
+                            window.dispatchEvent(new CustomEvent("areal-side-draft", { detail: { owner, text: localStorage.getItem(key) ?? "" } }));
+                          } : undefined}
                           onNew={() => void newTask()}
                           onOpenTask={target => { updateSettingsOpen(false); setTaskScope(undefined); setTaskNotification(target); setTaskCenterOpen(true); }}
                         />

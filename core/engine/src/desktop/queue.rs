@@ -12,6 +12,9 @@ impl Engine {
             if !engine.accepting_work() { return Err(Error::Closed); }
             let cell = engine.cell(&request.thread_id).await?;
             let mut state = cell.state.lock().await;
+            if state.thread.is_side() && (enqueue || request.interaction_mode.is_some() || request.input.len() != 1 || !matches!(&request.input[0], Input::Text { .. })) {
+                return Err(invalid("SIDE_POLICY_VIOLATION"));
+            }
             let method = if enqueue {"areal/turn/enqueue"} else {"areal/turn/start"};
             let hash = digest(&request)?;
             let mut data = desktop(&state.thread);
@@ -71,6 +74,7 @@ impl Engine {
         self.mutate(move |engine| async move {
             let cell = engine.cell(&request.thread_id).await?;
             let mut state = cell.state.lock().await;
+            if state.thread.is_side() { return Err(invalid("SIDE_POLICY_VIOLATION")); }
             let method = "areal/queue/steer";
             let hash = digest(&request)?;
             let data = desktop(&state.thread);
@@ -137,6 +141,7 @@ impl Engine {
         self.mutate(move |engine| async move {
             let cell = engine.cell(&thread_id).await?;
             let mut state = cell.state.lock().await;
+            if state.thread.is_side() { return Err(invalid("SIDE_POLICY_VIOLATION")); }
             let mut candidate = state.thread.clone();
             let data = candidate.desktop.get_or_insert_with(Default::default);
             if data.queue.revision != expected {

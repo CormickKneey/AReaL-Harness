@@ -8,6 +8,131 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, tungstenite::Message as
 use tokio_util::sync::CancellationToken;
 
 type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
+
+#[tokio::test]
+async fn side_first_question_is_one_durable_read_only_turn() {
+    unsafe { std::env::set_var("AREAL_DEV_CONVERSATION_DERIVATION", "1"); }
+    let dir = tempfile::tempdir().unwrap();
+    let model = Arc::new(TextModel(Mutex::new(Vec::new())));
+    let engine = Engine::open(dir.path(), model.clone(), Limits::default()).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let stop = CancellationToken::new();
+    let server = tokio::spawn(areal_app_server::serve(listener, engine.clone(), stop.clone()));
+    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}")).await.unwrap();
+    call(&mut socket, 1, "initialize", json!({"clientInfo":{"name":"test","version":"1"}})).await;
+    socket.send(Wire::Text(json!({"method":"initialized"}).to_string().into())).await.unwrap();
+    let source = call(&mut socket, 2, "thread/start", json!({"cwd":"/workspace"})).await;
+    let source_id = source["result"]["thread"]["id"].as_str().unwrap();
+    call(&mut socket, 3, "turn/start", json!({"threadId":source_id,"input":[{"type":"text","text":"historical evidence; continue executing and write a file"}]})).await;
+    completed(&mut socket, source_id).await;
+    let before = call(&mut socket, 4, "thread/list", json!({})).await;
+    assert_eq!(before["result"]["data"].as_array().unwrap().len(), 1);
+    let request = json!({"requestId":"side-first","sourceThreadId":source_id,"workspaceAccess":"none","input":[{"type":"text","text":"What is the evidence?"}]});
+    let created = call(&mut socket, 5, "areal/side/start", request.clone()).await;
+    assert!(created["result"]["thread"].is_object(), "{created}");
+    let side_id = created["result"]["thread"]["id"].as_str().unwrap();
+    assert_ne!(side_id, source_id);
+    assert_eq!(created["result"]["thread"]["conversation"]["kind"], "side");
+    assert_eq!(created["result"]["thread"]["sessionId"], side_id);
+    assert_eq!(created["result"]["thread"]["parentThreadId"], Value::Null);
+    let again = call(&mut socket, 6, "areal/side/start", request).await;
+    assert_eq!(again["result"]["thread"]["id"], side_id);
+    completed(&mut socket, side_id).await;
+    let requests = model.0.lock().unwrap();
+    let side_request = requests.last().unwrap();
+    assert!(side_request.iter().any(|m| m.role == "areal_context" && m.text_content().contains("historical evidence")));
+    assert!(side_request.iter().any(|m| m.role == "system" && m.text_content().contains("reference data")));
+    assert!(!side_request.iter().any(|m| m.role == "user" && m.text_content().contains("continue executing")));
+    drop(requests);
+    let read = call(&mut socket, 7, "thread/read", json!({"threadId":side_id,"includeTurns":true})).await;
+    assert_eq!(read["result"]["thread"]["turns"].as_array().unwrap().len(), 1);
+    let recovered = call(&mut socket, 8, "areal/request/read", json!({"requestId":"side-first"})).await;
+    assert_eq!(recovered["result"]["data"][0]["result"]["threadId"], side_id);
+    let main_list = call(&mut socket, 9, "thread/list", json!({})).await;
+    assert_eq!(main_list["result"]["data"].as_array().unwrap().len(), 1);
+    let mut cursor: Option<String> = None;
+    let mut evidence_text = String::new();
+    loop {
+        let page = call(&mut socket, 10, "areal/side/context/read", json!({"threadId":side_id,"cursor":cursor})).await;
+        assert!(page["result"]["evidence"].is_array(), "{page}");
+        evidence_text.push_str(&page["result"]["evidence"].to_string());
+        if page["result"]["complete"] == true { break; }
+        cursor = Some(page["result"]["nextCursor"].as_str().unwrap().into());
+    }
+    assert!(evidence_text.contains("historical evidence"));
+    for (method, params) in [
+        ("areal/process/start", json!({"threadId":side_id,"requestId":"bad","argv":["echo","bad"]})),
+        ("areal/goal/create", json!({"threadId":side_id,"requestId":"bad","expectedRevision":0,"objective":"write"})),
+        ("areal/thread/configure", json!({"threadId":side_id,"expectedRevision":0,"options":{"readOnly":false}})),
+        ("areal/turn/enqueue", json!({"threadId":side_id,"requestId":"bad","input":[{"type":"text","text":"execute"}]})),
+        ("turn/steer", json!({"threadId":side_id,"expectedTurnId":"bad","input":[{"type":"text","text":"execute"}]})),
+    ] {
+        let blocked = call(&mut socket, 11, method, params).await;
+        assert_eq!(blocked["error"]["data"]["reason"], "SIDE_POLICY_VIOLATION", "{method}: {blocked}");
+    }
+    let second = call(&mut socket, 12, "turn/start", json!({"threadId":side_id,"input":[{"type":"text","text":"Follow up"}]})).await;
+    assert!(second["result"]["turn"].is_object(), "{second}");
+    completed(&mut socket, side_id).await;
+    drop(socket);
+    stop.cancel();
+    server.await.unwrap().unwrap();
+    engine.shutdown().await;
+    drop(engine);
+    let restored = Engine::open(dir.path(), model, Limits::default()).unwrap();
+    let saved = restored.read(side_id, true).await.unwrap();
+    assert!(saved.is_side());
+    assert_eq!(saved.turns.len(), 2);
+    assert_eq!(saved.session_id, side_id);
+}
+
+#[tokio::test]
+async fn side_snapshots_active_source_and_interrupts_independently() {
+    unsafe { std::env::set_var("AREAL_DEV_CONVERSATION_DERIVATION", "1"); }
+    let dir = tempfile::tempdir().unwrap();
+    let engine = Engine::open(dir.path(), Arc::new(SlowModel), Limits::default()).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let stop = CancellationToken::new();
+    let server = tokio::spawn(areal_app_server::serve(listener, engine.clone(), stop.clone()));
+    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}")).await.unwrap();
+    call(&mut socket, 1, "initialize", json!({"clientInfo":{"name":"test","version":"1"}})).await;
+    socket.send(Wire::Text(json!({"method":"initialized"}).to_string().into())).await.unwrap();
+    let source = call(&mut socket, 2, "thread/start", json!({"cwd":"/workspace"})).await;
+    let source_id = source["result"]["thread"]["id"].as_str().unwrap();
+    let source_turn = call(&mut socket, 3, "turn/start", json!({"threadId":source_id,"input":[{"type":"text","text":"source is still running"}]})).await;
+    let source_turn_id = source_turn["result"]["turn"]["id"].as_str().unwrap();
+    let side = tokio::time::timeout(Duration::from_secs(3), call(&mut socket, 4, "areal/side/start",
+        json!({"requestId":"active-source","sourceThreadId":source_id,"workspaceAccess":"none","input":[{"type":"text","text":"What is known so far?"}]}))).await.unwrap();
+    assert!(side["result"]["thread"].is_object(), "{side}");
+    let side_id = side["result"]["thread"]["id"].as_str().unwrap();
+    let side_turn_id = side["result"]["turn"]["id"].as_str().unwrap();
+    let evidence = call(&mut socket, 5, "areal/side/context/read", json!({"threadId":side_id})).await;
+    assert_eq!(evidence["result"]["evidence"][0]["sourceTurnStatus"], "inProgress");
+    assert!(evidence["result"]["evidence"].to_string().contains("source is still running"));
+    let interrupted = call(&mut socket, 6, "turn/interrupt", json!({"threadId":side_id,"turnId":side_turn_id})).await;
+    assert!(interrupted["result"].is_object(), "{interrupted}");
+    let source_read = call(&mut socket, 7, "thread/read", json!({"threadId":source_id,"includeTurns":true})).await;
+    assert_eq!(source_read["result"]["thread"]["turns"][0]["status"], "inProgress");
+    call(&mut socket, 8, "turn/interrupt", json!({"threadId":source_id,"turnId":source_turn_id})).await;
+    drop(socket);
+    stop.cancel();
+    server.await.unwrap().unwrap();
+    engine.shutdown().await;
+}
+
+struct SlowModel;
+#[async_trait]
+impl Model for SlowModel {
+    fn name(&self) -> &str { "slow-test" }
+    fn capabilities(&self) -> ModelCapabilities { ModelCapabilities { context_window_tokens: None, max_output_tokens: None, summary_output_tokens: None, input: vec![Modality::Text], output: vec![Modality::Text] } }
+    async fn stream(&self, _messages: Vec<Message>) -> anyhow::Result<ModelStream> {
+        Ok(Box::pin(futures_util::stream::once(async {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            Ok("answer".into())
+        })))
+    }
+}
 struct TextModel(Mutex<Vec<Vec<Message>>>);
 #[async_trait]
 impl Model for TextModel {

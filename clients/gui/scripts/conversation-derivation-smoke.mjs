@@ -195,12 +195,15 @@ try {
   const anchor = page.locator(`[data-turn-id="${anchorTurnId}"]`);
   await anchor.getByRole("button", { name: /^轮次操作 / }).click();
   const forkButton = page.getByRole("menuitem", { name: "在此轮之后分支", exact: true });
-  page.once("dialog", async dialog => {
-    assert.match(dialog.message(), /共享工作区|项目文件保持当前状态/);
-    events.push({ confirmation: dialog.message() });
-    await dialog.accept();
-  });
   await forkButton.click();
+  const forkDialog = page.getByRole("dialog", { name: "创建独立分支", exact: true });
+  await forkDialog.waitFor();
+  const confirmation = await forkDialog.innerText();
+  assert.match(confirmation, /共享当前工作区/);
+  assert.match(confirmation, /文件不会回滚/);
+  events.push({ confirmation });
+  assert.equal(await forkDialog.getByLabel("分支目标配置").inputValue(), "inherit");
+  await forkDialog.getByRole("button", { name: "创建分支", exact: true }).click();
   await page.getByRole("region", { name: "继承的对话历史", exact: true }).waitFor();
   targetThreadId = await page.getByTestId("areal-workbench").getAttribute("data-thread-id");
   assert.ok(targetThreadId && targetThreadId !== sourceThreadId);
@@ -242,12 +245,12 @@ try {
   assert.ok(await afterActive.isDisabled(), "after an active Turn must explain that it is disabled");
   await page.getByText("此轮仍在运行；可选择轮次之前", { exact: true }).waitFor();
   const requestsBeforeActiveFork = requests.length;
-  page.once("dialog", async dialog => {
-    assert.match(dialog.message(), /不包含此轮|之前/);
-    events.push({ beforeConfirmation: dialog.message() });
-    await dialog.accept();
-  });
   await page.getByRole("menuitem", { name: "在此轮之前分支", exact: true }).click();
+  await forkDialog.waitFor();
+  const beforeConfirmation = await forkDialog.innerText();
+  assert.match(beforeConfirmation, /此轮之前/);
+  events.push({ beforeConfirmation });
+  await forkDialog.getByRole("button", { name: "创建分支", exact: true }).click();
   await page.waitForFunction(id => {
     const current = document.querySelector('[data-testid="areal-workbench"]')?.dataset.threadId;
     return current && current !== id;

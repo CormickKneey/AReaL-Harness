@@ -5154,6 +5154,95 @@
                         "workspaceMode"
                       ],
                       "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "kind": {
+                          "const": "side",
+                          "type": "string"
+                        },
+                        "origin": {
+                          "properties": {
+                            "boundary": {
+                              "type": "string"
+                            },
+                            "snapshotId": {
+                              "type": "string"
+                            },
+                            "sourceThreadId": {
+                              "type": "string"
+                            },
+                            "sourceTurnId": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "sourceThreadId",
+                            "sourceTurnId",
+                            "boundary",
+                            "snapshotId"
+                          ],
+                          "type": "object"
+                        },
+                        "policy": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "kind": {
+                              "type": "string"
+                            },
+                            "workspaceAccess": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "workspaceAccess"
+                          ],
+                          "type": "object"
+                        },
+                        "referenceSnapshot": {
+                          "properties": {
+                            "itemCount": {
+                              "format": "uint",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "logicalBytes": {
+                              "format": "uint",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "snapshotId": {
+                              "type": "string"
+                            },
+                            "turnCount": {
+                              "format": "uint",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "snapshotId",
+                            "turnCount",
+                            "itemCount",
+                            "logicalBytes"
+                          ],
+                          "type": "object"
+                        },
+                        "version": {
+                          "format": "uint32",
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "version",
+                        "origin",
+                        "referenceSnapshot",
+                        "policy"
+                      ],
+                      "type": "object"
                     }
                   ]
                 },
@@ -14083,6 +14172,315 @@
       "properties": {},
       "type": "object"
     },
+    "areal/side/context/read": {
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "type": "string"
+        },
+        "evidenceRef": {
+          "type": "string"
+        },
+        "maxBytes": {
+          "maximum": 16384,
+          "minimum": 64,
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "areal/side/start": {
+      "additionalProperties": false,
+      "properties": {
+        "anchor": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "boundary": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "kind": {
+                  "type": "string"
+                },
+                "turnId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "input": {
+          "items": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "text_elements": {
+                    "default": [],
+                    "items": true,
+                    "type": "array"
+                  },
+                  "type": {
+                    "const": "text",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "text"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "detail": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "auto",
+                          "low",
+                          "high",
+                          "original"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "type": {
+                    "const": "image",
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "url"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "detail": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "auto",
+                          "low",
+                          "high",
+                          "original"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "default": null
+                  },
+                  "path": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "localImage",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "path"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "audio",
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "url"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "const": "localAudio",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "path"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "mime_type": {
+                    "default": null,
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "name": {
+                    "default": null,
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "type": {
+                    "const": "file",
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "url"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "type": "array"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "modelId": {
+                  "type": "string"
+                },
+                "providerId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "providerId",
+                "modelId"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parameters": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "contextWindowTokens": {
+                  "format": "uint",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "maxOutputTokens": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "reasoningEffort": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "reasoningSummary": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "temperature": {
+                  "format": "double",
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                }
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "sourceThreadId": {
+          "type": "string"
+        },
+        "workspaceAccess": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "sourceThreadId",
+        "workspaceAccess",
+        "input"
+      ],
+      "title": "SideStart",
+      "type": "object"
+    },
     "areal/skill/list": {
       "additionalProperties": false,
       "properties": {
@@ -16820,6 +17218,95 @@
                           "origin",
                           "historySeed",
                           "workspaceMode"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "properties": {
+                          "kind": {
+                            "const": "side",
+                            "type": "string"
+                          },
+                          "origin": {
+                            "properties": {
+                              "boundary": {
+                                "type": "string"
+                              },
+                              "snapshotId": {
+                                "type": "string"
+                              },
+                              "sourceThreadId": {
+                                "type": "string"
+                              },
+                              "sourceTurnId": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "sourceThreadId",
+                              "sourceTurnId",
+                              "boundary",
+                              "snapshotId"
+                            ],
+                            "type": "object"
+                          },
+                          "policy": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "kind": {
+                                "type": "string"
+                              },
+                              "workspaceAccess": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "workspaceAccess"
+                            ],
+                            "type": "object"
+                          },
+                          "referenceSnapshot": {
+                            "properties": {
+                              "itemCount": {
+                                "format": "uint",
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "logicalBytes": {
+                                "format": "uint",
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "snapshotId": {
+                                "type": "string"
+                              },
+                              "turnCount": {
+                                "format": "uint",
+                                "minimum": 0,
+                                "type": "integer"
+                              }
+                            },
+                            "required": [
+                              "snapshotId",
+                              "turnCount",
+                              "itemCount",
+                              "logicalBytes"
+                            ],
+                            "type": "object"
+                          },
+                          "version": {
+                            "format": "uint32",
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "version",
+                          "origin",
+                          "referenceSnapshot",
+                          "policy"
                         ],
                         "type": "object"
                       }
@@ -20249,6 +20736,95 @@
                             "origin",
                             "historySeed",
                             "workspaceMode"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "properties": {
+                            "kind": {
+                              "const": "side",
+                              "type": "string"
+                            },
+                            "origin": {
+                              "properties": {
+                                "boundary": {
+                                  "type": "string"
+                                },
+                                "snapshotId": {
+                                  "type": "string"
+                                },
+                                "sourceThreadId": {
+                                  "type": "string"
+                                },
+                                "sourceTurnId": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "sourceThreadId",
+                                "sourceTurnId",
+                                "boundary",
+                                "snapshotId"
+                              ],
+                              "type": "object"
+                            },
+                            "policy": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "type": "string"
+                                },
+                                "workspaceAccess": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "workspaceAccess"
+                              ],
+                              "type": "object"
+                            },
+                            "referenceSnapshot": {
+                              "properties": {
+                                "itemCount": {
+                                  "format": "uint",
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                "logicalBytes": {
+                                  "format": "uint",
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                "snapshotId": {
+                                  "type": "string"
+                                },
+                                "turnCount": {
+                                  "format": "uint",
+                                  "minimum": 0,
+                                  "type": "integer"
+                                }
+                              },
+                              "required": [
+                                "snapshotId",
+                                "turnCount",
+                                "itemCount",
+                                "logicalBytes"
+                              ],
+                              "type": "object"
+                            },
+                            "version": {
+                              "format": "uint32",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "version",
+                            "origin",
+                            "referenceSnapshot",
+                            "policy"
                           ],
                           "type": "object"
                         }
@@ -38160,6 +38736,95 @@
                         "workspaceMode"
                       ],
                       "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "kind": {
+                          "const": "side",
+                          "type": "string"
+                        },
+                        "origin": {
+                          "properties": {
+                            "boundary": {
+                              "type": "string"
+                            },
+                            "snapshotId": {
+                              "type": "string"
+                            },
+                            "sourceThreadId": {
+                              "type": "string"
+                            },
+                            "sourceTurnId": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "sourceThreadId",
+                            "sourceTurnId",
+                            "boundary",
+                            "snapshotId"
+                          ],
+                          "type": "object"
+                        },
+                        "policy": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "kind": {
+                              "type": "string"
+                            },
+                            "workspaceAccess": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "workspaceAccess"
+                          ],
+                          "type": "object"
+                        },
+                        "referenceSnapshot": {
+                          "properties": {
+                            "itemCount": {
+                              "format": "uint",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "logicalBytes": {
+                              "format": "uint",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "snapshotId": {
+                              "type": "string"
+                            },
+                            "turnCount": {
+                              "format": "uint",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "snapshotId",
+                            "turnCount",
+                            "itemCount",
+                            "logicalBytes"
+                          ],
+                          "type": "object"
+                        },
+                        "version": {
+                          "format": "uint32",
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "version",
+                        "origin",
+                        "referenceSnapshot",
+                        "policy"
+                      ],
+                      "type": "object"
                     }
                   ]
                 },
@@ -42371,6 +43036,95 @@
                         "origin",
                         "historySeed",
                         "workspaceMode"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "kind": {
+                          "const": "side",
+                          "type": "string"
+                        },
+                        "origin": {
+                          "properties": {
+                            "boundary": {
+                              "type": "string"
+                            },
+                            "snapshotId": {
+                              "type": "string"
+                            },
+                            "sourceThreadId": {
+                              "type": "string"
+                            },
+                            "sourceTurnId": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "sourceThreadId",
+                            "sourceTurnId",
+                            "boundary",
+                            "snapshotId"
+                          ],
+                          "type": "object"
+                        },
+                        "policy": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "kind": {
+                              "type": "string"
+                            },
+                            "workspaceAccess": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "workspaceAccess"
+                          ],
+                          "type": "object"
+                        },
+                        "referenceSnapshot": {
+                          "properties": {
+                            "itemCount": {
+                              "format": "uint",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "logicalBytes": {
+                              "format": "uint",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "snapshotId": {
+                              "type": "string"
+                            },
+                            "turnCount": {
+                              "format": "uint",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "snapshotId",
+                            "turnCount",
+                            "itemCount",
+                            "logicalBytes"
+                          ],
+                          "type": "object"
+                        },
+                        "version": {
+                          "format": "uint32",
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "version",
+                        "origin",
+                        "referenceSnapshot",
+                        "policy"
                       ],
                       "type": "object"
                     }
@@ -50946,6 +51700,95 @@
                           "workspaceMode"
                         ],
                         "type": "object"
+                      },
+                      {
+                        "properties": {
+                          "kind": {
+                            "const": "side",
+                            "type": "string"
+                          },
+                          "origin": {
+                            "properties": {
+                              "boundary": {
+                                "type": "string"
+                              },
+                              "snapshotId": {
+                                "type": "string"
+                              },
+                              "sourceThreadId": {
+                                "type": "string"
+                              },
+                              "sourceTurnId": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "sourceThreadId",
+                              "sourceTurnId",
+                              "boundary",
+                              "snapshotId"
+                            ],
+                            "type": "object"
+                          },
+                          "policy": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "kind": {
+                                "type": "string"
+                              },
+                              "workspaceAccess": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "workspaceAccess"
+                            ],
+                            "type": "object"
+                          },
+                          "referenceSnapshot": {
+                            "properties": {
+                              "itemCount": {
+                                "format": "uint",
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "logicalBytes": {
+                                "format": "uint",
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "snapshotId": {
+                                "type": "string"
+                              },
+                              "turnCount": {
+                                "format": "uint",
+                                "minimum": 0,
+                                "type": "integer"
+                              }
+                            },
+                            "required": [
+                              "snapshotId",
+                              "turnCount",
+                              "itemCount",
+                              "logicalBytes"
+                            ],
+                            "type": "object"
+                          },
+                          "version": {
+                            "format": "uint32",
+                            "minimum": 0,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "version",
+                          "origin",
+                          "referenceSnapshot",
+                          "policy"
+                        ],
+                        "type": "object"
                       }
                     ]
                   },
@@ -54361,6 +55204,95 @@
                         "origin",
                         "historySeed",
                         "workspaceMode"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "kind": {
+                          "const": "side",
+                          "type": "string"
+                        },
+                        "origin": {
+                          "properties": {
+                            "boundary": {
+                              "type": "string"
+                            },
+                            "snapshotId": {
+                              "type": "string"
+                            },
+                            "sourceThreadId": {
+                              "type": "string"
+                            },
+                            "sourceTurnId": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "sourceThreadId",
+                            "sourceTurnId",
+                            "boundary",
+                            "snapshotId"
+                          ],
+                          "type": "object"
+                        },
+                        "policy": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "kind": {
+                              "type": "string"
+                            },
+                            "workspaceAccess": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "workspaceAccess"
+                          ],
+                          "type": "object"
+                        },
+                        "referenceSnapshot": {
+                          "properties": {
+                            "itemCount": {
+                              "format": "uint",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "logicalBytes": {
+                              "format": "uint",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "snapshotId": {
+                              "type": "string"
+                            },
+                            "turnCount": {
+                              "format": "uint",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "snapshotId",
+                            "turnCount",
+                            "itemCount",
+                            "logicalBytes"
+                          ],
+                          "type": "object"
+                        },
+                        "version": {
+                          "format": "uint32",
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "version",
+                        "origin",
+                        "referenceSnapshot",
+                        "policy"
                       ],
                       "type": "object"
                     }
@@ -57799,6 +58731,95 @@
                         "origin",
                         "historySeed",
                         "workspaceMode"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "kind": {
+                          "const": "side",
+                          "type": "string"
+                        },
+                        "origin": {
+                          "properties": {
+                            "boundary": {
+                              "type": "string"
+                            },
+                            "snapshotId": {
+                              "type": "string"
+                            },
+                            "sourceThreadId": {
+                              "type": "string"
+                            },
+                            "sourceTurnId": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "sourceThreadId",
+                            "sourceTurnId",
+                            "boundary",
+                            "snapshotId"
+                          ],
+                          "type": "object"
+                        },
+                        "policy": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "kind": {
+                              "type": "string"
+                            },
+                            "workspaceAccess": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "workspaceAccess"
+                          ],
+                          "type": "object"
+                        },
+                        "referenceSnapshot": {
+                          "properties": {
+                            "itemCount": {
+                              "format": "uint",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "logicalBytes": {
+                              "format": "uint",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "snapshotId": {
+                              "type": "string"
+                            },
+                            "turnCount": {
+                              "format": "uint",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "snapshotId",
+                            "turnCount",
+                            "itemCount",
+                            "logicalBytes"
+                          ],
+                          "type": "object"
+                        },
+                        "version": {
+                          "format": "uint32",
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "version",
+                        "origin",
+                        "referenceSnapshot",
+                        "policy"
                       ],
                       "type": "object"
                     }
@@ -61245,6 +62266,95 @@
                         "origin",
                         "historySeed",
                         "workspaceMode"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "properties": {
+                        "kind": {
+                          "const": "side",
+                          "type": "string"
+                        },
+                        "origin": {
+                          "properties": {
+                            "boundary": {
+                              "type": "string"
+                            },
+                            "snapshotId": {
+                              "type": "string"
+                            },
+                            "sourceThreadId": {
+                              "type": "string"
+                            },
+                            "sourceTurnId": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "sourceThreadId",
+                            "sourceTurnId",
+                            "boundary",
+                            "snapshotId"
+                          ],
+                          "type": "object"
+                        },
+                        "policy": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "kind": {
+                              "type": "string"
+                            },
+                            "workspaceAccess": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "workspaceAccess"
+                          ],
+                          "type": "object"
+                        },
+                        "referenceSnapshot": {
+                          "properties": {
+                            "itemCount": {
+                              "format": "uint",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "logicalBytes": {
+                              "format": "uint",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "snapshotId": {
+                              "type": "string"
+                            },
+                            "turnCount": {
+                              "format": "uint",
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "snapshotId",
+                            "turnCount",
+                            "itemCount",
+                            "logicalBytes"
+                          ],
+                          "type": "object"
+                        },
+                        "version": {
+                          "format": "uint32",
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "version",
+                        "origin",
+                        "referenceSnapshot",
+                        "policy"
                       ],
                       "type": "object"
                     }
@@ -65995,6 +67105,95 @@
                   "origin",
                   "historySeed",
                   "workspaceMode"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "side",
+                    "type": "string"
+                  },
+                  "origin": {
+                    "properties": {
+                      "boundary": {
+                        "type": "string"
+                      },
+                      "snapshotId": {
+                        "type": "string"
+                      },
+                      "sourceThreadId": {
+                        "type": "string"
+                      },
+                      "sourceTurnId": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "sourceThreadId",
+                      "sourceTurnId",
+                      "boundary",
+                      "snapshotId"
+                    ],
+                    "type": "object"
+                  },
+                  "policy": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "kind": {
+                        "type": "string"
+                      },
+                      "workspaceAccess": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "workspaceAccess"
+                    ],
+                    "type": "object"
+                  },
+                  "referenceSnapshot": {
+                    "properties": {
+                      "itemCount": {
+                        "format": "uint",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "logicalBytes": {
+                        "format": "uint",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "snapshotId": {
+                        "type": "string"
+                      },
+                      "turnCount": {
+                        "format": "uint",
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "snapshotId",
+                      "turnCount",
+                      "itemCount",
+                      "logicalBytes"
+                    ],
+                    "type": "object"
+                  },
+                  "version": {
+                    "format": "uint32",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "version",
+                  "origin",
+                  "referenceSnapshot",
+                  "policy"
                 ],
                 "type": "object"
               }
