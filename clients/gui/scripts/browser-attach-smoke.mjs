@@ -18,10 +18,10 @@ const workspace = join(scratch, 'workspace'), userHome = join(scratch, 'user');
 await mkdir(workspace); await mkdir(join(userHome, '.areal'), { recursive: true });
 execFileSync('git', ['init', '-b', 'main'], { cwd: workspace, stdio: 'ignore' });
 const sentinel = 'LEGACY_THREAD_SAME_PAGE_SENTINEL_06';
-const siteFacts = { gets: 0, posts: [] };
+const siteFacts = { documentGets: 0, otherGets: 0, posts: [] };
 const site = createServer(async (request, response) => {
   if (request.method === 'POST') { siteFacts.posts.push(request.url); response.end('ok'); return; }
-  siteFacts.gets++;
+  if (request.url.startsWith('/?')) siteFacts.documentGets++; else siteFacts.otherGets++;
   response.setHeader('Content-Type', 'text/html; charset=utf-8');
   response.end(`<!doctype html><title>Legacy Browser Fixture</title><main><h1>${sentinel}</h1>
     <label>Draft <input id="draft" aria-label="Draft"></label><div style="height:1800px"></div></main>
@@ -29,7 +29,7 @@ const site = createServer(async (request, response) => {
 });
 await new Promise(resolve => site.listen(0, '127.0.0.1', resolve));
 const siteUrl = `http://127.0.0.1:${site.address().port}/?token=SYNTHETIC_SECRET_06`;
-let pageId, modelCalls = [];
+let pageId, browserStage = 0, modelCalls = [];
 const model = createServer(async (request, response) => {
   let raw = ''; for await (const chunk of request) raw += chunk;
   const body = JSON.parse(raw);
@@ -44,10 +44,8 @@ const model = createServer(async (request, response) => {
   if (!browser) { send({ content: 'Older turn remains in this Thread' }); send({}, 'stop'); }
   else {
     await until(() => pageId, 'same page claim');
-    const last = body.messages.at(-1);
-    if (last?.role !== 'tool') tool('describe-06', { operation: 'describe', parameters: {} });
-    else if (!body.messages.some(message => message.role === 'tool' && JSON.stringify(message).includes(sentinel)))
-      tool('observe-06', { operation: 'observe', parameters: { pageId } });
+    if (browserStage === 0) { browserStage = 1; tool('describe-06', { operation: 'describe', parameters: {} }); }
+    else if (browserStage === 1) { browserStage = 2; tool('observe-06', { operation: 'observe', parameters: { pageId } }); }
     else { send({ content: `Observed ${sentinel}` }); send({}, 'stop'); }
   }
   response.end('data: [DONE]\n\n');
@@ -88,10 +86,19 @@ try {
   page.on('pageerror', error => errors.push(error.message));
   await page.getByTestId('areal-workbench').waitFor({ timeout: 120000 });
   await until(async () => (await snapshot()).connection?.state === 'ready', 'desktop ready');
-  await app.evaluate(({ dialog, BrowserWindow }, path) => {
+  await app.evaluate(({ dialog, BrowserWindow }, { path, origin }) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] });
+    const original = dialog.showMessageBox;
+    dialog.showMessageBox = async (...args) => {
+      const options = args.at(-1);
+      if (options?.title === '允许本地开发站点' && options.message === `允许此浏览工作区访问 ${origin}？`) {
+        globalThis.__m1OriginPrompt = { origin, title: options.title, count: (globalThis.__m1OriginPrompt?.count ?? 0) + 1 };
+        return { response: 1, checkboxChecked: false };
+      }
+      return original(...args);
+    };
     BrowserWindow.getAllWindows()[0].setSize(1440, 960);
-  }, workspace);
+  }, { path: workspace, origin: new URL(siteUrl).origin });
   await page.evaluate(() => window.arealDesktop.chooseProject());
   const project = await until(async () => (await snapshot()).projects.find(item => item.root === workspace && item.state?.connected), 'project ready');
   const projectId = project.id;
@@ -108,7 +115,12 @@ try {
   assert.match(originalTurn, /Older turn remains/);
   await page.keyboard.press('Meta+t');
   await page.locator('.preview-panel').waitFor();
+  await app.evaluate(({ app, BrowserWindow }) => { app.focus({ steal: true }); BrowserWindow.getAllWindows()[0].focus(); });
+  await until(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isFocused()), 'focused Main Origin prompt');
   await page.evaluate(({ projectId, threadId, siteUrl }) => window.arealDesktop.preview({ operation: 'navigate', projectId, threadId, url: siteUrl }), { projectId, threadId, siteUrl });
+  events.developmentOriginPrompt = await app.evaluate(() => globalThis.__m1OriginPrompt);
+  assert.equal(events.developmentOriginPrompt?.count, 1, 'exact-Origin Main prompt occurred once');
+  events.developmentOriginPrompt.response = 'fixture-stub-allow-exact-origin';
   await until(nativeState, 'native page loaded');
   await app.evaluate(({ webContents }, url) => {
     const c = webContents.getAllWebContents().find(item => item.getURL() === url);
@@ -116,13 +128,14 @@ try {
   }, siteUrl);
   const before = await nativeState();
   assert.ok(before?.id && before.facts.sentinel && before.facts.scrollY > 0);
+  const documentGetsBeforeAttach = siteFacts.documentGets;
   await page.getByRole('button', { name: '在当前聊天启用浏览器' }).click();
   const attached = await until(async () => {
     const thread = (await snapshot()).projects.find(item => item.id === projectId)?.state?.threads?.[threadId];
     return thread?.toolsetRevision === 1 && thread.dynamicTools?.some(tool => tool.name === 'browser_v1') ? thread : null;
   }, 'Core attachment projected');
   assert.equal(attached.turns.length, 1);
-  assert.equal(JSON.stringify(attached.turns[0]), originalTurn);
+  assert.deepEqual(attached.turns[0], beforeTurn.turns[0]);
   await page.getByRole('button', { name: '让 Agent 检查当前页' }).click();
   const claimed = await until(async () => {
     const value = await page.evaluate(({ projectId, threadId }) => window.arealDesktop.preview({ operation: 'state', projectId, threadId }), { projectId, threadId });
@@ -138,13 +151,30 @@ try {
   const after = await nativeState();
   assert.equal(after.id, before.id);
   assert.deepEqual(after.facts, before.facts);
-  assert.equal(siteFacts.gets, 1);
+  assert.ok(documentGetsBeforeAttach >= 1);
+  assert.equal(siteFacts.documentGets, documentGetsBeforeAttach, 'attachment and first Core call do not reload the native document');
   events.B17 = { projectId, threadId, pageId, nativeWebContentsId: after.id, nativeSentinel: after.facts.sentinel,
-    before, after, siteFacts, oldTurn: beforeTurn.turns[0], browserTurn: completed.turns[1] };
+    before, after, documentGetsBeforeAttach, siteFacts, oldTurn: beforeTurn.turns[0], browserTurn: completed.turns[1] };
   await page.screenshot({ path: join(scratch, 'gui-legacy-thread.png'), animations: 'disabled' });
   const nativePng = await app.evaluate(async ({ webContents }, id) => (await webContents.fromId(id).capturePage()).toPNG().toString('base64'), after.id);
   await writeFile(join(scratch, 'native-legacy-page.png'), Buffer.from(nativePng, 'base64'));
   checks.push('B-17: old Turn preserved; Core revision and browser callback observed original native WebContents/sentinel without navigation');
+  const repeated = await command('attachBrowser', { projectId, threadId, expectedToolsetRevision: 1 });
+  const afterRepeat = (await snapshot()).projects.find(item => item.id === projectId)?.state?.threads?.[threadId];
+  assert.equal(afterRepeat.toolsetRevision, 1);
+  assert.equal(afterRepeat.dynamicTools.filter(tool => tool.name === 'browser_v1').length, 1);
+  assert.deepEqual(afterRepeat.turns[0], beforeTurn.turns[0]);
+  const staleRevision = await page.evaluate(({ projectId, threadId }) =>
+    window.arealDesktop.command('attachBrowser', { projectId, threadId, expectedToolsetRevision: 0 }),
+    { projectId, threadId });
+  assert.equal(staleRevision.ok, false);
+  assert.match(staleRevision.error.message, /工具版本已变化|工具版本|聊天状态/);
+  const afterStale = (await snapshot()).projects.find(item => item.id === projectId)?.state?.threads?.[threadId];
+  assert.equal(afterStale.toolsetRevision, 1);
+  events.B18 = { repeated, revisionAfterRepeat: afterRepeat.toolsetRevision,
+    toolCountAfterRepeat: afterRepeat.dynamicTools.length, staleRevision,
+    revisionAfterStale: afterStale.toolsetRevision };
+  checks.push('B-18: repeating the idle Browser bundle attach is idempotent; stale toolset revision is refused');
   assert.deepEqual(errors, []);
   passed = true;
 } catch (error) {
