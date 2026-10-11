@@ -173,12 +173,14 @@ impl Engine {
     pub async fn thread_blob(&self, thread_id: &str, blob: &str) -> Result<Vec<u8>> {
         let thread = self.read(thread_id, true).await?;
         let uri = format!("areal://blob/{blob}");
-        let inherited = match &thread.conversation {
-            Some(areal_protocol::Conversation::Fork { history_seed, .. }) => self
-                .store
-                .read_fork_snapshot(&history_seed.snapshot_id)
-                .map_err(|e| Error::Storage(e.to_string()))?,
-            _ => Vec::new(),
+        let snapshot = match &thread.conversation {
+            Some(areal_protocol::Conversation::Fork { history_seed, .. }) => Some(&history_seed.snapshot_id),
+            Some(areal_protocol::Conversation::Side { reference_snapshot, .. }) => Some(&reference_snapshot.snapshot_id),
+            _ => None,
+        };
+        let inherited = match snapshot {
+            Some(snapshot) => self.store.read_fork_snapshot(snapshot).map_err(|e| Error::Storage(e.to_string()))?,
+            None => Vec::new(),
         };
         let associated=thread.desktop.as_ref().is_some_and(|d|d.uploads.iter().any(|m|m.uri==uri))
             || thread.turns.iter().chain(inherited.iter()).flat_map(|t|&t.items).any(|item| match item {

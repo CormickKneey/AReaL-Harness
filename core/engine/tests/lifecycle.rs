@@ -687,6 +687,6 @@ async fn legacy_text_sessions_load_and_upgrade_on_next_write() {
             &std::fs::read(dir.path().join(format!("{thread_id}.json"))).unwrap(),
         )
         .unwrap();
-        assert_eq!(record["version"], 13);
+        assert_eq!(record["version"], 14);
     }
 }
