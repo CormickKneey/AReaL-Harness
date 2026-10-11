@@ -83,6 +83,15 @@ try {
     const state = await preview({ operation: 'show', projectId, threadId: ownerId, visible: true,
       bounds: { x: 0, y: 80, width: 400, height: 300 } });
     await preview({ operation: 'selectPage', projectId, threadId: ownerId, pageId: state.browser.pageId });
+    await app.evaluate(({ app, BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      if (window.isMinimized()) window.restore();
+      window.show(); app.focus({ steal: true }); window.focus();
+    });
+    await until(() => app.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      return window.isVisible() && !window.isMinimized() && window.isFocused();
+    }), 'visible focused window for development-site consent');
   };
   await showOwner(threadId);
   await preview({ operation: 'navigate', projectId, threadId, url });

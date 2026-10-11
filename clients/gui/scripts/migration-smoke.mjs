@@ -536,6 +536,15 @@ try {
   }, new URL(previewUrl).origin);
   await openPanel("预览");
   await page.getByLabel("预览地址").fill(previewUrl);
+  await app.evaluate(({ app, BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0];
+    if (window.isMinimized()) window.restore();
+    window.show(); app.focus({ steal: true }); window.focus();
+  });
+  await until(() => app.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0];
+    return window.isVisible() && !window.isMinimized() && window.isFocused();
+  }), "visible focused window for development-site consent");
   await page.getByLabel("预览地址").press("Enter");
   let previewEvidence;
   for (let i = 0; i < 100; i++) {
