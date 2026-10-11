@@ -105,7 +105,13 @@ class WorkspaceNetworkPolicy {
       const headers = { ...details.responseHeaders };
       for (const name of Object.keys(headers))
         if (name.toLowerCase() === 'connection-allowlist') delete headers[name];
-      headers['Connection-Allowlist'] = [CONNECTION_ALLOWLIST];
+      const disposition = Object.entries(headers).find(([name]) => name.toLowerCase() === 'content-disposition')?.[1];
+      const attachment = Array.isArray(disposition) && disposition.length === 1
+        && typeof disposition[0] === 'string' && /^\s*attachment\s*(;|$)/i.test(disposition[0]);
+      // Connection-Allowlist protects a loaded document's future connections.
+      // An attachment creates no document; applying it to that response crashes
+      // Chromium's download path. The Session URL checks and parent policy remain.
+      if (!attachment) headers['Connection-Allowlist'] = [CONNECTION_ALLOWLIST];
       if (['mainFrame', 'subFrame'].includes(details.resourceType)) {
         const key = Object.keys(headers).find(name => name.toLowerCase() === 'content-security-policy')
           ?? 'Content-Security-Policy';
