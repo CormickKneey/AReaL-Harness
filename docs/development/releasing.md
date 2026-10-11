@@ -25,6 +25,8 @@ Release tag 与公开、tap 创建/更新是外部发布操作，应在产物审
 
 ## 本地命令
 
+bundle manifest 的 `apiVersion` 来自已生成的 `schemas/areal-core-v1.json`，`stateVersion` 来自 Core Store 的版本常量；缺失或不明确时在复制和签名前拒绝打包。复用已构建二进制时仍须核对其实际协议/状态版本与该源码一致，清单不代替二进制验收。
+
 ```sh
 make release
 python3 scripts/package.py --profile release --output target/release-bundle/areal

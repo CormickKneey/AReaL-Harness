@@ -5,9 +5,23 @@ import argparse
 import hashlib
 import json
 import platform
+import re
 import shutil
 import subprocess
 from pathlib import Path
+
+
+def bundle_info(root):
+    # 复用生成协议与 Store 版本常量，不能让包清单独立漂移。
+    schema = json.loads((root / "schemas/areal-core-v1.json").read_text())
+    versions = re.findall(
+        r"^pub\(crate\) const STATE_VERSION: u32 = (\d+);$",
+        (root / "core/engine/src/store.rs").read_text(),
+        re.MULTILINE,
+    )
+    if len(versions) != 1 or not isinstance(schema.get("apiVersion"), str):
+        raise ValueError("Core package metadata source is missing or ambiguous")
+    return {"apiVersion": schema["apiVersion"], "stateVersion": int(versions[0])}
 
 
 def main():
@@ -17,6 +31,7 @@ def main():
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     destination = args.output.resolve()
+    metadata = bundle_info(root)
     if destination.exists():
         parser.error("output must not exist")
     targets = {("Darwin", "arm64"): "darwin/arm64", ("Linux", "x86_64"): "linux/x86_64"}
@@ -60,8 +75,7 @@ def main():
         ).strip(),
         "workingTree": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=root)),
         "profile": args.profile,
-        "apiVersion": "areal.core.v1",
-        "stateVersion": 12,
+        **metadata,
         "platform": target_platform,
         "files": files,
         "prerequisites": [

@@ -25,6 +25,8 @@ Tagging, publishing and tap creation/updates are external publication operations
 
 ## Local commands
 
+The bundle manifest takes `apiVersion` from generated `schemas/areal-core-v1.json` and `stateVersion` from the Core Store version constant. Missing or ambiguous metadata refuses packaging before copying or signing. When reusing built binaries, verify their actual protocol/state versions against that source; the manifest does not replace binary acceptance.
+
 ```sh
 make release
 python3 scripts/package.py --profile release --output target/release-bundle/areal
