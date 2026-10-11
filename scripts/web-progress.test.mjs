@@ -583,8 +583,10 @@ test("unified subtasks keep verification and delivery distinct and ignore anothe
   assert.match(text, /检查通过/);
   assert.match(text, /交付存在冲突/);
   assert.doesNotMatch(text, /改动已应用/);
-  const cancelled = c.run(`executionCard(${JSON.stringify({ ...execution, status: "cancelled", delivery: { status: "cancelled" } })}, "thread", groupObservation)`);
-  const cancelledText = cancelled.children.map(child => child.textContent).join(" ");
+  const cancelled = c.run(
+    `executionCard(${JSON.stringify({ ...execution, status: "cancelled", delivery: { status: "cancelled" } })}, "thread", groupObservation)`,
+  );
+  const cancelledText = cancelled.children.map((child) => child.textContent).join(" ");
   assert.match(cancelledText, /已取消.*交付已取消/);
   assert.doesNotMatch(cancelledText, /改动已应用|等待结果|停止子任务/);
   const stale = c.run("listExecutions()");
