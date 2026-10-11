@@ -732,7 +732,7 @@ impl Engine {
         &self,
         cell: &Cell,
     ) -> anyhow::Result<areal_runtime_protocol::PermissionRequest> {
-        if let Some(scratch) = self.command_scratch(cell) {
+        if !cell.state.lock().await.thread.is_side() && let Some(scratch) = self.command_scratch(cell) {
             // 目录由可信 Core 创建，Runtime 再绑定和校验目录身份。
             std::fs::create_dir_all(scratch).context("cannot create task scratch")?;
         }
@@ -743,8 +743,11 @@ impl Engine {
             .last()
             .and_then(|t| t.configuration.as_ref())
             .is_some_and(|c| c.read_only);
+        let side = state.thread.is_side();
         Ok(areal_runtime_protocol::PermissionRequest {
-            read_roots: if readonly || cell.research {
+            read_roots: if side {
+                Some(vec!["workspace://repo".into()])
+            } else if readonly || cell.research {
                 Some(
                     vec!["workspace://repo".into(), self.scratch_uri(cell)]
                         .into_iter()
@@ -760,7 +763,9 @@ impl Engine {
             } else {
                 None
             },
-            write_roots: if readonly {
+            write_roots: if side {
+                Some(Vec::new())
+            } else if readonly {
                 Some(
                     if self
                         .runtime
@@ -775,7 +780,7 @@ impl Engine {
             } else {
                 self.scope_permissions(cell).write_roots
             },
-            network: if readonly {
+            network: if readonly || side {
                 areal_runtime_protocol::NetworkRequest::Deny
             } else {
                 areal_runtime_protocol::NetworkRequest::Inherit

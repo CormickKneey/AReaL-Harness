@@ -304,7 +304,7 @@ fn restore_cells(
         .map(|(id, thread)| {
             let bindings = tools::Bindings {
                 registry: if thread.is_side() {
-                    registry.clone().side_only()
+                    registry.clone().side_only(thread.side_workspace_read())
                 } else if thread.source == "nativeResearchAgent" {
                     registry.clone().research_only()
                 } else {
@@ -549,6 +549,20 @@ impl Engine {
             json!({"epoch": runtime.client.info().runtime_epoch,
                 "capabilities": runtime.client.info().capabilities})
         })
+    }
+    pub fn side_workspace_read_available(&self) -> bool {
+        let Some(runtime) = self.runtime.as_ref() else { return false; };
+        let capabilities = &runtime.client.info().capabilities;
+        let permissions = self.permission_config();
+        let native = matches!(capabilities["sandbox"].as_str(), Some("runtimeSeatbeltPathV1" | "runtimeBubblewrapPathV1"));
+        native && !runtime.client.is_closed() && capabilities["fullAccess"] == false
+            && !["fs_read", "fs_list", "fs_stat", "search_files"].iter().any(|tool|
+                permissions.deny.iter().any(|pattern| permissions::matches_tool(pattern, tool)))
+            && capabilities["filesystem"]["symlinks"] == "reject"
+            && capabilities["filesystem"]["search"] == "scopedNativeV1"
+            && capabilities["methods"].as_array().is_some_and(|methods| methods.iter().any(|m| m == "fs.execute"))
+            // 任意命令 hook 无法证明无副作用；不能跳过它们再声称已执行强制审计。
+            && self.extensions.hooks.is_empty()
     }
     pub fn default_cwd(&self) -> String {
         self.runtime

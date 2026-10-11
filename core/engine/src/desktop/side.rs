@@ -138,7 +138,10 @@ impl Engine {
                     }
                 }
             }
-            if request.workspace_access != "none" { return Err(invalid("WORKSPACE_READ_UNAVAILABLE")); }
+            if !matches!(request.workspace_access.as_str(), "none" | "readOnly") { return Err(invalid("invalid workspaceAccess")); }
+            if request.workspace_access == "readOnly" && !engine.side_workspace_read_available() {
+                return Err(invalid("WORKSPACE_READ_UNAVAILABLE"));
+            }
             if request.input.len() != 1 || !matches!(&request.input[0], Input::Text { .. }) {
                 return Err(invalid("Side first question must be one text input"));
             }
@@ -181,7 +184,9 @@ impl Engine {
                 request.parameters.unwrap_or(config.parameters), config.revision)?;
             config.profile = None;
             config.read_only = true;
-            config.tool_allowlist = Some(vec!["side_context_read".into()]);
+            config.tool_allowlist = Some(if request.workspace_access == "readOnly" {
+                vec!["side_context_read", "fs_read", "fs_list", "fs_stat", "search_files"]
+            } else { vec!["side_context_read"] }.into_iter().map(str::to_owned).collect());
             config.instructions.clear();
             config.options.system_prompt = None;
             config.options.append_instructions.clear();
@@ -205,7 +210,7 @@ impl Engine {
                         source_turn_id: origin_turn, boundary: boundary.into(), snapshot_id: snapshot_id.clone() },
                     reference_snapshot: areal_protocol::HistorySeed { snapshot_id, turn_count: end,
                         item_count: prefix.iter().map(|t| t.items.len()).sum(), logical_bytes },
-                    policy: areal_protocol::SidePolicy { kind: "sideReadOnlyV1".into(), workspace_access: "none".into() },
+                    policy: areal_protocol::SidePolicy { kind: "sideReadOnlyV1".into(), workspace_access: request.workspace_access.clone() },
                     selection,
                 }),
                 goals: Default::default(), goal_owner: None, desktop: Some(data),
@@ -218,7 +223,7 @@ impl Engine {
             let (thread, turn) = engine.prepare_turn(&base, request.input)?;
             engine.check_side_capacity(&source.id, None).await?;
             let admission = engine.reserve_active_turn()?;
-            let cell = Cell::new(thread.clone(), 0, crate::tools::Bindings { registry: engine.registry.clone().side_only(), host: None });
+            let cell = Cell::new(thread.clone(), 0, crate::tools::Bindings { registry: engine.registry.clone().side_only(request.workspace_access == "readOnly"), host: None });
             let mut threads = engine.threads.write().await;
             if threads.len() >= engine.limits.max_threads { return Err(Error::Exhausted("thread capacity reached".into())); }
             if let Err(error) = engine.persist(&thread).await {

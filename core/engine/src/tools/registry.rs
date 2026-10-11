@@ -206,8 +206,10 @@ fn compile(schema: &Value) -> anyhow::Result<jsonschema::Validator> {
 }
 
 impl Registry {
-    pub fn side_only(mut self) -> Self {
-        self.tools.retain(|name, tool| name == "side_context_read" && matches!(tool.backend, Backend::Core));
+    pub fn side_only(mut self, workspace_read: bool) -> Self {
+        self.tools.retain(|name, tool| (name == "side_context_read" && matches!(tool.backend, Backend::Core))
+            || (workspace_read && matches!(name.as_str(), "fs_read" | "fs_list" | "fs_stat" | "search_files")
+                && matches!(tool.backend, Backend::Builtin)));
         self.order.retain(|name| self.tools.contains_key(name));
         self
     }

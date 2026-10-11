@@ -445,6 +445,9 @@ impl Thread {
     pub fn is_side(&self) -> bool {
         matches!(self.conversation, Some(Conversation::Side { .. }))
     }
+    pub fn side_workspace_read(&self) -> bool {
+        matches!(&self.conversation, Some(Conversation::Side { policy, .. }) if policy.workspace_access == "readOnly")
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]

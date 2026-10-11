@@ -52,8 +52,20 @@ impl Invocation<'_> {
         self.validate(&arguments)?;
         {
             let state = self.cell.state.lock().await;
-            if state.thread.is_side() && !(self.call.name == "side_context_read" && matches!(self.entry.backend, Backend::Core)) {
+            if state.thread.is_side() && !(self.call.name == "side_context_read" && matches!(self.entry.backend, Backend::Core))
+                && !(state.thread.side_workspace_read() && super::side_file_tool(&self.call.name, &self.entry.backend)) {
                 return Err(rt::Error::new(rt::ErrorCode::PermissionDenied, "SIDE_POLICY_VIOLATION"));
+            }
+            if state.thread.side_workspace_read() && super::side_file_tool(&self.call.name, &self.entry.backend) {
+                if !self.engine.side_workspace_read_available() {
+                    return Err(rt::Error::new(rt::ErrorCode::Unavailable, "WORKSPACE_READ_UNAVAILABLE"));
+                }
+                let path = arguments.get("path").and_then(Value::as_str).unwrap_or(".");
+                let runtime = self.engine.runtime.as_ref().ok_or_else(|| rt::Error::new(rt::ErrorCode::Unavailable, "WORKSPACE_READ_UNAVAILABLE"))?;
+                let uri = super::resource_uri(path, runtime).map_err(invalid)?;
+                if uri != "workspace://repo" && !uri.starts_with("workspace://repo/") {
+                    return Err(rt::Error::new(rt::ErrorCode::PermissionDenied, "SIDE_POLICY_VIOLATION"));
+                }
             }
             if state
                 .thread
@@ -378,7 +390,7 @@ impl Invocation<'_> {
                     name: self.call.name.clone(),
                     arguments: effective.to_string(),
                 };
-                if matches!(call.name.as_str(), "read_file" | "search_files") {
+                if call.name == "read_file" || call.name == "search_files" && !state.thread.is_side() {
                     drop(state);
                     return navigation::invoke(
                         runtime,

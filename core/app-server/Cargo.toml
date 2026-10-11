@@ -24,6 +24,9 @@ uuid.workspace = true
 
 [dev-dependencies]
 areal-local-service.workspace = true
+areal-runtime = { path = "../../runtime/daemon" }
+areal-runtime-client.workspace = true
+areal-runtime-supervisor.workspace = true
 tempfile.workspace = true
 tokio-tungstenite.workspace = true
 reqwest.workspace = true

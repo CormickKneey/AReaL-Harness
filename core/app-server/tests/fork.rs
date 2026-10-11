@@ -10,6 +10,32 @@ use tokio_util::sync::CancellationToken;
 type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
 #[tokio::test]
+async fn side_read_only_requires_verified_runtime_and_none_remains_available() {
+    unsafe { std::env::set_var("AREAL_DEV_CONVERSATION_DERIVATION", "1"); }
+    let dir = tempfile::tempdir().unwrap();
+    let model = Arc::new(TextModel(Mutex::new(Vec::new())));
+    let engine = Engine::open(dir.path(), model, Limits::default()).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let stop = CancellationToken::new();
+    let server = tokio::spawn(areal_app_server::serve(listener, engine.clone(), stop.clone()));
+    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}")).await.unwrap();
+    call(&mut socket, 1, "initialize", json!({"clientInfo":{"name":"test","version":"1"}})).await;
+    socket.send(Wire::Text(json!({"method":"initialized"}).to_string().into())).await.unwrap();
+    let source = call(&mut socket, 2, "thread/start", json!({"cwd":"/workspace"})).await;
+    let source_id = source["result"]["thread"]["id"].as_str().unwrap();
+    let request = json!({"requestId":"read-only-unavailable","sourceThreadId":source_id,
+        "workspaceAccess":"readOnly","input":[{"type":"text","text":"Read current file"}]});
+    let refused = call(&mut socket, 3, "areal/side/start", request).await;
+    assert_eq!(refused["error"]["data"]["reason"], "WORKSPACE_READ_UNAVAILABLE", "{refused}");
+    let accepted = call(&mut socket, 4, "areal/side/start", json!({"requestId":"none-after-refusal",
+        "sourceThreadId":source_id,"workspaceAccess":"none",
+        "input":[{"type":"text","text":"Use frozen evidence"}]})).await;
+    assert_eq!(accepted["result"]["thread"]["conversation"]["policy"]["workspaceAccess"], "none", "{accepted}");
+    drop(socket); stop.cancel(); server.await.unwrap().unwrap(); engine.shutdown().await;
+}
+
+#[tokio::test]
 async fn side_list_archive_and_explicit_reopen_survive_restart() {
     unsafe { std::env::set_var("AREAL_DEV_CONVERSATION_DERIVATION", "1"); }
     let dir = tempfile::tempdir().unwrap();
