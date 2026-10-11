@@ -156,6 +156,7 @@ app.whenReady().then(async () => {
         : error.message === 'stale_ref' ? 'stale_ref'
         : /plan_stale/.test(error.message) ? 'plan_stale'
         : error.message === 'human_takeover_required' ? 'human_takeover_required'
+        : error.message === 'condition_timeout' ? 'condition_timeout'
         : /not_sent|target_unavailable/.test(error.message) ? 'not_sent'
         : /budget exceeded|Sensitive field|viewport changed|content changed during capture|capture guard unavailable/.test(error.message) ? 'evidence_unavailable' : 'page_unavailable' }; }
   };

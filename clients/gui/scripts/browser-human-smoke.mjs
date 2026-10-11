@@ -10,7 +10,7 @@ import { selectConversation, captureSmokeFailure } from './smoke-navigation.mjs'
 
 // B-14–B-16: a local takeover fence and a lost native input receipt on one real Core turn.
 const faultMode = process.argv[2] ?? 'full';
-assert.ok(['full', 'nonconverging', 'longwait', 'lateObserve', 'staleOnly', 'offline'].includes(faultMode), 'known M1 takeover mode');
+assert.ok(['full', 'nonconverging', 'longwait', 'lateObserve', 'staleOnly', 'offline', 'condition'].includes(faultMode), 'known M1 takeover mode');
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const root = resolve(gui, '../..');
 const require = createRequire(join(gui, 'app/package.json'));
@@ -55,7 +55,7 @@ await new Promise(resolve => site.listen(0, '127.0.0.1', resolve));
 const siteUrl = `http://127.0.0.1:${site.address().port}/?token=SYNTHETIC_URL_05`;
 const secondUrl = `http://127.0.0.1:${site.address().port}/?token=SECOND_WORKSPACE_05`;
 const secret = 'SYNTHETIC_LOGIN_SECRET_05';
-let pageId, snapshotId, targetRef, phase = 'initial', issued = false;
+let pageId, snapshotId, targetRef, phase = 'initial', issued = false, waitParameters;
 const modelCalls = [];
 async function until(predicate, label, timeout = 60000) {
   const deadline = Date.now() + timeout;
@@ -80,6 +80,7 @@ const model = createServer(async (request, response) => {
           ? { operation: 'diagnostics', parameters: { pageId, kind: 'console', limit: 20 } }
           : phase === 'boundedDiagnostics'
             ? { operation: 'diagnostics', parameters: { pageId, kind: 'console', cursor: 0, limit: 20 } }
+          : phase.startsWith('condition') ? { operation: 'wait', parameters: { pageId, ...waitParameters } }
           : phase === 'longWait' ? { operation: 'wait', parameters: { pageId, timeoutMs: 20000 } }
           : { operation: 'observe', parameters: { pageId } };
     send({ tool_calls: [{ index: 0, id: `human-${phase}`, type: 'function',
@@ -287,6 +288,87 @@ try {
     assert.equal(siteFacts.posts, 1);
     events.closed = { nativeGone: true, posts: siteFacts.posts };
     checks.push('B-14: explicit Close releases nonconverging Native view without a second effect');
+  } else if (faultMode === 'condition') {
+    await app.evaluate(({ webContents }, id) => {
+      const c = webContents.fromId(id), forward = c.debugger.sendCommand.bind(c.debugger);
+      globalThis.__m1WaitReads = []; globalThis.__m1WaitStimulus = null;
+      c.debugger.sendCommand = async (method, params) => {
+        if (method === 'Accessibility.getPartialAXTree' && params.fetchRelatives === false) {
+          globalThis.__m1WaitReads.push({ at: Date.now(), backendNodeId: params.backendNodeId });
+          const stimulus = globalThis.__m1WaitStimulus; globalThis.__m1WaitStimulus = null;
+          if (stimulus) await c.executeJavaScript(stimulus);
+        }
+        return forward(method, params);
+      };
+    }, nativeId);
+    events.waitCases = [];
+    async function waitCase(name, condition, timeoutMs, stimulus, expectedError = null) {
+      phase = name; issued = false; waitParameters = { condition, timeoutMs };
+      const previous = (await thread()).turns.length;
+      await app.evaluate((_electron, stimulus) => { globalThis.__m1WaitStimulus = stimulus; }, stimulus);
+      await command('send', { projectId, threadId, text: `Wait for ${JSON.stringify(condition)}` });
+      const approval = page.locator('[data-interaction="approval"]');
+      await approval.waitFor(); assert.ok((await approval.innerText()).includes(condition.kind), 'GUI exposes the exact condition');
+      await approval.getByRole('button', { name: '允许一次' }).click();
+      const item = browserItem(await terminalTurn(previous));
+      const proof = { name, callId: item.callId, success: item.success,
+        condition, timeoutMs, contentItems: item.contentItems, structuredContent: item.structuredContent };
+      events.waitCases.push(proof);
+      if (expectedError) { assert.equal(item.success, false); assert.match(JSON.stringify(item), expectedError); }
+      else { assert.equal(item.success, true); const result=JSON.parse(item.contentItems[0].text);
+        assert.equal(result.wait.satisfied, true); assert.deepEqual(result.wait.condition, condition);
+        assert.equal(result.inputConfirmed, false); assert.equal(result.dispatch, 'not_sent');
+        if(name==='conditionName') assert.ok(result.wait.elapsedMs>=500 && result.wait.elapsedMs<4000, 'known state ends before the maximum delay'); }
+      assert.equal(siteFacts.posts, 0, 'waiting never sends page input or business effects');
+    }
+    await waitCase('conditionReady', {kind:'documentReady',state:'complete'}, 4000, null);
+    checks.push('B-10 wait: exact Core-approved document readiness returns a matched receipt without input');
+    await waitCase('conditionName', {kind:'accessibleName',ref:targetRef,name:'Ready after native state change'}, 4000,
+      `setTimeout(()=>document.getElementById('effect').textContent='Ready after native state change',700)`);
+    checks.push('B-10 wait: real Native AX polling observes a delayed exact name on the original Ref');
+    await waitCase('conditionTimeout', {kind:'accessibleName',ref:targetRef,name:'Never reached'}, 400, null, /condition_timeout/);
+    checks.push('B-10 wait: unmet condition returns an explicit bounded timeout and no false readiness');
+    await waitCase('conditionStale', {kind:'accessibleName',ref:targetRef,name:'Ready after native state change'}, 4000,
+      `document.getElementById('effect').replaceWith(document.getElementById('effect').cloneNode(true))`, /stale_ref|plan_stale/);
+    checks.push('B-10 wait: same-name replacement cannot satisfy the old Ref or receive input');
+    phase='freshAfterReplacement';issued=false;
+    const beforeFresh=(await thread()).turns.length;
+    await command('send',{projectId,threadId,text:'Observe the current replacement before a new condition wait'});
+    const fresh=JSON.parse(browserItem(await terminalTurn(beforeFresh)).contentItems[0].text);
+    targetRef=fresh.nodes.find(node=>node.name==='Ready after native state change' && node.ref)?.ref;
+    assert.match(targetRef,/^r[1-9]\d*$/);
+    phase='conditionTakeover';issued=false;
+    waitParameters={condition:{kind:'accessibleName',ref:targetRef,name:'Never reached during takeover'},timeoutMs:20000};
+    const previous=(await thread()).turns.length;
+    const readCount=await app.evaluate(()=>globalThis.__m1WaitReads.length);
+    await command('send',{projectId,threadId,text:'Wait for the exact condition, then interrupt it by local Human takeover'});
+    const approval=page.locator('[data-interaction="approval"]');await approval.waitFor();
+    await approval.getByRole('button',{name:'允许一次'}).click();
+    await until(()=>app.evaluate((_electron,n)=>globalThis.__m1WaitReads.length>n,readCount),'real active Native condition polling');
+    const started=Date.now();
+    const taken=await page.evaluate(({projectId,threadId,pageId})=>window.arealDesktop.preview({operation:'takeover',projectId,threadId,pageId}),{projectId,threadId,pageId});
+    assert.ok(Date.now()-started<2000,'local takeover does not wait for condition timeout');
+    await until(async()=>(await controlState()).browser?.control==='human','Human control after condition wait');
+    const fencedReads=await app.evaluate(()=>globalThis.__m1WaitReads.length);
+    await new Promise(resolve=>setTimeout(resolve,600));
+    assert.equal(await app.evaluate(()=>globalThis.__m1WaitReads.length),fencedReads,'no AX condition poll is sent after the local fence');
+    const stopped=browserItem(await terminalTurn(previous));assert.equal(stopped.execution.outcome,'unknown');
+    assert.equal(siteFacts.posts,0);
+    const inspection='Inspected the actual Core conditional wait, its Native AX call counts and local Human fence. Polling stopped; no input or site POST occurred. Historical wait remains UNKNOWN and is not replayed.';
+    await command('manage',{projectId,threadId,operation:'toolAcknowledge',itemId:stopped.id,inspection});
+    assert.equal((await thread()).turns.flatMap(turn=>turn.items).find(item=>item.id===stopped.id).execution.outcome,'unknown');
+    phase='conditionOldEpoch';issued=false;
+    const previousDenied=(await thread()).turns.length;
+    await command('send',{projectId,threadId,text:'Attempt the old condition Ref while Human still owns the Page'});
+    const denied=browserItem(await terminalTurn(previousDenied));assert.equal(denied.success,false);
+    assert.match(JSON.stringify(denied),/human_control|host_unavailable/);
+    assert.equal(await app.evaluate(()=>globalThis.__m1WaitReads.length),fencedReads,'old epoch cannot restart polling');
+    assert.equal(siteFacts.posts,0);
+    events.conditionTakeover={elapsedMs:Date.now()-started,immediateControl:taken.browser.control,
+      fencedReads,waitItemId:stopped.id,unknownPreserved:true,inspection,deniedCallId:denied.callId,posts:0};
+    checks.push('B-14 condition wait: actual Native AX polling stops on local Human takeover; old epoch cannot read or replay; historical UNKNOWN preserved');
+    events.nativeWaitReads=await app.evaluate(()=>globalThis.__m1WaitReads);
+    assert.ok(events.nativeWaitReads.length>=4, 'condition matching uses actual native backend identities');
   } else if (faultMode === 'longwait') {
     phase = 'longWait'; issued = false;
     const beforeSend = Date.now();

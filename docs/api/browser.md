@@ -4,7 +4,7 @@
 
 **设计契约，部分实现。** 当前支持 Browser-enabled Thread 或空闲旧 Thread 对已有原生页的显式认领、观察/截图/诊断、经 Core 准备和审批的 Ref/坐标动作、等待、导航、新页面与有界批量，以及本机接管和宿主缺失拒绝。实际集合通过 `describe` 发现；未公布的操作仍是提案。不改变现有 [Core UNKNOWN 规则](core.md#dynamic-tools)。
 
-当前实现从新聊天 Composer 的“浏览器”开关注册固定 `browser_v1` 工具包；空闲旧 Thread 可在预览中启用同一工具包。用户打开当前聊天的预览页后点击“让 Agent 检查当前页”，Main 在原 WebContentsView 上认领并经认证服务连接登记；模型回调由该 Thread 已绑定的 Core 连接承接。工具定义的 `operation:string` 保持可扩展包络；二次校验接受 `describe`（空参数）、`observe`（`pageId`、可选文档范围、Ref 与预算）、`capture`（当前视口）、`act`（pageId、snapshotId 与已公布的 Ref/截图坐标动作）和 `wait`（pageId、1–30000 毫秒）。观察使用有界原生 AX 读取，按实际 Frame 覆盖状态报告不可读部分，并在可用时提供 role、name、state、value 与父节点关联。Ref 绑定原生节点和代次；预算截断本身不使被省略的存活 Ref 失效。结果 URL 去除查询和片段。截图限制在 800 万像素、单边 4096 像素和 2 MiB PNG，使用现有 Core Blob 和工具媒体通道交给模型与聊天。已知敏感表单或不可读 Frame 存在时拒绝自动截图；这不是截图遮罩，也无法识别所有敏感内容。持久 Profile 尚未实现。人工接管、导航、Core/宿主换代会撤销读取；在途取消或超时不会自动重试。
+当前实现从新聊天 Composer 的“浏览器”开关注册固定 `browser_v1` 工具包；空闲旧 Thread 可在预览中启用同一工具包。用户打开当前聊天的预览页后点击“让 Agent 检查当前页”，Main 在原 WebContentsView 上认领并经认证服务连接登记；模型回调由该 Thread 已绑定的 Core 连接承接。工具定义的 `operation:string` 保持可扩展包络；二次校验接受 `describe`（空参数）、`observe`（`pageId`、可选文档范围、Ref 与预算）、`capture`（当前视口）、`act`（pageId、snapshotId 与已公布的 Ref/截图坐标动作）和 `wait`（pageId、1–30000 毫秒和可选 condition）。观察使用有界原生 AX 读取，按实际 Frame 覆盖状态报告不可读部分，并在可用时提供 role、name、state、value 与父节点关联。Ref 绑定原生节点和代次；预算截断本身不使被省略的存活 Ref 失效。结果 URL 去除查询和片段。截图限制在 800 万像素、单边 4096 像素和 2 MiB PNG，使用现有 Core Blob 和工具媒体通道交给模型与聊天。已知敏感表单或不可读 Frame 存在时拒绝自动截图；这不是截图遮罩，也无法识别所有敏感内容。持久 Profile 尚未实现。人工接管、导航、Core/宿主换代会撤销读取；在途取消或超时不会自动重试。
 
 已知敏感内容检查和视口测量在 Electron 隔离世界运行，网页脚本不能替换检查所用的 DOM 查询方法或视口 getter。未知敏感内容仍可能无法识别；网页始终是不可信输入。
 
@@ -28,7 +28,7 @@
 
 ## 1. 两条既有连接与一个新能力
 
-批量执行在既有 `browser_v1` 包络新增 `runBatch`，不修改持久化工具定义。参数为 `{pageId, snapshotId, steps}`，包含 1–8 步；每步为已有 `act` 动作（`{operation:"act", snapshotId, action}`）或有界等待（`{operation:"wait", timeoutMs}`）。所有步骤使用同一 Page 与已观察快照，不允许导航、新页面、任意代码、隐式网络工具或文件权限。截图坐标仅可用于首步，因为输入会使截图失效；已知等待总时长不能超过内部 29 秒执行预算。Core 准备并批准具体完整序列；Main 私有保存逐步计划，在每次派发前检查原生目标和控制 fence。结果包含逐步已确认回执与 `verification:not_checked`；后续确定拒绝时剩余步骤标为 `not_sent`。任一步不确定则整个工具为 UNKNOWN，并在 Core 错误详情保留已确认前缀。相同 call 身份共享运行中或已完成结果，参数变化拒绝。Preview 沿既有 Page operation 投影显示进度。
+批量执行在既有 `browser_v1` 包络新增 `runBatch`，不修改持久化工具定义。参数为 `{pageId, snapshotId, steps}`，包含 1–8 步；每步为已有 `act` 动作（`{operation:"act", snapshotId, action}`）或有界等待（`{operation:"wait", timeoutMs, condition?}`）。所有步骤使用同一 Page 与已观察快照，不允许导航、新页面、任意代码、隐式网络工具或文件权限。截图坐标仅可用于首步，因为输入会使截图失效；已知等待总时长不能超过内部 29 秒执行预算。Core 准备并批准具体完整序列；Main 私有保存逐步计划，在每次派发前检查原生目标和控制 fence。结果包含逐步已确认回执与 `verification:not_checked`；后续确定拒绝时剩余步骤标为 `not_sent`。任一步不确定则整个工具为 UNKNOWN，并在 Core 错误详情保留已确认前缀。相同 call 身份共享运行中或已完成结果，参数变化拒绝。Preview 沿既有 Page operation 投影显示进度。
 
 现有链路是 Core app-server ↔ 独立桌面适配器，以及该适配器 ↔ Electron Main 的认证本地服务连接；Renderer 不持有 Core 凭据。后者承载状态、客户端命令与有界的反向 Browser 请求、结果和取消，复用既有认证，不新增公开浏览器服务端口。
 
@@ -124,6 +124,8 @@ Ref 私有映射键至少含 Page generation、Frame identity、Frame document i
 Ref 动作准备与派发都验证目标仍连接、可见、可交互且 hit test 命中。布局可变时等待有界稳定，再检查；不使用页面脚本的 `.click()` 冒充真实输入。滚动/刷新可能改变有效条件，不能只比较一个全页 DOM revision。Canvas 坐标以**截图 bitmap → 页面 CSS viewport**的明确变换转换；不直接乘 DPR 猜测。缩放、视口或文档变化必须重新截图。
 
 当前截图坐标动作使用最新可见视口 `capture` 的 `observationId` 作为 `snapshotId`：`clickAt(x,y)`、`drag(fromX,fromY,toX,toY,steps)` 与 `pressAt(x,y,key)` 的坐标是截图 bitmap 整数像素，必须落在实际位图内；拖拽 `steps` 为 1–20。`describe` 公布当前支持的动作。Main 以实际 bitmap 和页面 CSS 尺寸转换为 CDP 输入坐标，将转换后的目标绑定到 Core 审批计划。转换统一使用可精确表示的 1/64 CSS 像素精度，避免 JSON 往返的浮点末位变化。Canvas 无 Ref 时必须使用此截图路径，不能编造 DOM selector。每次动作后都需重新截图才能继续按坐标输入。截图同时记录 CSS viewport、scroll、DPR、page zoom、GUI zoom、原生 DIP bounds 和 bitmap 尺寸；GUI Renderer 的 CSS bounds 按 GUI zoom 转为原生 DIP bounds。隐藏、最小化或零尺寸页面不提供自动截图。视口、缩放、scroll 或文档变化使旧截图和准备计划失效；稳定 Ref 仍重新检查 actionability。
+
+`wait` 可选择 `{kind:"documentReady",state:"interactive"|"complete"}` 或 `{kind:"accessibleName",ref,name}`；后者只匹配当前主文档已观察 Ref 的完整可访问名称，旧节点被替换时返回 `stale_ref`。条件随具体等待计划审批；超时不宣称条件成立。未提供 condition 时只做固定延时，不证明页面就绪，不使用全页 networkidle 或任意脚本。批量等待沿用同一 condition 及预算。
 
 ## 6. Core 审批与原生执行：两阶段，但不是事务
 

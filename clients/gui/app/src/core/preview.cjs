@@ -9,6 +9,7 @@ const { isDeepStrictEqual } = require('node:util');
 const { basename } = require('node:path');
 const { validatePreview } = require('@areal/workbench/desktop-contract');
 const { WorkspaceNetworkPolicy, loopback } = require('./browser-network.cjs');
+const { waitAction } = require('./browser-tool.cjs');
 const { validateEdit, mutate: mutateStyleTrial } = require('./browser-style-trial.cjs');
 
 function webUrl(value) {
@@ -1166,12 +1167,16 @@ class CorePreview {
     if (page.crashed || c.isDestroyed() || c.isDevToolsOpened()) throw new Error('plan_stale');
     return { page, c };
   }
-  async actionTarget(page, c, ref) {
+  refNode(page, ref) {
     const identity = [...page.refs].find(([, value]) => value === ref)?.[0];
     if (!identity) throw new Error('stale_ref');
     const [generation, documentEpoch, controlEpoch, frameId, backendNodeId] = JSON.parse(identity);
     if (generation !== page.pageGeneration || documentEpoch !== page.documentGeneration
       || controlEpoch !== page.controlEpoch || frameId !== 'main') throw new Error('stale_ref');
+    return { identity, backendNodeId };
+  }
+  async actionTarget(page, c, ref) {
+    const { identity, backendNodeId } = this.refNode(page, ref);
     const ax = await c.debugger.sendCommand('Accessibility.getPartialAXTree', { backendNodeId });
     const dom = await c.debugger.sendCommand('DOM.describeNode', { backendNodeId, depth: 2 });
     const isFileInput = value => value?.nodeName?.toUpperCase() === 'INPUT'
@@ -1226,7 +1231,8 @@ class CorePreview {
   batchStep(request, step) {
     return { ...request, operation: step.operation, parameters: step.operation === 'act'
       ? { pageId: request.pageId, snapshotId: step.snapshotId, action: step.action }
-      : { pageId: request.pageId, timeoutMs: step.timeoutMs } };
+      : { pageId: request.pageId, timeoutMs: step.timeoutMs,
+        ...(step.condition === undefined ? {} : { condition: step.condition }) } };
   }
   async prepareBatch(request) {
     const key = this.batchIdentity(request);
@@ -1462,14 +1468,16 @@ class CorePreview {
         target: target ? coordinate ? { ...target, captureId: capture.observationId,
           bitmapWidth: capture.bitmapWidth, bitmapHeight: capture.bitmapHeight }
           : { ref: request.parameters.action.ref, role: target.role, name: target.name, x: target.x, y: target.y } : null,
-        action: request.operation === 'act' ? request.parameters.action : { kind: 'wait', timeoutMs: request.parameters.timeoutMs },
+        action: request.operation === 'act' ? request.parameters.action : waitAction(request.parameters),
         pageGeneration: page.pageGeneration, documentEpoch: page.documentGeneration,
         controlEpoch: page.controlEpoch, viewportRevision: page.viewportRevision, viewportKey,
         browserHostId: this.browserHostId, hostGeneration: this.hostGeneration,
         threadId: request.threadId, turnId: request.turnId, callId: request.callId,
         expiresAt: Date.now() + 300000 };
       plan.fingerprint = createHash('sha256').update(JSON.stringify({ plan, targetIdentity: target?.identity })).digest('hex');
-      page.plans.set(plan.preparedActionId, { plan, targetIdentity: target?.identity, pageUrl: url.href });
+      page.plans.set(plan.preparedActionId, { plan, targetIdentity: target?.identity, pageUrl: url.href,
+        waitIdentity: request.parameters.condition?.kind === 'accessibleName'
+          ? this.refNode(page, request.parameters.condition.ref).identity : null });
       return { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration,
         projectId: request.projectId, threadId: request.threadId, turnId: request.turnId, callId: request.callId,
         pageId: page.id, browserHostId: this.browserHostId, hostGeneration: this.hostGeneration,
@@ -1505,7 +1513,7 @@ class CorePreview {
         && page.lastCapture?.observationId !== saved.plan.target?.captureId)
       || saved.plan.snapshotId !== (request.operation === 'act' ? request.parameters.snapshotId : null)
       || !isDeepStrictEqual(saved.plan.action, request.operation === 'act'
-        ? request.parameters.action : { kind: 'wait', timeoutMs: request.parameters.timeoutMs })) throw new Error('plan_stale');
+        ? request.parameters.action : waitAction(request.parameters))) throw new Error('plan_stale');
     page.plans.delete(approved.preparedActionId);
     if (page.activeRead || page.activePrepare || page.activeAction || (page.activeBatch && !request.batchGuard)) throw new Error('not_sent');
     let cancelled;
@@ -1522,11 +1530,55 @@ class CorePreview {
     const stepTimeout = request.operation === 'wait'
       ? Math.min(30000, request.parameters.timeoutMs + 1000)
       : request.parameters.action.kind === 'drag' ? 12000 : 5000;
+    let waitResult;
     const deadline = setTimeout(() => action.cancel(), request.batchDeadline
       ? Math.max(1, Math.min(stepTimeout, request.batchDeadline - performance.now())) : stepTimeout);
     try {
       if (request.operation === 'wait') {
-        await Promise.race([new Promise(resolve => setTimeout(resolve, request.parameters.timeoutMs)), stop]);
+        const started = performance.now(), expires = started + request.parameters.timeoutMs;
+        const condition = request.parameters.condition;
+        if (!condition) {
+          await Promise.race([new Promise(resolve => setTimeout(resolve, request.parameters.timeoutMs)), stop]);
+        } else {
+          if (!c.debugger.isAttached()) c.debugger.attach('1.3');
+          const current = () => {
+            this.actionPage(request);
+            if (action.cancelled || request.batchGuard?.() || c.getURL() !== saved.pageUrl
+              || page.documentGeneration !== saved.plan.documentEpoch) throw new Error('plan_stale');
+          };
+          const read = async promise => {
+            try { return await Promise.race([nativeWithin(promise, expires), stop]); }
+            catch (error) {
+              current();
+              if (performance.now() >= expires) throw new Error('condition_timeout');
+              throw error;
+            }
+          };
+          for (;;) {
+            current();
+            let matched;
+            if (condition.kind === 'documentReady') {
+              const state = await read(readIsolated(c, 'document.readyState'));
+              matched = state === condition.state || (condition.state === 'interactive' && state === 'complete');
+            } else {
+              const node = this.refNode(page, condition.ref);
+              if (node.identity !== saved.waitIdentity) throw new Error('stale_ref');
+              const ax = await read(c.debugger.sendCommand('Accessibility.getPartialAXTree',
+                { backendNodeId: node.backendNodeId, fetchRelatives: false }));
+              const value = ax.nodes?.find(value => value.backendDOMNodeId === node.backendNodeId && !value.ignored);
+              if (!value) throw new Error('stale_ref');
+              matched = value.name?.value === condition.name;
+            }
+            current();
+            if (matched) break;
+            const remaining = expires - performance.now();
+            if (remaining <= 0) throw new Error('condition_timeout');
+            await Promise.race([new Promise(resolve => setTimeout(resolve, Math.min(100, remaining))), stop]);
+            if (performance.now() >= expires) throw new Error('condition_timeout');
+          }
+        }
+        waitResult = { condition: condition ?? null, satisfied: true,
+          elapsedMs: Math.round(performance.now() - started) };
       } else {
         if (!c.debugger.isAttached()) c.debugger.attach('1.3');
         const coordinate = coordinateKinds.has(request.parameters.action.kind);
@@ -1591,7 +1643,7 @@ class CorePreview {
         pageId: page.id, browserHostId: this.browserHostId, hostGeneration: this.hostGeneration,
         pageGeneration: page.pageGeneration, controlEpoch: page.controlEpoch,
         dispatch: action.dispatched ? 'confirmed' : 'not_sent', inputConfirmed: action.dispatched,
-        verification: 'not_checked',
+        verification: 'not_checked', ...(waitResult ? { wait: waitResult } : {}),
         preparedActionId: saved.plan.preparedActionId };
     } catch (error) {
       if (action.dispatched) throw new Error('outcome_unknown');

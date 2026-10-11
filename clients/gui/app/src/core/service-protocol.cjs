@@ -324,6 +324,10 @@ class DesktopService {
       actions: { ref: ['click', 'fill', 'press'], screenshot: ['clickAt', 'drag', 'pressAt'],
         screenshotCoordinates: 'bitmap pixels from the latest viewport capture; capture observationId is snapshotId',
         keyboard: ['Enter', 'Tab', 'Escape', 'Backspace', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'] },
+      waits: { timeoutMs: [1, 30000], conditions: ['documentReady', 'accessibleName'],
+        documentReady: '{kind:documentReady,state:interactive|complete}',
+        accessibleName: '{kind:accessibleName,ref,name}; exact current AX name; stale Ref refused',
+        withoutCondition: 'bounded delay only; not page readiness' },
       pages: [...claim.pages.keys()] });
     const pageClaim = claim.pages.get(input.parameters.pageId);
     if (!pageClaim) return browserFailure('wrong_page', 'Page does not belong to this thread');
@@ -380,7 +384,8 @@ class DesktopService {
       if (phase === 'prepare') return { error: result.error, dispatch: 'not_sent' };
       const hint = { human_control: 'Human controls this page', plan_stale: 'Page or target changed; observe again before a new action',
         stale_ref: 'Target changed; observe again', human_takeover_required: 'Use human takeover for this page',
-        not_sent: 'Target unavailable before input; observe again' }[result.error] ?? 'Page unavailable';
+        not_sent: 'Target unavailable before input; observe again',
+        condition_timeout: 'The requested page condition was not observed before timeout' }[result.error] ?? 'Page unavailable';
       if (input.operation === 'runBatch') return { ...browserFailure(result.error, hint),
         structuredContent: { code: result.error, dispatch: 'not_sent', receipts: result.receipts ?? [],
           failedStep: result.failedStep, remaining: 'not_sent', remainingSteps: result.remainingSteps } };
