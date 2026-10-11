@@ -134,6 +134,8 @@ Side 的 `conversation.kind=side` 与 `policy.kind=sideReadOnlyV1` 是持久角�
 
 已完成轮次的 GUI 选区默认传该轮 `after` 锚点；流式用户引文使用首问受理时的最新持久观察。富文本显示无法直接映射到 canonical 文本时，即使回复已完成，GUI 仍将其标成未确认 `userQuote`。单选区原文超过 16 KiB，或转义后无法装入初始包，返回 `SELECTION_TOO_LARGE`。初始模型包按序列化 UTF-8 字节限制在 32 KiB；证据页的 `maxBytes` 计入整个序列化结果，预算不足时明确拒绝。已有 Side 再从选区发起会打开新草稿，旧快照保持不变。
 
+GUI 可从 Side 的一条回复中选择文字，或显式选择整条回复，预览并编辑附有 Side 与来源快照说明的文本。确认时按捕获的服务实例、项目、来源会话和 Side 归属核对目标，在最新主草稿末尾追加并用本地 insertionId 去重；现有附件与模型选择保持原状。来源推进时显示旧快照提示，来源归档或目标改变时保留预览供复制。此操作只改本地草稿，不调用发送、排队或引导接口，也不会恢复归档。
+
 `areal/conversation/list {view?,sourceThreadId?,includeArchived?,limit?,cursor?}` 按 `main`（默认）、`side` 或 `all` 分类，默认不含归档，`limit` 为 1–100（默认 30）。`main` 只含普通主会话和 Fork，不含委派 Worker 或 Side；`sourceThreadId` 仅适用于 `side`/`all`。按 `createdAt,id` 稳定排序，游标绑定身份与筛选条件，跨筛选使用会拒绝。旧 `thread/list` 合同不变；GUI 主任务列表使用新接口并显式包含归档以支持归档视图，相关讨论面板按来源分页读取，手动刷新可发现其他客户端新建的讨论。
 
 空闲 Side 可用 `areal/thread/archive {threadId}` 持久归档；活动轮次归档会拒绝。`areal/conversation/unarchive {requestId,threadId}` 幂等恢复已归档 Side 和完整历史，不自动发问。读取或订阅归档 Side 不会恢复它，归档期间发送仍被拒绝。来源 Stop 或归档不级联停止或删除 Side；关闭相关讨论面板只隐藏视图。已发送内容由 Core 在 GUI 或 Core 重启后恢复，未发送草稿不承诺跨进程保存。

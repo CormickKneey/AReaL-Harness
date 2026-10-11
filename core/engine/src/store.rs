@@ -305,6 +305,11 @@ impl Store {
                     let turns = archive::read_segment(&root, &history_seed.snapshot_id)?.turns;
                     visit(&serde_json::to_value(turns)?, &mut keep);
                 }
+                if let Some(areal_protocol::Conversation::Side { reference_snapshot, .. }) = &record.thread.conversation {
+                    history.insert(reference_snapshot.snapshot_id.clone());
+                    let turns = archive::read_segment(&root, &reference_snapshot.snapshot_id)?.turns;
+                    visit(&serde_json::to_value(turns)?, &mut keep);
+                }
             }}
             let mut deleted=0;let mut reclaimed=0;let mut retained=0;
             for e in std::fs::read_dir(root.join("blobs"))?{let e=e?;let name=e.file_name().to_string_lossy().into_owned();if name.len()!=64||!name.bytes().all(|c|c.is_ascii_hexdigit())||!e.file_type()?.is_file(){continue;}

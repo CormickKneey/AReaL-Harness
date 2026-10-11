@@ -82,11 +82,18 @@ async fn side_list_archive_and_explicit_reopen_survive_restart() {
     let independent = call(&mut socket, 45, "turn/start", json!({"threadId":side_id,"input":[{"type":"text","text":"Still here?"}]})).await;
     assert!(independent["result"]["turn"].is_object(), "{independent}");
     completed(&mut socket, side_id).await;
+    let drained = call(&mut socket, 46, "areal/server/drain", json!({"strategy":"ifIdle","timeoutMs":0})).await;
+    assert_eq!(drained["result"]["restartSafe"], true, "{drained}");
+    let gc = call(&mut socket, 47, "areal/server/gc", json!({})).await;
+    assert!(gc.get("result").is_some(), "{gc}");
+    let evidence = call(&mut socket, 48, "areal/side/context/read", json!({"threadId":side_id})).await;
+    assert!(evidence["result"]["complete"].is_boolean(), "{evidence}");
     drop(socket); stop.cancel(); server.await.unwrap().unwrap(); engine.shutdown().await; drop(engine);
     let reopened = Engine::open(dir.path(), model, Limits::default()).unwrap();
     let side = reopened.read(side_id, true).await.unwrap();
     assert!(!side.desktop.unwrap().archived);
     assert_eq!(side.turns.len(), 2);
+    assert!(reopened.side_context_read(side_id, None, None, None).await.is_ok());
 }
 
 #[tokio::test]
@@ -418,7 +425,7 @@ async fn fork_is_durable_idle_and_replays_plain_text_prefix() {
     socket.send(Wire::Text(json!({"method":"initialized"}).to_string().into())).await.unwrap();
     let source = call(&mut socket, 2, "thread/start", json!({"cwd":"/workspace"})).await;
     let source_id = source["result"]["thread"]["id"].as_str().unwrap();
-    call(&mut socket, 3, "turn/start", json!({"threadId":source_id,"input":[{"type":"text","text":format!("first {}", "a".repeat(9000))}]})).await;
+    call(&mut socket, 3, "turn/start", json!({"threadId":source_id,"input":[{"type":"text","text":format!("first {}{}", "a🙂".repeat(1500), "\0".repeat(300))}]})).await;
     completed(&mut socket, source_id).await;
     call(&mut socket, 4, "turn/start", json!({"threadId":source_id,"input":[{"type":"text","text":format!("second {}", "b".repeat(9000))}]})).await;
     completed(&mut socket, source_id).await;
@@ -490,6 +497,28 @@ async fn fork_is_durable_idle_and_replays_plain_text_prefix() {
     let inherited_ids: Vec<_> = inherited["result"]["data"].as_array().unwrap().iter()
         .map(|entry| entry["sourceItemId"].clone()).collect();
     assert_eq!(inherited_ids, expected_ids);
+    // 单个历史 Item 超出页预算时，分片必须能按字节重组成完整 JSON。
+    let mut cursor = None;
+    let mut reconstructed = String::new();
+    let mut fragment_count = 0;
+    for _ in 0..1024 {
+        let page = call(&mut socket, 120, "areal/conversation/history", json!({"threadId":fork_id,
+            "view":"inherited","cursor":cursor,"maxBytes":512})).await;
+        assert!(page.get("error").is_none(), "{page}");
+        assert!(serde_json::to_vec(&page["result"]).unwrap().len() <= 512, "{page}");
+        for entry in page["result"]["data"].as_array().unwrap() {
+            if entry["sourceItemId"] == expected_ids[0] {
+                if let Some(part) = entry["fragment"]["text"].as_str() {
+                    fragment_count += 1;
+                    reconstructed.push_str(part);
+                }
+            }
+        }
+        cursor = page["result"]["nextCursor"].as_str().map(str::to_owned);
+        if cursor.is_none() { break; }
+    }
+    assert!(fragment_count > 1);
+    assert_eq!(serde_json::from_str::<Value>(&reconstructed).unwrap(), inherited["result"]["data"][0]);
     call(&mut socket, 10, "turn/start", json!({"threadId":fork_id,"input":[{"type":"text","text":"fork only"}]})).await;
     completed(&mut socket, fork_id).await;
     let requests = model.0.lock().unwrap();
@@ -522,6 +551,10 @@ async fn fork_is_durable_idle_and_replays_plain_text_prefix() {
     assert!(continued.iter().any(|message| message.text_content().contains("after compact")));
     assert!(!continued.iter().any(|message| message.text_content().contains("LATER_SENTINEL")));
     drop(requests);
+    let second_compact = call(&mut socket, 34, "areal/context/compact", json!({"threadId":fork_id})).await;
+    assert!(second_compact["result"]["checkpoint"].is_object(), "{second_compact}");
+    assert_eq!(second_compact["result"]["data"].as_array().unwrap().iter()
+        .filter(|entry| entry["text"].as_str().is_some_and(|text| text.starts_with("first "))).count(), 1);
     let inherited_anchor = before["result"]["thread"]["turns"][0]["id"].as_str().unwrap();
     let nested = call(&mut socket, 14, "areal/thread/fork", json!({"requestId":"nested-key","sourceThreadId":fork_id,
         "anchor":{"turnId":inherited_anchor,"boundary":"after"},"workspaceMode":"sharedCurrent"})).await;
@@ -547,6 +580,10 @@ async fn fork_is_durable_idle_and_replays_plain_text_prefix() {
     assert!(nested_text.contains("first") && !nested_text.contains("second") && !nested_text.contains("fork only"), "{nested_text}");
     let source_after = call(&mut socket, 11, "thread/read", json!({"threadId":source_id,"includeTurns":true})).await;
     assert_eq!(source_after["result"]["thread"]["turns"].as_array().unwrap().len(), 5);
+    let source_archived = call(&mut socket, 32, "areal/thread/archive", json!({"threadId":source_id})).await;
+    assert_eq!(source_archived["result"]["archived"], true, "{source_archived}");
+    let retained = call(&mut socket, 33, "areal/conversation/history", json!({"threadId":nested_id,"view":"inherited","maxBytes":512})).await;
+    assert!(retained["result"]["data"].is_array(), "{retained}");
     let archived = call(&mut socket, 30, "areal/thread/archive", json!({"threadId":fork_id})).await;
     assert_eq!(archived["result"]["archived"], true, "{archived}");
     let after_archive = call(&mut second, 31, "areal/request/read", json!({"requestId":"fork-key"})).await;

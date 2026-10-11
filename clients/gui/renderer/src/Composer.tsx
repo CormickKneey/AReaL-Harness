@@ -334,6 +334,7 @@ export function Composer({
         onChange={(value) => {
           setText(value);
           localStorage.setItem(key, value);
+          localStorage.setItem(`${key}:version`, String(Number(localStorage.getItem(`${key}:version`) ?? 0) + 1));
         }}
         onSubmit={(value) => {
           void submit(value);

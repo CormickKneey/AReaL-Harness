@@ -155,6 +155,10 @@ async fn fork_creation_faults_recover_only_committed_targets() {
         let snapshots = std::fs::read_dir(dir.path().join("history"))
             .map(|entries| entries.count()).unwrap_or(0);
         assert_eq!(snapshots, if stage == store::ForkFault::BeforeSnapshot { 0 } else { 1 });
+        engine.store.collect_blobs().await.unwrap();
+        let retained_snapshots = std::fs::read_dir(dir.path().join("history"))
+            .map(|entries| entries.count()).unwrap_or(0);
+        assert_eq!(retained_snapshots, usize::from(committed));
         if stage == store::ForkFault::AfterPersistError {
             let receipt = engine.find_request("owner", "stage-key").await.unwrap();
             let target = receipt["data"][0]["result"]["threadId"].as_str().unwrap();
@@ -173,6 +177,65 @@ async fn fork_creation_faults_recover_only_committed_targets() {
         assert_eq!(threads.len(), if committed { 2 } else { 1 });
         restored.shutdown().await;
     }
+}
+
+struct FileModel;
+#[async_trait::async_trait]
+impl Model for FileModel {
+    fn name(&self) -> &str { "file-fixture" }
+    fn capabilities(&self) -> model::ModelCapabilities {
+        model::ModelCapabilities { input: vec![areal_protocol::Modality::Text, areal_protocol::Modality::File],
+            output: vec![areal_protocol::Modality::Text], context_window_tokens: None,
+            max_output_tokens: None, summary_output_tokens: None }
+    }
+    async fn stream(&self, _: Vec<Message>) -> anyhow::Result<model::ModelStream> {
+        Ok(Box::pin(futures_util::stream::pending()))
+    }
+}
+
+#[tokio::test]
+async fn inherited_media_survives_release_gc_and_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = Engine::open(dir.path(), Arc::new(FileModel), Limits::default()).unwrap();
+    let mut source = engine.create("/fixture".into()).await.unwrap();
+    let media = engine.upload_blob(source.id.clone(), "owner".into(), None,
+        "text/plain".into(), b"inherited original bytes".to_vec()).await.unwrap();
+    let raw = engine.store.save_blob("application/json".into(), br#"{"original":"tool result"}"#.to_vec()).await.unwrap();
+    source = engine.read(&source.id, true).await.unwrap();
+    let anchor = id();
+    source.turns.push(Turn { started_at: None, completed_at: None, duration_ms: None, goal: None,
+        configuration: None, instruction_snapshot: None, id: anchor.clone(), status: TurnStatus::Completed,
+        error: None, usage: None, items: vec![Item::UserMessage { id: id(), content: vec![
+            Input::File { url: media.uri.clone(), name: Some("evidence.txt".into()), mime_type: Some("text/plain".into()) }
+        ] }, serde_json::from_value(json!({"type":"dynamicToolCall","id":id(),"tool":"read",
+            "callId":"raw-result","arguments":{},"status":"completed","success":true,
+            "contentItems":[{"type":"inputText","text":"done"}],
+            "execution":{"runtimeEpoch":"epoch","scopeId":"scope","operationId":"operation",
+                "outcome":"succeeded","resultSnapshot":raw}})).unwrap()] });
+    engine.persist(&source).await.unwrap();
+    engine.raw_cell(&source.id).await.unwrap().state.lock().await.thread = source.clone();
+    let fork = engine.fork_thread("owner".into(), areal_protocol::desktop::ForkThread {
+        request_id: "media-fork".into(), source_thread_id: source.id.clone(),
+        anchor: areal_protocol::desktop::ForkAnchor { turn_id: anchor, boundary: "after".into() },
+        workspace_mode: "sharedCurrent".into(), target: None,
+    }).await.unwrap();
+    let target_upload = engine.upload_blob(fork.id.clone(), "owner".into(), None,
+        "text/plain".into(), b"inherited original bytes".to_vec()).await.unwrap();
+    assert_eq!(target_upload.uri, media.uri);
+    assert!(matches!(engine.release_upload(fork.id.clone(), media.uri.clone()).await, Err(Error::Invalid(_))));
+    assert_eq!(engine.thread_blob(&fork.id, media.uri.rsplit('/').next().unwrap()).await.unwrap(), b"inherited original bytes");
+    assert_eq!(engine.thread_blob(&fork.id, raw.uri.rsplit('/').next().unwrap()).await.unwrap(), br#"{"original":"tool result"}"#);
+    // 来源释放热状态后，GC 仍须沿目标快照保留媒体和原始引用。
+    engine.archive_thread(source.id.clone()).await.unwrap();
+    engine.store.collect_blobs().await.unwrap();
+    engine.shutdown().await;
+    drop(engine);
+    let reopened = Engine::open(dir.path(), Arc::new(FileModel), Limits::default()).unwrap();
+    assert_eq!(reopened.thread_blob(&fork.id, media.uri.rsplit('/').next().unwrap()).await.unwrap(), b"inherited original bytes");
+    assert_eq!(reopened.thread_blob(&fork.id, raw.uri.rsplit('/').next().unwrap()).await.unwrap(), br#"{"original":"tool result"}"#);
+    let page = reopened.fork_history(&fork.id, None, Some(1024)).await.unwrap();
+    assert_eq!(page["data"][0]["item"]["content"][0]["url"], media.uri);
+    reopened.shutdown().await;
 }
 
 #[tokio::test]

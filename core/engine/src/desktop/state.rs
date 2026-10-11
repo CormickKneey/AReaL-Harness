@@ -161,13 +161,16 @@ impl Engine {
         let Some(areal_protocol::Conversation::Fork { history_seed, .. }) = thread.conversation else {
             return Err(invalid("inherited history requires a Fork"));
         };
-        let index = match cursor {
+        let (index, offset) = match cursor {
             Some(value) => {
-                let (id, index) = value.rsplit_once(':').ok_or_else(|| invalid("invalid history cursor"))?;
+                let (prefix, tail) = value.rsplit_once(':').ok_or_else(|| invalid("invalid history cursor"))?;
+                let (id, index, offset) = if let Some((id, index)) = prefix.rsplit_once(':') {
+                    (id, index, tail.parse::<usize>().map_err(invalid)?)
+                } else { (prefix, tail, 0) };
                 if id != history_seed.snapshot_id { return Err(invalid("invalid history cursor")); }
-                index.parse::<usize>().map_err(invalid)?
+                (index.parse::<usize>().map_err(invalid)?, offset)
             }
-            None => 0,
+            None => (0, 0),
         };
         let mut entries = Vec::new();
         let (turns, source_ids) = self.store.read_fork_snapshot_with_sources(&history_seed.snapshot_id)
@@ -178,20 +181,55 @@ impl Engine {
                     "sourceTurnId":turn.id,"sourceItemId":item.id(),"item":item}));
             }
         }
-        if index > entries.len() { return Err(invalid("invalid history cursor")); }
+        if index > entries.len() || index == entries.len() && offset != 0 { return Err(invalid("invalid history cursor")); }
+        let page_for = |data: Vec<Value>, next: Option<String>| json!({
+            "snapshotId":history_seed.snapshot_id,"data":data,"complete":next.is_none(),"nextCursor":next
+        });
         let mut data = Vec::new();
-        let mut size = 0;
-        for entry in entries.iter().skip(index) {
-            let bytes = serde_json::to_vec(entry).map_err(invalid)?.len();
-            if bytes > max_bytes { return Err(Error::Exhausted("history item exceeds page budget".into())); }
-            if size + bytes > max_bytes { break; }
-            size += bytes;
+        for (position, entry) in entries.iter().enumerate().skip(index) {
+            let serialized = serde_json::to_string(entry).map_err(invalid)?;
+            let next = (position + 1 < entries.len()).then(|| format!("{}:{}", history_seed.snapshot_id, position + 1));
+            if position == index && offset > 0 || page_for(vec![entry.clone()], next.clone()).to_string().len() > max_bytes {
+                if offset > serialized.len() || !serialized.is_char_boundary(offset) { return Err(invalid("invalid history cursor")); }
+                // 分片覆盖完整条目 JSON；按整个响应的编码字节数预算，避免转义字符放大帧。
+                let remaining = &serialized[offset..];
+                let fragment_page = |part: &str| {
+                    let next_offset = offset + part.len();
+                    let next = if next_offset < serialized.len() { Some(format!("{}:{}:{}", history_seed.snapshot_id, position, next_offset)) }
+                        else if position + 1 < entries.len() { Some(format!("{}:{}", history_seed.snapshot_id, position + 1)) } else { None };
+                    page_for(vec![json!({"sourceThreadId":entry["sourceThreadId"],
+                        "sourceTurnId":entry["sourceTurnId"],"sourceItemId":entry["sourceItemId"],"fragment":{
+                        "text":part,"offsetUtf8":offset,"nextOffsetUtf8":next_offset,"totalBytes":serialized.len()
+                    }})], next)
+                };
+                let mut low = 0;
+                let mut high = remaining.len().min(max_bytes);
+                let mut best = None;
+                while low <= high {
+                    let mid = low + (high - low) / 2;
+                    let mut end = mid;
+                    while !remaining.is_char_boundary(end) { end -= 1; }
+                    let page = fragment_page(&remaining[..end]);
+                    if page.to_string().len() <= max_bytes {
+                        best = Some((page, end));
+                        low = mid + 1;
+                    } else if mid == 0 { break; } else { high = mid - 1; }
+                }
+                let (page, consumed) = best.ok_or_else(|| invalid("history page budget too small"))?;
+                if consumed == 0 && !remaining.is_empty() { return Err(invalid("history page budget too small")); }
+                if data.is_empty() { return Ok(page); }
+                break;
+            }
+            let mut candidate = data.clone();
+            candidate.push(entry.clone());
+            if page_for(candidate, next).to_string().len() > max_bytes { break; }
             data.push(entry.clone());
         }
         let next = index + data.len();
-        Ok(json!({"snapshotId":history_seed.snapshot_id,"data":data,
-            "nextCursor":(next < entries.len()).then(||format!("{}:{}",history_seed.snapshot_id,next)),
-            "complete":next == entries.len()}))
+        let cursor = (next < entries.len()).then(||format!("{}:{}",history_seed.snapshot_id,next));
+        let page = page_for(data, cursor);
+        if page.to_string().len() > max_bytes { return Err(invalid("history page budget too small")); }
+        Ok(page)
     }
     /// 空闲旧会话只追加部署固定 Browser 包，受理回执与工具表同一快照提交。
     pub async fn attach_browser_tools(
