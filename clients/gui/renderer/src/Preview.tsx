@@ -4,7 +4,7 @@ import {
   BrowserLoadErrorState,
 } from "./EmbeddedBrowserPaneParts.js";
 // Core owns isolated native pages; the copied ZCode parts own the presentation.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "./components/ui/button.js";
 import type { PlatformServices, Data } from "./services.js";
 import { call } from "./services.js";
@@ -61,6 +61,13 @@ export function Preview({
   const [annotationBusyOwner, setAnnotationBusyOwner] = useState<string | null>(null);
   const annotationBusy = annotationBusyOwner === owner;
   const annotationControl = useRef<HTMLButtonElement>(null);
+  const annotationFocusOwner = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (annotationFocusOwner.current !== owner) { annotationFocusOwner.current = null; return; }
+    if (annotationBusy || annotating) return;
+    annotationFocusOwner.current = null;
+    annotationControl.current?.focus();
+  }, [owner, annotationBusy, annotating]);
   const [styleTrialState, setStyleTrialState] = useState<{ owner: string; draft: StyleTrialDraft | null }>(() =>
     ({ owner, draft: styleTrialDrafts.get(owner) ?? null }));
   const styleTrial = styleTrialState.owner === owner ? styleTrialState.draft : styleTrialDrafts.get(owner) ?? null;
@@ -360,7 +367,7 @@ export function Preview({
       await services.preview({ operation: 'endRegion', projectId, threadId,
         pageId: annotating.capture.pageId, captureId: annotating.capture.captureId });
       updateAnnotation(null);
-      if (mounted.current && current.current === owner) annotationControl.current?.focus();
+      if (mounted.current && current.current === owner) annotationFocusOwner.current = owner;
     } catch (e) { if (mounted.current && current.current === owner) setError(e instanceof Error ? e.message : String(e)); }
     finally { setAnnotationBusyOwner(value => value === owner ? null : value); }
   };
