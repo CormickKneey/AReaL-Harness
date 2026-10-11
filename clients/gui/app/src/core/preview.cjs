@@ -565,6 +565,7 @@ class CorePreview {
       await Promise.race([c.debugger.sendCommand('Network.enable', { maxPostDataSize: 0 }), cancelled]);
       // An indirect Agent click may open an <input type=file> chooser. Keep
       // Chromium's chooser suppressed for the entire Agent control epoch.
+      await Promise.race([c.debugger.sendCommand('Page.enable'), cancelled]);
       await Promise.race([c.debugger.sendCommand('Page.setInterceptFileChooserDialog', { enabled: true }), cancelled]);
       page.fileChooserIntercepted = true;
       if (!this.pageStillOwned(page) || page.claiming !== claim || page.control !== 'agent'
@@ -1202,6 +1203,7 @@ class CorePreview {
   }
   async prepareNavigation(request) {
     const { page, c } = this.actionPage(request);
+    if (page.needsObservation) throw new Error('stale_ref');
     if (page.activeRead || page.activePrepare || page.activeAction
       || this.workspaceOutstanding(page.projectId, page.threadId) >= 16)
       throw new Error('not_sent');
@@ -1396,7 +1398,6 @@ class CorePreview {
         const id = randomUUID();
         child = this.create(pageKey(page.coreInstanceId, page.projectId, page.threadId, id), page.projectId, page.threadId,
           { id, openerId: page.id, origin: 'agent' });
-        child.control = 'agent'; child.controlEpoch = page.controlEpoch;
         child.approvedNavigation = target; child.url = target;
         action.dispatched = true;
         await Promise.race([child.view.webContents.loadURL(target), stopped]);
@@ -1404,6 +1405,13 @@ class CorePreview {
       if (action.cancelled || !this.pageStillOwned(page) || !this.owns(page.projectId, page.threadId)
         || page.controlEpoch !== approved.controlEpoch || (child && !this.pageStillOwned(child)))
         throw new Error('outcome_unknown');
+      if (child) {
+        const claimed = await Promise.race([this.claim(page.projectId, page.threadId, child.id), stopped]);
+        if (action.cancelled || !this.pageStillOwned(page) || !this.owns(page.projectId, page.threadId)
+          || page.controlEpoch !== approved.controlEpoch || !this.pageStillOwned(child)
+          || child.control !== 'agent' || child.controlEpoch !== claimed.controlEpoch)
+          throw new Error('outcome_unknown');
+      }
       this.changed(child ?? page);
       return { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration,
         projectId: request.projectId, threadId: request.threadId, turnId: request.turnId,
@@ -1414,7 +1422,11 @@ class CorePreview {
         url: target, dispatch: 'confirmed' };
     } catch (error) {
       page.approvedNavigation = null;
-      if (child) child.approvedNavigation = null;
+      if (child) {
+        child.approvedNavigation = null;
+        child.claiming?.cancel();
+        if (child.control === 'agent') this.revoke(child);
+      }
       if (action.dispatched) throw new Error('outcome_unknown');
       throw error;
     } finally {

@@ -98,7 +98,7 @@ Browser Workspace 绑定 `(coreInstanceId, projectId, threadId)`。首期每 Thr
 
 Controller 提供**原子 snapshot + subscribe**，UI 先安装 snapshot 的序号，再消费后续增量。发现序号缺口就重取，不能靠独立 read 和 subscribe 假设无窗口。事件至多携带元数据；DOM、图像和网络正文按需读取，不广播。
 
-桌面 Main 的唯一 Page Map 持有原生对象。可信主视图通过 `preview.subscribe` 一次安装监听并取得快照；后续事件只携带 Page 元数据，序号缺口重新订阅。人工新建、切换和关闭是主视图意图；关闭人工或未知来源页必须带明确用户意图。`browser_v1` 的 `navigate` / `newPage` 先只读准备，再经 Core 审批，执行时按 Page ID 和代次路由。`newPage` 的 `pageId` 指 opener，成功回执给出新 Page ID。网页弹窗只有近期、一次性的本地人工输入才能进入同一临时上下文；其他原生开窗请求被拒绝。
+桌面 Main 的唯一 Page Map 持有原生对象。可信主视图通过 `preview.subscribe` 一次安装监听并取得快照；后续事件只携带 Page 元数据，序号缺口重新订阅。人工新建、切换和关闭是主视图意图；关闭人工或未知来源页必须带明确用户意图。`browser_v1` 的 `navigate` / `newPage` 先只读准备，再经 Core 审批，执行时按 Page ID 和代次路由。`newPage` 的 `pageId` 指 opener；子页加载后沿同一 claim 路径建立独立 controlEpoch、诊断和原生文件选择拦截，成功回执给出新 Page ID 和子页代次。认领或交还后，导航和新建页也必须先有新的 observe/capture。网页弹窗只有近期、一次性的本地人工输入才能进入同一临时上下文；其他原生开窗请求被拒绝。
 
 事件包括 `pageAdded/pageChanged/pageRemoved`、`controlChanged`、`operationChanged`、`hostAvailabilityChanged`、`viewportChanged`、`diagnosticsAvailable`。GUI-only 投影可在原有本地状态通道中分发；持久工具事件仍使用 Core Item。只对所属 Thread/项目/window 授权接收者广播。
 

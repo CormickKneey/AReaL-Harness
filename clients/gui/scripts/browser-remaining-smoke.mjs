@@ -10,7 +10,7 @@ import { selectConversation, captureSmokeFailure } from './smoke-navigation.mjs'
 
 // Remaining M1 synthetic Native boundaries: popup, storage, policy, and quota.
 const mode = process.argv[2] ?? 'full';
-assert.ok(['full', 'projection', 'background', 'lifecycle', 'download', 'windowClose', 'policy'].includes(mode));
+assert.ok(['full', 'projection', 'background', 'lifecycle', 'download', 'windowClose', 'policy', 'agentPages'].includes(mode));
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const root = resolve(gui, '../..');
 const require = createRequire(join(gui, 'app/package.json'));
@@ -91,6 +91,7 @@ const site = createServer(async (request, response) => {
     <button id="cross-origin-popup" onclick="window.open('${forbiddenUrl}','_blank')">Open denied</button>
     <a id="slow-download" href="/slow-download" download>Download synthetic stream</a>
     <label>Password <input id="password" type="password"></label>
+    <label>Choose file <input id="file" type="file"></label>
     <script>
     (async()=>{
       const marker=new URL(location.href).searchParams.get('marker');
@@ -147,8 +148,9 @@ const model = createServer(async (request, response) => {
   const send = (delta, finish_reason = null) => response.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
   if (!issued) {
     issued = true;
-    const args = phase === 'agentNavigate'
-      ? { operation: 'navigate', parameters: { pageId, url: navigateTarget } }
+    const args = ['agentNavigate', 'beforeObserveNavigate', 'beforeObserveNewPage', 'agentNewPage'].includes(phase)
+      ? { operation: ['beforeObserveNewPage', 'agentNewPage'].includes(phase) ? 'newPage' : 'navigate', parameters: { pageId, url: navigateTarget } }
+      : phase === 'childDiagnostics' ? { operation: 'diagnostics', parameters: { pageId, kind: 'console' } }
       : ['click', 'noClaimAct'].includes(phase)
       ? { operation: 'act', parameters: { pageId, snapshotId, action: { kind: 'click', ref: targetRef } } }
       : { operation: 'observe', parameters: { pageId } };
@@ -412,6 +414,95 @@ try {
     },'fresh Native Page after Window.show');
     events.windowClose.recovered=recovered;
     checks.push('B-09: public Window.show restores creation of a fresh Page and Native View');
+  } else if (mode === 'agentPages') {
+    const parentPageId = pageId, parentNativeId = nativeId;
+    await page.getByRole('button', { name: '让 Agent 检查当前页' }).click();
+    assert.equal(browserItem(await terminalTurn(0)).success, true);
+    let turns = 1;
+    async function coreStep(next, approval = false) {
+      phase = next; issued = false;
+      await command('send', { projectId, threadId, text: `Check ${next} on the synthetic page` });
+      if (approval) {
+        const panel = page.locator('[data-interaction="approval"]');
+        await panel.waitFor({ timeout: 60000 });
+        await panel.getByRole('button', { name: '允许一次' }).click();
+      }
+      const item = browserItem(await terminalTurn(turns++));
+      events[next] = { item, state: await stateFor(threadId), posts: siteFacts.posts, documentGets: siteFacts.documentGets };
+      return item;
+    }
+    await app.evaluate(({ app }) => {
+      globalThis.__newPageCommands = []; globalThis.__newPageDetaches = []; globalThis.__newPageChooserEvents = [];
+      app.on('web-contents-created', (_event, c) => {
+        const send = c.debugger.sendCommand.bind(c.debugger);
+        c.debugger.sendCommand = (method, params) => {
+          if (['Network.enable', 'Page.enable', 'Page.setInterceptFileChooserDialog'].includes(method))
+            globalThis.__newPageCommands.push({ id: c.id, method, params });
+          return send(method, params);
+        };
+        c.debugger.on('detach', (_event, reason) => globalThis.__newPageDetaches.push({ id: c.id, reason }));
+        c.debugger.on('message', (_event, method) => {
+          if (method === 'Page.fileChooserOpened') globalThis.__newPageChooserEvents.push({ id: c.id });
+        });
+      });
+    });
+    navigateTarget = `${siteUrl}&agentChild=1`;
+    const created = await coreStep('agentNewPage', true);
+    assert.equal(created.success, true);
+    const receipt = JSON.parse(created.contentItems[0].text);
+    const childPageId = receipt.createdPage.pageId;
+    assert.notEqual(childPageId, parentPageId);
+    const childNativeId = await wcByUrl(navigateTarget);
+    assert.notEqual(childNativeId, parentNativeId);
+    pageId = childPageId;
+    await pv(threadId, { operation: 'selectPage', pageId });
+    assert.equal((await coreStep('childObserve')).success, true);
+    assert.equal((await coreStep('childObserveAgain')).success, true);
+    const childState = (await stateFor(threadId)).workspace.pages.find(item => item.pageId === childPageId);
+    assert.equal(childState.control, 'agent');
+    const initialized = await app.evaluate(() => ({ commands: globalThis.__newPageCommands, detaches: globalThis.__newPageDetaches }));
+    assert.ok(initialized.commands.some(item => item.id === childNativeId && item.method === 'Network.enable'));
+    assert.ok(initialized.commands.some(item => item.id === childNativeId && item.method === 'Page.enable'));
+    assert.ok(initialized.commands.some(item => item.id === childNativeId && item.method === 'Page.setInterceptFileChooserDialog' && item.params.enabled === true));
+    assert.equal(initialized.detaches.filter(item => item.id === childNativeId).length, 0);
+    events.childInitialization = { parentPageId, childPageId, parentNativeId, childNativeId, receipt, initialized, childState };
+    checks.push('B-07: Core-approved Agent newPage initializes its own claim; repeated observation retains control and debugger');
+    await app.evaluate(({ webContents }, id) => webContents.fromId(id).executeJavaScript('console.error("AGENT_CHILD_DIAGNOSTIC_05")'), childNativeId);
+    const diagnostics = await coreStep('childDiagnostics');
+    assert.equal(diagnostics.success, true);
+    assert.match(JSON.stringify(diagnostics.contentItems), /AGENT_CHILD_DIAGNOSTIC_05/);
+    checks.push('B-18: Agent-created Page diagnostics reach actual Core history after claim initialization');
+
+    pageId = parentPageId;
+    await pv(threadId, { operation: 'selectPage', pageId });
+    await pv(threadId, { operation: 'takeover', pageId });
+    const humanEpoch = (await stateFor(threadId)).workspace.pages.find(item => item.pageId === pageId).controlEpoch;
+    await pv(threadId, { operation: 'claim', pageId });
+    assert.ok((await stateFor(threadId)).workspace.pages.find(item => item.pageId === pageId).controlEpoch > humanEpoch);
+    navigateTarget = `${siteUrl}&afterGiveback=1`;
+    const beforeGets = siteFacts.documentGets, beforePages = (await stateFor(threadId)).workspace.pages.length;
+    for (const next of ['beforeObserveNavigate', 'beforeObserveNewPage']) {
+      const refused = await coreStep(next);
+      assert.equal(refused.success, false);
+      assert.match(JSON.stringify(refused), /stale_ref.*not_sent/);
+      assert.equal(await page.locator('[data-interaction="approval"]').count(), 0);
+    }
+    assert.equal(siteFacts.documentGets, beforeGets);
+    assert.equal((await stateFor(threadId)).workspace.pages.length, beforePages);
+    checks.push('B-14: explicit giveback refuses navigate and newPage before fresh observation, without approval, GET or child creation');
+    assert.equal((await coreStep('parentObserve')).success, true);
+    assert.equal((await coreStep('agentNavigate', true)).success, true);
+    assert.equal(await app.evaluate(({ webContents }, id) => webContents.fromId(id).getURL(), parentNativeId), navigateTarget);
+    assert.equal((await stateFor(threadId)).workspace.pages.find(item => item.pageId === childPageId).control, 'agent');
+    checks.push('B-14: fresh Core observation permits approved parent navigation while its child remains usable');
+    await pv(threadId, { operation: 'selectPage', pageId: childPageId });
+    await app.evaluate(({ webContents }, id) => webContents.fromId(id).executeJavaScript('document.querySelector("#file").click()', true), childNativeId);
+    await until(async () => (await stateFor(threadId)).workspace.pages.find(item => item.pageId === childPageId).control === 'human', 'intercepted child chooser revokes Agent', 5000);
+    const chooserEvents = await app.evaluate(() => globalThis.__newPageChooserEvents);
+    assert.equal(chooserEvents.filter(item => item.id === childNativeId).length, 1);
+    events.childChooser = { chooserEvents, state: await stateFor(threadId) };
+    assert.equal(siteFacts.posts, 0);
+    checks.push('B-40: Agent-created Page has real Native chooser interception and revokes control on chooser event; no upload or operator OS choice asserted');
   } else if (mode === 'projection') {
     const secondPageUrl = `${siteUrl}&projection=second`;
     navigateTarget = `${siteUrl}&projection=agent`;
