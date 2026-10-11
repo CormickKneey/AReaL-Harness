@@ -421,13 +421,6 @@ async fn connection(
                     .and_then(Value::as_str)
                     .is_some_and(|thread| !conn.principal.sees(thread))
             })
-            || (conn.principal.thread_ids.is_some()
-                && (method == "thread/start"
-                    || method == "areal/thread/start"
-                    || method == "areal/thread/fork"
-                    || method == "areal/side/start"
-                    || method.starts_with("areal/workgroup/")
-                    || method.starts_with("areal/workflow/start")))
         {
             conn.send(response(
                 id.unwrap(),
@@ -439,12 +432,26 @@ async fn connection(
             ));
             continue;
         }
-        if let Some(thread_id) = params.get("threadId").and_then(Value::as_str) {
+        if conn.principal.thread_ids.is_some()
+            && (method == "thread/start"
+                || method == "areal/thread/start"
+                || method == "areal/thread/fork"
+                || method == "areal/side/start"
+                || method.starts_with("areal/workgroup/")
+                || method.starts_with("areal/workflow/start"))
+        {
+            conn.send(response(id.unwrap(), Err(RpcError { code: -32010,
+                message: "scoped principals cannot create conversations".into(),
+                data: Some(json!({"reason":"SCOPED_PRINCIPAL_UNSUPPORTED","retryable":false})) })));
+            continue;
+        }
+        if let Some(thread_id) = params.get("threadId").or_else(|| params.get("parentThreadId")).and_then(Value::as_str) {
             if engine.read(thread_id, false).await.is_ok_and(|thread| thread.is_side())
                 && !matches!(method,
                     "thread/read" | "thread/resume" | "areal/thread/observe" |
                     "turn/start" | "areal/turn/start" | "turn/interrupt" |
-                    "areal/side/context/read" | "areal/thread/archive" | "areal/conversation/unarchive" | "areal/request/read") {
+                    "areal/side/context/read" | "areal/context/read" | "areal/thread/configure" |
+                    "areal/thread/archive" | "areal/conversation/unarchive" | "areal/request/read") {
                 conn.send(response(id.unwrap(), Err(RpcError { code: -32010,
                     message: "Side conversations cannot use this method".into(),
                     data: Some(json!({"reason":"SIDE_POLICY_VIOLATION","retryable":false})) })));
@@ -686,7 +693,15 @@ impl Connection {
                 let p: areal_protocol::desktop::TurnStart = parse(params.clone())?;
                 self.subscribe(engine, &p.thread_id).await?;
             }
-            return desktop::dispatch(engine, &self.principal.id, method, params).await;
+            let scoped_request_search = method == "areal/request/read" && self.principal.thread_ids.is_some()
+                && params.get("threadId").and_then(Value::as_str).is_none();
+            let mut result = desktop::dispatch(engine, &self.principal.id, method, params).await?;
+            if scoped_request_search {
+                if let Some(data) = result.get_mut("data").and_then(Value::as_array_mut) {
+                    data.retain(|entry| entry["threadId"].as_str().is_some_and(|id| self.principal.sees(id)));
+                }
+            }
+            return Ok(result);
         }
         match method {
             "areal/thread/tools/attach" => {
@@ -945,6 +960,10 @@ fn parse<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, RpcError> {
     serde_json::from_value(value).map_err(|e| RpcError::invalid(e.to_string()))
 }
 fn map_error(error: Error) -> RpcError {
+    if matches!(&error, Error::Invalid(reason) if reason == "SIDE_POLICY_VIOLATION") {
+        return RpcError { code: -32010, message: "SIDE_POLICY_VIOLATION".into(),
+            data: Some(json!({"reason":"SIDE_POLICY_VIOLATION","retryable":false})) };
+    }
     let code = match &error {
         Error::Invalid(_) => -32602,
         Error::NotFound => -32004,

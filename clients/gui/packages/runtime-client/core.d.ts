@@ -1,6 +1,9 @@
 export class CoreRpcError extends Error {
   code?: string | number;
   method?: string;
+  data?: { reason?: string; requestId?: string; retryable?: boolean; [key: string]: unknown };
+  reason?: string;
+  requestId?: string;
   submissionUnknown: boolean;
 }
 export interface CoreSocket {

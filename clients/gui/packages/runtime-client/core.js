@@ -1,10 +1,13 @@
 /** AReaL Core app-server 客户端。认证与 socket 创建由可信平台宿主提供。 */
 export class CoreRpcError extends Error {
-  constructor(message, { code, method, cause, submissionUnknown = false } = {}) {
+  constructor(message, { code, method, data, cause, submissionUnknown = false } = {}) {
     super(message, { cause });
     this.name = 'CoreRpcError';
     this.code = code;
     this.method = method;
+    this.data = data;
+    this.reason = data?.reason;
+    this.requestId = data?.requestId;
     this.submissionUnknown = submissionUnknown;
   }
 }
@@ -127,7 +130,7 @@ export class CoreClient {
       this.pending.delete(message.id);
       clearTimeout(entry.timer);
       if (message.error) {
-        entry.reject(new CoreRpcError(message.error.message, { code: message.error.code, method: entry.method }));
+        entry.reject(new CoreRpcError(message.error.message, { code: message.error.code, method: entry.method, data: message.error.data }));
       } else {
         try {
           // 同一 socket 批次可能紧跟增量；快照必须在消息分派栈内先建立。
