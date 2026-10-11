@@ -38,7 +38,8 @@ export function BrowserVerificationCard({ thread, projectId, action, onReview, o
     && commandResult(entry.item)?.verification?.schema === "areal.verification.v1");
   const check = checks.at(-1);
   const services = entries.filter(entry => ["development_service_start", "development_service_inspect"].includes(entry.item.tool));
-  if (!latest && !latestDiagnostics) return null;
+  // Keep the collapsed summary in place before the first receipt so displaying
+  // an observation cannot resize the Native viewport that it just captured.
   const observation = latest ? recordedResult(latest.item) : null;
   const capture = (latestCapture?.item.contentItems ?? []).find((part: Data) => part.type === "arealMedia" && part.modality === "image" && typeof part.media?.uri === "string");
   const checkResult = check ? commandResult(check.item) : null;

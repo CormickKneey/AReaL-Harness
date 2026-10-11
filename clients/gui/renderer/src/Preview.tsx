@@ -607,7 +607,7 @@ export function Preview({
             .finally(() => { if (mounted.current && current.current === owner) setClaiming(false); });
         }}>在当前聊天启用浏览器</Button>
       </div>}
-      {thread && <BrowserVerificationCard thread={thread} projectId={projectId} action={action} onReview={onReview} onTool={onTool}
+      {browserEnabled && thread && <BrowserVerificationCard thread={thread} projectId={projectId} action={action} onReview={onReview} onTool={onTool}
         trialActive={!!styleTrial && !styleTrial.cleared || !!state.browser?.trialActive} />}
       {responsive && (
         <div className="preview-viewport-toolbar">
