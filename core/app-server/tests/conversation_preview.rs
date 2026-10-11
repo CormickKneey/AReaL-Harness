@@ -6,7 +6,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 
 #[tokio::test]
-async fn disabled_preview_has_known_routes_but_no_advertised_derivation() {
+async fn default_capabilities_advertise_derivation_and_dispatch_routes() {
     unsafe {
         std::env::remove_var("AREAL_DEV_CONVERSATION_DERIVATION");
     }
@@ -87,21 +87,31 @@ async fn disabled_preview_has_known_routes_but_no_advertised_derivation() {
                 .await
                 .unwrap();
         } else if id == 1 {
-            assert!(response["result"]["features"]["conversationDerivationV1"].is_null());
+            let feature = &response["result"]["features"]["conversationDerivationV1"];
+            assert_eq!(feature["preview"], false);
+            assert_eq!(feature["methods"], json!(methods));
+            assert_eq!(feature["forkBoundaries"], json!(["after", "before"]));
+            assert_eq!(feature["workspaceModes"], json!(["sharedCurrent"]));
+            assert_eq!(feature["sideWorkspaceAccess"], json!(["none"]));
+            assert_eq!(feature["limits"], engine.conversation_derivation_limits());
+            assert_eq!(feature["historyBytes"], engine.fork_snapshot_limit());
             for method in methods {
                 assert!(
-                    !response["result"]["methods"]
+                    response["result"]["methods"]
                         .as_array()
                         .unwrap()
                         .contains(&json!(method)),
-                    "{method} advertised"
+                    "{method} not advertised"
                 );
             }
         } else if id < 6 {
             assert_eq!(response["error"]["code"], -32602, "{method}: {response}");
+        } else if method == "areal/conversation/list" {
+            assert_eq!(response["result"]["data"], json!([]), "{response}");
         } else {
-            assert_eq!(response["error"]["code"], -32010, "{method}: {response}");
-            assert_eq!(
+            assert!(response["error"].is_object(), "{method}: {response}");
+            assert_ne!(response["error"]["code"], -32601, "{response}");
+            assert_ne!(
                 response["error"]["data"]["reason"], "CONVERSATION_DERIVATION_DISABLED",
                 "{response}"
             );
