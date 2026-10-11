@@ -455,13 +455,42 @@ impl Engine {
     ) -> Result<EffectiveConfig> {
         self.mutate(move |engine| async move {
             let cell = engine.cell(&request.thread_id).await?;
-            if cell.state.lock().await.thread.is_side() { return Err(invalid("SIDE_POLICY_VIOLATION")); }
-            engine.refresh_managed_tools(&cell).await.map_err(invalid)?;
+            let is_side = cell.state.lock().await.thread.is_side();
+            if !is_side { engine.refresh_managed_tools(&cell).await.map_err(invalid)?; }
             let mut state = cell.state.lock().await;
             if state.active.is_some() || state.compacting {
                 return Err(Error::Conflict);
             }
             let previous = desktop(&state.thread).configuration;
+            if is_side {
+                if request.options.is_some() || request.agent_profile.is_some() || request.reset_model
+                    || request.selected_skills.is_some() || previous.profile.is_some()
+                    || (request.model.is_none() && request.parameters.is_none()) {
+                    return Err(invalid("SIDE_POLICY_VIOLATION"));
+                }
+                if previous.revision != request.expected_revision { return Err(Error::Conflict); }
+                let mut configuration = engine.resolve_config(None,
+                    request.model.or(previous.model.clone()),
+                    request.parameters.unwrap_or(previous.parameters.clone()), previous.revision + 1)?;
+                configuration.options = previous.options;
+                configuration.selected_skills = previous.selected_skills;
+                configuration.instructions = previous.instructions;
+                configuration.tool_allowlist = previous.tool_allowlist;
+                configuration.read_only = true;
+                if configuration.model.is_none() {
+                    configuration.default_model_revision = previous.default_model_revision;
+                }
+                let model = engine.configured_model(&configuration).map_err(|_| invalid("MODEL_CONTEXT_INCOMPATIBLE"))?;
+                if !model.capabilities().supports_input(areal_protocol::Modality::Text) {
+                    return Err(invalid("MODEL_CONTEXT_INCOMPATIBLE"));
+                }
+                let mut candidate = state.thread.clone();
+                candidate.desktop.get_or_insert_with(Default::default).configuration = configuration.clone();
+                engine.persist(&candidate).await?;
+                state.thread = candidate;
+                cell.emit("areal/thread/configured", json!({"threadId":request.thread_id,"configuration":configuration}));
+                return Ok(configuration);
+            }
             if previous.revision != request.expected_revision {
                 return Err(Error::Conflict);
             }

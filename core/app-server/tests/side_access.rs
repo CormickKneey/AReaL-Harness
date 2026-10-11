@@ -21,6 +21,12 @@ impl Model for TextModel {
     fn name(&self) -> &str {
         "side-access-fixture"
     }
+    fn configure(
+        &self,
+        _: &areal_protocol::desktop::ModelParameters,
+    ) -> anyhow::Result<Arc<dyn Model>> {
+        Ok(Arc::new(TextModel))
+    }
     async fn stream(&self, _: Vec<Message>) -> anyhow::Result<ModelStream> {
         Ok(Box::pin(futures_util::stream::iter([Ok(
             areal_engine::model::ModelEvent::text("answer"),
@@ -173,6 +179,58 @@ async fn authenticated_side_access_and_legacy_routes_preserve_policy() {
         .as_str()
         .expect(&other.to_string())
         .to_owned();
+    engine.wait(&side_id).await.unwrap();
+    let before_configure = call(&mut owner, 6, "thread/read", json!({"threadId":side_id})).await;
+    let before = &before_configure["result"]["thread"];
+    let revision = before["desktop"]["configuration"]["revision"]
+        .as_u64()
+        .unwrap();
+    let configured = call(
+        &mut owner,
+        7,
+        "areal/thread/configure",
+        json!({"threadId":side_id,
+        "expectedRevision":revision,"parameters":{"temperature":0.2}}),
+    )
+    .await;
+    assert_eq!(
+        configured["result"]["revision"],
+        revision + 1,
+        "{configured}"
+    );
+    assert_eq!(configured["result"]["readOnly"], true, "{configured}");
+    assert_eq!(
+        configured["result"]["toolAllowlist"],
+        before["desktop"]["configuration"]["toolAllowlist"]
+    );
+    assert_eq!(configured["result"]["parameters"]["temperature"], 0.2);
+    let after_configure = call(&mut owner, 8, "thread/read", json!({"threadId":side_id})).await;
+    assert_eq!(
+        after_configure["result"]["thread"]["conversation"],
+        before["conversation"]
+    );
+    for extra in [
+        json!({"options":{"readOnly":false},"parameters":{"temperature":0.3}}),
+        json!({"agentProfile":{"id":"workflow","revision":"1"}}),
+        json!({"selectedSkills":[]}),
+        json!({"resetModel":true}),
+    ] {
+        let mut params = json!({"threadId":side_id,"expectedRevision":revision + 1});
+        params
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        let rejected = call(&mut owner, 9, "areal/thread/configure", params).await;
+        assert_eq!(
+            rejected["error"]["data"]["reason"], "SIDE_POLICY_VIOLATION",
+            "{rejected}"
+        );
+    }
+    let unchanged = call(&mut owner, 10, "thread/read", json!({"threadId":side_id})).await;
+    assert_eq!(
+        unchanged["result"]["thread"]["desktop"]["configuration"],
+        configured["result"]
+    );
     let list = call(
         &mut target,
         2,
@@ -364,6 +422,15 @@ async fn authenticated_side_access_and_legacy_routes_preserve_policy() {
     engine.wait(&side_id).await.unwrap();
     engine.shutdown().await;
     drop(engine);
+    let valid = Engine::open(dir.path(), Arc::new(TextModel), Limits::default()).unwrap();
+    let restored = valid.read(&side_id, false).await.unwrap();
+    assert!(restored.is_side());
+    assert_eq!(
+        restored.desktop.unwrap().configuration.revision,
+        revision + 1
+    );
+    valid.shutdown().await;
+    drop(valid);
     let path = dir.path().join(format!("{side_id}.json"));
     let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(record["version"], 14);

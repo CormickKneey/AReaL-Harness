@@ -450,7 +450,7 @@ async fn connection(
                 && !matches!(method,
                     "thread/read" | "thread/resume" | "areal/thread/observe" |
                     "turn/start" | "areal/turn/start" | "turn/interrupt" |
-                    "areal/side/context/read" | "areal/context/read" |
+                    "areal/side/context/read" | "areal/context/read" | "areal/thread/configure" |
                     "areal/thread/archive" | "areal/conversation/unarchive" | "areal/request/read") {
                 conn.send(response(id.unwrap(), Err(RpcError { code: -32010,
                     message: "Side conversations cannot use this method".into(),
@@ -960,6 +960,10 @@ fn parse<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, RpcError> {
     serde_json::from_value(value).map_err(|e| RpcError::invalid(e.to_string()))
 }
 fn map_error(error: Error) -> RpcError {
+    if matches!(&error, Error::Invalid(reason) if reason == "SIDE_POLICY_VIOLATION") {
+        return RpcError { code: -32010, message: "SIDE_POLICY_VIOLATION".into(),
+            data: Some(json!({"reason":"SIDE_POLICY_VIOLATION","retryable":false})) };
+    }
     let code = match &error {
         Error::Invalid(_) => -32602,
         Error::NotFound => -32004,
