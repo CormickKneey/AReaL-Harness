@@ -878,7 +878,11 @@ class CorePreview {
       || !this.pageStillOwned(page) || !this.owns(projectId, threadId)) throw new Error('标注页面已变化');
     if (page.claiming || page.activeRead || page.activeAction || page.activePrepare || page.control !== 'human'
       || c.isDestroyed() || c.isDevToolsOpened() || c.debugger.isAttached()) throw new Error('元素选择当前不可用，请使用区域标注');
-    if (x >= frozen.bitmapWidth || y >= frozen.bitmapHeight) throw new Error('选择位置超出截图');
+    if (page.frameGrant?.status === 'active') return {
+      available: false, reason: 'iframe 内容无法可靠识别，请使用区域标注；未生成选择器',
+    };
+    if (![x, y].every(value => Number.isSafeInteger(value) && value >= 0)
+      || x >= frozen.bitmapWidth || y >= frozen.bitmapHeight) throw new Error('选择位置超出截图');
     const same = () => page.annotationCaptureId === captureId && page.annotationCapture === frozen
       && this.pageStillOwned(page) && this.owns(projectId, threadId)
       && page.control === 'human' && page.controlEpoch === frozen.controlEpoch
@@ -2294,6 +2298,13 @@ class CorePreview {
     });
     c.on('before-input-event', (event, input) => {
       if (!this.pageStillOwned(page)) { event.preventDefault(); return; }
+      // Human focus may leave only the current visible page in the foreground window.
+      if (input.type === 'keyDown' && input.key === 'F6' && !input.isAutoRepeat
+        && page.control === 'human' && this.owns(projectId, threadId)
+        && this.owner === pageKey(page.coreInstanceId, projectId, threadId, page.id)
+        && page.view.getVisible() && this.window.isFocused() && c.isFocused()) {
+        event.preventDefault(); this.window.webContents.focus(); return;
+      }
       if (page.control === 'human' && c.isFocused() && input.type === 'keyDown'
         && ['Enter', 'Space'].includes(input.key)) page.userPopupIntentUntil = Date.now() + 1000;
       // CDP keys may echo while the native view is hidden. Only an action on a
@@ -2435,6 +2446,8 @@ class CorePreview {
       page?.activeSelection?.cancel();
       return this.state(page);
     }
+    if (request.operation === 'selectElement')
+      return this.selectElement(request.projectId, request.threadId, request.pageId, request.captureId, request.x, request.y);
     if (request.operation === 'checkElement')
       return this.checkElement(request.projectId, request.threadId, request.pageId, request.captureId, request.elementId);
     if (request.operation === 'beginStyleTrial')

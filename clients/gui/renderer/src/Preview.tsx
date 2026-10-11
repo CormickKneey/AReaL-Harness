@@ -13,6 +13,7 @@ import { attachmentDrafts, sending, stageThreadDraft } from "./Composer.js";
 import { BrowserVerificationCard } from "./BrowserVerificationCard.js";
 import "./BrowserFileHandoff.css";
 import { BrowserStyleTrial, type StyleTrialDraft } from './BrowserStyleTrial.js';
+import { BrowserKeyboardElementPicker } from './BrowserKeyboardElementPicker.js';
 import type { Action } from "./services.js";
 import type { PreviewRequest, OwnedPreviewOperation } from '@areal/workbench/desktop-contract';
 const locations = new Map<string, { url: string; link?: string }>();
@@ -73,6 +74,25 @@ export function Preview({
   const styleTrial = styleTrialState.owner === owner ? styleTrialState.draft : styleTrialDrafts.get(owner) ?? null;
   const [styleBusyOwner, setStyleBusyOwner] = useState<string | null>(null);
   const styleBusy = styleBusyOwner === owner;
+  const [keyboardCapture, setKeyboardCapture] = useState<RegionDraft['capture'] | null>(null);
+  const keyboardCaptureRef = useRef<RegionDraft['capture'] | null>(null);
+  const styleControl = useRef<HTMLButtonElement>(null);
+  const styleFocusOwner = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (styleFocusOwner.current !== owner) { styleFocusOwner.current = null; return; }
+    if (styleBusy || styleTrial || keyboardCapture) return;
+    styleFocusOwner.current = null;
+    styleControl.current?.focus();
+  }, [owner, styleBusy, styleTrial, keyboardCapture]);
+  useEffect(() => {
+    setKeyboardCapture(null);
+    return () => {
+      const capture = keyboardCaptureRef.current;
+      keyboardCaptureRef.current = null;
+      if (capture) void services.preview({ operation: 'endRegion', projectId, threadId,
+        pageId: capture.pageId, captureId: capture.captureId }).catch(() => {});
+    };
+  }, [services, projectId, threadId]);
   const styleTrialRef = useRef(styleTrial);
   styleTrialRef.current = styleTrial;
   const annotatingRef = useRef(annotating);
@@ -149,6 +169,7 @@ export function Preview({
     let lastDisplay = "";
     const update = () => {
       if (!active || !box.current) return;
+      if (keyboardCaptureRef.current) { lastDisplay = ''; return; }
       const r = box.current.getBoundingClientRect();
       // Native pages sit above the renderer, so keep them hidden through popup exit animations.
       const overlay = document.querySelector(
@@ -233,8 +254,8 @@ export function Preview({
     if (draft) styleTrialDrafts.set(owner, draft); else styleTrialDrafts.delete(owner);
     setStyleTrialState({ owner, draft });
   };
-  const startStyleTrial = async () => {
-    if (styleBusy || styleTrial || annotating || annotationBusy) return;
+  const startStyleTrial = async (keyboard = false) => {
+    if (styleBusy || styleTrial || annotating || annotationBusy || keyboardCaptureRef.current) return;
     setStyleBusyOwner(owner); setError('');
     let capture: RegionDraft['capture'] | null = null;
     try {
@@ -242,6 +263,16 @@ export function Preview({
       if (!pageId) throw new Error('请选择当前页面');
       if (stateRef.current.browser?.control === 'agent')
         await services.preview({ operation: 'takeover', projectId, threadId, pageId });
+      if (keyboard) {
+        capture = await services.preview({ operation: 'captureRegion', projectId, threadId, pageId }) as RegionDraft['capture'];
+        if (!mounted.current || current.current !== owner) throw new Error('选择所属聊天已变化');
+        // Pin the captured viewport while the local picker overlays the native page.
+        keyboardCaptureRef.current = capture;
+        await services.preview({ operation: 'hide', projectId, threadId, pageId, captureId: capture.captureId });
+        if (!mounted.current || current.current !== owner) throw new Error('选择所属聊天已变化');
+        setKeyboardCapture(capture);
+        return;
+      }
       const selected = await services.preview({ operation: 'captureElement', projectId, threadId, pageId });
       capture = selected.capture as RegionDraft['capture'];
       if (!selected.element?.available) throw new Error(selected.element?.reason || '此元素不支持页面试改');
@@ -254,8 +285,44 @@ export function Preview({
       updateStyleTrial({ trialId: begun.trialId, before: capture, element: selected.element,
         edits: [], canUndo: false, canRedo: false, stale: false, intent: '' });
     } catch (e) {
+      if (keyboardCaptureRef.current === capture) keyboardCaptureRef.current = null;
+      if (mounted.current && current.current === owner) styleFocusOwner.current = owner;
       if (capture) void services.preview({ operation: 'endRegion', projectId, threadId,
         pageId: capture.pageId, captureId: capture.captureId }).catch(() => {});
+      if (mounted.current && current.current === owner) setError(e instanceof Error ? e.message : String(e));
+    } finally { setStyleBusyOwner(value => value === owner ? null : value); }
+  };
+  const finishKeyboardSelection = async (point?: { x: number; y: number }) => {
+    const capture = keyboardCaptureRef.current;
+    if (!capture || styleBusy) return;
+    setStyleBusyOwner(owner); setError('');
+    try {
+      if (point) {
+        const element = await services.preview({ operation: 'selectElement', projectId, threadId,
+          pageId: capture.pageId, captureId: capture.captureId, ...point });
+        if (!mounted.current || current.current !== owner || keyboardCaptureRef.current !== capture) return;
+        if (!element.available) throw new Error(element.reason || '此元素不支持页面试改');
+        const begun = await services.preview({ operation: 'beginStyleTrial', projectId, threadId,
+          pageId: capture.pageId, captureId: capture.captureId, elementId: element.elementId });
+        if (!mounted.current || current.current !== owner || keyboardCaptureRef.current !== capture) {
+          await services.preview({ operation: 'clearStyleTrial', projectId, threadId,
+            pageId: capture.pageId, trialId: begun.trialId });
+          return;
+        }
+        updateStyleTrial({ trialId: begun.trialId, before: capture, element: element as NonNullable<RegionDraft['element']>,
+          edits: [], canUndo: false, canRedo: false, stale: false, intent: '' });
+      } else {
+        await services.preview({ operation: 'endRegion', projectId, threadId,
+          pageId: capture.pageId, captureId: capture.captureId });
+      }
+      if (mounted.current && current.current === owner && keyboardCaptureRef.current === capture) {
+        keyboardCaptureRef.current = null;
+        setKeyboardCapture(null);
+        if (!point) styleFocusOwner.current = owner;
+        // The hidden picker pinned the old display signature; force a visibility refresh.
+        window.dispatchEvent(new Event('resize'));
+      }
+    } catch (e) {
       if (mounted.current && current.current === owner) setError(e instanceof Error ? e.message : String(e));
     } finally { setStyleBusyOwner(value => value === owner ? null : value); }
   };
@@ -295,7 +362,10 @@ export function Preview({
       }
       if (draft.after) await services.preview({ operation: 'endRegion', projectId, threadId,
         pageId: draft.before.pageId, captureId: draft.after.capture.captureId });
-      if (mounted.current && current.current === owner) updateStyleTrial(null);
+      if (mounted.current && current.current === owner) {
+        updateStyleTrial(null);
+        styleFocusOwner.current = owner;
+      }
     } catch (e) {
       if (mounted.current && current.current === owner) setError(e instanceof Error ? e.message : String(e));
     } finally { setStyleBusyOwner(value => value === owner ? null : value); }
@@ -313,7 +383,7 @@ export function Preview({
   };
   const stageStyleTrial = async () => {
     const original = styleTrialRef.current;
-    if (!original || styleBusy || !original.intent.trim() || !original.edits.length) return;
+    if (!original || styleBusy || original.stale || !original.intent.trim() || !original.edits.length) return;
     setStyleBusyOwner(owner); setError('');
     try {
       let draft = original;
@@ -599,12 +669,13 @@ export function Preview({
             onClick={() => void request('authorizeFrameOrigin', { userIntent: true })}>授权当前页面的嵌入站点</Button>}
         </div>}
       {browserEnabled && state.url && <div className="preview-viewport-toolbar" role="group" aria-label="页面标注">
-        <Button ref={annotationControl} type="button" size="sm" disabled={annotationBusy || styleBusy || !!styleTrial || !!annotating || state.browser?.control === 'transferring'}
+        <Button ref={annotationControl} type="button" size="sm" disabled={annotationBusy || styleBusy || !!keyboardCapture || !!styleTrial || !!annotating || state.browser?.control === 'transferring'}
           onClick={() => void startAnnotation()}>截取区域并标注</Button>
-        <Button type="button" size="sm" disabled={annotationBusy || styleBusy || !!styleTrial || !!annotating || state.browser?.control === 'transferring'}
+        <Button type="button" size="sm" disabled={annotationBusy || styleBusy || !!keyboardCapture || !!styleTrial || !!annotating || state.browser?.control === 'transferring'}
           onClick={() => void startAnnotation('element')}>选择元素并标注</Button>
-        <Button type="button" size="sm" disabled={annotationBusy || styleBusy || !!styleTrial || !!annotating || state.browser?.control === 'transferring'}
-          onClick={() => void startStyleTrial()}>选择元素并试改</Button>
+        <Button ref={styleControl} type="button" size="sm" disabled={annotationBusy || styleBusy || !!keyboardCapture || !!styleTrial || !!annotating || state.browser?.control === 'transferring'}
+          onClick={event => void startStyleTrial(event.detail === 0)}>选择元素并试改</Button>
+        <span>F6 返回应用；键盘选择使用截图坐标。</span>
         <span role="status" aria-hidden={!annotationBusy || !!annotating}
           style={{ visibility: annotationBusy && !annotating ? 'visible' : 'hidden' }}>
           在页面中点击要标注的元素；按 Esc 取消。
@@ -653,6 +724,10 @@ export function Preview({
           className="preview-webview"
           style={responsive ? { width: `min(100%, ${width}px)`, flex: "none" } : undefined}
         />
+        {keyboardCapture?.projectId === projectId && keyboardCapture.threadId === threadId &&
+          <BrowserKeyboardElementPicker key={keyboardCapture.captureId} capture={keyboardCapture} busy={styleBusy}
+            onSelect={(x, y) => void finishKeyboardSelection({ x, y })}
+            onCancel={() => void finishKeyboardSelection()} />}
         {annotating && <BrowserRegionAnnotation draft={annotating} busy={annotationBusy}
           onChange={updateAnnotation} onCancel={() => void cancelAnnotation()} onStage={draft => void stageAnnotation(draft)} />}
         {failure ? (

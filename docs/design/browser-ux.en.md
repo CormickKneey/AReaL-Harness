@@ -45,6 +45,9 @@ Missing semantics, Canvas internals, and unresolvable iframe/Shadow content prov
 
 The current source path starts with “Select element and preview style” on the visible native page and reuses human Overlay selection and a guarded before image. Its form retains the original chat owner and offers constrained values, undo/redo, Escape cancel, and Ctrl/Cmd+Enter draft staging; IME composition suppresses shortcuts. Before and after evidence crops only the rechecked same element; full images remain local. The trial is cleared before staging, and the verification card warns that an active trial cannot prove a source change. A replaced or application-edited target requires reload to remove uncertain remaining effects. Failed Composer send retains the existing draft and does not retry automatically.
 
+
+Keyboard activation of “Select element and preview style” opens a local frozen-image coordinate picker: enter bitmap x/y coordinates, adjust with arrow keys, confirm with Enter, or cancel with Escape. Main reuses capture identity, document and viewport checks and element privacy restrictions; pointer activation retains native Overlay inspection. F6 returns focus from the current foreground human page to the app. Selection focuses the style property, cancellation returns to the initiating button, and staging focuses the original Composer for explicit send. This path does not establish manual IME or assistive-technology acceptance.
+
 ## 4. Native-view constraints
 
 React z-index is not a WebContentsView overlay implementation. A trusted native overlay/local view must handle resizing, focus, IME, occlusion and display scale without granting remote pages a privileged preload. In agent mode it blocks human page input but retains takeover; in human mode it revokes agent admission. Capture web content without agent cursor/labels/toolbars by default.
