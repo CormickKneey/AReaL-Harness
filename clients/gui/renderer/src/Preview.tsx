@@ -581,7 +581,10 @@ export function Preview({
           onClick={() => void startAnnotation('element')}>选择元素并标注</Button>
         <Button type="button" size="sm" disabled={annotationBusy || styleBusy || !!styleTrial || !!annotating || state.browser?.control === 'transferring'}
           onClick={() => void startStyleTrial()}>选择元素并试改</Button>
-        {annotationBusy && !annotating && <span role="status">在页面中点击要标注的元素；按 Esc 取消。</span>}
+        <span role="status" aria-hidden={!annotationBusy || !!annotating}
+          style={{ visibility: annotationBusy && !annotating ? 'visible' : 'hidden' }}>
+          在页面中点击要标注的元素；按 Esc 取消。
+        </span>
       </div>}
       {styleTrial && <BrowserStyleTrial draft={styleTrial} busy={styleBusy}
         onApply={(property, value) => void changeStyleTrial('applyStyleTrial', property, value)}
