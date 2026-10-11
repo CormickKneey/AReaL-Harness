@@ -426,6 +426,16 @@ pub fn projections() -> (Value, Value) {
             "areal/thread/configured",
             object(json!({"threadId":string,"configuration":config})),
         ),
+        (
+            "areal/thread/tools/attached",
+            object(
+                json!({"threadId":string,"toolsetRevision":number,"dynamicTools":array(schema::<ToolDefinition>())}),
+            ),
+        ),
+        (
+            "areal/side/capacity",
+            object(json!({"threadId":string,"status":{"enum":["waiting","available"]}})),
+        ),
         ("areal/thread/archived", object(json!({"threadId":string}))),
         (
             "areal/thread/unarchived",
