@@ -239,12 +239,18 @@ impl Engine {
                     if found.digest != hash {
                         return Err(Error::Conflict);
                     }
-                    let turn = state
-                        .thread
-                        .turns
-                        .first()
-                        .cloned()
-                        .ok_or_else(|| Error::Storage("Side first Turn missing".into()))?;
+                    // 归档和压缩会释放驻留 Turn，回执必须从完整持久历史恢复首轮。
+                    let saved = engine
+                        .store
+                        .read_thread(&state.thread.id)
+                        .await
+                        .map_err(|error| Error::Storage(error.to_string()))?;
+                    let turn = match found.result.get("turnId").and_then(Value::as_str) {
+                        Some(id) => saved.turns.iter().find(|turn| turn.id == id),
+                        None => saved.turns.first(),
+                    }
+                    .cloned()
+                    .ok_or_else(|| Error::Storage("Side first Turn missing".into()))?;
                     return Ok((state.thread.clone(), turn));
                 }
             }
@@ -270,6 +276,8 @@ impl Engine {
                 return Err(invalid("SOURCE_KIND_UNSUPPORTED"));
             }
             let cwd = source_state.thread.cwd.clone();
+            // 锚点只固定模型与证据；当前来源策略限制新旁路的读取授权。
+            let source_allowlist = desktop(&source_state.thread).configuration.tool_allowlist;
             drop(source_state);
             let source = engine
                 .store
@@ -344,20 +352,19 @@ impl Engine {
             config.profile = None;
             config.read_only = true;
             config.tool_allowlist = Some(
-                if request.workspace_access == "readOnly" {
-                    vec![
-                        "side_context_read",
-                        "fs_read",
-                        "fs_list",
-                        "fs_stat",
-                        "search_files",
-                    ]
-                } else {
-                    vec!["side_context_read"]
-                }
-                .into_iter()
-                .map(str::to_owned)
-                .collect(),
+                std::iter::once("side_context_read".to_owned())
+                    .chain(
+                        ["fs_read", "fs_list", "fs_stat", "search_files"]
+                            .into_iter()
+                            .filter(|name| {
+                                request.workspace_access == "readOnly"
+                                    && source_allowlist.as_ref().is_none_or(|allowed| {
+                                        allowed.iter().any(|entry| entry == name)
+                                    })
+                            })
+                            .map(str::to_owned),
+                    )
+                    .collect(),
             );
             config.instructions.clear();
             config.options.system_prompt = None;
@@ -459,7 +466,16 @@ impl Engine {
                 dynamic_tools: Vec::new(),
                 toolset_revision: 0,
             };
-            let (thread, turn) = engine.prepare_turn(&base, request.input)?;
+            let (mut thread, turn) = engine.prepare_turn(&base, request.input)?;
+            if let Some(data) = thread.desktop.as_mut()
+                && let Some(record) = data.receipts.iter_mut().find(|record| {
+                    record.identity == identity
+                        && record.request_id == request.request_id
+                        && record.method == method
+                })
+            {
+                record.result = json!({"threadId":thread_id,"turnId":turn.id});
+            }
             engine.check_side_capacity(&source.id, None).await?;
             let admission = engine.reserve_active_turn()?;
             let cell = Cell::new(

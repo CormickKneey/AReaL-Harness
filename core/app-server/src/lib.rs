@@ -469,6 +469,8 @@ async fn connection(
                     | "areal/turn/start"
                     | "turn/interrupt"
                     | "areal/side/context/read"
+                    | "areal/conversation/history"
+                    | "areal/tool/acknowledge"
                     | "areal/context/read"
                     | "areal/thread/configure"
                     | "areal/thread/archive"
@@ -562,6 +564,7 @@ async fn connection(
 impl Connection {
     async fn conversation_list(&self, engine: &Engine, params: Value) -> Result<Value, RpcError> {
         let p: ConversationList = parse(params)?;
+        desktop::require_fork_preview()?;
         let view = p.view.as_deref().unwrap_or("main");
         if !matches!(view, "main" | "side" | "all") {
             return Err(RpcError::invalid("view must be main, side or all"));
@@ -779,9 +782,6 @@ impl Connection {
             return task_mode::dispatch(engine, &self.principal, method, params).await;
         }
         if method == "areal/conversation/list" {
-            if !desktop::fork_preview_enabled() {
-                return Err(RpcError::method());
-            }
             return self.conversation_list(engine, params).await;
         }
         if desktop::METHODS.contains(&method) && method != "areal/thread/start" {
@@ -881,6 +881,8 @@ impl Connection {
                             "areal/thread/fork"
                                 | "areal/side/start"
                                 | "areal/conversation/list"
+                                | "areal/conversation/history"
+                                | "areal/side/context/read"
                                 | "areal/conversation/unarchive"
                         )
                     });

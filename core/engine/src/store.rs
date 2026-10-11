@@ -219,22 +219,15 @@ impl Store {
                                 .tool_allowlist
                                 .as_ref()
                                 .is_some_and(|tools| {
-                                    let expected: &[&str] = if policy.workspace_access == "readOnly"
-                                    {
-                                        &[
-                                            "side_context_read",
-                                            "fs_read",
-                                            "fs_list",
-                                            "fs_stat",
-                                            "search_files",
-                                        ]
-                                    } else {
-                                        &["side_context_read"]
-                                    };
-                                    tools
-                                        .iter()
-                                        .map(String::as_str)
-                                        .eq(expected.iter().copied())
+                                    tools.iter().any(|name| name == "side_context_read")
+                                        && tools.iter().all(|name| {
+                                            name == "side_context_read"
+                                                || (policy.workspace_access == "readOnly"
+                                                    && crate::tools::side_file_tool(
+                                                        name,
+                                                        &crate::tools::registry::Backend::Builtin,
+                                                    ))
+                                        })
                                 })),
                     "Side configuration authority mismatch"
                 );

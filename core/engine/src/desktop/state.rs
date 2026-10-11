@@ -308,29 +308,59 @@ impl Engine {
         cursor: Option<String>,
         max_bytes: Option<usize>,
     ) -> Result<Value> {
+        self.conversation_history(thread_id, "inherited", cursor, max_bytes)
+            .await
+    }
+
+    pub async fn conversation_history(
+        &self,
+        thread_id: &str,
+        view: &str,
+        cursor: Option<String>,
+        max_bytes: Option<usize>,
+    ) -> Result<Value> {
+        if !matches!(view, "inherited" | "reference") {
+            return Err(invalid("invalid history view"));
+        }
         let max_bytes = max_bytes.unwrap_or(65536);
         if !(1..=262144).contains(&max_bytes) {
             return Err(invalid("maxBytes must be 1..262144"));
         }
         let thread = self.read(thread_id, false).await?;
-        let Some(areal_protocol::Conversation::Fork { history_seed, .. }) = thread.conversation
-        else {
-            return Err(invalid("inherited history requires a Fork"));
+        let seed = match (view, thread.conversation) {
+            ("inherited", Some(areal_protocol::Conversation::Fork { history_seed, .. })) => {
+                Some(history_seed)
+            }
+            (
+                "reference",
+                Some(areal_protocol::Conversation::Side {
+                    reference_snapshot, ..
+                }),
+            ) => Some(reference_snapshot),
+            _ => None,
         };
+        let Some(history_seed) = seed else {
+            if cursor.is_some() {
+                return Err(invalid("invalid history cursor"));
+            }
+            let page = json!({"snapshotId":null,"data":[],"complete":true,"nextCursor":null});
+            if page.to_string().len() > max_bytes {
+                return Err(invalid("history page budget too small"));
+            }
+            return Ok(page);
+        };
+        // 同一个快照可被多个目标持有；游标必须同时绑定目标与历史层。
+        let scope = digest(&json!([thread_id, history_seed.snapshot_id, view]))?;
         let (index, offset) = match cursor {
             Some(value) => {
-                let (prefix, tail) = value
-                    .rsplit_once(':')
-                    .ok_or_else(|| invalid("invalid history cursor"))?;
-                let (id, index, offset) = if let Some((id, index)) = prefix.rsplit_once(':') {
-                    (id, index, tail.parse::<usize>().map_err(invalid)?)
-                } else {
-                    (prefix, tail, 0)
-                };
-                if id != history_seed.snapshot_id {
+                let parts: Vec<_> = value.split(':').collect();
+                if parts.len() != 3 || parts[0] != scope {
                     return Err(invalid("invalid history cursor"));
                 }
-                (index.parse::<usize>().map_err(invalid)?, offset)
+                (
+                    parts[1].parse::<usize>().map_err(invalid)?,
+                    parts[2].parse::<usize>().map_err(invalid)?,
+                )
             }
             None => (0, 0),
         };
@@ -342,7 +372,7 @@ impl Engine {
         for (turn, source_thread_id) in turns.into_iter().zip(source_ids) {
             for item in turn.items {
                 entries.push(json!({"sourceThreadId":source_thread_id,
-                    "sourceTurnId":turn.id,"sourceItemId":item.id(),"item":item}));
+                    "sourceTurnId":turn.id,"sourceItemId":item.id(),"sourceTurnStatus":turn.status,"item":item}));
             }
         }
         if index > entries.len() || index == entries.len() && offset != 0 {
@@ -356,8 +386,8 @@ impl Engine {
         let mut data = Vec::new();
         for (position, entry) in entries.iter().enumerate().skip(index) {
             let serialized = serde_json::to_string(entry).map_err(invalid)?;
-            let next = (position + 1 < entries.len())
-                .then(|| format!("{}:{}", history_seed.snapshot_id, position + 1));
+            let next =
+                (position + 1 < entries.len()).then(|| format!("{}:{}:0", scope, position + 1));
             if position == index && offset > 0
                 || page_for(vec![entry.clone()], next.clone())
                     .to_string()
@@ -372,18 +402,15 @@ impl Engine {
                 let fragment_page = |part: &str| {
                     let next_offset = offset + part.len();
                     let next = if next_offset < serialized.len() {
-                        Some(format!(
-                            "{}:{}:{}",
-                            history_seed.snapshot_id, position, next_offset
-                        ))
+                        Some(format!("{}:{}:{}", scope, position, next_offset))
                     } else if position + 1 < entries.len() {
-                        Some(format!("{}:{}", history_seed.snapshot_id, position + 1))
+                        Some(format!("{}:{}:0", scope, position + 1))
                     } else {
                         None
                     };
                     page_for(
                         vec![json!({"sourceThreadId":entry["sourceThreadId"],
-                            "sourceTurnId":entry["sourceTurnId"],"sourceItemId":entry["sourceItemId"],"fragment":{
+                            "sourceTurnId":entry["sourceTurnId"],"sourceItemId":entry["sourceItemId"],"sourceTurnStatus":entry["sourceTurnStatus"],"fragment":{
                             "text":part,"offsetUtf8":offset,"nextOffsetUtf8":next_offset,"totalBytes":serialized.len()
                         }})],
                         next,
@@ -426,8 +453,7 @@ impl Engine {
             data.push(entry.clone());
         }
         let next = index + data.len();
-        let cursor =
-            (next < entries.len()).then(|| format!("{}:{}", history_seed.snapshot_id, next));
+        let cursor = (next < entries.len()).then(|| format!("{}:{}:0", scope, next));
         let page = page_for(data, cursor);
         if page.to_string().len() > max_bytes {
             return Err(invalid("history page budget too small"));
@@ -1004,7 +1030,26 @@ impl Engine {
         let side = state.thread.is_side();
         Ok(areal_runtime_protocol::PermissionRequest {
             read_roots: if side {
-                Some(vec!["workspace://repo".into()])
+                let configuration = desktop(&state.thread).configuration;
+                Some(
+                    if state.thread.side_workspace_read()
+                        && configuration
+                            .tool_allowlist
+                            .as_ref()
+                            .is_some_and(|allowed| {
+                                allowed.iter().any(|name| {
+                                    crate::tools::side_file_tool(
+                                        name,
+                                        &crate::tools::registry::Backend::Builtin,
+                                    )
+                                })
+                            })
+                    {
+                        vec!["workspace://repo".into()]
+                    } else {
+                        Vec::new()
+                    },
+                )
             } else if readonly || cell.research {
                 Some(
                     vec!["workspace://repo".into(), self.scratch_uri(cell)]
