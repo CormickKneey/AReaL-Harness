@@ -1,5 +1,5 @@
 use areal_runtime_protocol::{Error, ErrorCode, LimitRequest, Limits, Result};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 pub(crate) struct Workspace {
     pub root: PathBuf,
@@ -128,20 +128,7 @@ impl Workspace {
             .strip_prefix(namespace)
             .filter(|s| s.is_empty() || s.starts_with('/'))
             .ok_or_else(|| invalid("expected workspace://repo[/path]"))?;
-        // v0 使用未编码的工作区路径；不允许 URL 解析器归一化掉越界证据。
-        if suffix.contains(['%', '?', '#', '\\', '\0']) || suffix.len() > 4096 {
-            return Err(invalid("unsupported workspace path encoding"));
-        }
-        let relative = Path::new(suffix.trim_start_matches('/'));
-        if suffix.split('/').any(|part| part == "." || part == "..")
-            || relative
-                .components()
-                .any(|c| !matches!(c, Component::Normal(_)))
-        {
-            return Err(invalid(
-                "workspace paths cannot contain dot or parent components",
-            ));
-        }
+        let relative = areal_runtime_protocol::workspace_relative_path(suffix)?;
         Ok((root, relative))
     }
     pub fn uri(&self, path: &Path) -> String {

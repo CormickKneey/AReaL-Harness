@@ -754,6 +754,9 @@ impl Engine {
         let coordination = entry
             .as_ref()
             .is_ok_and(|e| matches!(e.backend, Backend::Coordination | Backend::Core));
+        let agent_control = entry
+            .as_ref()
+            .is_ok_and(|e| matches!(e.backend, Backend::Agent));
         // 协调/等待不持工作区锁；独占子作者的工具复用整个Turn的写租约。
         let exclusive = cell
             .state
@@ -774,7 +777,10 @@ impl Engine {
                 "CHILD_EXECUTION_DISABLED: exclusive writers and bounded isolated workers must return a handoff instead of recursively creating child executions",
             ));
         }
-        let _workspace_guard = if coordination || exclusive || rejection.is_some() {
+        // 旧研究 Agent 的等待也不能持读租约，否则排队作者会阻止其子任务继续读取。
+        // 它仍保留原 Runtime scope 与 hooks；每个 hook 单独取得执行租约。
+        let _workspace_guard = if coordination || agent_control || exclusive || rejection.is_some()
+        {
             None
         } else {
             Some(tokio::select! {biased;
@@ -782,7 +788,7 @@ impl Engine {
                 guard=self.workspace_gate.clone().read_owned()=>guard,
             })
         };
-        let _permit = if coordination || rejection.is_some() {
+        let _permit = if coordination || agent_control || rejection.is_some() {
             None
         } else {
             Some(tokio::select! {

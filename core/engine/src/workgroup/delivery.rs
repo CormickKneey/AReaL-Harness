@@ -145,6 +145,44 @@ fn changed(bundle: &Bundle) -> Vec<String> {
         .collect()
 }
 
+async fn preflight(workspace: &Path, base: &Tree, candidate: &Tree) -> Result<()> {
+    let paths = base
+        .keys()
+        .chain(candidate.keys())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .filter(|path| base.get(*path) != candidate.get(*path))
+        .map(|path| (path.clone(), candidate.contains_key(path)))
+        .collect::<Vec<_>>();
+    let workspace = workspace.to_owned();
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        for (path, exists_after) in paths {
+            // Runtime v0 使用未编码 URI；整组先确认可表达，避免前面文件已提交后才拒绝。
+            rt::workspace_relative_path(&format!("/{path}")).with_context(|| {
+                format!("artifact path cannot be represented by Runtime v0: {path}")
+            })?;
+            if exists_after {
+                // 这里只预检当前类型；snapshot 与 Runtime 各自保留路径约束，外部修改仍可能冲突。
+                match std::fs::symlink_metadata(workspace.join(&path)) {
+                    Ok(metadata) => ensure!(
+                        !metadata.is_dir(),
+                        "artifact delivery cannot replace a directory with a file: {path}"
+                    ),
+                    // 文件→目录时，较短的旧文件路径会先被删除，再创建父目录。
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                        ) => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+        }
+        Ok(())
+    })
+    .await?
+}
+
 #[async_trait]
 trait Files: Send + Sync {
     fn operation_id(&self) -> String;
@@ -351,6 +389,7 @@ async fn deliver(
     let composed = async {
         let current = snapshot(&bundle.workspace).await?;
         let candidate = tree::compose(&current, &bundle.base, &bundle.candidate, &changed(bundle))?;
+        preflight(&bundle.workspace, &current, &candidate).await?;
         let root = bundle
             .journal
             .parent()
@@ -366,7 +405,7 @@ async fn deliver(
         Err(error) => {
             journal.status = "conflict".into();
             journal.error = Some(format!(
-                "candidate cannot compose onto current workspace; no files applied: {error}"
+                "candidate cannot be prepared for delivery; no files applied: {error}"
             ));
             save(&bundle.journal, &journal).await?;
             return Ok(projection(&journal, Some(false)));
@@ -760,6 +799,125 @@ mod tests {
         assert_eq!(files.calls.load(Ordering::SeqCst), 0);
         assert!(bundle.workspace.join("old").exists());
     }
+
+    #[tokio::test]
+    async fn unrepresentable_paths_reject_the_entire_delivery_before_writing_earlier_files() {
+        for path in ["zz-name#part", "zz-name?part", "zz-name%part"] {
+            let (_root, mut bundle, files) = fixture();
+            bundle.candidate.insert(
+                "old".into(),
+                tree::File {
+                    bytes: b"earlier valid modification".to_vec(),
+                    executable: false,
+                },
+            );
+            bundle.candidate.insert(
+                path.into(),
+                tree::File {
+                    bytes: b"late unsupported path".to_vec(),
+                    executable: false,
+                },
+            );
+            let result = deliver(
+                &files,
+                "scope",
+                &bundle,
+                "parent",
+                "group",
+                None,
+                &NeverVerify,
+            )
+            .await
+            .unwrap();
+            assert_eq!(result["status"], "conflict");
+            assert_eq!(result["applied"], false);
+            assert_eq!(result["steps"], 0);
+            assert!(result["error"].as_str().unwrap().contains("Runtime v0"));
+            assert_eq!(files.calls.load(Ordering::SeqCst), 0);
+            assert_eq!(tree::snapshot(&bundle.workspace).unwrap(), bundle.base);
+            assert_eq!(std::fs::read(bundle.workspace.join("old")).unwrap(), b"old");
+        }
+    }
+
+    #[tokio::test]
+    async fn directory_replacement_is_rejected_before_any_source_operation() {
+        for has_child in [false, true] {
+            let (_root, mut bundle, files) = fixture();
+            std::fs::create_dir(bundle.workspace.join("zz-target")).unwrap();
+            if has_child {
+                std::fs::write(bundle.workspace.join("zz-target/child"), b"child").unwrap();
+            }
+            bundle.base = tree::snapshot(&bundle.workspace).unwrap();
+            bundle.candidate = bundle.base.clone();
+            bundle.candidate.remove("zz-target/child");
+            bundle.candidate.get_mut("old").unwrap().bytes = b"earlier valid modification".to_vec();
+            for path in ["aa-earlier", "zz-target"] {
+                bundle.candidate.insert(
+                    path.into(),
+                    tree::File {
+                        bytes: b"replacement".to_vec(),
+                        executable: false,
+                    },
+                );
+            }
+            let result = deliver(
+                &files,
+                "scope",
+                &bundle,
+                "parent",
+                "group",
+                None,
+                &NeverVerify,
+            )
+            .await
+            .unwrap();
+            assert_eq!(result["status"], "conflict");
+            assert_eq!(result["applied"], false);
+            assert_eq!(result["steps"], 0);
+            assert!(
+                result["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains("cannot replace a directory")
+            );
+            assert_eq!(files.calls.load(Ordering::SeqCst), 0);
+            assert_eq!(tree::snapshot(&bundle.workspace).unwrap(), bundle.base);
+            assert!(bundle.workspace.join("zz-target").is_dir());
+            assert_eq!(std::fs::read(bundle.workspace.join("old")).unwrap(), b"old");
+        }
+    }
+
+    #[tokio::test]
+    async fn preflight_allows_file_to_directory_and_unchanged_special_names() {
+        let (_root, mut bundle, files) = fixture();
+        for path in ["untouched#", "untouched?", "untouched%"] {
+            std::fs::write(bundle.workspace.join(path), b"unchanged").unwrap();
+        }
+        bundle.base = tree::snapshot(&bundle.workspace).unwrap();
+        bundle.candidate = bundle.base.clone();
+        bundle.candidate.remove("old");
+        bundle.candidate.insert(
+            "old/child".into(),
+            tree::File {
+                bytes: b"inside new directory".to_vec(),
+                executable: false,
+            },
+        );
+        let result = deliver(
+            &files,
+            "scope",
+            &bundle,
+            "parent",
+            "group",
+            None,
+            &NeverVerify,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result["status"], "applied");
+        assert_eq!(tree::snapshot(&bundle.workspace).unwrap(), bundle.candidate);
+    }
+
     #[tokio::test]
     async fn delivery_records_every_receipt_and_applies_large_files_delete_and_mode() {
         let (_root, bundle, files) = fixture();

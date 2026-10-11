@@ -27,6 +27,8 @@ Execution, verification, and delivery are separate projections. Automatic isolat
 
 Model-spawned children progress asynchronously. The parent receives results in completion order and joins all children before normal completion. Waiting holds no model or ordinary tool permit. Manually spawned RPC children retain cancellation when the parent Turn ends. Cancellation, timeout and failure propagate downward; terminal state follows resource closure and persistence.
 
+Legacy research-agent creation, waiting, and cancellation also hold no workspace read lease or tool execution permit, preventing a cycle between a waiting parent, a queued writer, and child reads. Their pre/post hooks acquire workspace leases and tool permits for each actual execution, preserving approval, permission, and cancellation boundaries. An external tool with the same name receives no coordination exemption.
+
 `agent_report` persists summary, evidence and remaining work without ending the task. A failed task can hand back its latest report while retaining failure and partial markers; successful completion prefers a newer final reply. Checkpoints are not independent verification. Ordinary child execution belongs to its parent Turn; TaskRun-owned execution retains its existing lifetime across coordinator Turns. Control requests validate that owner, and completed children cannot start detached Turns.
 
 ## Separate quotas

@@ -3,6 +3,31 @@ use serde::{Deserialize, Serialize};
 pub const MAX_FILE_CHUNK: usize = 64 * 1024;
 pub const MAX_EDIT_FILE: usize = 8 * 1024 * 1024;
 
+/// 校验 workspace URI 命名空间之后的未编码后缀；不解析或授予命名空间权限。
+/// 4096 字节上限包含前导斜线，不包含 `workspace://repo` 等命名空间。
+pub fn workspace_relative_path(suffix: &str) -> crate::Result<&std::path::Path> {
+    use std::path::{Component, Path};
+    let invalid = |message| crate::Error::new(crate::ErrorCode::InvalidArgument, message);
+    if !suffix.is_empty() && !suffix.starts_with('/') {
+        return Err(invalid("workspace path suffix must begin with a slash"));
+    }
+    // v0 不做 URL 解码，防止解析器归一化掉越界证据。
+    if suffix.contains(['%', '?', '#', '\\', '\0']) || suffix.len() > 4096 {
+        return Err(invalid("unsupported workspace path encoding"));
+    }
+    let relative = Path::new(suffix.trim_start_matches('/'));
+    if suffix.split('/').any(|part| part == "." || part == "..")
+        || relative
+            .components()
+            .any(|part| !matches!(part, Component::Normal(_)))
+    {
+        return Err(invalid(
+            "workspace paths cannot contain dot or parent components",
+        ));
+    }
+    Ok(relative)
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FileRequest {
@@ -130,4 +155,36 @@ impl FileCommand {
 pub struct FileHelperRequest {
     pub root: String,
     pub command: FileCommand,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workspace_suffix_preserves_literal_paths_and_bounds_the_leading_slash() {
+        assert_eq!(
+            workspace_relative_path("").unwrap(),
+            std::path::Path::new("")
+        );
+        assert_eq!(
+            workspace_relative_path("/folder with spaces/中文.txt").unwrap(),
+            std::path::Path::new("folder with spaces/中文.txt")
+        );
+        assert!(workspace_relative_path(&format!("/{}", "a".repeat(4095))).is_ok());
+        assert!(workspace_relative_path(&format!("/{}", "a".repeat(4096))).is_err());
+        for suffix in [
+            "relative",
+            "/../outside",
+            "/a/./b",
+            "/name#part",
+            "/name?part",
+            "/name%part",
+            "/%2e%2e/outside",
+            "/a\\b",
+            "/a\0b",
+        ] {
+            assert!(workspace_relative_path(suffix).is_err(), "{suffix:?}");
+        }
+    }
 }
