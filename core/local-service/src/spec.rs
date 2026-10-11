@@ -12,6 +12,8 @@ use std::{collections::BTreeMap, ffi::OsString, path::PathBuf};
 pub struct LocalArgs {
     #[arg(long)]
     pub permissions: Option<String>,
+    #[arg(long, value_parser = ["native", "outer-container-perf", "full-access"])]
+    pub sandbox_profile: Option<String>,
     #[arg(long)]
     pub scratch: Option<PathBuf>,
     #[arg(long)]
@@ -75,6 +77,7 @@ impl LocalArgs {
         }
         for (name, value) in [
             ("permissions", &self.permissions),
+            ("sandbox-profile", &self.sandbox_profile),
             ("model-endpoint", &self.model_endpoint),
             ("model-protocol", &self.model_protocol),
             ("model", &self.model),
@@ -188,6 +191,15 @@ impl LaunchSpec {
                 >= args.command_output_bytes.unwrap_or(8 * 1024 * 1024)
                 && value <= 16 * 1024 * 1024 * 1024),
             "runtime output budget must cover one command and be at most 16 GiB"
+        );
+        ensure!(
+            args.sandbox_profile
+                .as_deref()
+                .is_none_or(|profile| matches!(
+                    profile,
+                    "native" | "outer-container-perf" | "full-access"
+                )),
+            "sandbox profile must be native, outer-container-perf, or full-access"
         );
         let launch_cwd = std::env::current_dir()?.canonicalize()?;
         let workspace = args
@@ -327,7 +339,7 @@ impl LaunchSpec {
             (
                 "permissions",
                 json!({"policy":config.permissions,"scratch":resolved.scratch,
-                    "sandbox":"full-access","allowConcurrentWrites":args.allow_concurrent_writes}),
+                    "sandbox":args.sandbox_profile.as_deref().unwrap_or("full-access"),"allowConcurrentWrites":args.allow_concurrent_writes}),
             ),
             (
                 "runtime",
@@ -429,6 +441,14 @@ mod tests {
         let default = Cli::try_parse_from(["areal"]).unwrap();
         assert_eq!(default.local.runtime_max_processes, None);
         assert!(default.local.launcher_args().is_empty());
+        let native = Cli::try_parse_from(["areal", "--sandbox-profile", "native"]).unwrap();
+        assert_eq!(
+            native.local.launcher_args(),
+            [OsString::from("--sandbox-profile=native")]
+        );
+        for invalid in ["", "unknown"] {
+            assert!(Cli::try_parse_from(["areal", "--sandbox-profile", invalid]).is_err());
+        }
         let configured = Cli::try_parse_from(["areal", "--runtime-max-processes", "32"]).unwrap();
         assert_eq!(configured.local.runtime_max_processes, Some(32));
         assert_eq!(
