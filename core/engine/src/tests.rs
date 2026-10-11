@@ -21,8 +21,21 @@ async fn fork_settled_failure_and_interruption_preserve_status() {
             configuration: None,
             instruction_snapshot: None,
             id: turn_id.clone(),
+            error: match &status {
+                TurnStatus::Failed | TurnStatus::Interrupted => Some(areal_protocol::TurnError {
+                    message: format!("fork-error-sentinel-{turn_id}"),
+                    outcome: Some(areal_protocol::TurnOutcome {
+                        code: format!("fixture-{status:?}"),
+                        class: "fixture-terminal".into(),
+                        source: "fork-preservation-fixture".into(),
+                        details: Some(
+                            json!({"sourceTurnId": turn_id, "sentinel": "preserve-error-details"}),
+                        ),
+                    }),
+                }),
+                _ => None,
+            },
             status,
-            error: None,
             usage: None,
             items: vec![Item::UserMessage {
                 id: id(),
@@ -69,10 +82,21 @@ async fn fork_settled_failure_and_interruption_preserve_status() {
         history.iter().map(|turn| &turn.status).collect::<Vec<_>>(),
         vec![&TurnStatus::Failed, &TurnStatus::Interrupted]
     );
-    assert_eq!(
-        engine.read(&source.id, true).await.unwrap().turns[2].status,
-        TurnStatus::InProgress
-    );
+    let retained_source = engine.read(&source.id, true).await.unwrap();
+    for index in 0..2 {
+        let expected = serde_json::to_value(source.turns[index].error.as_ref().unwrap()).unwrap();
+        assert_eq!(
+            serde_json::to_value(history[index].error.as_ref().unwrap()).unwrap(),
+            expected,
+            "fork must preserve the terminal error message, outcome, and details"
+        );
+        assert_eq!(
+            serde_json::to_value(retained_source.turns[index].error.as_ref().unwrap()).unwrap(),
+            expected,
+            "fork must leave the source terminal error unchanged"
+        );
+    }
+    assert_eq!(retained_source.turns[2].status, TurnStatus::InProgress);
     source.parent_thread_id = Some("delegating-thread".into());
     engine.persist(&source).await.unwrap();
     engine
