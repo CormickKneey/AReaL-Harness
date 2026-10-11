@@ -120,3 +120,7 @@ pnpm --dir clients/gui run test:browser-feasibility
 自动断言检查原生对象、sentinel、表单、滚动与 AX 读取，遮罩接收输入而网页计数不变，截图 bitmap/CSS/zoom/scroll 变换及合成站点回执，最小化返回 `page_not_visible`，DevTools 原生 detach/重新附加和旧调试代次拒绝，以及冻结后返回原对象。截图前等待可见页面绘制提交；不假定缩放属性更新就代表合成帧已经更新，也不依赖特定 Electron 版本自动 detach。测试显式在打开 DevTools 前暂停并 detach，关闭后重新附加。
 
 入口输出临时证据目录，保存 `run-manifest.json`、场景事实、截图元数据和页面 PNG；manifest 记录工作树、源码散列、运行版本、未测项及空 Core call 列表。原生窗口截图单独采集，Renderer 截图不能替代。失败运行保留原貌；不同进程的画面不得拼成一次连续运行。该实验没有生产 Browser 权限、Host 回调、UNKNOWN 恢复、区域评论或安装版验收能力。
+
+## 人工跨源 Frame 切片
+
+`node clients/gui/scripts/browser-frame-origin-smoke.mjs oopif boundaries` 使用真实 Core、独立 adapter、同一 Native 页面、确定性模型和两个本地 Origin。`same-process` 参数覆盖同进程跨源；实际进程身份与 FrameTree 区分 OOPIF，不能只看端口。覆盖显式重载、Main 确认取消与迟到失效、父页面借权拒绝、站点严格策略、全图敏感/瞬时变化/隔离上下文失败拒绝、Agent 截图拒绝、原 Thread 裁图 Blob 与模型 SHA、撤销销毁、标注隐藏保留同一 Native、普通关闭预览及随后切 Thread（不打开新预览）销毁旧授权、无效截图凭据拒绝保留，以及跨 Thread 隔离。Main 对话框由夹具对精确 Origin 回答，不算真人确认。以 `AREAL_CORE_BIN` 指定已冻结 Core；保存 fixture/源码散列、调用身份、图片与停止回执。

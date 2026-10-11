@@ -393,7 +393,7 @@ export function Preview({
         await services.preview({ operation: 'endRegion', projectId, threadId, pageId, captureId: captured.captureId });
         return;
       }
-      await services.preview({ operation: 'hide', projectId, threadId, pageId });
+      await services.preview({ operation: 'hide', projectId, threadId, pageId, captureId: captured.captureId });
       if (!mounted.current || current.current !== owner) {
         await services.preview({ operation: 'endRegion', projectId, threadId, pageId, captureId: captured.captureId });
         return;
@@ -401,7 +401,8 @@ export function Preview({
       const element = selected?.element?.available === true ? selected.element as RegionDraft['element'] : undefined;
       updateAnnotation({ capture: captured, comment: '', region: element?.bounds ?? null,
         mode: element ? 'element' : 'region', element,
-        unavailableReason: selected?.element?.available === false ? String(selected.element.reason) : undefined });
+        unavailableReason: selected?.element?.available === false ? String(selected.element.reason)
+          : typeof capture.unavailableReason === 'string' ? capture.unavailableReason : undefined });
     } catch (e) {
       if (captured) void services.preview({ operation: 'endRegion', projectId, threadId,
         pageId: captured.pageId, captureId: captured.captureId }).catch(() => {});
@@ -432,7 +433,8 @@ export function Preview({
         throw new Error('标注所属聊天已变化');
       const elementDescription = draft.element && draft.mode === 'element'
         ? `\n选择时元素: role=${JSON.stringify(draft.element.role)}; name=${JSON.stringify(draft.element.name)}; bounds bitmap(px)=${x},${y},${width},${height}; frame=${draft.element.frameId}; historicalRef=${draft.element.evidenceRef}; sourceMapping=${draft.element.sourceMapping}; ${elementCheck?.stale ? 'stale: 页面元素已变化，保留原证据。' : '发送时仍命中同一节点；页面之后仍可能变化。'} Agent 必须重新 observe 并取得新 Ref，禁止用 historicalRef 动作。React 源码位置未知。` : '';
-      const description = `页面${draft.element && draft.mode === 'element' ? '元素' : '区域'}标注（冻结截图，页面之后可能变化；仅分享选中区域）\nURL: ${capture.url}\n截图时间: ${capture.capturedAt}\nCore: ${capture.coreInstanceId}; Page: ${capture.pageId}; pageGeneration: ${capture.pageGeneration}; documentEpoch: ${capture.documentEpoch}; controlEpoch: ${capture.controlEpoch}; viewportRevision: ${capture.viewportRevision}; captureId: ${capture.captureId}\n原截图 bitmap(px): ${capture.viewport.bitmapWidth}×${capture.viewport.bitmapHeight}; CSS viewport(px): ${capture.viewport.width}×${capture.viewport.height}; scroll(px): ${capture.viewport.scrollX},${capture.viewport.scrollY}; pageZoom: ${capture.viewport.pageZoom}; GUI zoom: ${capture.viewport.guiZoom}; DPR: ${capture.viewport.deviceScaleFactor}; native DIP bounds: ${JSON.stringify(capture.viewport.nativeBounds)}\n选区 bitmap(px): ${x},${y},${width},${height}; viewport CSS(px): ${(x * scaleX).toFixed(1)},${(y * scaleY).toFixed(1)},${(width * scaleX).toFixed(1)},${(height * scaleY).toFixed(1)}${elementDescription}\n裁图: browser-region-${capture.captureId}.png\n意见: ${draft.comment.trim()}`;
+      const frameDescription = capture.frameEvidence ? `\n嵌入站点截图检查: ${JSON.stringify(capture.frameEvidence)}；仅区域证据，无选择器或 Agent 跨源授权。` : '';
+      const description = `页面${draft.element && draft.mode === 'element' ? '元素' : '区域'}标注（冻结截图，页面之后可能变化；仅分享选中区域）\nURL: ${capture.url}\n截图时间: ${capture.capturedAt}\nCore: ${capture.coreInstanceId}; Page: ${capture.pageId}; pageGeneration: ${capture.pageGeneration}; documentEpoch: ${capture.documentEpoch}; controlEpoch: ${capture.controlEpoch}; viewportRevision: ${capture.viewportRevision}; captureId: ${capture.captureId}\n原截图 bitmap(px): ${capture.viewport.bitmapWidth}×${capture.viewport.bitmapHeight}; CSS viewport(px): ${capture.viewport.width}×${capture.viewport.height}; scroll(px): ${capture.viewport.scrollX},${capture.viewport.scrollY}; pageZoom: ${capture.viewport.pageZoom}; GUI zoom: ${capture.viewport.guiZoom}; DPR: ${capture.viewport.deviceScaleFactor}; native DIP bounds: ${JSON.stringify(capture.viewport.nativeBounds)}\n选区 bitmap(px): ${x},${y},${width},${height}; viewport CSS(px): ${(x * scaleX).toFixed(1)},${(y * scaleY).toFixed(1)},${(width * scaleX).toFixed(1)},${(height * scaleY).toFixed(1)}${elementDescription}${frameDescription}\n裁图: browser-region-${capture.captureId}.png\n意见: ${draft.comment.trim()}`;
       const draftKey = `areal-gui:draft:${projectId}:${threadId}`;
       if (sending.has(draftKey) || localStorage.getItem(`${draftKey}:pending`))
         throw new Error('当前聊天有结果待核对的发送；请先确认结果，再加入标注草稿');
@@ -543,7 +545,7 @@ export function Preview({
           : <>
             {uninspectedUnknown && <span role="status">原浏览器动作结果 UNKNOWN。请先到聊天记录核查并确认；交还不会重试该动作。</span>}
             <Button type="button" size="sm" disabled={claiming || uninspectedUnknown || !!state.loading || !!state.error
-              || !!styleTrial
+              || !!styleTrial || !!state.browser?.frameOriginGrant
               || !!state.browser?.downloadIntentExpiresAt || (state.workspace?.fileReceipts ?? []).some((receipt: Data) =>
                 receipt.pageId === state.browser?.pageId && ['choosing', 'downloading', 'interrupted'].includes(receipt.status))}
             onClick={() => {
@@ -583,6 +585,18 @@ export function Preview({
               && state.browser?.control === 'human' && <Button type="button" size="sm"
                 onClick={() => void request('cancelDownload', { downloadId: receipt.id, userIntent: true })}>取消下载</Button>}
           </div>)}
+        </div>}
+      {browserEnabled && state.url && state.browser?.control === 'human' &&
+        <div className="preview-viewport-toolbar" role="group" aria-label="嵌入站点授权">
+          {state.browser.frameOriginGrant ? <>
+            <span role="status">嵌入站点 {state.browser.frameOriginGrant.origin} · 仅人工操作，iframe 使用区域标注</span>
+            {state.browser.frameOriginGrant.status === 'pending' && <Button type="button" size="sm"
+              disabled={!!annotating || !!styleTrial}
+              onClick={() => void request('reloadFrameOrigin', { userIntent: true })}>重载并应用嵌入授权</Button>}
+            <Button type="button" size="sm" disabled={!!annotating || !!styleTrial}
+              onClick={() => void request('revokeFrameOrigin', { userIntent: true })}>撤销嵌入授权并关闭页面</Button>
+          </> : <Button type="button" size="sm" disabled={!!annotating || !!styleTrial || annotationBusy}
+            onClick={() => void request('authorizeFrameOrigin', { userIntent: true })}>授权当前页面的嵌入站点</Button>}
         </div>}
       {browserEnabled && state.url && <div className="preview-viewport-toolbar" role="group" aria-label="页面标注">
         <Button ref={annotationControl} type="button" size="sm" disabled={annotationBusy || styleBusy || !!styleTrial || !!annotating || state.browser?.control === 'transferring'}

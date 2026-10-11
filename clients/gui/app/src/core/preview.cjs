@@ -103,7 +103,7 @@ const MAX_FILE_BYTES = 64 * 1024 * 1024;
 const MAX_FILE_RECEIPTS = 8;
 const DOWNLOAD_INTENT_MS = 30000;
 const DOWNLOAD_TIMEOUT_MS = 120000;
-const sensitiveCaptureScript = `(() => {
+const sensitiveCaptureScript = (includeFrames = true) => `(() => {
   const selector = 'input[type="password"],input[name*="token" i],input[name*="secret" i],input[name*="key" i]';
   const sensitiveAutocomplete = new Set(['current-password', 'new-password', 'cc-number', 'cc-csc', 'one-time-code']);
   const scan = root => {
@@ -116,7 +116,7 @@ const sensitiveCaptureScript = `(() => {
       if (!['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT'].includes(element.tagName)
         && [...element.childNodes].some(child => child.nodeType === Node.TEXT_NODE && /password|passcode|secret|token|api.?key|credit.?card|cvv|authorization|one.?time.?code|\\botp\\b|credential/i.test(child.textContent))) return true;
     }
-    for (const frame of root.querySelectorAll('iframe,frame')) {
+    for (const frame of ${includeFrames ? "root.querySelectorAll('iframe,frame')" : '[]'}) {
       try { if (!frame.contentDocument || scan(frame.contentDocument)) return true; }
       catch { return true; }
     }
@@ -124,7 +124,7 @@ const sensitiveCaptureScript = `(() => {
   };
   return scan(document);
 })()`;
-const captureGuardStartScript = (token, sequence) => `(() => {
+const captureGuardStartScript = (token, sequence, includeFrames = true) => `(() => {
   if ((globalThis.__arealCaptureGuardSequence ?? 0) >= ${sequence}) return false;
   globalThis.__arealCaptureGuardSequence = ${sequence};
   const previous = globalThis.__arealCaptureGuard;
@@ -137,7 +137,7 @@ const captureGuardStartScript = (token, sequence) => `(() => {
     guard.observers.push(observer);
     for (const element of root.querySelectorAll('*')) {
       if (element.shadowRoot) watch(element.shadowRoot);
-      if (element.matches('iframe,frame')) {
+      if (${includeFrames} && element.matches('iframe,frame')) {
         if (!element.contentDocument) throw new Error('Frame unavailable');
         watch(element.contentDocument);
       }
@@ -160,6 +160,88 @@ const clearCaptureGuardScript = `(() => {
   delete globalThis.__arealCaptureGuard;
   return true;
 })()`;
+// 仅人工标注使用，所有返回像素对应的 Frame 都必须接受独立隐私检查。
+async function captureHumanFrames(c, grant, bounded, valid, token, sequence) {
+  if (c.debugger.isAttached()) throw new Error('页面调试器正在使用，无法检查嵌入站点');
+  const targets = new Map(), contexts = [];
+  let attached = false;
+  const current = () => valid() && grant.valid() && grant.status === 'active';
+  const command = async (method, params = {}, sessionId) => {
+    if (!current()) throw new Error('嵌入站点截图授权已失效');
+    const result = await bounded(c.debugger.sendCommand(method, params, sessionId));
+    if (!current()) throw new Error('嵌入站点截图授权已失效');
+    return result;
+  };
+  const onMessage = (_event, method, params) => {
+    if (method === 'Target.attachedToTarget' && params.targetInfo.type === 'iframe')
+      targets.set(params.targetInfo.targetId, params.sessionId);
+    if (method === 'Target.detachedFromTarget')
+      for (const [id, sid] of targets) if (sid === params.sessionId) targets.delete(id);
+  };
+  const snapshot = async () => {
+    const root = (await command('Page.getFrameTree')).frameTree, frames = [];
+    const walk = (node, parent, sid) => {
+      const frame = node.frame;
+      frames.push({ id: frame.id, loaderId: frame.loaderId, url: frame.url,
+        origin: frame.securityOrigin, parent: parent ?? frame.parentId ?? null, sid });
+      for (const child of node.childFrames ?? []) walk(child, frame.id, sid);
+    };
+    walk(root, null);
+    for (const [id, sid] of targets) {
+      const child = (await command('Page.getFrameTree', {}, sid)).frameTree;
+      if (child.frame.id !== id || child.frame.parentId !== root.frame.id)
+        throw new Error('嵌入站点 Frame 归属无法确认');
+      walk(child, null, sid);
+    }
+    const parentOrigin = new URL(grant.parentURL).origin;
+    if (frames.length !== c.mainFrame.framesInSubtree.length
+      || new Set(frames.map(frame => frame.id)).size !== frames.length || frames.length > 32
+      || frames[0].url !== grant.parentURL
+      || frames.some(frame => frame.origin !== parentOrigin
+        && (frame.origin !== grant.origin || frame.parent !== root.frame.id)))
+      throw new Error('嵌入站点 Frame 隐私覆盖不完整');
+    return frames.sort((a, b) => a.id.localeCompare(b.id));
+  };
+  try {
+    c.debugger.attach('1.3'); attached = true;
+    c.debugger.on('message', onMessage);
+    await command('Page.enable');
+    await command('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false,
+      flatten: true, filter: [{ type: 'iframe', exclude: false }, { exclude: true }] });
+    const before = await snapshot();
+    for (const frame of before) {
+      const world = await command('Page.createIsolatedWorld', {
+        frameId: frame.id, worldName: `areal-human-capture-${token}` }, frame.sid);
+      const context = { id: world.executionContextId, sid: frame.sid };
+      contexts.push(context);
+      const run = expression => command('Runtime.evaluate', { expression, contextId: context.id,
+        returnByValue: true }, context.sid);
+      if ((await run(captureGuardStartScript(token, sequence, false))).result?.value !== true
+        || (await run(sensitiveCaptureScript(false))).result?.value !== false)
+        throw new Error('嵌入站点包含敏感内容或截图保护不可用，未生成图片');
+    }
+    const image = await bounded(c.capturePage());
+    if (!current()) throw new Error('嵌入站点截图授权已失效');
+    for (const context of contexts) {
+      const run = expression => command('Runtime.evaluate', { expression, contextId: context.id,
+        returnByValue: true }, context.sid);
+      if ((await run(sensitiveCaptureScript(false))).result?.value !== false
+        || (await run(captureGuardStopScript(token, sequence))).result?.value !== false)
+        throw new Error('嵌入站点在截图期间发生变化，未生成图片');
+    }
+    if (!isDeepStrictEqual(before, await snapshot())) throw new Error('嵌入站点 Frame 已变化，未生成图片');
+    return { image, frames: before.map(({ id, loaderId, origin }) => ({ id, loaderId, origin })) };
+  } finally {
+    // 清理即使授权已失效也要执行；仅清理本次固定上下文，不重放截图或页面动作。
+    const cleanupDeadline = performance.now() + 500;
+    await Promise.allSettled(contexts.map(context => !c.isDestroyed() && c.debugger.isAttached()
+      ? nativeWithin(c.debugger.sendCommand('Runtime.evaluate', {
+        expression: captureGuardStopScript(token, sequence), contextId: context.id, returnByValue: true,
+      }, context.sid), cleanupDeadline) : Promise.resolve()));
+    c.debugger.removeListener('message', onMessage);
+    if (attached && !c.isDestroyed() && c.debugger.isAttached()) c.debugger.detach();
+  }
+}
 function safeText(value, limit = 500) {
   const text = String(value ?? '').slice(0, limit);
   return sensitive.test(text) ? '[redacted]' : text;
@@ -368,6 +450,8 @@ class CorePreview {
     if (!page.view) return;
     page.styleTrial = null;
     const c = page.view.webContents;
+    page.networkPolicy?.revokeFrameGrant(c.id);
+    page.frameGrant = null;
     this.cancelFileOperations(page, 'page_closed_after_dispatch');
     if (page.openingDevTools && !page.openingDevTools.isDestroyed()) page.openingDevTools.close();
     page.openingDevTools = null;
@@ -434,6 +518,7 @@ class CorePreview {
       canGoForward: c?.navigationHistory.canGoForward() ?? false,
       error: page?.error ?? '',
       browser: page ? { pageId: page.id, control: page.control,
+        frameOriginGrant: page.frameGrant ? { origin: page.frameGrant.origin, status: page.frameGrant.status } : null,
         trialActive: !!page.styleTrial, trialStale: !!page.styleTrial?.stale,
         transferError: page.transferError ?? null, resource: page.view ? page.crashed ? 'crashed' : 'ready' : 'suspended',
         stateLoss: page.stateLoss ?? null,
@@ -532,6 +617,7 @@ class CorePreview {
     if (!page?.view || page.crashed || page.view.webContents.isDestroyed() || page.view.webContents.isDevToolsOpened()
       || !page.view.webContents.getURL()
       || !this.owns(projectId, threadId)) throw new Error('当前聊天没有可认领的页面');
+    if (page.frameGrant) throw new Error('请先撤销嵌入站点授权并关闭页面，再交还 Agent');
     if (page.control !== 'human' || page.claiming || page.activeSelection || page.annotationCaptureId
       || page.activeRead || page.activePrepare || page.activeAction || page.fileHandoff || page.downloads.size)
       throw new Error('浏览页面当前不可认领');
@@ -595,6 +681,10 @@ class CorePreview {
   async captureElement(projectId, threadId, pageId) {
     const page = this.page(projectId, threadId, pageId);
     if (page?.control === 'transferring') await this.convergeInput(page);
+    if (page?.frameGrant?.status === 'active') return {
+      capture: await this.captureRegion(projectId, threadId, pageId),
+      element: { available: false, reason: 'iframe 内容无法可靠识别，请使用区域标注；未生成选择器' },
+    };
     const c = page?.view?.webContents;
     const key = page && pageKey(page.coreInstanceId, projectId, threadId, pageId);
     if (!page || page.id !== pageId || !c || !this.pageStillOwned(page) || !this.owns(projectId, threadId)
@@ -725,7 +815,7 @@ class CorePreview {
       && !c.isDestroyed() && c.getURL() === sourceUrl && page.view?.getVisible()
       && this.owner === pageKey(page.coreInstanceId, projectId, threadId, pageId)
       && page.activeRead === read && this.window.isVisible() && !this.window.isMinimized();
-    let changed = true;
+    let changed = true, frameEvidence;
     try {
       const viewport = await bounded(readIsolated(c, viewportScript));
       if (!valid() || ![viewport.width, viewport.height, viewport.scrollX, viewport.scrollY, viewport.deviceScaleFactor]
@@ -734,13 +824,19 @@ class CorePreview {
       const facts = viewportFacts(this.window, page, viewport);
       const viewportKey = facts.key;
       if (page.viewportKey !== viewportKey) { page.viewportKey = viewportKey; page.viewportRevision++; }
-      if (await bounded(readIsolated(c, captureGuardStartScript(guardToken, guardSequence))) !== true)
-        throw new Error('页面截图保护不可用');
-      if (await bounded(readIsolated(c, sensitiveCaptureScript)) !== false) throw new Error('页面包含敏感输入框，无法截图标注');
-      const image = await bounded(c.capturePage());
-      if (!valid() || await bounded(readIsolated(c, sensitiveCaptureScript)) !== false)
-        throw new Error('页面截图条件已变化');
-      changed = await bounded(readIsolated(c, captureGuardStopScript(guardToken, guardSequence)));
+      let image;
+      if (page.frameGrant?.status === 'active') {
+        const captured = await captureHumanFrames(c, page.frameGrant, bounded, valid, guardToken, guardSequence);
+        image = captured.image; frameEvidence = captured.frames; changed = false;
+      } else {
+        if (await bounded(readIsolated(c, captureGuardStartScript(guardToken, guardSequence))) !== true)
+          throw new Error('页面截图保护不可用');
+        if (await bounded(readIsolated(c, sensitiveCaptureScript())) !== false) throw new Error('页面包含敏感输入框，无法截图标注');
+        image = await bounded(c.capturePage());
+        if (!valid() || await bounded(readIsolated(c, sensitiveCaptureScript())) !== false)
+          throw new Error('页面截图条件已变化');
+        changed = await bounded(readIsolated(c, captureGuardStopScript(guardToken, guardSequence)));
+      }
       if (changed !== false || !valid()
         || viewportFacts(this.window, page, await bounded(readIsolated(c, viewportScript))).key !== viewportKey)
         throw new Error('页面在截图期间发生变化，请重试');
@@ -764,6 +860,7 @@ class CorePreview {
         url: observationUrl(c.getURL()), capturedAt: new Date().toISOString(),
         viewport: { ...viewport, pageZoom: facts.pageZoom, guiZoom: facts.guiZoom,
           nativeBounds: facts.nativeBounds, bitmapWidth: size.width, bitmapHeight: size.height },
+        ...(frameEvidence ? { frameEvidence, unavailableReason: 'iframe 内容无法可靠识别，请使用区域标注；未生成选择器' } : {}),
         mimeType: 'image/png', imageBase64: png.toString('base64') };
     } finally {
       clearTimeout(timer);
@@ -1741,14 +1838,14 @@ class CorePreview {
         try {
           const watching = await Promise.race([readIsolated(c, captureGuardStartScript(guardToken, guardSequence)), cancelled]);
           if (watching !== true) throw new Error('Browser capture guard unavailable');
-          const hasSensitive = await Promise.race([readIsolated(c, sensitiveCaptureScript), cancelled]);
+          const hasSensitive = await Promise.race([readIsolated(c, sensitiveCaptureScript()), cancelled]);
           if (typeof hasSensitive !== 'boolean') throw new Error('Browser sensitive-field check unavailable');
           if (hasSensitive) throw new Error('Sensitive field prevents automatic screenshot');
           image = await Promise.race([c.capturePage(), cancelled]);
           if (!this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== epoch
             || page.documentGeneration !== documentGeneration)
             throw new Error('Browser observation was revoked');
-          postSensitive = await Promise.race([readIsolated(c, sensitiveCaptureScript), cancelled]);
+          postSensitive = await Promise.race([readIsolated(c, sensitiveCaptureScript()), cancelled]);
         } finally {
           if (page.control === 'agent' && page.controlEpoch === epoch) changed = await Promise.race([
             readIsolated(c, captureGuardStopScript(guardToken, guardSequence)).catch(() => true),
@@ -2094,7 +2191,7 @@ class CorePreview {
     const navigate = (event, url) => {
       try {
         webUrl(url);
-        if (!page.networkPolicy.permits({ url, resourceType: 'mainFrame' })) event.preventDefault();
+        if (page.frameGrant || !page.networkPolicy.permits({ url, resourceType: 'mainFrame' })) event.preventDefault();
       } catch {
         event.preventDefault();
       }
@@ -2104,7 +2201,8 @@ class CorePreview {
     c.on("will-frame-navigate", (event) => {
       try {
         webUrl(event.url);
-        if (!page.networkPolicy.permits({ url: event.url, resourceType: 'subFrame' })) event.preventDefault();
+        if (!page.networkPolicy.permits({ url: event.url, resourceType: event.isMainFrame ? 'mainFrame' : 'subFrame',
+          webContentsId: c.id, frame: event.frame })) event.preventDefault();
       } catch {
         event.preventDefault();
       }
@@ -2114,6 +2212,16 @@ class CorePreview {
       page.dialogPending = false;
       page.activeSelection?.cancel();
       if (main) {
+        page.frameDocumentGeneration = (page.frameDocumentGeneration ?? 0) + 1;
+        if (page.frameGrant) {
+          const grant = page.frameGrant;
+          if (grant.status === 'reloading' && !grant.navigationStarted && !inPlace && url === grant.parentURL) {
+            grant.navigationStarted = true; grant.documentGeneration = page.frameDocumentGeneration;
+          } else {
+            page.activeRead?.cancel(); this.closeNative(page);
+            page.stateLoss = '嵌入授权因文档变化已撤销，页面已关闭'; this.changed(page); return;
+          }
+        }
         // A new document discards its inline trial values. A same-document
         // navigation may retain them, so fence the trial until an explicit
         // refresh; never auto-reload and discard an unsaved form.
@@ -2137,6 +2245,12 @@ class CorePreview {
     });
     const commitNavigation = url => {
       if (!this.pageStillOwned(page)) return;
+      if (page.frameGrant && url !== page.frameGrant.parentURL) {
+        page.activeRead?.cancel(); this.closeNative(page);
+        page.stateLoss = '嵌入授权因文档变化已撤销，页面已关闭'; this.changed(page); return;
+      }
+      if (page.frameGrant?.status === 'reloading' && page.frameGrant.navigationStarted
+        && page.frameGrant.valid() && url === page.frameGrant.parentURL) page.frameGrant.status = 'active';
       page.committedUrl = url;
       page.url = url;
       if (page.fileHandoff) {
@@ -2205,6 +2319,51 @@ class CorePreview {
     this.changed(page, 'pageAdded');
     return page;
   }
+  async frameOriginCommand(page, operation) {
+    const c = page?.view?.webContents;
+    const fence = page && this.developmentPromptFence(page);
+    const valid = () => !!c && !c.isDestroyed() && this.currentDevelopmentPrompt(page, fence)
+      && this.window.isVisible() && !this.window.isMinimized() && this.window.isFocused()
+      && page.view.getVisible() && !c.isDevToolsOpened() && !page.activeRead && !page.activeSelection
+      && !page.activeAction && !page.activePrepare && !page.claiming && !page.styleTrial
+      && !page.fileHandoff && !page.downloads.size && !page.dialogPending;
+    if (operation === 'revokeFrameOrigin') {
+      if (!page || !this.pageStillOwned(page) || page.control !== 'human') throw new Error('页面归属已变化');
+      if (!page.frameGrant) throw new Error('嵌入站点授权已失效');
+      this.release(pageKey(page.coreInstanceId, page.projectId, page.threadId, page.id));
+      return this.state(this.page(page.projectId, page.threadId));
+    }
+    if (!valid()) throw new Error('请先接管并显示当前页面，再授权嵌入站点');
+    if (operation === 'reloadFrameOrigin') {
+      const grant = page.frameGrant;
+      if (!grant || grant.status !== 'pending' || Date.now() > grant.expiresAt
+        || !this.currentDevelopmentPrompt(page, grant.fence) || c.getURL() !== grant.parentURL)
+        throw new Error('嵌入站点授权已失效，请重新授权');
+      grant.status = 'reloading'; grant.navigationStarted = false;
+      page.networkPolicy.bindFrameGrant(grant);
+      c.reload(); this.changed(page); return this.state(page);
+    }
+    if (page.frameGrant || page.pendingDevelopmentPrompt) throw new Error('已有嵌入站点授权或确认正在进行');
+    const source = c.getURL(), parentOrigin = new URL(source).origin;
+    const origins = await nativeWithin(readIsolated(c, `(() => [...new Set([...document.querySelectorAll('iframe,frame')].map(frame => {
+      try { const url = new URL(frame.getAttribute('src'), document.baseURI); return ['http:', 'https:'].includes(url.protocol)
+        && !url.username && !url.password && url.origin !== location.origin ? url.origin : null; } catch { return null; }
+    }).filter(Boolean))])()`), performance.now() + 5000);
+    if (!valid() || c.getURL() !== source || !Array.isArray(origins) || origins.length !== 1
+      || origins[0] === parentOrigin || !page.networkPolicy.canAuthorize(origins[0]))
+      throw new Error('当前页面需要恰好一个可授权的独立嵌入站点');
+    const prompt = page.pendingDevelopmentPrompt = randomUUID();
+    let confirmed;
+    try { confirmed = await this.confirmDevelopmentOrigin({ kind: 'frame', origin: origins[0], page, fence }); }
+    finally { if (page.pendingDevelopmentPrompt === prompt) page.pendingDevelopmentPrompt = null; }
+    if (!confirmed || !valid() || c.getURL() !== source) throw new Error('嵌入站点授权已取消或失效');
+    const grant = { origin: origins[0], parentURL: source, contents: c, fence, status: 'pending',
+      expiresAt: Date.now() + 60000, documentGeneration: page.frameDocumentGeneration ?? 0 };
+    grant.valid = () => page.frameGrant === grant && this.pageStillOwned(page) && page.view?.webContents === c
+      && !c.isDestroyed() && page.control === 'human' && page.pageGeneration === fence.pageGeneration
+      && page.controlEpoch === fence.controlEpoch && (page.frameDocumentGeneration ?? 0) === grant.documentGeneration;
+    page.frameGrant = grant; this.changed(page); return this.state(page);
+  }
   async command(request) {
     validatePreview(request);
     const workspace = workspaceKey(this.coreIdentity(request.projectId), request.projectId, request.threadId);
@@ -2219,6 +2378,10 @@ class CorePreview {
     // A read must not touch LRU order or publish another metadata event.
     if (request.operation === 'state') return page ? this.state(page)
       : { ...this.state(null), workspace: this.snapshot(request.projectId, request.threadId) };
+    if (['authorizeFrameOrigin', 'reloadFrameOrigin', 'revokeFrameOrigin'].includes(request.operation))
+      return this.frameOriginCommand(page, request.operation);
+    if (page?.frameGrant && ['navigate', 'back', 'forward', 'reload', 'devtools'].includes(request.operation))
+      throw new Error('请先撤销嵌入站点授权并关闭页面，再导航或打开开发者工具');
     if (request.operation === 'release') {
       if (!page) return this.state(null);
       if (page.origin !== 'agent' && request.userIntent !== true) throw new Error('关闭人工页面需要明确用户操作');
@@ -2300,6 +2463,13 @@ class CorePreview {
       return this.state(page);
     }
     if (request.operation === 'hide') {
+      const hidden = page ?? (!request.projectId ? this.pages.get(this.owner) : null);
+      const frozen = hidden?.annotationCapture;
+      // 只有本页当前截图凭据允许标注临时隐藏；卸载和普通隐藏必须销毁授权文档。
+      const annotationHide = !!request.captureId && !!hidden && this.pageStillOwned(hidden)
+        && request.captureId === hidden.annotationCaptureId && hidden.control === 'human'
+        && frozen?.nativeWebContentsId === hidden.view?.webContents.id
+        && frozen?.pageGeneration === hidden.pageGeneration && frozen?.controlEpoch === hidden.controlEpoch;
       if (page) {
         page.requestedVisible = false; page.activeSelection?.cancel();
         if (page.fileHandoff?.timer) clearTimeout(page.fileHandoff.timer);
@@ -2310,6 +2480,10 @@ class CorePreview {
         if (!page) { const displayed = this.pages.get(this.owner); if (displayed) displayed.requestedVisible = false; }
         this.view?.setVisible(false);
         this.owner = null; this.view = null;
+      }
+      if (hidden?.frameGrant && !annotationHide) {
+        hidden.activeRead?.cancel(); this.closeNative(hidden);
+        hidden.stateLoss = '嵌入授权因关闭预览已撤销，页面已关闭'; this.changed(hidden);
       }
       return this.state(page);
     }
@@ -2445,9 +2619,20 @@ class CorePreview {
         this.changed(page);
         break;
       case 'show':
+        // 标注 hide 会保留冻结草稿；真正切换 Page/Thread 时仍撤销其他页面的临时授权。
+        for (const other of this.pages.values()) if (other !== page && other.frameGrant) {
+          other.activeRead?.cancel(); this.closeNative(other);
+          other.stateLoss = '嵌入授权因切换页面已撤销，页面已关闭'; this.changed(other);
+        }
         if (this.owner !== key) {
           const outgoing = this.pages.get(this.owner);
-          if (outgoing) outgoing.requestedVisible = false;
+          if (outgoing) {
+            outgoing.requestedVisible = false;
+            if (outgoing.frameGrant) {
+              outgoing.activeRead?.cancel(); this.closeNative(outgoing);
+              outgoing.stateLoss = '嵌入授权因切换页面已撤销，页面已关闭'; this.changed(outgoing);
+            }
+          }
           this.view?.setVisible(false);
         }
         this.owner = key; this.view = page.view;

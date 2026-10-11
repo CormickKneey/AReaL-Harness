@@ -95,16 +95,18 @@ async function createWindow() {
     () => backend.snapshot().library?.settings ?? {},
     projectId => backend.status.browserCore?.[projectId] ?? null,
     () => [backend.metadata?.endpoint, ...(backend.status.browserControlEndpoints ?? [])].filter(Boolean),
-    async ({ origin, page, fence }) => {
+    async ({ origin, page, fence, kind }) => {
       const current = () => !quitting && !!backend.metadata?.endpoint
         && window && !window.isDestroyed() && window.isVisible() && !window.isMinimized()
         && window.isFocused() && preview?.currentDevelopmentPrompt(page, fence);
       if (!current()) return false;
       const { response } = await dialog.showMessageBox(window, {
-        type: 'question', title: '允许本地开发站点',
-        message: `允许此浏览工作区访问 ${origin}？`,
-        detail: '仅允许此精确地址的临时站点状态；关闭工作区或重启后需要重新授权。',
-        buttons: ['取消', '仅此工作区允许'], defaultId: 0, cancelId: 0, noLink: true,
+        type: 'question', title: kind === 'frame' ? '授权当前页面的嵌入站点' : '允许本地开发站点',
+        message: kind === 'frame' ? `允许当前页面嵌入 ${origin} 并在人工标注时检查其隐私？` : `允许此浏览工作区访问 ${origin}？`,
+        detail: kind === 'frame'
+          ? '仅当前 Human 页面有效，不授权 Agent。确认后需明确重载，未保存的页面状态可能丢失。截图检查失败不生成图片；撤销、文档变化、关闭预览或切换页面将关闭此页面；标注时临时隐藏除外。'
+          : '仅允许此精确地址的临时站点状态；关闭工作区或重启后需要重新授权。',
+        buttons: ['取消', kind === 'frame' ? '仅当前页面允许' : '仅此工作区允许'], defaultId: 0, cancelId: 0, noLink: true,
       });
       return response === 1 && current();
     });
