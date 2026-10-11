@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Messages } from "./Messages.js";
 import { RelatedSideChats } from "./RelatedSideChats.js";
 import { SideDraftWorkspace } from "./side-draft-owner.js";
+import { insertSideAnswer, makeBringBackPreview } from "./side-bring-back.js";
 import type { Action, Data } from "./services.js";
 
 // 编辑器按服务、来源和具体草稿或 Side 隔离；切换目标会卸载旧编辑器。
@@ -61,12 +62,45 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
   const [evidenceCursor, setEvidenceCursor] = useState<string | null>(null);
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const [evidenceBusy, setEvidenceBusy] = useState(false);
+  const [bringPreview, setBringPreview] = useState<ReturnType<typeof makeBringBackPreview> | null>(null);
+  const [bringResult, setBringResult] = useState("");
   const mounted = useRef(true);
   const side = sideId ? project.state?.threads?.[sideId] : undefined;
   const validSide = side?.conversation?.kind === "side" && side.conversation.origin?.sourceThreadId === source.id;
   const active = validSide && side.turns?.some((turn: Data) => turn.status === "inProgress");
   const sourceStatus = !project.state?.connected || !source.updatedAt || !side?.createdAt ? "来源当前状态未知" :
     Date.parse(source.updatedAt) > Date.parse(side.createdAt) ? "来源已推进；此讨论仍依据创建时快照" : "依据创建时快照";
+  const answers = validSide ? (side.turns ?? []).flatMap((turn: Data) => {
+    const final = (turn.items ?? []).filter((item: Data) => item.type === "agentMessage" && item.text?.trim() && item.phase === "final_answer");
+    if (final.length) return final;
+    if (turn.status !== "completed") return [];
+    const legacy = (turn.items ?? []).filter((item: Data) => item.type === "agentMessage" && item.text?.trim() && !item.phase);
+    return legacy.length ? [legacy.at(-1)] : [];
+  }) : [];
+  const prepareBringBack = (answer: string, whole: boolean) => {
+    const selectedText = window.getSelection()?.toString().trim() ?? "";
+    const selectionNode = window.getSelection()?.anchorNode;
+    const pane = document.querySelector<HTMLElement>(`[data-side-owner="${CSS.escape(owner)}"]`)?.closest(".side-chat-pane");
+    const withinPane = !!selectionNode && !!pane?.contains(selectionNode);
+    const text = whole ? answer : withinPane && selectedText && answer.includes(selectedText) ? selectedText : "";
+    if (!text) { setBringResult("请先选中这条回复中的文字，或明确选择整条回复。"); return; }
+    setBringPreview(makeBringBackPreview({ storage: localStorage, owner: {
+      instanceId: project.core?.instanceId ?? "unknown", projectId: project.id, sourceThreadId: source.id,
+      sideThreadId: sideId, paneOwner: owner,
+    }, source, side, answer: text, insertionId: crypto.randomUUID() }));
+    setBringResult("");
+  };
+  const confirmBringBack = () => {
+    if (!bringPreview) return;
+    const result = insertSideAnswer({ storage: localStorage, preview: bringPreview,
+      current: { owner: { instanceId: project.core?.instanceId ?? "unknown", projectId: project.id,
+        sourceThreadId: source.id, sideThreadId: sideId, paneOwner: workspace.owner(workspace.current()) },
+      source, side, connected: !!project.state?.connected },
+      dispatch: (key: string) => { window.dispatchEvent(new CustomEvent("areal-draft-change", { detail: key })); } });
+    if (result.status === "inserted") { setBringResult(result.changed ? "已追加到更新后的主会话草稿；请检查再发送。" : "已插入主会话草稿；请检查再发送。"); setBringPreview(null); }
+    else if (result.status === "duplicate") setBringResult("这次内容已插入过主会话草稿。");
+    else setBringResult("来源或目标已变化，未写入草稿。可复制预览文字。");
+  };
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
     const refresh = (event: Event) => {
@@ -177,6 +211,28 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
         onLink={() => setError("旁路不提供链接预览；可复制链接后从主会话打开。")}
         onFile={() => setError("旁路尚未开放工作区文件读取。")}
         onReview={() => {}} readTurnReview={async () => ({})} />}
+      {answers.length > 0 && <section aria-label="旁路回复带回主草稿">
+        <p className="text-foreground-subtle">选择要带回的回复文字；整条回复需要单独确认。带回只修改来源主会话的本地草稿。</p>
+        {answers.map((answer: Data, index: number) => <div className="utility-actions" key={answer.id ?? index}>
+          <span>{`回复 ${index + 1}：${String(answer.text).slice(0, 70)}`}</span>
+          <button type="button" onClick={() => prepareBringBack(answer.text, false)}>带回选中文字</button>
+          <button type="button" onClick={() => prepareBringBack(answer.text, true)}>带回整条回复</button>
+        </div>)}
+      </section>}
+      {bringPreview && <section aria-label="带回预览" className="side-evidence">
+        <p>来源 Side：{side?.preview || sideId}；{sourceStatus}。请核对或编辑将插入的文字。</p>
+        {bringPreview.stale && <p role="status">来源在旁路创建后已推进；以下文字仍依据旧快照。</p>}
+        <textarea aria-label="编辑带回文字" value={bringPreview.text} onChange={event => setBringPreview({ ...bringPreview, text: event.target.value })} />
+        <div className="utility-actions">
+          <button type="button" onClick={confirmBringBack}>确认插入主草稿</button>
+          <button type="button" onClick={() => {
+            if (!navigator.clipboard?.writeText) { setBringResult("无法自动复制，请手动选择预览文字。"); return; }
+            void navigator.clipboard.writeText(bringPreview.text).then(() => setBringResult("已复制带回文字。"), () => setBringResult("复制失败，请手动选择预览文字。"));
+          }}>复制文字</button>
+          <button type="button" onClick={() => { setBringPreview(null); setBringResult(""); }}>取消</button>
+        </div>
+      </section>}
+      {bringResult && <p role="status">{bringResult}</p>}
       {error && <p role="alert">{error}</p>}
       {pendingId && <button type="button" onClick={() => void recover()} disabled={busy}>核对首问结果</button>}
       <form onSubmit={event => { event.preventDefault(); void submit(); }}>
