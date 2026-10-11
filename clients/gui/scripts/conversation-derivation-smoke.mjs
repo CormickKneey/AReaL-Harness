@@ -222,7 +222,7 @@ try {
   assert.equal(target.conversation?.origin?.sourceTurnId, anchorTurnId);
   assert.equal(target.turns?.length, 0, "target starts with empty local turns");
   const inherited = page.getByRole("region", { name: "继承的对话历史", exact: true });
-  await inherited.getByText(head, { exact: false }).waitFor();
+  await inherited.getByText(head, { exact: true }).waitFor();
   assert.equal(await inherited.getByText(future, { exact: false }).count(), 0, "future source Turn must not appear in inherited history");
   assert.match(await inherited.innerText(), /共享工作区/);
   assert.equal((await page.getByTestId("chat-input").innerText()).trim(), "");
@@ -271,7 +271,7 @@ try {
   assert.equal(beforeSnapshot.projects[0].state.threads[sourceThreadId].turns.at(-1).status, "inProgress");
   assert.equal(requests.length, requestsBeforeActiveFork);
   const beforeHistory = page.getByRole("region", { name: "继承的对话历史", exact: true });
-  await beforeHistory.getByText(future, { exact: false }).waitFor();
+  await beforeHistory.getByText(future, { exact: true }).waitFor();
   assert.equal(await beforeHistory.getByText(activeQuestion, { exact: false }).count(), 0);
   await shot("04-before-active.png");
   releaseActive();
