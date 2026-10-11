@@ -4,11 +4,12 @@
 /** @template T @typedef {{ok:true,value:T}|{ok:false,error:DesktopError}} DesktopResult */
 /** @typedef {{id:string,revision:string}} ResourceRef */
 /** @typedef {{projectId:string,threadId:string,expectedRevision?:number,model?:{providerId:string,modelId:string}|null,profile?:ResourceRef,options?:Record<string,unknown>,parameters?:Record<string,unknown>,selectedSkills?:ResourceRef[]}} ConfigureRequest */
+/** @typedef {{projectId:string,operation:'start'|'recover'|'send'|'context',sourceThreadId?:string,threadId?:string,requestId?:string,text?:string,cursor?:string,evidenceRef?:string}} SideRequest */
 
 // 名称、作用域和执行层只维护一份；Main 专属能力不能从后台服务入口调用。
 const commandDefinitions = Object.freeze({
   connect: ['service', 'project'], list: ['service', 'project'], open: ['service', 'thread'],
-  create: ['service', 'project'], fork: ['service', 'project'], send: ['service', 'thread'], stop: ['service', 'thread'],
+  create: ['service', 'project'], fork: ['service', 'project'], side: ['service', 'project'], send: ['service', 'thread'], stop: ['service', 'thread'],
   attachBrowser: ['service', 'thread'],
   respond: ['service', 'thread'], reconcile: ['service', 'project'], configure: ['service', 'thread'],
   queue: ['service', 'thread'], queueEdit: ['service', 'thread'], library: ['service', 'app'],
@@ -20,7 +21,7 @@ const commandDefinitions = Object.freeze({
   connectService: ['main', 'app'], export: ['main', 'thread'], remoteControl: ['main', 'app'],
 });
 /** @typedef {keyof typeof commandDefinitions} CommandName */
-/** @template {CommandName} N @typedef {N extends 'configure' ? ConfigureRequest : Record<string,unknown>} CommandParams */
+/** @template {CommandName} N @typedef {N extends 'configure' ? ConfigureRequest : N extends 'side' ? SideRequest : Record<string,unknown>} CommandParams */
 /** @typedef {'show'|'navigate'|'back'|'forward'|'reload'|'stop'|'state'|'external'|'devtools'|'openLink'|'release'|'claim'|'takeover'|'captureRegion'|'captureElement'|'cancelElementSelection'|'checkElement'|'endRegion'|'beginStyleTrial'|'applyStyleTrial'|'undoStyleTrial'|'redoStyleTrial'|'styleTrialState'|'captureStyleTrialAfter'|'clearStyleTrial'|'newPage'|'selectPage'|'subscribe'|'unsubscribe'|'allowNextDownload'|'cancelFileHandoff'|'cancelDownload'} OwnedPreviewOperation */
 /** @typedef {{operation:'hide',projectId?:string,threadId?:string,pageId?:string}|{operation:OwnedPreviewOperation,projectId:string,threadId:string,pageId?:string,captureId?:string,elementId?:string,trialId?:string,property?:string,value?:string,downloadId?:string,url?:string,userIntent?:boolean,visible?:boolean,bounds?:{x:number,y:number,width:number,height:number}}} PreviewRequest */
 /** @param {unknown} value @returns {value is Record<string,unknown>} */
@@ -43,6 +44,11 @@ function validateCommand(name, params, { serviceOnly = false } = {}) {
   if (name === 'fork' && (!identifier(params.sourceThreadId) || !record(params.anchor)
     || !identifier(params.anchor.turnId) || params.anchor.boundary !== 'after'
     || params.workspaceMode !== 'sharedCurrent')) invalid();
+  if (name === 'side' && (!['start', 'recover', 'send', 'context'].includes(String(params.operation))
+    || (params.operation === 'start' && (!identifier(params.sourceThreadId) || typeof params.text !== 'string' || !params.text.trim()))
+    || (params.operation === 'send' && (!identifier(params.threadId) || typeof params.text !== 'string' || !params.text.trim()))
+    || (params.operation === 'recover' && !identifier(params.requestId))
+    || (params.operation === 'context' && !identifier(params.threadId)))) invalid();
   if (name === 'attachBrowser' && (typeof params.expectedToolsetRevision !== 'number'
     || !Number.isSafeInteger(params.expectedToolsetRevision)
     || params.expectedToolsetRevision < 0)) invalid();

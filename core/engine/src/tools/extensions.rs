@@ -52,6 +52,9 @@ impl Invocation<'_> {
         self.validate(&arguments)?;
         {
             let state = self.cell.state.lock().await;
+            if state.thread.is_side() && !(self.call.name == "side_context_read" && matches!(self.entry.backend, Backend::Core)) {
+                return Err(rt::Error::new(rt::ErrorCode::PermissionDenied, "SIDE_POLICY_VIOLATION"));
+            }
             if state
                 .thread
                 .turns
