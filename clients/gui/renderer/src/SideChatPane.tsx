@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Messages } from "./Messages.js";
 import { RelatedSideChats } from "./RelatedSideChats.js";
 import { SideDraftWorkspace } from "./side-draft-owner.js";
-import { insertSideAnswer, makeBringBackPreview } from "./side-bring-back.js";
+import { insertSideAnswer, makeBringBackPreview, sideSourceAdvanced } from "./side-bring-back.js";
 import type { Action, Data } from "./services.js";
 
 // 编辑器按服务、来源和具体草稿或 Side 隔离；切换目标会卸载旧编辑器。
@@ -74,8 +74,9 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
   const side = sideId ? project.state?.threads?.[sideId] : undefined;
   const validSide = side?.conversation?.kind === "side" && side.conversation.origin?.sourceThreadId === source.id;
   const active = validSide && side.turns?.some((turn: Data) => turn.status === "inProgress");
-  const sourceStatus = !project.state?.connected || !source.updatedAt || !side?.createdAt ? "来源当前状态未知" :
-    Date.parse(source.updatedAt) > Date.parse(side.createdAt) ? "来源已推进；此讨论仍依据创建时快照" : "依据创建时快照";
+  const sourceStatus = !project.state?.connected || !validSide ? "来源当前状态未知" :
+    sideSourceAdvanced(source, side) ? "来源已推进；此讨论仍依据创建时快照" :
+    !Number.isFinite(source.updatedAt) || !Number.isFinite(side.createdAt) ? "来源当前状态未知" : "依据创建时快照";
   const answers = validSide ? (side.turns ?? []).flatMap((turn: Data) => {
     const final = (turn.items ?? []).filter((item: Data) => item.type === "agentMessage" && item.text?.trim() && item.phase === "final_answer");
     if (final.length) return final;
