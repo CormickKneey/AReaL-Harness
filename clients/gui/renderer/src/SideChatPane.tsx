@@ -50,6 +50,8 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
   const sideId = selected.kind === "side" ? selected.id : "";
   const generation = project.core?.connectionGeneration ?? 0;
   const [text, setText] = useState(() => localStorage.getItem(draftKey) ?? "");
+  const workspaceReadAvailable = project.core?.features?.sideWorkspaceRead === true;
+  const [workspaceAccess, setWorkspaceAccess] = useState<"none" | "readOnly">(() => workspaceReadAvailable ? "readOnly" : "none");
   const [pendingId, setPendingId] = useState(() => localStorage.getItem(pendingKey) ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -136,7 +138,7 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
       } else {
         const requestId = crypto.randomUUID();
         localStorage.setItem(pendingKey, requestId); setPendingId(requestId);
-        const result = await action("side", { projectId: project.id, operation: "start", sourceThreadId: source.id, text: question, requestId, selection, anchor });
+        const result = await action("side", { projectId: project.id, operation: "start", sourceThreadId: source.id, workspaceAccess, text: question, requestId, selection, anchor });
         if (!mounted.current || !workspace.isCurrent(token, generation)) return;
         workspace.acceptCreated(token, result.threadId, generation);
         onSelected({ kind: "side", id: result.threadId });
@@ -156,7 +158,12 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
     if (validSide && turn) void action("stop", { projectId: project.id, threadId: sideId }).catch((cause: Error) => setError(cause.message));
   };
   return <>
-      <p className="text-foreground-subtle">来源：{source.preview || source.id}。{validSide ? sourceStatus : anchor?.kind === "turn" ? `首问锚定轮次 ${anchor.turnId} 之后的持久证据` : "首问发送时冻结最新持久观察"}。仅会话证据；不会执行来源任务。</p>
+      <p className="text-foreground-subtle">来源：{source.preview || source.id}。{validSide ? sourceStatus : anchor?.kind === "turn" ? `首问锚定轮次 ${anchor.turnId} 之后的持久证据` : "首问发送时冻结最新持久观察"}。{validSide && side.conversation.policy?.workspaceAccess === "readOnly" ? "可只读查询当前工作区；文件内容可能与历史锚点不同。" : "仅会话证据"}；不会执行来源任务。</p>
+      {!sideId && <label>文件访问范围 <select value={workspaceAccess} onChange={event => setWorkspaceAccess(event.target.value as "none" | "readOnly")} disabled={busy || !!pendingId}>
+        {workspaceReadAvailable && <option value="readOnly">只读当前工作区</option>}
+        <option value="none">仅会话证据</option>
+      </select></label>}
+      {!sideId && !workspaceReadAvailable && <p className="text-foreground-subtle">当前 Core 未提供经过验证的工作区只读能力；可使用仅会话证据。</p>}
       {selection && !sideId && <blockquote className="notice">{selection.kind === "itemRange" ? "已持久化选区；发送时验证原文位置。" : "用户引文，来源未确认。"}<br />{selectionPreview || selection.text}</blockquote>}
       {validSide && <p className="text-foreground-subtle">冻结锚点：{side.conversation.origin?.boundary} · {side.conversation.origin?.sourceTurnId || "空历史"}</p>}
       {validSide && side.conversation.selection && <blockquote className="notice">{side.conversation.selection.verified ? "已验证来源片段" : "用户引文，来源未确认"}：{side.conversation.selection.text}</blockquote>}
@@ -175,7 +182,7 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
       {validSide && side.desktop?.archived && <p role="status">这段讨论已归档；请在相关讨论中显式恢复后继续。</p>}
       {validSide && <Messages key={`${owner}:${sideId}`} project={project} thread={side} action={action} dark={dark}
         onLink={() => setError("旁路不提供链接预览；可复制链接后从主会话打开。")}
-        onFile={() => setError("旁路尚未开放工作区文件读取。")}
+        onFile={() => setError(side.conversation.policy?.workspaceAccess === "readOnly" ? "旁路模型可只读查询当前工作区；请在问题中指定文件路径。" : "此旁路仅能读取冻结会话证据。")}
         onReview={() => {}} readTurnReview={async () => ({})} />}
       {error && <p role="alert">{error}</p>}
       {pendingId && <button type="button" onClick={() => void recover()} disabled={busy}>核对首问结果</button>}
@@ -184,7 +191,7 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
           setText(event.target.value); localStorage.setItem(draftKey, event.target.value);
         }} onKeyDown={event => {
           if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); }
-        }} placeholder="向旁路提问（仅会话证据）" disabled={!project.state?.connected || !!sideId && (!validSide || side.desktop?.archived)} />
+        }} placeholder={side?.conversation?.policy?.workspaceAccess === "readOnly" || !sideId && workspaceAccess === "readOnly" ? "向旁路提问（可只读查询当前文件）" : "向旁路提问（仅会话证据）"} disabled={!project.state?.connected || !!sideId && (!validSide || side.desktop?.archived)} />
         <div className="utility-actions">
           <button type="submit" disabled={!text.trim() || busy || !!pendingId || !!active || !!sideId && (!validSide || side.desktop?.archived)}>发送</button>
           {active && <button type="button" onClick={stop}>停止旁路</button>}
