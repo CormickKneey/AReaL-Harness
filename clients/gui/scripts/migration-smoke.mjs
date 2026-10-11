@@ -522,8 +522,29 @@ try {
     .getByRole("button", { name: "关闭面板", exact: true })
     .click();
   checks.push("real Runtime PTY with input/output");
+  await app.evaluate(({ dialog }, origin) => {
+    const showMessageBox = dialog.showMessageBox.bind(dialog);
+    dialog.showMessageBox = async (...args) => {
+      const options = args.at(-1);
+      if (options.title === "允许本地开发站点"
+        && options.message === `允许此浏览工作区访问 ${origin}？`
+        && JSON.stringify(options.buttons) === JSON.stringify(["取消", "仅此工作区允许"])) {
+        return { response: 1 };
+      }
+      return showMessageBox(...args);
+    };
+  }, new URL(previewUrl).origin);
   await openPanel("预览");
   await page.getByLabel("预览地址").fill(previewUrl);
+  await app.evaluate(({ app, BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0];
+    if (window.isMinimized()) window.restore();
+    window.show(); app.focus({ steal: true }); window.focus();
+  });
+  await until(() => app.evaluate(({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0];
+    return window.isVisible() && !window.isMinimized() && window.isFocused();
+  }), "visible focused window for development-site consent");
   await page.getByLabel("预览地址").press("Enter");
   let previewEvidence;
   for (let i = 0; i < 100; i++) {

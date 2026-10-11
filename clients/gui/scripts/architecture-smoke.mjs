@@ -52,10 +52,22 @@ try {
   assert.equal(providers.data[0].id, 'fixture');
   await assert.rejects(() => readFile(join(scratch, 'registry', 'config.toml')), { code: 'ENOENT' });
   checks.push('real Electron IPC reads the global Core provider catalog without a config override');
-  await app.evaluate(({ dialog }, path) => {
+  await app.evaluate(({ dialog }, { path, origin }) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] });
-    dialog.showMessageBox = async () => ({ response: 1 });
-  }, workspace);
+    const showMessageBox = dialog.showMessageBox.bind(dialog);
+    dialog.showMessageBox = async (...args) => {
+      const options = args.at(-1);
+      const buttons = JSON.stringify(options.buttons);
+      const development = options.title === '允许本地开发站点'
+        && options.message === `允许此浏览工作区访问 ${origin}？`
+        && buttons === JSON.stringify(['取消', '仅此工作区允许']);
+      const archive = options.message === '归档此会话？'
+        && buttons === JSON.stringify(['取消', '归档会话']);
+      const stop = options.message === '停止共享后台服务？'
+        && buttons === JSON.stringify(['取消', '停止后台服务']);
+      return development || archive || stop ? { response: 1 } : showMessageBox(...args);
+    };
+  }, { path: workspace, origin: new URL(url).origin });
   const projectId = await page.evaluate(() => window.arealDesktop.chooseProject());
   const create = () => call('create', { projectId, profile: { id: 'fixture', revision: 'v1' } });
   const { threadId } = await create();
@@ -67,14 +79,30 @@ try {
   assert.equal(coreError.ok, false); assert.equal(typeof coreError.error.code, 'number');
   await call('configure', { projectId, threadId, parameters: {} });
   checks.push('real IPC rejects malformed capability requests and preserves numeric Core error codes');
+  const showOwner = async ownerId => {
+    const state = await preview({ operation: 'show', projectId, threadId: ownerId, visible: true,
+      bounds: { x: 0, y: 80, width: 400, height: 300 } });
+    await preview({ operation: 'selectPage', projectId, threadId: ownerId, pageId: state.browser.pageId });
+    await app.evaluate(({ app, BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      if (window.isMinimized()) window.restore();
+      window.show(); app.focus({ steal: true }); window.focus();
+    });
+    await until(() => app.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      return window.isVisible() && !window.isMinimized() && window.isFocused();
+    }), 'visible focused window for development-site consent');
+  };
+  await showOwner(threadId);
   await preview({ operation: 'navigate', projectId, threadId, url });
-  await preview({ operation: 'show', projectId, threadId, visible: true, bounds: { x: 0, y: 80, width: 400, height: 300 } });
   await until(async () => (await natives()).some(content => content.url === url), 'first native page');
   const original = (await natives()).find(content => content.url === url).id;
   const owners = [];
   for (let index = 0; index < 10; index++) {
     const owner = await create(); owners.push(owner.threadId);
+    await showOwner(owner.threadId);
     await preview({ operation: 'navigate', projectId, threadId: owner.threadId, url: `${url}?page=${index}` });
+    await showOwner(threadId);
   }
   await until(async () => (await natives()).length === 8, 'bounded native page cache');
   assert.ok((await natives()).some(content => content.id === original), 'current native page is protected from eviction');
