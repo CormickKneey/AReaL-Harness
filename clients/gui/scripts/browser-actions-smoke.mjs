@@ -77,7 +77,7 @@ const model = createServer(async (request, response) => {
       if (!ref) { send({ content: `No target ${name}` }); send({}, 'stop'); }
       else {
         const action = mode === 'fill' ? { kind: 'fill', ref, value: 'DRAFT_INPUT_04' }
-          : mode === 'press' ? { kind: 'press', ref, key: 'Enter' } : { kind: 'click', ref };
+          : ['press', 'pressButton', 'pressTab'].includes(mode) ? { kind: 'press', ref, key: mode === 'pressTab' ? 'Tab' : 'Enter' } : { kind: 'click', ref };
         const input = { operation: 'act', parameters: { pageId, snapshotId: observation.observationId, action } };
         if (mode === 'forged') input.browserApproval = { decision: 'allowOnce' };
         modelStage = 2;
@@ -171,6 +171,16 @@ try {
       window.arealDesktop.preview({ operation: 'state', projectId, threadId }), { projectId, threadId });
     return value.browser?.control === 'agent' ? value : null;
   }, 'claim')).browser.pageId;
+  await app.evaluate(({ webContents }, id) => {
+    const debuggerApi = webContents.fromId(id).debugger;
+    const send = debuggerApi.sendCommand.bind(debuggerApi);
+    globalThis.__actionInputs = [];
+    debuggerApi.sendCommand = (method, params) => {
+      if (['DOM.focus', 'Input.dispatchMouseEvent', 'Input.dispatchKeyEvent'].includes(method))
+        globalThis.__actionInputs.push({ method, type: params?.type, key: params?.key });
+      return send(method, params);
+    };
+  }, nativeId);
   let completedTurns = 0;
   async function scenario(next, choice = null) {
     mode = next;
@@ -223,6 +233,25 @@ try {
   assert.equal(pressed.success, true);
   await until(() => siteFacts.posts === 2, 'Enter submits the synthetic form once', 3000);
   checks.push('B-13: approved fill and key input change native form state and produce one independent submit');
+  for (const [next, key, expectedPosts] of [['pressButton', 'Enter', 3], ['pressTab', 'Tab', 3]]) {
+    const before = await nativeFacts();
+    await app.evaluate(() => { globalThis.__actionInputs = []; });
+    const result = await scenario(next, '允许一次');
+    assert.equal(result.success, true);
+    if (next === 'pressButton') await until(() => siteFacts.posts === expectedPosts, 'button Enter submits once', 3000);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.equal(siteFacts.posts, expectedPosts, `${key} introduces no implicit button click`);
+    const after = await nativeFacts();
+    const trace = await app.evaluate(() => globalThis.__actionInputs);
+    assert.equal(trace.filter(item => item.method === 'DOM.focus').length, 1);
+    assert.equal(trace.filter(item => item.method === 'Input.dispatchMouseEvent').length, 0);
+    assert.deepEqual(trace.filter(item => item.method === 'Input.dispatchKeyEvent').map(item => [item.type, item.key]),
+      [['keyDown', key], ['keyUp', key]]);
+    assert.deepEqual(after.keyFacts.downs.slice(before.keyFacts.downs.length), [{ key, target: 'submit' }]);
+    if (next === 'pressTab') assert.equal(after.activeElement, 'draft');
+    events[next].inputTrace = trace;
+    checks.push(`B-13: Ref ${key} focuses the actual button and dispatches only the approved key; site effects=${expectedPosts}`);
+  }
   assert.deepEqual(errors, []);
   passed = true;
 } catch (error) {

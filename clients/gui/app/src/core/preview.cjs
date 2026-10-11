@@ -1618,6 +1618,9 @@ class CorePreview {
               x: from.x + (to.x - from.x) * step / steps, y: from.y + (to.y - from.y) * step / steps,
               button: 'left', buttons: 1 });
             await input({ type: 'mouseReleased', x: to.x, y: to.y, button: 'left', clickCount: 1 });
+          } else if (request.parameters.action.kind === 'press') {
+            live(); action.dispatched = true;
+            await this.dispatchInput(page, 'DOM.focus', { backendNodeId: target.backendNodeId });
           } else await click(coordinate ? target.point : target);
           if (request.parameters.action.kind === 'fill') {
             const modifier = process.platform === 'darwin' ? 8 : 2;
