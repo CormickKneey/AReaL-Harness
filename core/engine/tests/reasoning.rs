@@ -378,6 +378,7 @@ async fn responses_summary_is_opt_in_and_provider_context_replays_once() {
                         boundary: "after".into(),
                     },
                     workspace_mode: "sharedCurrent".into(),
+                    target: None,
                 },
             )
             .await

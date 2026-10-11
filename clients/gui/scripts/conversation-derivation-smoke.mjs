@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { captureSmokeFailure } from "./smoke-navigation.mjs";
+import { captureSmokeFailure, selectConversation } from "./smoke-navigation.mjs";
 
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const root = resolve(gui, "../..");
@@ -31,6 +31,7 @@ const sourceCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, enc
 const head = `SCF_HEAD_${randomUUID()}`;
 const future = `SCF_FUTURE_${randomUUID()}`;
 const forkQuestion = `SCF_BRANCH_${randomUUID()}`;
+const activeQuestion = `SCF_ACTIVE_${randomUUID()}`;
 const requests = [];
 const events = [];
 const checks = [];
@@ -39,6 +40,8 @@ const pageErrors = [];
 const electronStderr = [];
 let app, page, server, passed = false, failure;
 let sourceThreadId, targetThreadId, anchorTurnId, projectId, sandbox;
+let beforeThreadId, activeTurnId, releaseActive;
+const activeBarrier = new Promise(resolve => { releaseActive = resolve; });
 
 const sse = answer => [
   { id: "scf-fixture", object: "chat.completion.chunk", choices: [{ index: 0, delta: { content: answer }, finish_reason: null }] },
@@ -123,6 +126,8 @@ try {
       requests.push({ sequence: requests.length + 1, method: req.method, path: req.url, body });
       const lastUser = body.messages?.findLast(message => message.role === "user");
       const answer = `FIXTURE_OK_${requests.length}: ${typeof lastUser?.content === "string" ? lastUser.content : "received"}`;
+      // 固定活动轮次的完成时机，验证创建轮前分支不会等待或取消来源。
+      if (lastUser?.content === activeQuestion) await activeBarrier;
       if (body.stream === false) {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ choices: [{ message: { role: "assistant", content: answer } }] }));
@@ -188,8 +193,8 @@ try {
   const beforeCreation = { modelRequests: requests.length, workspaceSha256: await hash(fixturePath) };
   assert.equal(beforeCreation.workspaceSha256, workspaceBefore);
   const anchor = page.locator(`[data-turn-id="${anchorTurnId}"]`);
-  const forkButton = anchor.getByRole("button", { name: "从此轮次创建分支", exact: true });
-  await forkButton.waitFor();
+  await anchor.getByRole("button", { name: /^轮次操作 / }).click();
+  const forkButton = page.getByRole("menuitem", { name: "在此轮之后分支", exact: true });
   page.once("dialog", async dialog => {
     assert.match(dialog.message(), /共享工作区|项目文件保持当前状态/);
     events.push({ confirmation: dialog.message() });
@@ -222,6 +227,47 @@ try {
   assert.equal(await hash(fixturePath), workspaceBefore);
   await shot("03-fork-sent.png");
   checks.push("AC06: actual model input excludes the future sentinel; explicit send leaves source Turn IDs and workspace bytes unchanged");
+  await selectConversation(page, sourceThreadId);
+  await page.getByTestId("chat-input").fill(activeQuestion);
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+  const running = await until(s => {
+    const turn = s.projects[0]?.state?.threads?.[sourceThreadId]?.turns?.at(-1);
+    return turn && !sourceTurns.includes(turn.id) && turn.status === "inProgress"
+      && JSON.stringify(requests.at(-1)?.body?.messages ?? []).includes(activeQuestion);
+  }, "source active Turn at model barrier");
+  activeTurnId = running.projects[0].state.threads[sourceThreadId].turns.at(-1).id;
+  const activeAnchor = page.locator(`[data-turn-id="${activeTurnId}"]`);
+  await activeAnchor.getByRole("button", { name: /^轮次操作 / }).click();
+  const afterActive = page.getByRole("menuitem", { name: "在此轮之后分支", exact: true });
+  assert.ok(await afterActive.isDisabled(), "after an active Turn must explain that it is disabled");
+  await page.getByText("此轮仍在运行；可选择轮次之前", { exact: true }).waitFor();
+  const requestsBeforeActiveFork = requests.length;
+  page.once("dialog", async dialog => {
+    assert.match(dialog.message(), /不包含此轮|之前/);
+    events.push({ beforeConfirmation: dialog.message() });
+    await dialog.accept();
+  });
+  await page.getByRole("menuitem", { name: "在此轮之前分支", exact: true }).click();
+  await page.waitForFunction(id => {
+    const current = document.querySelector('[data-testid="areal-workbench"]')?.dataset.threadId;
+    return current && current !== id;
+  }, sourceThreadId);
+  beforeThreadId = await page.getByTestId("areal-workbench").getAttribute("data-thread-id");
+  const beforeSnapshot = await state();
+  const beforeThread = beforeSnapshot.projects[0].state.threads[beforeThreadId];
+  assert.equal(beforeThread.conversation?.origin?.sourceTurnId, activeTurnId);
+  assert.equal(beforeThread.conversation?.origin?.boundary, "before");
+  assert.equal(beforeThread.turns?.length, 0);
+  assert.equal(beforeSnapshot.projects[0].state.threads[sourceThreadId].turns.at(-1).status, "inProgress");
+  assert.equal(requests.length, requestsBeforeActiveFork);
+  const beforeHistory = page.getByRole("region", { name: "继承的对话历史", exact: true });
+  await beforeHistory.getByText(future, { exact: false }).waitFor();
+  assert.equal(await beforeHistory.getByText(activeQuestion, { exact: false }).count(), 0);
+  await shot("04-before-active.png");
+  releaseActive();
+  await until(s => s.projects[0]?.state?.threads?.[sourceThreadId]?.turns?.at(-1)?.status === "completed", "source completes independently");
+  assert.equal(await hash(fixturePath), workspaceBefore);
+  checks.push("AC18/19: active Turn after is disabled, before creates an idle exact prefix, and the source completes independently");
   assert.deepEqual(pageErrors, []);
   passed = true;
 } catch (error) {
@@ -231,6 +277,7 @@ try {
   if (page) frames.push(...(await captureSmokeFailure(page, scratch, error)).filter(name => name.endsWith(".png")));
   process.exitCode = 1;
 } finally {
+  releaseActive();
   let mutations = [];
   if (app) {
     try { mutations = await app.evaluate(() => globalThis.__scfMutations ?? []); } catch (error) { events.push({ requestCaptureError: error.message }); }
@@ -253,8 +300,8 @@ try {
     runtime: "real sandboxed Electron + Rust Core/Runtime + deterministic local HTTP/SSE model",
     sandbox, binary, binarySha256: await hash(binary).catch(() => null),
     smokeScriptSha256: await hash(fileURLToPath(import.meta.url)),
-    sourceThreadId, targetThreadId, anchorTurnId, projectId,
-    fixture: { head, future, forkQuestion, workspace, workspaceSha256Before: workspaceBefore, workspaceSha256After: await hash(fixturePath) },
+    sourceThreadId, targetThreadId, beforeThreadId, anchorTurnId, activeTurnId, projectId,
+    fixture: { head, future, forkQuestion, activeQuestion, workspace, workspaceSha256Before: workspaceBefore, workspaceSha256After: await hash(fixturePath) },
     requests, mutations,
   };
   await writeFile(join(scratch, "manifest.json"), JSON.stringify(manifest, null, 2));

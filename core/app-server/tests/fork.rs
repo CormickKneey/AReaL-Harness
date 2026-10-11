@@ -33,6 +33,59 @@ async fn completed(socket: &mut Socket, thread_id: &str) {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
+
+#[tokio::test]
+async fn before_first_turn_is_empty_and_before_later_turn_excludes_it() {
+    unsafe { std::env::set_var("AREAL_DEV_CONVERSATION_DERIVATION", "1"); }
+    let dir = tempfile::tempdir().unwrap();
+    let model = Arc::new(TextModel(Mutex::new(Vec::new())));
+    let engine = Engine::open(dir.path(), model.clone(), Limits::default()).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let stop = CancellationToken::new();
+    let server = tokio::spawn(areal_app_server::serve(listener, engine, stop.clone()));
+    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}")).await.unwrap();
+    call(&mut socket, 1, "initialize", json!({"clientInfo":{"name":"test","version":"1"}})).await;
+    socket.send(Wire::Text(json!({"method":"initialized"}).to_string().into())).await.unwrap();
+    let capabilities = call(&mut socket, 101, "areal/capabilities", json!({})).await;
+    let fork_capabilities = &capabilities["result"]["features"]["conversationDerivationV1"];
+    assert_eq!(fork_capabilities["forkBoundaries"], json!(["after", "before"]));
+    assert_eq!(fork_capabilities["historyBytes"], 64 * 1024 * 1024);
+    let source = call(&mut socket, 2, "thread/start", json!({"cwd":"/workspace"})).await;
+    let source_id = source["result"]["thread"]["id"].as_str().unwrap();
+    call(&mut socket, 3, "turn/start", json!({"threadId":source_id,"input":[{"type":"text","text":"FIRST_ONLY"}]})).await;
+    completed(&mut socket, source_id).await;
+    call(&mut socket, 4, "turn/start", json!({"threadId":source_id,"input":[{"type":"text","text":"SECOND_EXCLUDED"}]})).await;
+    completed(&mut socket, source_id).await;
+    let read = call(&mut socket, 5, "thread/read", json!({"threadId":source_id,"includeTurns":true})).await;
+    let first = read["result"]["thread"]["turns"][0]["id"].as_str().unwrap();
+    let second = read["result"]["thread"]["turns"][1]["id"].as_str().unwrap();
+    for (id, anchor, expected) in [(6, first, 0), (7, second, 1)] {
+        let response = call(&mut socket, id, "areal/thread/fork", json!({"requestId":format!("before-{id}"),"sourceThreadId":source_id,"anchor":{"turnId":anchor,"boundary":"before"},"workspaceMode":"sharedCurrent"})).await;
+        assert!(response.get("result").is_some(), "{response}");
+        assert_eq!(response["result"]["thread"]["conversation"]["historySeed"]["turnCount"], expected);
+        assert_eq!(response["result"]["thread"]["conversation"]["origin"]["boundary"], "before");
+    }
+    let explicit_default = call(&mut socket, 102, "areal/thread/fork", json!({"requestId":"explicit-default","sourceThreadId":source_id,
+        "anchor":{"turnId":second,"boundary":"before"},"workspaceMode":"sharedCurrent","target":{}})).await;
+    assert!(explicit_default.get("result").is_some(), "{explicit_default}");
+    let invalid_target = call(&mut socket, 103, "areal/thread/fork", json!({"requestId":"invalid-target","sourceThreadId":source_id,
+        "anchor":{"turnId":second,"boundary":"before"},"workspaceMode":"sharedCurrent",
+        "target":{"model":{"providerId":"missing","modelId":"missing"}}})).await;
+    assert!(invalid_target.get("error").is_some(), "{invalid_target}");
+    let other = call(&mut socket, 8, "thread/start", json!({"cwd":"/workspace"})).await;
+    let other_id = other["result"]["thread"]["id"].as_str().unwrap();
+    call(&mut socket, 9, "turn/start", json!({"threadId":other_id,"input":[{"type":"text","text":"OTHER_SOURCE"}]})).await;
+    completed(&mut socket, other_id).await;
+    let other_read = call(&mut socket, 10, "thread/read", json!({"threadId":other_id,"includeTurns":true})).await;
+    let foreign_anchor = other_read["result"]["thread"]["turns"][0]["id"].as_str().unwrap();
+    let foreign = call(&mut socket, 11, "areal/thread/fork", json!({"requestId":"foreign-anchor","sourceThreadId":source_id,"anchor":{"turnId":foreign_anchor,"boundary":"before"},"workspaceMode":"sharedCurrent"})).await;
+    assert_eq!(foreign["error"]["data"]["reason"], "ANCHOR_NOT_FOUND");
+    let malformed = call(&mut socket, 12, "areal/thread/fork", json!({"requestId":"malformed-boundary","sourceThreadId":source_id,"anchor":{"turnId":first,"boundary":"between"},"workspaceMode":"sharedCurrent"})).await;
+    assert_eq!(malformed["error"]["code"], -32602);
+    assert_eq!(model.0.lock().unwrap().len(), 3);
+    stop.cancel(); server.await.unwrap().unwrap();
+}
 #[tokio::test]
 async fn fork_is_durable_idle_and_replays_plain_text_prefix() {
     unsafe { std::env::set_var("AREAL_DEV_CONVERSATION_DERIVATION", "1"); }

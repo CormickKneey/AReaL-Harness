@@ -35,6 +35,7 @@ import { DndContext, DragOverlay } from "@dnd-kit/core";
 import { SidebarDragSurface, useSidebarDrag, type SidebarDragSource } from "./sidebarDrag.js";
 import { Messages } from "./Messages.js";
 import { ForkHistory } from "./ForkHistory.js";
+import { ForkTargetDialog } from "./ForkTargetDialog.js";
 import { ConversationDraftEmptyState } from "./ConversationDraftEmptyState.js";
 import { NewTaskButtonGroup } from "./NewTaskButtonGroup.js";
 import { Composer, sending, subscribeSending } from "./Composer.js";
@@ -283,6 +284,7 @@ function AppContent({ services }: { services: PlatformServices }) {
   const [previewSource, setPreviewSource] = useState("");
   const [previewRequest, setPreviewRequest] = useState(0);
   const [rename, setRename] = useState<Data | null>(null);
+  const [forkIntent, setForkIntent] = useState<{ projectId: string; sourceThreadId: string; turnId: string; boundary: "before" | "after"; title: string; models: Data[]; profiles: Data[]; route: string; resolve: () => void } | null>(null);
   const [renameText, setRenameText] = useState("");
   useEffect(() => {
     const unsubscribe = services.onState(setSnapshot);
@@ -1077,15 +1079,13 @@ function AppContent({ services }: { services: PlatformServices }) {
     !(thread && admitting) &&
     thread?.conversation?.kind !== "fork" &&
     !thread?.turns?.some((turn: Data) => turn.items?.length || turn.status === "inProgress");
-  const forkFromTurn = async (turnId: string) => {
-    if (!project || !thread) return;
+  const forkFromTurn = (turnId: string, boundary: "before" | "after"): Promise<void> => {
+    if (!project || !thread) return Promise.resolve();
     const owner = project.id;
     const sourceThreadId = thread.id;
     const route = `${owner}:${sourceThreadId}`;
-    if (!window.confirm("创建分支只复制此轮次及之前的对话历史。项目文件保持当前状态，分支与原会话共享工作区。继续创建？")) return;
-    const result = await action("fork", { projectId: owner, sourceThreadId,
-      anchor: { turnId, boundary: "after" }, workspaceMode: "sharedCurrent" });
-    if (activeConversation.current === route) await open(owner, result.threadId);
+    return new Promise(resolve => setForkIntent({ projectId: owner, sourceThreadId, turnId, boundary,
+      title: thread.preview || "当前会话", models: project.models ?? [], profiles: project.profiles ?? [], route, resolve }));
   };
   const taskActions = <DropdownMenu>
                     <DropdownMenuTrigger
@@ -1656,6 +1656,15 @@ function AppContent({ services }: { services: PlatformServices }) {
           </form>
         </div>
       )}
+      {forkIntent && <ForkTargetDialog title={forkIntent.title} boundary={forkIntent.boundary} models={forkIntent.models} profiles={forkIntent.profiles}
+        onClose={() => { forkIntent.resolve(); setForkIntent(current => current === forkIntent ? null : current); }}
+        onCheck={() => resourceAction("reconcile", { projectId: forkIntent.projectId })}
+        onCreate={async target => {
+          const result = await resourceAction("fork", { projectId: forkIntent.projectId, sourceThreadId: forkIntent.sourceThreadId,
+            anchor: { turnId: forkIntent.turnId, boundary: forkIntent.boundary }, workspaceMode: "sharedCurrent", ...(target ? { target } : {}) });
+          forkIntent.resolve(); setForkIntent(current => current === forkIntent ? null : current);
+          if (activeConversation.current === forkIntent.route) void open(forkIntent.projectId, result.threadId).catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
+        }} />}
     </WorkbenchShell>
   );
 }

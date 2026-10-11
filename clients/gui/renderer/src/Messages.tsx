@@ -4,6 +4,7 @@ import { executionOutcome, executionSegments, goalContinuationLabel, turnFailure
 import { TurnProgress } from "./TurnProgress.js";
 import { TurnElapsed, completedTimeLabel } from "./TurnElapsed.js";
 import { MessageActions } from "./MessageActions.js";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./components/ui/dropdown-menu.js";
 import { TurnHookStats } from "./TurnHookStats.js";
 import { ToolEvent } from "./ToolEvent.js";
 import { TurnExecution } from "./TurnExecution.js";
@@ -44,7 +45,7 @@ export function Messages({
 }: {
   beforeTurns?: ReactNode;
   onAgent?: (id: string) => void;
-  onFork?: (turnId: string) => Promise<void>;
+  onFork?: (turnId: string, boundary: "before" | "after") => Promise<void>;
   project: Data;
   thread: Data;
   action: Action;
@@ -61,14 +62,18 @@ export function Messages({
   const owner = JSON.stringify([project.id, thread.id]);
   const latestTurnId = thread.turns?.at(-1)?.id;
   const [forking, setForking] = useState(false);
+  const [forkError, setForkError] = useState<{ turnId: string; message: string } | null>(null);
   const canFork = !!onFork && project.core?.features?.forkPreview === true
-    && !thread.parentThreadId && !thread.desktop?.archived;
-  const forkableTurns = new Set<string>();
-  if (canFork) for (const turn of thread.turns ?? []) {
-    if (turn.status !== "completed" || !(turn.items ?? []).every((item: Data) =>
-      item.type === "agentMessage" || item.type === "userMessage" && (item.content ?? []).every((part: Data) => part.type === "text"))) break;
-    forkableTurns.add(turn.id);
-  }
+    && !thread.parentThreadId && !thread.desktop?.archived
+    && (!thread.conversation || thread.conversation.kind === "fork");
+  const unresolved = (turn: Data) => (turn.items ?? []).some((item: Data) => item.type === "dynamicToolCall" && (
+    item.status === "inProgress" || item.execution?.outcome === "running"
+    || item.execution?.hooks?.some((hook: Data) => hook.outcome === "running")
+    || item.execution?.plugin?.operations?.some((op: Data) => op.outcome === "running")
+    || !item.execution?.inspection && (item.execution?.outcome === "unknown"
+      || item.execution?.hooks?.some((hook: Data) => hook.outcome === "unknown")
+      || item.execution?.plugin?.operations?.some((op: Data) => op.outcome === "unknown"))));
+  const prefixIssue = (thread.turns ?? []).map((turn: Data) => turn.status === "inProgress" || unresolved(turn) ? turn.id : "");
   const activeOwner = useRef<string | undefined>(undefined);
   const seenTurn = useRef({ owner, id: latestTurnId });
   const reservation = useRef<ResponseSpace | undefined>(readingViews.get(owner)?.responseSpace);
@@ -228,7 +233,23 @@ export function Messages({
             此任务已归档，历史只读。当前 Core 不支持取消归档。
           </p>
         )}
-        {(thread.turns ?? []).map((turn: Data) => {
+        {(thread.turns ?? []).map((turn: Data, turnIndex: number) => {
+          const earlierIssue = prefixIssue.slice(0, turnIndex).find(Boolean);
+          const currentIssue = prefixIssue[turnIndex];
+          const inspectTurn = earlierIssue || (turn.status === "inProgress" ? "" : currentIssue);
+          const beforeReason = earlierIssue ? "较早轮次有未结算操作；请先在来源核查或选择更早边界" : "";
+          const afterReason = turn.status === "inProgress" ? "此轮仍在运行；可选择轮次之前" :
+            inspectTurn ? "历史包含未结算或未核查的操作；请在来源核查或选择更早边界" : "";
+          const forkAt = (boundary: "before" | "after") => {
+            setForking(true); setForkError(null);
+            void onFork?.(turn.id, boundary).catch((cause: Error & { data?: { reason?: string } }) => {
+              const reason = cause.data?.reason;
+              const message = reason === "TURN_NOT_TERMINAL" ? "此轮仍在运行；请选择之前边界或等待完成后刷新。"
+                : reason === "HISTORY_UNRESOLVED" ? "来源历史有未结算或未核查的操作；请在来源核查 UNKNOWN，或选择更早边界。"
+                : reason === "ANCHOR_NOT_FOUND" ? "轮次位置已变化；请刷新来源后重新选择。" : cause.message;
+              setForkError({ turnId: turn.id, message });
+            }).finally(() => setForking(false));
+          };
           const segments = executionSegments(turn.items ?? [], turn.status);
           const hasFinal = segments.some((item: Data) => item.type === "agentMessage" && item.phase === "final_answer" && item.text?.trim());
           const finalMessage = segments.findLast((item: Data) => item.type === "agentMessage" && item.phase === "final_answer" && item.text?.trim());
@@ -322,10 +343,17 @@ export function Messages({
               <UnknownToolInspection key={`${project.id}:${thread.id}:${item.id}`} item={item} project={project} thread={thread} action={action} />)}
             <TurnFileSummary turn={turn} readTurnReview={readTurnReview} onFile={onFile} onReview={onReview} />
             {finalMessage && turn.status !== "inProgress" && <MessageActions text={finalMessage.text}><TurnHookStats turn={turn} /></MessageActions>}
-            {forkableTurns.has(turn.id) && <button type="button" disabled={forking} onClick={() => {
-              setForking(true);
-              void onFork?.(turn.id).finally(() => setForking(false));
-            }}>{forking ? "正在创建分支…" : "从此轮次创建分支"}</button>}
+            {canFork && <DropdownMenu>
+              <DropdownMenuTrigger render={<button type="button" className="icon-button" disabled={forking} aria-label={`轮次操作 ${turnIndex + 1}`}>⋯</button>} />
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem disabled={!!afterReason} title={afterReason || undefined} onClick={() => forkAt("after")}>在此轮之后分支</DropdownMenuItem>
+                {afterReason && <p className="px-2 text-xs text-muted-foreground">{afterReason}</p>}
+                <DropdownMenuItem disabled={!!beforeReason} title={beforeReason || undefined} onClick={() => forkAt("before")}>在此轮之前分支</DropdownMenuItem>
+                {beforeReason && <p className="px-2 text-xs text-muted-foreground">{beforeReason}</p>}
+                {inspectTurn && <DropdownMenuItem onClick={() => document.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(inspectTurn)}"]`)?.scrollIntoView({ block: "center" })}>查看来源轮次的核查入口</DropdownMenuItem>}
+              </DropdownMenuContent>
+            </DropdownMenu>}
+            {canFork && forkError?.turnId === turn.id && <p role="alert" className="notice">{forkError?.message}</p>}
             {turn.status === "inProgress" && (!segments.length || ["userMessage", "agentMessage", "agentMedia"].includes(segments.at(-1)?.type)) && (
               <TurnExecution items={[]} turn={turn} project={project} threadId={thread.id} renderItem={() => null} />
             )}

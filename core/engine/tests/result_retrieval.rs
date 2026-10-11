@@ -211,6 +211,7 @@ async fn actual_mcp_large_result_is_retrieved_once_with_stable_history() {
                     boundary: "after".into(),
                 },
                 workspace_mode: "sharedCurrent".into(),
+                target: None,
             },
         )
         .await

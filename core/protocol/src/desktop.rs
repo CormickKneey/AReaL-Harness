@@ -69,6 +69,19 @@ pub struct ForkThread {
     pub source_thread_id: String,
     pub anchor: ForkAnchor,
     pub workspace_mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<ForkTarget>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ForkTarget {
+    #[serde(default)]
+    pub agent_profile: Option<VersionRef>,
+    #[serde(default)]
+    pub model: Option<ModelRef>,
+    #[serde(default)]
+    pub parameters: Option<ModelParameters>,
 }
 pub const NOTIFICATIONS: &[&str] = &[
     "areal/goal/updated",

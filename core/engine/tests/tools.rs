@@ -832,6 +832,7 @@ async fn http_tool_loop(done_marker: bool) {
                     boundary: "after".into(),
                 },
                 workspace_mode: "sharedCurrent".into(),
+                target: None,
             },
         )
         .await
