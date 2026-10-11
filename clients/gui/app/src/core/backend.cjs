@@ -115,7 +115,9 @@ class CoreBackend {
       // 配置会话的协议回复只在任务创建区展示，不混入普通聊天导航。
       const state = snapshot?.threads ? {...snapshot, threads: Object.fromEntries(Object.entries(snapshot.threads).filter(([id, thread]) =>
         !isTaskDraftConfiguration(live.configurations?.[id] ?? thread.desktop?.configuration)))} : snapshot;
-      return { ...project, backend: 'areal', core: projectCoreCapabilities(this.binary, live?.client?.capabilities), state: state && live.resourceInitializing ? {...state, connected:false} : state,
+      return { ...project, backend: 'areal', core: { ...projectCoreCapabilities(this.binary, live?.client?.capabilities),
+        instanceId: live?.service?.serviceId ?? null, connectionGeneration: live?.connectionGeneration ?? 0 },
+        state: state && live.resourceInitializing ? {...state, connected:false} : state,
         pending: (live?.pending ?? []).map(entry => ({ ...entry, awaitingResponse: this.awaitingResponses.has(entry) })), outcomes: live?.outcomes ?? {}, models: this.providers.catalog(live?.models ?? [], live), profiles: live?.profiles ?? [],
         configurations: live?.configurations ?? {},
         summaries: live?.summaries ?? [], summariesLoaded: live?.summariesLoaded === true, error: live?.error ?? null };
@@ -281,6 +283,7 @@ class CoreBackend {
         ?? browserFailure('host_unavailable', 'Desktop browser is unavailable');
     } });
     project.client = client;
+    project.connectionGeneration = (project.connectionGeneration ?? 0) + 1;
     client.onNotification((method, params) => {
       if (!this.currentConnection(project, client)) return;
       if (method === 'areal/thread/configured' && params?.threadId && params.configuration) {
