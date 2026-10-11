@@ -24,14 +24,43 @@ function InheritedItem({ item, projectId, threadId, action }: { item: Data; proj
 }
 
 /** 从 Core 读取目标持有的历史种子；本地 Turn 仍是执行账本。 */
-export function ForkHistory({ projectId, thread, action, onFork }: { projectId: string; thread: Data; action: Action; onFork?: (turnId: string, boundary: "before" | "after") => Promise<void> }) {
+export function ForkHistory({ projectId, thread, action, onFork, onSideSelection }: { projectId: string; thread: Data; action: Action; onFork?: (turnId: string, boundary: "before" | "after") => Promise<void>; onSideSelection?: (selection: Data, text: string, anchor?: Data) => void }) {
   const [items, setItems] = useState<Data[]>([]);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [complete, setComplete] = useState(false);
   const [error, setError] = useState("");
   const [forking, setForking] = useState(false);
   const [forkError, setForkError] = useState("");
+  const [selected, setSelected] = useState<{ turnId: string; itemId: string; text: string; startUtf8?: number; endUtf8?: number } | null>(null);
   const snapshotId = thread.conversation?.historySeed?.snapshotId;
+  const capture = (entry: Data, article: HTMLElement) => {
+    if (!onSideSelection) return;
+    const current = window.getSelection();
+    if (!current || current.isCollapsed || current.rangeCount !== 1) return;
+    const range = current.getRangeAt(0);
+    const body = article.querySelector<HTMLElement>("[data-inherited-content]");
+    if (!body || !body.contains(range.startContainer) || !body.contains(range.endContainer)) return;
+    const text = current.toString();
+    if (!text.trim()) return;
+    const item = entry.item;
+    const canonical = item?.type === "agentMessage" ? item.text : item?.type === "userMessage" && item.content?.length === 1 && item.content[0]?.type === "text" ? item.content[0].text : undefined;
+    if (canonical && body.textContent === canonical) {
+      const before = range.cloneRange(); before.selectNodeContents(body); before.setEnd(range.startContainer, range.startOffset);
+      const startUtf8 = new TextEncoder().encode(before.toString()).length;
+      setSelected({ turnId: entry.sourceTurnId, itemId: entry.sourceItemId, text, startUtf8, endUtf8: startUtf8 + new TextEncoder().encode(text).length });
+    } else setSelected({ turnId: entry.sourceTurnId, itemId: entry.sourceItemId, text });
+  };
+  const ask = async () => {
+    if (!selected || !onSideSelection) return;
+    let selection: Data = { kind: "userQuote", text: selected.text, claimedTurnId: selected.turnId, claimedItemId: selected.itemId };
+    if (selected.startUtf8 !== undefined && selected.endUtf8 !== undefined) {
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(selected.text));
+      selection = { kind: "itemRange", turnId: selected.turnId, itemId: selected.itemId,
+        startUtf8: selected.startUtf8, endUtf8: selected.endUtf8,
+        textSha256: Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("") };
+    }
+    onSideSelection(selection, selected.text, { kind: "turn", turnId: selected.turnId, boundary: "after" }); setSelected(null);
+  };
   useEffect(() => { setItems([]); setCursor(undefined); setComplete(false); setError(""); }, [thread.id, snapshotId]);
   useEffect(() => {
     if (!snapshotId || complete || error) return;
@@ -48,9 +77,10 @@ export function ForkHistory({ projectId, thread, action, onFork }: { projectId: 
   if (!snapshotId) return null;
   return <section className="fork-history" aria-label="继承的对话历史">
     <p className="notice">继承至来源会话 <code>{thread.conversation.origin?.sourceThreadId}</code> 的轮次 <code>{thread.conversation.origin?.sourceTurnId}</code> {thread.conversation.origin?.boundary === "before" ? "之前" : "之后"}。项目文件使用当前共享工作区；历史中的文件内容可能已变化。</p>
-    {items.map((entry, index) => <article key={`${thread.id}:inherited:${entry.sourceTurnId}:${entry.sourceItemId}`} className="fork-history-item">
+    {items.map((entry, index) => <article key={`${thread.id}:inherited:${entry.sourceTurnId}:${entry.sourceItemId}`} className="fork-history-item" onMouseUp={event => capture(entry, event.currentTarget)}>
       <small>{entry.item?.type === "userMessage" ? "原提问" : "继承记录"}</small>
-      <InheritedItem item={entry.item} projectId={projectId} threadId={thread.id} action={action} />
+      <div data-inherited-content><InheritedItem item={entry.item} projectId={projectId} threadId={thread.id} action={action} /></div>
+      {selected && selected.turnId === entry.sourceTurnId && selected.itemId === entry.sourceItemId && <button type="button" onClick={() => void ask()}>在旁路中询问所选内容</button>}
       {onFork && entry.sourceTurnId && (items[index + 1]?.sourceTurnId !== entry.sourceTurnId && (index + 1 < items.length || complete)) &&
         <DropdownMenu>
           <DropdownMenuTrigger render={<button type="button" disabled={forking} aria-label={`继承轮次操作 ${entry.sourceTurnId}`}>⋯</button>} />

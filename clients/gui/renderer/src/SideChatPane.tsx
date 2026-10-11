@@ -11,16 +11,28 @@ export function SideChatPane({ project, source, action, dark }: {
   const draftKey = `areal-gui:side:draft:${owner}`;
   const threadKey = `areal-gui:side:thread:${owner}`;
   const pendingKey = `areal-gui:side:pending:${owner}`;
+  const selectionKey = `areal-gui:side:selection:${owner}`;
+  const anchorKey = `areal-gui:side:anchor:${owner}`;
+  const previewKey = `areal-gui:side:selection-preview:${owner}`;
   const [text, setText] = useState(() => localStorage.getItem(draftKey) ?? "");
   const [sideId, setSideId] = useState(() => localStorage.getItem(threadKey) ?? "");
   const [pendingId, setPendingId] = useState(() => localStorage.getItem(pendingKey) ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [selection, setSelection] = useState<Data | null>(() => { try { return JSON.parse(localStorage.getItem(selectionKey) ?? "null"); } catch { return null; } });
+  const [anchor, setAnchor] = useState<Data | null>(() => { try { return JSON.parse(localStorage.getItem(anchorKey) ?? "null"); } catch { return null; } });
+  const [selectionPreview, setSelectionPreview] = useState(() => localStorage.getItem(previewKey) ?? "");
+  const [evidence, setEvidence] = useState<Data[]>([]);
+  const [evidenceCursor, setEvidenceCursor] = useState<string | null>(null);
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const [evidenceBusy, setEvidenceBusy] = useState(false);
   const mounted = useRef(true);
   const side = sideId ? project.state?.threads?.[sideId] : undefined;
   const validSide = side?.conversation?.kind === "side" && side.conversation.origin?.sourceThreadId === source.id;
   const active = validSide && side.turns?.some((turn: Data) => turn.status === "inProgress");
+  const sourceStatus = !project.state?.connected || !source.updatedAt || !side?.createdAt ? "来源当前状态未知" :
+    Date.parse(source.updatedAt) > Date.parse(side.createdAt) ? "来源已推进；此讨论仍依据创建时快照" : "依据创建时快照";
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
     const refresh = (event: Event) => {
@@ -33,6 +45,29 @@ export function SideChatPane({ project, source, action, dark }: {
     window.addEventListener("areal-side-draft", refresh);
     return () => window.removeEventListener("areal-side-draft", refresh);
   }, [owner, draftKey]);
+  useEffect(() => {
+    const receive = (event: Event) => {
+      const detail = (event as CustomEvent<{ owner: string }>).detail;
+      if (detail?.owner !== owner) return;
+      try { setSelection(JSON.parse(localStorage.getItem(selectionKey) ?? "null")); } catch { setSelection(null); }
+      try { setAnchor(JSON.parse(localStorage.getItem(anchorKey) ?? "null")); } catch { setAnchor(null); }
+      setSelectionPreview(localStorage.getItem(previewKey) ?? "");
+      setSideId(""); setEvidence([]); setEvidenceCursor(null); setEvidenceOpen(false);
+    };
+    window.addEventListener("areal-side-selection", receive);
+    return () => window.removeEventListener("areal-side-selection", receive);
+  }, [owner, selectionKey, anchorKey, previewKey]);
+  const loadEvidence = async (cursor?: string) => {
+    if (!validSide || evidenceBusy) return;
+    setEvidenceBusy(true); setError("");
+    try {
+      const page = await action("side", { projectId: project.id, operation: "context", threadId: sideId, cursor, maxBytes: 4096 });
+      if (!mounted.current || page.snapshotId !== side.conversation.referenceSnapshot?.snapshotId) return;
+      setEvidence(rows => cursor ? [...rows, ...(page.evidence ?? [])] : page.evidence ?? []);
+      setEvidenceCursor(page.nextCursor ?? null); setEvidenceOpen(true);
+    } catch (cause) { if (mounted.current) setError((cause as Error).message); }
+    finally { if (mounted.current) setEvidenceBusy(false); }
+  };
   useEffect(() => {
     if (!sideId || validSide || side || loading || !project.state?.connected) return;
     setLoading(true);
@@ -50,10 +85,12 @@ export function SideChatPane({ project, source, action, dark }: {
       localStorage.setItem(threadKey, result.threadId);
       localStorage.removeItem(pendingKey);
       localStorage.removeItem(draftKey);
+      localStorage.removeItem(selectionKey); localStorage.removeItem(anchorKey); localStorage.removeItem(previewKey);
+      setSelection(null); setAnchor(null); setSelectionPreview("");
       setSideId(result.threadId); setPendingId(""); setText("");
     } catch (cause) { if (mounted.current) setError((cause as Error).message); }
     finally { if (mounted.current) setBusy(false); }
-  }, [pendingId, busy, action, project.id, threadKey, pendingKey, draftKey]);
+  }, [pendingId, busy, action, project.id, threadKey, pendingKey, draftKey, selectionKey, anchorKey, previewKey]);
   useEffect(() => { if (pendingId && project.state?.connected) void recover(); }, [project.state?.connected]);
   const submit = async () => {
     const question = text.trim();
@@ -65,13 +102,14 @@ export function SideChatPane({ project, source, action, dark }: {
       } else {
         const requestId = crypto.randomUUID();
         localStorage.setItem(pendingKey, requestId); setPendingId(requestId);
-        const result = await action("side", { projectId: project.id, operation: "start", sourceThreadId: source.id, text: question, requestId });
+        const result = await action("side", { projectId: project.id, operation: "start", sourceThreadId: source.id, text: question, requestId, selection, anchor });
         if (!mounted.current) return;
         localStorage.setItem(threadKey, result.threadId);
         localStorage.removeItem(pendingKey);
         setSideId(result.threadId); setPendingId("");
       }
-      localStorage.removeItem(draftKey); setText("");
+      localStorage.removeItem(draftKey); localStorage.removeItem(selectionKey); localStorage.removeItem(anchorKey); localStorage.removeItem(previewKey);
+      setSelection(null); setAnchor(null); setSelectionPreview(""); setText("");
     } catch (cause) {
       const failure = cause as Error & { submissionUnknown?: boolean };
       if (!failure.submissionUnknown && !sideId) { localStorage.removeItem(pendingKey); setPendingId(""); }
@@ -90,6 +128,21 @@ export function SideChatPane({ project, source, action, dark }: {
         setSideId(id); setError("");
       }} />
       <p className="text-foreground-subtle">来源：{source.preview || source.id}。{validSide ? "基于创建时快照。" : "首问发送时冻结已提交的会话证据。"}不会执行来源任务。</p>
+      <p className="text-foreground-subtle">来源：{source.preview || source.id}。{validSide ? sourceStatus : anchor?.kind === "turn" ? `首问锚定轮次 ${anchor.turnId} 之后的持久证据` : "首问发送时冻结最新持久观察"}。仅会话证据；不会执行来源任务。</p>
+      {selection && !sideId && <blockquote className="notice">{selection.kind === "itemRange" ? "已持久化选区；发送时验证原文位置。" : "用户引文，来源未确认。"}<br />{selectionPreview || selection.text}</blockquote>}
+      {validSide && <p className="text-foreground-subtle">冻结锚点：{side.conversation.origin?.boundary} · {side.conversation.origin?.sourceTurnId || "空历史"}</p>}
+      {validSide && side.conversation.selection && <blockquote className="notice">{side.conversation.selection.verified ? "已验证来源片段" : "用户引文，来源未确认"}：{side.conversation.selection.text}</blockquote>}
+      {validSide && <div className="utility-actions"><button type="button" onClick={() => void loadEvidence()} disabled={evidenceBusy}>查看冻结证据</button></div>}
+      {validSide && evidenceOpen && <section aria-label="冻结证据" className="side-evidence">
+        <p>快照 {side.conversation.referenceSnapshot?.snapshotId}；仅显示已加载的证据。</p>
+        {evidence.map((row, index) => <article key={`${row.evidenceRef}:${row.range?.startUtf8 ?? 0}:${index}`}>
+          <small>轮次 {row.sourceTurnId} · 项 {row.sourceItemId} · {row.sourceTurnStatus}</small>
+          <pre>{row.text}</pre>
+          {row.range && row.range.endUtf8 < row.range.totalBytes && <small>片段 {row.range.startUtf8}–{row.range.endUtf8} / {row.range.totalBytes} 字节</small>}
+          <button type="button" onClick={() => document.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(row.sourceTurnId)}"]`)?.scrollIntoView({ block: "center" })}>在来源定位</button>
+        </article>)}
+        {evidenceCursor && <button type="button" disabled={evidenceBusy} onClick={() => void loadEvidence(evidenceCursor)}>继续加载证据</button>}
+      </section>}
       {sideId && !validSide && <p role="status">{side ? "旁路归属与当前来源不一致。" : loading ? "正在恢复旁路讨论…" : "正在核对旁路归属…"}</p>}
       {validSide && side.desktop?.archived && <p role="status">这段讨论已归档；请在相关讨论中显式恢复后继续。</p>}
       {validSide && <Messages key={`${owner}:${sideId}`} project={project} thread={side} action={action} dark={dark}

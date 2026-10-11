@@ -421,7 +421,17 @@ pub enum Conversation {
         #[serde(rename = "referenceSnapshot")]
         reference_snapshot: HistorySeed,
         policy: SidePolicy,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        selection: Option<SideReference>,
     },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SideReference {
+    pub selection: desktop::SideSelection,
+    pub text: String,
+    pub verified: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]

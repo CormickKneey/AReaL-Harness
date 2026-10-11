@@ -138,7 +138,7 @@ impl Store {
                         "fork snapshot anchor mismatch");
                 }
             }
-            if let Some(areal_protocol::Conversation::Side { version, origin, reference_snapshot, policy }) = &record.thread.conversation {
+            if let Some(areal_protocol::Conversation::Side { version, origin, reference_snapshot, policy, .. }) = &record.thread.conversation {
                 anyhow::ensure!(*version == 1 && record.version >= 14 && policy.kind == "sideReadOnlyV1" && policy.workspace_access == "none", "unsupported Side policy");
                 anyhow::ensure!(record.thread.parent_thread_id.is_none() && record.thread.session_id == record.thread.id
                     && record.thread.goal_owner.is_none() && record.thread.goals.is_empty()
