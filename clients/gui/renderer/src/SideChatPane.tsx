@@ -48,11 +48,19 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
   const selectionKey = `${owner}:selection`;
   const anchorKey = `${owner}:anchor`;
   const previewKey = `${owner}:selection-preview`;
+  const workspaceAccessKey = `${owner}:workspace-access`;
   const sideId = selected.kind === "side" ? selected.id : "";
   const generation = project.core?.connectionGeneration ?? 0;
   const [text, setText] = useState(() => localStorage.getItem(draftKey) ?? "");
   const workspaceReadAvailable = project.core?.features?.sideWorkspaceRead === true;
-  const [workspaceAccess, setWorkspaceAccess] = useState<"none" | "readOnly">(() => workspaceReadAvailable ? "readOnly" : "none");
+  const [workspaceAccess, setWorkspaceAccess] = useState<"none" | "readOnly">(() => {
+    const saved = localStorage.getItem(workspaceAccessKey);
+    if (saved !== null) return saved === "readOnly" ? "readOnly" : "none";
+    return workspaceReadAvailable ? "readOnly" : "none";
+  });
+  useEffect(() => {
+    if (!sideId) localStorage.setItem(workspaceAccessKey, workspaceAccess);
+  }, [sideId, workspaceAccessKey, workspaceAccess]);
   const [pendingId, setPendingId] = useState(() => localStorage.getItem(pendingKey) ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(() => localStorage.getItem(`${owner}:error`) ?? "");
@@ -159,12 +167,12 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
       if (!mounted.current || !workspace.isCurrent(token, generation)) return;
       if (!result.confirmed) { setError("首问结果仍待核对；不会自动重复提交。"); return; }
       workspace.acceptCreated(token, result.threadId, generation);
-      localStorage.removeItem(selectionKey); localStorage.removeItem(anchorKey); localStorage.removeItem(previewKey);
+      localStorage.removeItem(selectionKey); localStorage.removeItem(anchorKey); localStorage.removeItem(previewKey); localStorage.removeItem(workspaceAccessKey);
       setSelection(null); setAnchor(null); setSelectionPreview("");
       onSelected({ kind: "side", id: result.threadId });
     } catch (cause) { if (mounted.current && workspace.isCurrent(token, generation)) setError((cause as Error).message); }
     finally { if (mounted.current && workspace.isCurrent(token, generation)) setBusy(false); }
-  }, [pendingId, busy, action, project.id, pendingKey, draftKey, selectionKey, anchorKey, previewKey, workspace, generation, onSelected]);
+  }, [pendingId, busy, action, project.id, pendingKey, draftKey, selectionKey, anchorKey, previewKey, workspaceAccessKey, workspace, generation, onSelected]);
   useEffect(() => { if (pendingId && project.state?.connected) void recover(); }, [project.state?.connected]);
   const submit = async () => {
     const question = text.trim();
@@ -180,6 +188,7 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
         const result = await action("side", { projectId: project.id, operation: "start", sourceThreadId: source.id, workspaceAccess, text: question, requestId, selection, anchor });
         if (!mounted.current || !workspace.isCurrent(token, generation)) return;
         workspace.acceptCreated(token, result.threadId, generation);
+        localStorage.removeItem(workspaceAccessKey);
         onSelected({ kind: "side", id: result.threadId });
       }
       if (!mounted.current || !workspace.isCurrent(token, generation)) return;
@@ -198,8 +207,12 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
   };
   return <>
       <p className="text-foreground-subtle">来源：{source.preview || source.id}。{validSide ? sourceStatus : anchor?.kind === "turn" ? `首问锚定轮次 ${anchor.turnId} 之后的持久证据` : "首问发送时冻结最新持久观察"}。{validSide && side.conversation.policy?.workspaceAccess === "readOnly" ? "可只读查询当前工作区；文件内容可能与历史锚点不同。" : "仅会话证据"}；不会执行来源任务。</p>
-      {!sideId && <label>文件访问范围 <select value={workspaceAccess} onChange={event => setWorkspaceAccess(event.target.value as "none" | "readOnly")} disabled={busy || !!pendingId}>
-        {workspaceReadAvailable && <option value="readOnly">只读当前工作区</option>}
+      {!sideId && <label>文件访问范围 <select value={workspaceAccess} onChange={event => {
+        const value = event.target.value;
+        if (value !== "none" && value !== "readOnly") return;
+        localStorage.setItem(workspaceAccessKey, value); setWorkspaceAccess(value);
+      }} disabled={busy || !!pendingId}>
+        {(workspaceReadAvailable || workspaceAccess === "readOnly") && <option value="readOnly" disabled={!workspaceReadAvailable}>{workspaceReadAvailable ? "只读当前工作区" : "只读当前工作区（当前不可用）"}</option>}
         <option value="none">仅会话证据</option>
       </select></label>}
       {!sideId && !workspaceReadAvailable && <p className="text-foreground-subtle">当前 Core 未提供经过验证的工作区只读能力；可使用仅会话证据。</p>}
