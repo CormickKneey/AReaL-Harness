@@ -236,6 +236,8 @@ app.whenReady().then(async () => {
         (projectId, threadId) => projectId === owner.projectId && threadId === owner.threadId,
         () => ({}),
         () => 'fixture-core',
+        () => [],
+        ({ origin }) => origin === new URL(process.env.AREAL_BROWSER_FIXTURE_URL).origin,
     );
     await window.loadFile(join(__dirname, "shell.html"));
     await preview.command({ operation: "show", ...owner, bounds });
