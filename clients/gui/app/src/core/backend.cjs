@@ -28,7 +28,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 /** 每个项目连接公开的共享 Core 服务；这里只保留可重建投影与客户端受理回执。 */
 class CoreBackend {
-  constructor({ binary, home, harnessHome = join(home, 'harness'), config, desktopConfig, userHome, toolExtensions, workgroupPolicy, workgroupToolchain, desktopProcesses = false, defaultProfile, encryption, onChange = () => {} }) {
+  constructor({ binary, home, harnessHome = join(home, 'harness'), config, desktopConfig, userHome, toolExtensions, workgroupPolicy, workgroupToolchain, sandboxProfile, desktopProcesses = false, defaultProfile, encryption, onChange = () => {} }) {
     if (!binary || !isAbsolute(binary)) throw new Error('请设置 AREAL_CORE_BIN 为 areal 可执行文件的绝对路径');
     this.binary = binary;
     this.home = home;
@@ -38,6 +38,7 @@ class CoreBackend {
     this.workgroupPolicy = workgroupPolicy;
     this.workgroupToolchain = workgroupToolchain;
     this.desktopProcesses = desktopProcesses;
+    this.sandboxProfile = sandboxProfile;
     this.defaultProfile = defaultProfile;
     this.userHome = userHome;
     this.desktopConfig = desktopConfig;
@@ -181,6 +182,7 @@ class CoreBackend {
     const args = ['--workspace', project.root, '--data-dir', dataDir, '--scratch', scratch, '--allow-write'];
     if (this.desktopProcesses) args.push('--allow-concurrent-writes', '--desktop-process-timeout-ms', '86400000');
     if (this.config) args.push('--config', this.config);
+    if (this.sandboxProfile) args.push('--sandbox-profile', this.sandboxProfile);
     if (this.workgroupPolicy) args.push('--workgroup-policy', this.workgroupPolicy);
     if (this.workgroupToolchain) args.push('--workgroup-toolchain', this.workgroupToolchain);
     const resourceDeployment = await this.resources.deployment(project);

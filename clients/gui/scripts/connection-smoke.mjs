@@ -42,6 +42,9 @@ async function until(predicate, label, timeout = 15000) {
 }
 let passed = false;
 try {
+  const { serviceIdentity } = require('../app/src/core/service-config.cjs');
+  assert.notEqual(await serviceIdentity({ binary: backend.binary, sandboxProfile: 'native' }),
+    await serviceIdentity({ binary: backend.binary }), 'native sandbox changes desktop service compatibility');
   await backend.init();
   const providers = await backend.command('providers', { operation: 'list' });
   assert.equal(providers.path, config, 'desktop defaults to the user Core configuration, independently of its registry');

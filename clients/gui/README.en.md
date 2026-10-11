@@ -20,6 +20,8 @@ After installing locked dependencies, `make gui-install` explicitly runs the off
 
 `AREAL_CORE_BIN` selects an absolute trusted Core path; development defaults to `target/debug/areal`. Development data is isolated under `AReaL Harness GUI Dev/<checkout digest>`; installed builds use `AReaL Harness GUI`. Existing desktop installations and data are not imported or replaced. `AREAL_GUI_USER_DATA`, `AREAL_CORE_HOME`, and `AREAL_HARNESS_SERVICE_HOME` explicitly select isolated directories. Model configuration defaults to the CLI's `~/.areal/config.toml`; Core owns parsing, validation, and saving. `AREAL_HARNESS_HOME` changes the Core configuration home, and `AREAL_CORE_CONFIG` explicitly selects another file. Reads do not create configuration; Core creates the default file on first save. Configuration in old GUI isolated directories is not merged automatically.
 
+Explicitly select `AREAL_CORE_SANDBOX_PROFILE=native` before starting the GUI, or `--sandbox-profile native` for `areal service ensure/restart`, to request the native Runtime sandbox. The default remains `full-access`. The profile participates in deployment compatibility; stop active work and explicitly restart when changing it. Side chat offers read-only access to current workspace files only when Core verifies the native isolation capability. If native isolation is unavailable, startup fails closed; there is no fallback to full access.
+
 Both development and installed macOS builds require a working `/usr/bin/python3` to launch Runtime and trusted tool helpers; install Xcode Command Line Tools with `xcode-select --install`. The interpreter is not bundled. Shared-service startup checks availability and returns an actionable error.
 
 ## Composer
