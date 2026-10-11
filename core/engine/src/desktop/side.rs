@@ -1,5 +1,38 @@
 use super::*;
 
+fn canonical_text(item: &Item) -> Option<String> {
+    match item {
+        Item::UserMessage { content, .. } if content.len() == 1 => match &content[0] {
+            Input::Text { text, .. } => Some(text.clone()), _ => None,
+        },
+        Item::AgentMessage { text, .. } => Some(text.clone()),
+        Item::DynamicToolCall { success: Some(true), content_items: Some(parts), .. } if parts.len() == 1 =>
+            parts[0]["text"].as_str().map(str::to_owned),
+        _ => None,
+    }
+}
+
+fn resolve_selection(selection: &SideSelection, prefix: &[Turn]) -> Result<areal_protocol::SideReference> {
+    match selection {
+        SideSelection::ItemRange { turn_id, item_id, start_utf8, end_utf8, text_sha256 } => {
+            let item = prefix.iter().find(|turn| &turn.id == turn_id)
+                .and_then(|turn| turn.items.iter().find(|item| item.id() == item_id))
+                .ok_or_else(|| invalid("STALE_SELECTION"))?;
+            let text = canonical_text(item).ok_or_else(|| invalid("STALE_SELECTION"))?;
+            let selected = text.get(*start_utf8..*end_utf8).filter(|part| !part.is_empty())
+                .ok_or_else(|| invalid("STALE_SELECTION"))?;
+            if selected.len() > 16 * 1024 { return Err(invalid("SELECTION_TOO_LARGE")); }
+            let actual = format!("{:x}", Sha256::digest(selected.as_bytes()));
+            if !actual.eq_ignore_ascii_case(text_sha256) { return Err(invalid("STALE_SELECTION")); }
+            Ok(areal_protocol::SideReference { selection: selection.clone(), text: selected.into(), verified: true })
+        }
+        SideSelection::UserQuote { text, .. } if text.len() > 16 * 1024 => Err(invalid("SELECTION_TOO_LARGE")),
+        SideSelection::UserQuote { text, .. } if !text.trim().is_empty() =>
+            Ok(areal_protocol::SideReference { selection: selection.clone(), text: text.clone(), verified: false }),
+        _ => Err(invalid("invalid userQuote")),
+    }
+}
+
 impl Engine {
     pub async fn side_context_read(&self, thread_id: &str, evidence_ref: Option<String>, cursor: Option<String>, max_bytes: Option<usize>) -> Result<Value> {
         if evidence_ref.is_some() && cursor.is_some() { return Err(invalid("evidenceRef and cursor are mutually exclusive")); }
@@ -26,20 +59,44 @@ impl Engine {
             json!({"sourceThreadId":source,"sourceTurnId":turn.id,"sourceItemId":item.id(),"sourceTurnStatus":turn.status,"item":item})
         })).collect();
         if index > entries.len() || index == entries.len() && offset != 0 { return Err(invalid("invalid evidence cursor")); }
-        if index == entries.len() { return Ok(json!({"snapshotId":snapshot,"evidence":[],"nextCursor":null,"complete":true})); }
+        if index == entries.len() {
+            let page = json!({"snapshotId":snapshot,"evidence":[],"nextCursor":null,"complete":true});
+            if serde_json::to_vec(&page).map_err(invalid)?.len() > max_bytes { return Err(invalid("EVIDENCE_BUDGET_TOO_SMALL")); }
+            return Ok(page);
+        }
         let entry = &entries[index];
         let content = entry["item"].to_string();
         if offset > content.len() || !content.is_char_boundary(offset) { return Err(invalid("invalid evidence cursor")); }
-        // JSON 字符串转义会放大输出；保守限制正文，下一页用 UTF-8 字节位置续读。
-        let excerpt = crate::tools::prefix(&content[offset..], (max_bytes / 4).max(16));
-        let next_offset = offset + excerpt.len();
-        let next_cursor = if next_offset < content.len() { Some(format!("{}:{}:{}",snapshot,index,next_offset)) }
-            else if index + 1 < entries.len() { Some(format!("{}:{}:0",snapshot,index + 1)) } else { None };
-        Ok(json!({"snapshotId":snapshot,"evidence":[{"evidenceRef":format!("{}:{}",snapshot,index),
-            "sourceTurnId":entry["sourceTurnId"],"sourceItemId":entry["sourceItemId"],
-            "sourceTurnStatus":entry["sourceTurnStatus"],"text":excerpt,
-            "range":{"startUtf8":offset,"endUtf8":next_offset,"totalBytes":content.len()}}],
-            "nextCursor":next_cursor,"complete":next_cursor.is_none()}))
+        let rest = &content[offset..];
+        let page_for = |part: &str| {
+            let next_offset = offset + part.len();
+            let next_cursor = if next_offset < content.len() { Some(format!("{}:{}:{}",snapshot,index,next_offset)) }
+                else if index + 1 < entries.len() { Some(format!("{}:{}:0",snapshot,index + 1)) } else { None };
+            json!({"snapshotId":snapshot,"evidence":[{"evidenceRef":format!("{}:{}",snapshot,index),
+                "sourceTurnId":entry["sourceTurnId"],"sourceItemId":entry["sourceItemId"],
+                "sourceTurnStatus":entry["sourceTurnStatus"],"text":part,
+                "range":{"startUtf8":offset,"endUtf8":next_offset,"totalBytes":content.len()}}],
+                "nextCursor":next_cursor,"complete":next_cursor.is_none()})
+        };
+        // 页预算覆盖整个序列化响应；转义和游标字节都计入，避免高转义内容放大输出。
+        let mut low = 0usize;
+        let mut high = rest.len().min(max_bytes);
+        let mut best = None;
+        while low <= high {
+            let mid = low + (high - low) / 2;
+            let mut end = mid;
+            while !rest.is_char_boundary(end) { end -= 1; }
+            let page = page_for(&rest[..end]);
+            if serde_json::to_vec(&page).map_err(invalid)?.len() <= max_bytes {
+                best = Some(page);
+                low = mid + 1;
+            } else if mid == 0 { break; } else { high = mid - 1; }
+        }
+        let page = best.ok_or_else(|| invalid("EVIDENCE_BUDGET_TOO_SMALL"))?;
+        if !rest.is_empty() && page["evidence"][0]["range"]["endUtf8"].as_u64() == Some(offset as u64) {
+            return Err(invalid("EVIDENCE_BUDGET_TOO_SMALL"));
+        }
+        Ok(page)
     }
     /// 首问与只读身份在同一持久记录中提交；提交之前不会激活模型。
     pub async fn side_start(self: &Arc<Self>, identity: String, request: SideStart) -> Result<(Thread, Turn)> {
@@ -90,6 +147,12 @@ impl Engine {
                 _ => return Err(invalid("invalid Side anchor")),
             };
             let prefix = &logical[..end];
+            let selection = request.selection.as_ref().map(|value| resolve_selection(value, prefix)).transpose()?;
+            let item_count: usize = prefix.iter().map(|turn| turn.items.len()).sum();
+            let preview = crate::history::side_context_text(&"0".repeat(64), item_count, selection.as_ref(), &[]);
+            if serde_json::to_vec(&preview).map_err(invalid)?.len() > 32 * 1024 {
+                return Err(invalid("SELECTION_TOO_LARGE"));
+            }
             let config = prefix.iter().rev().find_map(|t| t.configuration.clone()).unwrap_or_default();
             if config.profile.as_ref().is_some_and(|p| p.workflow.is_some()) { return Err(invalid("PROFILE_NOT_SUPPORTED")); }
             let mut config = engine.resolve_config(None, request.model.or(config.model),
@@ -119,6 +182,7 @@ impl Engine {
                     reference_snapshot: areal_protocol::HistorySeed { snapshot_id, turn_count: end,
                         item_count: prefix.iter().map(|t| t.items.len()).sum(), logical_bytes },
                     policy: areal_protocol::SidePolicy { kind: "sideReadOnlyV1".into(), workspace_access: "none".into() },
+                    selection,
                 }),
                 goals: Default::default(), goal_owner: None, desktop: Some(data),
                 id: thread_id.clone(), session_id: thread_id.clone(), parent_thread_id: None,

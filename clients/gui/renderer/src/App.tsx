@@ -1092,6 +1092,19 @@ function AppContent({ services }: { services: PlatformServices }) {
       anchor: { turnId, boundary }, workspaceMode: "sharedCurrent" });
     if (activeConversation.current === route) await open(owner, result.threadId);
   };
+  const openSideSelection = (selection: Data, excerpt: string, anchor?: Data) => {
+    if (!project || !thread) return;
+    const owner = `${project.id}:${thread.id}:side`;
+    localStorage.setItem(`areal-gui:side:selection:${owner}`, JSON.stringify(selection));
+    localStorage.setItem(`areal-gui:side:selection-preview:${owner}`, excerpt);
+    if (anchor) localStorage.setItem(`areal-gui:side:anchor:${owner}`, JSON.stringify(anchor));
+    else localStorage.removeItem(`areal-gui:side:anchor:${owner}`);
+    localStorage.removeItem(`areal-gui:side:thread:${owner}`);
+    setWorkspaceView(mode => matchMedia("(max-width: 900px)").matches ? "panel" : mode === "split" ? mode : "panel");
+    setPanel("旁路讨论");
+    setPanelTabs(tabs => tabs.includes("旁路讨论") ? tabs : [...tabs, "旁路讨论"]);
+    window.dispatchEvent(new CustomEvent("areal-side-selection", { detail: { owner, excerpt } }));
+  };
   const taskActions = <DropdownMenu>
                     <DropdownMenuTrigger
                       render={
@@ -1396,8 +1409,10 @@ function AppContent({ services }: { services: PlatformServices }) {
                           thread={thread}
                           action={action}
                           beforeTurns={thread.conversation?.kind === "fork" ? <ForkHistory projectId={project.id} thread={thread} action={resourceAction}
-                            onFork={project.core?.features?.forkPreview === true && !thread.desktop?.archived ? forkFromTurn : undefined} /> : undefined}
+                            onFork={project.core?.features?.forkPreview === true && !thread.desktop?.archived ? forkFromTurn : undefined}
+                            onSideSelection={project.core?.features?.sidePreview === true && !thread.desktop?.archived ? openSideSelection : undefined} /> : undefined}
                           onFork={forkFromTurn}
+                          onSideSelection={project.core?.features?.sidePreview === true && !thread.desktop?.archived ? openSideSelection : undefined}
                           dark={dark}
                           onLink={onLink}
                           onFile={openFile}

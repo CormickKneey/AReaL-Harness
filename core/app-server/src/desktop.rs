@@ -193,7 +193,7 @@ async fn dispatch_inner(
             match engine.side_start(identity.into(), request).await {
                 Ok((thread, turn)) => Ok(json!({"thread":thread,"turn":turn,"requestId":request_id})),
                 Err(Error::Conflict) => return Err(RpcError { code:-32010, message:"request key conflicts with an existing Side".into(), data:Some(json!({"reason":"REQUEST_CONFLICT","retryable":false})) }),
-                Err(Error::Invalid(reason)) if matches!(reason.as_str(), "SOURCE_KIND_UNSUPPORTED" | "ANCHOR_NOT_FOUND" | "TURN_NOT_TERMINAL" | "HISTORY_UNRESOLVED" | "PROFILE_NOT_SUPPORTED" | "MODEL_CONTEXT_INCOMPATIBLE" | "WORKSPACE_READ_UNAVAILABLE") =>
+                Err(Error::Invalid(reason)) if matches!(reason.as_str(), "SOURCE_KIND_UNSUPPORTED" | "ANCHOR_NOT_FOUND" | "TURN_NOT_TERMINAL" | "HISTORY_UNRESOLVED" | "PROFILE_NOT_SUPPORTED" | "MODEL_CONTEXT_INCOMPATIBLE" | "WORKSPACE_READ_UNAVAILABLE" | "STALE_SELECTION" | "SELECTION_TOO_LARGE") =>
                     return Err(RpcError { code:-32010, message:reason.clone(), data:Some(json!({"reason":reason,"retryable":false})) }),
                 Err(error) => return Err(map_error(error)),
             }
