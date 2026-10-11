@@ -134,4 +134,4 @@ Persistent Profiles and login import/persistence, Chrome extensions, unrestricte
 
 ## Further Notes
 
-New capabilities and ADRs are proposed, not implemented. The handoff workspace contains evidence, baseline SHA, source map, tickets and validation gaps. External page content is untrusted. Design delivery does not authorize publication of GitHub Issues/PRs or production changes.
+Core/adapter/Main/Renderer ownership boundaries are integrated; operation availability follows Host capability discovery and the implementation limits in the public API. Persistent Profiles, cloud browsers and other deferred capabilities remain unavailable. Source evidence, baseline SHA, run results and remaining checks belong to their acceptance records, rather than this durable specification. External page content is untrusted; publishing GitHub Issues, PRs or production changes requires corresponding authorization.

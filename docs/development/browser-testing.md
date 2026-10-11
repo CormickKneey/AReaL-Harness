@@ -2,17 +2,17 @@
 
 # Browser 行为与发布验收
 
-04 票加入 B-10–B-13 的源码路径。M1 统一原生 fixture 须检查 Core 交互包含实际准备的页面、目标和 Origin；拒绝审批时服务端副作用为零，批准后原生点击/填写/按键只产生一次副作用；导航、目标替换、视口变化、接管、伪造审批和跨 Thread 请求均不产生副作用。分别在输入前注入 prepare 失败、在 fixture 服务端收到输入后丢失回执，断言 `not_sent` 和 Core UNKNOWN。04 票源码检查尚未运行这些原生断言。
+B-10–B-13 的原生 fixture 须检查 Core 交互包含实际准备的页面、目标和 Origin；拒绝审批时服务端副作用为零，批准后原生点击/填写/按键只产生一次副作用；导航、目标替换、视口变化、接管、伪造审批和跨 Thread 请求均不产生副作用。分别在输入前注入 prepare 失败、在 fixture 服务端收到输入后丢失回执，断言 `not_sent` 和 Core UNKNOWN。源码检查不能替代这些原生断言。
 
-09 票的 B-24–B-26 在 M1 统一 fixture 中通过公开 GUI/Core 入口验证：跨 Workspace 达到 8 个原生页和单 Workspace 4 个逻辑页，执行/接管/对话框页 pin 时新页被拒绝且原生对象数不增长；空闲驱逐必须显示状态损失。隐藏后核对原生对象、表单和 scroll；崩溃重开后核对 `pageGeneration`、旧 Ref/计划/回执拒绝以及已派发操作的 UNKNOWN。将延迟加载/接管回调与归档、隐藏项目、关闭窗口竞争，核对旧页不复活、共享 Session 在兄弟页存活时不清除，最后页面关闭后无孤儿 WebContents 或下载。该场景目前只准备了要求，尚未运行真实原生验收。
+B-24–B-26 的原生 fixture 通过公开 GUI/Core 入口验证：跨 Workspace 达到 8 个原生页和单 Workspace 4 个逻辑页，执行/接管/对话框页 pin 时新页被拒绝且原生对象数不增长；空闲驱逐必须显示状态损失。隐藏后核对原生对象、表单和 scroll；崩溃重开后核对 `pageGeneration`、旧 Ref/计划/回执拒绝以及已派发操作的 UNKNOWN。将延迟加载/接管回调与归档、隐藏项目、关闭窗口竞争，核对旧页不复活、共享 Session 在兄弟页存活时不清除，最后页面关闭后无孤儿 WebContents 或下载。各次真实原生验收结果单独记录。
 
-08 票的 B-21–B-23 须通过公开 Core/GUI 路径，使用两个 Workspace 和合成回环登录服务。在一个 Workspace 设置 HTTPOnly Cookie、localStorage、IndexedDB 及 Service Worker；确认兄弟页在不重建已认领 WebContents 的情况下可见这些状态，第二个 Workspace 不可见。关闭一个兄弟页后第一页面仍保留状态；关闭最后一页后重建，确认临时状态已清除。可信精确 Origin 授权后才能导航。夹具探测另一个未授权的回环 Origin、实际 Core/适配器端点、内网/元数据目标，以及重定向、Frame、Worker fetch 与 WebSocket；禁止目标的服务端副作用计数必须为零。运行清单保留页面/Session 身份、请求及界面截图。该原生场景已准备，尚未运行。
+B-21–B-23 须通过公开 Core/GUI 路径，使用两个 Workspace 和合成回环登录服务。在一个 Workspace 设置 HTTPOnly Cookie、localStorage、IndexedDB 及 Service Worker；确认兄弟页在不重建已认领 WebContents 的情况下可见这些状态，第二个 Workspace 不可见。关闭一个兄弟页后第一页面仍保留状态；关闭最后一页后重建，确认临时状态已清除。可信精确 Origin 授权后才能导航。夹具探测另一个未授权的回环 Origin、实际 Core/适配器端点、内网/元数据目标，以及重定向、Frame、Worker fetch 与 WebSocket；禁止目标的服务端副作用计数必须为零。运行清单保留页面/Session 身份、请求及界面截图。各次原生场景的结果单独记录。
 
 本文件定义完整 Browser 的测试契约。R0 原生实验已有独立入口，其结果以具体运行证据为准，不表示全部场景已经运行。后续主要测试切口沿用现有桌面 smoke/connection/architecture 的真实 Electron+Core+Runtime+确定性模型形态，参照[GUI指南](../../clients/gui/README.md)。
 
 当前同页读取切口运行 `make build`、`make gui-install`、`make gui-build` 后，以 `node clients/gui/scripts/browser-read-smoke.mjs` 验证 B-04/B-05/B-06。脚本仅用隔离 home、合成网页和本地确定性模型；记录 Core 动态工具 callId、真实原生 WebContents 身份与内存 sentinel、GUI/原生截图、服务端请求计数和跨 Thread/伪回执/宿主缺失结果。源码构建测试不代表安装包、真实账号或其他 OS 已验收。
 
-Ticket 03 的同一验收层使用 `node clients/gui/scripts/browser-evidence-smoke.mjs` 检查 B-07/B-08/B-09：部分观察后仍有效的 Ref、重复同名元素替换与 Frame 导航后的旧 Ref、iframe/Shadow 覆盖、语义状态和父节点关联、预算截断。脚本单独验证根页面/Frame/Shadow/明文敏感信息/跨源 Frame 的截图拒绝，检查截图期间视口变化与超大原生 PNG，并记录实际请求了哪种原生观察表面；随后验证模型图像输入、GUI 中的 Core 媒体回取及跨 Thread Blob 拒绝。仅脚本实际通过且保存运行清单时才能认定对应场景通过。
+同一验收层使用 `node clients/gui/scripts/browser-evidence-smoke.mjs` 检查 B-07/B-08/B-09：部分观察后仍有效的 Ref、重复同名元素替换与 Frame 导航后的旧 Ref、iframe/Shadow 覆盖、语义状态和父节点关联、预算截断。脚本单独验证根页面/Frame/Shadow/明文敏感信息/跨源 Frame 的截图拒绝，检查截图期间视口变化与超大原生 PNG，并记录实际请求了哪种原生观察表面；随后验证模型图像输入、GUI 中的 Core 媒体回取及跨 Thread Blob 拒绝。仅脚本实际通过且保存运行清单时才能认定对应场景通过。
 
 ## 测试层级
 
@@ -77,9 +77,9 @@ Fixture 至少含：不同端口的A/B站点、HTTPOnly Cookie登录模拟、跨
 | B-48 | 安装版自包含 | 隔离安装无开发依赖/全局Chrome/CDP端口仍通过流程。 | 19 |
 | B-49 | R2综合交付 | 真实安装版完成要求的开发协作故事并保留审核证据。 | 19 |
 
-16 票源码检查只覆盖受信任 IPC 范围、文件配额及 Agent 文件输入拒绝。M2 真实 Electron fixture 须在同一 Page/Thread 上分别触发人工上传选择、取消及 Agent 间接点击；用独立站点计数确认取消没有自动重放。下载需核对系统保存对话框出现前无落盘，路径仅由用户选择，未知大小、超限、超时、关闭/崩溃、同 Workspace 兄弟页归属与取消回执均与实际文件和 GUI 状态一致。测试若注入系统对话框选择，须标明其替代了真实用户选择；不能据此宣称人工完成。
+文件交接源码检查只覆盖受信任 IPC 范围、文件配额及 Agent 文件输入拒绝。真实 Electron fixture 须在同一 Page/Thread 上分别触发人工上传选择、取消及 Agent 间接点击；用独立站点计数确认取消没有自动重放。下载需核对系统保存对话框出现前无落盘，路径仅由用户选择，未知大小、超限、超时、关闭/崩溃、同 Workspace 兄弟页归属与取消回执均与实际文件和 GUI 状态一致。测试若注入系统对话框选择，须标明其替代了真实用户选择；不能据此宣称人工完成。
 
-15 票源码检查覆盖受限 IPC、Main 节点身份/实际值栅栏与 Composer 草稿接线。B-37/B-38 仍须在 M2 使用真实原生页验证撤销/重做、HMR 换节点、导航、键盘/输入法、敏感内容截图拒绝、草稿发送失败，以及清除试改前后的真实页面与 Core 回执；源码检查不构成这两项验收。
+临时样式源码检查覆盖受限 IPC、Main 节点身份/实际值栅栏与 Composer 草稿接线。B-37/B-38 须使用真实原生页验证撤销/重做、HMR 换节点、导航、键盘/输入法、敏感内容截图拒绝、草稿发送失败，以及清除试改前后的真实页面与 Core 回执；源码检查不构成这两项验收。
 
 ## 故障注入时刻
 
@@ -102,7 +102,7 @@ Fixture 至少含：不同端口的A/B站点、HTTPOnly Cookie登录模拟、跨
 
 ## 现有命令与新增命令
 
-现有可用入口包括 `make gui-smoke`、`pnpm --dir clients/gui run test:connection`、`pnpm --dir clients/gui run test:architecture`、`pnpm --dir clients/gui run test:composer`、GUI typecheck与verify；详见GUI指南。Browser专用测试入口应在实现票中真实加入package/Makefile后才使用，不能假设现在已有 `test:browser`。
+现有可用入口包括 `make gui-smoke`、`pnpm --dir clients/gui run test:connection`、`pnpm --dir clients/gui run test:architecture`、`pnpm --dir clients/gui run test:composer`、GUI typecheck与verify；详见GUI指南。Browser 专用脚本见本页所列入口；不得假设存在未公布的 `test:browser` 命令。
 
 文档与类型变更同时运行当前仓库要求的检查。原始设计交付仅做产物结构校验，没有运行仓库测试、真实 Electron 或安装版，不能作为发布证据；实际 R0 运行按下面的独立入口留证。
 
