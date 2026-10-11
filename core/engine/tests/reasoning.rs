@@ -289,10 +289,13 @@ async fn reasoning_is_bounded_and_is_not_a_successful_answer() {
 #[tokio::test]
 async fn responses_summary_is_opt_in_and_provider_context_replays_once() {
     use areal_engine::model::ModelOptions;
-    use areal_protocol::desktop::ModelParameters;
+    use areal_protocol::desktop::{ConfigureThread, ForkAnchor, ForkThread, ModelParameters};
     use axum::Json;
     let context = json!({"type":"reasoning","id":"r1","summary":[{"type":"summary_text","text":"public summary"}],"encrypted_content":"opaque-provider-context"});
-    for summary in [None, Some("auto"), Some("concise"), Some("detailed")] {
+    for (index, summary) in [None, Some("auto"), Some("concise"), Some("detailed")]
+        .into_iter()
+        .enumerate()
+    {
         let (requests, mut received) = mpsc::unbounded_channel();
         let returned = context.clone();
         let app = Router::new().route("/", post(move |Json(request): Json<Value>| {
@@ -362,6 +365,69 @@ async fn responses_summary_is_opt_in_and_provider_context_replays_once() {
                     .filter(|v| v["type"] != "reasoning")
                     .any(|v| v.to_string().contains("public summary"))
             );
+        }
+        let source = engine.read(&thread.id, true).await.unwrap();
+        let fork = engine
+            .fork_thread(
+                "opaque-fixture".into(),
+                ForkThread {
+                    request_id: format!("opaque-{index}"),
+                    source_thread_id: thread.id.clone(),
+                    anchor: ForkAnchor {
+                        turn_id: source.turns[0].id.clone(),
+                        boundary: "after".into(),
+                    },
+                    workspace_mode: "sharedCurrent".into(),
+                    target: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert!(fork.turns.is_empty());
+        engine
+            .start(&fork.id, vec![Input::text("Fork continuation")])
+            .await
+            .unwrap();
+        let target = engine.wait(&fork.id).await.unwrap();
+        assert_eq!(target.turns.len(), 1);
+        assert_eq!(target.turns[0].usage.as_ref().unwrap().output_tokens, 3);
+        let request = received.recv().await.unwrap();
+        let input = request["input"].as_array().unwrap();
+        assert_eq!(
+            input
+                .iter()
+                .filter(|v| v["type"] == "reasoning")
+                .collect::<Vec<_>>(),
+            [&context]
+        );
+        assert!(
+            input
+                .iter()
+                .any(|v| v["content"].to_string().contains("Fork continuation"))
+        );
+        if index == 0 {
+            let chat = HttpModel::new(endpoint.clone(), "chat-fixture".into(), None).unwrap();
+            engine.register_default_model("chat-revision".into(), Arc::new(chat), true);
+            let configured = engine.configure_thread(serde_json::from_value::<ConfigureThread>(json!({
+                "threadId":fork.id,"expectedRevision":fork.desktop.as_ref().unwrap().configuration.revision,
+                "resetModel":true
+            })).unwrap()).await.unwrap();
+            assert_eq!(
+                configured.revision,
+                fork.desktop.as_ref().unwrap().configuration.revision + 1
+            );
+            let error = engine
+                .start(
+                    &fork.id,
+                    vec![Input::text("must reject incompatible protocol")],
+                )
+                .await
+                .unwrap_err();
+            assert!(
+                error.to_string().contains("MODEL_CONTEXT_INCOMPATIBLE"),
+                "{error}"
+            );
+            assert_eq!(engine.read(&fork.id, true).await.unwrap().turns.len(), 1);
         }
         let wrong_protocol = HttpModel::new(endpoint, "fixture".into(), None)
             .unwrap()

@@ -1,6 +1,11 @@
 use super::*;
 
 impl Engine {
+    pub fn fork_snapshot_limit(&self) -> usize {
+        if self.limits.max_history_bytes == 0 { 64 * 1024 * 1024 }
+        else { self.limits.max_history_bytes.min(64 * 1024 * 1024) }
+    }
+
     /// Fork 持有已提交前缀的不可变副本；创建不激活 Turn，也不继承来源执行绑定。
     pub async fn fork_thread(self: &Arc<Self>, identity: String, request: ForkThread) -> Result<Thread> {
         self.mutate(move |engine| async move {
@@ -80,14 +85,20 @@ impl Engine {
                 return Err(invalid("HISTORY_UNRESOLVED"));
             }
             // 历史锚点不能继承来源在后续轮次修改的配置。
-            let config = prefix.last().and_then(|turn| turn.configuration.clone()).unwrap_or_default();
+            let anchor_config = prefix.last().and_then(|turn| turn.configuration.clone()).unwrap_or_default();
+            // 显式 target 是全新的普通配置选择；空对象表示当前部署默认模型。
+            let config = if let Some(target) = &request.target {
+                engine.resolve_config(target.agent_profile.clone(), target.model.clone(),
+                    target.parameters.clone().unwrap_or_default(), 0)?
+            } else { anchor_config };
+            let config = engine.freeze_configuration(config);
             if config.profile.as_ref().is_some_and(|p| p.workflow.is_some()) { return Err(invalid("PROFILE_NOT_SUPPORTED")); }
             let model = engine.configured_model(&config).map_err(|_| invalid("MODEL_CONTEXT_INCOMPATIBLE"))?;
             if !model.capabilities().supports_input(areal_protocol::Modality::Text) { return Err(invalid("MODEL_CONTEXT_INCOMPATIBLE")); }
+            engine.validate_fork_replay(prefix, model.as_ref()).await?;
             let item_count = prefix.iter().map(|t| t.items.len()).sum();
             let turn_count = prefix.len();
-            let snapshot_limit = if engine.limits.max_history_bytes == 0 { 64 * 1024 * 1024 }
-                else { engine.limits.max_history_bytes.min(64 * 1024 * 1024) };
+            let snapshot_limit = engine.fork_snapshot_limit();
             #[cfg(test)]
             engine.store.check_fork_fault(crate::store::ForkFault::BeforeSnapshot)?;
             let (snapshot_id, logical_bytes) = engine.store.write_fork_snapshot(prefix.to_vec(), source_ids[..end].to_vec(), snapshot_limit).await

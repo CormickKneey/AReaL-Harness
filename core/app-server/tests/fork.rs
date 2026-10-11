@@ -172,6 +172,10 @@ async fn before_first_turn_is_empty_and_before_later_turn_excludes_it() {
     let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}")).await.unwrap();
     call(&mut socket, 1, "initialize", json!({"clientInfo":{"name":"test","version":"1"}})).await;
     socket.send(Wire::Text(json!({"method":"initialized"}).to_string().into())).await.unwrap();
+    let capabilities = call(&mut socket, 101, "areal/capabilities", json!({})).await;
+    let fork_capabilities = &capabilities["result"]["features"]["conversationDerivationV1"];
+    assert_eq!(fork_capabilities["forkBoundaries"], json!(["after", "before"]));
+    assert_eq!(fork_capabilities["historyBytes"], 64 * 1024 * 1024);
     let source = call(&mut socket, 2, "thread/start", json!({"cwd":"/workspace"})).await;
     let source_id = source["result"]["thread"]["id"].as_str().unwrap();
     call(&mut socket, 3, "turn/start", json!({"threadId":source_id,"input":[{"type":"text","text":"FIRST_ONLY"}]})).await;
@@ -187,6 +191,13 @@ async fn before_first_turn_is_empty_and_before_later_turn_excludes_it() {
         assert_eq!(response["result"]["thread"]["conversation"]["historySeed"]["turnCount"], expected);
         assert_eq!(response["result"]["thread"]["conversation"]["origin"]["boundary"], "before");
     }
+    let explicit_default = call(&mut socket, 102, "areal/thread/fork", json!({"requestId":"explicit-default","sourceThreadId":source_id,
+        "anchor":{"turnId":second,"boundary":"before"},"workspaceMode":"sharedCurrent","target":{}})).await;
+    assert!(explicit_default.get("result").is_some(), "{explicit_default}");
+    let invalid_target = call(&mut socket, 103, "areal/thread/fork", json!({"requestId":"invalid-target","sourceThreadId":source_id,
+        "anchor":{"turnId":second,"boundary":"before"},"workspaceMode":"sharedCurrent",
+        "target":{"model":{"providerId":"missing","modelId":"missing"}}})).await;
+    assert!(invalid_target.get("error").is_some(), "{invalid_target}");
     let other = call(&mut socket, 8, "thread/start", json!({"cwd":"/workspace"})).await;
     let other_id = other["result"]["thread"]["id"].as_str().unwrap();
     call(&mut socket, 9, "turn/start", json!({"threadId":other_id,"input":[{"type":"text","text":"OTHER_SOURCE"}]})).await;

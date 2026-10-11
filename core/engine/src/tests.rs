@@ -23,6 +23,7 @@ async fn fork_settled_failure_and_interruption_preserve_status() {
         request_id: key.into(), source_thread_id: source_id.clone(),
         anchor: areal_protocol::desktop::ForkAnchor { turn_id: anchor.into(), boundary: boundary.into() },
         workspace_mode: "sharedCurrent".into(),
+        target: None,
     };
     assert!(matches!(engine.fork_thread("owner".into(), request("active-after", &active, "after")).await,
         Err(Error::Invalid(reason)) if reason == "TURN_NOT_TERMINAL"));
@@ -73,6 +74,7 @@ async fn fork_unknown_hook_requires_source_inspection_and_keeps_unknown() {
         request_id: key.into(), source_thread_id: source_id.clone(),
         anchor: areal_protocol::desktop::ForkAnchor { turn_id: anchor.clone(), boundary: "after".into() },
         workspace_mode: "sharedCurrent".into(),
+        target: None,
     };
     assert!(matches!(engine.fork_thread("owner".into(), request("running-hook")).await,
         Err(Error::Invalid(reason)) if reason == "HISTORY_UNRESOLVED"));
@@ -146,6 +148,7 @@ async fn fork_creation_faults_recover_only_committed_targets() {
             request_id: "stage-key".into(), source_thread_id: source.id.clone(),
             anchor: areal_protocol::desktop::ForkAnchor { turn_id: anchor, boundary: "after".into() },
             workspace_mode: "sharedCurrent".into(),
+            target: None,
         };
         let replay = request.clone();
         assert!(matches!(engine.fork_thread("owner".into(), request).await, Err(Error::Storage(_))));
