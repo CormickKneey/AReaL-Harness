@@ -26,7 +26,7 @@ launcher 自动创建与 dataDir 同级的 `scratch/`，每个 Thread 使用 `ag
 
 macOS native profile 使用固定 `/usr/bin/sandbox-exec` 和默认拒绝 Seatbelt 策略；失败不回退到无沙箱。授权是路径子树权限，设备/inode 重验发现旧绑定，但不保证目录对象隔离。系统读取范围见 [sandbox.rs](../../runtime/exec-native/src/sandbox.rs)，native 不默认开放 Homebrew 或共享临时目录写入；full-access 开放。Linux 的 launcher full-access 直接继承宿主执行；未收窄根 Scope 的只读操作也沿用该部署级执行能力，避免误进入仅 macOS 可用的 native Seatbelt。显式收窄的 Scope 仍需要 native 或 outer-container-perf，不能用 full-access 绕过路径隔离。
 
-Linux native profile 使用 Bubblewrap 创建空 mount namespace、显式系统只读绑定和 Scope 读写绑定，并叠加 Runtime seccomp；要求 `/usr/bin/bwrap` 和可用的 user namespace。所有 Linux profile 还要求同目录的 `areal-runtime-reaper` 和可读 `/proc`，回收路径不依赖 Python；`make build` 与完整发行包均包含该 Rust helper。`outer-container-perf` 另外依赖受控外层只读容器/cgroup，容器为内层 namespace 创建放宽外层 seccomp/systempaths/AppArmor；它仅支持[固定评测流程](../benchmarks/README.md)。
+Linux native profile 使用 Bubblewrap 创建空 mount namespace、显式系统只读绑定和 Scope 读写绑定，并叠加 Runtime seccomp；要求 `/usr/bin/bwrap` 和可用的 user namespace。启动检查在同样的系统只读绑定中执行 `/bin/true`，兼容 BusyBox 布局；失败保留 Bubblewrap 退出状态与 stderr，避免把命令缺失误报为 namespace 不可用。所有 Linux profile 还要求同目录的 `areal-runtime-reaper` 和可读 `/proc`，回收路径不依赖 Python；`make build` 与完整发行包均包含该 Rust helper。`outer-container-perf` 另外依赖受控外层只读容器/cgroup，容器为内层 namespace 创建放宽外层 seccomp/systempaths/AppArmor；它仅支持[固定评测流程](../benchmarks/README.md)。
 
 Core、Node Host、stdio MCP 不在 Runtime 沙箱内。进程组终止与输出关闭不证明所有逃逸后代结束；Runtime SIGKILL 后完整清理、宿主隔离和可靠 sandboxDenied 归因未验证。
 

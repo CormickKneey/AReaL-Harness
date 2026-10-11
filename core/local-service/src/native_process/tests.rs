@@ -220,3 +220,99 @@ async fn supervised_owner_death_cleans_up_but_persistent_service_survives() {
         gone(pid).await;
     }
 }
+
+#[tokio::test]
+async fn captured_output_drains_both_pipes_closes_stdin_and_preserves_status() {
+    let mut command = TrustedCommand::supervised(python(), &[]).unwrap();
+    command.args(["-I", "-S", "-c", "import os,sys; assert sys.stdin.read()==''; os.write(1,b'o'*262144); os.write(2,b'e'*262144); sys.exit(7)"]);
+    let result = command.output(Duration::from_secs(5)).await.unwrap();
+    assert_eq!(result.status.code(), Some(7));
+    assert_eq!(result.stdout, vec![b'o'; 262144]);
+    assert_eq!(result.stderr, vec![b'e'; 262144]);
+}
+
+#[tokio::test]
+async fn captured_output_timeout_and_cancellation_reap_the_real_child_and_bridge() {
+    for cancel in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("pid");
+        let mut command = TrustedCommand::supervised(python(), &[]).unwrap();
+        command.args(["-I", "-S", "-c", "import os,sys,time; from pathlib import Path; Path(sys.argv[1]).write_text(str(os.getpid())+','+str(os.getppid())); time.sleep(60)"]).arg(&path);
+        let task = tokio::spawn(async move {
+            command
+                .output(if cancel {
+                    Duration::from_secs(30)
+                } else {
+                    Duration::from_millis(800)
+                })
+                .await
+        });
+        let (pid, bridge) = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(value) = std::fs::read_to_string(&path)
+                    && let Some((pid, bridge)) = value.split_once(',')
+                    && let (Ok(pid), Ok(bridge)) = (pid.parse::<u32>(), bridge.parse::<u32>())
+                {
+                    break (pid, bridge);
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        if cancel {
+            task.abort();
+            assert!(matches!(task.await, Err(error) if error.is_cancelled()));
+        } else {
+            assert_eq!(
+                task.await.unwrap().unwrap_err().kind(),
+                io::ErrorKind::TimedOut
+            );
+        }
+        gone(pid).await;
+        gone(bridge).await;
+    }
+}
+
+#[tokio::test]
+async fn captured_output_overflow_cleans_up_the_temporary_child() {
+    for fd in [1, 2] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("pid");
+        let mut command = TrustedCommand::supervised(python(), &[]).unwrap();
+        command.args(["-I", "-S", "-c", "import os,sys,time; from pathlib import Path; Path(sys.argv[1]).write_text(str(os.getpid())); os.write(int(sys.argv[2]),b'x'*3145728); time.sleep(60)"]).arg(&path).arg(fd.to_string());
+        let error = command.output(Duration::from_secs(5)).await.unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("2 MiB"));
+        gone(std::fs::read_to_string(path).unwrap().parse().unwrap()).await;
+    }
+}
+
+#[tokio::test]
+async fn cancelling_timeout_cleanup_waiter_still_reaps_a_stopped_bridge() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("pid");
+    let mut command = TrustedCommand::supervised(python(), &[]).unwrap();
+    command.args(["-I", "-S", "-c", "import os,sys,time; from pathlib import Path; Path(sys.argv[1]).write_text(str(os.getpid())+','+str(os.getppid())); time.sleep(60)"]).arg(&path);
+    let task = tokio::spawn(async move { command.output(Duration::from_millis(800)).await });
+    let (pid, bridge) = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Ok(value) = std::fs::read_to_string(&path)
+                && let Some((pid, bridge)) = value.split_once(',')
+                && let (Ok(pid), Ok(bridge)) = (pid.parse::<u32>(), bridge.parse::<u32>())
+            {
+                break (pid, bridge);
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(unsafe { libc::kill(bridge as i32, libc::SIGSTOP) }, 0);
+    // 超时已进入清理等待，但暂停的桥尚不能 wait/reap；此时取消外层 waiter。
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    task.abort();
+    assert!(matches!(task.await, Err(error) if error.is_cancelled()));
+    gone(bridge).await;
+    gone(pid).await;
+}

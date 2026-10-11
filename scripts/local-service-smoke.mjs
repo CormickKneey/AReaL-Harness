@@ -7,7 +7,7 @@ import { connect as unixConnect } from "node:net";
 import { once } from "node:events";
 import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, writeFile, realpath, rm, symlink } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { connect } from "../examples/desktop-api/client.mjs";
 const exec = promisify(execFile);
 const root = await realpath(await mkdtemp("/tmp/as-"));
@@ -103,6 +103,46 @@ async function children(pid, recursive = false) {
     for (let i = 0; i < found.length; i++)
       found.push(...rows.filter(([, parent]) => parent === found[i]).map(([id]) => id));
   return found;
+}
+async function serviceProcesses(service) {
+  const executable = await realpath(bin);
+  const descendants = await children(service.hostPid, true);
+  const rows = await Promise.all(
+    descendants.map(async (pid) => {
+      const { stdout } = await exec("/bin/ps", ["-p", String(pid), "-o", "pid=,ppid=,comm="]);
+      const fields = stdout.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/);
+      assert(fields, `missing owned process ${pid}`);
+      const row = {
+        pid: Number(fields[1]),
+        parent: Number(fields[2]),
+        executable: basename(fields[3]),
+      };
+      if (row.executable === basename(executable)) {
+        row.args = (await exec("/bin/ps", ["-p", String(pid), "-o", "args="])).stdout.trim();
+      }
+      return row;
+    }),
+  );
+  // 系统 Python 是持有者而非故障目标；按实际可执行文件和参数识别受控后代。
+  const launchers = rows.filter(
+    (row) =>
+      row.executable === basename(executable) &&
+      (row.args === `${executable} launcher` || row.args?.startsWith(`${executable} launcher `)),
+  );
+  const runtimes = rows.filter((row) => row.executable === "areal-runtime");
+  assert.equal(launchers.length, 1, "exactly one actual launcher belongs to this host");
+  assert.equal(runtimes.length, 1, "exactly one actual Runtime belongs to this host");
+  const launcher = launchers[0].pid;
+  const processes = await children(launcher, true);
+  assert(processes.includes(service.corePid));
+  assert(processes.includes(runtimes[0].pid));
+  return {
+    launcher,
+    launcherBridge: launchers[0].parent,
+    runtime: runtimes[0].pid,
+    runtimeOwner: runtimes[0].parent,
+    processes,
+  };
 }
 async function dead(pid, timeoutMs = 20000) {
   await until(async () => {
@@ -240,16 +280,8 @@ try {
   await resumed.close();
   // 强杀启动器和宿主均须关闭旧 Core/Runtime，然后才能产生下一代实例。
   for (const victim of ["launcher", "host"]) {
-    const [launcher] = await children(current.hostPid);
-    assert(launcher);
-    const direct = await children(launcher);
-    const processes = await children(launcher, true);
-    assert(processes.includes(current.corePid));
+    const { launcher, runtime, processes } = await serviceProcesses(current);
     if (victim === "host") {
-      const runtimeOwner = direct.find((pid) => pid !== current.corePid);
-      assert(runtimeOwner);
-      const [runtimeChild] = await children(runtimeOwner);
-      const runtime = runtimeChild ?? runtimeOwner;
       // 让 Runtime 清理停在可观测窗口：Core 锁已释放，launcher 仍须阻止替代实例。
       process.kill(runtime, "SIGSTOP");
       try {
@@ -275,13 +307,32 @@ try {
     assert.notEqual(current.generation, previous.generation);
   }
   if (process.platform === "darwin") {
-    const [launcher] = await children(current.hostPid);
-    const runtimeOwner = (await children(launcher)).find((pid) => pid !== current.corePid);
-    const [runtime] = await children(runtimeOwner);
-    assert(runtime, "macOS Runtime must have a waiting system Python parent");
+    // 强杀桥没有真实 wait/reap 回执，必须保留 unavailable，不能冒充干净停止。
+    const topology = await serviceProcesses(current);
+    assert.notEqual(topology.launcherBridge, current.hostPid);
+    process.kill(topology.launcherBridge, "SIGKILL");
+    await dead(topology.launcherBridge);
+    for (const pid of [topology.launcher, ...topology.processes]) await dead(pid);
+    await until(
+      async () =>
+        (await cli(["service", "status", "--instance", current.serviceId])).state === "unavailable",
+    );
+    lifecycleChecks.push({
+      fault: "launcher-bridge-killed",
+      state: "unavailable",
+      descendantsExited: [topology.launcher, ...topology.processes],
+    });
+    const previousBridgeGeneration = current.generation;
+    current = await ensure();
+    assert.notEqual(current.generation, previousBridgeGeneration);
+    const { launcher, runtimeOwner, runtime, processes } = await serviceProcesses(current);
+    assert.notEqual(
+      runtimeOwner,
+      launcher,
+      "macOS Runtime must have a waiting system Python parent",
+    );
     const { stdout } = await exec("/bin/ps", ["-p", `${runtimeOwner},${runtime}`, "-o", "pgid="]);
     assert.deepEqual(stdout.trim().split(/\s+/).map(Number), [runtimeOwner, runtimeOwner]);
-    const processes = await children(launcher, true);
     // Runtime 停住时启动器必须强制清理整组，不能只杀中转进程就释放实例锁。
     process.kill(runtime, "SIGSTOP");
     try {

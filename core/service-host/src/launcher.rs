@@ -395,10 +395,10 @@ async fn preflight(args: &Args) -> Result<(PathBuf, PathBuf, PathBuf)> {
         .map_or_else(std::env::current_dir, |p| Ok(p.clone()))?
         .canonicalize()?;
     ensure!(workspace.is_dir(), "workspace must be a directory");
-    let mut check = tokio::process::Command::new(&binary);
+    let mut check = TrustedCommand::supervised(&binary, &[])?;
     check.args(["config", "show"]).args(args.core_overrides());
     let output = check
-        .output()
+        .output(Duration::from_secs(15))
         .await
         .context("preflight Core configuration")?;
     ensure!(

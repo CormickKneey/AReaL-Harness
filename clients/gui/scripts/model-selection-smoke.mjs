@@ -40,13 +40,18 @@ const coreBinary = process.env.AREAL_GUI_EXECUTABLE
   ? join(process.env.AREAL_GUI_EXECUTABLE, "../../Resources/areal-core/bin/areal")
   : env.AREAL_CORE_BIN;
 const coreSha256 = createHash("sha256").update(await readFile(coreBinary)).digest("hex");
-let app, page, passed = false;
+let app, page, failure = null, passed = false;
 const checks = [], errors = [];
 const button = name => page.getByRole("button", { name, exact: true });
 async function saveProvider() {
   await button("保存供应商").click();
   // 等待已保存目录刷新和按钮恢复，避免读取“保存中…”的旧状态。
   await button("应用模型配置").click({ trial: true });
+}
+async function applyProvider() {
+  await button("应用模型配置").click();
+  // Core 目录事件可能早于 apply 回执；等待整个设置操作恢复准入再发下一条命令。
+  await button("返回应用").click({ trial: true });
 }
 const state = () => page.evaluate(() => window.arealDesktop.snapshot());
 async function call(name, params) {
@@ -108,7 +113,7 @@ try {
   assert.match(await page.getByRole("status", { name: "模型 theta-model 状态", exact: true }).innerText(), /待应用/);
   assert.equal((await state()).projects[0].models.find(m => m.providerId === "theta").available, false, "saving does not silently apply credentials to a live project");
   await page.screenshot({ path: join(scratch, "pending-model-configuration.png"), animations: "disabled" });
-  await button("应用模型配置").click();
+  await applyProvider();
   await until(s => s.projects[0].models.some(m => m.available === true), "credential applies to Core");
   await page.waitForFunction(() => document.querySelector('[aria-label="配置应用状态"]')?.textContent.includes("已应用"));
   assert.equal((await call("providers", { operation: "list" })).pendingApply, false);
@@ -126,9 +131,35 @@ try {
   // 启用开关、凭据与配置应用分别验收；两个可用模型之间必须能实际切换。
   await page.locator(".provider-catalog-row").filter({ hasText: "arena" }).click();
   await page.getByRole("textbox", { name: "API Key", exact: true }).fill("fixture-key");
-  await saveProvider(); await button("应用模型配置").click();
+  await saveProvider();
+  // 真实 Core 完成应用后暂留回执，稳定覆盖目录已刷新但设置操作尚未结算的窗口。
+  await app.evaluate(({ app }) => {
+    const { ServiceConnection } = process.mainModule.require(`${app.getAppPath()}/src/core/service-client.cjs`);
+    const original = ServiceConnection.prototype.request;
+    let reached, release;
+    const ready = new Promise(resolve => { reached = resolve; });
+    const held = new Promise(resolve => { release = resolve; });
+    globalThis.modelApplyReceipt = { ready, release, restore: () => { ServiceConnection.prototype.request = original; } };
+    ServiceConnection.prototype.request = async function (method, params, mutation) {
+      const result = await original.call(this, method, params, mutation);
+      if (method === "command" && params.name === "providers" && params.request.operation === "apply") {
+        reached(); await held;
+      }
+      return result;
+    };
+  });
+  await button("应用模型配置").click();
   await until(s => s.projects[0].models.every(m => m.available === true), "both models available");
+  await app.evaluate(() => globalThis.modelApplyReceipt.ready);
+  assert.equal(await button("返回应用").isDisabled(), true, "back navigation must reflect the pending apply receipt");
+  assert.equal(await button("常规").isDisabled(), true, "settings categories share the same navigation admission");
+  await page.screenshot({ path: join(scratch, "apply-pending-navigation.png"), animations: "disabled" });
+  await app.evaluate(() => {
+    globalThis.modelApplyReceipt.release(); globalThis.modelApplyReceipt.restore(); delete globalThis.modelApplyReceipt;
+  });
   await button("返回应用").click();
+  await page.locator('[data-testid="areal-workbench"][data-view="workspace"]').waitFor();
+  checks.push("settings navigation stays disabled while a real apply receipt is pending and returns to the conversation after settlement");
   await button("模型").click(); await button("选择模型").click();
   const arena = page.getByRole("radio", { name: "arena-model", exact: true });
   assert.equal(await arena.isEnabled(), true); await arena.click();
@@ -163,7 +194,7 @@ try {
   await page.getByRole("combobox", { name: "认证方式", exact: true }).click();
   await page.getByRole("option", { name: "无需认证", exact: true }).click();
   await page.screenshot({ path: join(scratch, "no-auth-pending.png"), animations: "disabled" });
-  await button("应用模型配置").click();
+  await applyProvider();
   await page.waitForFunction(() => document.querySelector('[aria-label="配置应用状态"]')?.textContent.includes("已应用"));
   await button("返回应用").click();
   await button("模型").click(); await button("选择模型").click();
@@ -184,7 +215,7 @@ try {
   assert.match(await providerStatus.innerText(), /环境变量凭据.*凭据就绪/);
   await page.getByRole("textbox", { name: "API Key", exact: true }).fill("");
   await page.getByRole("switch", { name: "启用供应商", exact: true }).click();
-  await saveProvider(); await button("应用模型配置").click();
+  await saveProvider(); await applyProvider();
   await until(s => s.projects[0].models.length === 3, "environment model available after apply");
   assert.equal((await call("providers", { operation: "list" })).credentialSources.env, "environment", "an empty API Key input preserves the configured environment reference");
   await page.screenshot({ path: join(scratch, "environment-credential.png"), animations: "disabled" });
@@ -200,7 +231,7 @@ try {
   await button("模型").click(); await button("配置模型").click();
   await page.locator(".provider-catalog-row").filter({ hasText: /^env/ }).click();
   await page.getByRole("switch", { name: "启用供应商", exact: true }).click();
-  await saveProvider(); await button("应用模型配置").click();
+  await saveProvider(); await applyProvider();
   await until(s => s.projects[0].models.length === 2, "environment provider disabled again");
   await page.locator(".provider-catalog-row").filter({ hasText: "arena" }).click();
   await page.getByRole("switch", { name: "启用供应商", exact: true }).click();
@@ -208,14 +239,14 @@ try {
   await saveProvider();
   assert.match(await providerStatus.innerText(), /未启用/);
   assert.match(await applyStatus.innerText(), /待应用/);
-  await button("应用模型配置").click();
+  await applyProvider();
   await until(s => s.projects[0].models.length === 1, "disabled provider absent from executable Core catalog");
   await page.screenshot({ path: join(scratch, "disabled-provider.png"), animations: "disabled" });
   await page.locator(".provider-catalog-row").filter({ hasText: "theta" }).click();
   await page.getByRole("switch", { name: "启用模型 theta-model", exact: true }).click();
   await saveProvider();
   assert.match(await page.getByRole("status", { name: "模型 theta-model 状态", exact: true }).innerText(), /未启用/);
-  await button("应用模型配置").click();
+  await applyProvider();
   await until(s => s.projects[0].models.length === 0, "disabled model absent from executable Core catalog");
   checks.push("Core credential states and saved enablement remain separate from drafts and pending apply; Composer explicitly selects and executes another available model");
   // 空目录也必须提供可操作入口，不制造一个不可选的占位模型。
@@ -231,24 +262,35 @@ try {
   checks.push("an empty model catalog opens model settings directly");
   assert.deepEqual(errors, []); passed = true;
 } catch (error) {
+  failure = error.stack ?? String(error);
   if (page) await captureSmokeFailure(page, scratch, error);
   throw error;
 } finally {
+  const cleanupFailure = (operation, error) => {
+    errors.push(`cleanup ${operation}: ${error.message}`); passed = false; process.exitCode = 1;
+  };
   if (app) {
+    await app.evaluate(() => {
+      globalThis.modelApplyReceipt?.release(); globalThis.modelApplyReceipt?.restore();
+    }).catch(error => cleanupFailure("release receipt", error));
+    // 失败时保留原始断言；销毁本次测试窗口避免未保存设置的 beforeunload 阻塞清理。
+    if (!passed) await app.evaluate(({ BrowserWindow }) => {
+      for (const window of BrowserWindow.getAllWindows()) window.destroy();
+    }).catch(error => cleanupFailure("destroy failed window", error));
     // 先断开 GUI，避免设置页的刷新请求与安全停止竞争。
-    await app.close();
+    await app.close().catch(error => cleanupFailure("close GUI", error));
     try {
       const { ServiceConnection } = require("../app/src/core/service-client.cjs");
       const connection = new ServiceConnection();
       try { const metadata = JSON.parse(await readFile(join(scratch, "core/service.json"), "utf8")); await connection.connect(metadata); await connection.request("stopService", { protocol: metadata.protocol }, true); }
       finally { connection.close(); }
-    } catch (error) { errors.push(`cleanup: ${error.message}`); passed = false; process.exitCode = 1; }
+    } catch (error) { cleanupFailure("stop service", error); }
   }
   server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
-  const files = ["scripts/model-selection-smoke.mjs", "renderer/src/settings/ModelSettings.tsx", "renderer/src/i18n/IntlProvider.tsx", "app/src/core/model-config.cjs", "app/src/core/providers.cjs", "../../core/config/src/models.rs", "../../core/config/src/lib.rs", "../../core/server/src/lib.rs", "renderer/src/ComposerModelMenu.tsx", "renderer/src/Composer.tsx", "renderer/src/DraftComposer.tsx", "renderer/src/workbench.css"];
+  const files = ["scripts/model-selection-smoke.mjs", "renderer/src/settings/ModelSettings.tsx", "renderer/src/settings/UnsavedChanges.tsx", "renderer/src/settings/SettingsWorkspace.tsx", "renderer/src/i18n/IntlProvider.tsx", "app/src/core/model-config.cjs", "app/src/core/providers.cjs", "../../core/config/src/models.rs", "../../core/config/src/lib.rs", "../../core/server/src/lib.rs", "renderer/src/ComposerModelMenu.tsx", "renderer/src/Composer.tsx", "renderer/src/DraftComposer.tsx", "renderer/src/workbench.css"];
   const hashes = Object.fromEntries(await Promise.all(files.map(async file => [file, createHash("sha256").update(await readFile(join(gui, file))).digest("hex")])));
   const coreUnchanged = createHash("sha256").update(await readFile(coreBinary)).digest("hex") === coreSha256;
   if (!coreUnchanged) { errors.push("Core binary changed during acceptance"); passed = false; process.exitCode = 1; }
-  await writeFile(join(scratch, "manifest.json"), JSON.stringify({ passed, checks, errors, source: execFileSync("git", ["rev-parse", "HEAD"], { cwd: gui, encoding: "utf8" }).trim(), hashes, core: { binary: coreBinary, sha256: coreSha256, unchanged: coreUnchanged }, executable: process.env.AREAL_GUI_EXECUTABLE || "source Electron", scope: "isolated Electron/Core model selection; deterministic local authenticated fixture" }, null, 2));
+  await writeFile(join(scratch, "manifest.json"), JSON.stringify({ passed, checks, errors, failure, source: execFileSync("git", ["rev-parse", "HEAD"], { cwd: gui, encoding: "utf8" }).trim(), hashes, core: { binary: coreBinary, sha256: coreSha256, unchanged: coreUnchanged }, executable: process.env.AREAL_GUI_EXECUTABLE || "source Electron", scope: "isolated Electron/Core model selection; deterministic local authenticated fixture" }, null, 2));
   console.log(JSON.stringify({ passed, evidence: scratch, checks, errors }));
 }

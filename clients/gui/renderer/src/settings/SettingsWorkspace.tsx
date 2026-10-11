@@ -1,5 +1,6 @@
 import { useId, useState, type ReactNode } from "react";
 import { NavigationBackIcon as ArrowLeft, NavigationForwardIcon as ArrowRight } from "../interfaceIcons.js";
+import { useNavigationBusy } from "./UnsavedChanges.js";
 import { SettingsSearchInput } from "./SettingsSearchInput.js";
 import { NavigationSidebar } from "../app-shell/WorkbenchShell.js";
 import { cn } from "../components/lib/utils.js";
@@ -22,6 +23,7 @@ export function SettingsNavigation({ groups, activeId, onSelect, onBack, width, 
   rail?: ReactNode;
 }) {
   const [query, setQuery] = useState("");
+  const navigationBusy = useNavigationBusy();
   const visibleGroups = groups
     .map(group => ({
       ...group,
@@ -34,7 +36,7 @@ export function SettingsNavigation({ groups, activeId, onSelect, onBack, width, 
   return (
     <NavigationSidebar className="settings-sidebar" width={width} rail={rail} footer={footer}
       chrome={<div className="workspace-navigation">
-        <button type="button" className="icon-button settings-back" aria-label="返回应用" title="返回应用" onClick={onBack}><ArrowLeft size={16} /></button>
+        <button type="button" className="icon-button settings-back" aria-label="返回应用" title="返回应用" disabled={navigationBusy} onClick={onBack}><ArrowLeft size={16} /></button>
         <button type="button" className="icon-button" aria-label="前进" disabled><ArrowRight size={16} /></button>
       </div>}>
       <div className="settings-sidebar-header">
@@ -60,6 +62,7 @@ export function SettingsNavigation({ groups, activeId, onSelect, onBack, width, 
                 className="settings-navigation-item"
                 aria-current={activeId === item.id ? "page" : undefined}
                 aria-pressed={activeId === item.id}
+                disabled={navigationBusy}
                 onClick={() => onSelect(item.id)}
                 title={item.label}
               >

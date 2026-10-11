@@ -4,15 +4,16 @@ use std::{
     ops::{Deref, DerefMut},
     os::fd::RawFd,
     path::Path,
-    process::ExitStatus,
+    process::{ExitStatus, Output, Stdio},
+    time::Duration,
 };
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::{Child as TokioChild, ChildStdin, Command};
 
 #[cfg(target_os = "macos")]
 use std::{
     io::Read,
     os::{fd::AsRawFd, unix::net::UnixStream, unix::process::ExitStatusExt},
-    time::Duration,
 };
 
 #[cfg(target_os = "macos")]
@@ -189,6 +190,72 @@ impl TrustedCommand {
             }
         }
     }
+
+    /// 临时配置预检必须使用同一握手/回执路径，不能经 Deref 调用裸 Command::output。
+    pub async fn output(&mut self, limit: Duration) -> io::Result<Output> {
+        let deadline = tokio::time::Instant::now() + limit;
+        self.command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let child = tokio::time::timeout_at(deadline, self.spawn())
+            .await
+            .map_err(|_| {
+                io::Error::new(io::ErrorKind::TimedOut, "trusted output startup timed out")
+            })??;
+        let mut temporary = Temporary { child: Some(child) };
+        let child = temporary.child.as_mut().unwrap();
+        let mut stdout = child.child.stdout.take().unwrap();
+        let mut stderr = child.child.stderr.take().unwrap();
+        let mut out = Vec::new();
+        let mut err = Vec::new();
+        let result = tokio::time::timeout_at(deadline, async {
+            tokio::try_join!(
+                child.wait(),
+                capture(&mut stdout, &mut out),
+                capture(&mut stderr, &mut err)
+            )
+        })
+        .await;
+        match result {
+            Ok(Ok((status, _, _))) => {
+                drop(temporary.child.take());
+                Ok(Output {
+                    status,
+                    stdout: out,
+                    stderr: err,
+                })
+            }
+            other => {
+                // 清理归独立任务持有；取消等待者不能再次取消已经开始的回收。
+                tokio::spawn(cleanup_temporary(temporary.child.take().unwrap()))
+                    .await
+                    .map_err(|error| {
+                        io::Error::other(format!("trusted output cleanup unconfirmed: {error}"))
+                    })??;
+                Err(match other {
+                    Ok(Err(error)) => error,
+                    Err(_) => io::Error::new(io::ErrorKind::TimedOut, "trusted output timed out"),
+                    Ok(Ok(_)) => unreachable!(),
+                })
+            }
+        }
+    }
+}
+
+async fn capture(reader: &mut (impl AsyncRead + Unpin), bytes: &mut Vec<u8>) -> io::Result<()> {
+    const MAX_BUFFER: usize = 2 * 1024 * 1024;
+    reader
+        .take(MAX_BUFFER as u64 + 1)
+        .read_to_end(bytes)
+        .await?;
+    if bytes.len() > MAX_BUFFER {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "trusted output exceeded the 2 MiB stream limit",
+        ));
+    }
+    Ok(())
 }
 
 impl Deref for TrustedCommand {
@@ -285,6 +352,48 @@ impl TrustedChild {
         }
         Ok(status)
     }
+}
+
+struct Temporary {
+    child: Option<TrustedChild>,
+}
+
+impl Drop for Temporary {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            // future 取消也立即终止本次临时调用；专用回收任务继续持有进程对象。
+            let _ = child.start_kill();
+            tokio::spawn(async move {
+                let _ = cleanup_temporary(child).await;
+            });
+        }
+    }
+}
+
+async fn cleanup_temporary(mut child: TrustedChild) -> io::Result<()> {
+    child.start_kill()?;
+    if let Ok(result) = tokio::time::timeout(Duration::from_secs(5), child.wait()).await {
+        return result.map(|_| ());
+    }
+    // 桥被停止等异常不能让配置取消永久等待；此组不包含持久 service。
+    #[cfg(target_os = "macos")]
+    if let Some(bridge) = &child.bridge {
+        unsafe {
+            libc::kill(-(bridge.group as i32), libc::SIGKILL);
+        }
+    }
+    child.child.start_kill()?;
+    tokio::time::timeout(Duration::from_secs(5), child.child.wait())
+        .await
+        .map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::TimedOut,
+                "trusted output cleanup unconfirmed",
+            )
+        })??;
+    Err(io::Error::other(
+        "trusted output bridge required forced cleanup; child receipt unavailable",
+    ))
 }
 
 #[cfg(target_os = "macos")]
