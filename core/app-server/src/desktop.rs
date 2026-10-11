@@ -3,6 +3,8 @@ use super::*;
 use areal_protocol::desktop::*;
 
 pub(crate) const METHODS: &[&str] = &[
+    "areal/side/start",
+    "areal/side/context/read",
     "areal/thread/fork",
     "areal/conversation/history",
     "areal/permissions/read",
@@ -181,10 +183,28 @@ async fn dispatch_inner(
     method: &str,
     params: Value,
 ) -> Result<Value, RpcError> {
-    if method == "areal/thread/fork" && !fork_preview_enabled() {
+    if matches!(method, "areal/thread/fork" | "areal/side/start") && !fork_preview_enabled() {
         return Err(RpcError::method());
     }
     let result = match method {
+        "areal/side/start" => {
+            let request: SideStart = parse(params)?;
+            let request_id = request.request_id.clone();
+            match engine.side_start(identity.into(), request).await {
+                Ok((thread, turn)) => Ok(json!({"thread":thread,"turn":turn,"requestId":request_id})),
+                Err(Error::Conflict) => return Err(RpcError { code:-32010, message:"request key conflicts with an existing Side".into(), data:Some(json!({"reason":"REQUEST_CONFLICT","retryable":false})) }),
+                Err(Error::Invalid(reason)) if matches!(reason.as_str(), "SOURCE_KIND_UNSUPPORTED" | "ANCHOR_NOT_FOUND" | "TURN_NOT_TERMINAL" | "HISTORY_UNRESOLVED" | "PROFILE_NOT_SUPPORTED" | "MODEL_CONTEXT_INCOMPATIBLE" | "WORKSPACE_READ_UNAVAILABLE") =>
+                    return Err(RpcError { code:-32010, message:reason.clone(), data:Some(json!({"reason":reason,"retryable":false})) }),
+                Err(error) => return Err(map_error(error)),
+            }
+        }
+        "areal/side/context/read" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct ReadContext { thread_id: String, evidence_ref: Option<String>, cursor: Option<String>, max_bytes: Option<usize> }
+            let p: ReadContext = parse(params)?;
+            engine.side_context_read(&p.thread_id, p.evidence_ref, p.cursor, p.max_bytes).await
+        }
         "areal/thread/fork" => {
             let request: ForkThread = parse(params)?;
             let request_id = request.request_id.clone();

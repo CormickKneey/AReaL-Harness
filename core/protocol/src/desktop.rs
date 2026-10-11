@@ -70,6 +70,26 @@ pub struct ForkThread {
     pub anchor: ForkAnchor,
     pub workspace_mode: String,
 }
+
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SideAnchor {
+    pub kind: String,
+    pub turn_id: Option<String>,
+    pub boundary: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SideStart {
+    pub request_id: String,
+    pub source_thread_id: String,
+    pub anchor: Option<SideAnchor>,
+    pub workspace_access: String,
+    pub model: Option<ModelRef>,
+    pub parameters: Option<ModelParameters>,
+    pub input: Vec<super::Input>,
+}
 pub const NOTIFICATIONS: &[&str] = &[
     "areal/goal/updated",
     "areal/goal/cleared",

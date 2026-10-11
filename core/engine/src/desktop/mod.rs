@@ -9,6 +9,7 @@ mod processes;
 mod queue;
 mod retention;
 mod server;
+mod side;
 mod skills;
 mod state;
 mod submissions;

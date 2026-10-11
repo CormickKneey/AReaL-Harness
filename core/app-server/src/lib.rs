@@ -423,6 +423,7 @@ async fn connection(
                 && (method == "thread/start"
                     || method == "areal/thread/start"
                     || method == "areal/thread/fork"
+                    || method == "areal/side/start"
                     || method.starts_with("areal/workgroup/")
                     || method.starts_with("areal/workflow/start")))
         {
@@ -435,6 +436,18 @@ async fn connection(
                 }),
             ));
             continue;
+        }
+        if let Some(thread_id) = params.get("threadId").and_then(Value::as_str) {
+            if engine.read(thread_id, false).await.is_ok_and(|thread| thread.is_side())
+                && !matches!(method,
+                    "thread/read" | "thread/resume" | "areal/thread/observe" |
+                    "turn/start" | "areal/turn/start" | "turn/interrupt" |
+                    "areal/side/context/read" | "areal/thread/archive" | "areal/request/read") {
+                conn.send(response(id.unwrap(), Err(RpcError { code: -32010,
+                    message: "Side conversations cannot use this method".into(),
+                    data: Some(json!({"reason":"SIDE_POLICY_VIOLATION","retryable":false})) })));
+                continue;
+            }
         }
         // Long waits and snapshot creation must not block cancellation/steering
         // on this same WebSocket. Bound independently from subscriptions.
@@ -684,7 +697,7 @@ impl Connection {
                     && self.principal.thread_ids.is_none();
                 if !can_attach_browser { methods.retain(|method| *method != "areal/thread/tools/attach"); }
                 methods.extend_from_slice(desktop::METHODS);
-                if !desktop::fork_preview_enabled() { methods.retain(|method| *method != "areal/thread/fork"); }
+                if !desktop::fork_preview_enabled() { methods.retain(|method| !matches!(*method, "areal/thread/fork" | "areal/side/start")); }
                 methods.extend_from_slice(task_mode::METHODS);
                 if !engine.runtime_capabilities().is_null() {
                     methods.extend_from_slice(processes::METHODS);
@@ -705,7 +718,7 @@ impl Connection {
                     "notifications": NOTIFICATIONS, "serverRequests":["item/tool/call"],
                     "browserToolBundles":if can_attach_browser {json!([{"bundleId":areal_protocol::desktop::BROWSER_V1_BUNDLE,
                         "definition":areal_protocol::desktop::browser_v1_tool()}])} else {json!([])},
-                    "features":{"conversationDerivationV1":if desktop::fork_preview_enabled() { json!({"preview":true,"forkBoundaries":["after"],"workspaceModes":["sharedCurrent"],"historyBytes":33554432}) } else { Value::Null },"subscriptionRemoval":true,"atomicResume":true,"atomicObserve":true,"browserToolAttachment":can_attach_browser,
+                    "features":{"conversationDerivationV1":if desktop::fork_preview_enabled() { json!({"preview":true,"forkBoundaries":["after"],"workspaceModes":["sharedCurrent"],"sideWorkspaceAccess":["none"],"historyBytes":33554432}) } else { Value::Null },"subscriptionRemoval":true,"atomicResume":true,"atomicObserve":true,"browserToolAttachment":can_attach_browser,
                         "taskModes":true,"taskChannels":true,"asyncQuestions":true,"headlessInteractions":true,"goals":true,"dynamicTools":true,"mediaOutput":true,"durableSubmissionDeduplication":true,"profiles":true,"skills":true,"plans":true,"interactions":true,"queue":true,"providerConfiguration":true,"modelReset":true,"toolMedia":true,"blobUpload":true},
                     "limits":{"frameBytes":MAX_FRAME_BYTES,"subscriptions":128,"sendQueue":256,"threadEventWindow":128},
                     "runtime":engine.runtime_capabilities()}))
@@ -821,7 +834,7 @@ impl Connection {
                     )
                     .await
                     .map_err(map_error)?;
-                data.retain(|thread| self.principal.sees(&thread.id));
+                data.retain(|thread| self.principal.sees(&thread.id) && !thread.is_side());
                 Ok(json!({"data":data,"nextCursor":cursor}))
             }
             "turn/start" => {
