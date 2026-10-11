@@ -81,11 +81,14 @@ export function Messages({
     const turnId = start.closest<HTMLElement>("[data-turn-id]")?.dataset.turnId;
     const itemId = start.dataset.sideItemId;
     if (!turnId || !itemId) return;
-    const canonical = (thread.turns ?? []).find((turn: Data) => turn.id === turnId)?.items?.find((item: Data) => item.id === itemId);
+    const sourceTurn = (thread.turns ?? []).find((turn: Data) => turn.id === turnId);
+    const canonical = sourceTurn?.items?.find((item: Data) => item.id === itemId);
+    // 流式回复的增量尚未确认持久化；DOM 相等不能证明选区属于冻结证据。
+    const streamingReply = sourceTurn?.status === "inProgress" && canonical?.type === "agentMessage";
     const canonicalText = canonical?.type === "agentMessage" ? canonical.text : canonical?.type === "userMessage" && canonical.content?.length === 1 && canonical.content[0].type === "text" ? canonical.content[0].text :
       canonical?.type === "dynamicToolCall" && canonical.success === true && canonical.contentItems?.length === 1 ? canonical.contentItems[0]?.text : undefined;
     const body = canonical?.type === "dynamicToolCall" ? start.querySelector<HTMLElement>("[aria-label='工具结果']") : start.querySelector<HTMLElement>(".conversation-markdown");
-    if (canonicalText && body && body.textContent === canonicalText && body.contains(range.startContainer) && body.contains(range.endContainer)) {
+    if (!streamingReply && canonicalText && body && body.textContent === canonicalText && body.contains(range.startContainer) && body.contains(range.endContainer)) {
       const prefix = range.cloneRange(); prefix.selectNodeContents(body); prefix.setEnd(range.startContainer, range.startOffset);
       const startUtf8 = new TextEncoder().encode(prefix.toString()).length;
       const endUtf8 = startUtf8 + new TextEncoder().encode(text).length;
