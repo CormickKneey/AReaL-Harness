@@ -10,6 +10,60 @@ use tokio_util::sync::CancellationToken;
 type Socket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
 #[tokio::test]
+async fn side_list_archive_and_explicit_reopen_survive_restart() {
+    unsafe { std::env::set_var("AREAL_DEV_CONVERSATION_DERIVATION", "1"); }
+    let dir = tempfile::tempdir().unwrap();
+    let model = Arc::new(TextModel(Mutex::new(Vec::new())));
+    let engine = Engine::open(dir.path(), model.clone(), Limits::default()).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let stop = CancellationToken::new();
+    let server = tokio::spawn(areal_app_server::serve(listener, engine.clone(), stop.clone()));
+    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}")).await.unwrap();
+    call(&mut socket, 1, "initialize", json!({"clientInfo":{"name":"test","version":"1"}})).await;
+    socket.send(Wire::Text(json!({"method":"initialized"}).to_string().into())).await.unwrap();
+    let source = call(&mut socket, 2, "thread/start", json!({"cwd":"/workspace"})).await;
+    let source_id = source["result"]["thread"]["id"].as_str().unwrap();
+    let side = call(&mut socket, 3, "areal/side/start", json!({"requestId":"list-side","sourceThreadId":source_id,"workspaceAccess":"none","input":[{"type":"text","text":"Explain"}]})).await;
+    let side_id = side["result"]["thread"]["id"].as_str().unwrap();
+    completed(&mut socket, side_id).await;
+    let list = call(&mut socket, 4, "areal/conversation/list", json!({"view":"side","sourceThreadId":source_id,"limit":1})).await;
+    assert_eq!(list["result"]["data"][0]["id"], side_id, "{list}");
+    let second = call(&mut socket, 40, "areal/side/start", json!({"requestId":"list-side-2","sourceThreadId":source_id,"workspaceAccess":"none","input":[{"type":"text","text":"Second question"}]})).await;
+    let second_id = second["result"]["thread"]["id"].as_str().unwrap();
+    completed(&mut socket, second_id).await;
+    let first_page = call(&mut socket, 41, "areal/conversation/list", json!({"view":"side","sourceThreadId":source_id,"limit":1})).await;
+    let first_id = first_page["result"]["data"][0]["id"].as_str().unwrap();
+    let page_cursor = first_page["result"]["nextCursor"].as_str().unwrap();
+    let next_page = call(&mut socket, 42, "areal/conversation/list", json!({"view":"side","sourceThreadId":source_id,"limit":1,"cursor":page_cursor})).await;
+    assert_ne!(next_page["result"]["data"][0]["id"], first_id);
+    let wrong_filter = call(&mut socket, 43, "areal/conversation/list", json!({"view":"main","cursor":page_cursor})).await;
+    assert!(wrong_filter["error"].is_object(), "{wrong_filter}");
+    let main = call(&mut socket, 5, "areal/conversation/list", json!({"view":"main"})).await;
+    assert_eq!(main["result"]["data"].as_array().unwrap().len(), 1, "{main}");
+    let archived = call(&mut socket, 6, "areal/thread/archive", json!({"threadId":side_id})).await;
+    assert_eq!(archived["result"]["archived"], true, "{archived}");
+    let hidden = call(&mut socket, 7, "areal/conversation/list", json!({"view":"side","sourceThreadId":source_id})).await;
+    assert_eq!(hidden["result"]["data"].as_array().unwrap().len(), 1, "{hidden}");
+    let found = call(&mut socket, 8, "areal/conversation/list", json!({"view":"side","sourceThreadId":source_id,"includeArchived":true})).await;
+    assert_eq!(found["result"]["data"].as_array().unwrap().len(), 2, "{found}");
+    let restored = call(&mut socket, 9, "areal/conversation/unarchive", json!({"requestId":"restore-side","threadId":side_id})).await;
+    assert_eq!(restored["result"]["archived"], false, "{restored}");
+    let repeated = call(&mut socket, 10, "areal/conversation/unarchive", json!({"requestId":"restore-side","threadId":side_id})).await;
+    assert_eq!(repeated["result"], restored["result"]);
+    let source_archived = call(&mut socket, 44, "areal/thread/archive", json!({"threadId":source_id})).await;
+    assert_eq!(source_archived["result"]["archived"], true, "{source_archived}");
+    let independent = call(&mut socket, 45, "turn/start", json!({"threadId":side_id,"input":[{"type":"text","text":"Still here?"}]})).await;
+    assert!(independent["result"]["turn"].is_object(), "{independent}");
+    completed(&mut socket, side_id).await;
+    drop(socket); stop.cancel(); server.await.unwrap().unwrap(); engine.shutdown().await; drop(engine);
+    let reopened = Engine::open(dir.path(), model, Limits::default()).unwrap();
+    let side = reopened.read(side_id, true).await.unwrap();
+    assert!(!side.desktop.unwrap().archived);
+    assert_eq!(side.turns.len(), 2);
+}
+
+#[tokio::test]
 async fn side_selection_is_exact_and_frozen_after_source_advances() {
     unsafe { std::env::set_var("AREAL_DEV_CONVERSATION_DERIVATION", "1"); }
     let dir = tempfile::tempdir().unwrap();

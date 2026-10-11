@@ -126,6 +126,7 @@ pub const NOTIFICATIONS: &[&str] = &[
     "areal/tool/cancelled",
     "areal/thread/configured",
     "areal/thread/archived",
+    "areal/thread/unarchived",
     "areal/plan/updated",
     "areal/queue/updated",
     "areal/side/capacity",

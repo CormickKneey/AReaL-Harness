@@ -7,6 +7,8 @@ pub(crate) const METHODS: &[&str] = &[
     "areal/side/context/read",
     "areal/thread/fork",
     "areal/conversation/history",
+    "areal/conversation/list",
+    "areal/conversation/unarchive",
     "areal/permissions/read",
     "areal/permissions/forget",
     "areal/goal/get",
@@ -133,8 +135,12 @@ pub(crate) async fn dispatch(
             | "areal/queue/pause"
             | "areal/queue/resume"
             | "areal/thread/archive"
+            | "areal/conversation/unarchive"
             | "areal/blob/release"
     );
+    if method == "areal/conversation/unarchive" && params.get("requestId").and_then(Value::as_str).is_none_or(str::is_empty) {
+        return Err(RpcError::invalid("requestId is required for unarchive"));
+    }
     if mutation && params.get("requestId").is_some() {
         let request = params
             .as_object_mut()
@@ -183,7 +189,7 @@ async fn dispatch_inner(
     method: &str,
     params: Value,
 ) -> Result<Value, RpcError> {
-    if matches!(method, "areal/thread/fork" | "areal/side/start") && !fork_preview_enabled() {
+    if matches!(method, "areal/thread/fork" | "areal/side/start" | "areal/conversation/unarchive") && !fork_preview_enabled() {
         return Err(RpcError::method());
     }
     let result = match method {
@@ -293,6 +299,10 @@ async fn dispatch_inner(
         "areal/thread/archive" => {
             let p: ThreadId = parse(params)?;
             engine.archive_thread(p.thread_id).await
+        }
+        "areal/conversation/unarchive" => {
+            let p: ThreadId = parse(params)?;
+            engine.unarchive_conversation(p.thread_id).await
         }
         "areal/blob/release" => {
             #[derive(Deserialize)]

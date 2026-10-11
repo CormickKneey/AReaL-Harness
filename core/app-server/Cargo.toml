@@ -12,6 +12,7 @@ areal-protocol.workspace = true
 areal-engine.workspace = true
 anyhow.workspace = true
 axum.workspace = true
+base64.workspace = true
 futures-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true

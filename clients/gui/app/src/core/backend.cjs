@@ -115,7 +115,9 @@ class CoreBackend {
       // 配置会话的协议回复只在任务创建区展示，不混入普通聊天导航。
       const state = snapshot?.threads ? {...snapshot, threads: Object.fromEntries(Object.entries(snapshot.threads).filter(([id, thread]) =>
         !isTaskDraftConfiguration(live.configurations?.[id] ?? thread.desktop?.configuration)))} : snapshot;
-      return { ...project, backend: 'areal', core: projectCoreCapabilities(this.binary, live?.client?.capabilities), state: state && live.resourceInitializing ? {...state, connected:false} : state,
+      return { ...project, backend: 'areal', core: { ...projectCoreCapabilities(this.binary, live?.client?.capabilities),
+        instanceId: live?.service?.serviceId ?? null, connectionGeneration: live?.connectionGeneration ?? 0 },
+        state: state && live.resourceInitializing ? {...state, connected:false} : state,
         pending: (live?.pending ?? []).map(entry => ({ ...entry, awaitingResponse: this.awaitingResponses.has(entry) })), outcomes: live?.outcomes ?? {}, models: this.providers.catalog(live?.models ?? [], live), profiles: live?.profiles ?? [],
         configurations: live?.configurations ?? {},
         summaries: live?.summaries ?? [], summariesLoaded: live?.summariesLoaded === true, error: live?.error ?? null };
@@ -281,6 +283,7 @@ class CoreBackend {
         ?? browserFailure('host_unavailable', 'Desktop browser is unavailable');
     } });
     project.client = client;
+    project.connectionGeneration = (project.connectionGeneration ?? 0) + 1;
     client.onNotification((method, params) => {
       if (!this.currentConnection(project, client)) return;
       if (method === 'areal/thread/configured' && params?.threadId && params.configuration) {
@@ -351,7 +354,10 @@ class CoreBackend {
       const data = [];
       let cursor;
       do {
-        const page = await client.request('thread/list', { limit: 100, ...(cursor ? { cursor } : {}) });
+        const classified = client.capabilities?.methods?.includes('areal/conversation/list');
+        const page = await client.request(classified ? 'areal/conversation/list' : 'thread/list', {
+          limit: 100, ...(classified ? { view: 'main', includeArchived: true } : {}), ...(cursor ? { cursor } : {}),
+        });
         data.push(...page.data.filter(thread => !isTaskDraftConfiguration(thread.desktop?.configuration)));
         cursor = page.nextCursor;
       } while (cursor);
@@ -381,9 +387,10 @@ class CoreBackend {
       throw new Error('当前 Core 不支持安全观察已有聊天；请更新 Core 后重新连接');
     }
     const resumed = await client.request('areal/thread/observe', { threadId }, {
-      onResult: result => { if (this.currentConnection(project, client)) project.model.replace(result.thread); },
+      onResult: result => { if (this.currentConnection(project, client) && result.thread?.id === threadId) project.model.replace(result.thread); },
     });
     this.requireConnection(project, client);
+    if (resumed.thread?.id !== threadId) throw new Error('恢复结果与目标会话不匹配');
     if (resumed.thread?.desktop?.archived) {
       project.configurations[threadId] = resumed.thread.desktop.configuration;
       project.model.setQueue(threadId, resumed.thread.desktop.queue);
@@ -974,6 +981,11 @@ class CoreBackend {
       }
       case 'side': {
         if (!project.client.capabilities?.methods?.includes('areal/side/start')) throw new Error('当前 Core 不支持旁路讨论');
+        if (request.operation === 'list') {
+          if (!project.client.capabilities?.methods?.includes('areal/conversation/list')) throw new Error('当前 Core 不支持相关讨论列表');
+          return project.client.request('areal/conversation/list', { view: 'side', sourceThreadId: request.sourceThreadId,
+            includeArchived: request.includeArchived === true, limit: 30, ...(request.cursor ? { cursor: request.cursor } : {}) });
+        }
         if (request.operation === 'context') return project.client.request('areal/side/context/read', {
           threadId: request.threadId, ...(request.cursor ? { cursor: request.cursor } : {}),
           ...(request.evidenceRef ? { evidenceRef: request.evidenceRef } : {}),
@@ -1006,6 +1018,7 @@ class CoreBackend {
           input: [{ type: 'text', text: request.text }],
         }, { requestId: request.requestId });
         await this.openThread(project, result.thread.id);
+        await this.listThreads(project);
         return { threadId: result.thread.id, turnId: result.turn?.id, requestId: result.requestId };
       }
       case 'send': {

@@ -134,4 +134,7 @@ Side 的 `conversation.kind=side` 与 `policy.kind=sideReadOnlyV1` 是持久角�
 
 已完成轮次的 GUI 选区默认传该轮 `after` 锚点；流式用户引文使用首问受理时的最新持久观察。富文本显示无法直接映射到 canonical 文本时，即使回复已完成，GUI 仍将其标成未确认 `userQuote`。单选区原文超过 16 KiB，或转义后无法装入初始包，返回 `SELECTION_TOO_LARGE`。初始模型包按序列化 UTF-8 字节限制在 32 KiB；证据页的 `maxBytes` 计入整个序列化结果，预算不足时明确拒绝。已有 Side 再从选区发起会打开新草稿，旧快照保持不变。
 
+`areal/conversation/list {view?,sourceThreadId?,includeArchived?,limit?,cursor?}` 按 `main`（默认）、`side` 或 `all` 分类，默认不含归档，`limit` 为 1–100（默认 30）。`main` 只含普通主会话和 Fork，不含委派 Worker 或 Side；`sourceThreadId` 仅适用于 `side`/`all`。按 `createdAt,id` 稳定排序，游标绑定身份与筛选条件，跨筛选使用会拒绝。旧 `thread/list` 合同不变；GUI 主任务列表使用新接口并显式包含归档以支持归档视图，相关讨论面板按来源分页读取，手动刷新可发现其他客户端新建的讨论。
+
+空闲 Side 可用 `areal/thread/archive {threadId}` 持久归档；活动轮次归档会拒绝。`areal/conversation/unarchive {requestId,threadId}` 幂等恢复已归档 Side 和完整历史，不自动发问。读取或订阅归档 Side 不会恢复它，归档期间发送仍被拒绝。来源 Stop 或归档不级联停止或删除 Side；关闭相关讨论面板只隐藏视图。已发送内容由 Core 在 GUI 或 Core 重启后恢复，未发送草稿不承诺跨进程保存。
 Side 首问与追问共用活跃额度：默认每来源 2、每部署 8；超额分别报 `SIDE_SOURCE_CAPACITY_REACHED`、`SIDE_DEPLOYMENT_CAPACITY_REACHED`。每个 Side Turn 默认最多 8 次模型轮、16 次工具调用、300 秒；全局限额仍可进一步收紧。Side 不自动或手动调用模型压缩，避免额度外请求；上下文过大时明确失败。模型许可不足时 `areal/side/capacity` 推送 `waiting`/`available`，活跃 Side 的 `thread/read` 在 `desktop.sideCapacityStatus` 投影当前状态；停止只取消对应 Side。Side 请求计入自己的 Session 与部署真实用量，不继承来源 Goal 预算。

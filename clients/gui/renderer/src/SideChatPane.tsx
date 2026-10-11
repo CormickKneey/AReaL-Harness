@@ -1,20 +1,55 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Messages } from "./Messages.js";
+import { RelatedSideChats } from "./RelatedSideChats.js";
+import { SideDraftWorkspace } from "./side-draft-owner.js";
 import type { Action, Data } from "./services.js";
 
-// 旁路草稿和业务键只属于明确来源；关闭面板不会取消已受理的 Turn。
+// 编辑器按服务、来源和具体草稿或 Side 隔离；切换目标会卸载旧编辑器。
 export function SideChatPane({ project, source, action, dark }: {
   project: Data; source: Data; action: Action; dark: boolean;
 }) {
-  const owner = `${project.id}:${source.id}:side`;
-  const draftKey = `areal-gui:side:draft:${owner}`;
-  const threadKey = `areal-gui:side:thread:${owner}`;
-  const pendingKey = `areal-gui:side:pending:${owner}`;
-  const selectionKey = `areal-gui:side:selection:${owner}`;
-  const anchorKey = `areal-gui:side:anchor:${owner}`;
-  const previewKey = `areal-gui:side:selection-preview:${owner}`;
+  const workspace = useMemo(() => new SideDraftWorkspace(localStorage, {
+    instanceId: project.core?.instanceId ?? "unknown", projectId: project.id, sourceThreadId: source.id, randomId: () => crypto.randomUUID(),
+  }), [project.core?.instanceId, project.id, source.id]);
+  const [selected, setSelected] = useState(() => workspace.current());
+  const [draftRevision, setDraftRevision] = useState(0);
+  const choose = (next: { kind: string; id: string }) => { setSelected(next); setDraftRevision(value => value + 1); };
+  useEffect(() => { choose(workspace.current()); }, [workspace]);
+  useEffect(() => {
+    const receive = (event: Event) => {
+      const detail = (event as CustomEvent<{ owner: string }>).detail;
+      if (detail?.owner?.startsWith(workspace.prefix + ":")) choose(workspace.current());
+    };
+    window.addEventListener("areal-side-draft", receive);
+    window.addEventListener("areal-side-selection", receive);
+    return () => { window.removeEventListener("areal-side-draft", receive); window.removeEventListener("areal-side-selection", receive); };
+  }, [workspace]);
+  return <section className="side-chat-pane" aria-label="旁路讨论">
+    <div className="panel-header"><strong>旁路讨论</strong><span className="text-foreground-subtle">只读 · 独立会话</span></div>
+    <div className="utility-content">
+      <RelatedSideChats project={project} sourceId={source.id} selectedId={selected.kind === "side" ? selected.id : ""} action={action}
+        onSelect={id => choose(id ? workspace.selectSide(id) : workspace.newDraft())} />
+      {workspace.availableDrafts().filter(draft => draft.id !== selected.id).map(draft => <button type="button" key={draft.id}
+        onClick={() => choose(workspace.selectDraft(draft.id))}>{localStorage.getItem(workspace.pendingKey(draft)) ? "待核对的讨论" : "未发送的草稿"}</button>)}
+      <SideChatEditor key={`${workspace.owner(selected)}:${project.core?.connectionGeneration ?? 0}`} project={project} source={source}
+        action={action} dark={dark} workspace={workspace} selected={selected} onSelected={choose} />
+    </div>
+  </section>;
+}
+
+function SideChatEditor({ project, source, action, dark, workspace, selected, onSelected }: {
+  project: Data; source: Data; action: Action; dark: boolean; workspace: SideDraftWorkspace;
+  selected: { kind: string; id: string }; onSelected: (next: { kind: string; id: string }) => void;
+}) {
+  const owner = workspace.owner(selected);
+  const draftKey = workspace.draftKey(selected);
+  const pendingKey = workspace.pendingKey(selected);
+  const selectionKey = `${owner}:selection`;
+  const anchorKey = `${owner}:anchor`;
+  const previewKey = `${owner}:selection-preview`;
+  const sideId = selected.kind === "side" ? selected.id : "";
+  const generation = project.core?.connectionGeneration ?? 0;
   const [text, setText] = useState(() => localStorage.getItem(draftKey) ?? "");
-  const [sideId, setSideId] = useState(() => localStorage.getItem(threadKey) ?? "");
   const [pendingId, setPendingId] = useState(() => localStorage.getItem(pendingKey) ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -51,7 +86,7 @@ export function SideChatPane({ project, source, action, dark }: {
       try { setSelection(JSON.parse(localStorage.getItem(selectionKey) ?? "null")); } catch { setSelection(null); }
       try { setAnchor(JSON.parse(localStorage.getItem(anchorKey) ?? "null")); } catch { setAnchor(null); }
       setSelectionPreview(localStorage.getItem(previewKey) ?? "");
-      setSideId(""); setEvidence([]); setEvidenceCursor(null); setEvidenceOpen(false);
+      setEvidence([]); setEvidenceCursor(null); setEvidenceOpen(false);
     };
     window.addEventListener("areal-side-selection", receive);
     return () => window.removeEventListener("areal-side-selection", receive);
@@ -76,24 +111,24 @@ export function SideChatPane({ project, source, action, dark }: {
   }, [sideId, validSide, side, loading, project.id, project.state?.connected, action]);
   const recover = useCallback(async () => {
     if (!pendingId || busy) return;
+    const token = workspace.capture(generation);
     setBusy(true); setError("");
     try {
       const result = await action("side", { projectId: project.id, operation: "recover", requestId: pendingId });
-      if (!mounted.current) return;
+      if (!mounted.current || !workspace.isCurrent(token, generation)) return;
       if (!result.confirmed) { setError("首问结果仍待核对；不会自动重复提交。"); return; }
-      localStorage.setItem(threadKey, result.threadId);
-      localStorage.removeItem(pendingKey);
-      localStorage.removeItem(draftKey);
+      workspace.acceptCreated(token, result.threadId, generation);
       localStorage.removeItem(selectionKey); localStorage.removeItem(anchorKey); localStorage.removeItem(previewKey);
       setSelection(null); setAnchor(null); setSelectionPreview("");
-      setSideId(result.threadId); setPendingId(""); setText("");
-    } catch (cause) { if (mounted.current) setError((cause as Error).message); }
-    finally { if (mounted.current) setBusy(false); }
-  }, [pendingId, busy, action, project.id, threadKey, pendingKey, draftKey, selectionKey, anchorKey, previewKey]);
+      onSelected({ kind: "side", id: result.threadId });
+    } catch (cause) { if (mounted.current && workspace.isCurrent(token, generation)) setError((cause as Error).message); }
+    finally { if (mounted.current && workspace.isCurrent(token, generation)) setBusy(false); }
+  }, [pendingId, busy, action, project.id, pendingKey, draftKey, selectionKey, anchorKey, previewKey, workspace, generation, onSelected]);
   useEffect(() => { if (pendingId && project.state?.connected) void recover(); }, [project.state?.connected]);
   const submit = async () => {
     const question = text.trim();
-    if (!question || busy || pendingId || active || !project.state?.connected || sideId && !validSide) return;
+    if (!question || busy || pendingId || active || !project.state?.connected || sideId && (!validSide || side.desktop?.archived)) return;
+    const token = workspace.capture(generation);
     setBusy(true); setError("");
     try {
       if (sideId) {
@@ -102,26 +137,25 @@ export function SideChatPane({ project, source, action, dark }: {
         const requestId = crypto.randomUUID();
         localStorage.setItem(pendingKey, requestId); setPendingId(requestId);
         const result = await action("side", { projectId: project.id, operation: "start", sourceThreadId: source.id, text: question, requestId, selection, anchor });
-        if (!mounted.current) return;
-        localStorage.setItem(threadKey, result.threadId);
-        localStorage.removeItem(pendingKey);
-        setSideId(result.threadId); setPendingId("");
+        if (!mounted.current || !workspace.isCurrent(token, generation)) return;
+        workspace.acceptCreated(token, result.threadId, generation);
+        onSelected({ kind: "side", id: result.threadId });
       }
-      localStorage.removeItem(draftKey); localStorage.removeItem(selectionKey); localStorage.removeItem(anchorKey); localStorage.removeItem(previewKey);
+      if (!mounted.current || !workspace.isCurrent(token, generation)) return;
+      workspace.clearAfterSend(token, generation); localStorage.removeItem(selectionKey); localStorage.removeItem(anchorKey); localStorage.removeItem(previewKey);
       setSelection(null); setAnchor(null); setSelectionPreview(""); setText("");
     } catch (cause) {
       const failure = cause as Error & { submissionUnknown?: boolean };
+      if (!mounted.current || !workspace.isCurrent(token, generation)) return;
       if (!failure.submissionUnknown && !sideId) { localStorage.removeItem(pendingKey); setPendingId(""); }
-      if (mounted.current) setError(failure.message);
-    } finally { if (mounted.current) setBusy(false); }
+      setError(failure.message);
+    } finally { if (mounted.current && workspace.isCurrent(token, generation)) setBusy(false); }
   };
   const stop = () => {
     const turn = side?.turns?.find((item: Data) => item.status === "inProgress");
     if (validSide && turn) void action("stop", { projectId: project.id, threadId: sideId }).catch((cause: Error) => setError(cause.message));
   };
-  return <section className="side-chat-pane" aria-label="旁路讨论">
-    <div className="panel-header"><strong>旁路讨论</strong><span className="text-foreground-subtle">只读 · 独立会话</span></div>
-    <div className="utility-content">
+  return <>
       <p className="text-foreground-subtle">来源：{source.preview || source.id}。{validSide ? sourceStatus : anchor?.kind === "turn" ? `首问锚定轮次 ${anchor.turnId} 之后的持久证据` : "首问发送时冻结最新持久观察"}。仅会话证据；不会执行来源任务。</p>
       {selection && !sideId && <blockquote className="notice">{selection.kind === "itemRange" ? "已持久化选区；发送时验证原文位置。" : "用户引文，来源未确认。"}<br />{selectionPreview || selection.text}</blockquote>}
       {validSide && <p className="text-foreground-subtle">冻结锚点：{side.conversation.origin?.boundary} · {side.conversation.origin?.sourceTurnId || "空历史"}</p>}
@@ -138,6 +172,7 @@ export function SideChatPane({ project, source, action, dark }: {
         {evidenceCursor && <button type="button" disabled={evidenceBusy} onClick={() => void loadEvidence(evidenceCursor)}>继续加载证据</button>}
       </section>}
       {sideId && !validSide && <p role="status">{side ? "旁路归属与当前来源不一致。" : loading ? "正在恢复旁路讨论…" : "正在核对旁路归属…"}</p>}
+      {validSide && side.desktop?.archived && <p role="status">这段讨论已归档；请在相关讨论中显式恢复后继续。</p>}
       {validSide && <Messages key={`${owner}:${sideId}`} project={project} thread={side} action={action} dark={dark}
         onLink={() => setError("旁路不提供链接预览；可复制链接后从主会话打开。")}
         onFile={() => setError("旁路尚未开放工作区文件读取。")}
@@ -149,12 +184,11 @@ export function SideChatPane({ project, source, action, dark }: {
           setText(event.target.value); localStorage.setItem(draftKey, event.target.value);
         }} onKeyDown={event => {
           if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); }
-        }} placeholder="向旁路提问（仅会话证据）" disabled={!project.state?.connected || !!sideId && !validSide} />
+        }} placeholder="向旁路提问（仅会话证据）" disabled={!project.state?.connected || !!sideId && (!validSide || side.desktop?.archived)} />
         <div className="utility-actions">
-          <button type="submit" disabled={!text.trim() || busy || !!pendingId || !!active || !!sideId && !validSide}>发送</button>
+          <button type="submit" disabled={!text.trim() || busy || !!pendingId || !!active || !!sideId && (!validSide || side.desktop?.archived)}>发送</button>
           {active && <button type="button" onClick={stop}>停止旁路</button>}
         </div>
       </form>
-    </div>
-  </section>;
+  </>;
 }
