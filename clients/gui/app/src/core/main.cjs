@@ -347,9 +347,11 @@ app.on('before-quit', event => {
       quitting = false;
       return;
     }
-    preview?.dispose();
+    // 先断开宿主连接，让已派发且未返回的 Browser 请求保留 UNKNOWN；
+    // 再释放原生页，避免退出撤销回执把它误记成未派发。
     try { await backend?.shutdown(); }
     catch (error) { await dialog.showMessageBox(window, { type: 'warning', message: '退出清理未完全确认', detail: error.message }); }
+    preview?.dispose();
     exitReady = true;
     app.quit();
   })();
