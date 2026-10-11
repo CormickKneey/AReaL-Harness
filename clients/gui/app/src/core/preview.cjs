@@ -348,7 +348,10 @@ class CorePreview {
       return existing.policy;
     }
     if (page.session.storagePath !== null) throw new Error('浏览工作区需要临时 Session');
-    const policy = new WorkspaceNetworkPolicy(this.controlEndpoints);
+    const policy = new WorkspaceNetworkPolicy(this.controlEndpoints, webContentsId =>
+      Number.isSafeInteger(webContentsId) && [...this.pages.values()].some(candidate =>
+        candidate.partition === page.partition && this.pageStillOwned(candidate)
+        && (candidate.view?.webContents.devToolsWebContents ?? candidate.openingDevTools)?.id === webContentsId));
     policy.install(page.session);
     this.contexts.set(page.partition, { workspace: key, session: page.session, policy });
     return policy;
@@ -362,6 +365,8 @@ class CorePreview {
     page.styleTrial = null;
     const c = page.view.webContents;
     this.cancelFileOperations(page, 'page_closed_after_dispatch');
+    if (page.openingDevTools && !page.openingDevTools.isDestroyed()) page.openingDevTools.close();
+    page.openingDevTools = null;
     if (page.onDownload) c.session.removeListener('will-download', page.onDownload);
     page.diagnosticsReady = false; page.diagnosticRequests?.clear();
     page.claiming?.cancel();
@@ -1887,7 +1892,7 @@ class CorePreview {
       this.clearDiagnostics(page, 'debugger_detached');
       if (page.control === 'agent') this.revoke(page);
     });
-    c.on('devtools-opened', () => { if (page.styleTrial) page.styleTrial.stale = true; this.revoke(page); });
+    c.on('devtools-opened', () => { page.openingDevTools = null; if (page.styleTrial) page.styleTrial.stale = true; this.revoke(page); });
     c.on('devtools-closed', () => {
       if (!this.pageStillOwned(page)) return;
       page.pageGeneration++; page.documentGeneration++; page.refs.clear(); page.plans.clear();
@@ -2391,7 +2396,18 @@ class CorePreview {
         this.revoke(page);
         await this.convergeInput(page);
         if (page.control !== 'human') throw new Error('原生输入尚未收敛，请停止或关闭页面');
-        c.openDevTools({ mode: 'detach' });
+        // Electron 在首个文档加载后才公开 devToolsWebContents；
+        // 在这次可信调用期间绑定其内部创建的前端。
+        {
+          const { app } = require('electron');
+          const created = (_event, contents) => {
+            if (contents.getType() === 'remote' && contents.session === c.session)
+              page.openingDevTools = contents;
+          };
+          app.on('web-contents-created', created);
+          try { c.openDevTools({ mode: 'detach' }); }
+          finally { app.removeListener('web-contents-created', created); }
+        }
         break;
     }
     if (['navigate', 'reload', 'stop'].includes(request.operation)) this.changed(page);

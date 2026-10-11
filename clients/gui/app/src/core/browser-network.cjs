@@ -35,8 +35,9 @@ function publicAddress(address) {
 }
 
 class WorkspaceNetworkPolicy {
-  constructor(controlEndpoint = () => null) {
+  constructor(controlEndpoint = () => null, ownsDevTools = () => false) {
     this.controlEndpoint = controlEndpoint;
+    this.ownsDevTools = ownsDevTools;
     this.origins = new Set();
     this.active = true;
   }
@@ -68,12 +69,20 @@ class WorkspaceNetworkPolicy {
     this.origins.add(url.origin);
     return true;
   }
+  permitsDevTools(details) {
+    let url;
+    try { url = new URL(details.url); } catch { return false; }
+    return this.active && url.protocol === 'devtools:' && url.hostname === 'devtools'
+      && url.pathname.startsWith('/bundled/') && this.ownsDevTools(details.webContentsId);
+  }
   permits(details) {
+    if (this.permitsDevTools(details)) return true;
     const url = httpUrl(details.url);
     return this.active && details.resourceType !== 'webSocket' && !!url
       && !this.isControl(url) && this.origins.has(url.origin);
   }
   async permitsResolved(details, session) {
+    if (this.permitsDevTools(details)) return true;
     if (!this.permits(details)) return false;
     const url = new URL(details.url);
     if (loopback(url.hostname)) return true;
@@ -91,6 +100,7 @@ class WorkspaceNetworkPolicy {
         () => respond({ cancel: true }));
     });
     session.webRequest.onHeadersReceived({ urls: ['<all_urls>'] }, (details, respond) => {
+      if (this.permitsDevTools(details)) { respond({}); return; }
       if (!this.permits(details)) { respond({ cancel: true }); return; }
       const headers = { ...details.responseHeaders };
       for (const name of Object.keys(headers))
