@@ -736,7 +736,12 @@ function AppContent({ services }: { services: PlatformServices }) {
     const map = new Map<string, Data>(navigation.map((s: Data) => [s.id, s]));
     for (const t of Object.values(owner.state?.threads ?? {}) as Data[])
       if (!map.has(t.id)) map.set(t.id, t);
-    return [...map.values()].filter(summary => !scheduledThreads.has(summary.id)).map((summary) => {
+    return [...map.values()].filter(summary => {
+      const live = owner.state?.threads[summary.id];
+      return !scheduledThreads.has(summary.id)
+        && !live?.parentThreadId && !summary.parentThreadId
+        && live?.conversation?.kind !== "side" && summary.conversation?.kind !== "side";
+    }).map((summary) => {
       const t = owner.state?.threads[summary.id];
       return {
         owner,
