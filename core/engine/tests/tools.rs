@@ -702,6 +702,7 @@ async fn http_tool_loop_preserves_multimodal_history_and_accumulates_usage() {
 }
 
 async fn http_tool_loop(done_marker: bool) {
+    use areal_protocol::desktop::{ForkAnchor, ForkThread};
     use axum::{Json, Router, routing::post};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -727,7 +728,7 @@ async fn http_tool_loop(done_marker: bool) {
                         "tool_calls",
                         5,
                     )
-                } else {
+                } else if call == 1 {
                     assert_eq!(call, 1);
                     let result = messages.last().unwrap();
                     assert_eq!(result["role"], "tool");
@@ -743,6 +744,16 @@ async fn http_tool_loop(done_marker: bool) {
                     assert_eq!(messages[1]["tool_calls"][0]["id"], "fixture-call-0");
                     assert_eq!(messages[1]["tool_calls"][1]["id"], "fixture-call-1");
                     (json!({"content":"verified HTTP tool result"}), "stop", 7)
+                } else {
+                    assert_eq!(call, 2);
+                    let calls: Vec<_> = messages.iter().filter(|m| m["role"] == "assistant" && m["tool_calls"].is_array()).collect();
+                    assert_eq!(calls.len(), 1);
+                    assert_eq!(calls[0]["tool_calls"].as_array().unwrap().len(), 2);
+                    let results: Vec<_> = messages.iter().filter(|m| m["role"] == "tool").collect();
+                    assert_eq!(results.iter().map(|m| m["tool_call_id"].as_str().unwrap()).collect::<Vec<_>>(),
+                        ["fixture-call-0", "fixture-call-1"]);
+                    assert_eq!(messages.last().unwrap()["content"], "continue in fork");
+                    (json!({"content":"fork replay verified"}), "stop", 4)
                 };
                 let mut body = [
                     json!({"choices":[{"index":0,"delta":delta,"finish_reason":null}]}),
@@ -810,6 +821,31 @@ async fn http_tool_loop(done_marker: bool) {
     );
     assert!(done.turns[0].items.iter().any(|item| matches!(item, Item::DynamicToolCall { execution, .. } if execution.outcome == ToolOutcome::Succeeded)));
     assert!(done.turns[0].items.iter().any(|item| matches!(item, Item::AgentMessage { text, .. } if text == "verified HTTP tool result")));
+    let fork = engine
+        .fork_thread(
+            "fixture-owner".into(),
+            ForkThread {
+                request_id: format!("batch-fork-{done_marker}"),
+                source_thread_id: thread.id.clone(),
+                anchor: ForkAnchor {
+                    turn_id: done.turns[0].id.clone(),
+                    boundary: "after".into(),
+                },
+                workspace_mode: "sharedCurrent".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(fork.turns.is_empty());
+    engine
+        .start(&fork.id, vec![Input::text("continue in fork")])
+        .await
+        .unwrap();
+    let target = bounded(engine.wait(&fork.id)).await.unwrap();
+    assert_eq!(target.turns[0].status, TurnStatus::Completed);
+    assert_eq!(requests.load(Ordering::SeqCst), 3);
+    assert_eq!(target.turns.len(), 1);
+    assert_eq!(target.turns[0].usage.as_ref().unwrap().input_tokens, 4);
     engine.shutdown().await;
     fixture.client.shutdown().await.unwrap();
     fixture.task.await.unwrap();

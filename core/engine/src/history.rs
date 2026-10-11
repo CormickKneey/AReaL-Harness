@@ -1,6 +1,7 @@
 //! 输入校验与持久化会话到模型消息的投影。
 
 use super::*;
+use sha2::Digest;
 
 pub(super) fn validate_input(input: &[Input], capabilities: &ModelCapabilities) -> Result<()> {
     if input.is_empty()
@@ -362,8 +363,16 @@ pub(super) fn history(thread: &Thread, store: &store::Store) -> anyhow::Result<V
     if let Some(areal_protocol::Conversation::Fork { history_seed, .. }) = &thread.conversation {
         let mut logical = logical_history(thread, store)?;
         // 检查点越过继承块并落在本地冷段时，冷段边界代表整个此前逻辑前缀。
-        if thread.context_checkpoint.as_ref().is_some_and(|checkpoint|
-            thread.history_archive.as_ref().is_some_and(|archive| archive.through_item_id == checkpoint.through_item_id)) {
+        if thread
+            .context_checkpoint
+            .as_ref()
+            .is_some_and(|checkpoint| {
+                thread
+                    .history_archive
+                    .as_ref()
+                    .is_some_and(|archive| archive.through_item_id == checkpoint.through_item_id)
+            })
+        {
             let count = history_seed.turn_count.min(logical.turns.len());
             logical.turns.drain(..count);
         }
@@ -579,8 +588,9 @@ pub(super) fn history(thread: &Thread, store: &store::Store) -> anyhow::Result<V
                                     .context("invalid tool media URI")?;
                                 let bytes = std::fs::read(store.blob_path(blob)?)?;
                                 anyhow::ensure!(
-                                    bytes.len() as u64 == media.size_bytes,
-                                    "tool media size changed"
+                                    bytes.len() as u64 == media.size_bytes
+                                        && format!("{:x}", sha2::Sha256::digest(&bytes)) == blob,
+                                    "tool media integrity changed"
                                 );
                                 let source = MediaSource::Url(format!(
                                     "data:{};base64,{}",
@@ -699,12 +709,49 @@ fn uploaded_content(
         let media = thread
             .desktop
             .as_ref()
-            .and_then(|d| d.uploads.iter().find(|m| &m.uri == uri))
-            .context("missing uploaded media metadata")?;
+            .and_then(|d| d.uploads.iter().find(|m| &m.uri == uri));
         let bytes = std::fs::read(store.blob_path(id)?)?;
+        anyhow::ensure!(
+            format!("{:x}", sha2::Sha256::digest(&bytes)) == id,
+            "uploaded media integrity changed"
+        );
+        let mime = media
+            .map(|m| m.mime_type.as_str())
+            .or_else(|| match input {
+                Input::Image { .. } if bytes.starts_with(b"\x89PNG\r\n\x1a\n") => Some("image/png"),
+                Input::Image { .. } if bytes.starts_with(&[0xff, 0xd8, 0xff]) => Some("image/jpeg"),
+                Input::Image { .. }
+                    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") =>
+                {
+                    Some("image/gif")
+                }
+                Input::Image { .. }
+                    if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") =>
+                {
+                    Some("image/webp")
+                }
+                Input::Audio { .. }
+                    if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WAVE") =>
+                {
+                    Some("audio/wav")
+                }
+                Input::Audio { .. }
+                    if bytes.starts_with(b"ID3")
+                        || (bytes.first() == Some(&0xff)
+                            && bytes.get(1).is_some_and(|byte| byte & 0xe0 == 0xe0)) =>
+                {
+                    Some("audio/mpeg")
+                }
+                Input::File {
+                    mime_type: Some(mime),
+                    ..
+                } => Some(mime.as_str()),
+                _ => None,
+            })
+            .context("missing uploaded media MIME")?;
         *source = MediaSource::Url(format!(
             "data:{};base64,{}",
-            media.mime_type,
+            mime,
             base64::engine::general_purpose::STANDARD.encode(bytes)
         ));
     }

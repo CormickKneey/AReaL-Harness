@@ -191,7 +191,7 @@ async fn dispatch_inner(
             match engine.fork_thread(identity.into(), request).await {
                 Ok(thread) => Ok(json!({"thread":thread,"requestId":request_id})),
                 Err(Error::Conflict) => return Err(RpcError { code: -32010, message: "request key conflicts with an existing Fork".into(), data: Some(json!({"reason":"REQUEST_CONFLICT","retryable":false})) }),
-                Err(Error::Invalid(reason)) if matches!(reason.as_str(), "SOURCE_KIND_UNSUPPORTED" | "ANCHOR_NOT_FOUND" | "TURN_NOT_TERMINAL" | "HISTORY_UNRESOLVED" | "HISTORY_INTEGRITY" | "PROFILE_NOT_SUPPORTED" | "MODEL_CONTEXT_INCOMPATIBLE") =>
+                Err(Error::Invalid(reason)) if matches!(reason.as_str(), "SOURCE_KIND_UNSUPPORTED" | "ANCHOR_NOT_FOUND" | "TURN_NOT_TERMINAL" | "HISTORY_UNRESOLVED" | "HISTORY_INTEGRITY" | "PROFILE_NOT_SUPPORTED" | "MODEL_CONTEXT_INCOMPATIBLE" | "MODEL_MODALITY_INCOMPATIBLE") =>
                     return Err(RpcError { code: -32010, message: reason.clone(), data: Some(json!({"reason":reason,"retryable":false})) }),
                 Err(Error::Storage(message)) if message.contains("fork snapshot exceeds history limit") || message.contains("history segment exceeds size limit") =>
                     return Err(RpcError { code: -32010, message: "Fork history exceeds the configured snapshot limit".into(), data: Some(json!({"reason":"HISTORY_LIMIT_EXCEEDED","retryable":false})) }),

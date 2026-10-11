@@ -500,6 +500,9 @@ impl Model for MeteredModel {
     fn provider(&self) -> &str {
         self.inner.provider()
     }
+    fn replay_protocol(&self) -> Option<crate::model::ModelProtocol> {
+        self.inner.replay_protocol()
+    }
     fn capabilities(&self) -> ModelCapabilities {
         self.inner.capabilities()
     }

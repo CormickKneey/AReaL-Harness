@@ -83,10 +83,9 @@ impl Engine {
                 .map(|d| d.configuration.clone())
                 .unwrap_or_default(),
         );
-        validate_input(
-            &input,
-            &self.configured_model(&configuration)?.capabilities(),
-        )?;
+        let model = self.configured_model(&configuration)?;
+        self.validate_fork_model_compatibility(thread, model.as_ref())?;
+        validate_input(&input, &model.capabilities())?;
         let mut candidate = thread.clone();
         let text = input
             .iter()

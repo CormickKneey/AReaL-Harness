@@ -57,18 +57,12 @@ impl Engine {
                 || turn.items.iter().any(|item| !item_ids.insert(item.id()))) {
                 return Err(invalid("HISTORY_INTEGRITY"));
             }
-            if prefix.iter().flat_map(|t| &t.items).any(|item| !match item {
-                Item::UserMessage { content, .. } => content.iter().all(|i| matches!(i, Input::Text { .. })),
-                Item::AgentMessage { .. } => true,
-                _ => false,
-            }) {
-                return Err(invalid("HISTORY_UNRESOLVED"));
-            }
             // 历史锚点不能继承来源在后续轮次修改的配置。
             let config = last.configuration.clone().unwrap_or_default();
             if config.profile.as_ref().is_some_and(|p| p.workflow.is_some()) { return Err(invalid("PROFILE_NOT_SUPPORTED")); }
             let model = engine.configured_model(&config).map_err(|_| invalid("MODEL_CONTEXT_INCOMPATIBLE"))?;
             if !model.capabilities().supports_input(areal_protocol::Modality::Text) { return Err(invalid("MODEL_CONTEXT_INCOMPATIBLE")); }
+            engine.validate_fork_replay(prefix, model.as_ref()).await?;
             let item_count = prefix.iter().map(|t| t.items.len()).sum();
             let turn_count = prefix.len();
             let snapshot_limit = if engine.limits.max_history_bytes == 0 { 64 * 1024 * 1024 }

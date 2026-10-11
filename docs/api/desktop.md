@@ -120,8 +120,8 @@ features.goals=true 表示服务支持 Goal，无需单独配置开关；Goal �
 
 ## Turn Fork 开发预览
 
-设置 `AREAL_DEV_CONVERSATION_DERIVATION=1` 后，`areal/capabilities` 仅声明 `conversationDerivationV1.preview` 子集：最近一个已完成的纯文本主会话 Turn 的 `after` 边界，以及 `sharedCurrent` 工作区。未开启时不公布 Fork 创建方法；既有 Fork 的继承历史仍可读取。此预览不代表完整 Side Chat/Fork P0 已验收。
+设置 `AREAL_DEV_CONVERSATION_DERIVATION=1` 后，`areal/capabilities` 声明 `conversationDerivationV1.preview` 子集：主会话或 Fork 中已持久化的 Turn 锚点，以及 `sharedCurrent` 工作区。未开启时不公布 Fork 创建方法；既有 Fork 的继承历史仍可读取。此预览不代表完整 Side Chat/Fork P0 已验收。
 
-`areal/thread/fork` 接受 `{requestId,sourceThreadId,anchor:{turnId,boundary:"after"},workspaceMode:"sharedCurrent"}`。Core 从已提交来源记录冻结完整纯文本前缀，持久化目标自有快照和创建收据，再公开一个空闲的独立 Thread/Session；目标本地 `turns` 起初为空，来源 Goal、队列、审批和执行宿主均不继承。创建不启动模型或工具，不修改工作区文件。相同业务键和参数返回同一目标，参数冲突的 `error.data.reason` 是 `REQUEST_CONFLICT`。目标 `conversation.kind=fork`、`origin` 和 `historySeed` 是内容来源，不是 `parentThreadId` 委派关系。
+`areal/thread/fork` 接受 `{requestId,sourceThreadId,anchor:{turnId,boundary:"after"},workspaceMode:"sharedCurrent"}`。Core 从已提交来源记录与固定冷段读取锚点前缀；来源也是 Fork 时先扁平化其继承快照。Core 持久化目标自有快照、逐轮来源 ID 和创建收据，再公开一个空闲的独立 Thread/Session；目标本地 `turns` 起初为空，来源 Goal、队列、审批和执行宿主均不继承。创建不启动模型或工具，不修改工作区文件。相同业务键和参数返回同一目标，参数冲突的 `error.data.reason` 是 `REQUEST_CONFLICT`。目标 `conversation.kind=fork`、`origin` 和 `historySeed` 是内容来源，不是 `parentThreadId` 委派关系。
 
-`areal/conversation/history {threadId,view:"inherited",cursor?,maxBytes?}` 按目标授权读取继承项，默认页预算 64 KiB、最大 256 KiB。此开发切片只接受能完整装入单页的纯文本 Item；过大项会明确拒绝，后续切片加入片段分页。`areal/context/read` 和目标后续模型请求从持久快照与本地 Turn 构造逻辑历史，不再读取来源实时会话。当前限制为一个 32 MiB 不可变段；复杂、冷历史和 before 锚点由后续切片处理。旧记录缺少 `conversation` 时仍按普通主会话读取；未知 kind 或不支持的版本拒绝恢复。
+`areal/conversation/history {threadId,view:"inherited",cursor?,maxBytes?}` 按目标授权读取继承项，默认页预算 64 KiB、最大 256 KiB。超出单页预算的 Item 明确拒绝；片段分页仍待实现。`areal/context/read` 和目标后续模型请求从持久快照与本地 Turn 构造逻辑历史，不读取来源实时会话。快照上限为配置的历史上限与 64 MiB 中较小者。工具批次、已结算回执、媒体和原始结果引用按历史事实保存，不登记为目标新执行或用量；目标只可读取其快照实际引用的 Blob。目标模型必须支持继承模态与 Provider 原生上下文格式；不支持时创建返回 `MODEL_MODALITY_INCOMPATIBLE` 或 `MODEL_CONTEXT_INCOMPATIBLE`，自动 Workflow Profile 返回 `PROFILE_NOT_SUPPORTED`。旧记录缺少 `conversation` 时仍按普通主会话读取；未知 kind 或不支持的版本拒绝恢复。
