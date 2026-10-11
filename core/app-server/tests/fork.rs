@@ -1814,6 +1814,29 @@ async fn fork_from_populated_source_has_independent_execution_state() {
         json!({"threadId":fork_id,"input":[{"type":"text","text":"AC03_HOLD_GOAL"}]}),
     )
     .await;
+    // 来源的真实待回答交互不能借目标 Thread/Turn 身份控制，两个 ID 都来自公开回读。
+    let source_interaction = interactions["result"]["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["status"] == "pending")
+        .unwrap();
+    for (turn_id, expected_code) in [
+        (source_interaction["turnId"].clone(), -32009),
+        (target_turn["result"]["turn"]["id"].clone(), -32004),
+    ] {
+        let denied = call(
+            &mut socket,
+            151,
+            "areal/interaction/respond",
+            json!({
+                "threadId":fork_id, "turnId":turn_id, "requestId":source_interaction["requestId"],
+                "answers":{"confirm":"must not reach source"}
+            }),
+        )
+        .await;
+        assert_eq!(denied["error"]["code"], expected_code, "{denied}");
+    }
     call(
         &mut socket,
         16,
@@ -1941,6 +1964,49 @@ async fn fork_from_populated_source_has_independent_execution_state() {
             source_before["result"]["thread"]["goals"]["goal"]["usage"][counter]
         );
     }
+    // 使用真实 Side 与其完成轮次验证来源类型，不以不存在的锚点代替类型拒绝。
+    let threads_before = engine.list(None, 100, None).await.unwrap().0.len();
+    let rejected_side = call(&mut socket, 25, "areal/thread/fork", json!({
+        "requestId":"ac23-side-source", "sourceThreadId":side_id,
+        "anchor":{"turnId":side_export["result"]["thread"]["turns"][0]["id"],"boundary":"after"},
+        "workspaceMode":"sharedCurrent"
+    })).await;
+    assert_eq!(
+        rejected_side["error"]["data"]["reason"], "SOURCE_KIND_UNSUPPORTED",
+        "{rejected_side}"
+    );
+    assert_eq!(
+        engine.list(None, 100, None).await.unwrap().0.len(),
+        threads_before
+    );
+    assert_eq!(
+        call(
+            &mut socket,
+            26,
+            "thread/read",
+            json!({"threadId":side_id,"includeTurns":true})
+        )
+        .await["result"],
+        side_export["result"]
+    );
+    let source_after_refusal = call(
+        &mut socket,
+        27,
+        "thread/read",
+        json!({"threadId":source_id,"includeTurns":true}),
+    )
+    .await;
+    // 活跃 Goal 的计时会自然推进；比较实际控制与执行记录。
+    for field in ["turns", "desktop", "status"] {
+        assert_eq!(
+            source_after_refusal["result"]["thread"][field],
+            source_after_usage["result"]["thread"][field],
+            "source field {field} changed"
+        );
+    }
+    println!(
+        "AC16_AC23 actualSourcePendingInteractionRejectedByTarget=true sourceStateUnchanged=true actualSideSourceRejected=true targetCountUnchanged=true"
+    );
     println!(
         "AC03_AC70_AC71 {}",
         json!({"sourceDynamicTools":1,"sourcePendingInteractions":1,"sourcePendingQueue":1,"sourceGoalPresent":true,"sourceTurnHeld":true,"forkOwnUsage":expected_usage,"sideOwnUsage":expected_usage,"sourceGoalTokenAndTurnCountersUnchanged":true,"inheritedTurns":1,"forkLocalTurns":2,"deploymentAccounting":"no public deployment usage aggregate RPC; not measured","nativeProcessResources":"no Runtime attached; not measured","goalOwner":"main root is null by contract, no fabricated Worker source"})
