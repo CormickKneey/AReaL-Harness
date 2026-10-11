@@ -38,6 +38,17 @@ export function ApprovalRequest({ item, projectId, action }: { item: Data; proje
     {browserPlan ? <div>
       <p>页面：{browserPlan.url}（{browserPlan.origin}）</p>
       <p>操作：{browserPlan.action?.kind ?? browserPlan.operation}{browserPlan.target ? ` · ${browserPlan.target.role} ${browserPlan.target.name} [${browserPlan.target.ref}]` : ""}</p>
+      {Array.isArray(browserPlan.steps) && <ol aria-label="本次批准的浏览步骤" className="list-decimal pl-5">
+        {browserPlan.steps.map((step: Data, index: number) => <li key={index}>
+          {step.action?.kind ?? step.operation}
+          {step.target?.ref ? ` · ${step.target.role} ${step.target.name} [${step.target.ref}]` : ""}
+          {step.action?.kind === "wait" ? ` · ${step.action.timeoutMs} 毫秒` : ""}
+          {step.action?.kind === "fill" ? ` · 填写：${step.action.value}` : ""}
+          {["press", "pressAt"].includes(step.action?.kind) ? ` · 按键：${step.action.key}` : ""}
+          {["clickAt", "pressAt"].includes(step.action?.kind) ? ` · 截图坐标：${step.action.x}, ${step.action.y}` : ""}
+          {step.action?.kind === "drag" ? ` · 截图拖动：${step.action.fromX}, ${step.action.fromY} → ${step.action.toX}, ${step.action.toY}` : ""}
+        </li>)}
+      </ol>}
       {browserPlan.targetUrl && <p>目标地址：{browserPlan.targetUrl}（{browserPlan.targetOrigin}）</p>}
       {browserPlan.action?.kind === "fill" && <p>填写：{browserPlan.action.value}</p>}
       {browserPlan.action?.kind === "press" && <p>按键：{browserPlan.action.key}</p>}

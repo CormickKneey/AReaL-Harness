@@ -482,11 +482,14 @@ export function Preview({
       {state.browser?.stateLoss && <div className="preview-viewport-toolbar" role="status">
         {state.browser.stateLoss}
       </div>}
-      {batch && <div className="preview-viewport-toolbar" role="status">
-        浏览步骤 {batch.completed}/{batch.total} · {batch.status === 'running' ? '进行中'
-          : batch.status === 'confirmed' ? '已确认输入，仍需检查页面结果'
-            : batch.status === 'unknown' ? '结果未知，请检查聊天记录'
-              : '已停止，剩余步骤未执行'}
+      {browserEnabled && state.url && <div className="preview-viewport-toolbar" role="status" aria-hidden={!batch}
+        style={{ visibility: batch ? 'visible' : 'hidden' }}>
+        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          浏览步骤 {batch?.completed ?? 0}/{batch?.total ?? 0} · {batch?.status === 'running' ? '进行中'
+            : batch?.status === 'confirmed' ? '已确认输入，仍需检查页面结果'
+              : batch?.status === 'unknown' ? '结果未知，请检查聊天记录'
+                : '已停止，剩余步骤未执行'}
+        </span>
       </div>}
       {browserEnabled && <div className="preview-viewport-toolbar" role="note">
         临时登录只在当前浏览工作区使用；关闭工作区或重启后可能需要重新登录。
