@@ -14,7 +14,8 @@ export function UnknownToolInspection({ item, project, thread, action }: {
   const locked = useRef(false);
   const connected = !!project.state?.connected;
   const confirmed = item.execution?.inspection;
-  const unknown = item.execution?.outcome === "unknown" || item.execution?.hooks?.some((hook: Data) => hook.outcome === "unknown");
+  const unknown = item.execution?.outcome === "unknown" || item.execution?.hooks?.some((hook: Data) => hook.outcome === "unknown")
+    || item.execution?.plugin?.operations?.some((operation: Data) => operation.outcome === "unknown");
   const active = thread.turns?.some((turn: Data) => turn.status === "inProgress");
   const bytes = new TextEncoder().encode(inspection.trim()).length;
   const disabled = busy || !connected || active || thread.desktop?.archived || !!confirmed;
@@ -49,7 +50,7 @@ export function UnknownToolInspection({ item, project, thread, action }: {
           <dt>原工具</dt><dd>{item.tool}</dd>
           <dt>执行项</dt><dd>{item.id}</dd>
           <dt>操作</dt><dd>{item.execution.operationId}</dd>
-          <dt>历史状态</dt><dd>{item.execution.outcome}{item.execution.hooks?.some((hook: Data) => hook.outcome === "unknown") ? " · 钩子 UNKNOWN" : ""}</dd>
+          <dt>历史状态</dt><dd>{item.execution.outcome}{item.execution.hooks?.some((hook: Data) => hook.outcome === "unknown") ? " · 钩子 UNKNOWN" : ""}{item.execution.plugin?.operations?.some((operation: Data) => operation.outcome === "unknown") ? " · 插件 UNKNOWN" : ""}</dd>
         </dl>
         <div><h3>原操作参数</h3><pre className="whitespace-pre-wrap break-all text-xs" aria-label="原操作参数">{JSON.stringify(item.arguments, null, 2)}</pre></div>
         <details><summary>Core 原始结果与核查事实</summary><pre className="whitespace-pre-wrap break-all text-xs" aria-label="Core 原始结果">{JSON.stringify({ output: item.contentItems, execution: item.execution }, null, 2)}</pre></details>

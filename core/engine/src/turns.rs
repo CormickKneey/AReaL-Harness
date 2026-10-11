@@ -428,7 +428,9 @@ impl Engine {
                         || execution
                             .hooks
                             .iter()
-                            .any(|hook| hook.outcome == areal_protocol::ToolOutcome::Unknown) =>
+                            .any(|hook| hook.outcome == areal_protocol::ToolOutcome::Unknown)
+                        || execution.plugin.as_ref().is_some_and(|plugin| plugin.operations.iter()
+                            .any(|operation| operation.outcome == areal_protocol::ToolOutcome::Unknown)) =>
                 {
                     execution.inspection = Some(inspection)
                 }

@@ -1082,14 +1082,14 @@ function AppContent({ services }: { services: PlatformServices }) {
     !(thread && admitting) &&
     thread?.conversation?.kind !== "fork" &&
     !thread?.turns?.some((turn: Data) => turn.items?.length || turn.status === "inProgress");
-  const forkFromTurn = async (turnId: string) => {
+  const forkFromTurn = async (turnId: string, boundary: "before" | "after") => {
     if (!project || !thread) return;
     const owner = project.id;
     const sourceThreadId = thread.id;
     const route = `${owner}:${sourceThreadId}`;
-    if (!window.confirm("创建分支只复制此轮次及之前的对话历史。项目文件保持当前状态，分支与原会话共享工作区。继续创建？")) return;
-    const result = await action("fork", { projectId: owner, sourceThreadId,
-      anchor: { turnId, boundary: "after" }, workspaceMode: "sharedCurrent" });
+    if (!window.confirm(`从「${thread.preview || "当前会话"}」创建独立分支，${boundary === "after" ? "包含此轮及之前的对话" : "不包含此轮及之后的对话"}。文件仍是当前工作区的状态，不会回滚；新旧会话共享同一工作区。创建分支？`)) return;
+    const result = await resourceAction("fork", { projectId: owner, sourceThreadId,
+      anchor: { turnId, boundary }, workspaceMode: "sharedCurrent" });
     if (activeConversation.current === route) await open(owner, result.threadId);
   };
   const taskActions = <DropdownMenu>
