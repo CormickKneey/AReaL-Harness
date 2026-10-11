@@ -25,6 +25,7 @@ protocol.registerSchemesAsPrivileged([{ scheme: 'areal-ui', privileges: { standa
 const guiRoot = app.isPackaged ? join(process.resourcesPath, 'areal-gui') : resolve(__dirname, '../../../renderer/dist');
 const mime = { '.wasm': 'application/wasm', '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.json': 'application/json', '.woff2': 'font/woff2', '.woff': 'font/woff', '.svg': 'image/svg+xml', '.png': 'image/png' };
 let window, backend, preview, updates, quitting = false, exitReady = false, themeId = 'system';
+let browserWindowClosed = false;
 const previewSubscriptions = new Map();
 let startupPending = true, startupPainted = false, startupReady = false;
 // The renderer owns first-screen readiness; Main alone owns native visibility.
@@ -78,6 +79,7 @@ function trusted(event) {
 }
 
 async function createWindow() {
+  browserWindowClosed = false;
   window = new BrowserWindow({ width: 1440, height: 900, minWidth: 980, minHeight: 620,
     show: false,
     title: 'AReaL Harness', titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 14, y: 15 }, backgroundColor: '#1b1b1c',
@@ -109,11 +111,13 @@ async function createWindow() {
   preview.onRevoke = identity => { void backend.browserRevoke(identity).catch(() => {}); };
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
+  window.on('show', () => { browserWindowClosed = false; });
   window.on('close', event => {
     if (exitReady) return;
     event.preventDefault();
     // A close-to-background still ends this window's Browser ownership. Fence
     // native callbacks before hiding; reopening creates fresh Pages on demand.
+    browserWindowClosed = true;
     preview?.dispose();
     window.hide();
   });
@@ -174,6 +178,8 @@ app.whenReady().then(async () => {
       previewSubscriptions.get(key)?.(); previewSubscriptions.delete(key);
       return null;
     }
+    if (browserWindowClosed && ['show', 'newPage', 'navigate', 'reload'].includes(request?.operation))
+      throw new Error('窗口已关闭，无法打开浏览页面');
     if (request?.operation === 'claim') {
       const identity = await preview.claim(request.projectId, request.threadId, request.pageId);
       const currentClaimPage = () => {
