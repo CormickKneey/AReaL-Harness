@@ -54,6 +54,17 @@ impl Engine {
             {
                 return Err(invalid("upload is referenced by retained history or queue"));
             }
+            let snapshot = match &state.thread.conversation {
+                Some(areal_protocol::Conversation::Fork { history_seed, .. }) => Some(&history_seed.snapshot_id),
+                Some(areal_protocol::Conversation::Side { reference_snapshot, .. }) => Some(&reference_snapshot.snapshot_id),
+                None => None,
+            };
+            if let Some(snapshot) = snapshot {
+                let turns = engine.store.read_fork_snapshot(snapshot).map_err(invalid)?;
+                if serde_json::to_string(&turns).map_err(invalid)?.contains(&uri) {
+                    return Err(invalid("upload is referenced by retained history or queue"));
+                }
+            }
             let mut candidate = state.thread.clone();
             let data = candidate.desktop.as_mut().ok_or(Error::NotFound)?;
             let old = data.uploads.len();
