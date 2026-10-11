@@ -309,6 +309,51 @@ fn retry_budget_survives_restart_and_manual_retry_resets_only_failed() {
     assert_eq!(retry_failed(&c).unwrap()["queue"]["pending"], 1);
     assert_eq!(worker::pick(&c).unwrap().unwrap().attempts, 1);
 }
+
+#[test]
+fn worker_shutdown_rechecks_enable_before_releasing_its_lease() {
+    let d = tempfile::tempdir().unwrap();
+    let mut c = config(d.path());
+    c.enabled = false;
+    configure(&c).unwrap();
+    let queue_lock = queue::lock(d.path(), ".queue.lock", true).unwrap();
+    let spawn_lock = queue::lock(d.path(), ".spawn.lock", true).unwrap();
+    let root = d.path().to_path_buf();
+    let (done, exited) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _ = done.send(runtime.block_on(run_worker(root)));
+    });
+    let started = std::time::Instant::now();
+    while !worker_running(d.path()) && started.elapsed() < Duration::from_secs(2) {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let acquired = worker_running(d.path());
+    drop(queue_lock);
+    // 让 worker 读到 disabled 并等待退出交接；enable 在其交还租约前发布。
+    std::thread::sleep(Duration::from_millis(50));
+    let waited_for_handoff = worker_running(d.path());
+    c.enabled = true;
+    configure(&c).unwrap();
+    drop(spawn_lock);
+    std::thread::sleep(Duration::from_millis(150));
+    let retained = worker_running(d.path());
+    c.enabled = false;
+    configure(&c).unwrap();
+    exited
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap()
+        .unwrap();
+    worker.join().unwrap();
+    assert!(acquired, "worker 必须先取得唯一上传租约");
+    assert!(waited_for_handoff, "正常退出必须等待启动锁完成交接");
+    assert!(retained, "新 enable 不能丢给已经决定退出的旧 worker");
+    assert!(!worker_running(d.path()));
+}
+
 #[test]
 fn waits_for_turn_terminal_but_does_not_strand_dead_producer() {
     let d = tempfile::tempdir().unwrap();

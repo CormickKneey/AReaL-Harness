@@ -307,9 +307,10 @@ pub(super) fn settle(config: &TrajectoryConfig, record: &Record, outcome: Outcom
 
 /// 独立进程持有一把跨进程租约；单次请求、固定速率和全局退避隔离补传洪峰。
 pub async fn run_worker(root: PathBuf) -> Result<()> {
-    let Some(_worker) = queue::lock(&root, ".worker.lock", false)? else {
+    let mut worker = queue::lock(&root, ".worker.lock", false)?;
+    if worker.is_none() {
         return Ok(());
-    };
+    }
     {
         let _queue = queue::lock(&root, ".queue.lock", true)?;
         let mut stats = queue::stats(&root);
@@ -326,11 +327,15 @@ pub async fn run_worker(root: PathBuf) -> Result<()> {
     let mut idle = Instant::now();
     loop {
         let config = queue::read::<TrajectoryConfig>(&root, "control.json", 16384)?;
-        if !config.enabled {
-            return Ok(());
-        }
-        if endpoint(&config).is_err() {
-            return Ok(());
+        if !config.enabled || endpoint(&config).is_err() {
+            // 与启动者同步交接并重读控制；新 enable 不能误把即将退出的 worker 当成接收者。
+            let _spawn = queue::lock(&root, ".spawn.lock", true)?;
+            let current = queue::read::<TrajectoryConfig>(&root, "control.json", 16384)?;
+            if !current.enabled || endpoint(&current).is_err() {
+                drop(worker.take());
+                return Ok(());
+            }
+            continue;
         }
         let selected = pick(&config)?;
         if let Some(record) = selected {
@@ -340,7 +345,7 @@ pub async fn run_worker(root: PathBuf) -> Result<()> {
                     // 网络await前再次检查控制，关闭和切换地址不会把队列送到新目的地。
                     let current = queue::read::<TrajectoryConfig>(&root, "control.json", 16384)?;
                     if !current.enabled || destination(&current) != record.destination {
-                        return Ok(());
+                        continue;
                     }
                     upload(&client, &current, bytes).await
                 }
@@ -349,10 +354,12 @@ pub async fn run_worker(root: PathBuf) -> Result<()> {
             settle(&config, &record, result)?;
         } else if idle.elapsed() > Duration::from_secs(60) {
             // 有退避中的积压就继续存活；空闲或全部失败时退出，下一次入队会重新唤醒。
+            let _spawn = queue::lock(&root, ".spawn.lock", true)?;
             let pending = queue::records(&root, config.max_disk_bytes)?
                 .iter()
                 .any(|r| matches!(r.status.as_str(), "pending" | "uploading"));
             if !pending {
+                drop(worker.take());
                 return Ok(());
             }
         }

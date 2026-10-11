@@ -152,7 +152,7 @@ impl Processor {
                                 shared_worker.dropped.fetch_add(1, Ordering::Relaxed);
                             }
                             if result.is_ok() {
-                                let _ = ensure_worker(&config_worker.spool_dir);
+                                let _ = ensure_worker(&config_worker.spool_dir, false);
                             }
                         }
                         Ok(Work::Flush(done)) => {
@@ -186,7 +186,7 @@ impl Processor {
                                     })
                                 })
                             {
-                                let _ = ensure_worker(&config_worker.spool_dir);
+                                let _ = ensure_worker(&config_worker.spool_dir, false);
                             }
                         }
                     }

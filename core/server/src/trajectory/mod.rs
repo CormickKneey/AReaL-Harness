@@ -139,7 +139,7 @@ fn configure_inner(config: &TrajectoryConfig, startup: bool) -> Result<()> {
         queue::save_stats(root, &totals)?;
     }
     if config.enabled && endpoint(config).is_ok() {
-        ensure_worker(root)?;
+        ensure_worker(root, !startup)?;
     }
     Ok(())
 }
@@ -157,7 +157,7 @@ fn worker_running(root: &Path) -> bool {
     };
     matches!(file.try_lock_exclusive(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
 }
-fn ensure_worker(root: &Path) -> Result<()> {
+fn ensure_worker(root: &Path, explicit: bool) -> Result<()> {
     if cfg!(test) {
         return Ok(());
     }
@@ -165,17 +165,17 @@ fn ensure_worker(root: &Path) -> Result<()> {
         os::unix::process::CommandExt,
         process::{Command, Stdio},
     };
-    let Some(_spawn) = queue::lock(root, ".spawn.lock", false)? else {
-        return Ok(());
-    };
+    // 自动调用仅来自采集后台；等待正在交接的启动/退出，不能丢掉最后一次唤醒。
+    let _spawn = queue::lock(root, ".spawn.lock", true)?;
     if !queue::read::<TrajectoryConfig>(root, "control.json", 16384).is_ok_and(|c| c.enabled) {
         return Ok(());
     }
     if worker_running(root) {
         return Ok(());
     }
-    if queue::read::<u64>(root, "spawned_at.json", 128)
-        .is_ok_and(|t| now().saturating_sub(t) < 5000)
+    if !explicit
+        && queue::read::<u64>(root, "spawned_at.json", 128)
+            .is_ok_and(|t| now().saturating_sub(t) < 5000)
     {
         return Ok(());
     }
@@ -210,6 +210,25 @@ fn ensure_worker(root: &Path) -> Result<()> {
         });
     }
     let mut child = command.spawn().context("cannot start trajectory worker")?;
+    // 本地 lease 握手不等待网络；启动锁覆盖子进程初始化，避免并发显式重试重复创建。
+    let started = std::time::Instant::now();
+    while !worker_running(root) {
+        if child.try_wait()?.is_some() {
+            anyhow::bail!("trajectory worker exited before startup");
+        }
+        if started.elapsed() >= std::time::Duration::from_secs(5) {
+            // 子进程已 setsid；macOS 的 Python 中转和实际 worker 属于同一独立进程组。
+            unsafe {
+                libc::kill(-(child.id() as i32), libc::SIGKILL);
+            }
+            let _ = child.kill();
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+            anyhow::bail!("trajectory worker startup timed out");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
     // 仍在同一宿主存活期间主动回收子进程；Core 退出后由系统收养。
     std::thread::spawn(move || {
         let _ = child.wait();
