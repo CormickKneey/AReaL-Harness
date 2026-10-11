@@ -220,7 +220,7 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
       </section>}
       {sideId && !validSide && <p role="status">{side ? "旁路归属与当前来源不一致。" : loading ? "正在恢复旁路讨论…" : "正在核对旁路归属…"}</p>}
       {validSide && side.desktop?.archived && <p role="status">这段讨论已归档；请在相关讨论中显式恢复后继续。</p>}
-      {validSide && <Messages key={`${owner}:${sideId}`} project={project} thread={side} action={action} dark={dark}
+      {validSide && <Messages key={`${owner}:${sideId}`} project={project} thread={side} action={action} dark={dark} reserveResponseSpace={false}
         onLink={() => setError("旁路不提供链接预览；可复制链接后从主会话打开。")}
         onFile={() => setError(side.conversation.policy?.workspaceAccess === "readOnly" ? "旁路模型可只读查询当前工作区；请在问题中指定文件路径。" : "此旁路仅能读取冻结会话证据。")}
         onReview={() => {}} readTurnReview={async () => ({})} />}

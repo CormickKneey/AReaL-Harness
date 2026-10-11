@@ -43,7 +43,9 @@ export function Messages({
   onAgent,
   onFork,
   onSideSelection,
+  reserveResponseSpace = true,
 }: {
+  reserveResponseSpace?: boolean;
   beforeTurns?: ReactNode;
   onAgent?: (id: string) => void;
   onFork?: (turnId: string, boundary: "before" | "after") => Promise<void>;
@@ -190,7 +192,7 @@ export function Messages({
     };
     if (switched) {
       follow.current = remembered?.following ?? true;
-      reservation.current = remembered?.responseSpace && { ...remembered.responseSpace };
+      reservation.current = reserveResponseSpace && remembered?.responseSpace ? { ...remembered.responseSpace } : undefined;
     } else if (previous.id !== latestTurnId) {
       // Reflow may leave all prior history visible while preserving a former
       // departure. The next accepted message follows from that actual tail;
@@ -200,9 +202,12 @@ export function Messages({
       // the first turn and Goal continuations retain natural content height.
       // Core may deliver the user and process together or separately. Reserve
       // from the accepted user boundary, never the first transient process size.
-      reservation.current = previous.id && follow.current && section && user && !goalContinuationLabel(latest)
+      reservation.current = reserveResponseSpace && previous.id && follow.current && section && user && !goalContinuationLabel(latest)
         ? { turnId: latestTurnId, height: 0, contentHeight: 0 } : undefined;
     }
+    // Natural-flow consumers scroll in their parent. Their own height includes
+    // the spacer, so reserving against it would feed back into the next resize.
+    if (!reserveResponseSpace) reservation.current = undefined;
     activeOwner.current = owner;
     seenTurn.current = { owner, id: latestTurnId };
     const layout = () => {
@@ -253,7 +258,7 @@ export function Messages({
       if (frame !== undefined) cancelAnimationFrame(frame);
       element.removeEventListener("wheel", wheel);
     };
-  }, [owner, latestTurnId]);
+  }, [owner, latestTurnId, reserveResponseSpace]);
   return (
     <div className="messages-shell">
     <TurnNavigation turns={thread.turns ?? []} container={container} onNavigate={() => {
