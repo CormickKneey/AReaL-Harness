@@ -1260,6 +1260,8 @@ class CorePreview {
           if (performance.now() >= deadline || page.view?.webContents !== c || page.controlEpoch !== request.controlEpoch)
             throw new Error('plan_stale');
         }
+        // 批量外层计划也占用同一工作区预算；失败时沿现有路径清除子计划。
+        if (this.workspaceOutstanding(page.projectId, page.threadId) >= 16) throw new Error('not_sent');
         const plan = { preparedActionId: randomUUID(), operation: 'runBatch', pageId: page.id,
           origin: new URL(c.getURL()).origin, url: observationUrl(c.getURL()),
           snapshotId: request.parameters.snapshotId, steps: stepPlans,
