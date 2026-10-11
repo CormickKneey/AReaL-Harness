@@ -40,8 +40,14 @@ impl Engine {
         if state.active.is_some() || state.compacting {
             return Err(Error::Conflict);
         }
-        if state.thread.is_side() && (input.len() != 1 || !matches!(&input[0], Input::Text { .. })) {
+        if state.thread.is_side() && (input.len() != 1 || !matches!(&input[0], Input::Text { .. }))
+        {
             return Err(Error::Invalid("SIDE_POLICY_VIOLATION".into()));
+        }
+        if let Some(areal_protocol::Conversation::Side { origin, .. }) = &state.thread.conversation
+        {
+            self.check_side_capacity(&origin.source_thread_id, Some(&state.thread.id))
+                .await?;
         }
         if !state.thread.dynamic_tools.is_empty()
             && cell
@@ -191,6 +197,7 @@ impl Engine {
         cell.cancel_grace_ms.store(1000, Ordering::Release);
         state.active = Some(Active {
             tool_calls: 0,
+            waiting_for_model_capacity: false,
             started: std::time::Instant::now(),
             isolated_children: 0,
             _admission: admission,
@@ -243,7 +250,9 @@ impl Engine {
     ) -> Result<()> {
         let thread_id = thread_id.to_owned();
         let turn_id = turn_id.to_owned();
-        if self.read(&thread_id, false).await?.is_side() { return Err(Error::Invalid("SIDE_POLICY_VIOLATION".into())); }
+        if self.read(&thread_id, false).await?.is_side() {
+            return Err(Error::Invalid("SIDE_POLICY_VIOLATION".into()));
+        }
         self.mutate(move |engine| async move {
             engine.steer_inner(&thread_id, &turn_id, input, false).await
         })
@@ -428,8 +437,11 @@ impl Engine {
                             .hooks
                             .iter()
                             .any(|hook| hook.outcome == areal_protocol::ToolOutcome::Unknown)
-                        || execution.plugin.as_ref().is_some_and(|plugin| plugin.operations.iter()
-                            .any(|operation| operation.outcome == areal_protocol::ToolOutcome::Unknown)) =>
+                        || execution.plugin.as_ref().is_some_and(|plugin| {
+                            plugin.operations.iter().any(|operation| {
+                                operation.outcome == areal_protocol::ToolOutcome::Unknown
+                            })
+                        }) =>
                 {
                     execution.inspection = Some(inspection)
                 }
@@ -486,6 +498,9 @@ impl Engine {
             .as_ref()
             .filter(|_| cell.research)
             .map(|a| tokio::time::Instant::now() + Duration::from_secs(a.worker_timeout_seconds));
+        let side_deadline = cell.state.lock().await.thread.is_side().then(|| {
+            tokio::time::Instant::now() + Duration::from_secs(self.limits.max_side_turn_seconds)
+        });
         let goal_budget = {
             let state = cell.state.lock().await;
             if state.thread.goal_owner.is_some()
@@ -508,6 +523,12 @@ impl Engine {
                 None => std::future::pending::<()>().await,
             }
         };
+        let side_expired = async {
+            match side_deadline {
+                Some(deadline) => tokio::time::sleep_until(deadline).await,
+                None => std::future::pending::<()>().await,
+            }
+        };
         let mut result = {
             let generation =
                 std::panic::AssertUnwindSafe(self.generate(&cell, &cancel, &mut steer))
@@ -519,7 +540,7 @@ impl Engine {
                     // 不能先丢弃 generate，否则内部流收尾永远无法执行。
                     // 收尾仍受原 Goal/worker 截止时间约束，过时工具不会执行。
                     let started = tokio::time::Instant::now();
-                    let deadline = worker_deadline.into_iter().chain(goal_budget.as_ref().and_then(|b| b.deadline())).min();
+                    let deadline = worker_deadline.into_iter().chain(side_deadline).chain(goal_budget.as_ref().and_then(|b| b.deadline())).min();
                     let mut end = deadline.unwrap_or(started + Duration::from_secs(60));
                     loop {
                         // 重复取消不得延长期限；force 升级最多在 50ms 后缩短收尾。
@@ -540,6 +561,10 @@ impl Engine {
                 _ = worker_expired => Err(crate::outcome::TerminalFailure::new(
                     "research worker deadline exceeded",
                     crate::outcome::outcome("AGENT_RUN_TIMEOUT", "agent", "core_execution_budget", json!({"goalDeadlineReached":false})),
+                ).into()),
+                _ = side_expired => Err(crate::outcome::TerminalFailure::new(
+                    "Side Turn deadline exceeded",
+                    crate::outcome::outcome("AGENT_RUN_TIMEOUT", "agent", "core_side_budget", json!({"sideDeadlineReached":true})),
                 ).into()),
                 result = &mut generation =>
                     result.unwrap_or_else(|_| Err(anyhow::anyhow!("model task panicked"))),

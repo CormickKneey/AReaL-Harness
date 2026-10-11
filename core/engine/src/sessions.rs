@@ -225,7 +225,25 @@ impl Engine {
 
     pub async fn read(&self, thread_id: &str, include_turns: bool) -> Result<Thread> {
         let cell = self.raw_cell(thread_id).await?;
-        let mut thread = cell.state.lock().await.thread.clone();
+        let mut thread = {
+            let state = cell.state.lock().await;
+            let mut thread = state.thread.clone();
+            if thread.is_side() {
+                if let Some(active) = &state.active {
+                    if let Some(desktop) = thread.desktop.as_mut() {
+                        desktop.side_capacity_status = Some(
+                            if active.waiting_for_model_capacity {
+                                "waiting"
+                            } else {
+                                "available"
+                            }
+                            .into(),
+                        );
+                    }
+                }
+            }
+            thread
+        };
         if include_turns && thread.desktop.as_ref().is_some_and(|d| d.archived) {
             thread = self
                 .store

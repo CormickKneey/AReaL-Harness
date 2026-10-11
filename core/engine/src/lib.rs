@@ -46,6 +46,11 @@ pub struct Limits {
     pub max_threads: usize,
     pub model_concurrency: usize,
     pub max_active_turns: usize,
+    pub max_side_turns_per_source: usize,
+    pub max_side_turns_per_deployment: usize,
+    pub max_side_model_rounds: usize,
+    pub max_side_tool_calls: usize,
+    pub max_side_turn_seconds: u64,
     pub max_children_per_turn: usize,
     pub max_agent_depth: usize,
     pub max_history_bytes: usize,
@@ -79,6 +84,11 @@ impl Default for Limits {
             max_threads: 20_000,
             model_concurrency: 32,
             max_active_turns: 256,
+            max_side_turns_per_source: 2,
+            max_side_turns_per_deployment: 8,
+            max_side_model_rounds: 8,
+            max_side_tool_calls: 16,
+            max_side_turn_seconds: 300,
             max_children_per_turn: 64,
             max_agent_depth: 8,
             max_history_bytes: 0,
@@ -137,6 +147,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 struct Active {
     tool_calls: usize,
+    waiting_for_model_capacity: bool,
     started: std::time::Instant,
     isolated_children: usize,
     // Includes queued model work, tool waits and cleanup. Never wait for this
@@ -378,6 +389,11 @@ impl Engine {
                 && limits.mailbox_capacity > 0
                 && limits.max_response_bytes > 0
                 && limits.max_response_tool_calls > 0
+                && limits.max_side_turns_per_source > 0
+                && limits.max_side_turns_per_deployment > 0
+                && (1..=1024).contains(&limits.max_side_model_rounds)
+                && (1..=65536).contains(&limits.max_side_tool_calls)
+                && (1..=86400).contains(&limits.max_side_turn_seconds)
                 && limits.max_tool_buffer_bytes > 0
                 && (limits.context_window_bytes == 0
                     || limits.context_recent_bytes < limits.context_window_bytes)
@@ -600,8 +616,12 @@ impl Engine {
             && (bytes.len() as u64)
                 .saturating_add(thread.history_archive.as_ref().map_or(0, |a| a.bytes))
                 .saturating_add(match &thread.conversation {
-                    Some(areal_protocol::Conversation::Fork { history_seed, .. }) => history_seed.logical_bytes as u64,
-                    Some(areal_protocol::Conversation::Side { reference_snapshot, .. }) => reference_snapshot.logical_bytes as u64,
+                    Some(areal_protocol::Conversation::Fork { history_seed, .. }) => {
+                        history_seed.logical_bytes as u64
+                    }
+                    Some(areal_protocol::Conversation::Side {
+                        reference_snapshot, ..
+                    }) => reference_snapshot.logical_bytes as u64,
                     _ => 0,
                 })
                 > self.limits.max_history_bytes as u64

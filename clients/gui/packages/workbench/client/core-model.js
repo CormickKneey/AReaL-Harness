@@ -68,6 +68,11 @@ export class CoreTaskModel {
     }
     const thread = this.state.threads[params?.threadId];
     if (!thread) return;
+    if (method === 'areal/side/capacity' && thread.conversation?.kind === 'side'
+      && ['waiting', 'available'].includes(params.status)) {
+      this.replace({ ...thread, desktop: { ...thread.desktop, sideCapacityStatus: params.status } });
+      return;
+    }
     if (method === 'areal/thread/tools/attached') {
       if (!Number.isSafeInteger(params.toolsetRevision) || params.toolsetRevision < 0
         || !Array.isArray(params.dynamicTools) || params.toolsetRevision <= (thread.toolsetRevision ?? 0)) return;

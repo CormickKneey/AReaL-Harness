@@ -48,6 +48,8 @@ Provider HTTP 错误体最多读取 64 KiB、等待 2 秒，仅保留白名单 c
 
 EnvArena [runner](../../integrations/envarena/runner.py) 将 Core outcome 复制到 `harness_result.raw.outcome` 并添加 `schema=areal.envarena-outcome.v1`。runner 自己触发的进程期限使用 `AGENT_RUN_TIMEOUT`，收到外部信号使用 `HARNESS_INTERRUPTED`，适配/收集失败使用 `HARNESS_INTERNAL_ERROR`，正常完成使用 `AGENT_COMPLETED`；失败仍输出 ERROR 并非零退出。主线程原因优先，旧 Core 缺字段时不借子线程错误补猜。
 
+EnvArena 首次运行固定 `entry_thread_id`；结果状态、失败原因和 `usage` 仅取该入口 Thread 的新 Turn。`deployment_usage` 汇总所有 Thread 的新 Turn，包括 Side 的实际请求；`usage_known` 和 `deployment_usage_known` 标明是否有缺失用量。`thread-provenance.json` 按 Thread 列出 `kind`、`origin`、`inheritedRange`、`newTurnIds`、`newUsage` 和 `newUsageKnown`，继承快照不作为目标新采样计费。
+
 适配或收集失败仍以 `raw.outcome=HARNESS_INTERNAL_ERROR` 作为主要故障，防止基础设施失败被当作模型零分样本；`raw.adapter_error` 保存适配错误。若 Core 已失败，`raw.core_outcome` 和 `raw.core_errors` 同时保留原始分类、消息与 thread/turn ID；若 runner 已超时或收到信号，`raw.runner_outcome` 保留该原因。结果文件、native receipt 和轨迹 result 均保留这些诊断，重复结算不会累加重复记录。
 
 runner 的 summary 和 stdout 同时保留 `GAMEAGENT_OUTCOME_CODE=... GAMEAGENT_OUTCOME_CLASS=...`，兼容 AReaL 已有的 marker fallback；该名称是历史消费协议，不表示底层运行 GameAgent。平台若截断或丢弃失败 summary/log，仍需从结果制品读取 raw.outcome，不能保证仅凭 Task 顶层 raw 即可获取。已识别的模型 code 复用 AReaL 统计白名单，新增基础设施 code 在未更新的消费端归为 OTHER。

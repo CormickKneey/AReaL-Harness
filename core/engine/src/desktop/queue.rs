@@ -49,6 +49,9 @@ impl Engine {
                 Ok(result)
             } else {
                 if state.active.is_some() || state.compacting { return Err(Error::Conflict); }
+                if let Some(areal_protocol::Conversation::Side { origin, .. }) = &state.thread.conversation {
+                    engine.check_side_capacity(&origin.source_thread_id, Some(&state.thread.id)).await?;
+                }
                 engine.check_turn_available(&cell,&state).await?;
                 let previous_mode = data.configuration.options.interaction_mode;
                 data.configuration.options.interaction_mode = configuration.options.interaction_mode;
@@ -141,7 +144,9 @@ impl Engine {
         self.mutate(move |engine| async move {
             let cell = engine.cell(&thread_id).await?;
             let mut state = cell.state.lock().await;
-            if state.thread.is_side() { return Err(invalid("SIDE_POLICY_VIOLATION")); }
+            if state.thread.is_side() {
+                return Err(invalid("SIDE_POLICY_VIOLATION"));
+            }
             let mut candidate = state.thread.clone();
             let data = candidate.desktop.get_or_insert_with(Default::default);
             if data.queue.revision != expected {

@@ -120,6 +120,7 @@ pub const NOTIFICATIONS: &[&str] = &[
     "areal/thread/archived",
     "areal/plan/updated",
     "areal/queue/updated",
+    "areal/side/capacity",
     "areal/task/updated",
     "areal/interaction/requested",
     "areal/interaction/resolved",
@@ -358,6 +359,9 @@ pub struct PermissionGrant {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DesktopState {
+    /// 只在读取活跃 Side 时由 Core 投影；历史快照不承载模型等待状态。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side_capacity_status: Option<String>,
     #[serde(default)]
     pub permission_grants: Vec<PermissionGrant>,
     #[serde(default)]
