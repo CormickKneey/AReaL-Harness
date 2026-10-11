@@ -3,9 +3,11 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
+import { CoreRpcError } from '../packages/runtime-client/core.js';
 
 const require = createRequire(import.meta.url);
 const { CoreBackend } = require('../app/src/core/backend.cjs');
+const { desktopError } = require('../packages/workbench/client/desktop-contract.cjs');
 const home = await mkdtemp(join(tmpdir(), 'areal-fork-recovery-'));
 try {
   const backend = Object.create(CoreBackend.prototype);
@@ -51,3 +53,18 @@ try {
 } finally {
   await rm(home, { recursive: true, force: true });
 }
+
+// Core -> service IPC -> main IPC must retain the scoped denial reason without forwarding private data.
+const coreError = new CoreRpcError('Side action denied', {
+  code: -32010,
+  method: 'areal/side/start',
+  data: { reason: 'SIDE_POLICY_VIOLATION', requestId: 'side-key', private: 'secret' },
+});
+const serviceWireError = JSON.parse(JSON.stringify(desktopError(coreError)));
+const mainError = Object.assign(new Error(serviceWireError.message), serviceWireError);
+const rendererWireError = desktopError(mainError);
+assert.equal(rendererWireError.code, -32010);
+assert.equal(rendererWireError.reason, 'SIDE_POLICY_VIOLATION');
+assert.equal(rendererWireError.requestId, 'side-key');
+assert.equal('data' in rendererWireError, false);
+assert.equal(JSON.stringify(rendererWireError).includes('secret'), false);

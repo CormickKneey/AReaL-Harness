@@ -101,7 +101,9 @@ function desktopError(error) {
   const value = record(error) || error instanceof Error ? error : {};
   const code = 'code' in value ? value.code : undefined;
   const requestId = 'requestId' in value ? value.requestId : undefined;
-  const reason = 'data' in value && record(value.data) && typeof value.data.reason === 'string' ? value.data.reason : undefined;
+  const reason = 'data' in value && record(value.data) && typeof value.data.reason === 'string'
+    ? value.data.reason
+    : 'reason' in value && typeof value.reason === 'string' ? value.reason : undefined;
   return {
     message: typeof value.message === 'string' ? value.message : '桌面操作失败',
     ...(typeof code === 'string' || typeof code === 'number' ? { code } : {}),
