@@ -928,6 +928,10 @@ class CoreBackend {
       }
       case 'queueEdit': return this.editQueue(project, request);
       case 'create': {
+        if (request.browserEnabled === true
+          && projectCoreCapabilities(this.binary, project.client?.capabilities).features?.browserToolAttachment !== true) {
+          throw new Error('当前 Core 不支持新聊天启用浏览器');
+        }
         await this.resources.beforeCreate(project);
         const { thread } = await this.submit(project, 'areal/thread/start', { cwd: project.root,
           ...(request.browserEnabled === true ? { dynamicTools: [browserTool] } : {}),

@@ -72,6 +72,8 @@ export function DraftComposer({
   const [permission, setPermission] = useState<PermissionMode>(() => localStorage.getItem(`${key}:permission`) === "ask" ? "ask" : "auto");
   const [plan, setPlan] = useState(() => localStorage.getItem(`${key}:plan`) === "true");
   const [browserEnabled, setBrowserEnabled] = useState(() => localStorage.getItem(`${key}:browser`) === "true");
+  const browserAvailable = project.core?.features?.browserToolAttachment === true;
+  const browserActive = browserAvailable && browserEnabled;
   const [profileSelection, setProfileSelection] = useState(() => localStorage.getItem(`${key}:profile`) ?? "");
   const chosenProfile = profileSelection
     ? project.profiles.find((p: Data) => profileKey(p) === profileSelection)
@@ -163,7 +165,7 @@ export function DraftComposer({
       creationAttempted = true;
       const result = await action("create", {
         projectId: owner.id,
-        ...(browserEnabled ? { browserEnabled: true } : {}),
+        ...(browserActive ? { browserEnabled: true } : {}),
         ...(effort ? { parameters: { reasoningEffort: effort } } : {}),
         ...(profile
           ? { profile: { id: profile.id, revision: profile.revision } }
@@ -295,8 +297,8 @@ export function DraftComposer({
           <><ComposerPermissionMenu value={chosenProfile?.readOnly ? "readOnly" : permission} disabled={disabled}
             lockedReadOnly={chosenProfile?.readOnly === true}
             onChange={value => { setPermission(value); localStorage.setItem(`${key}:permission`, value); }} onClose={() => api.current?.focus()} />
-          <Button type="button" variant={browserEnabled ? "secondary" : "ghost"} disabled={disabled}
-            aria-pressed={browserEnabled} aria-label="新聊天启用共享浏览器"
+          <Button type="button" variant={browserActive ? "secondary" : "ghost"} disabled={disabled || !browserAvailable}
+            aria-pressed={browserActive} aria-label="新聊天启用共享浏览器"
             onClick={() => { setBrowserEnabled(!browserEnabled); localStorage.setItem(`${key}:browser`, String(!browserEnabled)); }}>
             浏览器
           </Button>
