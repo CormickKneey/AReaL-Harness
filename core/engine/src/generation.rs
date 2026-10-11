@@ -221,8 +221,10 @@ impl Engine {
                     .map_or(0, |s| context::text_tokens(s))
                 + instructions.as_ref().map_or(0, |s| context::text_tokens(s))
                 + 512;
-            self.compact_context(cell, cancel, overhead, previous_usage, false)
-                .await?;
+            if side_thread_id.is_none() {
+                self.compact_context(cell, cancel, overhead, previous_usage, false)
+                    .await?;
+            }
 
             let goal_instructions = self.goal_instructions(cell).await?;
             let (messages, thread_id, session_id, turn_id, turn_number) = {
@@ -394,6 +396,7 @@ impl Engine {
             if context_budget.window > 0 && request_estimate > context_budget.input_limit {
                 if self.limits.context_compaction_enabled
                     && self.limits.context_auto_compaction
+                    && side_thread_id.is_none()
                     && preflight_compactions < 2
                 {
                     preflight_compactions += 1;
@@ -740,6 +743,7 @@ impl Engine {
                                 && calls.is_empty()
                                 && self.limits.context_compaction_enabled
                                 && self.limits.context_auto_compaction
+                                && side_thread_id.is_none()
                                 && model::terminal_outcome(&error).is_some_and(|outcome| {
                                     outcome.code == "LLM_CONTEXT_WINDOW_EXCEEDED"
                                 })

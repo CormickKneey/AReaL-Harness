@@ -64,6 +64,7 @@ async fn side_first_question_is_one_durable_read_only_turn() {
     for (method, params) in [
         ("areal/process/start", json!({"threadId":side_id,"requestId":"bad","argv":["echo","bad"]})),
         ("areal/goal/create", json!({"threadId":side_id,"requestId":"bad","expectedRevision":0,"objective":"write"})),
+        ("areal/context/compact", json!({"threadId":side_id})),
         ("areal/thread/configure", json!({"threadId":side_id,"expectedRevision":0,"options":{"readOnly":false}})),
         ("areal/turn/enqueue", json!({"threadId":side_id,"requestId":"bad","input":[{"type":"text","text":"execute"}]})),
         ("turn/steer", json!({"threadId":side_id,"expectedTurnId":"bad","input":[{"type":"text","text":"execute"}]})),
