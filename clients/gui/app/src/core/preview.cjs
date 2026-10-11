@@ -1830,7 +1830,7 @@ class CorePreview {
       c = view.webContents;
     try { page.networkPolicy = this.ensureWorkspaceContext(page); }
     catch (error) { if (!c.isDestroyed()) c.close(); throw error; }
-    c.on('console-message', (_event, details) => {
+    c.on('console-message', details => {
       if (page.control !== 'agent' || !page.diagnosticsReady) return;
       const value = details && typeof details === 'object' ? details : {};
       this.addDiagnostic(page, { kind: 'console', level: ['error', 'warning', 'info', 'debug'].includes(value.level) ? value.level : 'log',
