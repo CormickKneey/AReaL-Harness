@@ -44,6 +44,7 @@ impl Engine {
             let admission=engine.desktop.lifecycle.gate.lock().await;
             if !engine.accepting_work(){return Err(Error::Closed);}
             let cell=engine.cell(&thread_id).await?;
+            if cell.state.lock().await.thread.is_side() { return Err(invalid("SIDE_POLICY_VIOLATION")); }
             {let mut state=cell.state.lock().await;if state.active.is_some()||state.compacting||state.thread.goals.goal.as_ref().is_some_and(|g|g.status==areal_protocol::goals::GoalStatus::Active){return Err(Error::Conflict);}state.compacting=true;}
             drop(admission);
             let result=async {

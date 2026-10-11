@@ -103,6 +103,7 @@ class RunnerTest(unittest.TestCase):
                     vars(runner),
                     result=result,
                     threads=[{"id": "root", "turns": [turn]}],
+                    entry_thread_id="root",
                     graybox=True,
                     graybox_state=None,
                     workspace=str(work),
