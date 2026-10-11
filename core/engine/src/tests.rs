@@ -1,6 +1,117 @@
 use super::*;
 
 #[tokio::test]
+async fn fork_settled_failure_and_interruption_preserve_status() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = Engine::open(dir.path(), Arc::new(PendingModel), Limits::default()).unwrap();
+    let mut source = engine.create("/fixture".into()).await.unwrap();
+    let failed = id();
+    let interrupted = id();
+    let active = id();
+    for (turn_id, status) in [(&failed, TurnStatus::Failed), (&interrupted, TurnStatus::Interrupted), (&active, TurnStatus::InProgress)] {
+        source.turns.push(Turn {
+            started_at: None, completed_at: None, duration_ms: None, goal: None,
+            configuration: None, instruction_snapshot: None, id: turn_id.clone(),
+            status, error: None, usage: None,
+            items: vec![Item::UserMessage { id: id(), content: vec![Input::text(turn_id)] }],
+        });
+    }
+    engine.persist(&source).await.unwrap();
+    engine.raw_cell(&source.id).await.unwrap().state.lock().await.thread = source.clone();
+    let source_id = source.id.clone();
+    let request = |key: &str, anchor: &str, boundary: &str| areal_protocol::desktop::ForkThread {
+        request_id: key.into(), source_thread_id: source_id.clone(),
+        anchor: areal_protocol::desktop::ForkAnchor { turn_id: anchor.into(), boundary: boundary.into() },
+        workspace_mode: "sharedCurrent".into(),
+    };
+    assert!(matches!(engine.fork_thread("owner".into(), request("active-after", &active, "after")).await,
+        Err(Error::Invalid(reason)) if reason == "TURN_NOT_TERMINAL"));
+    let fork = engine.fork_thread("owner".into(), request("active-before", &active, "before")).await.unwrap();
+    let Some(areal_protocol::Conversation::Fork { history_seed, .. }) = fork.conversation else { panic!("expected fork"); };
+    let (history, _) = engine.store.read_fork_snapshot_with_sources(&history_seed.snapshot_id).unwrap();
+    assert_eq!(history.iter().map(|turn| &turn.status).collect::<Vec<_>>(), vec![&TurnStatus::Failed, &TurnStatus::Interrupted]);
+    assert_eq!(engine.read(&source.id, true).await.unwrap().turns[2].status, TurnStatus::InProgress);
+    source.parent_thread_id = Some("delegating-thread".into());
+    engine.persist(&source).await.unwrap();
+    engine.raw_cell(&source.id).await.unwrap().state.lock().await.thread = source.clone();
+    assert!(matches!(engine.fork_thread("owner".into(), request("worker", &failed, "after")).await,
+        Err(Error::Invalid(reason)) if reason == "SOURCE_KIND_UNSUPPORTED"));
+    engine.shutdown().await;
+}
+
+#[tokio::test]
+async fn fork_unknown_hook_requires_source_inspection_and_keeps_unknown() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = Engine::open(dir.path(), Arc::new(PendingModel), Limits::default()).unwrap();
+    let mut source = engine.create("/fixture".into()).await.unwrap();
+    let anchor = id();
+    let tool_id = id();
+    let tool: Item = serde_json::from_value(json!({
+        "type":"dynamicToolCall", "id":tool_id, "tool":"lookup", "callId":"call-1",
+        "arguments":{}, "status":"failed", "success":false,
+        "contentItems":[{"type":"inputText","text":"result unknown"}],
+        "execution":{"runtimeEpoch":"runtime", "scopeId":"scope", "operationId":"operation",
+            "outcome":"failed", "hooks":[{"name":"audit","event":"postToolUse",
+                "operationId":"hook-operation", "outcome":"unknown"}],
+            "plugin":{"pluginId":"fixture", "generation":"1", "scopeId":"scope",
+                "operations":[{"operationId":"plugin-operation", "kind":"read", "path":"fixture",
+                    "requestSha256":"digest", "outcome":"unknown", "result":null}]}}
+    })).unwrap();
+    source.turns.push(Turn {
+        started_at: None, completed_at: None, duration_ms: None, goal: None,
+        configuration: None, instruction_snapshot: None, id: anchor.clone(),
+        status: TurnStatus::Failed, error: None, usage: None,
+        items: vec![Item::UserMessage { id: id(), content: vec![Input::text("lookup")] }, tool],
+    });
+    if let Item::DynamicToolCall { execution, .. } = &mut source.turns[0].items[1] {
+        execution.hooks[0].outcome = areal_protocol::ToolOutcome::Running;
+    }
+    engine.persist(&source).await.unwrap();
+    engine.raw_cell(&source.id).await.unwrap().state.lock().await.thread = source.clone();
+    let source_id = source.id.clone();
+    let request = |key: &str| areal_protocol::desktop::ForkThread {
+        request_id: key.into(), source_thread_id: source_id.clone(),
+        anchor: areal_protocol::desktop::ForkAnchor { turn_id: anchor.clone(), boundary: "after".into() },
+        workspace_mode: "sharedCurrent".into(),
+    };
+    assert!(matches!(engine.fork_thread("owner".into(), request("running-hook")).await,
+        Err(Error::Invalid(reason)) if reason == "HISTORY_UNRESOLVED"));
+    if let Item::DynamicToolCall { execution, .. } = &mut source.turns[0].items[1] {
+        execution.hooks[0].outcome = areal_protocol::ToolOutcome::Unknown;
+    }
+    engine.persist(&source).await.unwrap();
+    engine.raw_cell(&source.id).await.unwrap().state.lock().await.thread = source.clone();
+    assert!(matches!(engine.fork_thread("owner".into(), request("before-inspect")).await,
+        Err(Error::Invalid(reason)) if reason == "HISTORY_UNRESOLVED"));
+    engine.acknowledge_tool(source.id.clone(), tool_id, "Checked the actual operation and audit hook".into()).await.unwrap();
+    let fork = engine.fork_thread("owner".into(), request("after-inspect")).await.unwrap();
+    let Some(areal_protocol::Conversation::Fork { history_seed, .. }) = fork.conversation else { panic!("expected fork"); };
+    let (history, _) = engine.store.read_fork_snapshot_with_sources(&history_seed.snapshot_id).unwrap();
+    assert_eq!(history[0].status, TurnStatus::Failed);
+    assert!(matches!(&history[0].items[1], Item::DynamicToolCall { execution, .. }
+        if execution.hooks[0].outcome == areal_protocol::ToolOutcome::Unknown
+            && execution.plugin.as_ref().unwrap().operations[0].outcome == areal_protocol::ToolOutcome::Unknown
+            && execution.inspection.is_some()));
+    let mut plugin_only = engine.read(&source.id, true).await.unwrap();
+    if let Item::DynamicToolCall { execution, .. } = &mut plugin_only.turns[0].items[1] {
+        execution.hooks[0].outcome = areal_protocol::ToolOutcome::Succeeded;
+        execution.inspection = None;
+    }
+    engine.persist(&plugin_only).await.unwrap();
+    engine.raw_cell(&source.id).await.unwrap().state.lock().await.thread = plugin_only;
+    assert!(matches!(engine.fork_thread("owner".into(), request("plugin-unchecked")).await,
+        Err(Error::Invalid(reason)) if reason == "HISTORY_UNRESOLVED"));
+    engine.acknowledge_tool(source.id.clone(), history[0].items[1].id().into(), "Checked original plugin operation".into()).await.unwrap();
+    let plugin_fork = engine.fork_thread("owner".into(), request("plugin-checked")).await.unwrap();
+    let Some(areal_protocol::Conversation::Fork { history_seed, .. }) = plugin_fork.conversation else { panic!("expected fork"); };
+    let (plugin_history, _) = engine.store.read_fork_snapshot_with_sources(&history_seed.snapshot_id).unwrap();
+    assert!(matches!(&plugin_history[0].items[1], Item::DynamicToolCall { execution, .. }
+        if execution.plugin.as_ref().unwrap().operations[0].outcome == areal_protocol::ToolOutcome::Unknown
+            && execution.inspection.is_some()));
+    engine.shutdown().await;
+}
+
+#[tokio::test]
 async fn fork_creation_faults_recover_only_committed_targets() {
     for (stage, committed) in [
         (store::ForkFault::BeforeSnapshot, false),

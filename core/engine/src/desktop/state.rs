@@ -22,8 +22,9 @@ impl Engine {
                     }
                 }
             }
-            if request.workspace_mode != "sharedCurrent" || request.anchor.boundary != "after" {
-                return Err(invalid("SCF-01 supports only after and sharedCurrent"));
+            if request.workspace_mode != "sharedCurrent"
+                || !matches!(request.anchor.boundary.as_str(), "before" | "after") {
+                return Err(invalid("boundary must be before or after; workspaceMode must be sharedCurrent"));
             }
             let source_cell = engine.raw_cell(&request.source_thread_id).await?;
             let source_state = source_cell.state.lock().await;
@@ -47,25 +48,38 @@ impl Engine {
             logical.extend(source.turns.iter().cloned());
             let anchor_index = logical.iter().position(|turn| turn.id == request.anchor.turn_id)
                 .ok_or_else(|| invalid("ANCHOR_NOT_FOUND"))?;
-            let last = &logical[anchor_index];
-            if last.status != TurnStatus::Completed { return Err(invalid("TURN_NOT_TERMINAL")); }
-            let prefix = &logical[..=anchor_index];
-            if prefix.iter().any(|turn| turn.status != TurnStatus::Completed) { return Err(invalid("HISTORY_UNRESOLVED")); }
+            let anchor = &logical[anchor_index];
+            if request.anchor.boundary == "after" && anchor.status == TurnStatus::InProgress {
+                return Err(invalid("TURN_NOT_TERMINAL"));
+            }
+            let end = anchor_index + usize::from(request.anchor.boundary == "after");
+            let prefix = &logical[..end];
+            if prefix.iter().any(|turn| turn.status == TurnStatus::InProgress) {
+                return Err(invalid("HISTORY_UNRESOLVED"));
+            }
             let mut turn_ids = std::collections::HashSet::new();
             let mut item_ids = std::collections::HashSet::new();
             if prefix.iter().any(|turn| !turn_ids.insert(turn.id.as_str())
                 || turn.items.iter().any(|item| !item_ids.insert(item.id()))) {
                 return Err(invalid("HISTORY_INTEGRITY"));
             }
-            if prefix.iter().flat_map(|t| &t.items).any(|item| !match item {
-                Item::UserMessage { content, .. } => content.iter().all(|i| matches!(i, Input::Text { .. })),
-                Item::AgentMessage { .. } => true,
+            // 前缀内每个工具及钩子都要结算；UNKNOWN 仅由来源人工检查解锁，历史结果不改写。
+            if prefix.iter().flat_map(|t| &t.items).any(|item| match item {
+                Item::DynamicToolCall { status, execution, .. } => {
+                    *status == areal_protocol::ToolStatus::InProgress
+                        || execution.outcome == areal_protocol::ToolOutcome::Running
+                        || execution.hooks.iter().any(|h| h.outcome == areal_protocol::ToolOutcome::Running)
+                        || execution.plugin.as_ref().is_some_and(|p| p.operations.iter().any(|o| o.outcome == areal_protocol::ToolOutcome::Running))
+                        || (execution.inspection.is_none() && (execution.outcome == areal_protocol::ToolOutcome::Unknown
+                            || execution.hooks.iter().any(|h| h.outcome == areal_protocol::ToolOutcome::Unknown)
+                            || execution.plugin.as_ref().is_some_and(|p| p.operations.iter().any(|o| o.outcome == areal_protocol::ToolOutcome::Unknown))))
+                }
                 _ => false,
             }) {
                 return Err(invalid("HISTORY_UNRESOLVED"));
             }
             // 历史锚点不能继承来源在后续轮次修改的配置。
-            let config = last.configuration.clone().unwrap_or_default();
+            let config = prefix.last().and_then(|turn| turn.configuration.clone()).unwrap_or_default();
             if config.profile.as_ref().is_some_and(|p| p.workflow.is_some()) { return Err(invalid("PROFILE_NOT_SUPPORTED")); }
             let model = engine.configured_model(&config).map_err(|_| invalid("MODEL_CONTEXT_INCOMPATIBLE"))?;
             if !model.capabilities().supports_input(areal_protocol::Modality::Text) { return Err(invalid("MODEL_CONTEXT_INCOMPATIBLE")); }
@@ -75,7 +89,7 @@ impl Engine {
                 else { engine.limits.max_history_bytes.min(64 * 1024 * 1024) };
             #[cfg(test)]
             engine.store.check_fork_fault(crate::store::ForkFault::BeforeSnapshot)?;
-            let (snapshot_id, logical_bytes) = engine.store.write_fork_snapshot(prefix.to_vec(), source_ids[..=anchor_index].to_vec(), snapshot_limit).await
+            let (snapshot_id, logical_bytes) = engine.store.write_fork_snapshot(prefix.to_vec(), source_ids[..end].to_vec(), snapshot_limit).await
                 .map_err(|e| Error::Storage(e.to_string()))?;
             #[cfg(test)]
             engine.store.check_fork_fault(crate::store::ForkFault::AfterSnapshot)?;
@@ -89,7 +103,7 @@ impl Engine {
                     origin: areal_protocol::ConversationOrigin {
                         source_thread_id: request.source_thread_id,
                         source_turn_id: request.anchor.turn_id,
-                        boundary: "after".into(),
+                        boundary: request.anchor.boundary,
                         snapshot_id: snapshot_id.clone(),
                     },
                     history_seed: areal_protocol::HistorySeed { snapshot_id, turn_count, item_count, logical_bytes },
