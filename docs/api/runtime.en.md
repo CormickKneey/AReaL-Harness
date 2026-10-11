@@ -20,6 +20,8 @@ Standard deployments expose capabilities.builtinTools.searchFiles with a trusted
 
 On macOS, embedded search and fs.execute share the system Python launch bridge, which runs the original sandbox command. process.start selects this bridge only when its first command argument exactly matches the deployment-configured absolute helper path; this does not expand Scope permissions or access to the helper's parent directory.
 
+If Runtime assembly fails, `connection.open` reports the original error after startup rollback, with `initializationFailed=true` and `cleanupConfirmed` in `error.details`. Only a failure with confirmed rollback and a normal process exit may be treated as unavailable isolation. `CLEANUP_FAILED`, EOF without a receipt, and abnormal exits do not authorize a safe fallback. This failure handshake waits at most four seconds and accepts no task requests. The Rust Client also marks initialization as clean when the operating system refuses process creation before any Runtime starts. Normal shutdown and UNKNOWN semantics remain unchanged.
+
 ## Methods
 
 | Method | params |

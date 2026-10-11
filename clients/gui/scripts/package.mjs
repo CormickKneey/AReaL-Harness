@@ -1,9 +1,10 @@
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { stageCoreApp } from "./stage-app.mjs";
 const gui = fileURLToPath(new URL("..", import.meta.url));
 const root = resolve(gui, "../..");
@@ -36,19 +37,19 @@ if (release) {
   }));
 }
 const bundle = join(output, "areal-core");
-execFileSync(
-  "python3",
-  [
-    join(root, "scripts/package.py"),
-    "--profile",
-    process.env.AREAL_CORE_PROFILE || (release ? "release" : "debug"),
-    "--output",
-    bundle,
-  ],
-  { cwd: root, stdio: "inherit" },
-);
+// 验收可固定已校验的 Core bundle，避免并行 Cargo 构建切换输入字节。
+if (process.env.AREAL_GUI_CORE_BUNDLE) {
+  await cp(resolve(process.env.AREAL_GUI_CORE_BUNDLE), bundle, { recursive: true, errorOnExist: true, force: false });
+} else {
+  execFileSync(
+    "python3",
+    [join(root, "scripts/package.py"), "--profile", process.env.AREAL_CORE_PROFILE || (release ? "release" : "debug"), "--output", bundle],
+    { cwd: root, stdio: "inherit" },
+  );
+}
 const { verifyCoreBundle } = require(join(gui, "app/src/core/bundle.cjs"));
-verifyCoreBundle(output, { hashes: true });
+const coreBundle = verifyCoreBundle(output, { hashes: true });
+if (release) assert.equal(coreBundle.manifest.profile, "release", "GUI release requires a release Core bundle");
 const iconset = join(staged, "app.iconset");
 await mkdir(iconset);
 for (const size of [16, 32, 128, 256, 512]) {
@@ -116,6 +117,11 @@ await writeFile(
       app,
       archive,
       dependencies,
+      builder: {
+        node: process.version,
+        executable: process.execPath,
+        sha256: createHash("sha256").update(await readFile(process.execPath)).digest("hex"),
+      },
       core: JSON.parse(await readFile(join(bundle, "manifest.json"), "utf8")),
       signing: "Ad-hoc staging only; run sign:mac for Developer ID signing and app/DMG notarization before installation acceptance",
     },

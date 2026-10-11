@@ -79,6 +79,7 @@ jobs:
         env:
           NO_PROXY: 127.0.0.1,localhost
           CARGO_TEST_ARGS: --exclude areal-runtime-exec-native
+          AREAL_UNIFIED_EVIDENCE_DIR: target/ci/unified
         run: make "${{ matrix.target }}" 2>&1 | tee "target/ci/${{ matrix.log }}.log"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()
@@ -166,6 +167,23 @@ jobs:
             --entrypoint python3 areal-ci:runtime scripts/native-tools-smoke.py \
             --bin-dir /usr/local/bin --sandbox-profile outer-container-perf \
             2>&1 | tee target/ci/native-tools.log
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Prepare locked unified smoke dependencies
+        run: npm ci --ignore-scripts
+      - name: Verify unified delegation inside the supported container
+        run: |
+          mkdir -p target/ci/unified
+          docker run --rm --network none \
+            --security-opt seccomp=unconfined --security-opt systempaths=unconfined \
+            --security-opt apparmor=unconfined \
+            --mount "type=bind,source=$PWD,target=/repo,readonly" -w /repo \
+            --mount "type=bind,source=$PWD/target/ci/unified,target=/evidence" \
+            -e AREAL_UNIFIED_BIN_DIR=/usr/local/bin -e AREAL_UNIFIED_EVIDENCE_DIR=/evidence \
+            --entrypoint node areal-ci:runtime scripts/unified-execution-smoke.mjs \
+            2>&1 | tee target/ci/unified.log
       - name: Verify root-only container ownership cases
         run: >-
           docker run --rm --network none --entrypoint python3

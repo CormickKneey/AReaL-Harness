@@ -11,6 +11,74 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 struct NoExecution;
+
+#[tokio::test]
+async fn initialization_failure_preserves_cleanup_evidence_through_client_handshake() {
+    for (code, cleaned) in [
+        (ErrorCode::Unavailable, true),
+        (ErrorCode::CleanupFailed, false),
+    ] {
+        let (client, server) = tokio::io::duplex(4096);
+        let (read, write) = tokio::io::split(server);
+        let service = tokio::spawn(areal_runtime::reject_startup(
+            read,
+            write,
+            Error::new(code, "native executor cannot initialize"),
+        ));
+        let (read, write) = tokio::io::split(client);
+        let error = match areal_runtime_client::Client::connect(read, write).await {
+            Ok(_) => panic!("failed initialization must not yield a Runtime client"),
+            Err(error) => error,
+        };
+        assert_eq!(error.code, code);
+        assert_eq!(
+            error.details.as_ref().unwrap()["initializationFailed"],
+            true
+        );
+        assert_eq!(error.details.as_ref().unwrap()["cleanupConfirmed"], cleaned);
+        let result = service.await.unwrap();
+        if cleaned {
+            result.unwrap();
+        } else {
+            assert_eq!(result.unwrap_err().code, ErrorCode::CleanupFailed);
+        }
+    }
+}
+
+#[tokio::test]
+async fn failed_initialization_never_acknowledges_a_non_handshake_request() {
+    let (client, server) = tokio::io::duplex(4096);
+    let (read, write) = tokio::io::split(server);
+    let service = tokio::spawn(areal_runtime::reject_startup(
+        read,
+        write,
+        Error::new(ErrorCode::Unavailable, "sandbox unavailable"),
+    ));
+    let (read, mut write) = tokio::io::split(client);
+    write
+        .write_all(
+            format!(
+                "{}\n",
+                json!({"id":1,"method":"process.start","params":{"protocolVersion":VERSION}})
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        service.await.unwrap().unwrap_err().code,
+        ErrorCode::InvalidRequest
+    );
+    assert!(
+        BufReader::new(read)
+            .lines()
+            .next_line()
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
 #[async_trait]
 impl Backend for NoExecution {
     async fn start(&self, _: Execution) -> Result<mpsc::Receiver<Event>> {

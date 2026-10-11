@@ -2,6 +2,8 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { createWriteStream } from "node:fs";
+import { finished } from "node:stream/promises";
 import { createServer } from "node:http";
 import { mkdtemp, mkdir, readFile, writeFile, rm, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -9,6 +11,13 @@ import { join, resolve } from "node:path";
 import { connect } from "../examples/desktop-api/client.mjs";
 
 const root = await mkdtemp(join(tmpdir(), "areal-unified-execution-"));
+const evidence = process.env.AREAL_UNIFIED_EVIDENCE_DIR
+  ? resolve(process.env.AREAL_UNIFIED_EVIDENCE_DIR)
+  : root;
+await mkdir(evidence, { recursive: true });
+const diagnosticPath = join(evidence, "core-runtime.stderr.log");
+const diagnosticLog = createWriteStream(diagnosticPath);
+let failed = false;
 const workspace = join(root, "workspace");
 const data = join(root, "data");
 await mkdir(workspace);
@@ -175,7 +184,7 @@ async function start() {
       "--config",
       join(root, "config.toml"),
       "--bin-dir",
-      resolve("target/debug"),
+      resolve(process.env.AREAL_UNIFIED_BIN_DIR ?? "target/debug"),
       "--listen",
       "127.0.0.1:0",
       "--data-dir",
@@ -206,7 +215,10 @@ async function start() {
   const exited = once(child, "exit");
   child.stdout.resume();
   let diagnostic = "";
-  child.stderr.on("data", (chunk) => (diagnostic = (diagnostic + chunk).slice(-32768)));
+  child.stderr.on("data", (chunk) => {
+    diagnosticLog.write(chunk);
+    diagnostic = (diagnostic + chunk).slice(-32768);
+  });
   server = { child, exited, diagnostic: () => diagnostic };
   let endpoint;
   for (let attempt = 0; attempt < 300; attempt++) {
@@ -330,6 +342,8 @@ try {
     "PASS restart preserves execution identity and durable delivery receipts without replay",
   );
 } catch (error) {
+  failed = true;
+  console.error(`Full Core/Runtime diagnostics: ${diagnosticPath}`);
   console.error(modelFailure?.stack ?? error.stack);
   console.error(server?.diagnostic().slice(-3000) ?? "");
   throw error;
@@ -344,5 +358,7 @@ try {
   }
   model.closeAllConnections();
   await new Promise((resolve) => model.close(resolve));
-  await rm(root, { recursive: true, force: true });
+  diagnosticLog.end();
+  await finished(diagnosticLog);
+  if (!failed) await rm(root, { recursive: true, force: true });
 }

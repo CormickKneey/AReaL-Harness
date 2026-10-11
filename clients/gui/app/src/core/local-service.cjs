@@ -1,23 +1,21 @@
 'use strict';
 
-const { execFile } = require('node:child_process');
+const { executeCore } = require('./core-process.cjs');
 const { readFile, realpath } = require('node:fs/promises');
 const { isAbsolute, resolve } = require('node:path');
 
 // 可信桌面适配器只调用公共 CLI；不持有或终止 Core/Runtime 子进程。
-function request(backend, args, environment = backend.hooks.environment()) {
-  return new Promise((resolveResult, reject) => {
-    execFile(backend.binary, ['service', ...args, '--json'], {
+async function request(backend, args, environment = backend.hooks.environment()) {
+  let stdout;
+  try {
+    ({ stdout } = await executeCore(backend.binary, ['service', ...args, '--json'], {
       env: environment, timeout: args[0] === 'status' ? 10_000 : 120_000, maxBuffer: 2 * 1024 * 1024, windowsHide: true,
-    }, (error, stdout, stderr) => {
-      if (error) {
-        reject(new Error(`Core 服务请求失败：${backend.providers.redact(stderr || error.message).slice(0, 2048)}`));
-        return;
-      }
-      try { resolveResult(JSON.parse(stdout)); }
-      catch { reject(new Error('Core 返回了无效的本地服务描述')); }
-    });
-  });
+    }));
+  } catch (error) {
+    throw new Error(`Core 服务请求失败：${backend.providers.redact(error.stderr || error.message).slice(0, 2048)}`);
+  }
+  try { return JSON.parse(stdout); }
+  catch { throw new Error('Core 返回了无效的本地服务描述'); }
 }
 
 async function connectService(backend, operation, args, environment, project, dataDir) {

@@ -4,7 +4,7 @@ use areal_engine::{
     tools::RuntimeConfig,
     workgroup::{
         self, Check, Executor,
-        service::{Factory, Policy, Service},
+        service::{AvailabilityError, Factory, Policy, Service},
         tree::{self, File, Tree},
     },
 };
@@ -65,12 +65,20 @@ impl Model for ModelFixture {
     }
 }
 struct WorkerFixture {
+    probes: AtomicUsize,
+    availability: std::sync::Mutex<Result<(), AvailabilityError>>,
     attempts: AtomicUsize,
     checks: AtomicUsize,
     max_model_rounds: AtomicUsize,
 }
 struct FactoryFixture(Arc<WorkerFixture>);
+#[async_trait]
 impl Factory for FactoryFixture {
+    async fn probe_availability(&self, _: &Path) -> Result<(), AvailabilityError> {
+        self.0.probes.fetch_add(1, Ordering::SeqCst);
+        self.0.availability.lock().unwrap().clone()
+    }
+
     fn executor(&self, _: &Path, _: &Policy) -> anyhow::Result<Arc<dyn Executor>> {
         Ok(self.0.clone())
     }
@@ -174,6 +182,8 @@ impl Fixture {
             release: Semaphore::new(0),
         });
         let worker = Arc::new(WorkerFixture {
+            probes: AtomicUsize::new(0),
+            availability: std::sync::Mutex::new(Ok(())),
             attempts: AtomicUsize::new(0),
             checks: AtomicUsize::new(0),
             max_model_rounds: AtomicUsize::new(0),
@@ -371,6 +381,152 @@ async fn environment_bound_modifications_use_a_shared_exclusive_writer() {
     assert!(!child.turns[0].configuration.as_ref().unwrap().read_only);
     assert_eq!(fixture.worker.attempts.load(Ordering::SeqCst), 0);
     fixture.close().await;
+}
+
+#[tokio::test]
+async fn unavailable_native_isolation_falls_back_before_worker_creation_and_is_cached() {
+    let fixture = Fixture::open(Some(false)).await;
+    *fixture.worker.availability.lock().unwrap() = Err(AvailabilityError::Unavailable(
+        "fixture: user namespaces denied".into(),
+    ));
+    for key in ["first", "second"] {
+        let mut request = fixture.request(key, "modify", "changes");
+        request.independent = true;
+        request.writes = vec!["result.txt".into()];
+        let first = fixture.engine.delegate(request.clone()).await.unwrap();
+        assert_eq!(first["strategy"], "sharedExclusive");
+        assert!(
+            first["reason"]
+                .as_str()
+                .unwrap()
+                .contains("user namespaces denied")
+        );
+        let second = fixture.engine.delegate(request).await.unwrap();
+        assert_eq!(first["executionId"], second["executionId"]);
+        assert_eq!(fixture.wait(&first).await["status"], "completed");
+    }
+    assert_eq!(fixture.worker.probes.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.worker.attempts.load(Ordering::SeqCst), 0);
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn unavailable_native_isolation_rejects_required_guarantees_before_recording_work() {
+    let fixture = Fixture::open(Some(true)).await;
+    *fixture.worker.availability.lock().unwrap() = Err(AvailabilityError::Unavailable(
+        "fixture: native sandbox missing".into(),
+    ));
+    for (key, delivery, trusted) in [("patch", "patch", false), ("trusted", "changes", true)] {
+        let mut request = fixture.request(key, "modify", delivery);
+        request.require_trusted_checks = trusted;
+        request.writes = vec!["result.txt".into()];
+        let error = fixture
+            .engine
+            .delegate(request)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("required execution guarantee unavailable"),
+            "{error}"
+        );
+    }
+    assert!(
+        fixture
+            .engine
+            .execution_list(&fixture.parent, 0, 50)
+            .await
+            .unwrap()["data"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(fixture.worker.probes.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.worker.attempts.load(Ordering::SeqCst), 0);
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn probe_cleanup_unknown_never_falls_back_or_creates_a_worker() {
+    let fixture = Fixture::open(Some(false)).await;
+    *fixture.worker.availability.lock().unwrap() = Err(AvailabilityError::CleanupUnknown(
+        "fixture: close acknowledgement lost".into(),
+    ));
+    for key in ["first", "second"] {
+        let mut request = fixture.request(key, "modify", "changes");
+        request.independent = true;
+        request.writes = vec!["result.txt".into()];
+        let error = fixture
+            .engine
+            .delegate(request)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("probe did not settle") && error.contains("UNKNOWN"),
+            "{error}"
+        );
+    }
+    assert!(
+        fixture
+            .engine
+            .execution_list(&fixture.parent, 0, 50)
+            .await
+            .unwrap()["data"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(fixture.worker.probes.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.worker.attempts.load(Ordering::SeqCst), 0);
+    fixture.close().await;
+}
+
+struct BlockingProbeFactory {
+    started: Semaphore,
+    release: Semaphore,
+    finished: AtomicBool,
+}
+#[async_trait]
+impl Factory for BlockingProbeFactory {
+    async fn probe_availability(&self, _: &Path) -> Result<(), AvailabilityError> {
+        self.started.add_permits(1);
+        self.release.acquire().await.unwrap().forget();
+        self.finished.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+    fn executor(&self, _: &Path, _: &Policy) -> anyhow::Result<Arc<dyn Executor>> {
+        anyhow::bail!("capability probe must not create an executor")
+    }
+}
+
+#[tokio::test]
+async fn cancelled_probe_waiter_preserves_owned_cleanup_and_service_shutdown_waits() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = root.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    let factory = Arc::new(BlockingProbeFactory {
+        started: Semaphore::new(0),
+        release: Semaphore::new(0),
+        finished: AtomicBool::new(false),
+    });
+    let service =
+        Service::open_automatic(&root.path().join("service"), &workspace, factory.clone(), 1)
+            .unwrap();
+    let pending = service.clone();
+    let waiter = tokio::spawn(async move { pending.probe_availability().await });
+    factory.started.acquire().await.unwrap().forget();
+    waiter.abort();
+    assert!(waiter.await.unwrap_err().is_cancelled());
+    let shutdown = service.shutdown();
+    tokio::pin!(shutdown);
+    assert!(futures_util::poll!(shutdown.as_mut()).is_pending());
+    assert!(!factory.finished.load(Ordering::SeqCst));
+    factory.release.add_permits(1);
+    tokio::time::timeout(Duration::from_secs(5), shutdown)
+        .await
+        .unwrap();
+    assert!(factory.finished.load(Ordering::SeqCst));
 }
 
 #[tokio::test]

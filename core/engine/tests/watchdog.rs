@@ -282,6 +282,60 @@ async fn watchdog_disable_preserves_finite_recovery_and_semantic_errors_still_fa
 }
 
 #[tokio::test]
+async fn recovery_notifications_match_public_desktop_contract() {
+    let data = tempfile::tempdir().unwrap();
+    let engine = Engine::open(
+        data.path(),
+        flaky(vec![Fault::Error(ModelFailure::Transport)], false),
+        Limits::default(),
+    )
+    .unwrap();
+    let thread = engine.create("/workspace".into()).await.unwrap();
+    let mut events = engine.subscribe(&thread.id).await.unwrap();
+    engine
+        .start(
+            &thread.id,
+            vec![Input::text("Recover from a network failure")],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        settled(&engine, &thread.id).await.turns[0].status,
+        TurnStatus::Completed
+    );
+    let contract: Value =
+        serde_json::from_str(include_str!("../../../schemas/areal-core-v1.json")).unwrap();
+    let mut observed = std::collections::BTreeSet::new();
+    while let Ok(event) = events.try_recv() {
+        let method = event["method"].as_str().unwrap();
+        if !matches!(
+            method,
+            "areal/model/watchdogRetry" | "areal/model/completionDiscarded"
+        ) {
+            continue;
+        }
+        assert!(
+            areal_protocol::desktop::NOTIFICATIONS.contains(&method),
+            "unadvertised notification: {method}"
+        );
+        let schema = &contract["notifications"][method];
+        assert!(schema.is_object(), "missing public schema: {method}");
+        let validator = jsonschema::validator_for(schema).unwrap();
+        assert!(
+            validator.is_valid(&event["params"]),
+            "event violates public schema: {event}"
+        );
+        observed.insert(method.to_owned());
+    }
+    assert_eq!(
+        observed.len(),
+        2,
+        "both real recovery events must be validated"
+    );
+    engine.shutdown().await;
+}
+
+#[tokio::test]
 async fn cancellation_and_steer_interrupt_watchdog_backoff() {
     for action in ["cancel", "steer"] {
         let data = tempfile::tempdir().unwrap();

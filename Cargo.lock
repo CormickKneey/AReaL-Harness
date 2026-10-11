@@ -270,6 +270,7 @@ name = "areal-runtime"
 version = "0.1.4"
 dependencies = [
  "anyhow",
+ "areal-runtime-client",
  "areal-runtime-exec-native",
  "areal-runtime-protocol",
  "areal-runtime-supervisor",

@@ -1,5 +1,6 @@
 //! TUI、CLI 与可信 Desktop Main 共用的本地服务入口。
 mod client;
+pub mod native_process;
 mod spec;
 pub mod storage;
 

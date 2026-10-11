@@ -6,7 +6,7 @@ The complete desktop client contains a React renderer, Electron native adapter, 
 
 ## Development
 
-Run from the repository root with Node.js 22.19+, pnpm 11.7.0 and the repository Rust toolchain:
+Run from the repository root with Node.js 22.19+, pnpm 11.7.0 and the repository Rust toolchain. Use the same Node.js 22 LTS version as CI for both packaging and validation:
 
 ```sh
 make build
@@ -48,7 +48,9 @@ Child-agent creation records in the conversation and entries in the resource lis
 
 ## Lifecycle
 
-The renderer accesses the desktop adapter through narrow preload IPC. The independent adapter connects through `areal service ensure/restart/stop --json`, without managing Core PIDs. GUI exit disconnects the interface and settles GUI-owned terminals; Core Turn/Goal and configured scheduled tasks continue. Reopening restores authoritative snapshots without replaying submissions. Stopping the background service is explicit; safe stop rejects busy instances.
+On macOS, the desktop adapter retains system `/usr/bin/python3` as the parent of trusted Core commands, matching Runtime’s native launch approach. Arguments, environment, and standard streams are preserved. Timeouts, cancellation, and forced termination target the actual Core child; adapter or bridge exit cleans up its still-running direct child. This path never replays writes or terminates persistent services already established by Core. `pnpm --dir clients/gui run test:core-process` verifies signal exits, timeout escalation, cancellation, output limits, and process cleanup.
+
+The renderer accesses the desktop adapter through narrow preload IPC. The independent adapter connects through `areal service ensure/restart/stop --json`, without managing persistent Core service PIDs. GUI exit disconnects the interface and settles GUI-owned terminals; Core Turn/Goal and configured scheduled tasks continue. Reopening restores authoritative snapshots without replaying submissions. Stopping the background service is explicit; safe stop rejects busy instances.
 
 When a Core observation connection closes unexpectedly, its project owner retries with backoff from 500ms to 30s, discovers a compatible running instance through `service status --instance`, and restores Thread/Task snapshots, subscriptions and notification baselines. `thread/resume` also restores tool-host binding. Recovery does not submit tasks again, synchronize Provider/MCP configuration or execute configuration revision barriers. Retired connections lose permission to update projections through messages or asynchronous results. Explicit stop, adapter shutdown, a stopping Core or an incompatible deployment fingerprint blocks automatic recovery; reconnection requires an explicit action.
 
@@ -71,6 +73,8 @@ pnpm --dir clients/gui run sign:mac --app "/absolute/new-package/package/mac-arm
 ```
 
 `gui-package` only stages a macOS arm64 candidate, defaulting to the already-built debug Core; installation packages use release Core as shown above. Candidate outputs include an `.app`, ad-hoc ZIP, dependency inventory and Core integrity manifest, and do not establish package acceptance. `sign:mac` uses an independent copy for Developer ID signing, app/DMG Apple notarization, stapling, Gatekeeper, and general desktop plus model-selection acceptance. Deliver its final ZIP/DMG after those checks pass. Use fresh output directories and bind the bundled Core revision to the final fix commit. Candidates have no automatic-update configuration; signing and notarization do not publish. See the [release guide](../../docs/development/releasing.en.md#gui-releases) for production publication and the update channel.
+
+When staging a candidate package, `AREAL_GUI_CORE_BUNDLE=/absolute/core-bundle` can reuse a frozen Core bundle. Packaging still verifies embedded component hashes, and releases require a `release` Core. This setting only selects packaging input.
 
 `make gui-smoke` runs real Electron/Core/Runtime against a deterministic local HTTP model with native sandboxing enabled. The project picker is injected with an isolated temporary workspace. Local model requests connect directly over loopback, preserving and merging existing `NO_PROXY` / `no_proxy` entries. Screenshots and `manifest.json` remain in the printed temporary directory; the manifest records Core binary checksums before and after the run and any failure reason. Set `AREAL_GUI_EXECUTABLE` to the absolute installed app executable for package testing; that mode uses bundled Core instead of an external binary. Real account login, paid models, other operating systems, and signed distribution require separate acceptance.
 

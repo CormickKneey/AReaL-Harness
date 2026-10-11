@@ -99,7 +99,7 @@ Responses 摘要通过可选 `reasoning_summary` / `reasoningSummary` 显式开�
 
 `Limits.watchdog_disable` 默认 false，Core 对已分类的网络故障无限次重试当前模型请求，包含传输错误、HTTP 408/429/5xx、提前断流、请求/流空闲超时与明确的 SSE 限流/不可用；不把长度、空回复、鉴权、额度或参数错误当成网络故障。启动配置与关闭方式见[配置指南](../guides/configuration.md)。主 Agent、子 Agent 与独立 Workgroup Engine 继承宿主开关；嵌入式调用方显式传入 Limits，Engine 不读取进程环境。Rust `Limits`、`NativeFactory` 和 `NativeExecutor` 新增 `watchdog_disable` 字段，显式结构体初始化需同步更新；`Limits::default()` 与 `NativeExecutor::new()` 默认启用。
 
-watchdog 保留同一请求的 messages、tools、采样参数与模型轮次，不消耗 `max_completion_retries`；重试不会再次预留 Agent 逻辑请求额度，Workgroup 仍计入每次实际请求及部署预算。250 ms 指数退避封顶 30 秒，释放失败流持有的共享模型许可后等待；取消与显式任务预算仍能结束等待，求解请求还响应 steer。Core 审计并丢弃失败响应的文本、上下文与未执行工具调用，恢复该响应占用的输出字节额度，保留此前已执行工具和已观测 usage。发布 `areal/model/completionDiscarded`（新增 `retryKind=network|completion`）及 `areal/model/watchdogRetry {threadId,turnId,purpose:solve|summary,retry,delayMs}`。这里的丢弃不回滚已执行工具，也不重启整个 Turn。
+watchdog 保留同一请求的 messages、tools、采样参数与模型轮次，不消耗 `max_completion_retries`；重试不会再次预留 Agent 逻辑请求额度，Workgroup 仍计入每次实际请求及部署预算。250 ms 指数退避封顶 30 秒，释放失败流持有的共享模型许可后等待；取消与显式任务预算仍能结束等待，求解请求还响应 steer。Core 审计并丢弃失败响应的文本、上下文与未执行工具调用，恢复该响应占用的输出字节额度，保留此前已执行工具和已观测 usage。发布 `areal/model/completionDiscarded`（新增 `retryKind=network|completion`）及 `areal/model/watchdogRetry {threadId,turnId,purpose:solve|summary,retry,delayMs}`。这里的丢弃不回滚已执行工具，也不重启整个 Turn。 这两个事件也包含在 `areal/capabilities.notifications` 与公开 JSON Schema 中；摘要重试的 `turnId` 可为 null。
 
 SSE 错误 `server_is_overloaded` 和 `service_unavailable_error` 保留为可重试的过载/暂不可用分类；鉴权、额度等明确永久错误仍优先禁止重试。分类只决定网络 watchdog 的候选范围，不绕过 Goal 的未知消费检查。
 
@@ -228,6 +228,8 @@ list/read/wait/artifact 需要 observe，delegate/cancel/apply 需要 interact�
 状态 revision 与计划 planRevision 分开。修改只影响未启动任务或追加节点，保留原检查与授权。owner/requestId 相同参数返回原组，不同参数冲突。模型只能控制本 Turn 的组。等待上限 60 秒，不阻塞同连接取消；16 在途中保留 4 个控制额度。仅已通过且清理确认的制品可读取。
 
 Rust 接口见 [Engine](../../core/engine/src/lib.rs)、[并发原语](../../core/engine/src/concurrency.rs)和 [Workgroup](../../core/engine/src/workgroup/mod.rs)。宿主拥有 Runtime、MCP Connections、PluginHost 和 Service 生命周期；先等待 Engine shutdown，再关闭宿主资源，不以 Drop 代替异步清理。Service 的父 Engine 与 Factory 应共享 SharedModel pool。
+
+`Factory::probe_availability` 为自定义执行器提供默认成功实现以保持兼容；`NativeFactory` 覆盖该方法并核验真实 Runtime 初始化与关闭。统一委派在创建执行记录前调用服务缓存的探针：已确认不可用时可改选共享执行，`AvailabilityError::CleanupUnknown` 必须拒绝，不得降级或重放。见[执行方式选择](../design/multi-agent.md#执行方式选择)。
 
 Rust 启动器调用 `areal_config::skills::discover(workspace, homedir)` 获得 `SkillDiscovery { skills, warnings }`，须展示逐 Skill 告警；每个条目包含 id/revision/root/metadata。Engine 的 `SkillLocation` 可接收可选 metadata，省略时复用文件头解析器；新增字段会影响 Rust 结构体字面量调用方，原部署 JSON 可继续省略。正文和附件不进入启动目录缓存，详情见[桌面 Skill 契约](desktop.md#skills)。
 

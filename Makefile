@@ -96,13 +96,12 @@ verify-runtime: ## 顺序运行 Runtime 行为测试和真实 sandbox 验收
 	$(MAKE) test-runtime
 	$(MAKE) runtime-smoke
 
-verify: ## 常规验收：格式、静态检查、Rust/SDK/Python 测试与 TUI/统一委派冒烟
+verify: ## 常规验收：格式、静态检查、Rust/SDK/Python 测试与 TUI 冒烟
 	$(MAKE) cordis-pin
 	$(MAKE) -j2 fmt-check sdk-test script-test
 	$(MAKE) lint
 	$(MAKE) test
 	$(MAKE) smoke
-	$(MAKE) unified-execution-smoke
 
 sdk-build: ## 编译两套 TypeScript SDK
 	npm --prefix runtime/sdk-typescript run build

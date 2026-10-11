@@ -21,6 +21,8 @@ Shared and isolated execution preserve different capabilities without another mo
 
 An ordinary independent modification can select a shared exclusive writer before starting when isolation is unavailable. A started execution does not silently switch strategies after failure. Shared write exclusion covers actual tool side effects so the coordinator and children cannot simultaneously change code under verification. A declared isolated write set assigns responsibility; it does not expand host authorization. Read-only restrictions, denied tools, Profiles, Runtime limits, and root budgets remain effective.
 
+Before admitting isolated work, the native executor starts a read-only Runtime in a separate empty directory and confirms shutdown to check the actual native sandbox prerequisites. Each service caches confirmed availability or unavailability. Ordinary modifications may choose shared execution only after the probe explicitly confirms startup rollback without retained resources. UNKNOWN probe cleanup rejects delegation rather than falling back; cancelling a waiter does not abandon the probe’s own cleanup.
+
 Execution, verification, and delivery are separate projections. Automatic isolation without deployment checks can produce a candidate but must report checks as not run; model summaries and empty checks cannot claim trusted verification. `changes` delivers into the original workspace within authorization, while `patch` retains a candidate. Core preflights every target baseline and journals application; conflicts, partial application, and unknown outcomes are not successful delivery. See [Core API](../api/core.en.md#agent-tools).
 
 ## Ownership and settlement

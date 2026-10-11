@@ -205,7 +205,7 @@ class SharedCoreBackend {
     if (this.disposed) throw new Error('GUI 连接已关闭');
     // Explain a known binary incompatibility through this connection attempt's
     // error channel; never expose shared or stale service log contents to GUI.
-    inspectCoreCapabilities(this.options.binary);
+    await inspectCoreCapabilities(this.options.binary);
     const log = await open(join(this.home, 'service.log'), 'a', 0o600);
     const env = { ...process.env, AREAL_BACKEND: 'areal', AREAL_CORE_HOME: this.home };
     delete env.ELECTRON_RUN_AS_NODE;

@@ -14,6 +14,8 @@ UTF-8 JSONL 请求 `{id,method,params}`，响应回显 id 和 result/error，诊
 
 握手返回 protocolVersion、connectionId、runtimeEpoch、rootScopeId、capabilities，版本必须精确匹配。初始化前其他方法 UNAUTHENTICATED。帧最多 128 KiB，规范载荷通常 64 KiB；fs.execute/process.write 编码后最多 124 KiB。
 
+Runtime 装配失败时，完成启动回滚后通过 `connection.open` 返回原始错误，`error.details` 包含 `initializationFailed=true` 和 `cleanupConfirmed`。仅明确确认回滚且进程正常退出的失败可视为隔离不可用；`CLEANUP_FAILED`、无回执 EOF 或异常退出不能用于安全降级。该失败握手最多等待 4 秒，不接受任务请求。Rust Client 在系统拒绝创建进程、尚未启动 Runtime 时也返回已确认无资源的初始化失败；普通运行中的关闭与 UNKNOWN 语义不变。
+
 capabilities 描述实际 sandbox、fullAccess、rootNetwork、方法和 processLimits；不授予新权限。coreHostIsolated/processTreeCleanupVerified/directoryObjectIsolation/sandboxDenialAttribution 为 false。旧 Runtime 缺少 rootNetwork 时 Core 保守视为无网络。
 
 标准部署的 capabilities.builtinTools.searchFiles 返回可信文件助手路径。Runtime 文件助手直接链接 ripgrep 搜索库，不读取宿主 rg 配置。Core 的 search_files 在现有 Runtime Scope 内调用该助手；旧外部 Runtime 未提供该能力时返回 UNSUPPORTED 并要求升级。

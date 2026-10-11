@@ -1913,6 +1913,77 @@
       ],
       "type": "object"
     },
+    "areal/model/completionDiscarded": {
+      "additionalProperties": true,
+      "properties": {
+        "itemIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "retry": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "retryKind": {
+          "enum": [
+            "network",
+            "completion"
+          ]
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "itemIds",
+        "retry",
+        "retryKind",
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "areal/model/watchdogRetry": {
+      "additionalProperties": true,
+      "properties": {
+        "delayMs": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "purpose": {
+          "enum": [
+            "solve",
+            "summary"
+          ]
+        },
+        "retry": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "delayMs",
+        "purpose",
+        "retry",
+        "threadId",
+        "turnId"
+      ],
+      "type": "object"
+    },
     "areal/plan/updated": {
       "additionalProperties": true,
       "properties": {

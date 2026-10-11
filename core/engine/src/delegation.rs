@@ -351,6 +351,7 @@ impl Engine {
                 let root = service.workspace().to_owned();
                 // 文件表示能力是硬约束；复制失败不能变成运行中静默降级。
                 tokio::task::spawn_blocking(move || workgroup::tree::snapshot(&root)).await??;
+                service.probe_availability().await?;
                 Ok(())
             }
             .await;
@@ -358,6 +359,16 @@ impl Engine {
                 Ok(()) => {
                     isolated = true;
                     reason="independent source changes or candidate delivery require an isolated workspace".into();
+                }
+                Err(error)
+                    if matches!(
+                        error.downcast_ref::<workgroup::service::AvailabilityError>(),
+                        Some(workgroup::service::AvailabilityError::CleanupUnknown(_))
+                    ) =>
+                {
+                    return Err(invalid(format!(
+                        "isolated capability probe did not settle: {error}"
+                    )));
                 }
                 Err(error) if required => {
                     return Err(invalid(format!(

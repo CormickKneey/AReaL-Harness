@@ -122,7 +122,8 @@ async fn ensure_inner(
             "could not configure service log append mode"
         );
     }
-    let mut command = tokio::process::Command::new(spec.bin_dir.join("areal"));
+    let mut command =
+        crate::native_process::TrustedCommand::persistent(&spec.bin_dir.join("areal"))?;
     command.arg("service-host");
     command
         .current_dir(&spec.launch_cwd)
@@ -130,16 +131,8 @@ async fn ensure_inner(
         .stdout(Stdio::null())
         .stderr(log)
         .kill_on_drop(false);
-    // setsid 使后台服务不再属于首个终端的会话和前台进程组。
-    unsafe {
-        command.pre_exec(|| {
-            if libc::setsid() < 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
-    let mut child = command.spawn().context("start service host")?;
+    let mut child = command.spawn().await.context("start service host")?;
+    drop(command);
     let mut input = child.stdin.take().unwrap();
     input.write_all(&serde_json::to_vec(spec)?).await?;
     input.shutdown().await?;

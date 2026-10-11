@@ -179,8 +179,11 @@ async fn main() -> Result<()> {
         signal.cancel();
     });
     let result: Result<()> = async {
-        let runtime = RuntimeHost::launch_with_profile(config, args.sandbox_profile.into()).await?;
-        areal_runtime::serve(read, write, runtime, stop).await?;
+        match RuntimeHost::launch_with_profile(config, args.sandbox_profile.into()).await {
+            Ok(runtime) => areal_runtime::serve(read, write, runtime, stop).await?,
+            // RuntimeHost 已等待启动回滚；失败握手明确区分已清理与清理未知。
+            Err(error) => areal_runtime::reject_startup(read, write, error).await?,
+        }
         Ok(())
     }
     .await;

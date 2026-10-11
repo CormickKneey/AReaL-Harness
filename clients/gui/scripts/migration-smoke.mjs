@@ -783,6 +783,11 @@ try {
           .digest("hex"),
         diffSha256: createHash("sha256").update(diff).digest("hex"),
         binary,
+        controller: {
+          node: process.version,
+          executable: process.execPath,
+          sha256: createHash("sha256").update(await readFile(process.execPath)).digest("hex"),
+        },
         platform: process.platform,
         arch: process.arch,
         runtime: "real Electron + real Rust Core/Runtime + deterministic local HTTP/SSE model",

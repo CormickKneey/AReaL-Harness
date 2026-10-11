@@ -42,10 +42,12 @@ Binary-only changes automatically restart an idle shared service, so manual rest
 | Rust / SDK / scripts | `make test` / `make sdk-test` / `make script-test` |
 | Regular regression | `make verify` |
 | Native integration | `make verify-harness`, including regular regression |
-| Unified delegation integration | `make unified-execution-smoke`: real Runtime candidate composition, delivery receipts, parent ownership, cancellation, and recovery; included in `make verify` and `make harness-smoke` |
+| Unified delegation integration | `make unified-execution-smoke`: real Runtime candidate composition, delivery receipts, parent ownership, cancellation, and recovery; included in `make harness-smoke` / `make verify-native`; Linux CI runs it in the supported container with Bubblewrap user namespaces, while `make verify` remains portable |
 | CI native delta | `make verify-native`, native backend and Harness integration smoke only |
 | Capacity | `make capacity`, run separately |
 | Documentation only | `python3 scripts/check-docs.py`; also compare commands with implementation |
+
+The unified delegation smoke defaults to `target/debug`; set `AREAL_UNIFIED_BIN_DIR` to the complete installed bundle’s `bin` directory and `AREAL_UNIFIED_EVIDENCE_DIR` to retain full Core/Runtime stderr. Independent workers always use the native sandbox. Linux requires working Bubblewrap user/mount/PID namespaces; workers do not inherit the parent launcher’s full-access mode.
 
 See [testing](testing.en.md) for coverage. Pass arguments with `make tui ARGS='--prompt hello'`. `make release` writes to `target/release`; `make docs` generates Rust API documentation.
 

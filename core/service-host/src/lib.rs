@@ -1,5 +1,6 @@
 //! 每个部署实例一个宿主；UI 进程退出不影响服务，停止须先完成 Core 结算。
 use anyhow::{Context, Result, bail, ensure};
+use areal_local_service::native_process::{TrustedChild as Child, TrustedCommand};
 use areal_local_service::{LaunchSpec, probe, rpc, storage};
 use areal_protocol::service::{Identity, Request, Response, Service, State, VERSION};
 use fs2::FileExt;
@@ -8,7 +9,6 @@ use std::{os::fd::AsRawFd, path::PathBuf, process::Stdio, sync::Arc, time::Durat
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     net::{UnixListener, UnixStream},
-    process::Child,
     sync::Mutex,
     time::{Instant, timeout},
 };
@@ -54,7 +54,8 @@ pub async fn run() -> Result<()> {
     storage::write(&info, &identity)?;
     let ready = run.join("ready.json");
     let log_file = directory.join("host.log");
-    let mut command = tokio::process::Command::new(spec.bin_dir.join("areal"));
+    let lease_fd = ownership.as_raw_fd();
+    let mut command = TrustedCommand::supervised(&spec.bin_dir.join("areal"), &[lease_fd])?;
     command
         .arg("launcher")
         .arg("--lease-fd")
@@ -63,8 +64,6 @@ pub async fn run() -> Result<()> {
         .arg(&spec.bin_dir)
         .args(spec.args.launcher_args())
         .arg("--desktop")
-        .arg("--parent-pid")
-        .arg(std::process::id().to_string())
         .arg("--ready-metadata-file")
         .arg(&ready)
         .arg("--service-info")
@@ -76,18 +75,12 @@ pub async fn run() -> Result<()> {
         .kill_on_drop(false);
     // launcher 共同持有实例锁：宿主被强杀后，在旧 Core/Runtime 清理完之前仍禁止替代启动。
     // Rust launcher 保留此锁并在启动 Core/Runtime 前恢复 close-on-exec。
-    let lease_fd = ownership.as_raw_fd();
-    unsafe {
-        command.pre_exec(move || {
-            if libc::fcntl(lease_fd, libc::F_SETFD, 0) < 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
+    command.parent_pid_arg();
     let mut child = command
         .spawn()
+        .await
         .context("start trusted Core/Runtime launcher")?;
+    drop(command);
     let shutdown = CancellationToken::new();
     let signal_stop = shutdown.clone();
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;

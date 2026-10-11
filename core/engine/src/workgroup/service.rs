@@ -4,7 +4,7 @@ use super::*;
 use futures_util::FutureExt;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-use tokio::sync::{Mutex, Semaphore};
+use tokio::sync::{Mutex, Semaphore, watch};
 use tokio_util::task::TaskTracker;
 
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
@@ -81,8 +81,22 @@ pub struct Start {
     pub admission: Admission,
 }
 
+/// 探针失败只有确认没有遗留 Runtime 资源时才允许创建前改选共享执行。
+#[derive(Clone, Debug, thiserror::Error)]
+pub enum AvailabilityError {
+    #[error("native isolation unavailable: {0}")]
+    Unavailable(String),
+    #[error("native isolation probe cleanup UNKNOWN: {0}")]
+    CleanupUnknown(String),
+}
+
 /// Instantiated by the trusted server, never by an agent-provided command.
+#[async_trait]
 pub trait Factory: Send + Sync + 'static {
+    /// 自定义执行器保留原准入；原生工厂必须覆盖并核验实际隔离环境。
+    async fn probe_availability(&self, _root: &Path) -> std::result::Result<(), AvailabilityError> {
+        Ok(())
+    }
     fn executor(&self, root: &Path, policy: &Policy) -> Result<Arc<dyn Executor>>;
     /// 自定义工厂必须显式接入目标预算，禁止默默绕过计量。
     fn executor_for_goal(
@@ -109,7 +123,12 @@ pub struct NativeFactory {
     pub file_helper: PathBuf,
     pub toolchain: Option<PathBuf>,
 }
+#[async_trait]
 impl Factory for NativeFactory {
+    async fn probe_availability(&self, root: &Path) -> std::result::Result<(), AvailabilityError> {
+        native::probe_availability(&self.runtime, &self.file_helper, root).await
+    }
+
     fn executor(&self, root: &Path, policy: &Policy) -> Result<Arc<dyn Executor>> {
         self.executor_for_goal(root, policy, None)
     }
@@ -232,6 +251,8 @@ pub struct Service {
     policy: Policy,
     strict: bool,
     factory: Arc<dyn Factory>,
+    availability:
+        std::sync::OnceLock<watch::Receiver<Option<std::result::Result<(), AvailabilityError>>>>,
     entries: Mutex<BTreeMap<String, Entry>>,
     // Serializes creation/retry deduplication only, never execution or waits.
     admission: Mutex<()>,
@@ -341,11 +362,54 @@ impl Service {
             policy,
             strict,
             factory,
+            availability: std::sync::OnceLock::new(),
             entries: Mutex::new(entries),
             admission: Mutex::new(()),
             tasks: TaskTracker::new(),
             stop: CancellationToken::new(),
         }))
+    }
+
+    pub async fn probe_availability(
+        self: &Arc<Self>,
+    ) -> std::result::Result<(), AvailabilityError> {
+        let admission = self.admission.lock().await;
+        if self.stop.is_cancelled() {
+            return Err(AvailabilityError::CleanupUnknown(
+                "service is stopping".into(),
+            ));
+        }
+        let mut received = self
+            .availability
+            .get_or_init(|| {
+                let (sent, received) = watch::channel(None);
+                let service = self.clone();
+                // 探针拥有独立的清理寿命；取消一个等待者不会丢掉私有 Runtime。
+                self.tasks.spawn(async move {
+                    let result = std::panic::AssertUnwindSafe(
+                        service.factory.probe_availability(&service.root),
+                    )
+                    .catch_unwind()
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(AvailabilityError::CleanupUnknown(
+                            "capability probe panicked".into(),
+                        ))
+                    });
+                    sent.send_replace(Some(result));
+                });
+                received
+            })
+            .clone();
+        drop(admission);
+        loop {
+            if let Some(result) = received.borrow().clone() {
+                return result;
+            }
+            received.changed().await.map_err(|_| {
+                AvailabilityError::CleanupUnknown("capability probe lost its result".into())
+            })?;
+        }
     }
 
     pub fn is_strict(&self) -> bool {

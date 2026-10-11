@@ -1,11 +1,9 @@
 'use strict';
-const { execFile } = require('node:child_process');
-const { promisify } = require('node:util');
+const { executeCore: execute } = require('./core-process.cjs');
 const { open, writeFile, rename, unlink } = require('node:fs/promises');
 const { constants } = require('node:fs');
 const { join, dirname } = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
-const execute = promisify(execFile);
 const hash = value => createHash('sha256').update(value).digest('hex');
 // Core owns parsing, validation and execution. Only the hooks field is exposed
 // over IPC; paths and other extension fields are selected by trusted config.

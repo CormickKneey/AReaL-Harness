@@ -636,6 +636,34 @@ impl ProgressModel {
     }
 }
 
+/// 仅启动无源码的只读 Runtime 并关闭；不创建 worker、调用模型或执行任务工具。
+pub(super) async fn probe_availability(
+    binary: &Path,
+    helper: &Path,
+    root: &Path,
+) -> std::result::Result<(), super::service::AvailabilityError> {
+    use super::service::AvailabilityError;
+    let workspace = tempfile::Builder::new()
+        .prefix("capability-")
+        .tempdir_in(root)
+        .map_err(|error| AvailabilityError::Unavailable(error.to_string()))?;
+    let client = Client::launch(binary, helper, workspace.path(), false)
+        .await
+        .map_err(|error| {
+            if error.details.as_ref().is_some_and(|details| {
+                details["initializationFailed"] == true && details["cleanupConfirmed"] == true
+            }) {
+                AvailabilityError::Unavailable(error.to_string())
+            } else {
+                AvailabilityError::CleanupUnknown(error.to_string())
+            }
+        })?;
+    client
+        .shutdown()
+        .await
+        .map_err(|error| AvailabilityError::CleanupUnknown(error.to_string()))
+}
+
 pub struct NativeExecutor {
     pub worker_limits: Limits,
     pub catalog: Option<std::sync::Weak<Engine>>,
@@ -1024,6 +1052,45 @@ pub async fn propose(
 mod progress_tests {
     use super::*;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn capability_probe_requires_an_explicit_startup_rollback_receipt() {
+        use super::super::service::AvailabilityError;
+        use std::os::unix::fs::PermissionsExt;
+        for (receipt, exit_code, available) in
+            [(true, 0, true), (false, 0, false), (true, 1, false)]
+        {
+            let root = tempfile::tempdir().unwrap();
+            let binary = root.path().join("runtime-fixture");
+            let storage = root.path().join("service");
+            std::fs::create_dir(&storage).unwrap();
+            let details = if receipt {
+                json!({"initializationFailed":true,"cleanupConfirmed":true})
+            } else {
+                json!({})
+            };
+            let error = json!({"code":"UNSUPPORTED","message":"fixture native sandbox unavailable","details":details});
+            let script = format!(
+                "#!/usr/bin/python3\nimport json,sys\nassert '--sandbox-profile' not in sys.argv and '--allow-write' not in sys.argv\nrequest=json.loads(sys.stdin.readline())\nassert request['method']=='connection.open'\nerror=json.loads({})\nprint(json.dumps({{'jsonrpc':'2.0','id':request['id'],'error':error}}),flush=True)\nsys.exit({exit_code})\n",
+                serde_json::to_string(&error.to_string()).unwrap()
+            );
+            std::fs::write(&binary, script).unwrap();
+            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+            let result = probe_availability(&binary, &binary, &storage).await;
+            assert_eq!(
+                matches!(result, Err(AvailabilityError::Unavailable(_))),
+                available,
+                "{result:?}"
+            );
+            if !available {
+                assert!(
+                    matches!(result, Err(AvailabilityError::CleanupUnknown(_))),
+                    "{result:?}"
+                );
+            }
+            assert_eq!(std::fs::read_dir(&storage).unwrap().count(), 0);
+        }
+    }
 
     #[test]
     fn source_checkpoint_requires_an_edit_and_consecutive_observed_unchanged_rounds() {

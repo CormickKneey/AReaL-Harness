@@ -48,7 +48,7 @@ Task Mode 由 `core/engine/src/task_mode` 管理 Task/TaskRun、定时触发、�
 
 [draw.io 源文件](diagrams/task-mode-mailbox-architecture.drawio) · [异步交互流程](diagrams/task-mode-mailbox-flow.svg) · [流程源文件](diagrams/task-mode-mailbox-flow.drawio)
 
-`clients/cli` 提供 Rust 命令入口 `areal`，分派到 TUI、非交互客户端、Core server 和服务宿主的库入口；Core 不依赖客户端。`core/service-host` 的 Rust launcher 持有独立 Core/Runtime 进程与私有生命周期管道，Linux 不依赖 Python；macOS 沿用 `/usr/bin/python3` 中转启动 Runtime，以满足本地可执行文件的 AMFI 启动约束。`scripts/launch.py` 保留用于开发脚本与独立评测入口。发行目录 `bin` 只含 `areal`，Runtime daemon/file helper 放在 `libexec/areal`，不并入客户端进程。命令契约见[客户端指南](../guides/clients.md)。
+`clients/cli` 提供 Rust 命令入口 `areal`，分派到 TUI、非交互客户端、Core server 和服务宿主的库入口；Core 不依赖客户端。`core/service-host` 的 Rust launcher 持有独立 Core/Runtime 进程与私有生命周期管道，Linux 不依赖 Python；macOS 的可信 service-host、launcher、Core 和 Runtime 由 `/usr/bin/python3` 作为实际父进程启动，以满足本地可执行文件的启动约束；`core/local-service/native_process` 只适配服务链的进程身份、显式描述符与生命周期，不参与 Runtime sandbox 或权限决策。`scripts/launch.py` 保留用于开发脚本与独立评测入口。发行目录 `bin` 只含 `areal`，Runtime daemon/file helper 放在 `libexec/areal`，不并入客户端进程。命令契约见[客户端指南](../guides/clients.md)。
 
 ## 状态与执行
 
