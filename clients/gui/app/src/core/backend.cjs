@@ -967,10 +967,9 @@ class CoreBackend {
           sourceThreadId: request.sourceThreadId, anchor: request.anchor, workspaceMode: 'sharedCurrent',
           ...(request.target ? { target: request.target } : {}),
         }, { requestId: request.requestId });
-        // The creation receipt is authoritative. A later projection failure
-        // must not turn this committed creation into an apparent retryable error.
+        // 创建收据已确认受理；后续投影失败不能把已提交的创建显示成可重试错误。
         try { await this.openThread(project, result.thread.id); await this.listThreads(project); }
-        catch { /* The caller can reopen the committed target by threadId. */ }
+        catch { /* 调用方仍可凭 threadId 打开已提交目标。 */ }
         return { threadId: result.thread.id, requestId: result.requestId };
       }
       case 'side': {
