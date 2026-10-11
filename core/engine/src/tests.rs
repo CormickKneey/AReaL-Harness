@@ -83,10 +83,10 @@ async fn fork_settled_failure_and_interruption_preserve_status() {
         vec![&TurnStatus::Failed, &TurnStatus::Interrupted]
     );
     let retained_source = engine.read(&source.id, true).await.unwrap();
-    for index in 0..2 {
+    for (index, turn) in history.iter().enumerate().take(2) {
         let expected = serde_json::to_value(source.turns[index].error.as_ref().unwrap()).unwrap();
         assert_eq!(
-            serde_json::to_value(history[index].error.as_ref().unwrap()).unwrap(),
+            serde_json::to_value(turn.error.as_ref().unwrap()).unwrap(),
             expected,
             "fork must preserve the terminal error message, outcome, and details"
         );

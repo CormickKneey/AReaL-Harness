@@ -451,7 +451,6 @@ try {
   assert.ok(Number.isInteger(sourceConfig?.revision) && sourceConfig.revision > 0,
     "source must have an actual Core configuration before retention check");
   assert.equal(requests.at(-1)?.body?.model, "fixture", "the running source request must use the configured fixture model");
-  const mainConfigBefore = JSON.stringify(sourceConfig);
   await page.getByTestId("chat-input").fill(mainDraftSentinel);
   await page.locator('.composer-dock input[type="file"]').setInputFiles({ name: "main-attachment.txt", mimeType: "text/plain", buffer: Buffer.from("keep this main attachment") });
   await page.getByTestId("composer-attachments").getByText("main-attachment.txt").waitFor();
@@ -481,6 +480,13 @@ try {
   await selectConversation(page, targetThreadId);
   assert.equal(await sideTrigger.count(), 0, "来源 A 的选区不能在切换后的 B 会话显示或提交");
   await selectConversation(page, sourceThreadId);
+  // 导航会补全默认模型的权威版本；在打开 Side 前固定完整配置基线。
+  const refreshedSource = await until(s => {
+    const configuration = s.projects[0]?.configurations?.[sourceThreadId];
+    return configuration?.model === null && typeof configuration.defaultModelRevision === "string"
+      && configuration.defaultModelRevision.length > 0;
+  }, "source default model configuration restored after navigation");
+  const mainConfigBefore = JSON.stringify(refreshedSource.projects[0].configurations[sourceThreadId]);
   await selectSideExcerpt();
   checks.push("AC55: switching the source Thread invalidates the prior Side selection owner");
   await sideTrigger.focus();
