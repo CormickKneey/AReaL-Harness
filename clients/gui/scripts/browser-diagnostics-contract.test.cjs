@@ -175,3 +175,35 @@ test('rejected terminal release clears a stale gesture without injecting into a 
     { type: 'mouseUp', x: -10, y: 400, button: 'left' }));
   assert.equal(preview.humanMouseGesture, null);
 });
+
+test('public search ignores empty unnamed file helpers but still refuses sensitive controls', async () => {
+  const preview = Object.create(CorePreview.prototype);
+  const control = (tagName, type, name, label, value = '') => ({ tagName, type, name, value, id: '', autocomplete: '',
+    getAttribute: key => key === 'aria-label' ? label : null, hasAttribute: () => false,
+    matches: () => false, closest: () => null });
+  const query = control('TEXTAREA', 'textarea', 'q', 'Search', 'AI Agent');
+  const uploadButton = control('BUTTON', 'button', '', 'Add files and tools');
+  const file = { ...control('INPUT', 'file', '', null), files: [] };
+  const form = { elements: [uploadButton, file, query], method: 'get', action: 'https://search.example/search',
+    getAttribute: key => key === 'role' ? 'search' : null };
+  query.form = form; uploadButton.form = form;
+  let element = query;
+  const c = { debugger: { sendCommand: async (method, params) => method === 'Page.getFrameTree' ? { frameTree: { frame: { id: 'main' } } }
+    : method === 'Page.createIsolatedWorld' ? { executionContextId: 7 }
+    : method === 'DOM.resolveNode' ? { object: { objectId: 'target' } }
+    : method === 'Runtime.callFunctionOn' ? { result: { value: require('node:vm').runInNewContext(
+      '(' + params.functionDeclaration + ')', { document: { characterSet: 'UTF-8' }, TextEncoder })
+      .apply(element, params.arguments.map(argument => argument.value)) } } : {} } };
+  const page = { networkPolicy: { canAuthorize: () => true } }, target = { backendNodeId: 1 };
+  const fill = { kind: 'fill', value: 'AI Agent' }, press = { kind: 'press', key: 'Enter' };
+  assert.equal((await preview.publicActionSemantics(page, c, target, fill)).kind, 'edit_field');
+  assert.equal((await preview.publicActionSemantics(page, c, target, press)).encodedQuery, 'q=AI+Agent');
+  file.files = [{}];
+  await assert.rejects(preview.publicActionSemantics(page, c, target, press), /human_takeover_required/);
+  file.files = []; file.name = 'attachment';
+  await assert.rejects(preview.publicActionSemantics(page, c, target, fill), /human_takeover_required/);
+  file.name = ''; form.elements.push(control('INPUT', 'password', 'password', 'Password'));
+  await assert.rejects(preview.publicActionSemantics(page, c, target, fill), /human_takeover_required/);
+  form.elements.pop(); element = uploadButton;
+  await assert.rejects(preview.publicActionSemantics(page, c, target, { kind: 'click' }), /human_takeover_required/);
+});

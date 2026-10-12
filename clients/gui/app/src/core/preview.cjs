@@ -1451,7 +1451,10 @@ class CorePreview {
           const search = !!form && (form.getAttribute('role') === 'search' || el.type === 'search'
             || Array.from(form.elements).some(item => /^(q|query|search|search_query)$/i.test(item.name)));
           const controls = form ? Array.from(form.elements) : [];
-          const privateForm = sensitive.test(tokens) || controls.some(item => sensitive.test([item.type, item.name, item.id, item.autocomplete, item.getAttribute('aria-label')].join(' ')));
+          // 空的无名文件辅助控件不参与表单提交；按钮文案不能把相邻搜索字段变成文件操作。
+          const privateForm = sensitive.test(tokens) || controls.some(item => item.type !== 'button'
+            && !(item.type === 'file' && !item.name && item.files?.length === 0)
+            && sensitive.test([item.type, item.name, item.id, item.autocomplete, item.getAttribute('aria-label')].join(' ')));
           const submits = kind === 'click' && /^(submit|image)$/.test(el.type) || kind === 'press' && key === 'Enter' && field;
           const submitter = kind === 'click' ? el : controls.find(item => /^(submit|image)$/.test(item.type));
           let submittedFields = null, query = null;
