@@ -656,6 +656,13 @@ class CorePreview {
       hostGeneration: this.hostGeneration, pageGeneration: page.pageGeneration, controlEpoch: page.controlEpoch };
     return this.claim(projectId, threadId, page.id);
   }
+  noteHumanInput(page) {
+    page.humanRevision = (page.humanRevision ?? 0) + 1;
+    page.claiming?.cancel();
+    // Human 阶段也撤销等待 Core 审批的潜在认领，防止审批迟到重新观察人工内容。
+    if (page.control === 'human') this.onRevoke?.({ projectId: page.projectId, threadId: page.threadId, pageId: page.id });
+    this.revoke(page);
+  }
   async humanKey(page, input) {
     const modifiers = ['shift', 'control', 'alt', 'meta'].filter(name => input[name]);
     const keyCode = input.key === ' ' ? 'Space' : input.key;
@@ -677,9 +684,7 @@ class CorePreview {
       || input.x < 0 || input.y < 0 || input.x >= bounds.width || input.y >= bounds.height))
       throw new Error('人工输入坐标已变化');
     // fence 必须在首个 await 之前完成，后续输入按同一代次串行交付。
-    page.humanRevision = (page.humanRevision ?? 0) + 1;
-    page.claiming?.cancel();
-    this.revoke(page);
+    this.noteHumanInput(page);
     const epoch = page.controlEpoch, generation = page.pageGeneration, document = page.documentGeneration;
     const deliver = async () => {
       if (page.control === 'transferring') await this.convergeInput(page);
@@ -2492,7 +2497,7 @@ class CorePreview {
         event.preventDefault();
         void this.humanKey(page, input).catch(() => {});
       } else if (page.control === 'transferring') event.preventDefault();
-      else if (page.control === 'human') { page.humanRevision = (page.humanRevision ?? 0) + 1; page.claiming?.cancel(); }
+      else if (page.control === 'human') this.noteHumanInput(page);
     });
     c.on('before-mouse-event', (event, mouse) => {
       if (!this.pageStillOwned(page)) { event.preventDefault(); return; }
@@ -2503,7 +2508,7 @@ class CorePreview {
         void this.humanInput(projectId, threadId, page.id, mouse).catch(() => {});
       } else if (page.control === 'transferring') event.preventDefault();
       else if (page.control === 'human' && ['mouseDown', 'mouseWheel'].includes(mouse.type)) {
-        page.humanRevision = (page.humanRevision ?? 0) + 1; page.claiming?.cancel();
+        this.noteHumanInput(page);
       }
     });
     c.on('focus', () => { if (this.pageStillOwned(page) && this.window.isFocused()) this.nativeInputOwner = page.id; });
