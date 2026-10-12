@@ -23,7 +23,7 @@ import {
   SettingsPluginIcon,
   SettingsUsageIcon,
 } from "./settings/settingsNavIcons.js";
-import { Cpu, Server, Smartphone, Inbox as InboxIcon } from "lucide-react";
+import { Cpu, Server, Smartphone } from "lucide-react"; // 恢复 Inbox 入口时加回 Inbox as InboxIcon
 import * as React from "react";
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { DismissIcon as X } from "./interfaceIcons.js";
@@ -1171,7 +1171,8 @@ function AppContent({ services }: { services: PlatformServices }) {
                   </DropdownMenu>;
   const applicationRail = <ApplicationRail activeId={settingsOpen ? "settings" : taskSurface ?? "home"} items={[
               { id: "home", label: "首页", icon: <Home active={!settingsOpen && !taskCenterOpen} />, onSelect: () => requestNavigation(() => { if (taskCenterOpen) recordWorkspaceLocation({ projectId: project?.id ?? "", threadId }); setTaskCenterOpen(false); updateSettingsOpen(false); }) },
-              { id: "inbox", label: "Inbox", icon: <InboxIcon />, onSelect: () => requestNavigation(() => { updateSettingsOpen(false); setTaskSurface("inbox"); if (matchMedia("(max-width: 640px)").matches) setSidebar(false); }) },
+              // 暂时隐藏 Inbox 入口（恢复时同时把 InboxIcon 加回 import）
+              // { id: "inbox", label: "Inbox", icon: <InboxIcon />, onSelect: () => requestNavigation(() => { updateSettingsOpen(false); setTaskSurface("inbox"); if (matchMedia("(max-width: 640px)").matches) setSidebar(false); }) },
               { id: "tasks", label: "执行任务", icon: <CalendarClock />, onSelect: () => requestNavigation(() => { updateSettingsOpen(false); setTaskScope(undefined); setTaskNotification(undefined); setTaskCenterOpen(true); if (matchMedia("(max-width: 640px)").matches) setSidebar(false); }) },
               { id: "plugins", label: "插件", icon: <SettingsPluginIcon />, onSelect: () => requestNavigation(() => { updateSettingsTab("插件"); setSettingsOpen(true); }) },
             ]} footer={<><UpdateIndicator services={services} /><Button variant="ghost" size="icon" className="application-rail-button" aria-label="设置" title="设置" aria-current={settingsOpen ? "page" : undefined} onClick={() => showPanel("设置")}><Settings /></Button></>} />;
