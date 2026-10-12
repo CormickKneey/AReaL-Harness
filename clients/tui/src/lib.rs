@@ -43,6 +43,11 @@ pub struct Args {
     /// 可信启动器提供的认证文件，不把 token 放入 URL。
     #[arg(long, requires = "endpoint")]
     auth_file: Option<std::path::PathBuf>,
+    /// 仅由 owned launcher 为其本地子 TUI 传递；普通远端连接不检查本地轨迹。
+    #[arg(long, hide = true, requires = "endpoint")]
+    local_trajectory_monitor: bool,
+    #[arg(long, hide = true, requires = "local_trajectory_monitor")]
+    local_trajectory_config: Option<std::path::PathBuf>,
     #[arg(skip)]
     shared_service: Option<areal_local_service::LaunchSpec>,
     #[command(flatten)]
@@ -71,9 +76,24 @@ pub struct Args {
 }
 
 impl Args {
-    /// 产品入口可检查本地部署状态；远程连接不读取宿主用户配置。
-    pub fn local_options(&self) -> Option<&areal_local_service::LocalArgs> {
-        self.endpoint.is_none().then_some(&self.local)
+    pub fn is_headless(&self) -> bool {
+        self.prompt.is_some() || self.goal.is_some() || self.input_file.is_some()
+    }
+
+    fn owns_local_service(&self) -> bool {
+        self.local_mode
+            .as_deref()
+            .map_or(self.is_headless(), |mode| mode == "owned")
+    }
+
+    /// 外层 owned 入口即将 exec；只有 launcher 派生的最终子 TUI 持有检测器。
+    pub fn trajectory_monitor_config(&self) -> Option<Option<std::path::PathBuf>> {
+        if self.endpoint.is_some() {
+            return self
+                .local_trajectory_monitor
+                .then(|| self.local_trajectory_config.clone());
+        }
+        (!self.owns_local_service()).then(|| self.local.config.clone())
     }
 }
 
@@ -95,7 +115,14 @@ impl Drop for TerminalGuard {
     }
 }
 
-pub async fn run(mut args: Args) -> Result<()> {
+pub async fn run(args: Args) -> Result<()> {
+    run_with_trajectory_notice(args, None).await
+}
+
+pub async fn run_with_trajectory_notice(
+    mut args: Args,
+    mut trajectory_notice: Option<tokio::sync::oneshot::Receiver<String>>,
+) -> Result<()> {
     let agent_profile = args
         .agent
         .as_deref()
@@ -118,12 +145,7 @@ pub async fn run(mut args: Args) -> Result<()> {
         None
     };
     if args.endpoint.is_none() {
-        let owned = args
-            .local_mode
-            .as_deref()
-            .map(|mode| mode == "owned")
-            .unwrap_or(args.prompt.is_some() || args.goal.is_some() || args.input_file.is_some());
-        if owned {
+        if args.owns_local_service() {
             return local::launch(&args);
         }
         let spec = areal_local_service::LaunchSpec::resolve(&args.local)?;
@@ -178,7 +200,14 @@ pub async fn run(mut args: Args) -> Result<()> {
     } else {
         execute!(std::io::stdout(), DisableMouseCapture)?;
     }
-    interactive(&mut client, &mut app, &mut terminal, &args).await
+    interactive(
+        &mut client,
+        &mut app,
+        &mut terminal,
+        &args,
+        &mut trajectory_notice,
+    )
+    .await
 }
 
 async fn interactive(
@@ -186,6 +215,7 @@ async fn interactive(
     app: &mut App,
     terminal: &mut ratatui::DefaultTerminal,
     args: &Args,
+    trajectory_notice: &mut Option<tokio::sync::oneshot::Receiver<String>>,
 ) -> Result<()> {
     let mut initial_prompt = args.initial_prompt.clone();
     let mut events = EventStream::new();
@@ -251,6 +281,10 @@ async fn interactive(
             app.disconnect(&e.to_string());
         }
         tokio::select! {
+            notice = async { trajectory_notice.as_mut().unwrap().await }, if trajectory_notice.is_some() => {
+                *trajectory_notice = None;
+                if let Ok(notice) = notice { app.set_trajectory_notice(notice); }
+            }
             result = async { updating.as_mut().unwrap().await }, if updating.is_some() => {
                 updating = None;
                 match result {

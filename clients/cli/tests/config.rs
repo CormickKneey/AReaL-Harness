@@ -155,7 +155,7 @@ fn trajectory_suspend_reads_under_config_writer_lock_without_mutating_the_file()
 }
 
 #[test]
-fn local_startup_warns_once_on_stderr_and_remote_exec_ignores_local_trajectory() {
+fn short_exec_keeps_json_clean_and_remote_ignores_local_trajectory() {
     let temp = tempfile::tempdir().unwrap();
     fs::write(temp.path().join("config.toml"), "schema_version=2\n[trajectory]\nenabled=true\nendpoint='https://user:private-token@example.com?token=private-query'\n").unwrap();
     let notice = "轨迹导出需要处理";
@@ -163,6 +163,8 @@ fn local_startup_warns_once_on_stderr_and_remote_exec_ignores_local_trajectory()
         vec![
             "exec",
             "hello",
+            "--output-format",
+            "json",
             "--workspace",
             "missing",
             "--config",
@@ -179,7 +181,13 @@ fn local_startup_warns_once_on_stderr_and_remote_exec_ignores_local_trajectory()
     ] {
         let out = invoke(temp.path(), &args, &[]);
         let stderr = String::from_utf8_lossy(&out.stderr);
-        assert_eq!(stderr.matches(notice).count(), 1, "{stderr}");
+        // 短请求可以先结束；不得为了等待通知延长请求。
+        assert!(stderr.matches(notice).count() <= 1, "{stderr}");
+        if args.first() == Some(&"exec") {
+            let result: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+            assert_eq!(result["type"], "result");
+            assert_eq!(result["is_error"], true);
+        }
         assert!(!String::from_utf8_lossy(&out.stdout).contains(notice));
         assert!(!stderr.contains("private-token"));
         assert!(!stderr.contains("private-query"));

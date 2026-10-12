@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import type { TrajectoryStatus } from "@areal/workbench/desktop-contract";
 import { Button } from "../components/ui/button.js";
 import type { Action } from "../services.js";
+import { useTrajectoryPolling } from "./useTrajectoryPolling.js";
 import {
     SettingsBadge,
     SettingsGroupCard,
@@ -30,6 +31,8 @@ const size = (bytes: number) =>
           : `${(bytes / 1024 ** 2).toFixed(1)} MiB`;
 const date = (value: number | null) =>
     value == null ? "暂无记录" : new Date(value).toLocaleString();
+const duration = (value: number | null | undefined) =>
+    value == null ? "未知" : `${value.toLocaleString(undefined, { maximumFractionDigits: 3 })} ms`;
 
 export function TrajectorySettings({
     action,
@@ -42,57 +45,49 @@ export function TrajectorySettings({
 }) {
     const [status, setStatus] = useState<TrajectoryStatus | null>(null);
     const [busy, setBusy] = useState<"status" | "retry" | null>(null);
+    const [working, setWorking] = useState(false);
     const [error, setError] = useState(""),
         [notice, setNotice] = useState(""),
         [checkedAt, setCheckedAt] = useState("");
-    const generation = useRef(0),
-        pending = useRef<{ ticket: number } | null>(null);
-    const run = useCallback(
-        async (operation: "status" | "retry") => {
-            if (!connected || pending.current?.ticket === generation.current) return;
-            const ticket = generation.current;
-            const request = { ticket };
-            pending.current = request;
-            setBusy(operation);
+    const lastStatus = useRef<TrajectoryStatus | null>(null);
+    const refresh = useTrajectoryPolling(action, {
+        connected,
+        intervalMs: 2500,
+        onResult(value, operation) {
+            lastStatus.current = value;
+            setStatus(value);
             setError("");
-            setNotice("");
-            try {
-                const value: TrajectoryStatus = await action("trajectory", { operation });
-                if (ticket !== generation.current) return;
-                setStatus(value);
-                setCheckedAt(new Date().toLocaleTimeString());
-                onStatus(value);
-                if (operation === "retry") setNotice("已请求重试，请刷新查看上传进度。");
-            } catch (cause) {
-                if (ticket === generation.current) {
-                    setError((cause as Error).message);
-                    onStatus(null);
-                }
-            } finally {
-                if (pending.current === request) pending.current = null;
-                if (ticket === generation.current) setBusy(null);
-            }
+            setCheckedAt(new Date().toLocaleTimeString());
+            onStatus(value);
+            if (operation === "retry") setNotice("已请求重试，上传进度将自动更新。");
         },
-        [action, connected, onStatus],
-    );
-    useEffect(() => {
-        setBusy(null);
-        void run("status");
-        return () => {
-            generation.current++;
-        };
-    }, [run]);
+        onError(cause) {
+            setError(cause instanceof Error ? cause.message : "无法读取轨迹上传状态。");
+            onStatus(null);
+        },
+        onBusy(operation) {
+            setWorking(operation !== null);
+            // 后台刷新保留上次结果和错误；仅首次加载或显式操作显示读取中。
+            if (!operation || operation === "retry" || !lastStatus.current) setBusy(operation);
+        },
+    });
+    const run = (operation: "status" | "retry") => {
+        if (refresh(operation)) {
+            setBusy(operation);
+            if (operation === "retry") setNotice("");
+        }
+    };
     const stale = !connected || !!error;
     return (
         <div className="settings-sections" aria-label="数据飞轮状态">
             <SettingsSection
                 title="轨迹上传"
-                description="轨迹由后台异步上传，上传进度与失败信息集中显示在此页。"
+                description="轨迹由后台异步上传；此页可见且连接正常时，每 2.5 秒自动更新状态。"
                 action={
                     <Button
                         size="sm"
                         variant="outline"
-                        disabled={!connected || !!busy}
+                        disabled={!connected || working}
                         onClick={() => void run("status")}
                     >
                         刷新上传状态
@@ -173,7 +168,7 @@ export function TrajectorySettings({
                                 variant="outline"
                                 disabled={
                                     !connected ||
-                                    !!busy ||
+                                    working ||
                                     !!error ||
                                     !status.enabled ||
                                     status.state === "invalid" ||
@@ -238,6 +233,33 @@ export function TrajectorySettings({
                         </SettingsGroupCard>
                     </SettingsSection>
                     <SettingsSection
+                        title="模型调用耗时"
+                        description={`最近 ${status.model_call_summary?.records_considered ?? status.records.length} 条记录中的模型调用耗时；含请求准备、网络、模型调用内排队和重试，非纯服务端推理时间。`}
+                    >
+                        {status.model_call_summary ? (
+                            <SettingsGroupCard>
+                                <SettingsRow
+                                    label="有耗时记录的模型调用"
+                                    control={<span>{status.model_call_summary.model_calls}</span>}
+                                    description="仅汇总最近最多 100 条上传记录，非完整历史；同一调用的上传重试不重复计入。缺失耗时保持未知。"
+                                />
+                                <SettingsRow
+                                    label="调用耗时总和 / 平均 / 最大"
+                                    control={null}
+                                    description={[
+                                        duration(status.model_call_summary.total_duration_ms),
+                                        duration(status.model_call_summary.mean_duration_ms),
+                                        duration(status.model_call_summary.max_duration_ms),
+                                    ].join(" / ")}
+                                />
+                            </SettingsGroupCard>
+                        ) : (
+                            <p className="settings-section-desc">
+                                当前 Core 未提供模型调用耗时汇总，耗时未知。
+                            </p>
+                        )}
+                    </SettingsSection>
+                    <SettingsSection
                         title="最近上传记录"
                         description="最多展示最近 100 条；事件发生、记录创建与上传成功时间分别显示。"
                     >
@@ -284,7 +306,14 @@ export function TrajectorySettings({
                                                     )}
                                                 {record.execution_duration_ms != null && (
                                                     <p>
-                                                        执行耗时 {record.execution_duration_ms} ms
+                                                        Agent 执行耗时（含工具/等待）{" "}
+                                                        {duration(record.execution_duration_ms)}
+                                                    </p>
+                                                )}
+                                                {record.model_call_duration_ms != null && (
+                                                    <p>
+                                                        模型调用耗时（含网络/重试）{" "}
+                                                        {duration(record.model_call_duration_ms)}
                                                     </p>
                                                 )}
                                                 <span>

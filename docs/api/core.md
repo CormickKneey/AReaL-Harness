@@ -338,6 +338,8 @@ Task Mode 在 Goal 之上提供 foreground/scheduled/background 任务、TaskRun
 | `gen_ai.tool.call.result` / `areal.tool.result.projected`            | 执行结果与 Core 处理后的结果投影；后续模型真正收到的观察以该次 `.request.body` 为准                                                                            |
 | `areal.tool.outcome`                                                 | `succeeded`、`failed`、`cancelled`、`unknown` 等执行结论，不能仅凭没有异常推断成功                                                                             |
 
+`areal.duration_ms` 按事件类型解释：模型事件记录从客户端准备请求到响应消费结束的逻辑调用耗时，包含网络、服务端排队和内部重试；工具事件记录工具执行耗时；Turn 终态记录完整 Agent 执行耗时。它们都不包含后台上传等待，且模型调用耗时不等于纯服务端推理时间。客户端状态中的模型耗时汇总范围见[配置指南](../guides/configuration.md#持久轨迹导出)。
+
 采集内容受共享预算约束，丢失时标记 `areal.capture.truncated`；完整 JSON 未展开只标记 `areal.capture.json_fallback`。接收端可保留不完整轨迹用于排障；文本 SFT 转换还需校验完整性、成功且被接受的请求、工具链、不可变来源摘要与独立质量验收。多模态外部 URI/本地文件不保证可重取，协议不包含 token logits，不能宣称支持精确多模态重放、soft-logit 蒸馏或 RL rollout。具体配置见[持久轨迹导出](../guides/configuration.md#持久轨迹导出)。
 
 工具执行记录新增可选 `originalArguments`，旧记录可继续读取。参数语义未被 hook 改写时，历史保留原始 JSON 字节。Responses `function_call` 原始 item 作为 `modelContext` 保存，匹配未改写调用时保留其 item ID 与原始字段；Chat 投影不发送 Responses 元数据。上下文压缩将请求快照和关联输出作为同一保留单元，压缩后重新建立缓存前缀。

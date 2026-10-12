@@ -278,6 +278,31 @@ pub fn status(config: &TrajectoryConfig) -> Result<Value> {
     } else {
         totals.last_error.clone()
     };
+    let recent = records.iter().rev().take(100).collect::<Vec<_>>();
+    let mut model_calls = 0usize;
+    let mut total_duration = Some(0.0_f64);
+    let mut maximum_duration = 0.0_f64;
+    // 与下方记录列表采用同一有限窗口，只读元数据；旧记录不扫描正文补值。
+    for duration in recent.iter().filter_map(|r| {
+        (r.event_name == "gen_ai.client.inference.operation.details")
+            .then_some(r.model_call_duration_ms)
+            .flatten()
+            .filter(|n| n.is_finite() && *n >= 0.0)
+    }) {
+        model_calls += 1;
+        total_duration = total_duration.and_then(|total| {
+            let sum = total + duration;
+            sum.is_finite().then_some(sum)
+        });
+        maximum_duration = maximum_duration.max(duration);
+    }
+    let total_duration = (model_calls > 0).then_some(total_duration).flatten();
+    let model_call_summary = json!({
+        "scope": "recent_records", "record_limit": 100, "records_considered": recent.len(),
+        "model_calls": model_calls, "total_duration_ms": total_duration,
+        "mean_duration_ms": total_duration.map(|total| total / model_calls as f64),
+        "max_duration_ms": (model_calls > 0).then_some(maximum_duration)
+    });
     Ok(json!({
         "enabled": config.enabled, "state": if conflict || mismatch {"degraded"} else if !config.enabled {"disabled"} else if invalid {"invalid"} else if error.is_some() || count("failed") > 0 {"degraded"} else {"ready"},
         "endpoint": config.diagnostic()["endpoint"], "spool_dir": root, "worker_running": running,
@@ -285,10 +310,12 @@ pub fn status(config: &TrajectoryConfig) -> Result<Value> {
             "uploaded":totals.uploaded,"evicted":totals.evicted,"bytes":bytes,"max_bytes":config.max_disk_bytes,
             "dropped_memory":totals.dropped_memory,"dropped_oversize":totals.dropped_oversize},
         "last_error":error,"last_success_at":totals.last_success_at,
-        "records":records.iter().rev().take(100).map(|r|json!({"id":r.id,"status":r.status,"created_at":r.created_at,
+        "records":recent.iter().map(|r|json!({"id":r.id,"status":r.status,"created_at":r.created_at,
             "uploaded_at":r.uploaded_at,"attempts":r.attempts,"next_attempt_at":r.next_attempt_at,
             "bytes":r.bytes,"error":r.error,"turn_id":r.turn_id,"event_name":r.event_name,"model_name":r.model_name,
-            "harness_version":r.harness_version,"occurred_at":r.occurred_at,"execution_duration_ms":r.execution_duration_ms})).collect::<Vec<_>>(),
+            "harness_version":r.harness_version,"occurred_at":r.occurred_at,"execution_duration_ms":r.execution_duration_ms,
+            "model_call_duration_ms":r.model_call_duration_ms})).collect::<Vec<_>>(),
+        "model_call_summary":model_call_summary,
         "limits":{"max_retries":config.max_retries,"upload_interval_ms":config.upload_interval_ms,"max_memory_bytes":config.max_memory_bytes}
     }))
 }

@@ -73,6 +73,52 @@ mod tests {
     use clap::Parser;
 
     #[test]
+    fn only_final_local_clients_monitor_trajectory() {
+        let shared = Args::try_parse_from(["areal", "--config", "chosen.toml"]).unwrap();
+        assert_eq!(
+            shared.trajectory_monitor_config(),
+            Some(Some("chosen.toml".into()))
+        );
+        for args in [
+            vec!["areal", "--local-mode", "owned"],
+            vec!["areal", "--prompt", "hello"],
+        ] {
+            assert!(
+                Args::try_parse_from(args)
+                    .unwrap()
+                    .trajectory_monitor_config()
+                    .is_none()
+            );
+        }
+        let remote = ["areal", "--endpoint", "ws://localhost:1234"];
+        assert!(
+            Args::try_parse_from(remote)
+                .unwrap()
+                .trajectory_monitor_config()
+                .is_none()
+        );
+        let owned = Args::try_parse_from(remote.into_iter().chain([
+            "--local-trajectory-monitor",
+            "--local-trajectory-config",
+            "/resolved/chosen.toml",
+        ]))
+        .unwrap();
+        assert_eq!(
+            owned.trajectory_monitor_config(),
+            Some(Some("/resolved/chosen.toml".into()))
+        );
+        assert!(Args::try_parse_from(["areal", "--local-trajectory-monitor"]).is_err());
+        assert!(
+            Args::try_parse_from(
+                remote
+                    .into_iter()
+                    .chain(["--local-trajectory-config", "/resolved/chosen.toml"])
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn default_is_local_and_remote_alias_is_explicit() {
         assert!(Args::try_parse_from(["areal"]).unwrap().endpoint.is_none());
         let args = Args::try_parse_from([

@@ -84,6 +84,7 @@ import { agentName } from "./AgentIdentity.js";
 import { WorkgroupsPane } from "./WorkgroupsPane.js";
 import { ServiceStatusSettings } from "./settings/ServiceStatusSettings.js";
 import { TrajectorySettings } from "./settings/TrajectorySettings.js";
+import { useTrajectoryPolling } from "./settings/useTrajectoryPolling.js";
 import type { TrajectoryStatus } from "@areal/workbench/desktop-contract";
 import { CoreCapabilitiesSettings } from "./settings/CoreCapabilitiesSettings.js";
 import { MobileSettings } from "./settings/MobileSettings.js";
@@ -197,8 +198,6 @@ function AppContent({ services }: { services: PlatformServices }) {
   const [snapshot, updateSnapshot] = useState<Snapshot>({ projects: [], connection: { state: "connecting" } });
   const [themeReady, setThemeReady] = useState(false);
   const [trajectoryAttention, setTrajectoryAttention] = useState(false);
-  const trajectoryChecked = React.useRef(false);
-  const trajectoryRevision = React.useRef(0);
   const [restoration, setRestoration] = useState<{ projectId: string; pending: boolean; failed: boolean }>();
   // 初始 IPC 读回可能晚于订阅事件；只接受本 GUI 连接中更新的投影。
   const setSnapshot = useCallback((next: Snapshot) => updateSnapshot(previous =>
@@ -405,20 +404,15 @@ function AppContent({ services }: { services: PlatformServices }) {
     [services],
   );
   const onTrajectoryStatus = useCallback((status: TrajectoryStatus | null) => {
-    trajectoryRevision.current++;
     setTrajectoryAttention(!status || status.state === "degraded" || status.state === "invalid");
   }, []);
-  useEffect(() => {
-    if (snapshot.connection?.state !== "ready" || trajectoryChecked.current) return;
-    trajectoryChecked.current = true;
-    const revision = trajectoryRevision.current;
-    // 首次连接只检查一次，错误留在设置页，避免与聊天错误提示混在一起。
-    void resourceAction("trajectory", { operation: "status" }).then(status => {
-      if (revision === trajectoryRevision.current) onTrajectoryStatus(status);
-    }).catch(() => {
-      if (revision === trajectoryRevision.current) onTrajectoryStatus(null);
-    });
-  }, [snapshot.connection?.state, resourceAction, onTrajectoryStatus]);
+  // 状态只更新设置入口，不阻塞启动、不反复弹窗，也不进入聊天错误栏。
+  useTrajectoryPolling(resourceAction, {
+    connected: snapshot.connection?.state === "ready",
+    intervalMs: 15000,
+    onResult: onTrajectoryStatus,
+    onError: () => onTrajectoryStatus(null),
+  });
   const readTurnReview = useCallback((turnId: string, itemId?: string) => resourceAction("workspace", {
     projectId: project?.id, threadId, turnId, itemId, operation: "turnReview",
   }), [resourceAction, project?.id, threadId]);

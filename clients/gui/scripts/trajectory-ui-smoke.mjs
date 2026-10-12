@@ -47,11 +47,35 @@ try {
       ? { executablePath: process.env.AREAL_GUI_TEST_BROWSER }
       : { channel: "chrome" }),
   });
-  const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
-  const settled = () =>
-    page.evaluate(
-      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
-    );
+  const page = await browser.newPage({
+    viewport: { width: 1280, height: 1000 },
+    serviceWorkers: "block",
+  });
+  // fixture 只服务本次随机 loopback 端口，意外外部资源不得连网。
+  await page.route("**/*", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.origin === `http://127.0.0.1:${server.address().port}`) {
+      await route.continue();
+      return;
+    }
+    errors.push("unexpected non-fixture network request");
+    await route.abort();
+  });
+  // 浏览器继续执行真实界面与 Promise，只将轮询时钟推进交给测试控制。
+  const clockStart = new Date("2026-10-12T08:00:00.000Z");
+  await page.clock.install({ time: clockStart });
+  await page.clock.pauseAt(clockStart);
+  const settled = () => page.clock.runFor(50);
+  const advance = async (milliseconds) => {
+    await page.clock.runFor(milliseconds);
+    await settled();
+  };
+  const trajectoryCalls = () =>
+    page.evaluate(() => window.calls.filter((call) => call.name === "trajectory").length);
+  const click = async (name) => {
+    await page.getByRole("button", { name, exact: true }).click({ force: true });
+    await settled();
+  };
   page.on("pageerror", (error) => errors.push(error.message));
   await page.addInitScript(() => {
     window.fixture = {
@@ -102,10 +126,49 @@ try {
           execution_duration_ms: 1200,
           occurred_at: 1720000000000,
         },
+        {
+          id: "batch-model-call",
+          status: "uploaded",
+          created_at: 1720000061000,
+          uploaded_at: 1720000120100,
+          attempts: 2,
+          next_attempt_at: null,
+          bytes: 64,
+          error: null,
+          event_name: "gen_ai.client.inference.operation.details",
+          model_call_duration_ms: 125.5,
+        },
       ],
+      model_call_summary: {
+        scope: "recent_records",
+        record_limit: 100,
+        records_considered: 3,
+        model_calls: 1,
+        total_duration_ms: 125.5,
+        mean_duration_ms: 125.5,
+        max_duration_ms: 125.5,
+      },
       limits: { max_retries: 5, upload_interval_ms: 1000, max_memory_bytes: 4194304 },
     };
     window.calls = [];
+    window.activeTrajectory = 0;
+    window.maxActiveTrajectory = 0;
+    window.toasts = [];
+    document.addEventListener("areal:toast", (event) => window.toasts.push(event.detail));
+    // headless 环境没有桌面最小化，显式派发浏览器可见性事件覆盖同一产品生命周期。
+    window.testVisibility = "visible";
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => window.testVisibility,
+    });
+    Object.defineProperty(document, "hidden", {
+      configurable: true,
+      get: () => window.testVisibility === "hidden",
+    });
+    window.setVisibility = (state) => {
+      window.testVisibility = state;
+      document.dispatchEvent(new Event("visibilitychange"));
+    };
     window.readError = new URL(location.href).searchParams.has("initialError");
     window.holdNext = new URL(location.href).searchParams.has("holdStartup");
     window.delayed = [];
@@ -128,35 +191,42 @@ try {
       command: async (name, params) => {
         window.calls.push({ name, params });
         if (name === "trajectory") {
-          if (window.holdNext) {
-            window.holdNext = false;
-            return new Promise((resolve) => window.delayed.push(resolve));
+          window.activeTrajectory++;
+          window.maxActiveTrajectory = Math.max(
+            window.maxActiveTrajectory,
+            window.activeTrajectory,
+          );
+          try {
+            if (window.holdNext) {
+              window.holdNext = false;
+              return await new Promise((resolve) => window.delayed.push(resolve));
+            }
+            if (window.readError) return { ok: false, error: { message: "FIXTURE_READ_FAILURE" } };
+            if (params.operation === "retry")
+              window.fixture = {
+                ...window.fixture,
+                state: "ready",
+                last_error: null,
+                queue: { ...window.fixture.queue, failed: 0, pending: 2 },
+              };
+            return { ok: true, value: structuredClone(window.fixture) };
+          } finally {
+            window.activeTrajectory--;
           }
-          if (window.readError) return { ok: false, error: { message: "FIXTURE_READ_FAILURE" } };
-          if (params.operation === "retry")
-            window.fixture = {
-              ...window.fixture,
-              state: "ready",
-              last_error: null,
-              queue: { ...window.fixture.queue, failed: 0, pending: 2 },
-            };
-          return { ok: true, value: window.fixture };
         }
         return { ok: true, value: { data: [], projects: [], pendingApply: false } };
       },
     };
   });
   await page.goto(`http://127.0.0.1:${server.address().port}/`);
+  await settled();
   await page.locator('[data-testid="areal-workbench"]').waitFor();
   await page.locator('[aria-label="数据飞轮需要检查"]').waitFor();
-  assert.equal(
-    await page.evaluate(() => window.calls.filter((call) => call.name === "trajectory").length),
-    1,
-  );
+  assert.equal(await trajectoryCalls(), 1);
   assert.equal(await page.locator(".error-banner").count(), 0);
-  checks.push("initial status is read once and warns only at settings");
-  await page.getByRole("button", { name: "设置", exact: true }).click();
-  await page.getByRole("button", { name: "数据飞轮 · 需要检查", exact: true }).click();
+  checks.push("initial background status warns only at settings");
+  await click("设置");
+  await click("数据飞轮 · 需要检查");
   await page.getByText("authentication_failed", { exact: true }).first().waitFor();
   assert.equal(
     await page.locator('.settings-navigation-item[aria-current="page"]').innerText(),
@@ -166,99 +236,109 @@ try {
     await page.getByRole("button", { name: "模型设置", exact: true }).getAttribute("aria-pressed"),
     "false",
   );
-  assert.equal(
-    await page.evaluate(() => window.calls.filter((call) => call.name === "trajectory").length),
-    2,
-  );
-  // 等导航背景过渡结束再截图，避免把旧项淡出的瞬间误认为选中状态。
+  assert.equal(await trajectoryCalls(), 2);
+  // 推进真实过渡动画后截图，避免旧导航的淡出背景造成误判。
   await page.mouse.move(800, 200);
-  await page.locator(".settings-category-navigation").evaluate(async (element) => {
-    await Promise.all(
-      element
-        .getAnimations({ subtree: true })
-        .map((animation) => animation.finished.catch(() => {})),
-    );
+  await advance(200);
+  await page.screenshot({
+    path: join(scratch, "settings.png"),
+    fullPage: true,
+    animations: "disabled",
   });
-  await page.screenshot({ path: join(scratch, "settings.png"), fullPage: true });
   await page.getByText("Turn turn-fixture", { exact: true }).scrollIntoViewIfNeeded();
   await page.getByText("模型 fixture-model · Harness 0.1.4", { exact: true }).waitFor();
   await page.getByText("事件 areal.turn.completed", { exact: true }).waitFor();
-  await page.getByText("执行耗时 1200 ms", { exact: true }).waitFor();
+  await page.getByText(/^Agent 执行耗时（含工具\/等待） 1,?200 ms$/).waitFor();
+  await page.getByText("模型调用耗时（含网络/重试） 125.5 ms", { exact: true }).waitFor();
+  await page.getByText("125.5 ms / 125.5 ms / 125.5 ms", { exact: true }).waitFor();
+  await page.getByText(/^最近 3 条记录中的模型调用耗时/).waitFor();
+  await page.getByText(/仅汇总最近最多 100 条上传记录，非完整历史/).waitFor();
   assert.equal(await page.getByText(/^事件发生 /).count(), 1);
-  assert.equal(await page.getByText(/^记录创建 /).count(), 2);
-  assert.equal(await page.getByText(/^上传成功 /).count(), 1);
+  assert.equal(await page.getByText(/^记录创建 /).count(), 3);
+  assert.equal(await page.getByText(/^上传成功 /).count(), 2);
   assert.equal(await page.getByText(/undefined|Invalid Date/).count(), 0);
-  await page.screenshot({ path: join(scratch, "records.png"), fullPage: true });
+  await page.screenshot({
+    path: join(scratch, "records.png"),
+    fullPage: true,
+    animations: "disabled",
+  });
   checks.push(
-    "navigation selection matches the page; optional metadata and legacy records show distinct times",
+    "navigation and metadata distinguish Agent/model durations and bounded summary from complete history",
   );
-  await page.getByRole("button", { name: "重试上传", exact: true }).click();
-  await page.getByText("已请求重试，请刷新查看上传进度。", { exact: true }).waitFor();
-  assert.equal(await page.locator('[aria-label="数据飞轮需要检查"]').count(), 0);
-  await page.evaluate(() => {
-    window.readError = true;
-  });
-  await page.getByRole("button", { name: "刷新上传状态", exact: true }).click();
-  await page
-    .getByRole("alert")
-    .getByText(/FIXTURE_READ_FAILURE/)
-    .waitFor();
-  assert.equal(
-    await page.getByRole("button", { name: "重试上传", exact: true }).isDisabled(),
-    true,
-  );
-  assert.equal(await page.locator(".error-banner").count(), 0);
-  await page.getByRole("button", { name: "返回应用", exact: true }).click();
-  assert.equal(await page.getByText("authentication_failed", { exact: true }).count(), 0);
-  checks.push("retry updates the settings badge; read failures and metadata never enter chat");
-  // 初次读取失败也必须在设置入口可发现；断线恢复不重复自动读取。
-  await page.goto(`http://127.0.0.1:${server.address().port}/?initialError=1`);
-  await page.locator('[aria-label="数据飞轮需要检查"]').waitFor();
-  await page.evaluate(() => window.setConnection("unavailable"));
-  await page.getByText("后台尚未连接", { exact: true }).waitFor();
-  await page.evaluate(() => window.setConnection("ready"));
-  await page.getByText("后台尚未连接", { exact: true }).waitFor({ state: "hidden" });
-  assert.equal(
-    await page.evaluate(() => window.calls.filter((call) => call.name === "trajectory").length),
-    1,
-  );
-  assert.equal(await page.locator(".error-banner").count(), 0);
-  checks.push("initial CLI failure warns once at settings and reconnect does not poll again");
 
-  // 设置页较新的失败必须使迟到的首次成功失效，避免隐藏真实异常。
-  await page.goto(`http://127.0.0.1:${server.address().port}/?holdStartup=1`);
-  await page.waitForFunction(() => window.delayed.length === 1);
+  // 旧 Core 缺失模型耗时字段时只显示未知，不能以零值补造统计。
   await page.evaluate(() => {
-    window.readError = true;
+    window.durationFixture = structuredClone(window.fixture);
+    delete window.fixture.model_call_summary;
+    for (const record of window.fixture.records) delete record.model_call_duration_ms;
   });
-  await page.getByRole("button", { name: "设置", exact: true }).click();
-  await page.getByRole("button", { name: "数据飞轮", exact: true }).click();
-  await page.getByRole("alert").getByText("FIXTURE_READ_FAILURE", { exact: true }).waitFor();
-  await page.evaluate(() =>
-    window.delayed.shift()({
-      ok: true,
-      value: { ...window.fixture, state: "ready", last_error: null },
-    }),
-  );
-  await settled();
-  await page.locator('[aria-label="数据飞轮需要检查"]').waitFor();
+  await advance(2600);
+  await page.getByText("当前 Core 未提供模型调用耗时汇总，耗时未知。", { exact: true }).waitFor();
+  assert.equal(await page.getByText(/^模型调用耗时（含网络\/重试） /).count(), 0);
+  assert.equal(await page.getByText("0 ms / 0 ms / 0 ms", { exact: true }).count(), 0);
+  checks.push("legacy missing model durations remain unknown instead of becoming zero");
+
+  // 修改桌面侧状态而不点击刷新，确认页内轮询实际更新队列与失败提示。
+  const beforeAutomatic = await trajectoryCalls();
   await page.evaluate(() => {
-    window.readError = false;
-    window.fixture = { ...window.fixture, state: "ready", last_error: null };
+    window.fixture = {
+      ...window.durationFixture,
+      state: "ready",
+      last_error: null,
+      queue: { ...window.fixture.queue, pending: 0, uploading: 0, failed: 0, uploaded: 5 },
+    };
   });
-  await page.getByRole("button", { name: "刷新上传状态", exact: true }).click();
+  await advance(2600);
   await page.getByText("就绪", { exact: true }).waitFor();
   assert.equal(await page.locator('[aria-label="数据飞轮需要检查"]').count(), 0);
-  checks.push(
-    "late startup success cannot clear a newer read failure; explicit recovery clears it",
-  );
+  assert.equal(await trajectoryCalls(), beforeAutomatic + 1);
+  await page.getByText("0 / 0 / 0", { exact: true }).waitFor();
+  checks.push("visible settings poll automatically after 2.5 seconds and recover the badge");
 
-  // 前一连接的重试在断线后失败，不能覆盖重新连接读回的状态。
+  // 未完成的读取跨过多个前台和后台周期时，全 GUI 仍只能有一个在途请求。
   await page.evaluate(() => {
     window.holdNext = true;
   });
-  await page.getByRole("button", { name: "重试上传", exact: true }).click();
+  await advance(2600);
   await page.waitForFunction(() => window.delayed.length === 1);
+  const heldCalls = await trajectoryCalls();
+  await advance(31000);
+  assert.equal(await trajectoryCalls(), heldCalls);
+  assert.equal(await page.evaluate(() => window.activeTrajectory), 1);
+  assert.equal(await page.evaluate(() => window.maxActiveTrajectory), 1);
+  checks.push("slow requests do not overlap or queue repeated foreground/background polls");
+
+  await page.evaluate(() => window.setVisibility("hidden"));
+  await settled();
+  await page.evaluate(() =>
+    window.delayed.shift()({
+      ok: true,
+      value: { ...window.fixture, state: "degraded", last_error: "HIDDEN_STALE_RESPONSE" },
+    }),
+  );
+  await advance(31000);
+  assert.equal(await trajectoryCalls(), heldCalls);
+  assert.equal(await page.getByText("HIDDEN_STALE_RESPONSE", { exact: true }).count(), 0);
+  assert.equal(await page.locator('[aria-label="数据飞轮需要检查"]').count(), 0);
+  await page.evaluate(() => window.setVisibility("visible"));
+  await settled();
+  await page.getByText("就绪", { exact: true }).waitFor();
+  assert.equal(await trajectoryCalls(), heldCalls + 1);
+  checks.push(
+    "hidden windows stop polling and discard pending results; visibility resumes with one fresh read",
+  );
+
+  // 重试与自动读取共享在途锁；断线重连必须等待旧请求结束，再读新连接的状态。
+  await page.evaluate(() => {
+    window.fixture = { ...window.fixture, queue: { ...window.fixture.queue, pending: 1 } };
+  });
+  await advance(2600);
+  await page.evaluate(() => {
+    window.holdNext = true;
+  });
+  await click("重试上传");
+  await page.waitForFunction(() => window.delayed.length === 1);
+  const retryCalls = await trajectoryCalls();
   assert.equal(
     await page.getByRole("button", { name: "刷新上传状态", exact: true }).isDisabled(),
     true,
@@ -268,27 +348,28 @@ try {
     true,
   );
   await page.evaluate(() => window.setConnection("unavailable"));
+  await settled();
   await page
     .getByText("后台适配器未连接，请在“后台服务”中连接后读取状态。", { exact: true })
     .waitFor();
+  await advance(31000);
+  assert.equal(await trajectoryCalls(), retryCalls);
   await page.evaluate(() => window.setConnection("ready"));
-  await page
-    .getByRole("button", { name: "刷新上传状态", exact: true })
-    .waitFor({ state: "visible" });
-  await page.waitForFunction(
-    () =>
-      ![...document.querySelectorAll("button")].find(
-        (button) => button.textContent === "刷新上传状态",
-      )?.disabled,
-  );
+  await settled();
+  assert.equal(await trajectoryCalls(), retryCalls);
   await page.evaluate(() =>
     window.delayed.shift()({ ok: false, error: { message: "STALE_RETRY_FAILURE" } }),
   );
   await settled();
+  await page.getByText("就绪", { exact: true }).waitFor();
+  assert.equal(await trajectoryCalls(), retryCalls + 1);
   assert.equal(await page.getByRole("alert").count(), 0);
   assert.equal(await page.locator('[aria-label="数据飞轮需要检查"]').count(), 0);
-  await page.getByText("就绪", { exact: true }).waitFor();
-  checks.push("a late retry failure from a disconnected adapter cannot overwrite fresh status");
+  assert.equal(await page.evaluate(() => window.maxActiveTrajectory), 1);
+  checks.push(
+    "retry and reconnect remain serial; old connection failures cannot replace fresh status",
+  );
+
   for (const error of [
     "spool_configuration_conflict",
     "configuration_not_applied",
@@ -297,29 +378,107 @@ try {
     await page.evaluate((error) => {
       window.fixture = { ...window.fixture, state: "degraded", last_error: error };
     }, error);
-    await page.getByRole("button", { name: "刷新上传状态", exact: true }).click();
+    await advance(2600);
     await page.getByText(error, { exact: true }).waitFor();
     assert.equal(await page.locator('[aria-label="数据飞轮需要检查"]').count(), 1);
   }
-  checks.push(
-    "spool ownership and stopped worker failure categories remain visible without a state schema change",
-  );
-
-  await page.goto(`http://127.0.0.1:${server.address().port}/?holdStartup=1`);
-  await page.waitForFunction(() => window.delayed.length === 1);
-  await page.evaluate(() => {
-    window.fixture = { ...window.fixture, state: "ready", last_error: null };
-  });
-  await page.getByRole("button", { name: "设置", exact: true }).click();
-  await page.getByRole("button", { name: "数据飞轮", exact: true }).click();
+  checks.push("automatic reads retain safe failure categories");
+  await click("重试上传");
+  await page.getByText(/已请求重试/).waitFor();
   await page.getByText("就绪", { exact: true }).waitFor();
+  assert.equal(await page.locator('[aria-label="数据飞轮需要检查"]').count(), 0);
+  await page.evaluate(() => {
+    window.readError = true;
+  });
+  await advance(2600);
+  await page
+    .getByRole("alert")
+    .getByText(/FIXTURE_READ_FAILURE/)
+    .waitFor();
+  assert.equal(
+    await page.getByRole("button", { name: "重试上传", exact: true }).isDisabled(),
+    true,
+  );
+  assert.equal(await page.locator(".error-banner").count(), 0);
+  await page.evaluate(() => {
+    window.holdNext = true;
+  });
+  await advance(2600);
+  await page.waitForFunction(() => window.delayed.length === 1);
+  await page
+    .getByRole("alert")
+    .getByText(/FIXTURE_READ_FAILURE/)
+    .waitFor();
+  assert.equal(await page.getByText(/^记录创建 /).count(), 3);
+  await page.getByText("125.5 ms / 125.5 ms / 125.5 ms", { exact: true }).waitFor();
   await page.evaluate(() =>
-    window.delayed.shift()({ ok: false, error: { message: "STALE_INITIAL_FAILURE" } }),
+    window.delayed.shift()({ ok: false, error: { message: "FIXTURE_READ_FAILURE" } }),
   );
   await settled();
-  assert.equal(await page.locator('[aria-label="数据飞轮需要检查"]').count(), 0);
+  await page.evaluate(() => {
+    window.readError = false;
+  });
+  await advance(2600);
+  await page.getByText("就绪", { exact: true }).waitFor();
   assert.equal(await page.getByRole("alert").count(), 0);
-  checks.push("a late initial failure cannot overwrite a newer successful explicit read");
+  checks.push(
+    "failed polls retain records and the error during the next read, then recover without entering chat",
+  );
+
+  // 卸载专页后仅保留 App 的低频监控，不残留 2.5 秒定时器。
+  await click("返回应用");
+  const backgroundCalls = await trajectoryCalls();
+  await advance(3000);
+  assert.equal(await trajectoryCalls(), backgroundCalls);
+  await page.evaluate(() => {
+    window.readError = true;
+  });
+  await advance(15000);
+  await page.locator('[aria-label="数据飞轮需要检查"]').waitFor();
+  assert.equal(await trajectoryCalls(), backgroundCalls + 1);
+  assert.equal(await page.locator(".error-banner").count(), 0);
+  await page.evaluate(() => {
+    window.readError = false;
+  });
+  await advance(15000);
+  assert.equal(await page.locator('[aria-label="数据飞轮需要检查"]').count(), 0);
+  assert.equal(await trajectoryCalls(), backgroundCalls + 2);
+  checks.push(
+    "unmounted settings leave only 15-second monitoring; later failures and recovery update the badge",
+  );
+
+  await page.evaluate(() => window.setVisibility("hidden"));
+  await settled();
+  const hiddenBackground = await trajectoryCalls();
+  await advance(31000);
+  assert.equal(await trajectoryCalls(), hiddenBackground);
+  await page.evaluate(() => window.setVisibility("visible"));
+  await settled();
+  assert.equal(await trajectoryCalls(), hiddenBackground + 1);
+  assert.equal(await page.evaluate(() => window.maxActiveTrajectory), 1);
+  assert.equal(await page.locator(".error-banner").count(), 0);
+  assert.equal(await page.getByRole("alert").count(), 0);
+  assert.ok(await page.evaluate(() => window.toasts.length <= 1));
+  checks.push(
+    "background monitor pauses while hidden; repeated failures produce at most one proactive notice and no chat error",
+  );
+  await page.goto(`http://127.0.0.1:${server.address().port}/?initialError=1`);
+  await settled();
+  await page.locator('[aria-label="数据飞轮需要检查"]').waitFor();
+  assert.equal(await trajectoryCalls(), 1);
+  await advance(31000);
+  assert.equal(await trajectoryCalls(), 3);
+  assert.equal(await page.locator(".error-banner").count(), 0);
+  assert.ok(await page.evaluate(() => window.toasts.length <= 1));
+  await page.evaluate(() => {
+    window.readError = false;
+    window.fixture = { ...window.fixture, state: "ready", last_error: null };
+  });
+  await advance(15000);
+  assert.equal(await page.locator('[aria-label="数据飞轮需要检查"]').count(), 0);
+  checks.push(
+    "initial read failure remains visible without repeated proactive notices and recovers on later polls",
+  );
   assert.deepEqual(errors, []);
   passed = true;
 } finally {
@@ -332,8 +491,15 @@ try {
         passed,
         checks,
         errors,
+        timing: {
+          clock: "Playwright controlled browser timers",
+          foreground_interval_ms: 2500,
+          background_interval_ms: 15000,
+          pending_request_observation_ms: 31000,
+          visibility: "document visibility fixture and visibilitychange; not native minimization",
+        },
         scope:
-          "production renderer with isolated desktop service fixture; no Electron or Core integration",
+          "production renderer with isolated desktop service fixture; only owned loopback network; no Electron or Core integration",
       },
       null,
       2,

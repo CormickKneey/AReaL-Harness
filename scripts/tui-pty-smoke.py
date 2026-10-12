@@ -96,6 +96,17 @@ def expect(pattern, offset=0, raw=False, absent=False):
     )
 
 
+def expect_trajectory_notice():
+    if not os.environ.get("AREAL_PTY_EXPECT_TRAJECTORY"):
+        return
+    # 中文宽字符后有模拟器占位空格；核对当前画面，不靠历史输出证明仍可见。
+    pattern = " ?".join("轨迹导出需要处理").encode()
+    expect(pattern)
+    rows = screen.text().splitlines()
+    assert re.search(pattern, rows[1]), screen.text()
+    assert len(re.findall(pattern, screen.text())) == 1, screen.text()
+
+
 try:
     if os.environ.get("AREAL_PTY_INITIAL_PROMPT"):
         expect(rb"reply:pty-initial")
@@ -104,10 +115,12 @@ try:
     expect(rb"[a-f0-9]{8}-[a-f0-9]{4}-")
     root_id = re.search(rb"[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9-]+", screen.text())[0]
     expect(rb"Welcome")
+    expect_trajectory_notice()
     os.write(master, b"/theme\r")
     expect(rb"Preview.*Enter save")
     os.write(master, b"\x1b[B\r")
     expect(rb"Theme saved: Milk Tea Light")
+    expect_trajectory_notice()
     assert 'theme = "light"' in (Path(preferences.name) / "areal-harness/tui.toml").read_text()
     # Slash 补全、会话弹窗和模型弹窗都不能把命令作为用户消息发送。
     os.write(master, b"/ses")
@@ -151,6 +164,7 @@ try:
     os.write(master, b"\x1b[D\x1b[D\x1b[D\x1b[C\x1b[200~s\x1b[201~\r")
     expect(rb"reply:pty-cursor")
     expect(rb"Completed")
+    expect_trajectory_notice()
     os.write(master, "中👩‍💻文".encode() + b"\x1b[D\x7f\x01\x04\x05")
     os.write(master, b"\x1b[200~-unicode\x1b[201~\r")
     # 模拟器以终端单元格存储文本，中文后保留一个占位空格。
@@ -175,6 +189,7 @@ try:
     # 连接恢复后还需等权威快照；旧历史仍在屏幕上，不能作为可发送的信号。
     expect("Completed · live".encode())
     expect(rb"0599")
+    expect_trajectory_notice()
     if os.environ.get("AREAL_PTY_TRACES"):
         os.write(master, b"trace-fixture\r")
         expect(rb"reply:trace-fixture")
@@ -210,11 +225,13 @@ try:
         os.write(master, b"error-fixture\r")
         expect(rb"Turn failed")
         expect(rb"model HTTP status 400")
+        expect_trajectory_notice()
         os.write(master, b"\x12")
         expect(rb"Reconnected")
         expect("Failed · live".encode())
         expect(rb"Turn failed")
         expect(rb"model HTTP status 400")
+        expect_trajectory_notice()
     offset = len(output)
     os.write(master, b"hang\r")
     # 流式过程正文默认折叠；显式进入详细视图后才能看到。
@@ -231,6 +248,7 @@ try:
     expect(rb"reply:hang")
     os.write(master, b"\x03")  # Ctrl-C is a TUI key, not a process signal in raw mode.
     expect(rb"Interrupted", offset)
+    expect_trajectory_notice()
     # resize 后进入单栏仍能操作，终端模拟器同步使用新的行列数。
     screen = TerminalScreen(24, 60)
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 60, 0, 0))
@@ -255,6 +273,10 @@ try:
     if os.environ.get("AREAL_PTY_TRACES"):
         print(
             "PASS compact traces: hidden payloads, second-record mouse hit, third-record keyboard expansion, failure survives reconnect"
+        )
+    if os.environ.get("AREAL_PTY_EXPECT_TRAJECTORY"):
+        print(
+            "PASS owned trajectory notice: visible once in header alongside theme feedback, completed turns, reconnect, model failure and cancellation"
         )
     print(
         "PASS full-screen PTY: welcome, input cursor editing and Unicode deletion, slash completion, session/model pickers, theme persistence, long history, reconnect, topology, child navigation, resize, cancellation and terminal cleanup"

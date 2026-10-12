@@ -45,6 +45,8 @@ pub(super) struct Record {
     #[serde(default)]
     pub execution_duration_ms: Option<u64>,
     #[serde(default)]
+    pub model_call_duration_ms: Option<f64>,
+    #[serde(default)]
     pub terminal: bool,
     #[serde(default)]
     pub producer: Option<String>,
@@ -323,6 +325,19 @@ pub(super) fn enqueue(
     } else {
         None
     };
+    // 仅索引模型逻辑调用的客户端墙钟耗时；不把 Turn 总时长或缺失值冒充推理耗时。
+    let model_call_duration_ms = if event_name == "gen_ai.client.inference.operation.details" {
+        log.and_then(|l| l.attributes.iter().find(|a| a.key == "areal.duration_ms"))
+            .and_then(|a| a.value.as_ref())
+            .and_then(|v| match v.value {
+                Some(any_value::Value::DoubleValue(n)) => Some(n),
+                Some(any_value::Value::IntValue(n)) => Some(n as f64),
+                _ => None,
+            })
+            .filter(|n| n.is_finite() && *n >= 0.0)
+    } else {
+        None
+    };
     let record = Record {
         id: uuid::Uuid::new_v4().to_string(),
         status: "pending".into(),
@@ -341,6 +356,7 @@ pub(super) fn enqueue(
         model_name,
         harness_version,
         execution_duration_ms,
+        model_call_duration_ms,
         terminal,
         producer,
         payload_present: true,

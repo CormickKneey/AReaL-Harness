@@ -197,10 +197,16 @@ async fn main() {
         }
         Some(Command::Upgrade { check }) => upgrade::run(check).await,
         None => {
-            if let Some(local) = args.interactive.local_options() {
-                trajectory::warn_startup(local.config.as_deref());
+            let mut monitor = args
+                .interactive
+                .trajectory_monitor_config()
+                .and_then(trajectory::Monitor::start);
+            let notice = monitor.as_mut().and_then(trajectory::Monitor::take_notice);
+            if args.interactive.is_headless() {
+                trajectory::with_stderr_notice(notice, areal_tui::run(args.interactive)).await
+            } else {
+                areal_tui::run_with_trajectory_notice(args.interactive, notice).await
             }
-            areal_tui::run(args.interactive).await
         }
         Some(Command::Exec(cli)) => {
             execute(*cli).await;
@@ -246,11 +252,15 @@ fn is_subcommand(arg: &std::ffi::OsStr) -> bool {
 }
 
 async fn execute(args: Cli) {
-    if args.endpoint.is_none() {
-        trajectory::warn_startup(args.config.as_deref());
-    }
+    let mut monitor = args
+        .endpoint
+        .is_none()
+        .then(|| args.config.clone())
+        .and_then(trajectory::Monitor::start);
+    let notice = monitor.as_mut().and_then(trajectory::Monitor::take_notice);
     let started = std::time::Instant::now();
-    let result = run::execute(&args).await;
+    let result = trajectory::with_stderr_notice(notice, run::execute(&args)).await;
+    drop(monitor);
     let code = match result {
         Ok(code) => code,
         Err(error) => {

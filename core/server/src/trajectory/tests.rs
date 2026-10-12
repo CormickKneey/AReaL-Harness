@@ -73,6 +73,191 @@ fn event(turn: &str, terminal: bool, size: usize) -> Vec<u8> {
     }
     .encode_to_vec()
 }
+fn duration_event(turn: &str, name: &str, duration: Option<any_value::Value>) -> Vec<u8> {
+    let mut request = ExportLogsServiceRequest::decode(event(turn, false, 0).as_slice()).unwrap();
+    let log = &mut request.resource_logs[0].scope_logs[0].log_records[0];
+    log.event_name = name.into();
+    if let Some(value) = duration {
+        log.attributes.push(KeyValue {
+            key: "areal.duration_ms".into(),
+            value: Some(AnyValue { value: Some(value) }),
+            ..Default::default()
+        });
+    }
+    request.encode_to_vec()
+}
+
+#[test]
+fn model_call_duration_preserves_fractional_metadata_and_ignores_invalid_or_other_events() {
+    let d = tempfile::tempdir().unwrap();
+    let c = config(d.path());
+    configure(&c).unwrap();
+    let values = [
+        (
+            Some(any_value::Value::DoubleValue(16.924917)),
+            Some(16.924917),
+        ),
+        (Some(any_value::Value::IntValue(0)), Some(0.0)),
+        (Some(any_value::Value::IntValue(12)), Some(12.0)),
+        (Some(any_value::Value::IntValue(-1)), None),
+        (Some(any_value::Value::DoubleValue(-0.5)), None),
+        (Some(any_value::Value::DoubleValue(f64::NAN)), None),
+        (Some(any_value::Value::DoubleValue(f64::INFINITY)), None),
+        (Some(any_value::Value::DoubleValue(f64::NEG_INFINITY)), None),
+        (Some(any_value::Value::StringValue("42".into())), None),
+        (Some(any_value::Value::BoolValue(true)), None),
+        (None, None),
+    ];
+    for (idx, (duration, expected)) in values.into_iter().enumerate() {
+        let turn = format!("model-{idx}");
+        let body = duration_event(&turn, "gen_ai.client.inference.operation.details", duration);
+        queue::enqueue(&c, &body, None).unwrap();
+        let record = queue::records(d.path(), c.max_disk_bytes)
+            .unwrap()
+            .into_iter()
+            .find(|r| r.turn_id == turn)
+            .unwrap();
+        assert_eq!(record.model_call_duration_ms, expected);
+        assert_eq!(record.execution_duration_ms, None);
+        assert_eq!(
+            queue::payload(d.path(), &record, c.max_batch_bytes).unwrap(),
+            body
+        );
+    }
+    for (turn, name) in [
+        ("terminal", "areal.turn.completed"),
+        ("tool", "areal.tool.result"),
+    ] {
+        queue::enqueue(
+            &c,
+            &duration_event(turn, name, Some(any_value::Value::IntValue(999))),
+            None,
+        )
+        .unwrap();
+    }
+    let view = status(&c).unwrap();
+    let records = view["records"].as_array().unwrap();
+    let terminal = records.iter().find(|r| r["turn_id"] == "terminal").unwrap();
+    assert_eq!(terminal["execution_duration_ms"], 999);
+    assert!(terminal["model_call_duration_ms"].is_null());
+    let tool = records.iter().find(|r| r["turn_id"] == "tool").unwrap();
+    assert!(tool["execution_duration_ms"].is_null());
+    assert!(tool["model_call_duration_ms"].is_null());
+    assert_eq!(view["model_call_summary"]["model_calls"], 3);
+    assert_eq!(view["model_call_summary"]["max_duration_ms"], 16.924917);
+}
+
+#[test]
+fn model_call_duration_legacy_metadata_stays_unknown_without_reading_payload() {
+    let d = tempfile::tempdir().unwrap();
+    let c = config(d.path());
+    configure(&c).unwrap();
+    queue::enqueue(
+        &c,
+        &duration_event(
+            "legacy",
+            "gen_ai.client.inference.operation.details",
+            Some(any_value::Value::DoubleValue(500.25)),
+        ),
+        None,
+    )
+    .unwrap();
+    let record = queue::records(d.path(), c.max_disk_bytes)
+        .unwrap()
+        .remove(0);
+    let mut legacy = serde_json::to_value(&record).unwrap();
+    legacy
+        .as_object_mut()
+        .unwrap()
+        .remove("model_call_duration_ms");
+    queue::atomic(
+        d.path(),
+        &format!("record-{}.json", record.id),
+        &serde_json::to_vec(&legacy).unwrap(),
+    )
+    .unwrap();
+    // 状态查询不能为了补旧字段去解码大正文；损坏正文也不影响元数据展示。
+    std::fs::write(
+        d.path().join(format!("payload-{}.pb", record.id)),
+        b"not-protobuf",
+    )
+    .unwrap();
+    let view = status(&c).unwrap();
+    assert!(view["records"][0]["model_call_duration_ms"].is_null());
+    assert_eq!(view["model_call_summary"]["model_calls"], 0);
+    for field in ["total_duration_ms", "mean_duration_ms", "max_duration_ms"] {
+        assert!(view["model_call_summary"][field].is_null());
+    }
+}
+
+#[test]
+fn model_call_summary_uses_exact_recent_record_window_without_counting_upload_retries() {
+    let d = tempfile::tempdir().unwrap();
+    let mut c = config(d.path());
+    c.max_records = 120;
+    configure(&c).unwrap();
+    for idx in 0..102 {
+        let turn = format!("model-{idx}");
+        let value = if idx < 2 { 10_000.0 } else { 1.0 };
+        queue::enqueue(
+            &c,
+            &duration_event(
+                &turn,
+                "gen_ai.client.inference.operation.details",
+                Some(any_value::Value::DoubleValue(value)),
+            ),
+            None,
+        )
+        .unwrap();
+        let mut record = queue::records(d.path(), c.max_disk_bytes)
+            .unwrap()
+            .into_iter()
+            .find(|r| r.turn_id == turn)
+            .unwrap();
+        record.created_at = idx;
+        record.attempts = 7;
+        record.status = if idx % 2 == 0 { "failed" } else { "pending" }.into();
+        queue::save(d.path(), &record).unwrap();
+    }
+    let view = status(&c).unwrap();
+    assert_eq!(view["records"].as_array().unwrap().len(), 100);
+    assert_eq!(view["records"][0]["turn_id"], "model-101");
+    assert_eq!(view["records"][99]["turn_id"], "model-2");
+    assert_eq!(
+        view["model_call_summary"],
+        json!({
+            "scope":"recent_records", "record_limit":100, "records_considered":100,
+            "model_calls":100, "total_duration_ms":100.0, "mean_duration_ms":1.0, "max_duration_ms":1.0
+        })
+    );
+}
+
+#[test]
+fn model_call_summary_overflow_remains_valid_json_with_unknown_total() {
+    let d = tempfile::tempdir().unwrap();
+    let c = config(d.path());
+    configure(&c).unwrap();
+    for turn in ["large-a", "large-b"] {
+        queue::enqueue(
+            &c,
+            &duration_event(
+                turn,
+                "gen_ai.client.inference.operation.details",
+                Some(any_value::Value::DoubleValue(f64::MAX)),
+            ),
+            None,
+        )
+        .unwrap();
+    }
+    let view = status(&c).unwrap();
+    let summary = &view["model_call_summary"];
+    assert_eq!(summary["model_calls"], 2);
+    assert!(summary["total_duration_ms"].is_null());
+    assert!(summary["mean_duration_ms"].is_null());
+    assert_eq!(summary["max_duration_ms"].as_f64(), Some(f64::MAX));
+    serde_json::from_str::<Value>(&view.to_string()).unwrap();
+}
+
 fn reset_delay(c: &TrajectoryConfig) {
     let _lock = queue::lock(&c.spool_dir, ".queue.lock", true).unwrap();
     let mut s = queue::stats(&c.spool_dir);

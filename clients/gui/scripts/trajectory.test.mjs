@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 const require = createRequire(new URL("../app/package.json", import.meta.url));
-const { TrajectoryExport } = require("../app/src/core/trajectory.cjs");
+const { TrajectoryExport, publicStatus } = require("../app/src/core/trajectory.cjs");
 const { validateCommand } = require("@areal/workbench/desktop-contract");
 const status = {
   enabled: true,
@@ -179,4 +179,95 @@ test("optional execution metadata is projected without changing legacy records",
     );
     await assert.rejects(exporter.command({ operation: "status" }), /无效的数据飞轮状态/);
   }
+});
+
+test("model timing keeps fractional calls and bounded window summary without private fields", () => {
+  const summary = {
+    scope: "recent_records",
+    record_limit: 100,
+    records_considered: 1,
+    model_calls: 1,
+    total_duration_ms: 125.5,
+    mean_duration_ms: 125.5,
+    max_duration_ms: 125.5,
+  };
+  const expected = {
+    ...status,
+    records: [
+      {
+        ...status.records[0],
+        event_name: "gen_ai.client.inference.operation.details",
+        model_call_duration_ms: 125.5,
+      },
+    ],
+    model_call_summary: summary,
+  };
+  assert.deepEqual(
+    publicStatus({ ...expected, model_call_summary: { ...summary, raw_request: "private" } }),
+    expected,
+  );
+  assert.deepEqual(publicStatus(status), status);
+  const unknown = {
+    ...status,
+    records: [{ ...status.records[0], model_call_duration_ms: null }],
+    model_call_summary: {
+      ...summary,
+      model_calls: 0,
+      total_duration_ms: null,
+      mean_duration_ms: null,
+      max_duration_ms: null,
+    },
+  };
+  assert.deepEqual(publicStatus(unknown), unknown);
+  const overflow = {
+    ...expected,
+    model_call_summary: { ...summary, total_duration_ms: null, mean_duration_ms: null },
+  };
+  assert.deepEqual(publicStatus(overflow), overflow);
+});
+
+test("invalid timing, wrong event and unbounded or mismatched summaries do not cross IPC", () => {
+  const record = {
+    ...status.records[0],
+    event_name: "gen_ai.client.inference.operation.details",
+    model_call_duration_ms: 0,
+  };
+  const summary = {
+    scope: "recent_records",
+    record_limit: 100,
+    records_considered: 1,
+    model_calls: 1,
+    total_duration_ms: 0,
+    mean_duration_ms: 0,
+    max_duration_ms: 0,
+  };
+  const enriched = { ...status, records: [record], model_call_summary: summary };
+  assert.equal(publicStatus(enriched).records[0].model_call_duration_ms, 0);
+  for (const value of [-1, Infinity, NaN, "125.5"])
+    assert.throws(
+      () => publicStatus({ ...enriched, records: [{ ...record, model_call_duration_ms: value }] }),
+      /无效的数据飞轮状态/,
+    );
+  assert.throws(
+    () =>
+      publicStatus({ ...enriched, records: [{ ...record, event_name: "areal.turn.completed" }] }),
+    /无效的数据飞轮状态/,
+  );
+  for (const patch of [
+    { scope: "all_history" },
+    { record_limit: 101 },
+    { records_considered: 101 },
+    { records_considered: 0 },
+    { model_calls: 2 },
+    { model_calls: -1 },
+    { model_calls: 0 },
+    { max_duration_ms: null },
+    { mean_duration_ms: null },
+    { total_duration_ms: Infinity },
+    { max_duration_ms: -1 },
+  ])
+    assert.throws(
+      () => publicStatus({ ...enriched, model_call_summary: { ...summary, ...patch } }),
+      /无效的数据飞轮状态/,
+    );
 });

@@ -20,6 +20,17 @@ class RustLauncherTests(legacy.LauncherTests):
         if not executable.is_file():
             self.skipTest("build target/debug/areal first")
         self.command = [str(executable), "launcher", *self.command[2:]]
+        # Rust launcher 只给自己创建的最终 TUI 标记本地队列检查来源。
+        self.fixture(
+            "interactive",
+            """
+assert sys.argv[1] == '--local-trajectory-monitor'
+assert sys.argv[2:4] == ['--endpoint', 'ws://127.0.0.1:12345']
+assert sys.argv[4:6] == ['--auth-file', '/fixture/auth.json']
+assert sys.argv[6:] == ['--resume=thread-id', '--prompt=-hello with spaces']
+print('fixture reply')
+""",
+        )
 
     def test_preflight_reports_exit_status_and_empty_stderr(self):
         dispatcher = self.bin / "areal"
