@@ -142,7 +142,7 @@ test('queued continuation binds to its persisted queue turn and loses entry on r
       void receive('browserResult', { requestId: packet.params.requestId, result: { claimed: true } });
     });
   } };
-  let reads = 0, pendingQueueRead = null;
+  let reads = 0, pendingQueueRead = null, acceptedQueueId = 'queued-user-message';
   const client = { closed: false, request: async (method, params) => {
     assert.equal(method, 'areal/queue/list'); assert.equal(params.threadId, 'thread-1'); reads++;
     return pendingQueueRead ? pendingQueueRead() : queue;
@@ -152,7 +152,7 @@ test('queued continuation binds to its persisted queue turn and loses entry on r
   const backend = { projects: new Map([['project-1', project]]), starting: new Set(),
     snapshot: () => ({}), hasWork: () => false, providers: { redact: value => value },
     currentConnection: (current, connection) => current.client === connection && !connection.closed,
-    command: async (_name, _request, context) => { context.onBrowserTurnQueued?.('queued-user-message'); return {}; } };
+    command: async (_name, _request, context) => { context.onBrowserTurnQueued?.(acceptedQueueId); return {}; } };
   service = new DesktopService(backend, 'queue-fixture');
   const receive = (method, params) => service.receive(owner, Buffer.from(JSON.stringify({ id: ++requestId, method, params })));
   const send = () => receive('command', { name: 'send', request: { projectId: 'project-1', threadId: 'thread-1', text: 'Continue in the Browser' } });
@@ -175,15 +175,34 @@ test('queued continuation binds to its persisted queue turn and loses entry on r
     assert.equal(dispatched()[0].params.turnId, 'exact-queued-turn');
     assert.equal(service.browserEntrypoints.size, 0, 'entry is consumed once');
     assert.ok(reads >= 3, 'each queued claim resolves against Core queue state');
+    acceptedQueueId = 'queued-first'; await send();
+    acceptedQueueId = 'queued-second'; await send();
+    queue = { items: [
+      { id: 'queued-first', status: 'running', turnId: 'first-queued-turn' },
+      { id: 'queued-second', status: 'pending', turnId: null },
+    ] };
+    await describe('old-active');
+    assert.equal(dispatched().length, 1);
+    await describe('first-queued-turn');
+    assert.equal(dispatched().length, 2, 'second queued message cannot overwrite first accepted authorization');
+    assert.equal(service.browserEntrypoints.size, 1, 'first consumption preserves second queued entry');
+    queue.items[0].status = 'completed';
+    queue.items[1] = { id: 'queued-second', status: 'running', turnId: 'second-queued-turn' };
+    await describe('second-queued-turn');
+    assert.equal(dispatched().length, 3);
+    assert.equal(service.browserEntrypoints.size, 0);
+    acceptedQueueId = 'queued-user-message';
     await send();
     queue = { items: [{ id: 'queued-user-message', status: 'removed', turnId: null }] };
     await describe('exact-queued-turn');
     assert.equal(service.browserEntrypoints.size, 0, 'removed input revokes authorization');
     await send();
+    acceptedQueueId = 'second-revoked-message'; await send();
+    acceptedQueueId = 'queued-user-message';
     await receive('browserRevoke', { projectId: 'project-1', threadId: 'thread-1' });
     queue = { items: [{ id: 'queued-user-message', status: 'running', turnId: 'exact-queued-turn' }] };
     await describe('exact-queued-turn');
-    assert.equal(dispatched().length, 1, 'human input revokes queued authorization');
+    assert.equal(dispatched().length, 3, 'human input revokes queued authorization');
     await send();
     let releaseQueue;
     pendingQueueRead = () => new Promise(resolve => { releaseQueue = resolve; });
@@ -193,11 +212,12 @@ test('queued continuation binds to its persisted queue turn and loses entry on r
     releaseQueue(queue);
     await waiting;
     pendingQueueRead = null;
-    assert.equal(dispatched().length, 1, 'late queue response cannot revive a revoked entry');
+    assert.equal(dispatched().length, 3, 'late queue response cannot revive a revoked entry');
     await send();
+    acceptedQueueId = 'second-owner-message'; await send();
     project.client = { ...client };
     await describe('exact-queued-turn');
     assert.equal(service.browserEntrypoints.size, 0, 'owner reconnect cannot inherit queued authorization');
-    assert.equal(dispatched().length, 1);
+    assert.equal(dispatched().length, 3);
   } finally { service.close(); }
 });

@@ -108,7 +108,8 @@ class DesktopService {
       socket.on('message', bytes => { void this.receive(socket, bytes); });
       socket.on('close', () => {
         for (const [key, claim] of this.browserClaims) if (claim.socket === socket) this.browserClaims.delete(key);
-        for (const [key, entry] of this.browserEntrypoints) if (entry.socket === socket) { entry.resolve(null); this.browserEntrypoints.delete(key); }
+        for (const [key, entries] of this.browserEntrypoints) for (const entry of entries)
+          if (entry.socket === socket) this.forgetBrowserEntrypoint(key, entry);
         for (const [key, attempt] of this.browserClaimAttempts) if (attempt.socket === socket) {
           attempt.cancelled = true; this.browserClaimAttempts.delete(key);
         }
@@ -221,7 +222,7 @@ class DesktopService {
       }
       if (method === 'browserRevoke') {
         const key = browserKey(params?.projectId, params?.threadId);
-        this.browserEntrypoints.get(key)?.resolve(null); this.browserEntrypoints.delete(key);
+        for (const entry of this.browserEntrypoints.get(key) ?? []) this.forgetBrowserEntrypoint(key, entry);
         for (const pending of this.browserPending.values()) if (pending.bootstrap && pending.key === key && pending.socket === socket)
           pending.reject(new Error('Browser entry revoked by human input'));
         const attempt = this.browserClaimAttempts.get(key);
@@ -287,15 +288,21 @@ class DesktopService {
         const entry = entryProject?.model.state.threads[params.request.threadId]
           ? { socket, project: entryProject, client: entryProject.client } : null;
         if (entry) {
-          entry.ready = new Promise(resolve => { entry.resolve = resolve; });
-          this.browserEntrypoints.get(entryKey)?.resolve(null);
-          this.browserEntrypoints.set(entryKey, entry);
+          const entries = this.browserEntrypoints.get(entryKey) ?? new Set();
+          const activeTurns = new Set(entryProject.model.state.threads[params.request.threadId].turns
+            ?.filter(turn => turn.status === 'inProgress').map(turn => turn.id) ?? []);
+          for (const previous of entries) if (previous.accepted?.turnId && !activeTurns.has(previous.accepted.turnId))
+            this.forgetBrowserEntrypoint(entryKey, previous);
+          // Core admits at most 128 queue items, plus this thread's active turn.
+          if (entries.size >= 129) throw new Error('Browser entry capacity reached');
+          entry.ready = new Promise(resolve => { entry.resolve = value => { entry.accepted ??= value; resolve(value); }; });
+          entries.add(entry); this.browserEntrypoints.set(entryKey, entries);
         }
         let result;
         try { result = method === 'command' ? await this.backend.command(params.name, params.name === 'media' ? decodeMedia(params.request) : params.request,
           { onBrowserTurnStarted: turnId => entry?.resolve({ turnId }),
             onBrowserTurnQueued: queueItemId => entry?.resolve({ queueItemId }) }) : await this.backend.addProject(params.path); }
-        catch (error) { if (entry && this.browserEntrypoints.get(entryKey) === entry) this.browserEntrypoints.delete(entryKey); throw error; }
+        catch (error) { if (entry) this.forgetBrowserEntrypoint(entryKey, entry); throw error; }
         finally { entry?.resolve(null); }
         if (method === 'command' && params.name === 'media') result = encodeMedia(result);
         this.publish(); this.send(socket, { id, result });
@@ -312,7 +319,7 @@ class DesktopService {
     for (const attempt of this.browserClaimAttempts.values()) attempt.cancelled = true;
     this.browserClaimAttempts.clear();
     for (const pending of this.browserPending.values()) { clearTimeout(pending.timer); pending.reject(new Error('Browser service closed after dispatch')); }
-    for (const entry of this.browserEntrypoints.values()) entry.resolve(null);
+    for (const entries of this.browserEntrypoints.values()) for (const entry of entries) entry.resolve(null);
     this.browserPending.clear(); this.browserClaims.clear(); this.browserEntrypoints.clear();
     this.remote?.close();
     this.power?.close();
@@ -327,32 +334,43 @@ class DesktopService {
     try { return await this.backend.command(name, request); }
     finally { this.inflight--; this.schedule(); }
   }
-  async bootstrapBrowser(request, key) {
-    const entry = this.browserEntrypoints.get(key);
-    if (!entry || entry.socket.readyState !== 1) return;
-    const accepted = await entry.ready;
-    const current = () => this.browserEntrypoints.get(key) === entry && entry.socket.readyState === 1
-      && this.backend.projects.get(request.projectId) === entry.project
-      && this.backend.currentConnection(entry.project, entry.client)
-      && entry.project.service?.serviceId === request.coreInstanceId
-      && entry.project.service?.generation === request.coreGeneration;
-    const forget = () => { if (this.browserEntrypoints.get(key) === entry) this.browserEntrypoints.delete(key); };
-    if (!accepted || !current()) { forget(); return; }
-    let turnId = accepted.turnId;
-    if (typeof accepted.queueItemId === 'string') {
-      // Enqueue acceptance authorizes only its persisted queue item. A previous
-      // active callback or an unrelated next turn cannot borrow this entry.
-      let queue;
-      try { queue = await entry.client.request('areal/queue/list', { threadId: request.threadId }); }
-      catch { forget(); return; }
-      if (!current()) { forget(); return; }
-      const item = queue.items?.find(item => item.id === accepted.queueItemId);
-      if (!item || !['pending', 'running'].includes(item.status)) { forget(); return; }
-      if (item.status === 'pending') return;
-      turnId = item.turnId;
+  forgetBrowserEntrypoint(key, entry) {
+    entry.resolve(null);
+    const entries = this.browserEntrypoints.get(key);
+    entries?.delete(entry);
+    if (entries?.size === 0) this.browserEntrypoints.delete(key);
+  }
+  async browserEntrypoint(request, key) {
+    // Keep each admitted message's capability independent. Reading this queue is
+    // read-only; no event order or "next turn" guess can authorize a callback.
+    let queue;
+    for (const entry of [...this.browserEntrypoints.get(key) ?? []]) {
+      const accepted = await entry.ready;
+      const current = () => this.browserEntrypoints.get(key)?.has(entry) && entry.socket.readyState === 1
+        && this.backend.projects.get(request.projectId) === entry.project
+        && this.backend.currentConnection(entry.project, entry.client)
+        && entry.project.service?.serviceId === request.coreInstanceId
+        && entry.project.service?.generation === request.coreGeneration;
+      const forget = () => this.forgetBrowserEntrypoint(key, entry);
+      if (!accepted || !current()) { forget(); continue; }
+      let turnId = accepted.turnId;
+      if (typeof accepted.queueItemId === 'string') {
+        try { queue ??= await entry.client.request('areal/queue/list', { threadId: request.threadId }); }
+        catch { forget(); continue; }
+        if (!current()) { forget(); continue; }
+        const item = queue.items?.find(item => item.id === accepted.queueItemId);
+        if (!item || !['pending', 'running'].includes(item.status)) { forget(); continue; }
+        if (item.status === 'pending') continue;
+        turnId = item.turnId;
+      }
+      if (turnId === request.turnId) return entry;
     }
-    if (turnId !== request.turnId) return;
-    this.browserEntrypoints.delete(key); // A cancelled/unknown entry is never replayed.
+    return null;
+  }
+  async bootstrapBrowser(request, key) {
+    const entry = await this.browserEntrypoint(request, key);
+    if (!entry || !this.browserEntrypoints.get(key)?.has(entry)) return;
+    this.forgetBrowserEntrypoint(key, entry); // Consume only this accepted message; never replay it.
     if (request.signal?.aborted || this.browserPending.size >= 8) return;
     const requestId = ++this.nextBrowserId;
     await new Promise((resolve, reject) => {
