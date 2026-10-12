@@ -2547,7 +2547,9 @@ class CorePreview {
       } else {
         page.documentGeneration++;
         this.cancelHumanGesture(page);
-        page.refs.clear();
+        // 按键释放可完成，但后续动作仍须重新观察，不能沿用子 Frame 变化前的计划。
+        page.needsObservation = true;
+        page.refs.clear(); page.plans.clear();
         page.activeRead?.cancel();
       }
       if (this.pageStillOwned(page)) this.changed(page);
