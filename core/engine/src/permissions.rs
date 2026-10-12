@@ -45,13 +45,17 @@ impl Engine {
         generation: Option<&str>,
         restrictions: &Value,
     ) -> anyhow::Result<PermissionGrant> {
-        // A browser session grant is scoped to the exact claimed page, Origin and
-        // operation kind. The prepared target remains in each approval request;
-        // its short-lived ID must not make a remembered local-site grant useless.
+        // Browser grants cannot survive human takeover or page replacement. Public
+        // actions retain their concrete target and payload, so a local development
+        // grant (or another public form) cannot silently authorize a search submit.
         let grant_arguments = if tool == "browser_v1" && arguments["plan"].is_object() {
-            json!({"origin":arguments["plan"]["origin"],"targetOrigin":arguments["plan"]["targetOrigin"],
-                "pageId":arguments["plan"]["pageId"],
-                "operation":arguments["plan"]["operation"],"actionKind":arguments["plan"]["action"]["kind"]})
+            let plan = &arguments["plan"];
+            json!({"origin":plan["origin"],"targetOrigin":plan["targetOrigin"],
+                "pageId":plan["pageId"],"pageGeneration":plan["pageGeneration"],
+                "controlEpoch":plan["controlEpoch"],"browserHostId":plan["browserHostId"],
+                "hostGeneration":plan["hostGeneration"],"operation":plan["operation"],
+                "targetUrl":plan["targetUrl"],"target":plan["target"],"action":plan["action"],
+                "parameters":arguments["arguments"]["parameters"]})
         } else {
             arguments.clone()
         };
@@ -104,7 +108,7 @@ impl Engine {
             ),
             Some(tools::Backend::Client) => (
                 bindings.host.as_ref().map(|host| host.id().to_owned()),
-                bindings.host.is_some(),
+                bindings.host.is_some() && !(tool == "browser_v1" && args["operation"] == "describe"),
             ),
             // MCP 尚未提供可验证的连接代际，只允许单次回答。
             _ => (None, false),

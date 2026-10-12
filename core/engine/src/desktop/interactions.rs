@@ -326,7 +326,7 @@ impl Engine {
             .ask
             .iter()
             .any(|p| crate::permissions::matches_tool(p, tool));
-        let browser_action = tool == "browser_v1" && arguments["plan"].is_object();
+        let browser_action = tool == "browser_v1";
         if forced
             || ((action == "ask" || browser_action)
                 && (explicit_ask || !can_remember || !(session_allowed || project_allowed)))

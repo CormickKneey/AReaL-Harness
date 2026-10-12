@@ -145,9 +145,28 @@ app.whenReady().then(async () => {
   backend.onBrowserCancel = request => preview?.cancelRead(request);
   backend.onBrowserRequest = async request => {
     if (quitting || !preview || !window || window.isDestroyed()) throw new Error('Browser host unavailable');
-    try { return await (request.phase === 'prepare' ? preview.prepare(request)
-      : ['act', 'wait', 'navigate', 'newPage', 'runBatch'].includes(request.operation) ? preview.execute(request)
-      : request.operation === 'diagnostics' ? preview.diagnostics(request) : preview.observe(request)); }
+    try {
+      if (request.operation === 'describe') {
+        const identity = await preview.ensureAgentPage(request.projectId, request.threadId);
+        try {
+          await backend.browserClaim({ ...identity, bootstrapRequestId: request.requestId });
+          const page = preview.page(request.projectId, request.threadId, identity.pageId);
+          if (!page || !preview.pageStillOwned(page) || page.control !== 'agent'
+            || page.controlEpoch !== identity.controlEpoch || page.pageGeneration !== identity.pageGeneration)
+            throw new Error('Browser entry was revoked');
+        }
+        catch (error) {
+          const page = preview.page(request.projectId, request.threadId, identity.pageId);
+          if (page?.controlEpoch === identity.controlEpoch && page.control === 'agent')
+            preview.takeover(request.projectId, request.threadId, identity.pageId);
+          throw error;
+        }
+        if (!window.isDestroyed()) window.webContents.send('areal-core:preview-event', {
+          kind: 'reveal', projectId: request.projectId, threadId: request.threadId, pageId: identity.pageId });
+        return { claimed: true };
+      }
+      return await (request.phase === 'prepare' ? preview.prepare(request) : preview.execute(request));
+    }
     catch (error) {
       if (error.message === 'outcome_unknown') throw error;
       return { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration, projectId: request.projectId,

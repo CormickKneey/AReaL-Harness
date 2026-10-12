@@ -404,6 +404,33 @@ class CoreBackend {
     ]);
   }
 
+  supportsBrowser(project) {
+    const capabilities = project.client?.capabilities;
+    return capabilities?.methods?.includes('areal/thread/observe')
+      && capabilities?.methods?.includes('areal/thread/tools/attach')
+      && capabilities?.features?.browserToolAttachment === true
+      && capabilities?.browserToolBundles?.some(bundle => bundle.bundleId === 'areal.browser.v1');
+  }
+
+  async ensureBrowserTools(project, threadId) {
+    if (!this.supportsBrowser(project)) return;
+    const client = project.client;
+    const { thread } = await client.request('areal/thread/observe', { threadId }, {
+      onResult: result => { if (this.currentConnection(project, client)) project.model.replace(result.thread); },
+    });
+    this.requireConnection(project, client);
+    if (thread.desktop?.archived || thread.parentThreadId || thread.status?.type !== 'idle') return;
+    // The fixed bundle append also safely reconnects its original idle ToolHost.
+    // Core refuses a live different owner and preserves all existing definitions.
+    await this.submit(project, 'areal/thread/tools/attach', {
+      threadId, expectedToolsetRevision: thread.toolsetRevision ?? 0, bundleId: 'areal.browser.v1',
+    });
+    await client.request('areal/thread/observe', { threadId }, {
+      onResult: result => { if (this.currentConnection(project, client)) project.model.replace(result.thread); },
+    });
+    this.requireConnection(project, client);
+  }
+
   async bindBrowserHostForClaim(project, threadId) {
     const client = project.client;
     if (!client?.capabilities?.methods?.includes('areal/thread/observe')) {
@@ -867,7 +894,7 @@ class CoreBackend {
     }
   }
 
-  async command(name, request) {
+  async command(name, request, context = {}) {
     if (this.closing) throw new Error('应用正在退出');
     if (name === 'analytics') return this.analytics.command(request);
     if (name === 'chatgpt') return this.providers.chatgpt(request);
@@ -875,11 +902,11 @@ class CoreBackend {
     if (name === 'resources') return this.resources.command(request);
     if (this.providerUpdating || this.resourcesUpdating) throw new Error('配置正在应用，请稍后重试');
     this.activeCommands++;
-    try { return await this.executeCommand(name, request); }
+    try { return await this.executeCommand(name, request, context); }
     finally { this.activeCommands--; }
   }
 
-  async executeCommand(name, request) {
+  async executeCommand(name, request, context = {}) {
     if (this.closing) throw new Error('应用正在退出');
     if (name === 'tasks') return taskCatalog(this, request);
     if (name === 'projectless') return this.projectless.command(request);
@@ -934,7 +961,7 @@ class CoreBackend {
         }
         await this.resources.beforeCreate(project);
         const { thread } = await this.submit(project, 'areal/thread/start', { cwd: project.root,
-          ...(request.browserEnabled === true ? { dynamicTools: [browserTool] } : {}),
+          ...(this.supportsBrowser(project) ? { dynamicTools: [browserTool] } : {}),
           ...(request.parameters ? { parameters: request.parameters } : {}),
           ...(request.model ? { model: request.model } : {}),
           ...((request.profile ?? project.resourceProfile ?? this.defaultProfile) ? { agentProfile: request.profile ?? project.resourceProfile ?? this.defaultProfile } : {}),
@@ -944,11 +971,13 @@ class CoreBackend {
         return { threadId: thread.id };
       }
       case 'send': {
+        await this.ensureBrowserTools(project, threadId);
         const input = messageInput(this, request);
         // Queue state survives completed/interrupted turns. Only current execution
         // determines admission; the renderer's enqueue hint may already be stale.
         const enqueue = project.model.state.threads[threadId]?.turns?.some(turn => turn.status === 'inProgress');
-        await this.submit(project, enqueue ? 'areal/turn/enqueue' : 'areal/turn/start', { threadId, input });
+        const submitted = await this.submit(project, enqueue ? 'areal/turn/enqueue' : 'areal/turn/start', { threadId, input });
+        if (!enqueue) context.onBrowserTurnStarted?.(submitted.turn?.id);
         break;
       }
       case 'steer': {
