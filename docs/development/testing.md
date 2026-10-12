@@ -127,6 +127,8 @@ cargo test --locked -p areal-engine --lib plugin_host_inherits_proxies_without_o
 
 `make local-service-smoke` 使用临时目录、真实 Core/Runtime、两个 PTY 和 HTTP 模型 fixture，验证并发 ensure、工作区/符号链接身份、配置冲突、认证、Web 发现、窗口退出、忙碌拒绝停止/显式取消、历史保留、launcher/host 强杀清理与重新连接。已纳入 `make harness-smoke`。`make desktop-schemas` 同时导出 `schemas/local-service-v1.json`。
 
+故障注入后的状态等待仅重试本地 HTTP 探测的连接拒绝，保留截止时间并要求精确的 `stopped` / `unavailable` 终态；认证、协议和其他错误立即失败。`make script-test` 覆盖瞬态恢复、错误传播与持续拒绝超时。smoke 日志记录生命周期阶段，`AREAL_TEST_EVIDENCE` 可指定包含失败阶段的 JSON 证据路径。
+
 `cargo test --locked -p areal-app-server --test browser_auth` 验证可信客户端到真实 HTTP/WebSocket 的自动登录、并发单次兑换、Origin 校验、实例隔离、权限继承、手动登录与会话到期断连；该 crate 单元测试使用虚拟时间检查登录码/会话过期和容量上限。`node --test scripts/web-progress.test.mjs` 检查兑换前清除 URL 片段、成功后连接、失败时手动登录兜底和普通刷新。
 
 PTY helper 在等待 CLI、服务停止和窗口退出时持续消费终端输出，避免缓冲区背压阻塞 TUI。`make script-test` 包含退出前输出超过 PTY 容量的确定性回归。

@@ -226,7 +226,8 @@ async fn execute_connected(args: &Cli, local: &local::Local) -> Result<(i32, Vec
     }
     let thread = if let Some(id) = &args.resume {
         // CLI cannot answer ambient tool callbacks; keep any live desktop owner bound.
-        rpc.call("areal/thread/observe", json!({"threadId":id})).await?
+        rpc.call("areal/thread/observe", json!({"threadId":id}))
+            .await?
     } else {
         rpc.call(
             "areal/thread/start",

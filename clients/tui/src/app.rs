@@ -546,7 +546,11 @@ impl App {
                 && !reserved.contains(&id)
                 && !self.releasing.contains(&id)
             {
-                self.queue("areal/thread/observe", json!({"threadId":id}), Purpose::Resume(id))?;
+                self.queue(
+                    "areal/thread/observe",
+                    json!({"threadId":id}),
+                    Purpose::Resume(id),
+                )?;
                 occupied += 1;
             }
         }
@@ -1938,7 +1942,11 @@ impl App {
                     }
                 }
                 Purpose::Interaction(id) => {
-                    self.queue("areal/thread/observe", json!({"threadId":id}), Purpose::Resume(id))?;
+                    self.queue(
+                        "areal/thread/observe",
+                        json!({"threadId":id}),
+                        Purpose::Resume(id),
+                    )?;
                 }
                 Purpose::Configuration => {
                     self.restart_ready = result["configuration"]["restartRequired"] == true
@@ -2955,7 +2963,11 @@ pub(crate) mod tests {
         app.outbox.clear();
         app.snapshot(t);
         app.refresh().unwrap();
-        assert!(app.outbox.iter().all(|r| r.method != "areal/thread/observe"));
+        assert!(
+            app.outbox
+                .iter()
+                .all(|r| r.method != "areal/thread/observe")
+        );
         let goal = app
             .threads
             .get_mut("root")
@@ -2967,7 +2979,11 @@ pub(crate) mod tests {
         goal.active_turn_id = Some("turn".into());
         app.resynced.clear();
         app.refresh().unwrap();
-        assert!(app.outbox.iter().all(|r| r.method != "areal/thread/observe"));
+        assert!(
+            app.outbox
+                .iter()
+                .all(|r| r.method != "areal/thread/observe")
+        );
     }
     #[test]
     fn details_toggle_preserves_input_and_does_not_submit() {

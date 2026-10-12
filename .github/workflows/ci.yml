@@ -80,6 +80,7 @@ jobs:
           NO_PROXY: 127.0.0.1,localhost
           CARGO_TEST_ARGS: --exclude areal-runtime-exec-native
           AREAL_UNIFIED_EVIDENCE_DIR: target/ci/unified
+          AREAL_TEST_EVIDENCE: target/ci/local-service.json
         run: make "${{ matrix.target }}" 2>&1 | tee "target/ci/${{ matrix.log }}.log"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: failure()

@@ -9,6 +9,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, writeFile, realpath, rm, symlink } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { connect } from "../examples/desktop-api/client.mjs";
+import { waitForServiceState } from "./local-service-wait.mjs";
 const exec = promisify(execFile);
 const root = await realpath(await mkdtemp("/tmp/as-"));
 const workspace = join(root, "workspace"),
@@ -19,6 +20,7 @@ const evidence = resolve(
   process.env.AREAL_TEST_EVIDENCE ?? `/tmp/areal-local-service-${Date.now()}.json`,
 );
 const lifecycleChecks = [];
+let phase = "startup";
 let passed = false;
 const env = {
   ...Object.fromEntries(
@@ -183,7 +185,10 @@ try {
   assert.equal((await cli(["web", "--json", ...local])).generation, current.generation);
   assert.equal((await ensure(["--runtime-max-processes", "4"])).generation, current.generation);
   assert.equal((await ensure(["--sandbox-profile", "full-access"])).generation, current.generation);
-  await rejected(() => ensure(["--sandbox-profile", "native"]), /configuration conflict.*permissions/s);
+  await rejected(
+    () => ensure(["--sandbox-profile", "native"]),
+    /configuration conflict.*permissions/s,
+  );
   await assert.rejects(
     () => ensure(["--runtime-max-processes", "32"]),
     (error) => {
@@ -282,6 +287,8 @@ try {
   await resumed.close();
   // 强杀启动器和宿主均须关闭旧 Core/Runtime，然后才能产生下一代实例。
   for (const victim of ["launcher", "host"]) {
+    phase = `${victim}-killed`;
+    console.log(`Lifecycle: ${phase}`);
     const { launcher, runtime, processes } = await serviceProcesses(current);
     if (victim === "host") {
       // 让 Runtime 清理停在可观测窗口：Core 锁已释放，launcher 仍须阻止替代实例。
@@ -300,24 +307,26 @@ try {
     }
     for (const pid of processes) await dead(pid);
     lifecycleChecks.push({ fault: `${victim}-killed`, descendantsExited: processes });
-    await until(
-      async () =>
-        (await cli(["service", "status", "--instance", current.serviceId])).state === "stopped",
+    await waitForServiceState(
+      () => cli(["service", "status", "--instance", current.serviceId]),
+      "stopped",
     );
     const previous = current;
     current = await ensure();
     assert.notEqual(current.generation, previous.generation);
   }
   if (process.platform === "darwin") {
+    phase = "launcher-bridge-killed";
+    console.log(`Lifecycle: ${phase}`);
     // 强杀桥没有真实 wait/reap 回执，必须保留 unavailable，不能冒充干净停止。
     const topology = await serviceProcesses(current);
     assert.notEqual(topology.launcherBridge, current.hostPid);
     process.kill(topology.launcherBridge, "SIGKILL");
     await dead(topology.launcherBridge);
     for (const pid of [topology.launcher, ...topology.processes]) await dead(pid);
-    await until(
-      async () =>
-        (await cli(["service", "status", "--instance", current.serviceId])).state === "unavailable",
+    await waitForServiceState(
+      () => cli(["service", "status", "--instance", current.serviceId]),
+      "unavailable",
     );
     lifecycleChecks.push({
       fault: "launcher-bridge-killed",
@@ -327,6 +336,8 @@ try {
     const previousBridgeGeneration = current.generation;
     current = await ensure();
     assert.notEqual(current.generation, previousBridgeGeneration);
+    phase = "runtime-stalled";
+    console.log(`Lifecycle: ${phase}`);
     const { launcher, runtimeOwner, runtime, processes } = await serviceProcesses(current);
     assert.notEqual(
       runtimeOwner,
@@ -353,6 +364,7 @@ try {
     current = await ensure();
     assert.notEqual(current.generation, previous.generation);
   }
+  phase = "pty-and-model-reload";
   await exec("python3", ["-I", "-S", resolve("scripts/local-service-pty.py"), bin, ...local], {
     env: { ...env, TEST_EXPLICIT_STOP: "1" },
     timeout: 45000,
@@ -524,6 +536,7 @@ try {
     JSON.stringify(
       {
         passed,
+        phase,
         platform: process.platform,
         binary: bin,
         binarySha256: createHash("sha256")
