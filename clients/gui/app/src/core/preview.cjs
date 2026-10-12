@@ -1996,7 +1996,7 @@ class CorePreview {
             await this.dispatchInput(page, 'DOM.focus', { backendNodeId: target.backendNodeId });
           } else await click(coordinate ? target.point : target);
           if (request.parameters.action.kind === 'fill') {
-            const modifier = process.platform === 'darwin' ? 8 : 2;
+            const modifier = process.platform === 'darwin' ? 4 : 2;
             await keyboard({ type: 'keyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: modifier });
             await keyboard({ type: 'keyUp', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: modifier });
             live(); action.dispatched = true;
