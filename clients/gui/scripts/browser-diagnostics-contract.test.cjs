@@ -145,3 +145,33 @@ test('public search approval includes exact successful form values and refuses u
   fields = null;
   await assert.rejects(preview.publicActionSemantics(page, c, target, action), /human_takeover_required/);
 });
+
+test('hidden Agent view ignores pointer motion and release without an owned gesture', () => {
+  const { EventEmitter } = require('node:events');
+  const window = new EventEmitter(); window.webContents = new EventEmitter(); window.isFocused = () => true;
+  const preview = new CorePreview(window, null, () => true);
+  const page = { id: 'page', control: 'agent', requestedVisible: true, pageGeneration: 1, documentGeneration: 1,
+    view: { getBounds: () => ({ x: 10, y: 20, width: 100, height: 100 }), getVisible: () => false } };
+  preview.owner = 'owner'; preview.pages.set('owner', page);
+  let delivered = 0;
+  preview.humanInput = async () => { delivered++; };
+  for (const type of ['mouseMove', 'mouseUp']) window.webContents.emit('before-mouse-event',
+    { preventDefault: () => assert.fail('unowned event intercepted') }, { type, x: 30, y: 40, button: 'left' });
+  assert.equal(delivered, 0);
+});
+
+test('rejected terminal release clears a stale gesture without injecting into a new document', async () => {
+  const preview = Object.create(CorePreview.prototype);
+  const page = { id: 'page', coreInstanceId: 'core', projectId: 'project', threadId: 'thread',
+    pageGeneration: 1, documentGeneration: 2, control: 'human', controlEpoch: 1, requestedVisible: true,
+    view: { getBounds: () => ({ width: 100, height: 100 }), webContents: { isDestroyed: () => false,
+      sendInputEvent: () => assert.fail('release injected into replacement document') } } };
+  Object.assign(preview, { page: () => page, pageStillOwned: () => true,
+    owner: JSON.stringify(['core', 'project', 'thread', 'page']),
+    selected: new Map([[JSON.stringify(['core', 'project', 'thread']), 'page']]),
+    window: { isVisible: () => true, isMinimized: () => false, isFocused: () => true },
+    humanMouseGesture: { page, generation: 1, document: 1, button: 'left', delivered: true } });
+  await assert.rejects(preview.humanInput('project', 'thread', 'page',
+    { type: 'mouseUp', x: -10, y: 400, button: 'left' }));
+  assert.equal(preview.humanMouseGesture, null);
+});

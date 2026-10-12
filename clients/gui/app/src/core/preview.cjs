@@ -315,7 +315,14 @@ class CorePreview {
       const x = Math.round(mouse.x - bounds.x), y = Math.round(mouse.y - bounds.y);
       const inside = x >= 0 && y >= 0 && x < bounds.width && y < bounds.height;
       const gesture = this.humanMouseGesture;
-      const continuation = gesture?.page === page && ['mouseUp', 'mouseMove'].includes(mouse.type);
+      const continuation = gesture?.page === page && !gesture.cancelled
+        && gesture.generation === page.pageGeneration && gesture.document === page.documentGeneration
+        && ['mouseUp', 'mouseMove'].includes(mouse.type)
+        && (mouse.type !== 'mouseUp' || mouse.button === gesture.button);
+      if (['mouseUp', 'mouseMove'].includes(mouse.type) && !continuation) {
+        if (mouse.type === 'mouseUp' && gesture?.page === page && mouse.button === gesture.button) this.cancelHumanGesture(page);
+        return;
+      }
       if (mouse.type === 'mouseDown' && !inside) this.nativeInputOwner = null;
       if ((!inside && !continuation) || (!continuation && page.view.getVisible()) || !page.requestedVisible
         || (!continuation && !['agent', 'transferring'].includes(page.control))
@@ -692,15 +699,21 @@ class CorePreview {
       && this.selected.get(workspaceKey(page.coreInstanceId, projectId, threadId)) === pageId
       && page.requestedVisible && !page.annotationCaptureId
       && this.window.isVisible() && !this.window.isMinimized() && this.window.isFocused();
-    if (!current()) throw new Error('人工输入页面已变化');
+    const rejectInput = message => {
+      if (input.type === 'mouseUp' && this.humanMouseGesture && this.humanMouseGesture.page === page
+        && input.button === this.humanMouseGesture.button) this.cancelHumanGesture(page);
+      throw new Error(message);
+    };
+    if (!current()) rejectInput('人工输入页面已变化');
     const bounds = page.view.getBounds();
     const gesture = this.humanMouseGesture;
     const continuation = gesture?.page === page && gesture.generation === page.pageGeneration
       && gesture.document === page.documentGeneration && ['mouseUp', 'mouseMove'].includes(input.type)
       && (input.type !== 'mouseUp' || input.button === gesture.button);
+    if (['mouseUp', 'mouseMove'].includes(input.type) && !continuation) rejectInput('人工输入手势已变化');
     if (input.type.startsWith('mouse') && (!Number.isSafeInteger(input.x) || !Number.isSafeInteger(input.y)
       || (!continuation && (input.x < 0 || input.y < 0 || input.x >= bounds.width || input.y >= bounds.height))))
-      throw new Error('人工输入坐标已变化');
+      rejectInput('人工输入坐标已变化');
     // fence 必须在首个 await 之前完成，后续输入按同一代次串行交付。
     // 隐藏 View 仍可能保留焦点；先迁到 Main，让 drain 期间的真实 up/char 继续进入 Main 队列。
     if (c.isFocused?.()) { this.nativeInputOwner = page.id; this.window.webContents.focus(); }
@@ -722,7 +735,11 @@ class CorePreview {
     const pending = (page.humanInputPending ?? Promise.resolve()).then(deliver);
     page.humanInputPending = pending;
     try { return await pending; }
-    finally { if (page.humanInputPending === pending) page.humanInputPending = null; }
+    catch (error) {
+      if (this.humanMouseGesture === ownedGesture && ['mouseDown', 'mouseUp'].includes(input.type))
+        this.cancelHumanGesture(page);
+      throw error;
+    } finally { if (page.humanInputPending === pending) page.humanInputPending = null; }
   }
   async claim(projectId, threadId, pageId) {
     const page = this.page(projectId, threadId, pageId);
@@ -2307,7 +2324,7 @@ class CorePreview {
     c.on('devtools-opened', () => { page.openingDevTools = null; if (page.styleTrial) page.styleTrial.stale = true; this.revoke(page); });
     c.on('devtools-closed', () => {
       if (!this.pageStillOwned(page)) return;
-      page.pageGeneration++; page.documentGeneration++; page.refs.clear(); page.plans.clear();
+      page.pageGeneration++; page.documentGeneration++; this.cancelHumanGesture(page); page.refs.clear(); page.plans.clear();
       page.needsObservation = true; this.clearDiagnostics(page, 'devtools_closed'); this.changed(page);
     });
     page.onDownload = (event, item, source) => {
@@ -2485,6 +2502,7 @@ class CorePreview {
         if (page.approvedNavigation === url) page.approvedNavigation = null;
         else if (!approvedAction) this.revoke(page);
         page.documentGeneration++;
+        this.cancelHumanGesture(page);
         if (approvedAction && page.activeAction) page.activeAction.navigationDocument = page.documentGeneration;
         page.needsObservation = true;
         page.refs.clear();
@@ -2492,6 +2510,7 @@ class CorePreview {
         page.error = "";
       } else {
         page.documentGeneration++;
+        this.cancelHumanGesture(page);
         page.refs.clear();
         page.activeRead?.cancel();
       }
