@@ -36,6 +36,12 @@ A new send or steer clears the previous operation's UI error. A failed attempt s
 
 Images show thumbnails. “Show in text box” appends UTF-8 text attachments to the body. Pasting more than 200 characters or at least five lines creates a text card; expansion is limited to 1 MiB. Removing files or skills preserves the body. Goal mode uses the same editor; goal creation consumes only the objective and leaves other attachments unsent. `pnpm --dir clients/gui run test:composer` verifies these paths with isolated Electron/Core/Runtime instances.
 
+## Fork and Side Chat
+
+The branch action below a completed response opens a compact popover and creates an independent chat in the current worktree at the selected history boundary. Files keep their current state; creating a new worktree is not offered. Other turn actions retain before/after boundary checks. Unknown creation outcomes are reconciled before retrying.
+
+Use `/side` in the main composer to open a right-side chat. Both panes reuse `Messages` and `ConversationComposer` (the Lexical input, toolbar and `ComposerModelMenu`) while retaining separate drafts and submission state. The Side's first question can select a model and reasoning effort from the Core catalog; subsequent configuration affects that Side only. Core/Runtime retains file-access and read-only policy enforcement. Related discussions, frozen evidence and draft recovery remain available through the side pane. Bringing an answer back opens a preview and appends to the main draft without sending it.
+
 ## Subtasks and delivery
 
 Describe the objective in the ordinary composer; Core arranges child execution. The Subtasks panel presents progress, verification evidence, and delivery status together. Open a child's process to inspect its history; Core continues to own waits and cancellation. Passing checks, pending application, conflicts, partial application, and unknown outcomes remain distinct. Candidate deliveries support paginated file previews and whole-change application managed by Core. If the original task is no longer active, continue it to accept delivery; the interface never labels an unapplied candidate as success.

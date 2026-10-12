@@ -493,7 +493,15 @@ class CoreBackend {
 
   async refreshConfiguration(project, threadId) {
     const client = project.client;
-    const result = await client.request('areal/thread/inspect', { threadId });
+    let result;
+    if (project.model.state.threads[threadId]?.conversation?.kind === 'side') {
+      // Side cannot call the ordinary execution inspection route. Its read snapshot
+      // supplies the same authoritative configuration and active-turn precondition.
+      const { thread } = await client.request('thread/read', { threadId, includeTurns: true });
+      if (thread?.id !== threadId || thread.conversation?.kind !== 'side') throw new Error('Side 配置快照与目标会话不匹配');
+      result = { configuration: thread.desktop?.configuration,
+        activeTurnId: thread.turns?.find(turn => turn.status === 'inProgress')?.id };
+    } else result = await client.request('areal/thread/inspect', { threadId });
     this.requireConnection(project, client);
     if (!result?.configuration || !Number.isSafeInteger(result.configuration.revision)) {
       throw new Error('Core 未返回有效的会话配置，请重新打开任务');
@@ -1020,6 +1028,8 @@ class CoreBackend {
           ...(request.selection ? { selection: request.selection } : {}),
           ...(request.anchor ? { anchor: request.anchor } : {}),
           input: [{ type: 'text', text: request.text }],
+          ...(request.model ? { model: request.model } : {}),
+          ...(request.parameters ? { parameters: request.parameters } : {}),
         }, { requestId: request.requestId });
         // 与 Fork 一样，投影刷新不改变 Core 已确认的创建结果。
         try { await this.openThread(project, result.thread.id); await this.listThreads(project); }

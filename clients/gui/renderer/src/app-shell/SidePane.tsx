@@ -96,7 +96,7 @@ export function SidePane({
         id: name,
         title: name.startsWith("file:")
           ? name.slice(5).split("/").pop()!
-          : (({ 改动: "审查", 预览: "浏览器" } as Record<string, string>)[name] ?? name),
+          : (({ 改动: "审查", 预览: "浏览器", 旁路讨论: "侧边聊天" } as Record<string, string>)[name] ?? name),
         openedAt: Date.now(),
         ownerTaskId,
         workspaceKey,
@@ -312,7 +312,7 @@ export function SidePane({
         </Button>
       </div>
       <div className="panel-resource-layout" data-file-preview={active.startsWith("file:") || undefined}>
-        <div className={`panel-content ${active === "功能" || ["预览", "终端", "改动", "文件"].includes(active) || active.startsWith("file:") || active.startsWith("terminal:") ? "full-height" : ""}`}>
+        <div className={`panel-content ${active === "功能" || ["预览", "终端", "改动", "文件", "旁路讨论"].includes(active) || active.startsWith("file:") || active.startsWith("terminal:") ? "full-height" : ""}`}>
           {active === "功能" ? <SidePaneLauncher items={items} /> : render(active)}
         </div>
         {auxiliary && <aside className="panel-resource-tree" aria-label="文件列表">{auxiliary}</aside>}

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { Action, Data } from "./services.js";
 
-export function RelatedSideChats({ project, sourceId, selectedId, onSelect, action }: {
-  project: Data; sourceId: string; selectedId: string; onSelect: (id: string) => void; action: Action;
+export function RelatedSideChats({ project, sourceId, selectedId, onSelect, action, showNew = true }: {
+  project: Data; sourceId: string; selectedId: string; onSelect: (id: string) => void; action: Action; showNew?: boolean;
 }) {
   const [archived, setArchived] = useState(false);
   const [items, setItems] = useState<Data[]>([]);
@@ -44,7 +44,7 @@ export function RelatedSideChats({ project, sourceId, selectedId, onSelect, acti
   };
   return <section aria-label="相关讨论">
     <div className="utility-actions"><strong>相关讨论</strong>
-      <button type="button" onClick={() => onSelect("")}>新讨论</button>
+      {showNew && <button type="button" onClick={() => onSelect("")}>新讨论</button>}
       <button type="button" onClick={() => setRevision(value => value + 1)} disabled={busy}>刷新</button>
       <label><input type="checkbox" checked={archived} onChange={event => setArchived(event.target.checked)} />包含已归档</label>
     </div>

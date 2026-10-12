@@ -3,6 +3,7 @@ import { TurnNavigation } from "./TurnNavigation.js";
 import { executionOutcome, executionSegments, goalContinuationLabel, turnFailureMessage } from "./conversationPresentation.js";
 import { TurnProgress } from "./TurnProgress.js";
 import { TurnElapsed, completedTimeLabel } from "./TurnElapsed.js";
+import { ForkIcon, MoreOptionsIcon } from "./interfaceIcons.js";
 import { MessageActions } from "./MessageActions.js";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./components/ui/dropdown-menu.js";
 import { TurnHookStats } from "./TurnHookStats.js";
@@ -43,12 +44,14 @@ export function Messages({
   onAgent,
   onFork,
   onSideSelection,
+  responseActions,
   reserveResponseSpace = true,
 }: {
   reserveResponseSpace?: boolean;
   beforeTurns?: ReactNode;
   onAgent?: (id: string) => void;
-  onFork?: (turnId: string, boundary: "before" | "after") => Promise<void>;
+  onFork?: (turnId: string, boundary: "before" | "after", anchor?: HTMLElement) => Promise<void>;
+  responseActions?: (message: Data) => ReactNode;
   onSideSelection?: (selection: Data, text: string, anchor?: Data) => void;
   project: Data;
   thread: Data;
@@ -296,9 +299,9 @@ export function Messages({
           const beforeReason = earlierIssue ? "较早轮次有未结算操作；请先在来源核查或选择更早边界" : "";
           const afterReason = turn.status === "inProgress" ? "此轮仍在运行；可选择轮次之前" :
             inspectTurn ? "历史包含未结算或未核查的操作；请在来源核查或选择更早边界" : "";
-          const forkAt = (boundary: "before" | "after") => {
+          const forkAt = (boundary: "before" | "after", anchor?: HTMLElement) => {
             setForking(true); setForkError(null);
-            void onFork?.(turn.id, boundary).catch((cause: Error & { data?: { reason?: string } }) => {
+            void onFork?.(turn.id, boundary, anchor).catch((cause: Error & { data?: { reason?: string } }) => {
               const reason = cause.data?.reason;
               const message = reason === "TURN_NOT_TERMINAL" ? "此轮仍在运行；请选择之前边界或等待完成后刷新。"
                 : reason === "HISTORY_UNRESOLVED" ? "来源历史有未结算或未核查的操作；请在来源核查 UNKNOWN，或选择更早边界。"
@@ -306,6 +309,16 @@ export function Messages({
               setForkError({ turnId: turn.id, message });
             }).finally(() => setForking(false));
           };
+          const forkControls = canFork ? <><button type="button" className="turn-fork-trigger" aria-label="从此轮创建聊天分支" title={afterReason || "从这里创建聊天分支"} disabled={forking || !!afterReason} onClick={event => forkAt("after", event.currentTarget)}><ForkIcon /><span>分支</span></button><DropdownMenu>
+              <DropdownMenuTrigger render={<button type="button" className="icon-button" disabled={forking} aria-label={`轮次操作 ${turnIndex + 1}`}><MoreOptionsIcon /></button>} />
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem disabled={!!afterReason} title={afterReason || undefined} onClick={() => forkAt("after")}>在此轮之后分支</DropdownMenuItem>
+                {afterReason && <p className="px-2 text-xs text-muted-foreground">{afterReason}</p>}
+                <DropdownMenuItem disabled={!!beforeReason} title={beforeReason || undefined} onClick={() => forkAt("before")}>在此轮之前分支</DropdownMenuItem>
+                {beforeReason && <p className="px-2 text-xs text-muted-foreground">{beforeReason}</p>}
+                {inspectTurn && <DropdownMenuItem onClick={() => document.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(inspectTurn)}"]`)?.scrollIntoView({ block: "center" })}>查看来源轮次的核查入口</DropdownMenuItem>}
+              </DropdownMenuContent>
+            </DropdownMenu></> : null;
           const segments = executionSegments(turn.items ?? [], turn.status);
           const hasFinal = segments.some((item: Data) => item.type === "agentMessage" && item.phase === "final_answer" && item.text?.trim());
           const finalMessage = segments.findLast((item: Data) => item.type === "agentMessage" && item.phase === "final_answer" && item.text?.trim());
@@ -317,6 +330,7 @@ export function Messages({
             segments.every((item: Data) => item.type !== "agentMessage" || item.phase == null) &&
             !executionOutcome(segments.flatMap((item: Data) => item.items ?? [])).unfinished &&
             !project.state?.interactions?.[thread.id]?.data?.some((item: Data) => item.status === "pending" && item.turnId === turn.id) ? tail : undefined;
+          const responseMessage = finalMessage ?? legacyReply;
           const hasReadingSummary = hasFinal || !!legacyReply;
           // User follow-ups, media and the retained reply remain in original order.
           const groups: { id: string; progress: boolean; entries: { item: Data; index: number }[] }[] = [];
@@ -398,17 +412,8 @@ export function Messages({
             {(turn.items ?? []).filter((item: Data) => item.type === "dynamicToolCall").map((item: Data) =>
               <UnknownToolInspection key={`${project.id}:${thread.id}:${item.id}`} item={item} project={project} thread={thread} action={action} />)}
             <TurnFileSummary turn={turn} readTurnReview={readTurnReview} onFile={onFile} onReview={onReview} />
-            {finalMessage && turn.status !== "inProgress" && <MessageActions text={finalMessage.text}><TurnHookStats turn={turn} /></MessageActions>}
-            {canFork && <DropdownMenu>
-              <DropdownMenuTrigger render={<button type="button" className="icon-button" disabled={forking} aria-label={`轮次操作 ${turnIndex + 1}`}>⋯</button>} />
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem disabled={!!afterReason} title={afterReason || undefined} onClick={() => forkAt("after")}>在此轮之后分支</DropdownMenuItem>
-                {afterReason && <p className="px-2 text-xs text-muted-foreground">{afterReason}</p>}
-                <DropdownMenuItem disabled={!!beforeReason} title={beforeReason || undefined} onClick={() => forkAt("before")}>在此轮之前分支</DropdownMenuItem>
-                {beforeReason && <p className="px-2 text-xs text-muted-foreground">{beforeReason}</p>}
-                {inspectTurn && <DropdownMenuItem onClick={() => document.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(inspectTurn)}"]`)?.scrollIntoView({ block: "center" })}>查看来源轮次的核查入口</DropdownMenuItem>}
-              </DropdownMenuContent>
-            </DropdownMenu>}
+            {responseMessage && turn.status !== "inProgress" && <MessageActions text={responseMessage.text}><TurnHookStats turn={turn} />{forkControls}{responseActions?.(responseMessage)}</MessageActions>}
+            {canFork && (!responseMessage || turn.status === "inProgress") && <div className="message-actions">{forkControls}</div>}
             {canFork && forkError?.turnId === turn.id && <p role="alert" className="notice">{forkError?.message}</p>}
             {turn.status === "inProgress" && (!segments.length || ["userMessage", "agentMessage", "agentMedia"].includes(segments.at(-1)?.type)) && (
               <TurnExecution items={[]} turn={turn} project={project} threadId={thread.id} renderItem={() => null} />

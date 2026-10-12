@@ -114,6 +114,14 @@ async function shot(name) {
   await page.screenshot({ path: join(scratch, name), scale: "css", animations: "disabled" });
   frames.push(name);
 }
+async function showRelated(pane) {
+  const trigger = pane.getByRole("button", { name: "相关侧边讨论", exact: true });
+  if (await trigger.getAttribute("aria-expanded") !== "true") await trigger.click();
+  await page.getByRole("region", { name: "相关讨论" }).waitFor();
+}
+async function openSideContext(pane) {
+  if (!await pane.locator("details.side-chat-context").getAttribute("open").then(value => value !== null)) await pane.getByText("会话上下文与文件访问", { exact: true }).click();
+}
 async function composeText(input, text, label, append = false) {
   const prefix = append ? await input.evaluate(element => element.isContentEditable ? element.innerText : element.value) : "";
   if (!append) await input.fill("");
@@ -145,7 +153,7 @@ async function send(text, threadId) {
   const previousCount = threadId ? (await state()).projects[0]?.state?.threads?.[threadId]?.turns?.length ?? 0 : 0;
   const previousRequests = requests.length;
   await page.getByTestId("chat-input").fill(text);
-  await page.locator(".composer-dock").getByRole("button", { name: "发送", exact: true }).click();
+  await page.locator(".composer-dock:not(.side-chat-composer)").getByRole("button", { name: "发送", exact: true }).click();
   await page.waitForFunction(id => {
     const active = document.querySelector('[data-testid="areal-workbench"]')?.dataset.threadId;
     return active && (!id || active === id);
@@ -249,7 +257,7 @@ try {
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   const endpoint = `http://127.0.0.1:${server.address().port}/v1/chat/completions`;
   const config = join(scratch, "config.toml");
-  await writeFile(config, `schema_version=1\n[model]\nprovider="fixture"\nname="fixture"\n[model.providers.fixture]\nprotocol="chat-completions"\nendpoint=${JSON.stringify(endpoint)}\n[limits]\nmodel_concurrency=1\n`);
+  await writeFile(config, `schema_version=1\n[model]\ncatalog_version=1\nprovider="fixture"\nname="fixture"\n[model.providers.fixture]\nprotocol="chat-completions"\nendpoint=${JSON.stringify(endpoint)}\nmodels=[{id="fixture",enabled=true},{id="fixture-alternate",enabled=true}]\n[limits]\nmodel_concurrency=1\n`);
   env.AREAL_CORE_CONFIG = config;
   const deployment = join(scratch, "desktop.json");
   await writeFile(deployment, JSON.stringify({ profiles: [
@@ -342,11 +350,11 @@ try {
   const beforeCreation = { modelRequests: requests.length, workspaceSha256: await hash(fixturePath) };
   assert.equal(beforeCreation.workspaceSha256, workspaceBefore);
   const anchor = page.locator(`[data-turn-id="${anchorTurnId}"]`);
-  await anchor.getByRole("button", { name: /^轮次操作 / }).click();
-  const forkButton = page.getByRole("menuitem", { name: "在此轮之后分支", exact: true });
-  await forkButton.click();
-  let forkDialog = page.getByRole("dialog", { name: "创建独立分支", exact: true });
+  await anchor.getByRole("button", { name: "从此轮创建聊天分支", exact: true }).click();
+  let forkDialog = page.getByRole("dialog", { name: "从这里创建聊天分支", exact: true });
   await forkDialog.waitFor();
+  assert.equal(await forkDialog.getByText("在当前工作树中创建", { exact: true }).count(), 1);
+  assert.equal(await forkDialog.getByText("在新工作树中创建", { exact: true }).count(), 0);
   const selectedTarget = await forkDialog.getByLabel("分支目标配置").inputValue();
   await app.evaluate(() => { globalThis.__scfRejectNext = "workflow"; });
   await forkDialog.getByRole("button", { name: "创建分支", exact: true }).click();
@@ -438,7 +446,7 @@ try {
   checks.push("AC06: actual model input excludes the future sentinel; explicit send leaves source Turn IDs and workspace bytes unchanged");
   await selectConversation(page, sourceThreadId);
   await page.getByTestId("chat-input").fill(activeQuestion);
-  await page.locator(".composer-dock").getByRole("button", { name: "发送", exact: true }).click();
+  await page.locator(".composer-dock:not(.side-chat-composer)").getByRole("button", { name: "发送", exact: true }).click();
   const running = await until(s => {
     const turn = s.projects[0]?.state?.threads?.[sourceThreadId]?.turns?.at(-1);
     return turn && !sourceTurns.includes(turn.id) && turn.status === "inProgress"
@@ -483,9 +491,9 @@ try {
   // 导航会补全默认模型的权威版本；在打开 Side 前固定完整配置基线。
   const refreshedSource = await until(s => {
     const configuration = s.projects[0]?.configurations?.[sourceThreadId];
-    return configuration?.model === null && typeof configuration.defaultModelRevision === "string"
-      && configuration.defaultModelRevision.length > 0;
-  }, "source default model configuration restored after navigation");
+    return configuration?.model?.providerId === "fixture" && configuration.model.modelId === "fixture"
+      || configuration?.model === null && typeof configuration.defaultModelRevision === "string" && configuration.defaultModelRevision.length > 0;
+  }, "source configured fixture model restored after navigation");
   const mainConfigBefore = JSON.stringify(refreshedSource.projects[0].configurations[sourceThreadId]);
   await selectSideExcerpt();
   checks.push("AC55: switching the source Thread invalidates the prior Side selection owner");
@@ -493,23 +501,35 @@ try {
   await sideTrigger.evaluate(element => { window.__scfSideTrigger = element; });
   await sideTrigger.press("Enter");
   const sidePane = page.getByRole("region", { name: "旁路讨论" });
+  await sidePane.getByText("会话上下文与文件访问", { exact: true }).click();
   await sidePane.locator("blockquote.notice").filter({ hasText: unicodeExcerpt }).waitFor();
   assert.match(await sidePane.innerText(), /已持久化选区/);
+  await openSideContext(sidePane);
   await sidePane.getByLabel("文件访问范围").selectOption("none");
   assert.equal(await sidePane.getByLabel("文件访问范围").inputValue(), "none");
-  await composeText(sidePane.getByRole("textbox", { name: "旁路问题" }), sideQuestion, "Side IME");
+  const sideInput = sidePane.getByRole("textbox", { name: "随心输入" });
+  assert.equal(await sideInput.getAttribute("contenteditable"), "true", "Side must use the shared Lexical editor");
+  assert.ok(await sidePane.locator(".composer-surface").isVisible());
+  const sourceConfigBeforeSideModel = JSON.stringify((await state()).projects[0].configurations[sourceThreadId]);
+  await sidePane.getByRole("button", { name: "模型", exact: true }).click();
+  const modelPage = page.getByRole("button", { name: "选择模型", exact: true });
+  if (await modelPage.isVisible()) await modelPage.click();
+  await page.locator('[role="radio"][data-model-value="fixture/fixture-alternate"]').click();
+  await page.keyboard.press("Escape");
+  await sideInput.click();
+  await composeText(sideInput, sideQuestion, "Side IME");
   const narrowBounds = await app.evaluate(({ BrowserWindow }) => { const win = BrowserWindow.getAllWindows()[0]; win.setSize(980, 800); return win.getBounds(); });
   events.push({ narrowBounds });
   assert.equal(narrowBounds.width, 980, "native window should reach its configured minimum width");
-  assert.ok(await sidePane.getByRole("textbox", { name: "旁路问题" }).isVisible());
+  assert.ok(await sidePane.getByRole("textbox", { name: "随心输入" }).isVisible());
   await page.waitForFunction(() => document.querySelector('[data-workspace-view]')?.dataset.workspaceView === "panel");
-  const narrowSideDraft = await sidePane.getByRole("textbox", { name: "旁路问题" }).inputValue();
+  const narrowSideDraft = await sidePane.getByRole("textbox", { name: "随心输入" }).innerText();
   await sidePane.getByRole("button", { name: "返回主会话", exact: true }).click();
   assert.ok(await page.getByTestId("chat-input").isVisible());
   await page.waitForFunction(() => document.activeElement === (window.__scfSideTrigger?.isConnected
     ? window.__scfSideTrigger : document.querySelector('[data-testid="chat-input"]')));
   await page.getByRole("button", { name: "展开侧边面板", exact: true }).click();
-  assert.equal(await sidePane.getByRole("textbox", { name: "旁路问题" }).inputValue(), narrowSideDraft);
+  assert.equal(await sidePane.getByRole("textbox", { name: "随心输入" }).innerText(), narrowSideDraft);
   await page.waitForFunction(() => document.querySelector('[data-workspace-view]')?.dataset.workspaceView === "panel");
 
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 960));
@@ -517,7 +537,7 @@ try {
   await app.evaluate(() => { globalThis.__scfRejectNext = "selection"; });
   await sidePane.getByRole("button", { name: "发送", exact: true }).click();
   await sidePane.getByRole("alert").filter({ hasText: "STALE_SELECTION" }).waitFor();
-  assert.equal(await sidePane.getByRole("textbox", { name: "旁路问题" }).inputValue(), sideQuestion);
+  assert.equal(await sidePane.getByRole("textbox", { name: "随心输入" }).innerText(), sideQuestion);
   assert.equal(requests.length, sideStartRequests);
   assert.ok(!Object.values((await state()).projects[0].state.threads).some(thread => thread.conversation?.kind === "side"));
   await shot("04a-stale-selection.png");
@@ -532,6 +552,10 @@ try {
     "main navigation must exclude Side conversations");
   assert.ok(await page.locator(`#areal-sidebar [data-thread-id="${targetThreadId}"]`).count(),
     "main navigation must retain independent Fork conversations");
+  assert.equal(sideStarted.projects[0].configurations[sideThreadId].model.modelId, "fixture-alternate");
+  assert.equal(JSON.stringify(sideStarted.projects[0].configurations[sourceThreadId]), sourceConfigBeforeSideModel);
+  assert.ok(requests.slice(sideStartRequests).some(request => request.body.model === "fixture-alternate"), "first Side question uses the selected real Core model");
+  checks.push("shared Lexical composer and Core model menu: alternate model applies to Side first question without configuring the source");
   assert.equal(side.conversation.policy?.workspaceAccess, "none", "frozen evidence journey uses session-only Side policy");
   assert.equal(side.conversation.selection?.text, unicodeExcerpt);
   assert.equal(side.conversation.selection?.verified, true);
@@ -540,6 +564,18 @@ try {
   const sideModelInput = JSON.stringify(requests.slice(sideStartRequests).flatMap(r => r.body.messages ?? []));
   assert.ok(sideModelInput.includes(sideQuestion) && sideModelInput.includes(unicodeExcerpt));
   assert.ok(!sideModelInput.includes(lateSentinel));
+  const firstSideRevision = sideStarted.projects[0].configurations[sideThreadId].revision;
+  await sidePane.getByRole("button", { name: "模型", exact: true }).click();
+  const sideModelPage = page.getByRole("button", { name: "选择模型", exact: true });
+  if (await sideModelPage.isVisible()) await sideModelPage.click();
+  await page.locator('[role="radio"][data-model-value="fixture/fixture"]').click();
+  await page.keyboard.press("Escape");
+  await sidePane.getByRole("textbox", { name: "随心输入" }).click();
+  await until(s => s.projects[0].configurations[sideThreadId]?.revision > firstSideRevision && s.projects[0].configurations[sideThreadId]?.model?.modelId === "fixture", "Side model update through Core configure");
+  assert.equal(JSON.stringify((await state()).projects[0].configurations[sourceThreadId]), sourceConfigBeforeSideModel);
+  assert.equal((await state()).projects[0].state.threads[sideThreadId].conversation.policy.workspaceAccess, "none");
+  checks.push("shared model menu configures only an idle Side and preserves its Core read-only policy");
+  await openSideContext(sidePane);
   await sidePane.getByRole("button", { name: "查看冻结证据" }).click();
   await sidePane.getByRole("region", { name: "冻结证据" }).locator("pre").filter({ hasText: unicodeExcerpt }).first().waitFor();
   await shot("05-side-answered-frozen.png");
@@ -556,7 +592,8 @@ try {
   const previewIdentity = await page.evaluate(() => Object.entries(localStorage).find(([key]) => key.endsWith(':bring-back'))?.[1]);
   await sidePane.getByRole("button", { name: "新讨论", exact: true }).click();
   assert.equal(await sidePane.getByRole("region", { name: "带回预览" }).count(), 0);
-  await sidePane.getByRole("region", { name: "相关讨论" }).getByRole("button", { name: new RegExp(sideQuestion) }).click();
+  await showRelated(sidePane);
+  await page.getByRole("region", { name: "相关讨论" }).getByRole("button", { name: new RegExp(sideQuestion) }).click();
   await preview.waitFor();
   assert.equal(await preview.getByRole("textbox", { name: "编辑带回文字" }).inputValue(), `${brought}\n保留的编辑`);
   assert.equal(await page.evaluate(() => Object.entries(localStorage).find(([key]) => key.endsWith(':bring-back'))?.[1]), previewIdentity,
@@ -588,7 +625,8 @@ try {
     "main model configuration must survive Side and bring-back");
   // 关闭面板会记住当前任务的 lastPanel；主窗口的展开按钮恢复同一 Side 标签。
   await page.getByRole("button", { name: "展开侧边面板", exact: true }).click();
-  await sidePane.getByRole("region", { name: "相关讨论" }).getByRole("button", { name: new RegExp(sideQuestion) }).waitFor();
+  await showRelated(sidePane);
+  await page.getByRole("region", { name: "相关讨论" }).getByRole("button", { name: new RegExp(sideQuestion) }).waitFor();
   assert.equal((await state()).projects[0].state.threads[sideThreadId].id, sideThreadId);
   checks.push("AC47/52/53/54/55/74: bring-back appends to the concurrent main draft with its attachment and model; edited preview survives Side switching; Chromium composition Enter submits neither editor; narrow return restores the original trigger or main editor fallback");
   const activeAnchor = page.locator(`[data-turn-id="${activeTurnId}"]`);
@@ -664,7 +702,7 @@ try {
   const beforeFileRefusal = { requests: requests.length,
     turns: (await state()).projects[0].state.threads[sourceThreadId].turns.length };
   await page.getByTestId("chat-input").fill(lateSentinel);
-  await page.locator(".composer-dock").getByRole("button", { name: "发送", exact: true }).click();
+  await page.locator(".composer-dock:not(.side-chat-composer)").getByRole("button", { name: "发送", exact: true }).click();
   await page.getByText("model does not support File input", { exact: true }).first().waitFor();
   assert.equal(requests.length, beforeFileRefusal.requests);
   assert.equal((await state()).projects[0].state.threads[sourceThreadId].turns.length, beforeFileRefusal.turns);
@@ -679,19 +717,22 @@ try {
   assert.match(await sidePane.innerText(), /来源已推进/);
   const previousSideTurns = (await state()).projects[0].state.threads[sideThreadId].turns.length;
   const followStart = requests.length;
-  await sidePane.getByRole("textbox", { name: "旁路问题" }).fill(sideFollowUp);
+  await sidePane.getByRole("textbox", { name: "随心输入" }).fill(sideFollowUp);
   await sidePane.getByRole("button", { name: "发送", exact: true }).click();
   await until(s => s.projects[0]?.state?.threads?.[sideThreadId]?.turns?.length > previousSideTurns &&
     s.projects[0].state.threads[sideThreadId].turns.at(-1).status === "completed", "Side follow-up from frozen history");
   const followInput = JSON.stringify(requests.slice(followStart).flatMap(request => request.body.messages ?? []));
   assert.ok(followInput.includes(sideFollowUp) && followInput.includes(sideQuestion));
   assert.ok(!followInput.includes(lateSentinel), "later source Turn must never enter old Side model context");
+  await openSideContext(sidePane);
   await sidePane.getByRole("button", { name: "查看冻结证据" }).click();
   const frozen = await sidePane.getByRole("region", { name: "冻结证据" }).innerText();
   assert.ok(frozen.includes(unicodeExcerpt) && !frozen.includes(lateSentinel));
   await shot("08-side-after-source-progress.png");
   checks.push("AC39: later source sentinel is excluded from old Side follow-up model request and paged frozen evidence");
-  const related = sidePane.getByRole("region", { name: "相关讨论" });
+  await showRelated(sidePane);
+  const related = page.getByRole("region", { name: "相关讨论" });
+  await showRelated(sidePane);
   await related.getByRole("button", { name: "刷新" }).click();
   await sidePane.getByRole("button", { name: "带回整条回复" }).first().click();
   await preview.getByRole("status").filter({ hasText: "来源在旁路创建后已推进" }).waitFor();
@@ -699,9 +740,10 @@ try {
   await preview.getByRole("textbox", { name: "编辑带回文字" }).fill(editedOldReference);
   const draftBeforeArchivedInsert = await page.getByTestId("chat-input").innerText();
   await app.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 1 }); });
+  await showRelated(sidePane);
   await related.getByRole("button", { name: "归档", exact: true }).click();
   await until(s => s.projects[0]?.state?.threads?.[sideThreadId]?.desktop?.archived === true, "Side archived");
-  assert.ok(await sidePane.getByRole("textbox", { name: "旁路问题" }).isDisabled());
+  assert.equal(await sidePane.getByRole("textbox", { name: "随心输入" }).getAttribute("contenteditable"), "false");
   await preview.getByRole("button", { name: "确认插入主草稿" }).click();
   await sidePane.getByText("来源或目标已变化，未写入草稿。可复制预览文字。", { exact: true }).waitFor();
   assert.equal(await page.getByTestId("chat-input").innerText(), draftBeforeArchivedInsert);
@@ -717,8 +759,11 @@ try {
   await app.evaluate(({ clipboard }, value) => clipboard.writeText(value), priorClipboard);
   await shot("08b-archived-copyable-preview.png");
   checks.push("AC40/55/56: old snapshot warning survives source progress; archived Side cannot insert, edited useful text and invalid link remain copyable through the real clipboard");
+  await showRelated(sidePane);
   await related.getByRole("checkbox", { name: "包含已归档" }).check();
+  await showRelated(sidePane);
   await related.getByRole("button", { name: /已归档/ }).waitFor();
+  await showRelated(sidePane);
   await related.getByRole("button", { name: "恢复", exact: true }).click();
   await until(s => s.projects[0]?.state?.threads?.[sideThreadId]?.desktop?.archived === false, "Side unarchived");
   assert.equal((await state()).projects[0].state.threads[sideThreadId].turns.length, previousSideTurns + 1);
@@ -729,8 +774,9 @@ try {
       "explicit native deployment must expose verified Side workspace read");
   }
   if ((await state()).projects[0].core?.features?.sideWorkspaceRead === true) {
+  await openSideContext(sidePane);
   await sidePane.getByLabel("文件访问范围").selectOption("readOnly");
-  await sidePane.getByRole("textbox", { name: "旁路问题" }).fill(sideFileQuestion);
+  await sidePane.getByRole("textbox", { name: "随心输入" }).fill(sideFileQuestion);
   await sidePane.getByRole("button", { name: "发送", exact: true }).click();
   const fileSideState = await until(s => Object.values(s.projects[0].state.threads).some(thread =>
     thread.conversation?.kind === "side" && thread.conversation.policy?.workspaceAccess === "readOnly"
@@ -739,6 +785,7 @@ try {
     && thread.conversation.policy?.workspaceAccess === "readOnly");
   const fileResult = fileSide.turns.at(-1).items.find(item => item.type === "dynamicToolCall" && item.tool === "fs_read");
   assert.equal(JSON.parse(fileResult.contentItems.find(item => item.type === "inputText").text).source, "currentWorkspace");
+  await openSideContext(sidePane);
   await sidePane.getByText(/可只读查询当前工作区；文件内容可能与历史锚点不同/).waitFor();
   assert.equal(await hash(fixturePath), workspaceBefore);
   await shot("08c-side-current-workspace.png");
@@ -746,25 +793,28 @@ try {
   } else {
     const question = "工作区只读不可用时，只讨论冻结会话证据";
     const before = { count: Object.keys((await state()).projects[0].state.threads).length, requests: requests.length };
+    await openSideContext(sidePane);
     await sidePane.getByText(/当前 Core 未提供经过验证的工作区只读能力/).waitFor();
-    await sidePane.getByRole("textbox", { name: "旁路问题" }).fill(question);
+    await sidePane.getByRole("textbox", { name: "随心输入" }).fill(question);
     await app.evaluate(() => { globalThis.__scfRejectNext = "workspace-read"; });
     await sidePane.getByRole("button", { name: "发送", exact: true }).click();
     await sidePane.getByRole("alert").filter({ hasText: "WORKSPACE_READ_UNAVAILABLE" }).waitFor();
-    assert.equal(await sidePane.getByRole("textbox", { name: "旁路问题" }).inputValue(), question);
+    assert.equal(await sidePane.getByRole("textbox", { name: "随心输入" }).innerText(), question);
     assert.equal(Object.keys((await state()).projects[0].state.threads).length, before.count);
     assert.equal(requests.length, before.requests);
-    await sidePane.getByLabel("文件访问范围").selectOption("none");
+    await openSideContext(sidePane);
+  await sidePane.getByLabel("文件访问范围").selectOption("none");
     await sidePane.getByRole("button", { name: "发送", exact: true }).click();
     await until(s => Object.values(s.projects[0].state.threads).some(thread => thread.conversation?.kind === "side"
       && thread.preview === question && thread.turns?.at(-1)?.status === "completed"), "explicit evidence-only Side after read-only refusal");
     await shot("08d-side-workspace-unavailable.png");
     checks.push("AC46: unavailable native workspace read is explicitly refused by Core, GUI retains question, explicit none creates an evidence-only Side with no silent fallback");
   }
+  await showRelated(sidePane);
   await related.getByRole("button", { name: new RegExp(sideQuestion) }).click();
   // 单模型名额由真实 HTTP 流占用；验证两边的停止都不取消另一会话。
   await page.getByTestId("chat-input").fill(capacitySourceQuestion);
-  await page.locator(".composer-dock").getByRole("button", { name: "发送", exact: true }).click();
+  await page.locator(".composer-dock:not(.side-chat-composer)").getByRole("button", { name: "发送", exact: true }).click();
   await until(s => heldResponses.has(capacitySourceQuestion)
     && s.projects[0]?.state?.threads?.[sourceThreadId]?.turns?.at(-1)?.status === "inProgress", "source owns the single model slot");
   const streamingTurnId = (await state()).projects[0].state.threads[sourceThreadId].turns.at(-1).id;
@@ -784,9 +834,11 @@ try {
     throw Error("streamed source text missing");
   }, { turnId: streamingTurnId, excerpt: streamExcerpt });
   await page.getByRole("button", { name: "在旁路中询问所选内容" }).click();
+  await openSideContext(sidePane);
   await sidePane.locator("blockquote.notice").filter({ hasText: "用户引文，来源未确认" }).waitFor();
+  await openSideContext(sidePane);
   await sidePane.getByLabel("文件访问范围").selectOption("none");
-  await sidePane.getByRole("textbox", { name: "旁路问题" }).fill("等待模型名额的旁路问题");
+  await sidePane.getByRole("textbox", { name: "随心输入" }).fill("等待模型名额的旁路问题");
   await sidePane.getByRole("button", { name: "发送", exact: true }).click();
   const quoteState = await until(s => Object.values(s.projects[0].state.threads).some(thread =>
     thread.conversation?.selection?.text === streamExcerpt && thread.desktop?.sideCapacityStatus === "waiting"), "Side waits for model capacity");
@@ -796,6 +848,7 @@ try {
   assert.equal(quotedSide.conversation.selection.selection.kind, "userQuote");
   const persistedQuote = JSON.parse(await readFile(join(scratch, "core", projectId, "state", `${userQuoteSideId}.json`), "utf8"));
   assert.deepEqual(persistedQuote.thread.conversation.selection, quotedSide.conversation.selection);
+  await openSideContext(sidePane);
   await sidePane.getByRole("button", { name: "查看冻结证据", exact: true }).click();
   const quoteEvidence = sidePane.getByRole("region", { name: "冻结证据", exact: true });
   await quoteEvidence.waitFor();
@@ -815,13 +868,14 @@ try {
   assert.equal((await state()).projects[0].state.threads[sourceThreadId].turns.at(-1).status, "inProgress");
   heldResponses.get(capacitySourceQuestion)(); heldResponses.delete(capacitySourceQuestion);
   await until(s => s.projects[0]?.state?.threads?.[sourceThreadId]?.turns?.at(-1)?.status === "completed", "source retains and releases its model slot");
+  await showRelated(sidePane);
   await related.getByRole("button", { name: new RegExp(sideQuestion) }).click();
-  await sidePane.getByRole("textbox", { name: "旁路问题" }).fill(capacitySideQuestion);
+  await sidePane.getByRole("textbox", { name: "随心输入" }).fill(capacitySideQuestion);
   await sidePane.getByRole("button", { name: "发送", exact: true }).click();
   await until(s => heldResponses.has(capacitySideQuestion)
     && s.projects[0]?.state?.threads?.[sideThreadId]?.desktop?.sideCapacityStatus === "available", "Side owns the single model slot");
   await page.getByTestId("chat-input").fill("等待模型名额的来源问题");
-  await page.locator(".composer-dock").getByRole("button", { name: "发送", exact: true }).click();
+  await page.locator(".composer-dock:not(.side-chat-composer)").getByRole("button", { name: "发送", exact: true }).click();
   await until(s => s.projects[0]?.state?.threads?.[sourceThreadId]?.turns?.at(-1)?.status === "inProgress", "source waits while Side runs");
   await page.getByRole("button", { name: "停止", exact: true }).click();
   await until(s => s.projects[0]?.state?.threads?.[sourceThreadId]?.turns?.at(-1)?.status === "interrupted", "source stops independently");
@@ -832,6 +886,7 @@ try {
   const beforeDisconnect = (await state()).projects[0];
   await app.evaluate(() => globalThis.__scfConnection.socket.terminate());
   await until(s => s.connection?.state === "unavailable", "GUI-to-Core transport disconnect");
+  await openSideContext(sidePane);
   await sidePane.getByText(/^来源：.*来源当前状态未知/).waitFor();
   await page.getByRole("button", { name: "重新连接后台" }).click();
   const reconnected = await until(s => s.connection?.state === "ready" && s.projects[0]?.state?.connected &&
@@ -867,14 +922,14 @@ try {
   page = await app.firstWindow();
   page.setDefaultTimeout(15000);
   page.on("pageerror", error => pageErrors.push(error.message));
-  forkDialog = page.getByRole("dialog", { name: "创建独立分支", exact: true });
+  forkDialog = page.getByRole("dialog", { name: "从这里创建聊天分支", exact: true });
   await page.getByTestId("areal-workbench").waitFor({ timeout: 120000 });
   await until(s => s.projects.some(project => project.id === projectId && project.state?.connected), "restarted Core connection");
   await selectConversation(page, sourceThreadId);
   await page.getByRole("button", { name: "任务操作", exact: true }).click();
   await page.getByRole("menuitem", { name: "旁路讨论", exact: true }).click();
-  await page.getByRole("region", { name: "旁路讨论" }).getByRole("region", { name: "相关讨论" })
-    .getByRole("button", { name: new RegExp(sideQuestion) }).click();
+  await showRelated(page.getByRole("region", { name: "旁路讨论" }));
+  await page.getByRole("region", { name: "相关讨论" }).getByRole("button", { name: new RegExp(sideQuestion) }).click();
   const restored = await until(s => s.projects[0]?.state?.threads?.[sourceThreadId]?.turns?.length === preRestart.sourceTurns &&
     s.projects[0]?.state?.threads?.[sideThreadId]?.turns?.length === preRestart.sideTurns, "restarted source and Side identity");
   assert.equal(restored.projects[0].state.threads[sideThreadId].conversation.origin.sourceThreadId, sourceThreadId);

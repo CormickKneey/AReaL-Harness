@@ -4,7 +4,7 @@
 /** @template T @typedef {{ok:true,value:T}|{ok:false,error:DesktopError}} DesktopResult */
 /** @typedef {{id:string,revision:string}} ResourceRef */
 /** @typedef {{projectId:string,threadId:string,expectedRevision?:number,model?:{providerId:string,modelId:string}|null,profile?:ResourceRef,options?:Record<string,unknown>,parameters?:Record<string,unknown>,selectedSkills?:ResourceRef[]}} ConfigureRequest */
-/** @typedef {{projectId:string,operation:'start'|'recover'|'send'|'context'|'list',sourceThreadId?:string,threadId?:string,requestId?:string,text?:string,cursor?:string,evidenceRef?:string,includeArchived?:boolean}} SideRequest */
+/** @typedef {{projectId:string,operation:'start'|'recover'|'send'|'context'|'list',sourceThreadId?:string,threadId?:string,requestId?:string,text?:string,cursor?:string,evidenceRef?:string,includeArchived?:boolean,model?:{providerId:string,modelId:string},parameters?:Record<string,unknown>}} SideRequest */
 
 // 名称、作用域和执行层只维护一份；Main 专属能力不能从后台服务入口调用。
 const commandDefinitions = Object.freeze({

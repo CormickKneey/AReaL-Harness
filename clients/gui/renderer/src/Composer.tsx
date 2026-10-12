@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useApplicationPreferences } from "./settings/applicationPreferences.js";
 import { shouldSteer } from "./settings/applicationSettings.js";
-import { ComposerModelMenu, composerModelOption } from "./ComposerModelMenu.js";
+
 import { ComposerPermissionMenu } from "./ComposerPermissionMenu.js";
 import { canExecutePlan, permissionMode, permissionOptions, planModeOptions } from "./permissions.js";
 import { ComposerPlanMode } from "./ComposerPlanMode.js";
@@ -15,8 +15,8 @@ import { ApprovalRequest } from "./ApprovalRequest.js";
 import { GoalCard, goalControlError } from "./Goal.js";
 import { goalContinuationLabel } from "./conversationPresentation.js";
 import { GoalIcon as Target, PlanModeIcon as Lightbulb } from "./interfaceIcons.js";
-import { FileTree, ArchiveChatIcon, SendMessageIcon, StopIcon } from "./interfaceIcons.js";
-import { ChatPromptEditor } from "./prompt-editor/ChatPromptEditor.js";
+import { FileTree, ArchiveChatIcon, SendMessageIcon, StopIcon, SideChatIcon } from "./interfaceIcons.js";
+import { ConversationComposer } from "./ConversationComposer.js";
 import { ComposerAttachment, composerPaste } from "./ComposerAttachments.js";
 import { useComposerSkills, composerSkillContent, readComposerSkills } from "./ComposerSkills.js";
 import { ComposerMcpIcon } from "./ComposerIcons.js";
@@ -233,7 +233,7 @@ export function Composer({
     } catch (cause) { setAdmissionError((cause as Error).message); } finally { markSending(key, false); }
   };
   const catalogActions: ComposerCatalogEntry[] = [
-    ...(onSide ? [{ value: "side", label: "旁路讨论", description: "基于当前会话快照独立提问", icon: <Lightbulb />, group: "功能" as const, run: () => onSide("") }] : []),
+    ...(onSide ? [{ value: "side", label: "侧边聊天", description: "在右侧讨论，不打断当前聊天", icon: <SideChatIcon />, group: "功能" as const, run: () => onSide("") }] : []),
     { value: "upload", label: "上传文件", description: "添加图片、文档或其他文件", icon: <AttachmentIcon />, group: "功能", run: () => upload.current?.click() },
     { value: "mcp", label: "MCP", description: "查看服务器与连接状态", icon: <ComposerMcpIcon />, group: "功能", run: () => setMcpOpen(true) },
     { value: "files", label: "工作区文件", description: "引用当前项目中的文件", icon: <FileTree />, group: "功能", run: () => onPanel("文件") },
@@ -313,7 +313,12 @@ export function Composer({
           onPanel("工作组");
         }}>查看关联工作流结果</Button>
       </div>}
-      <ChatPromptEditor
+      <ConversationComposer
+        project={project}
+        modelConfig={config}
+        modelDisabled={disabled || !!queueEditor.edit || !!running || !config}
+        onConfigureModel={values => { void configure(values); }}
+        onModelSettings={() => onPanel("设置")}
         triggerPanelContainer={menuAnchor}
         className={questions.length && !queueEditor.edit ? "hidden" : undefined}
         shellClassName="@container/composer"
@@ -412,22 +417,7 @@ export function Composer({
             </Button>
           </ControlHintTooltip>
         ) : undefined}
-        betweenCancelAndSubmitAction={<ComposerModelMenu
-          value={config?.model ? `${config.model.providerId}/${config.model.modelId}` : ""}
-          disabled={disabled || !!queueEditor.edit || !!running}
-          effort={config?.parameters?.reasoningEffort ?? ""}
-          onEffortChange={value => { void configure({ parameters: { ...config?.parameters, reasoningEffort: value } }); }}
-          options={[...(project.models.some((model: Data) => !model.providerId) ? [{ value: "", label: "默认模型", efforts: project.models.find((model: Data) => !model.providerId)?.reasoningEffortOptions }] : []), ...project.models
-            .filter((model: Data) => model.providerId)
-            .map(composerModelOption)]}
-          onChange={value => {
-            if (!value) { void configure({ model: null }); return; }
-            const model = project.models.find((item: Data) => `${item.providerId}/${item.modelId}` === value);
-            if (model) void configure({ model: { providerId: model.providerId, modelId: model.modelId } });
-          }}
-          onClose={() => api.current?.focus()}
-          onConfigure={() => onPanel("设置")}
-        />}
+
       />
       </div>
       <ComposerMcp projectId={project.id} action={readAction} open={mcpOpen} anchor={menuAnchor} onClose={() => { setMcpOpen(false); api.current?.focus(); }} />

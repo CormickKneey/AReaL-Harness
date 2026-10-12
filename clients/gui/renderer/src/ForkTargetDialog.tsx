@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { Button } from "./components/ui/button.js";
-import { SettingsDialog } from "./settings/common.js";
+import { Popover, PopoverContent, PopoverTitle, PopoverDescription } from "./components/ui/popover.js";
+import { ForkIcon } from "./interfaceIcons.js";
 import type { Data } from "./services.js";
 
-export function ForkTargetDialog({ title, boundary, models, profiles, onClose, onCreate, onCheck }: {
+export function ForkTargetDialog({ title, boundary, models, profiles, onClose, onCreate, onCheck, anchor }: {
+  anchor?: HTMLElement;
   title: string;
   boundary: "before" | "after";
   models: Data[];
@@ -41,7 +43,12 @@ export function ForkTargetDialog({ title, boundary, models, profiles, onClose, o
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { setBusy(false); }
   };
-  return <SettingsDialog title="创建独立分支" description={`从「${title}」${boundary === "after" ? "此轮之后" : "此轮之前"}冻结历史。新旧会话共享当前工作区，文件不会回滚。`} onClose={onClose}>
+  return <Popover open onOpenChange={open => { if (!open) onClose(); }}>
+    <PopoverContent anchor={anchor} side="top" align="start" sideOffset={8} className="fork-target-popover" aria-label="创建独立分支" finalFocus={() => anchor?.isConnected ? anchor : false}>
+    <PopoverTitle>从这里创建聊天分支</PopoverTitle>
+    <PopoverDescription className="fork-target-description">{`从「${title}」${boundary === "after" ? "此轮之后" : "此轮之前"}冻结历史。新旧会话共享当前工作区，文件不会回滚。`}</PopoverDescription>
+    {!unknown && <button type="button" className="fork-workspace-choice" aria-label="创建分支" disabled={busy} onClick={() => void create()}><ForkIcon size={18} /><span><strong>{busy ? "正在创建…" : "在当前工作树中创建"}</strong><small>在当前工作区创建新的独立聊天</small></span></button>}
+    <details className="fork-target-options"><summary>目标配置</summary>
     <label className="grid gap-2">目标配置
       <select aria-label="分支目标配置" value={selection} disabled={busy} onChange={event => setSelection(event.target.value)}>
         <option value="inherit">继承锚点配置</option>
@@ -50,9 +57,11 @@ export function ForkTargetDialog({ title, boundary, models, profiles, onClose, o
         {availableModels.map((model, index) => <option key={`model:${model.providerId}:${model.modelId}`} value={`model:${index}`}>模型 · {model.displayName || model.modelId}</option>)}
       </select>
     </label>
+    </details>
     {error && <p role="alert">{error}{unknown ? "。请先核对原提交，不会重新创建。" : "。可选择兼容的普通配置后重试。"}</p>}
     <div className="flex justify-end gap-2"><Button type="button" variant="ghost" onClick={onClose}>{busy ? "关闭等待" : "取消"}</Button>{unknown
       ? <Button type="button" disabled={busy} onClick={() => void check()}>{busy ? "正在核对…" : "核对受理结果"}</Button>
-      : <Button type="button" disabled={busy} onClick={() => void create()}>{busy ? "正在创建…" : "创建分支"}</Button>}</div>
-  </SettingsDialog>;
+      : null}</div>
+    </PopoverContent>
+  </Popover>;
 }

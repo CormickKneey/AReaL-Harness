@@ -288,7 +288,7 @@ function AppContent({ services }: { services: PlatformServices }) {
   const [previewSource, setPreviewSource] = useState("");
   const [previewRequest, setPreviewRequest] = useState(0);
   const [rename, setRename] = useState<Data | null>(null);
-  const [forkIntent, setForkIntent] = useState<{ projectId: string; sourceThreadId: string; turnId: string; boundary: "before" | "after"; title: string; models: Data[]; profiles: Data[]; route: string; resolve: () => void } | null>(null);
+  const [forkIntent, setForkIntent] = useState<{ projectId: string; sourceThreadId: string; turnId: string; boundary: "before" | "after"; title: string; models: Data[]; profiles: Data[]; route: string; anchor?: HTMLElement; resolve: () => void } | null>(null);
   const [renameText, setRenameText] = useState("");
   useEffect(() => {
     const unsubscribe = services.onState(setSnapshot);
@@ -981,7 +981,7 @@ function AppContent({ services }: { services: PlatformServices }) {
     if (!project) return null;
     const props = { project, thread, action };
     if (panel === "旁路讨论" && thread && project.core?.features?.sidePreview === true && !thread.parentThreadId && thread.conversation?.kind !== "side") {
-      return <SideChatPane onReturn={hidePanel} key={`${project.core?.instanceId}:${project.id}:${thread.id}:side`} project={project} source={thread} action={resourceAction} dark={dark} />;
+      return <SideChatPane onPanel={showPanel} onReturn={hidePanel} key={`${project.core?.instanceId}:${project.id}:${thread.id}:side`} project={project} source={thread} action={resourceAction} dark={dark} />;
     }
     if (panel.startsWith("agent:") && thread) {
       const childId = panel.slice(6);
@@ -1118,13 +1118,13 @@ function AppContent({ services }: { services: PlatformServices }) {
     !(thread && admitting) &&
     thread?.conversation?.kind !== "fork" &&
     !thread?.turns?.some((turn: Data) => turn.items?.length || turn.status === "inProgress");
-  const forkFromTurn = (turnId: string, boundary: "before" | "after"): Promise<void> => {
+  const forkFromTurn = (turnId: string, boundary: "before" | "after", anchor?: HTMLElement): Promise<void> => {
     if (!project || !thread) return Promise.resolve();
     const owner = project.id;
     const sourceThreadId = thread.id;
     const route = `${owner}:${sourceThreadId}`;
     return new Promise(resolve => setForkIntent({ projectId: owner, sourceThreadId, turnId, boundary,
-      title: thread.preview || "当前会话", models: project.models ?? [], profiles: project.profiles ?? [], route, resolve }));
+      title: thread.preview || "当前会话", models: project.models ?? [], profiles: project.profiles ?? [], route, anchor: anchor ?? document.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(turnId)}"] .icon-button`) ?? undefined, resolve }));
   };
   const openForkOrigin = (sourceId: string, turnId: string) => {
     if (!project) return;
@@ -1749,7 +1749,7 @@ function AppContent({ services }: { services: PlatformServices }) {
           </form>
         </div>
       )}
-      {forkIntent && <ForkTargetDialog title={forkIntent.title} boundary={forkIntent.boundary} models={forkIntent.models} profiles={forkIntent.profiles}
+      {forkIntent && <ForkTargetDialog anchor={forkIntent.anchor} title={forkIntent.title} boundary={forkIntent.boundary} models={forkIntent.models} profiles={forkIntent.profiles}
         onClose={() => { forkIntent.resolve(); setForkIntent(current => current === forkIntent ? null : current); }}
         onCheck={() => resourceAction("reconcile", { projectId: forkIntent.projectId })}
         onCreate={async target => {

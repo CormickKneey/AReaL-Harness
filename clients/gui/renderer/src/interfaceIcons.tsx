@@ -1,5 +1,6 @@
 // Reference glyphs retain the public Codex SVG geometry and role-specific grids.
 // LucideProps is a caller-compatible type only; matched glyphs use no Lucide artwork.
+import forkMask from "./assets/codex-fork-mask.png";
 import { ActivityIcon } from "./ActivityIcon.js";
 import type { CSSProperties } from "react";
 import type { LucideProps } from "lucide-react";
@@ -308,4 +309,9 @@ export function ReviewOptionGlyph({ kind, size = 16, ...props }: LucideProps & {
     <path d="M3.74009 16.5L6.24009 14L8.74009 16.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     <path d="M8.74009 7.5L6.24009 10L3.74009 7.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
   </svg>;
+}
+
+// Native Codex Fork glyph supplied with the approved UI reference. Geometry is preserved as a raster alpha mask.
+export function ForkIcon({ size = 16, className, style }: LucideProps) {
+  return <span aria-hidden="true" className={className} style={{ display: "inline-block", flexShrink: 0, width: size, height: size, background: "currentColor", maskImage: `url(${forkMask})`, maskPosition: "center", maskSize: "contain", maskRepeat: "no-repeat", ...style }} />;
 }
