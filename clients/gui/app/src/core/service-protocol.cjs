@@ -283,9 +283,9 @@ class DesktopService {
       try {
         const entryKey = method === 'command' && params.name === 'send'
           ? browserKey(params.request.projectId, params.request.threadId) : null;
-        const thread = entryKey && this.backend.projects.get(params.request.projectId)?.model.state.threads[params.request.threadId];
-        const entry = thread && !thread.turns?.some(turn => turn.status === 'inProgress')
-          ? { socket } : null;
+        const entryProject = entryKey && this.backend.projects.get(params.request.projectId);
+        const entry = entryProject?.model.state.threads[params.request.threadId]
+          ? { socket, project: entryProject, client: entryProject.client } : null;
         if (entry) {
           entry.ready = new Promise(resolve => { entry.resolve = resolve; });
           this.browserEntrypoints.get(entryKey)?.resolve(null);
@@ -293,7 +293,8 @@ class DesktopService {
         }
         let result;
         try { result = method === 'command' ? await this.backend.command(params.name, params.name === 'media' ? decodeMedia(params.request) : params.request,
-          { onBrowserTurnStarted: turnId => entry?.resolve(turnId) }) : await this.backend.addProject(params.path); }
+          { onBrowserTurnStarted: turnId => entry?.resolve({ turnId }),
+            onBrowserTurnQueued: queueItemId => entry?.resolve({ queueItemId }) }) : await this.backend.addProject(params.path); }
         catch (error) { if (entry && this.browserEntrypoints.get(entryKey) === entry) this.browserEntrypoints.delete(entryKey); throw error; }
         finally { entry?.resolve(null); }
         if (method === 'command' && params.name === 'media') result = encodeMedia(result);
@@ -329,8 +330,28 @@ class DesktopService {
   async bootstrapBrowser(request, key) {
     const entry = this.browserEntrypoints.get(key);
     if (!entry || entry.socket.readyState !== 1) return;
-    const turnId = await entry.ready;
-    if (turnId !== request.turnId || this.browserEntrypoints.get(key) !== entry) return;
+    const accepted = await entry.ready;
+    const current = () => this.browserEntrypoints.get(key) === entry && entry.socket.readyState === 1
+      && this.backend.projects.get(request.projectId) === entry.project
+      && this.backend.currentConnection(entry.project, entry.client)
+      && entry.project.service?.serviceId === request.coreInstanceId
+      && entry.project.service?.generation === request.coreGeneration;
+    const forget = () => { if (this.browserEntrypoints.get(key) === entry) this.browserEntrypoints.delete(key); };
+    if (!accepted || !current()) { forget(); return; }
+    let turnId = accepted.turnId;
+    if (typeof accepted.queueItemId === 'string') {
+      // Enqueue acceptance authorizes only its persisted queue item. A previous
+      // active callback or an unrelated next turn cannot borrow this entry.
+      let queue;
+      try { queue = await entry.client.request('areal/queue/list', { threadId: request.threadId }); }
+      catch { forget(); return; }
+      if (!current()) { forget(); return; }
+      const item = queue.items?.find(item => item.id === accepted.queueItemId);
+      if (!item || !['pending', 'running'].includes(item.status)) { forget(); return; }
+      if (item.status === 'pending') return;
+      turnId = item.turnId;
+    }
+    if (turnId !== request.turnId) return;
     this.browserEntrypoints.delete(key); // A cancelled/unknown entry is never replayed.
     if (request.signal?.aborted || this.browserPending.size >= 8) return;
     const requestId = ++this.nextBrowserId;

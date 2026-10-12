@@ -977,7 +977,8 @@ class CoreBackend {
         // determines admission; the renderer's enqueue hint may already be stale.
         const enqueue = project.model.state.threads[threadId]?.turns?.some(turn => turn.status === 'inProgress');
         const submitted = await this.submit(project, enqueue ? 'areal/turn/enqueue' : 'areal/turn/start', { threadId, input });
-        if (!enqueue) context.onBrowserTurnStarted?.(submitted.turn?.id);
+        if (enqueue) context.onBrowserTurnQueued?.(submitted.queueItemId);
+        else context.onBrowserTurnStarted?.(submitted.turn?.id);
         break;
       }
       case 'steer': {
