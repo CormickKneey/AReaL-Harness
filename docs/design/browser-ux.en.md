@@ -2,36 +2,36 @@
 
 # Shared Browser interaction specification
 
-Proposed design, constrained by the [spec](browser.en.md) and [contract](../api/browser.en.md). Reuse existing components, Composer, ApprovalRequest, resource and diff surfaces rather than replacing the design system.
+Current source interaction and remaining design constraints, bounded by the [spec](browser.en.md) and [contract](../api/browser.en.md). Reuse existing components, Composer, ApprovalRequest, resource and diff surfaces. Unified native and package acceptance of the natural browsing flow remains pending; design parameters and future acceptance requirements are not verified capabilities.
 
 ## 1. Structure
 
-Use the existing right workspace with split/expanded viewing while retaining chat and Thread identity. Keep back/forward, reload/stop, address, Page tabs, viewport and controller status in a trusted toolbar. Takeover stays visible above web content. Background Thread activity never steals focus, switches chat or opens a different user's panel.
+Use the existing right workspace with split/expanded viewing while retaining chat and Thread identity. The default toolbar keeps back/forward, reload/stop, address, Page tabs and independent annotations. Diagnostics, viewport and control details live under More. No Browser tool switch or human/Agent mode button is required. Background Thread activity must not steal focus, switch chat or open another panel.
 
-An activity strip shows the current target, progress and takeover, not raw CDP traffic. Completion presents a verification card linking checks, evidence and code changes. A historical card is not a live interactive page.
+Operation activity and results appear in chat and expandable details, showing target, progress and errors without raw CDP traffic or internal state in ordinary browsing. Verification cards link checks, evidence and code changes; a historical card is not a live interactive page.
 
 ## 2. Control states
 
 | State | Presentation and behavior |
 |---|---|
-| human | “You control this page; agent observation paused”; normal interaction, comments and explicit resume |
-| agent | “Agent controls this page”; trusted input shield and takeover; read-only following |
+| human | Direct browsing and independent comments; details explain paused Agent observation; next explicit message/continuation requires Core approval to resume |
+| agent | Chat/details show operation progress; direct page input intervenes after Main establishes the fence |
 | transferring | Handoff progress with possible in-flight uncertainty; local takeover always works; no new agent input |
 | waiting approval | Existing Core approval card showing actual site/action; clicking Allow is not local execution permission |
 | unavailable | Specific host/page failure and restoration impact; no fake live preview |
 | unknown | “Outcome unconfirmed; will not retry automatically”; inspect page/receipt and acknowledge without rewriting history |
 
-Takeover immediately fences locally. Open human input only after native synthetic input quiesces; otherwise remain transferring and offer safe page stop/closure. Do not wait for Core approval or permit competing writers.
+Physical page input immediately establishes Main’s control fence, revokes the old Agent epoch and pauses actions and reads. After dispatched synthetic input settles and held keys are released, the first human event reaches the same Page. No takeover-button prerequisite exists. If input cannot converge, remain transferring and offer stop/closure without competing writers or waiting for Core approval. Ambiguous dispatched results remain UNKNOWN and are never retried automatically.
 
 Stop loading, take over Browser, interrupt Turn and stop service are distinct controls. Browser takeover does not stop unrelated development servers.
 
 ## 3. Journeys
 
-**A. Inspect the existing page.** The user has unsent form state, chooses “Let agent inspect current page”, confirms the Thread/URL/scope, and binds the same Page. Observe semantically and capture when needed. E2E must compare native object identity and a sentinel, not only URL. Prefer claiming the intended existing page over opening a duplicate.
+**A. Inspect the existing page.** With unsent state on a Page, the user explicitly asks in chat to inspect it or perform an ordinary search. New chats discover the fixed bundle; older chats append it on an explicit send while idle. The first Core-approved `describe` binds the same Page, lazily allocating a blank Page only if none exists. Subsequent reads and actions require Page/epoch-scoped approval. No tool switch or Page-claim button is needed. E2E compares native identity and a sentinel, not only URL; `thread/resume` cannot steal a host or rewrite history.
 
-**B. Manual login then resume.** Keep the page open when login, permissions or sensitive submissions need a person. Human takeover pauses automated reads and diagnostics. Explicit “Resume and continue” grants a new epoch and fresh observation. No restart-persistent login promise; merely changing window visibility is not consent.
+**B. Manual login then resume.** Keep the Page open when login, permissions or sensitive submissions need a person. Direct human input makes Main fence and drain old input, pausing automatic reads and diagnostics. After manual work, the next explicit chat instruction or continuation passes Core approval for a new epoch and fresh observation. No restart-persistent login is promised. Visibility changes and timers grant no control or automatic upload of human-period content.
 
-**C. Region annotation.** Take human control, capture a provenance-bearing page view, hide the native surface and annotate the frozen image. Label it as a capture whose live page may still change. The draft contains region/comment/thumbnail/URL/time and remains bound to its original Thread. Only explicit send submits; cancel restores the page without navigation. Region dragging uses the frozen image; element picking uses the visible native page's CDP Overlay inspect mode. Both use the same guarded capture and original-Thread draft path. Native B-29/B-30 acceptance remains pending.
+**C. Region annotation.** Annotation and sending context do not require Agent tool activation or a Page claim. Take human control, capture a provenance-bearing page view, hide the native surface and annotate the frozen image. Label it as a capture whose live page may still change. The draft contains region/comment/thumbnail/URL/time and remains bound to its original Thread. Only explicit send submits; cancel restores the page without navigation. Region dragging uses the frozen image; element picking uses the visible native page's CDP Overlay inspect mode. Both use the same guarded capture and original-Thread draft path. Native B-29/B-30 acceptance remains pending.
 
 Current source path: the user-initiated `captureRegion` preview command waits for native input convergence and captures only a visible human-controlled Page. The native Page remains pinned while its frozen editor is open, including across chat switches; cancel releases the pin and restores that Page without navigation. Selection maps rendered image coordinates to captured bitmap pixels. “Add to chat draft” appends the comment, Page/document/viewport/bitmap provenance, clip coordinates and cropped PNG to the original Thread's Composer draft; the user sends explicitly from Composer. Only the selected crop is uploaded through the existing Thread-scoped Core Blob/MediaRef path during explicit Composer send; the full capture stays local. Core history owns the annotation only after message admission. A pending or in-flight submission blocks staging another annotation until its outcome is inspected. The frozen editor remains in memory across chat switches; Composer text uses its existing local draft storage, while the image attachment follows the existing in-memory attachment lifetime.
 
@@ -50,7 +50,7 @@ Keyboard activation of “Select element and preview style” opens a local froz
 
 ## 4. Native-view constraints
 
-React z-index is not a WebContentsView overlay implementation. A trusted native overlay/local view must handle resizing, focus, IME, occlusion and display scale without granting remote pages a privileged preload. In agent mode it blocks human page input but retains takeover; in human mode it revokes agent admission. Capture web content without agent cursor/labels/toolbars by default.
+React z-index is not a WebContentsView overlay implementation. A trusted native overlay/local view must handle resizing, focus, IME, occlusion and display scale without granting remote pages a privileged preload. On physical input, Main revokes Agent admission and drains old input before preserving the first human event. A React shield must not make a takeover button a prerequisite for browsing. Capture web content without agent cursor/labels/toolbars by default.
 
 Do not fabricate screenshots while minimized, hidden, zero-sized or unsupported. Request a visible page when needed rather than present an old capture as new evidence. Remote video infrastructure is not required initially.
 
@@ -60,20 +60,22 @@ Explicit DevTools opening pauses automation. Detach marks the driver unavailable
 
 Store page CSS viewport separately from GUI display zoom. An initial1280×720 viewport and configurable320–3840×320–2160 range are policy values, not browser guarantees. Record bitmap and CSS sizes. Test center/edge/scrolled/iframe/Canvas coordinates at1×/2× display scale and multiple page zoom values.
 
-Only genuine human-mode input goes directly to the page. IME confirmation Enter must not submit a comment or chat. Clear synthetic keys without disrupting human composition. Keyboard navigation reaches takeover, approvals, address, tabs and comment actions, and restores focus to the initiating control. Use text labels and accessible state announcements, not color alone.
+Genuine keyboard input can directly trigger human intervention; Main fences and drains before delivering the first event, without a manual mode switch. IME confirmation Enter must not submit a comment or chat. Clear synthetic keys without disrupting human composition. Keyboard navigation reaches approvals, address, tabs, More and comment actions, and restores focus to the initiating control. Use text labels and accessible state announcements, not color alone.
 
 ## 6. Files and permissions
 
-Attribute popups to opener, Thread and transient context before accepting; no unowned windows. Recheck cross-origin login transitions. Deny camera/microphone/location by default initially and hand the flow to a person.
+Attribute popups to opener, Thread and transient context before accepting; no unowned windows. Ordinary cross-origin login redirects retain Chromium networking and control-endpoint protection without per-Origin prompts; Agent reads/actions remain separately permissioned. Deny camera/microphone/location by default initially and hand the flow to a person.
 
 Show download origin, name, size-or-unknown and state; save only after user confirmation and never execute. Uploads use a trusted user chooser, not model-specified host paths. Cancellation is a normal outcome. Files selected during human control are not automatically read by the agent.
 
-Current source path: the visible current human Page offers “Allow next download,” which permits one site-triggered item within 30 seconds. Electron's native Save dialog lets the user choose the destination; cancellation saves no file. Status shows the Page provenance, initiating origin (explicitly unknown when unavailable), filename, size or unknown, and completion/cancellation/interruption, with cancellation for active items. Files never open automatically, and a dispatched network request is never retried on cancellation. Uploads use the site's file control and the system chooser during human control; cancellation leaves the human Page usable. Explicit giveback lets the Agent freshly observe only visible site results, without receiving the chosen host path or file bytes. Native B-39/B-40 acceptance remains for M2.
+Current source path: the visible current human Page offers “Allow next download,” which permits one site-triggered item within 30 seconds. Electron's native Save dialog lets the user choose the destination; cancellation saves no file. Status shows the Page provenance, initiating origin (explicitly unknown when unavailable), filename, size or unknown, and completion/cancellation/interruption, with cancellation for active items. Files never open automatically, and a dispatched network request is never retried on cancellation. Uploads use the site's file control and the system chooser during human control; cancellation leaves the human Page usable. The next explicit message or continuation, after Core approval, lets the Agent freshly observe only visible site results, without receiving the chosen host path or file bytes. Native B-39/B-40 acceptance remains for M2.
 
 ## 7. Acceptance evidence
 
 Capture real evidence for same-page action, takeover/resume, region/element comments, source verification after clearing style overlays, and unavailable/error states. Distinguish unverified/passed/failed/unknown rather than one generic success badge. See the [test matrix](../development/browser-testing.en.md).
 
-![Proposed human takeover](diagrams/browser-takeover.svg)
+The following is the original handoff concept diagram; the direct-input flow above supersedes its button prerequisite.
+
+![Human handoff concept](diagrams/browser-takeover.svg)
 
 [Editable takeover diagram](diagrams/browser-takeover.drawio)

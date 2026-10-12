@@ -2,25 +2,25 @@
 
 # Browser v1 契约
 
-**设计契约，部分实现。** 当前支持 Browser-enabled Thread 或空闲旧 Thread 对已有原生页的显式认领、观察/截图/诊断、经 Core 准备和审批的 Ref/坐标动作、等待、导航、新页面与有界批量，以及本机接管和宿主缺失拒绝。实际集合通过 `describe` 发现；未公布的操作仍是提案。不改变现有 [Core UNKNOWN 规则](core.md#dynamic-tools)。
+**设计契约，部分实现。** 当前源码支持具备 Browser 能力的 GUI 聊天自然发现固定工具包、经 Core 审批绑定同一原生页、观察/截图/诊断、Ref 动作、受限本地坐标动作、等待、导航、新页面和有界批量，以及人工直接介入和宿主缺失拒绝。实际集合通过 `describe` 发现；未公布的操作仍是提案。自然浏览流程的统一原生与安装包验收尚未完成，不改变现有 [Core UNKNOWN 规则](core.md#dynamic-tools)。
 
-当前实现从新聊天 Composer 的“浏览器”开关注册固定 `browser_v1` 工具包；空闲旧 Thread 可在预览中启用同一工具包。用户打开当前聊天的预览页后点击“让 Agent 检查当前页”，Main 在原 WebContentsView 上认领并经认证服务连接登记；模型回调由该 Thread 已绑定的 Core 连接承接。工具定义的 `operation:string` 保持可扩展包络；二次校验接受 `describe`（空参数）、`observe`（`pageId`、可选文档范围、Ref 与预算）、`capture`（当前视口）、`act`（pageId、snapshotId 与已公布的 Ref/截图坐标动作）和 `wait`（pageId、1–30000 毫秒和可选 condition）。观察使用有界原生 AX 读取，按实际 Frame 覆盖状态报告不可读部分，并在可用时提供 role、name、state、value 与父节点关联。Ref 绑定原生节点和代次；预算截断本身不使被省略的存活 Ref 失效。结果 URL 去除查询和片段。截图限制在 800 万像素、单边 4096 像素和 2 MiB PNG，使用现有 Core Blob 和工具媒体通道交给模型与聊天。已知敏感表单或不可读 Frame 存在时拒绝自动截图；这不是截图遮罩，也无法识别所有敏感内容。持久 Profile 尚未实现。人工接管、导航、Core/宿主换代会撤销读取；在途取消或超时不会自动重试。
+支持 Browser 的 GUI 新聊天登记固定 `browser_v1` 工具包；旧 Thread 在下一次空闲时的明确用户发送中，按 [ADR-0007](../adr/0007-browser-tool-compatibility.md) 受控追加部署固定包，保留原工具和历史。无需 Composer 开关或页面交还按钮。首次经 Core 批准的 `describe` 延迟绑定当前同一原生页；没有页面时才分配空白页。模型回调仍由该 Thread 绑定的 Core 连接承接。工具定义的 `operation:string` 保持可扩展包络；二次校验接受 `describe`（空参数）、`observe`（`pageId`、可选文档范围、Ref 与预算）、`capture`（当前视口）、`act`（pageId、snapshotId 与已公布的 Ref 动作及受限本地截图坐标动作）和 `wait`（pageId、1–30000 毫秒和可选 condition）。观察使用有界原生 AX 读取，按实际 Frame 覆盖状态报告不可读部分，并在可用时提供 role、name、state、value 与父节点关联。Ref 绑定原生节点和代次；预算截断本身不使被省略的存活 Ref 失效。结果 URL 去除查询和片段。截图限制在 800 万像素、单边 4096 像素和 2 MiB PNG，使用现有 Core Blob 和工具媒体通道交给模型与聊天。已知敏感表单或不可读 Frame 存在时拒绝自动截图；这不是截图遮罩，也无法识别所有敏感内容。持久 Profile 尚未实现。人工接管、导航、Core/宿主换代会撤销读取；在途取消或超时不会自动重试。
 
-预览地址栏首次聚焦时展开并选中完整 URL，输入新地址会替换旧地址；再次点击可编辑地址的一部分。未启用 Browser 的聊天只供人工浏览，必须先显式启用工具，再交还当前页，Agent 才能读取或操作。启用工具本身不授予页面控制权。
+预览地址栏首次聚焦时展开并选中完整 URL，输入新地址会替换旧地址；再次点击可编辑地址的一部分。地址栏、导航和标签用于普通人工浏览，批注与发送上下文不依赖 Agent 工具启用或页面认领。工具包存在不等于页面读取或动作获准；Core 按实际页面、目标、操作和控制代次审批。
 
 已知敏感内容检查和视口测量在 Electron 隔离世界运行，网页脚本不能替换检查所用的 DOM 查询方法或视口 getter。未知敏感内容仍可能无法识别；网页始终是不可信输入。
 
-当前动作切片只准备用户显式认领的 HTTP 回环页面。Core 可将开发操作许可记住在精确 Origin、页面和操作类型内。外部页面在 prepare 阶段返回 `human_takeover_required`。每份计划短期有效，绑定当前观察、目标、文档、控制代次和视口；过期返回 `plan_stale`，不自动改目标。输入确认回执的业务验证仍为 `not_checked`。
+当前动作支持经 Core 批准的本地开发操作，以及公网页面中语义明确的普通文本输入、GET 搜索提交和链接导航等 Ref 操作。Main 在准备与执行时核查实际目标；敏感、未知或高影响动作返回 `human_takeover_required`，公网截图坐标动作仍拒绝。读取与动作都经过 Core 权限路径，许可绑定页面和控制代次。每份计划短期有效，绑定当前观察、目标、文档、控制代次和视口；过期返回 `plan_stale`，不自动改目标。输入确认回执的业务验证仍为 `not_checked`。
 
 开发闭环中，Agent 可通过 `development_service_inspect` 与 `development_service_start` 检查或启动当前 Thread 既有 Core 受管服务。进程面板只提供当前运行进程完整输出中出现的明确回环地址，用户选择后在同一原生预览页打开。该输出是端点证据，不能证明监听已就绪，也不授予 Browser 权限。预览验证卡关联 Core 检查、Browser 观察/截图和文件写入 Item，以及原始截图 Blob 和本轮 diff。命令退出、视觉判断、已加载构建身份和刷新后行为分别标注；源码指纹不能单独证明页面加载版本。
 
-本机控制路径由 Main 拥有：可信接管先同步撤销旧代次、计划和读取，再进入 `transferring`。Main 隐藏原生视图，等待已派发 CDP 输入结算并经同一通道释放仍按下的合成键/鼠标按钮；确认收敛后才恢复人手输入。未确认时保持隐藏并提供停止加载或关闭页面。可见页面上的本机键盘与鼠标按下事件会触发接管；合成动作派发前若页面拥有前台原生焦点，Main 将焦点移回产品主视图，仍持有焦点则不派发。隐藏视图本身不作为键盘隔离证明。人工阶段不接受自动观察或截图，迟到结果须按代次丢弃。显式交还清除旧观察与计划，首次动作要求新观察。“交还并继续”通过既有 `send` 用户提交路径开始新请求，不重放旧工具调用。历史 UNKNOWN 仍由现有核查入口处理；已经交付给 Core/模型的内容不会撤回。
+本机控制路径由 Main 拥有：可见页面的真实键盘或鼠标输入先同步撤销旧 Agent 代次、计划和读取，再等待已派发 CDP 输入结算并释放合成键/鼠标按钮；首个人工事件在收敛后继续送入同一页，无需先切换模式。未确认收敛时保持 `transferring`，提供停止加载或关闭页面，不让双路输入争写。合成动作派发前仍校验原生焦点和隔离。人工阶段暂停自动观察、截图和诊断，迟到结果按代次丢弃；已经派发且不确定的动作保留 UNKNOWN，不自动重试。下一条明确用户消息或明确继续通过既有 `send` 路径和 Core 审批重新取得控制，清除旧观察与计划，动作前要求新观察。不会定时上传人工期间内容，也不能撤回此前已交付给 Core/模型的证据。
 
 元素选择提供仅供可信 GUI 用户触发的 `captureElement`、`cancelElementSelection` 和 `checkElement` 预览 IPC，不扩展模型 `browser_v1` 操作。Controller 在可见 human Page 的同一 CDP 会话先启用 DOM 与 Overlay，接收 `inspectNodeRequested` 后关闭叠层，再调用已有隐私保护截图并读取该节点的 AX role/name、位图边界和 Page/文档/控制身份。选择与后续读取按 Core/Thread/Page/原生 WebContentsView、代次、显示状态及期限校验；取消或换页会使迟到结果失效。`human:` 证据 Ref 不放入 Agent 可动作的 Ref 缓存；发送前节点身份、语义、边界和视口变化会标记 `stale`，保留选择时证据。裁图与来源说明只进入原 Thread 的 Composer 草稿，用户明确发送后才经既有 Core Blob/MediaRef 和消息受理进入历史。无实际项目来源映射时不提供 React 源码位置；Canvas/不可核查的 iframe 或 Shadow 内容给出原因和区域反馈入口。未显式授权或隐私检查不可完成的跨源 Frame 拒绝图片，不伪造裁图。
 
-人工嵌入站点授权使用 `authorizeFrameOrigin`、`reloadFrameOrigin`、`revokeFrameOrigin` 预览 IPC，要求当前 Human 页面和可信 Main 确认。Main 从当前主文档的 iframe/frame 地址取得恰好一个独立 HTTP(S) Origin，不接受 Renderer 提供的 Origin。确认仅创建 60 秒有效的待重载许可，用户明确重载才加载；它绑定 Core、Thread、Page、原生 WebContents、父文档和控制代次，不进入 Workspace 导航许可。文档变化、切换到其他页面/Thread 或显式撤销关闭该原生页面；确认文案说明状态损失。关闭预览或普通 `hide` 会销毁授权页面；仅携带本页当前 Main 截图凭据 `captureId` 的标注临时隐藏保留同一 Native 和冻结草稿，卸载始终发送普通 `hide`。授权期间拒绝 Agent 认领及普通导航/DevTools，自动截图权限不变。
+人工嵌入站点授权使用 `authorizeFrameOrigin`、`reloadFrameOrigin`、`revokeFrameOrigin` 预览 IPC，要求当前 Human 页面和可信 Main 确认。Main 从当前主文档的 iframe/frame 地址取得恰好一个独立 HTTP(S) Origin，不接受 Renderer 提供的 Origin。确认仅创建 60 秒有效的待重载许可，用户明确重载才应用许可；它绑定 Core、Thread、Page、原生 WebContents、父文档和控制代次，不授予 Agent 读取或动作权限。文档变化、切换到其他页面/Thread 或显式撤销关闭该原生页面；确认文案说明状态损失。关闭预览或普通 `hide` 会销毁授权页面；仅携带本页当前 Main 截图凭据 `captureId` 的标注临时隐藏保留同一 Native 和冻结草稿，卸载始终发送普通 `hide`。授权期间拒绝 Agent 认领及普通导航/DevTools，自动截图权限不变。
 
-授权父文档仅增加精确 Frame Origin，其他 CSP 限制保留；请求还按实际发起 Frame 和所属原生页面检查。已有站点 CSP 不覆盖；带自定义 `Connection-Allowlist` 的文档从首次导航起保守拒绝（下载附件不创建文档，沿用既有处理），不假设多条响应头会合并成更严格策略。人工截图在同进程 Frame 和 OOPIF 各自的隔离世界检查整张返回 PNG 对应的 Frame（最多 32 个），包括截图前后敏感检查、DOM 变更及 Frame/loader 身份；未覆盖、未知嵌套跨源、上下文失败、导航或取消均不返回图片。沿用 10 秒读取期限和有界清理，未知 Canvas/closed Shadow 秘密仍不保证可识别。该授权页的元素标注提供 iframe 不可可靠识别原因并进入区域标注，不产生选择器；裁图和 Frame 来源只经原 Thread 草稿及用户显式发送进入已有 Blob/MediaRef。
+人工 Frame 许可用于受限截图和页面归属，不是普通网页加载所需的逐资源 Origin 许可。许可期间请求仍按实际发起 Frame 和所属原生页面检查；不注入、删除或改写站点 CSP、`Connection-Allowlist` 或下载响应头，站点自己的限制继续生效。人工截图在同进程 Frame 和 OOPIF 各自的隔离世界检查整张返回 PNG 对应的 Frame（最多 32 个），包括截图前后敏感检查、DOM 变更及 Frame/loader 身份；未覆盖、未知嵌套跨源、上下文失败、导航或取消均不返回图片。沿用 10 秒读取期限和有界清理，未知 Canvas/closed Shadow 秘密仍不保证可识别。该授权页的元素标注提供 iframe 不可可靠识别原因并进入区域标注，不产生选择器；裁图和 Frame 来源只经原 Thread 草稿及用户显式发送进入已有 Blob/MediaRef。
 
 临时样式试改提供可信 GUI 用户的 `beginStyleTrial`、`applyStyleTrial`、`undoStyleTrial`、`redoStyleTrial`、`captureStyleTrialAfter` 和 `clearStyleTrial` 预览 IPC；模型工具定义不变。Main 仅对 原生选中的私有 backend 节点接受固定文本/颜色/字体/间距/尺寸词表，拒绝任意 CSS、CSS 值中的 URL/脚本以及 Renderer 选择器；普通文本按文本节点赋值。每步在隔离世界按真实当前属性值、节点连接及 Page/文档/控制代次核对；应用替换节点或改写已试改属性后拒绝回放。最多 20 步。清除仅在当前值仍等于本次覆盖时恢复旧值；不确定时要求刷新，不以试改效果宣称源码验证。跨文档导航丢弃旧覆盖；页内导航将试改标为过期并阻止交还控制，用户须明确刷新以清除可能存活的覆盖，避免自动刷新丢失表单内容。前后截图都经过既有隐私保护，只有选中元素裁图与用户意图进入原 Thread Composer 草稿，显式发送才经既有 Core 媒体与消息受理进入历史。源码位置未知时如实标注。
 
@@ -131,13 +131,13 @@ Ref 私有映射键至少含 Page generation、Frame identity、Frame document i
 
 Ref 动作准备与派发都验证目标仍连接、可见、可交互且 hit test 命中。布局可变时等待有界稳定，再检查；不使用页面脚本的 `.click()` 冒充真实输入。滚动/刷新可能改变有效条件，不能只比较一个全页 DOM revision。Canvas 坐标以**截图 bitmap → 页面 CSS viewport**的明确变换转换；不直接乘 DPR 猜测。缩放、视口或文档变化必须重新截图。
 
-当前截图坐标动作使用最新可见视口 `capture` 的 `observationId` 作为 `snapshotId`：`clickAt(x,y)`、`drag(fromX,fromY,toX,toY,steps)` 与 `pressAt(x,y,key)` 的坐标是截图 bitmap 整数像素，必须落在实际位图内；拖拽 `steps` 为 1–20。`describe` 公布当前支持的动作。Main 以实际 bitmap 和页面 CSS 尺寸转换为 CDP 输入坐标，将转换后的目标绑定到 Core 审批计划。转换统一使用可精确表示的 1/64 CSS 像素精度，避免 JSON 往返的浮点末位变化。Canvas 无 Ref 时必须使用此截图路径，不能编造 DOM selector。每次动作后都需重新截图才能继续按坐标输入。截图同时记录 CSS viewport、scroll、DPR、page zoom、GUI zoom、原生 DIP bounds 和 bitmap 尺寸；GUI Renderer 的 CSS bounds 按 GUI zoom 转为原生 DIP bounds。隐藏、最小化或零尺寸页面不提供自动截图。视口、缩放、scroll 或文档变化使旧截图和准备计划失效；稳定 Ref 仍重新检查 actionability。
+当前仅本地开发页支持截图坐标动作，公网页拒绝；坐标动作使用最新可见视口 `capture` 的 `observationId` 作为 `snapshotId`：`clickAt(x,y)`、`drag(fromX,fromY,toX,toY,steps)` 与 `pressAt(x,y,key)` 的坐标是截图 bitmap 整数像素，必须落在实际位图内；拖拽 `steps` 为 1–20。`describe` 公布当前支持的动作。Main 以实际 bitmap 和页面 CSS 尺寸转换为 CDP 输入坐标，将转换后的目标绑定到 Core 审批计划。转换统一使用可精确表示的 1/64 CSS 像素精度，避免 JSON 往返的浮点末位变化。本地 Canvas 无 Ref 时只能使用此截图路径；公网 Canvas 交给人工，不编造 DOM selector。每次动作后都需重新截图才能继续按坐标输入。截图同时记录 CSS viewport、scroll、DPR、page zoom、GUI zoom、原生 DIP bounds 和 bitmap 尺寸；GUI Renderer 的 CSS bounds 按 GUI zoom 转为原生 DIP bounds。隐藏、最小化或零尺寸页面不提供自动截图。视口、缩放、scroll 或文档变化使旧截图和准备计划失效；稳定 Ref 仍重新检查 actionability。
 
 `wait` 可选择 `{kind:"documentReady",state:"interactive"|"complete"}` 或 `{kind:"accessibleName",ref,name}`；后者只匹配当前主文档已观察 Ref 的完整可访问名称，旧节点被替换时返回 `stale_ref`。条件随具体等待计划审批；超时不宣称条件成立。未提供 condition 时只做固定延时，不证明页面就绪，不使用全页 networkidle 或任意脚本。批量等待沿用同一 condition 及预算。
 
 ## 6. Core 审批与原生执行：两阶段，但不是事务
 
-对会改变页面或触发外部副作用的操作：
+读取与动作均须经 Core 权限机制。首次 `describe` 的绑定及后续观察/截图/诊断也不能绕过许可或人工控制栅栏；读取许可按当前控制代次校验。对会改变页面或触发外部副作用的操作：
 
 1. Core 记录 Tool Intent；校验工具包、实际 Thread 及部署策略。
 2. 通过**新增只读服务器请求** `areal/browser/prepare` 请求已绑定 Browser Host 准备。它只解析实际目标、动作和当前代次，不输入、不导航、不上传、不创建页面。新建页只能准备计划，执行阶段才分配资源。
@@ -152,7 +152,7 @@ Ref 动作准备与派发都验证目标仍连接、可见、可交互且 hit te
 
 ## 7. Human Takeover 与暂停边界
 
-用户按接管或点击原生输入屏障：Controller **同步增加 controlEpoch**，禁止旧代次新动作，清退未派发队列并暂停 Agent 自动读/截图/诊断。控制通道不排在动作队列后。按下的合成按键/鼠标按钮做有界清理；已经到达网站的输入无法回滚。
+用户直接在原生页输入：Controller **同步增加 controlEpoch**，禁止旧代次新动作，清退未派发队列并暂停 Agent 自动读/截图/诊断。控制通道不排在动作队列后。按下的合成按键/鼠标按钮做有界清理；已经到达网站的输入无法回滚。
 
 本机栅栏立即生效，但 human 输入开放前必须完成原生输入收敛屏障：已派发的合成输入结算、释放按键，确认不会再派发旧代次输入。这只等待本机原生通道，不等待 Core。若在有界时间内无法证明输入已收敛，保留 transferring、阻止双写，并提供停止/关闭该页的安全退出；不能把“已请求接管”显示成“接管完成”。网页已触发的网络/业务副作用可以继续，仍需保留 UNKNOWN。
 
@@ -160,7 +160,7 @@ Ref 动作准备与派发都验证目标仍连接、可见、可交互且 hit te
 
 人工控制不是仅禁写：Agent 侧 DOM、图像、Console、网络采样与历史缓冲交付均停止；只留宿主安全与生命周期必须的内部信号。人手动登录结束后默认丢弃这段可敏感的诊断缓冲。在途读/截图即使在接管前启动，返回时也必须重新验证controlEpoch；过时代次不得向模型或历史发布结果。暂停不能撤回先前已发给模型的证据，UI 应明确这一点。
 
-交还只接受可信用户操作。创建新 controlEpoch，清空旧 prepared records 与观察句柄，要求新 observe/capture。按钮“交还并继续”可合并显式交还与既有幂等用户提交，但不是自动重放旧工具；有 UNKNOWN 时先显示核对入口和既有检查确认。
+下一条明确用户消息或明确继续才可沿 Core 审批路径恢复控制，创建新 controlEpoch，清空旧 prepared records 与观察句柄，并要求新 observe/capture。无需独立交还按钮；普通显示、切页或定时器不算授权。有 UNKNOWN 时保留核对入口和既有检查确认，不重放旧工具。
 
 ## 8. 回执、去重、超时和取消
 
@@ -197,9 +197,9 @@ Core 的4 MiB WS帧上限是全链路实际约束；适配器更大的本地帧�
 
 网页永远无 Node、preload 产品 API；保持 sandbox/contextIsolation/webSecurity、主/Frame导航检查及IPC来源检查。浏览器 Profile不是Agent Profile，不能从用户模型配置继承账号权限。拒绝 file/javascript/data 顶层导航、带凭据URL、私有产品协议、系统命令和 shell逃逸。新浏览器任务不得访问 Core/adapter 的内部控制端口，即使它们也在 localhost。
 
-开发站点按用户明确的精确 Origin 授权；允许本地应用不等于允许所有 localhost/内网/云元数据。跟踪重定向和Frame导航。导航许可不是完整网络沙箱：网页脚本、请求、Service Worker、WebSocket 等出口不能仅靠顶层URL检查约束；首期网络策略必须明确可覆盖的传输，对不覆盖的能力默认关闭或将目标限定为可信开发站点。不得声称域名白名单已实现全面防外传。
+普通人工公网/本地浏览沿用 Chromium 的系统代理、DNS、重定向、跨源依赖、Frame、Worker 和 HTTP(S)/WebSocket；不以私网地址或 fake-IP 分类替代权限，也不要求逐站点或逐资源 Origin 提示。产品不修改 OS/Surge 配置，不注入 CSP 或 `Connection-Allowlist`，完整保留站点响应头。Main 将当前 Core/adapter 控制端口在所有主机名上保留并拒绝，防止 DNS 别名或代理 fake-IP 绕过；无关站点使用同一活动控制端口也会被拒绝。关闭 Session 后保留拒绝策略。此边界不等于操作系统级网络沙箱或防外传保证；Agent 读取与动作另外经过 Core 权限机制。
 
-原始 Cookie/Storage导出、浏览器级CDP、系统文件访问、任意 evaluate 不向模型开放。按权限提供有限调试操作。文本密码、令牌、Authorization/Cookie/Set-Cookie、敏感查询值默认脱敏；截图对已识别密码/敏感区遮罩，未知敏感内容不能保证检测，采集前须有站点/页面许可。手动输入流程优先接管。下载与用户选取上传另行授权，不能传任意宿主路径或自动打开可执行文件。
+原始 Cookie/Storage导出、浏览器级CDP、系统文件访问、任意 evaluate 不向模型开放。按权限提供有限调试操作。文本密码、令牌、Authorization/Cookie/Set-Cookie、敏感查询值默认脱敏；当前截图在发现已知敏感表单或隐私检查不完整时拒绝，不提供遮罩；未知敏感内容不能保证检测，Agent 采集须有当前页面及代次的 Core 许可。手动输入流程优先接管。下载与用户选取上传另行授权，不能传任意宿主路径或自动打开可执行文件。
 
 ### 信任模型与剩余风险
 
@@ -209,7 +209,7 @@ Core 的4 MiB WS帧上限是全链路实际约束；适配器更大的本地帧�
 
 ## 10. 旧 Thread 与多客户端：新增 Core 接口
 
-`areal/thread/tools/attach` 与 `areal/thread/observe` 已在源码实现。客户端通过 `areal/capabilities` 的方法列表和 `features.atomicObserve` 发现观察能力，通过 `features.browserToolAttachment` 和 `browserToolBundles` 发现追加能力；不修改固定 Codex 兼容 schema 的既有定义。GUI 重连与打开 Thread 先调用 `areal/thread/observe`，只恢复 Core 权威投影；旧 Core 未公布该方法时明确提示不支持，不用 `thread/resume` 偷取宿主。用户显式认领当前原生页后，GUI 再读取权威状态，并且仅在 Thread 空闲时通过既有 `thread/resume` 尝试重绑；Core 仍执行宿主冲突检查。观察者的工具回执不能代替绑定宿主，页面操作不从 URL 或缓存事件重放。
+`areal/thread/tools/attach` 与 `areal/thread/observe` 已在源码实现。客户端通过 `areal/capabilities` 的方法列表和 `features.atomicObserve` 发现观察能力，通过 `features.browserToolAttachment` 和 `browserToolBundles` 发现追加能力；不修改固定 Codex 兼容 schema 的既有定义。GUI 重连与打开 Thread 先调用 `areal/thread/observe`，只恢复 Core 权威投影；旧 Core 未公布该方法时明确提示不支持，不用 `thread/resume` 偷取宿主。下一次空闲时明确发送可追加固定包；首次经 Core 批准的 `describe` 绑定页面。不能通过 `thread/resume` 抢宿主或改写历史，Core 仍执行宿主冲突检查。观察者的工具回执不能代替绑定宿主，页面操作不从 URL 或缓存事件重放。
 
 | 方法 | 请求 | 语义 |
 |---|---|---|
@@ -222,9 +222,9 @@ Core 的4 MiB WS帧上限是全链路实际约束；适配器更大的本地帧�
 
 当前 GUI 宿主只执行 `browser_v1`。含其他既有客户端动态工具的 Thread 仅在同一在线原宿主连接上允许追加；原宿主已断开时拒绝改绑，以免把那些工具交给不能执行它们的 GUI 回调。原有定义和历史仍可读。
 
-存储版本从 12 提升至 13；新 Core 用默认 0 读取旧 Thread。旧 Core 拒绝 13 版记录；回退前应备份数据，并使用支持版本 13 的 Core 读取，禁止改写版本号或删去工具历史。GUI 在旧 Core 未公布能力时隐藏启用入口。
+存储版本从 12 提升至 13；新 Core 用默认 0 读取旧 Thread。旧 Core 拒绝 13 版记录；回退前应备份数据，并使用支持版本 13 的 Core 读取，禁止改写版本号或删去工具历史。旧 Core 未公布能力时明确报告 Browser 不可用。
 
-新建 GUI Thread 可登记固定 Dispatcher；旧Thread必须由用户启用。CLI/TUI 作为观察者使用新 observe，不实现 Electron Driver。由已有 GUI ToolHost 服务的Thread可继续通过授权Core入口提交消息；GUI不存在时明确 Browser unavailable，不启动另一个Chrome。子Agent默认不继承父Thread浏览控制；共享只读历史不等于控制授权。
+支持 Browser 的新建 GUI Thread 登记固定 Dispatcher；旧 Thread 在下一次空闲时明确发送受控追加固定包，无需手动启用开关。CLI/TUI 作为观察者使用新 observe，不实现 Electron Driver。由已有 GUI ToolHost 服务的Thread可继续通过授权Core入口提交消息；GUI不存在时明确 Browser unavailable，不启动另一个Chrome。子Agent默认不继承父Thread浏览控制；共享只读历史不等于控制授权。
 
 ## 11. 版本与回退
 
