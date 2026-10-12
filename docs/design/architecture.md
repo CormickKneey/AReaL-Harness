@@ -44,8 +44,6 @@ Goal 模式由 `core/engine/src/goals` 管理持久目标、请求账本与跨 T
 
 Task Mode 由 `core/engine/src/task_mode` 管理 Task/TaskRun、定时触发、独立 Channel 和 worker。它复用 Goal 账本与 Thread 准入，通信状态由 Core 持有；Inbox 是授权问题的查询投影。TaskRun worker 可跨协调 Turn，在独立 Session 中执行，仍由 Core 负责取消和结算。接口见 [Task 契约](../api/tasks.md)。
 
-GUI 定时安排的每次新会话执行与桌面 Host 依赖正在设计，产品方向和未决边界见[设计草案](../adr/0013-desktop-scheduled-runs.md)，不表示当前 Task 契约已经改变。
-
 ![Task Mode](diagrams/task-mode-mailbox-architecture.svg)
 
 [draw.io 源文件](diagrams/task-mode-mailbox-architecture.drawio) · [异步交互流程](diagrams/task-mode-mailbox-flow.svg) · [流程源文件](diagrams/task-mode-mailbox-flow.drawio)
@@ -109,5 +107,3 @@ Core `permissions` 负责审批模式、规则优先级与精确请求记忆；C
 `core/engine/src/delegation.rs` 是统一委派与执行投影门面，记录身份、所有权和后端引用；原 Thread/Turn 与 Workgroup 保留各自执行状态。共享作者租约、隔离快照和交付由 Core 协调，Runtime 不选择策略。`workgroup/delivery.rs` 组合候选、调用可信验收并持久化逐项交付回执，`runtime/fs-helper/src/delivery.rs` 实现受控分块提交与条件删除。Clients 只显示统一子任务与交付投影，高级历史入口保持兼容。接口见 [统一委派](../api/core.md#agent-tools)。
 
 Arena 公开输入物化与清单属于 Runner；只读目录身份、文件操作拒绝及 OS 挂载保护属于 Runtime。Core 的媒体工具生成有界派生图与动画视图，模型适配器计量最终请求字节；职责不进入 Runner 的模型循环。契约见[工具](../guides/tools.md)、[Runtime](../api/runtime.md)和[评测](../benchmarks/README.md)。
-
-共享 Browser 的设计沿用 Core 会话、审批与历史所有权，独立桌面适配器负责工具回调，Electron Main 拥有原生页面。设计与尚未实现的契约见[Browser 规格](browser.md)、[Browser API](../api/browser.md)及[所有权提案](../adr/0002-shared-browser-ownership.md)。

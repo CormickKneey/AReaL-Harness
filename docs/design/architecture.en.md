@@ -44,8 +44,6 @@ Interactive TUI and Web launchers attach to one service per deployment. The host
 
 `core/engine/src/task_mode` owns Tasks/TaskRuns, time triggers, independent Channels and workers. It reuses Goal ledgers and Thread admission; communication state belongs to Core. Inbox projects authorized questions. TaskRun workers survive coordinator Turns in independent Sessions while Core owns cancellation and settlement. See the [Task contract](../api/tasks.en.md).
 
-New conversations per GUI scheduled run and dependency on the desktop Host are under design. See the [design proposal](../adr/0013-desktop-scheduled-runs.en.md) for product direction and open boundaries; the current Task contract has not changed.
-
 ![Task Mode](diagrams/task-mode-mailbox-architecture.svg)
 
 [draw.io source](diagrams/task-mode-mailbox-architecture.drawio) · [Asynchronous interaction flow](diagrams/task-mode-mailbox-flow.svg) · [Flow source](diagrams/task-mode-mailbox-flow.drawio)
@@ -109,5 +107,3 @@ Store owns authoritative history as hot snapshots plus immutable SHA-256 segment
 `core/engine/src/delegation.rs` provides unified delegation and execution projections, storing identity, ownership and backend references while existing Thread/Turn and Workgroup state remain authoritative. Core coordinates shared-writer leases, isolated snapshots and delivery; Runtime does not select strategies. `workgroup/delivery.rs` composes candidates, invokes trusted acceptance and journals delivery receipts; `runtime/fs-helper/src/delivery.rs` implements bounded staged commits and conditional deletion. Clients display unified child work and delivery projections, retaining advanced legacy history. See [unified delegation](../api/core.en.md#agent-tools).
 
 Arena public input import/manifests belong to Runner; read-only directory identity, file-operation rejection and OS mount protection belong to Runtime. Core media tools produce bounded image/animation views and model adapters measure final request bytes. Runner owns no model loop. See [tools](../guides/tools.en.md), [Runtime](../api/runtime.en.md) and [benchmarks](../benchmarks/README.en.md).
-
-The Shared Browser design keeps sessions, approval and history in Core, tool callbacks in the independent desktop adapter, and native pages in Electron Main. See the [Browser specification](browser.en.md), [proposed Browser API](../api/browser.en.md), and [ownership proposal](../adr/0002-shared-browser-ownership.en.md).

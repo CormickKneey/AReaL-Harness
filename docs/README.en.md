@@ -19,7 +19,3 @@ Start with the [quickstart](guides/quickstart.en.md). [Capabilities and limitati
 Maintained pages pair a Chinese `.md` file with an English `.en.md` file in the same directory, linked at the top. Update both together. Machine schemas, code and shared diagrams have one copy. API contracts and their linked types/schemas define parameters; guides avoid duplicating them.
 
 - [Installation and upgrades](guides/installation.en.md) · [Release workflow](development/releasing.en.md)
-
-Shared Browser design proposals: [specification](design/browser.en.md) · [UX](design/browser-ux.en.md) · [API](api/browser.en.md) · [behavior acceptance](development/browser-testing.en.md) · [native approach](adr/0003-native-view-and-driver.en.md).
-
-Conversation derivation design decisions: [independent provenance](adr/0008-conversation-origin.en.md) · [immutable snapshots](adr/0009-detached-history-snapshots.en.md) · [persistent read-only side chats](adr/0010-persistent-read-only-side.en.md) · [conversation and files](adr/0011-conversation-not-files.en.md) · [extension protocol](adr/0012-explicit-areal-contract.en.md).
