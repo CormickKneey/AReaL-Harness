@@ -1063,6 +1063,7 @@ button.composer-project:hover > svg,
   min-height: 0;
 }
 .preview-panel {
+  position: relative;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -2529,3 +2530,5 @@ body { font-family: var(--font-sans); }
 .composer-skill-tag .composer-skill-preview-trigger { border-radius: 4px; padding: 0; }
 .composer-skill-preview { width: min(480px, calc(100vw - 24px)); max-height: min(420px, 60dvh); }
 .composer-skill-preview pre { font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.browser-transfer-status { position: absolute; bottom: 12px; left: 12px; right: 12px; z-index: 5; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 8px; }

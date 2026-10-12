@@ -598,14 +598,14 @@ export function Preview({
           void request("navigate", { url });
         }}
       />
-      {state.browser?.control === 'transferring' && <div className="preview-viewport-toolbar" role="status">
+      {state.browser?.control === 'transferring' && <div className="preview-viewport-toolbar browser-transfer-status" role="status">
         <span>{state.browser.transferError || '正在停止浏览器动作…'}</span>
         <Button type="button" size="sm" onClick={() => void request('stop')}>停止加载</Button>
         <Button type="button" size="sm" onClick={() => void request('release', { userIntent: true })}>关闭页面</Button>
       </div>}
       {uninspectedUnknown && <div className="preview-viewport-toolbar" role="status">上次浏览器操作的结果待核对，请在聊天中确认后继续。</div>}
-      {annotationBusy && !annotating && <div className="preview-viewport-toolbar" role="status">在页面中点击要标注的元素；按 Esc 取消。</div>}
-      {batch?.status === 'running' && <div className="preview-viewport-toolbar" role="status">正在浏览 · {batch.completed}/{batch.total}</div>}
+      {annotationBusy && !annotating && <div className="sr-only" role="status">在页面中点击要标注的元素；按 Esc 取消。</div>}
+      {batch?.status === 'running' && <div className="sr-only" role="status">正在浏览 · {batch.completed}/{batch.total}</div>}
       {detailsOpen && <div className="browser-details" aria-label="浏览器详情">
         <div className="preview-viewport-toolbar">
           <span>临时登录仅在当前浏览工作区使用。</span>
