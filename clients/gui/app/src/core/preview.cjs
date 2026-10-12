@@ -1457,7 +1457,7 @@ class CorePreview {
             && sensitive.test([item.type, item.name, item.id, item.autocomplete, item.getAttribute('aria-label')].join(' ')));
           const submits = kind === 'click' && /^(submit|image)$/.test(el.type) || kind === 'press' && key === 'Enter' && field;
           const submitter = kind === 'click' ? el : controls.find(item => /^(submit|image)$/.test(item.type));
-          let submittedFields = null, query = null;
+          let submittedFields = null, query = null, queryName = null;
           if (search && submits && !privateForm && controls.length <= 128) {
             const fields = [];
             const target = submitter?.getAttribute('formtarget') || form.target;
@@ -1481,14 +1481,17 @@ class CorePreview {
               }
               if (!valid) break;
             }
-            const queryName = controls.find(item => /^(q|query|search|search_query)$/i.test(item.name))?.name
-              || controls.find(item => item.type === 'search')?.name;
+            const queryControls = controls.filter(item => /^(INPUT|TEXTAREA)$/.test(item.tagName)
+              && /^(text|search|textarea)$/.test(item.type)
+              && (/^(q|query|search|search_query)$/i.test(item.name) || item.type === 'search'));
+            const queryControl = queryControls.includes(el) ? el : queryControls.length === 1 ? queryControls[0] : null;
+            queryName = queryControl?.name ?? null;
             const queryField = fields.find(entry => entry[0] === queryName);
             if (valid && queryField && new TextEncoder().encode(JSON.stringify(fields)).length <= 8192) {
               submittedFields = fields; query = queryField[1];
             }
           }
-          return { field, sensitive: privateForm, submittedFields, query,
+          return { field, sensitive: privateForm, submittedFields, query, queryName,
             search, method: form ? (submits && submitter?.getAttribute('formmethod') || form.method || 'get').toLowerCase() : null,
             destination: el.closest('a[href]')?.href || (form ? submits && submitter?.hasAttribute('formaction') ? submitter.formAction : form.action : null),
             link: !!el.closest('a[href]'), download: !!el.closest('a[download]'),
@@ -1503,7 +1506,7 @@ class CorePreview {
     if (action.kind === 'press' && action.key !== 'Enter' && facts.field) return { kind: 'field_key' };
     const searchSubmit = facts.search && facts.method === 'get'
       && ((action.kind === 'press' && action.key === 'Enter' && facts.field) || (action.kind === 'click' && facts.submit));
-    if (searchSubmit && (!Array.isArray(facts.submittedFields) || typeof facts.query !== 'string'))
+    if (searchSubmit && (!Array.isArray(facts.submittedFields) || typeof facts.query !== 'string' || typeof facts.queryName !== 'string'))
       throw new Error('human_takeover_required');
     if (searchSubmit || (action.kind === 'click' && facts.link && !facts.download)) {
       let destination;
@@ -1511,11 +1514,32 @@ class CorePreview {
       if (!page.networkPolicy.canAuthorize(destination.href)) throw new Error('human_takeover_required');
       return { kind: searchSubmit ? 'public_search' : 'link_navigation', method: 'GET',
         targetOrigin: destination.origin, targetPath: destination.pathname,
-        ...(searchSubmit ? { query: facts.query, submittedFields: facts.submittedFields,
+        ...(searchSubmit ? { query: facts.query, queryName: facts.queryName, submittedFields: facts.submittedFields,
           encodedQuery: new URLSearchParams(facts.submittedFields).toString() } : { targetUrl: destination.href }) };
     }
     if (action.kind === 'click' && facts.field) return { kind: 'focus_field' };
     throw new Error('human_takeover_required');
+  }
+  acceptActionNavigation(page, url) {
+    const intent = page.approvedActionNavigation;
+    page.approvedActionNavigation = null;
+    if (!intent || page.control !== 'agent' || intent.controlEpoch !== page.controlEpoch) return false;
+    try {
+      const destination = new URL(webUrl(url));
+      if (destination.origin !== intent.targetOrigin || destination.pathname !== intent.targetPath) return false;
+      if (intent.kind !== 'public_search') return intent.targetUrl === destination.href;
+      if (intent.pageGeneration !== page.pageGeneration || intent.expiresAt < Date.now()) return false;
+      const expected = new URLSearchParams(intent.submittedFields);
+      for (const name of new Set(expected.keys())) {
+        const values = expected.getAll(name), actual = destination.searchParams.getAll(name);
+        // 网页可省略空的提交按钮，并添加跳转参数；已批准的字段值与重数必须保持不变。
+        if (name !== intent.queryName && !actual.length && values.every(value => value === '')) continue;
+        if (!isDeepStrictEqual(actual, values)) return false;
+      }
+      // 保留一次搜索的短时跳转链；导航不续期，人工撤权或下一次动作会清除此意图。
+      page.approvedActionNavigation = intent;
+      return true;
+    } catch { return false; }
   }
   async prepareNavigation(request) {
     const { page, c } = this.actionPage(request);
@@ -1708,6 +1732,7 @@ class CorePreview {
     let child;
     const deadline = setTimeout(() => action.cancel(), 12000);
     try {
+      page.approvedActionNavigation = null;
       if (request.operation === 'navigate') {
         page.approvedNavigation = target; page.url = target; page.error = '';
         action.dispatched = true;
@@ -1961,11 +1986,11 @@ class CorePreview {
           || viewportFacts(this.window, page, currentViewport).key !== saved.plan.viewportKey
           || c.getURL() !== saved.pageUrl || page.controlEpoch !== saved.plan.controlEpoch)
           throw new Error('plan_stale');
+        let navigationIntent = null;
         if (saved.plan.target?.semantics) {
           const semantics = await this.publicActionSemantics(page, c, target, request.parameters.action);
           if (!isDeepStrictEqual(semantics, saved.plan.target.semantics)) throw new Error('plan_stale');
-          if (['public_search', 'link_navigation'].includes(semantics.kind))
-            page.approvedActionNavigation = { ...semantics, controlEpoch: page.controlEpoch };
+          if (['public_search', 'link_navigation'].includes(semantics.kind)) navigationIntent = semantics;
         }
         // If the native page still owns local keyboard focus, do not dispatch.
         // before-input-event cannot distinguish a physical key from CDP echo.
@@ -1983,6 +2008,9 @@ class CorePreview {
           await input({ type: 'mouseReleased', x: point.x, y: point.y, button: 'left', clickCount: 1 });
         };
         await Promise.race([(async () => {
+          live();
+          page.approvedActionNavigation = navigationIntent ? { ...navigationIntent,
+            controlEpoch: page.controlEpoch, pageGeneration: page.pageGeneration, expiresAt: Date.now() + 12000 } : null;
           if (request.parameters.action.kind === 'drag') {
             const { from, to, steps } = target;
             await input({ type: 'mouseMoved', x: from.x, y: from.y, button: 'none' });
@@ -2024,12 +2052,12 @@ class CorePreview {
         verification: 'not_checked', ...(waitResult ? { wait: waitResult } : {}),
         preparedActionId: saved.plan.preparedActionId };
     } catch (error) {
+      if (action.dispatched || action.cancelled) page.approvedActionNavigation = null;
       if (action.dispatched) throw new Error('outcome_unknown');
       throw error;
     } finally {
       clearTimeout(deadline);
       if (page.activeAction === action) page.activeAction = null;
-      if (!action.dispatched) page.approvedActionNavigation = null;
       if (request.operation === 'act') page.lastCapture = null;
       if (page.control === 'agent' && page.controlEpoch === saved.plan.controlEpoch
         && page.inputPending.size === 0
@@ -2495,22 +2523,14 @@ class CorePreview {
           else page.styleTrial = null;
         }
         page.activeRead?.cancel();
-        const intent = page.approvedActionNavigation;
-        let approvedAction = false;
-        try {
-          const destination = new URL(url);
-          approvedAction = intent?.controlEpoch === page.controlEpoch
-            && destination.origin === intent.targetOrigin && destination.pathname === intent.targetPath
-            && (!intent.targetUrl || intent.targetUrl === destination.href);
-        } catch { /* 非网页导航不继承 Agent 权限。 */ }
-        page.approvedActionNavigation = null;
+        const approvedAction = this.acceptActionNavigation(page, url);
         if (page.approvedNavigation === url) page.approvedNavigation = null;
         else if (!approvedAction) this.revoke(page);
         page.documentGeneration++;
         this.cancelHumanGesture(page);
         if (approvedAction && page.activeAction) page.activeAction.navigationDocument = page.documentGeneration;
         page.needsObservation = true;
-        page.refs.clear();
+        page.refs.clear(); page.plans.clear();
         page.url = url;
         page.error = "";
       } else {

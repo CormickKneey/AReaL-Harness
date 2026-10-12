@@ -134,7 +134,7 @@ test('public search approval includes exact successful form values and refuses u
     : method === 'Page.createIsolatedWorld' ? { executionContextId: 7 }
     : method === 'DOM.resolveNode' ? { object: { objectId: 'query' } }
     : method === 'Runtime.callFunctionOn' ? { result: { value: { field: true, search: true, method: 'get',
-      destination: 'https://search.example/search', submittedFields: fields, query: fields?.[0]?.[1] } } } : {} } };
+      destination: 'https://search.example/search', submittedFields: fields, query: fields?.[0]?.[1], queryName: 'q' } } } : {} } };
   const page = { networkPolicy: { canAuthorize: () => true } };
   const action = { kind: 'press', key: 'Enter' }, target = { backendNodeId: 1 };
   const approved = await preview.publicActionSemantics(page, c, target, action);
@@ -202,8 +202,51 @@ test('public search ignores empty unnamed file helpers but still refuses sensiti
   await assert.rejects(preview.publicActionSemantics(page, c, target, press), /human_takeover_required/);
   file.files = []; file.name = 'attachment';
   await assert.rejects(preview.publicActionSemantics(page, c, target, fill), /human_takeover_required/);
-  file.name = ''; form.elements.push(control('INPUT', 'password', 'password', 'Password'));
+  file.name = '';
+  const submit = control('INPUT', 'submit', 'search', null); submit.form = form;
+  form.elements.unshift(submit);
+  assert.equal((await preview.publicActionSemantics(page, c, target, press)).query, 'AI Agent');
+  form.elements.push(control('INPUT', 'password', 'password', 'Password'));
   await assert.rejects(preview.publicActionSemantics(page, c, target, fill), /human_takeover_required/);
   form.elements.pop(); element = uploadButton;
   await assert.rejects(preview.publicActionSemantics(page, c, target, { kind: 'click' }), /human_takeover_required/);
+});
+
+// 先复现真实搜索的二次同路径跳转；反例覆盖查询篡改、重复参数、超时及人工换代。
+test('approved public search retains a bounded exact-query navigation chain', () => {
+  const preview = Object.create(CorePreview.prototype);
+  const intent = { kind: 'public_search', controlEpoch: 3, pageGeneration: 1, expiresAt: Date.now() + 12000,
+    targetOrigin: 'https://search.example', targetPath: '/search', queryName: 'q',
+    submittedFields: [['search', ''], ['q', 'AI Agent'], ['form', 'QBLH']] };
+  const page = () => ({ control: 'agent', controlEpoch: 3, pageGeneration: 1, approvedActionNavigation: structuredClone(intent) });
+  const live = page();
+  assert.equal(preview.acceptActionNavigation(live, 'https://search.example/search?q=AI+Agent&form=QBLH'), true);
+  const expiresAt = live.approvedActionNavigation.expiresAt;
+  assert.equal(preview.acceptActionNavigation(live, 'https://search.example/search?q=AI+Agent&form=QBLH&rdr=1'), true);
+  assert.equal(live.approvedActionNavigation.expiresAt, expiresAt, 'redirects cannot renew the deadline');
+  for (const url of [
+    'https://other.example/search?q=AI+Agent&form=QBLH',
+    'https://search.example/other?q=AI+Agent&form=QBLH',
+    'https://search.example/search?q=changed&form=QBLH',
+    'https://search.example/search?q=AI+Agent&q=changed&form=QBLH',
+    'https://search.example/search?q=AI+Agent',
+    'https://search.example/search?form=QBLH',
+    'https://search.example/search?q=AI+Agent&form=changed',
+    'https://user:secret@search.example/search?q=AI+Agent&form=QBLH',
+  ]) { const p = page(); assert.equal(preview.acceptActionNavigation(p, url), false); assert.equal(p.approvedActionNavigation, null); }
+  const expired = page(); expired.approvedActionNavigation.expiresAt = Date.now() - 1;
+  assert.equal(preview.acceptActionNavigation(expired, 'https://search.example/search?q=AI+Agent&form=QBLH'), false);
+  const revoked = page(); revoked.controlEpoch++;
+  assert.equal(preview.acceptActionNavigation(revoked, 'https://search.example/search?q=AI+Agent&form=QBLH'), false);
+  const replaced = page(); replaced.pageGeneration++;
+  assert.equal(preview.acceptActionNavigation(replaced, 'https://search.example/search?q=AI+Agent&form=QBLH'), false);
+  const empty = page(); empty.approvedActionNavigation.submittedFields = [['q', ''], ['search', '']];
+  assert.equal(preview.acceptActionNavigation(empty, 'https://search.example/search?q='), true);
+  assert.equal(preview.acceptActionNavigation(empty, 'https://search.example/search'), false, 'empty query cannot disappear');
+  const human = page(); human.control = 'human';
+  assert.equal(preview.acceptActionNavigation(human, 'https://search.example/search?q=AI+Agent&form=QBLH'), false);
+  const link = page(); link.approvedActionNavigation = { kind: 'link_navigation', controlEpoch: 3,
+    targetOrigin: 'https://search.example', targetPath: '/article', targetUrl: 'https://search.example/article?id=1' };
+  assert.equal(preview.acceptActionNavigation(link, 'https://search.example/article?id=1'), true);
+  assert.equal(preview.acceptActionNavigation(link, 'https://search.example/article?id=1'), false, 'link approval remains single-use');
 });
