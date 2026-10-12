@@ -6,6 +6,8 @@
 
 当前实现从新聊天 Composer 的“浏览器”开关注册固定 `browser_v1` 工具包；空闲旧 Thread 可在预览中启用同一工具包。用户打开当前聊天的预览页后点击“让 Agent 检查当前页”，Main 在原 WebContentsView 上认领并经认证服务连接登记；模型回调由该 Thread 已绑定的 Core 连接承接。工具定义的 `operation:string` 保持可扩展包络；二次校验接受 `describe`（空参数）、`observe`（`pageId`、可选文档范围、Ref 与预算）、`capture`（当前视口）、`act`（pageId、snapshotId 与已公布的 Ref/截图坐标动作）和 `wait`（pageId、1–30000 毫秒和可选 condition）。观察使用有界原生 AX 读取，按实际 Frame 覆盖状态报告不可读部分，并在可用时提供 role、name、state、value 与父节点关联。Ref 绑定原生节点和代次；预算截断本身不使被省略的存活 Ref 失效。结果 URL 去除查询和片段。截图限制在 800 万像素、单边 4096 像素和 2 MiB PNG，使用现有 Core Blob 和工具媒体通道交给模型与聊天。已知敏感表单或不可读 Frame 存在时拒绝自动截图；这不是截图遮罩，也无法识别所有敏感内容。持久 Profile 尚未实现。人工接管、导航、Core/宿主换代会撤销读取；在途取消或超时不会自动重试。
 
+预览地址栏首次聚焦时展开并选中完整 URL，输入新地址会替换旧地址；再次点击可编辑地址的一部分。未启用 Browser 的聊天只供人工浏览，必须先显式启用工具，再交还当前页，Agent 才能读取或操作。启用工具本身不授予页面控制权。
+
 已知敏感内容检查和视口测量在 Electron 隔离世界运行，网页脚本不能替换检查所用的 DOM 查询方法或视口 getter。未知敏感内容仍可能无法识别；网页始终是不可信输入。
 
 当前动作切片只准备用户显式认领的 HTTP 回环页面。Core 可将开发操作许可记住在精确 Origin、页面和操作类型内。外部页面在 prepare 阶段返回 `human_takeover_required`。每份计划短期有效，绑定当前观察、目标、文档、控制代次和视口；过期返回 `plan_stale`，不自动改目标。输入确认回执的业务验证仍为 `not_checked`。

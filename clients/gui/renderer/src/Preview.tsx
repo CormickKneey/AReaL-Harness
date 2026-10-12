@@ -688,6 +688,7 @@ export function Preview({
         onIntent={value => updateStyleTrial({ ...styleTrial, intent: value })}
         onStage={() => void stageStyleTrial()} onCancel={() => void cancelStyleTrial()} />}
       {!browserEnabled && browserAvailable && state.url && <div className="preview-viewport-toolbar">
+        <span>当前仅供你浏览；启用后，还需将当前页交给 Agent 才能读取或操作。</span>
         <Button type="button" size="sm" disabled={claiming} onClick={() => {
           setClaiming(true);
           void call(services, 'attachBrowser', { projectId, threadId, expectedToolsetRevision: toolsetRevision })

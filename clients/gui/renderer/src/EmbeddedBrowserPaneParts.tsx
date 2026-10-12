@@ -1,5 +1,6 @@
 // Copied from ZCode EmbeddedBrowserPaneParts (872ad960), Core state and labels adapted; telemetry and unsupported element picking omitted.
-import type { FormEvent, ReactNode } from "react";
+import { useRef, type FormEvent, type ReactNode } from "react";
+import { flushSync } from "react-dom";
 import {
   Bug,
   ChevronLeft,
@@ -63,6 +64,7 @@ export function BrowserToolbar({
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   isResponsiveMode: boolean;
 }) {
+  const selectOnPointerUp = useRef(false);
   return (
     <form onSubmit={onSubmit} className="panel-toolbar browser-toolbar">
       <div className="browser-navigation-controls">
@@ -97,8 +99,21 @@ export function BrowserToolbar({
         onChange={(event) => onAddressChange(event.target.value)}
         placeholder={formatMessage({ id: "browser.addressPlaceholder" })}
         aria-label="预览地址"
-        onFocus={onAddressFocus}
-        onBlur={onAddressBlur}
+        onMouseDown={(event) => {
+          selectOnPointerUp.current = event.currentTarget !== document.activeElement;
+        }}
+        onFocus={(event) => {
+          // 先显示完整地址再选中，避免域名展开时把新输入追加到旧 URL。
+          flushSync(onAddressFocus);
+          event.currentTarget.select();
+        }}
+        onMouseUp={(event) => {
+          if (!selectOnPointerUp.current) return;
+          selectOnPointerUp.current = false;
+          event.preventDefault();
+          event.currentTarget.select();
+        }}
+        onBlur={() => { selectOnPointerUp.current = false; onAddressBlur(); }}
         onKeyDown={(event) => {
           if (event.key === "Escape") {
             onAddressEscape();
