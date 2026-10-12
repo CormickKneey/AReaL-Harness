@@ -28,6 +28,35 @@ def thread(code="LLM_CONTEXT_WINDOW_EXCEEDED", parent=None, message="opaque"):
 
 
 class OutcomesTest(unittest.TestCase):
+    def test_explicit_entry_ignores_unrelated_failed_side_and_fork(self):
+        entry = {"id": "entry", "turns": [{"status": "completed"}]}
+        side = {
+            "id": "side",
+            "conversation": {"kind": "side"},
+            "turns": [
+                {
+                    "status": "failed",
+                    "error": {
+                        "outcome": {"code": "SIDE_FAILURE", "class": "agent", "source": "core"}
+                    },
+                }
+            ],
+        }
+        fork = {
+            "id": "fork",
+            "turns": [
+                {
+                    "status": "failed",
+                    "error": {
+                        "outcome": {"code": "FORK_FAILURE", "class": "agent", "source": "core"}
+                    },
+                }
+            ],
+        }
+        result = {"status": "OK"}
+        finalize(result, [side, fork, entry], entry_thread_id="entry")
+        self.assertEqual(result["raw"]["outcome"]["code"], "AGENT_COMPLETED")
+
     def test_core_outcome_is_forwarded_not_inferred(self):
         root = thread(message="timeout HTTP 413")
         child = thread("LLM_OUTPUT_TOKEN_LIMIT_EXCEEDED", parent="root")

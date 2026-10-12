@@ -42,6 +42,8 @@ fn main() {
     }
     add!("areal/subscription/remove", RemoveSubscriptions);
     add!("areal/thread/start", ThreadStart);
+    add!("areal/thread/tools/attach", AttachBrowserTools);
+    add!("areal/thread/observe", ObserveThread);
     add!("areal/thread/configure", ConfigureThread);
     add!("areal/turn/start", TurnStart);
     add!("areal/turn/enqueue", TurnStart);
@@ -54,6 +56,8 @@ fn main() {
         "areal/agent/delegate",
         areal_protocol::delegation::DelegationRequest
     );
+    add!("areal/thread/fork", ForkThread);
+    add!("areal/side/start", SideStart);
     add!("areal/profile/read", VersionRef);
     add!("areal/workflow/read", VersionRef);
     add!(
@@ -270,6 +274,16 @@ fn main() {
         );
     }
     methods.insert("turn/start".into(),object(json!({"threadId":string,"input":{"type":"array","items":schemars::schema_for!(areal_protocol::Input)}}),vec!["threadId","input"]));
+    methods.insert("areal/conversation/history".into(),object(json!({"threadId":string,"view":{"enum":["inherited","reference"]},"cursor":string,"maxBytes":{"type":"integer","minimum":1,"maximum":262144}}),vec!["threadId","view"]));
+    methods.insert("areal/conversation/list".into(),object(json!({"view":{"enum":["main","side","all"]},"sourceThreadId":string,"includeArchived":{"type":"boolean"},"limit":{"type":"integer","minimum":1,"maximum":100},"cursor":string}),vec![]));
+    methods.insert(
+        "areal/conversation/unarchive".into(),
+        object(
+            json!({"requestId":string,"threadId":string}),
+            vec!["requestId", "threadId"],
+        ),
+    );
+    methods.insert("areal/side/context/read".into(),object(json!({"threadId":string,"evidenceRef":string,"cursor":string,"maxBytes":{"type":"integer","minimum":64,"maximum":16384}}),vec!["threadId"]));
     methods.insert("turn/steer".into(),object(json!({"threadId":string,"expectedTurnId":string,"input":{"type":"array","items":schemars::schema_for!(areal_protocol::Input)}}),vec!["threadId","expectedTurnId","input"]));
     methods.insert(
         "turn/interrupt".into(),
@@ -304,9 +318,21 @@ fn main() {
     let (responses, notifications) = schema::projections();
     output["responses"] = responses;
     output["notifications"] = notifications;
-    output["serverRequests"] = json!({"item/tool/call":object(json!({"threadId":string,"turnId":string,"callId":string,"tool":string,"arguments":{},"hostGeneration":string}),vec!["threadId","turnId","callId","tool","arguments","hostGeneration"])});
-    output["serverResponses"] =
-        json!({"item/tool/call":schemars::schema_for!(areal_protocol::DynamicToolResponse)});
+    let browser_request = object(
+        json!({"threadId":string,"turnId":string,"callId":string,"tool":string,"arguments":{},"hostGeneration":string}),
+        vec![
+            "threadId",
+            "turnId",
+            "callId",
+            "tool",
+            "arguments",
+            "hostGeneration",
+        ],
+    );
+    output["serverRequests"] = json!({"item/tool/call":browser_request,
+        "areal/browser/prepare":object(json!({"threadId":string,"turnId":string,"callId":string,"tool":string,"arguments":{},"hostGeneration":string}),vec!["threadId","turnId","callId","tool","arguments","hostGeneration"])});
+    output["serverRequests"]["item/tool/call"]["properties"]["browserApproval"] = json!({"type":"object","properties":{"plan":{"type":"object"}},"required":["plan"],"additionalProperties":false});
+    output["serverResponses"] = json!({"item/tool/call":schemars::schema_for!(areal_protocol::DynamicToolResponse),"areal/browser/prepare":{"type":"object"}});
     inline(&mut output, &Value::Null);
     println!("{}", serde_json::to_string_pretty(&output).unwrap());
 }

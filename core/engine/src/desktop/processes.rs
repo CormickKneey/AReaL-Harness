@@ -17,6 +17,7 @@ impl Engine {
             if !engine.accepting_work(){return Err(Error::Closed);}
             let runtime=engine.runtime.as_ref().ok_or_else(||invalid("Runtime is not configured"))?;
             let cell=engine.cell(&request.thread_id).await?;
+            if cell.state.lock().await.thread.is_side() { return Err(invalid("SIDE_POLICY_VIOLATION")); }
             let _resources=cell.resource_gate.lock().await;
             let hash=digest(&request)?;
             let cwd=crate::tools::workspace_uri(&request.cwd,&runtime.workspace).map_err(invalid)?;

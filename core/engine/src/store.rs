@@ -11,7 +11,7 @@ use tokio::sync::Semaphore;
 mod archive;
 
 // 持久化版本与服务状态必须一致，避免客户端误判可恢复的数据格式。
-pub(crate) const STATE_VERSION: u32 = 13;
+pub(crate) const STATE_VERSION: u32 = 14;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Record {
@@ -24,6 +24,17 @@ pub struct Store {
     _lock: File,
     io: Arc<Semaphore>,
     blob_write: Arc<tokio::sync::Mutex<()>>,
+    #[cfg(test)]
+    fork_fault: std::sync::Mutex<Option<ForkFault>>,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ForkFault {
+    BeforeSnapshot,
+    AfterSnapshot,
+    AfterTarget,
+    AfterPersistError,
 }
 
 impl Store {
@@ -45,7 +56,24 @@ impl Store {
             _lock: lock,
             io: Arc::new(Semaphore::new(8)),
             blob_write: Arc::new(tokio::sync::Mutex::new(())),
+            #[cfg(test)]
+            fork_fault: std::sync::Mutex::new(None),
         })
+    }
+    #[cfg(test)]
+    pub(crate) fn set_fork_fault(&self, fault: ForkFault) {
+        *self.fork_fault.lock().unwrap() = Some(fault);
+    }
+    #[cfg(test)]
+    pub(crate) fn check_fork_fault(&self, stage: ForkFault) -> crate::Result<()> {
+        let mut fault = self.fork_fault.lock().unwrap();
+        if *fault == Some(stage) {
+            *fault = None;
+            return Err(crate::Error::Storage(
+                "injected fork persistence fault".into(),
+            ));
+        }
+        Ok(())
     }
     pub fn root(&self) -> &Path {
         &self.root
@@ -81,6 +109,14 @@ impl Store {
                         .history_archive
                         .as_ref()
                         .map_or(0, |a| a.bytes)
+                        .saturating_add(match &record.thread.conversation {
+                            Some(areal_protocol::Conversation::Fork { history_seed, .. }) =>
+                                history_seed.logical_bytes as u64,
+                            Some(areal_protocol::Conversation::Side {
+                                reference_snapshot, ..
+                            }) => reference_snapshot.logical_bytes as u64,
+                            _ => 0,
+                        })
                         .saturating_add(std::fs::metadata(&path)?.len())
                         <= max_bytes as u64,
                 "stored thread exceeds configured history limit"
@@ -93,6 +129,131 @@ impl Store {
             }
             if let Some(reference) = &record.thread.history_archive {
                 archive::read_segment(&self.root, &reference.head)?;
+            }
+            if let Some(areal_protocol::Conversation::Fork {
+                version,
+                origin,
+                history_seed,
+                ..
+            }) = &record.thread.conversation
+            {
+                anyhow::ensure!(
+                    *version == 1 && record.version >= 14,
+                    "unsupported fork conversation version"
+                );
+                anyhow::ensure!(
+                    origin.snapshot_id == history_seed.snapshot_id,
+                    "fork snapshot reference mismatch"
+                );
+                let segment = archive::read_segment(&self.root, &history_seed.snapshot_id)?;
+                anyhow::ensure!(
+                    segment.previous.is_none(),
+                    "fork snapshot contains archive chain"
+                );
+                anyhow::ensure!(
+                    std::fs::metadata(self.root.join("history").join(&history_seed.snapshot_id))?
+                        .len()
+                        == history_seed.logical_bytes as u64,
+                    "fork snapshot size mismatch"
+                );
+                anyhow::ensure!(
+                    segment.turns.len() == history_seed.turn_count
+                        && segment
+                            .turns
+                            .iter()
+                            .map(|turn| turn.items.len())
+                            .sum::<usize>()
+                            == history_seed.item_count,
+                    "fork snapshot manifest mismatch"
+                );
+                anyhow::ensure!(
+                    segment.source_thread_ids.len() == segment.turns.len()
+                        && segment
+                            .source_thread_ids
+                            .iter()
+                            .all(|id| uuid::Uuid::parse_str(id).is_ok()),
+                    "fork snapshot provenance mismatch"
+                );
+                if origin.boundary == "after" {
+                    anyhow::ensure!(
+                        segment
+                            .turns
+                            .last()
+                            .is_some_and(|turn| turn.id == origin.source_turn_id),
+                        "fork snapshot anchor mismatch"
+                    );
+                }
+            }
+            if let Some(areal_protocol::Conversation::Side {
+                version,
+                origin,
+                reference_snapshot,
+                policy,
+                ..
+            }) = &record.thread.conversation
+            {
+                anyhow::ensure!(
+                    *version == 1
+                        && record.version >= 14
+                        && policy.kind == "sideReadOnlyV1"
+                        && matches!(policy.workspace_access.as_str(), "none" | "readOnly"),
+                    "unsupported Side policy"
+                );
+                anyhow::ensure!(
+                    record.thread.parent_thread_id.is_none()
+                        && record.thread.session_id == record.thread.id
+                        && record.thread.goal_owner.is_none()
+                        && record.thread.goals.is_empty()
+                        && record.thread.dynamic_tools.is_empty(),
+                    "Side execution authority mismatch"
+                );
+                anyhow::ensure!(
+                    record
+                        .thread
+                        .desktop
+                        .as_ref()
+                        .is_some_and(|d| d.queue.items.is_empty()
+                            && d.processes.is_empty()
+                            && d.configuration.read_only
+                            && d.configuration
+                                .tool_allowlist
+                                .as_ref()
+                                .is_some_and(|tools| {
+                                    tools.iter().any(|name| name == "side_context_read")
+                                        && tools.iter().all(|name| {
+                                            name == "side_context_read"
+                                                || (policy.workspace_access == "readOnly"
+                                                    && crate::tools::side_file_tool(
+                                                        name,
+                                                        &crate::tools::registry::Backend::Builtin,
+                                                    ))
+                                        })
+                                })),
+                    "Side configuration authority mismatch"
+                );
+                anyhow::ensure!(
+                    origin.snapshot_id == reference_snapshot.snapshot_id,
+                    "Side snapshot reference mismatch"
+                );
+                let segment = archive::read_segment(&self.root, &reference_snapshot.snapshot_id)?;
+                anyhow::ensure!(
+                    segment.previous.is_none()
+                        && segment.turns.len() == reference_snapshot.turn_count
+                        && segment.turns.iter().map(|t| t.items.len()).sum::<usize>()
+                            == reference_snapshot.item_count
+                        && segment.source_thread_ids.len() == segment.turns.len(),
+                    "Side snapshot manifest mismatch"
+                );
+                anyhow::ensure!(
+                    std::fs::metadata(
+                        self.root
+                            .join("history")
+                            .join(&reference_snapshot.snapshot_id)
+                    )?
+                    .len()
+                        == reference_snapshot.logical_bytes as u64,
+                    "Side snapshot size mismatch"
+                );
             }
             let mut repaired = false;
             if let Some(goal) = &mut record.thread.goals.goal {
@@ -233,7 +394,18 @@ impl Store {
             let mut history = std::collections::BTreeSet::new();
             fn visit(v:&serde_json::Value,keep:&mut std::collections::BTreeSet<String>){match v{serde_json::Value::String(s)=>{if let Some(id)=s.strip_prefix("areal://blob/"){keep.insert(id.into());}},serde_json::Value::Array(v)=>{for x in v{visit(x,keep);}},serde_json::Value::Object(v)=>{for x in v.values(){visit(x,keep);}},_=>{}}}
             for e in std::fs::read_dir(&root)?{let p=e?.path();if p.extension().and_then(|s|s.to_str())==Some("json"){let record:Record=serde_json::from_slice(&std::fs::read(p)?)?;visit(&serde_json::to_value(&record.thread)?,&mut keep);
-                archive::visit_segments(&root, record.thread.history_archive, &mut history, |turns| { visit(&serde_json::to_value(turns)?, &mut keep); Ok(()) })?;}}
+                archive::visit_segments(&root, record.thread.history_archive, &mut history, |turns| { visit(&serde_json::to_value(turns)?, &mut keep); Ok(()) })?;
+                if let Some(areal_protocol::Conversation::Fork { history_seed, .. }) = &record.thread.conversation {
+                    history.insert(history_seed.snapshot_id.clone());
+                    let turns = archive::read_segment(&root, &history_seed.snapshot_id)?.turns;
+                    visit(&serde_json::to_value(turns)?, &mut keep);
+                }
+                if let Some(areal_protocol::Conversation::Side { reference_snapshot, .. }) = &record.thread.conversation {
+                    history.insert(reference_snapshot.snapshot_id.clone());
+                    let turns = archive::read_segment(&root, &reference_snapshot.snapshot_id)?.turns;
+                    visit(&serde_json::to_value(turns)?, &mut keep);
+                }
+            }}
             let mut deleted=0;let mut reclaimed=0;let mut retained=0;
             for e in std::fs::read_dir(root.join("blobs"))?{let e=e?;let name=e.file_name().to_string_lossy().into_owned();if name.len()!=64||!name.bytes().all(|c|c.is_ascii_hexdigit())||!e.file_type()?.is_file(){continue;}
 if keep.contains(&name){retained+=e.metadata()?.len();}else{reclaimed+=e.metadata()?.len();std::fs::remove_file(e.path())?;deleted+=1;}}
@@ -278,6 +450,9 @@ if keep.contains(&name){retained+=e.metadata()?.len();}else{reclaimed+=e.metadat
             atomic_write_encoded(&root, &id, &bytes)
         })
         .await??;
+        #[cfg(test)]
+        self.check_fork_fault(ForkFault::AfterPersistError)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         Ok(())
     }
 

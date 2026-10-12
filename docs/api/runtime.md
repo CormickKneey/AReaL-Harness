@@ -84,6 +84,7 @@ fs.execute 仅在配置可信 helper 时可用；command.kind：
 | read | `path,offset?=0,maxBytes` | `dataBase64,sha256,size,nextOffset,eof` |
 | stat | `path` | `kind,size` |
 | list | `path,after?,limit` | `entries,nextCursor` |
+| search | `path,pattern,glob?,context,limit` | `matches[{path,line,text,kind}],limited,guidance` |
 | write | `path,dataBase64,expected` | `sha256,size` |
 | applyPatch | `path,oldText,newText,expectedSha256` | `sha256,size` |
 | applyPatches | `path,patches[{oldText,newText}],expectedSha256` | `sha256,size` |
@@ -95,6 +96,8 @@ staging 和 commit 是独立、可审计操作，不是跨文件事务。断连�
 expected 为 `{kind:"absent"}` 或 `{kind:"sha256",value:"digest"}`。read 的 sha256 总是完整文件摘要，offset 为字节；单文件最多 8 MiB，read/write 最多 64 KiB，patch 旧/新文本合计 64 KiB 且旧文本非空唯一匹配。applyPatch 是保留的单条兼容入口，与单元素 applyPatches 共用实现。applyPatches 一次最多 32 个替换，所有替换均唯一匹配后才条件写入；陈旧摘要/已存在/歧义返回 CONFLICT。
 
 list 每页最多 256 项/约 32 KiB，扫描最多 4096 UTF-8 名称；目录变化时不是快照。helper 使用目录描述符与 NOFOLLOW，普通读写拒绝符号链接、硬链接和特殊文件，条件替换 fsync。
+
+`search` 是只读的原生 `FileCommand`，在当前 Scope 授权的文件或目录中按正则表达式 `pattern` 搜索，可选 `glob` 过滤路径。`context` 必填且为 0–20，`limit` 必填且为 1–1000，只计匹配行，不计上下文行。结果行的 `path` 是宿主文件路径，`line` 为行号或 null，`text` 为 UTF-8 文本或 null，`kind` 为 `match` 或 `context`。匹配超限、单行超过 64 KiB、返回行累计超过 8 MiB 或序列化结果行超过 13000 字节时，`limited=true`；此时应按 `guidance` 缩小路径或模式，只有 `limited=false` 时空结果才表示没有匹配。搜索遵循工作区内 ignore 规则，不读取宿主 rg 配置，不跟随符号链接。此分支扩展了既有 `fs.execute` 命令联合类型；旧 Runtime 不认识 `search` 时会拒绝请求，SDK 不自动降级或重试。
 
 默认 helper 按文件、命令按写根协调冲突（writeSerialization=conflictingPaths）；显式绕过命令协调为 filePaths。外部进程不参与，不保证外部 CAS/跨文件事务。helper 结果丢失或提交后清理失败为 UNKNOWN，不能重放。
 

@@ -13,6 +13,10 @@ pub(super) const HANDOFF_OUTPUT_RESERVE: usize = 8 * 1024;
 // Leave room for process metadata and JSON framing after stdout/stderr are
 // escaped. Control-heavy output can expand several times in the model payload.
 const MODEL_OUTPUT_HEADROOM: usize = 4096;
+pub(crate) fn side_file_tool(name: &str, backend: &registry::Backend) -> bool {
+    matches!(name, "fs_read" | "fs_list" | "fs_stat" | "search_files")
+        && matches!(backend, registry::Backend::Builtin)
+}
 #[derive(Default)]
 pub(crate) struct Handles {
     processes: BTreeMap<String, String>,
@@ -476,6 +480,12 @@ fn request_with_policy(
             fields.insert("maxBytes".into(), json!(bytes.min(8192)));
         }
     }
+    if call.name == "search_files" {
+        let fields = args.as_object_mut().unwrap();
+        fields.entry("path").or_insert(json!("workspace://repo"));
+        fields.entry("context").or_insert(json!(2));
+        fields.entry("limit").or_insert(json!(50));
+    }
     if call.name == "read_process" && args.get("waitMs").is_none() {
         args["waitMs"] = json!(policy.read_wait_ms);
     }
@@ -586,6 +596,7 @@ fn request_with_policy(
         "fs_read" => "read",
         "fs_list" => "list",
         "fs_stat" => "stat",
+        "search_files" => "search",
         "fs_apply_patches" => "applyPatches",
         _ => anyhow::bail!("unknown tool: {}", call.name),
     };
@@ -751,6 +762,27 @@ impl Engine {
         let mut rejection = self.goal_tool_guard(cell, &call.name).await?;
         let bindings = cell.bindings.read().await.clone();
         let entry = bindings.registry.get(&call.name);
+        let side_read = cell.state.lock().await.thread.side_workspace_read();
+        if cell.state.lock().await.thread.is_side()
+            && !(call.name == "side_context_read"
+                && entry
+                    .as_ref()
+                    .is_ok_and(|e| matches!(e.backend, Backend::Core)))
+            && !(side_read
+                && entry
+                    .as_ref()
+                    .is_ok_and(|e| side_file_tool(&call.name, &e.backend)))
+        {
+            anyhow::bail!("SIDE_POLICY_VIOLATION");
+        }
+        if side_read
+            && entry
+                .as_ref()
+                .is_ok_and(|e| side_file_tool(&call.name, &e.backend))
+            && !self.side_workspace_read_available()
+        {
+            anyhow::bail!("WORKSPACE_READ_UNAVAILABLE");
+        }
         let coordination = entry
             .as_ref()
             .is_ok_and(|e| matches!(e.backend, Backend::Coordination | Backend::Core));
@@ -992,6 +1024,47 @@ impl Engine {
             None
         };
         if let Some(runtime) = runtime {
+            let is_side_read = success
+                && cell.state.lock().await.thread.side_workspace_read()
+                && matches!(
+                    call.name.as_str(),
+                    "fs_read" | "fs_list" | "fs_stat" | "search_files"
+                );
+            let current = result["sha256"].as_str().map(str::to_owned);
+            let previous = if is_side_read && call.name == "fs_read" {
+                let path = serde_json::from_str::<Value>(&call.arguments)
+                    .ok()
+                    .and_then(|args| {
+                        args["path"]
+                            .as_str()
+                            .and_then(|p| resource_uri(p, runtime).ok())
+                    });
+                let state = cell.state.lock().await;
+                path.as_ref().and_then(|path| {
+                    state.active.as_ref().and_then(|active| {
+                        active
+                            .handles
+                            .version_order
+                            .iter()
+                            .rev()
+                            .filter_map(|id| active.handles.versions.get(id))
+                            .find(|(known_path, _)| known_path == path)
+                            .map(|(_, hash)| hash.clone())
+                    })
+                })
+            } else {
+                None
+            };
+            if is_side_read && let Some(object) = result.as_object_mut() {
+                object.insert("source".into(), json!("currentWorkspace"));
+                object.insert("versionNotice".into(), json!("Current workspace observation; not the source conversation's historical file version. Files may change between pages."));
+                if let (Some(previous), Some(current)) = (previous, current) {
+                    object.insert(
+                        "changedSincePreviousPage".into(),
+                        json!(previous != current),
+                    );
+                }
+            }
             cell.state
                 .lock()
                 .await

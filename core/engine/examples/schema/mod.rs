@@ -141,7 +141,7 @@ pub fn projections() -> (Value, Value) {
     insert(
         &["capabilities"],
         object(
-            json!({"apiVersion":{"const":API_VERSION},"methods":array(string.clone()),"notifications":array(string.clone()),"serverRequests":array(string.clone()),"features":{"type":"object","additionalProperties":{"type":"boolean"}},"limits":object(json!({"frameBytes":number,"subscriptions":number,"sendQueue":number,"threadEventWindow":number})),"runtime":nullable(any_object.clone())}),
+            json!({"apiVersion":{"const":API_VERSION},"methods":array(string.clone()),"notifications":array(string.clone()),"serverRequests":array(string.clone()),"features":{"type":"object","properties":{"conversationDerivationV1":nullable(object(json!({"preview":{"const":false},"methods":array(string.clone()),"forkBoundaries":array(json!({"enum":["before","after"]})),"workspaceModes":array(json!({"const":"sharedCurrent"})),"sideWorkspaceAccess":array(json!({"enum":["none","readOnly"]})),"historyBytes":number.clone(),"limits":object(json!({"maxThreads":number.clone(),"maxActiveTurns":number.clone(),"maxSideTurnsPerSource":number.clone(),"maxSideTurnsPerDeployment":number.clone(),"maxSideModelRounds":number.clone(),"maxSideToolCalls":number.clone(),"maxSideTurnSeconds":number.clone()}))})))},"additionalProperties":{"type":"boolean"}},"limits":object(json!({"frameBytes":number,"subscriptions":number,"sendQueue":number,"threadEventWindow":number})),"runtime":nullable(any_object.clone())}),
         ),
     );
     insert(
@@ -376,8 +376,50 @@ pub fn projections() -> (Value, Value) {
         ),
     );
     insert(&["tool/acknowledge"], object(json!({})));
+    insert(
+        &["thread/fork"],
+        object(json!({"thread":thread.clone(),"requestId":string.clone()})),
+    );
+    insert(
+        &["side/start"],
+        object(json!({"thread":thread.clone(),"turn":turn.clone(),"requestId":string.clone()})),
+    );
+    insert(
+        &["side/context/read"],
+        object(json!({
+            "snapshotId":string.clone(),
+            "evidence":array(object(json!({
+                "evidenceRef":string.clone(),"sourceTurnId":string.clone(),
+                "sourceItemId":string.clone(),"sourceTurnStatus":schema::<TurnStatus>(),
+                "text":string.clone(),
+                "range":object(json!({"startUtf8":number.clone(),"endUtf8":number.clone(),"totalBytes":number.clone()}))
+            }))),
+            "nextCursor":nullable(string.clone()),"complete":boolean
+        })),
+    );
+    insert(
+        &["conversation/history"],
+        object(
+            json!({"snapshotId":nullable(string.clone()),"data":array(json!({"oneOf":[
+                object(json!({"sourceThreadId":string.clone(),"sourceTurnId":string.clone(),"sourceItemId":string.clone(),"sourceTurnStatus":schema::<TurnStatus>(),"item":schema::<Item>()})),
+                object(json!({"sourceThreadId":string.clone(),"sourceTurnId":string.clone(),"sourceItemId":string.clone(),"sourceTurnStatus":schema::<TurnStatus>(),"fragment":object(json!({"text":string.clone(),"offsetUtf8":number.clone(),"nextOffsetUtf8":number.clone(),"totalBytes":number.clone()}))}))
+            ]})),"nextCursor":nullable(string.clone()),"complete":boolean}),
+        ),
+    );
+    insert(
+        &["conversation/list"],
+        object(json!({"data":array(thread.clone()),"nextCursor":nullable(string.clone())})),
+    );
+    insert(
+        &["conversation/unarchive"],
+        object(json!({"threadId":string.clone(),"archived":boolean})),
+    );
+    insert(
+        &["thread/tools/attach"],
+        object(json!({"threadId":string,"toolsetRevision":number,"bundleId":string})),
+    );
     responses.insert("thread/read".into(), object(json!({"thread":thread})));
-    for name in ["thread/start", "thread/resume"] {
+    for name in ["thread/start", "thread/resume", "areal/thread/observe"] {
         responses.insert(name.into(),object(json!({"thread":thread,"cwd":string,"model":string,"modelProvider":string,"approvalPolicy":string,"permissionMode":{"enum":["YOLO","ASK_PERMISSIONS"]},"approvalsReviewer":string,"sandbox":any_object,"reasoningEffort":nullable(string.clone())})));
     }
     responses.insert(
@@ -442,7 +484,21 @@ pub fn projections() -> (Value, Value) {
             "areal/thread/configured",
             object(json!({"threadId":string,"configuration":config})),
         ),
+        (
+            "areal/thread/tools/attached",
+            object(
+                json!({"threadId":string,"toolsetRevision":number,"dynamicTools":array(schema::<ToolDefinition>())}),
+            ),
+        ),
+        (
+            "areal/side/capacity",
+            object(json!({"threadId":string,"status":{"enum":["waiting","available"]}})),
+        ),
         ("areal/thread/archived", object(json!({"threadId":string}))),
+        (
+            "areal/thread/unarchived",
+            object(json!({"threadId":string})),
+        ),
         (
             "areal/plan/updated",
             object(json!({"threadId":string,"plan":schema::<Plan>()})),

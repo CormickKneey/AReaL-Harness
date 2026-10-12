@@ -2,6 +2,22 @@
 
 use super::*;
 
+// 读取与订阅快照共用当前执行状态；冻结历史不持久化模型容量等待。
+fn project_side_capacity(thread: &mut Thread, active: Option<&Active>) {
+    if thread.is_side()
+        && let Some(desktop) = thread.desktop.as_mut()
+    {
+        desktop.side_capacity_status = active.map(|active| {
+            if active.waiting_for_model_capacity {
+                "waiting"
+            } else {
+                "available"
+            }
+            .into()
+        });
+    }
+}
+
 impl Engine {
     pub async fn read_blob(&self, id: &str) -> Result<Vec<u8>> {
         self.store
@@ -121,6 +137,7 @@ impl Engine {
         }
         let thread_id = id();
         let mut thread = Thread {
+            conversation: None,
             history_archive: None,
             goals: Default::default(),
             goal_owner: parent.and_then(|p| {
@@ -155,6 +172,7 @@ impl Engine {
             turns: Vec::new(),
             context_checkpoint: None,
             dynamic_tools,
+            toolset_revision: 0,
         };
         if let Some(data) = &mut thread.desktop {
             for receipt in &mut data.receipts {
@@ -223,7 +241,12 @@ impl Engine {
 
     pub async fn read(&self, thread_id: &str, include_turns: bool) -> Result<Thread> {
         let cell = self.raw_cell(thread_id).await?;
-        let mut thread = cell.state.lock().await.thread.clone();
+        let mut thread = {
+            let state = cell.state.lock().await;
+            let mut thread = state.thread.clone();
+            project_side_capacity(&mut thread, state.active.as_ref());
+            thread
+        };
         if include_turns && thread.desktop.as_ref().is_some_and(|d| d.archived) {
             thread = self
                 .store
@@ -304,6 +327,7 @@ impl Engine {
                 .await
                 .map_err(|e| Error::Storage(e.to_string()))?
         };
+        project_side_capacity(&mut thread, state.active.as_ref());
         self.refresh_goal_usage(&mut thread);
         Ok((thread, cell.events.subscribe()))
     }

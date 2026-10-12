@@ -11,6 +11,11 @@ contextBridge.exposeInMainWorld('arealDesktop', {
     return () => ipcRenderer.removeListener('areal-core:update-changed', handler);
   },
   preview: request => ipcRenderer.invoke('areal-core:preview', request),
+  onPreviewEvent: listener => {
+    const handler = (_event, value) => listener(value);
+    ipcRenderer.on('areal-core:preview-event', handler);
+    return () => ipcRenderer.removeListener('areal-core:preview-event', handler);
+  },
   snapshot: () => ipcRenderer.invoke('areal-core:snapshot'),
   chooseProject: () => ipcRenderer.invoke('areal-core:choose-project'),
   chooseProjectlessDirectory: () => ipcRenderer.invoke('areal-core:choose-projectless-directory'),

@@ -10,11 +10,13 @@ import { Button } from "./components/ui/button.js";
 import { verifiedFileReceipts } from "./TurnFileSummary.js";
 import { DiffViewer } from "./components/ui/diff-viewer.js";
 import { MessageActions } from "./MessageActions.js";
-import type { Data } from "./services.js";
-export function ToolEvent({ item, onFile, onAgent, turnId, readTurnReview, animate = false, onDisclosureChange }: {
+import { SentAttachment } from "./MessageAttachment.js";
+import type { Action, Data } from "./services.js";
+export function ToolEvent({ item, onFile, onAgent, turnId, readTurnReview, action, projectId, threadId, animate = false, onDisclosureChange }: {
   animate?: boolean; onDisclosureChange?: (open: boolean) => void;
   item: Data; onAgent?: (id: string) => void; onFile?: (path: string) => void; turnId?: string;
   readTurnReview?: (turnId: string, itemId?: string) => Promise<Data>;
+  action?: Action; projectId?: string; threadId?: string;
 }) {
   const [open, setOpen] = useState(false);
   const toggle = () => { const next = !open; setOpen(next); onDisclosureChange?.(next); };
@@ -91,6 +93,8 @@ export function ToolEvent({ item, onFile, onAgent, turnId, readTurnReview, anima
           <div className="tool-event-heading tool-record-heading"><span>{item.tool}</span><ToolCallDuration item={item} /></div>
             <pre aria-label="工具参数">{JSON.stringify(item.arguments, null, 2)}</pre>
             <pre aria-label="工具结果">{(item.contentItems ?? []).map((c: Data) => c.text ?? "").join("\n") || (view.running ? "等待工具输出…" : "无文本输出")}</pre>
+            {action && projectId && threadId && (item.contentItems ?? []).filter((c: Data) => c.type === 'arealMedia' && c.modality === 'image').map((c: Data) =>
+              <SentAttachment key={c.media.uri} part={{ type: 'image', uri: c.media.uri, name: '页面截图' }} projectId={projectId} threadId={threadId} action={action} />)}
             {item.execution?.exitCode != null && <small>退出码 {item.execution.exitCode}</small>}
         </div>
       )}

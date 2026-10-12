@@ -128,6 +128,14 @@ export type FileCommand =
   | { kind: "read"; path: string; offset?: number; maxBytes: number }
   | { kind: "stat"; path: string }
   | { kind: "list"; path: string; after?: string | null; limit: number }
+  | {
+      kind: "search";
+      path: string;
+      pattern: string;
+      glob?: string | null;
+      context: number;
+      limit: number;
+    }
   | { kind: "write"; path: string; dataBase64: string; expected: ExpectedFile }
   | { kind: "stageFileChunk"; path: string; uploadId: string; offset: number; dataBase64: string }
   | {
@@ -174,12 +182,18 @@ export type FileResult<C extends FileCommand> = C extends { kind: "read" }
   ? FileRead
   : C extends { kind: "list" }
     ? FileList
-    : C extends { kind: "stat" }
-      ? { kind: FileKind; size: number }
-      : C extends { kind: "stageFileChunk" }
-        ? { uploadId: string; nextOffset: number }
-        : C extends { kind: "removeFile" }
-          ? { removed: true }
-          : C extends { kind: "commitFile" }
-            ? FileWrite & { executable: boolean }
-            : FileWrite;
+    : C extends { kind: "search" }
+      ? {
+          matches: { path: string; line: number | null; text: string | null; kind: string }[];
+          limited: boolean;
+          guidance: string;
+        }
+      : C extends { kind: "stat" }
+        ? { kind: FileKind; size: number }
+        : C extends { kind: "stageFileChunk" }
+          ? { uploadId: string; nextOffset: number }
+          : C extends { kind: "removeFile" }
+            ? { removed: true }
+            : C extends { kind: "commitFile" }
+              ? FileWrite & { executable: boolean }
+              : FileWrite;

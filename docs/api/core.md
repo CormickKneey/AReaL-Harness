@@ -24,6 +24,8 @@ Core 提供固定 Codex app-server 0.145.0 的子集与 AReaL 扩展，不代表
 
 Core 拥有 Thread/Turn/Item 的稳定 ID 与历史。read 不订阅，resume 原子读取快照并建立增量边界，先返回基线再发事件。每连接最多 128 订阅，发送队列 256、Thread 事件窗口 128；落后时断连，重连后重新 resume。普通观察断连不取消任务。
 
+`areal/thread/fork` 的 `anchor:{turnId,boundary}` 必须明确选择 `before` 或 `after`，并使用 `workspaceMode:"sharedCurrent"`。`before` 排除所选轮次及之后的全部历史，包括活动轮次；`after` 只接受已终结轮次。纳入前缀中的失败、中断状态按原样保留；未结算工具或 hook、未经来源核查的工具、hook 或插件 UNKNOWN 返回 `HISTORY_UNRESOLVED`。核查只记录事实，历史 UNKNOWN 不改写为成功。锚点不存在返回 `ANCHOR_NOT_FOUND`，委派 Worker 或 Side 来源返回 `SOURCE_KIND_UNSUPPORTED`，活动轮次的 `after` 返回 `TURN_NOT_TERMINAL`；错误的 `data.reason` 可用于呈现恢复路径。分支只继承对话历史，项目文件仍是当前共享工作区。完整请求与来源元数据见[桌面 API](desktop.md)。
+
 input 为有序 text/image/audio/file 等内容，UTF-8 文本合计最多 1 MiB，仍受历史预算约束；认证客户端上传媒体 Blob，不传宿主 localImage/localAudio 路径。模态由 adapter/模型能力校验。原有 thread/start 的 model 需匹配服务默认；产品模型选择使用 areal/thread/start/configure。
 
 事件包括 thread/started、turn/started/completed、item/started/completed、item/agentMessage/delta；AReaL 媒体通知为 areal/item/agentMedia/available。终态 completed/interrupted/failed 在保存后发布。steer 保留已输出文本，取消当前模型请求后在同一 Turn 继续。
@@ -46,6 +48,8 @@ input 为有序 text/image/audio/file 等内容，UTF-8 文本合计最多 1 MiB
 Provider HTTP 错误体最多读取 64 KiB、等待 2 秒，仅保留白名单 code/type/reason；原始响应体、Provider message、鉴权信息不写入 outcome。HTTP 状态码保留在 `details.httpStatus`。错误分类不启用重试、不将失败转换为成功、不自动续轮或评分；未识别的 code 应保留为未知原因。
 
 EnvArena [runner](../../integrations/envarena/runner.py) 将 Core outcome 复制到 `harness_result.raw.outcome` 并添加 `schema=areal.envarena-outcome.v1`。runner 自己触发的进程期限使用 `AGENT_RUN_TIMEOUT`，收到外部信号使用 `HARNESS_INTERRUPTED`，适配/收集失败使用 `HARNESS_INTERNAL_ERROR`，正常完成使用 `AGENT_COMPLETED`；失败仍输出 ERROR 并非零退出。主线程原因优先，旧 Core 缺字段时不借子线程错误补猜。
+
+EnvArena 首次运行固定 `entry_thread_id`；结果状态、失败原因和 `usage` 仅取该入口 Thread 的新 Turn。`deployment_usage` 汇总所有 Thread 的新 Turn，包括 Side 的实际请求；`usage_known` 和 `deployment_usage_known` 标明是否有缺失用量。`thread-provenance.json` 按 Thread 列出 `kind`、`origin`、`inheritedRange`、`newTurnIds`、`newUsage` 和 `newUsageKnown`，继承快照不作为目标新采样计费。
 
 适配或收集失败仍以 `raw.outcome=HARNESS_INTERNAL_ERROR` 作为主要故障，防止基础设施失败被当作模型零分样本；`raw.adapter_error` 保存适配错误。若 Core 已失败，`raw.core_outcome` 和 `raw.core_errors` 同时保留原始分类、消息与 thread/turn ID；若 runner 已超时或收到信号，`raw.runner_outcome` 保留该原因。结果文件、native receipt 和轨迹 result 均保留这些诊断，重复结算不会累加重复记录。
 
@@ -150,7 +154,7 @@ JSONL 的 30 天期限按文件最后修改时间计算，不逐条检查行的�
 
 工具错误审计新增 `errorCode` 与 `toolCallError`：`invalid_tool_call_index` 附固定原因、协议、字段路径、从 1 开始的 SSE 数据事件序号、index JSON 类型及已缓冲调用数量；`tool_call_budget_exceeded` 附预算类别、上限和观测值。字段只含固定标签和有界数值，诊断不复制 SSE、参数、reasoning 或非法字段值，使用同一记录的本地 `requestId` 关联。`responseShape.toolArgumentBytes` 沿用旧名称，实际累计通过校验的 id/name/arguments 字节。
 
-快照写入格式 13，可读取 1–13；旧二进制不能读取新快照。可选 `historyArchive` 引用 `history/` 中的不可变 SHA-256 分段，包含 head、throughItemId、completedTurns、items、bytes；单分段最多 32 MiB。先同步分段，再提交引用它的快照。热快照保留近期条目和 checkpoint；完整 thread 读取还原原始 Turn/Item，并省略存储清单。`read_history` 按 item ID 分页，无需加载全部归档。GC 同时追踪热快照与冷分段引用。工具意图持久化与 UNKNOWN 恢复不变，不重放归档副作用。usage/duration 缺失表示未知，不是 0。
+快照写入格式 14，可读取无派生元数据的旧格式 1–14；Fork/Side 记录必须使用格式 14 并通过会话版本与持久权限校验。旧二进制不能读取新快照，不能通过降低版本号绕过角色检查。可选 `historyArchive` 引用 `history/` 中的不可变 SHA-256 分段，包含 head、throughItemId、completedTurns、items、bytes；单分段最多 32 MiB。先同步分段，再提交引用它的快照。热快照保留近期条目和 checkpoint；完整 thread 读取还原原始 Turn/Item，并省略存储清单。`read_history` 按 item ID 分页，无需加载全部归档。GC 同时追踪热快照与冷分段引用。工具意图持久化与 UNKNOWN 恢复不变，不重放归档副作用。usage/duration 缺失表示未知，不是 0。
 
 `ToolExecution` 新增可选 `resultSnapshot: MediaRef` 与 `outputProjection` 度量对象，旧记录默认缺省。原文回取是模型 Core 工具 `read_tool_result`，不是新的 Runtime RPC；边界见[工具指南](../guides/tools.md)。模型请求审计另记 messageBlocks 的摘要/字节数、toolSchemaSha256 和 instructionsSha256，用于离线比较稳定前缀；不记录提示词正文，也不将前缀相同直接视为提供方缓存命中。`usageDetails` 记录提供方可选的缓存输入和推理 token；缺失时为 null，预算用量结构不变。
 
@@ -259,7 +263,7 @@ objective 为 1–4000 个 Unicode 字符且不能全空白。显式预算为正
 
 已设置跨 Run Token 总预算的周期 Task 不允许通过目标文本重新推断预算，继续由 Task 控制接口维护。
 
-GUI 仅提交目标文本及 inferLimits=true，不展示预算输入。create 的 inferLimits 不可和显式限制同时提交；update 的 inferLimits 要求 objective，清除旧限制并重新等待确认，保留 ID 和全部用量、不隐式启动。根 Agent 在执行工作前调用 goal_set_limits，解释用户明确指定的 token、轮次与活动时间（换算为秒）；没有指定的项不设限，任务正文中的数字不作为预算。推断请求及耗时也计入实际用量。模型至少需要三轮、allowlist 必须允许 goal_set_limits。旧数据中的数字限制保持原值；读取格式 1–13，旧 Core 不能读取格式 13。
+GUI 仅提交目标文本及 inferLimits=true，不展示预算输入。create 的 inferLimits 不可和显式限制同时提交；update 的 inferLimits 要求 objective，清除旧限制并重新等待确认，保留 ID 和全部用量、不隐式启动。根 Agent 在执行工作前调用 goal_set_limits，解释用户明确指定的 token、轮次与活动时间（换算为秒）；没有指定的项不设限，任务正文中的数字不作为预算。推断请求及耗时也计入实际用量。模型至少需要三轮、allowlist 必须允许 goal_set_limits。旧数据中的数字限制保持原值；无派生元数据的旧记录可读取格式 1–14，下一次写入升级为 14；旧 Core 不能读取新格式。
 
 resume 保留计量，不能使已经达到的限额失效；completed 不可恢复。resume 同时确认此前未知模型消费的保守预留，但不删除该预留，不将 accountingComplete 改回 true；工具 UNKNOWN 仍需独立检查与 acknowledge。普通 `thread/resume` 仍只恢复订阅和快照，不恢复 Goal 执行。暂停时保存原因，只有属于该次 Goal 暂停的队列暂停才可被 Goal resume 自动撤销。
 
@@ -307,7 +311,7 @@ goalId 和根线程身份由 Core 绑定，模型不能自报其他目标。summ
 
 Rust 嵌入式调用使用 `Limits.goals: goals::Policy` 及 `Engine::goal_get/goal_create/goal_control`。自定义 Model 的 `chat_limited` 必须显式接受逐请求输出上限，`share_context` 保留预算归因；内置 HTTP adapter 已支持。自定义 Workgroup Factory 需实现 `executor_for_goal` 并保留传入 Budget；默认实现对有 Goal 的调用明确报错。普通 Turn 和独立 Workgroup 沿用原行为。
 
-Goal 请求账本位于 `goals/<goal-id>.json`，发送前持久预留；主/子 Agent、原生 Workgroup、活动 Turn 摘要共享计量。确认结算的请求滚入不可变 `goals/requests/` 分段并汇总累计用量；热账本保留在途与未知请求，仍有 4 MiB 资源保护。默认没有累计请求次数预算。滚动不重置用量、不释放未知消费预留。clear 保留账本及归档，不提供自动账本 GC。API 仍为 areal.core.v1；快照格式 13 保存冷历史引用与有界 checkpoint 原文。
+Goal 请求账本位于 `goals/<goal-id>.json`，发送前持久预留；主/子 Agent、原生 Workgroup、活动 Turn 摘要共享计量。确认结算的请求滚入不可变 `goals/requests/` 分段并汇总累计用量；热账本保留在途与未知请求，仍有 4 MiB 资源保护。默认没有累计请求次数预算。滚动不重置用量、不释放未知消费预留。clear 保留账本及归档，不提供自动账本 GC。API 仍为 areal.core.v1；快照格式 14 保留冷历史引用与有界 checkpoint 原文，并保护 Fork/Side 的持久会话语义。
 
 Task Mode 在 Goal 之上提供 foreground/scheduled/background 任务、TaskRun、独立 Channel 与 Inbox。Goal create 同时返回 taskId/runId；Goal 内的 ask_user_question 可选 mode=async，headless 不等待用户。接口、预算与恢复语义见 [Task 契约](tasks.md)。timeUsedSeconds 包含协调 Turn 与 TaskRun worker 活动时间的并集，纯异步用户等待不计入。
 
@@ -354,3 +358,5 @@ checkpoint 恢复最多保留 8 组接口导向文件片段，序列化内容总
 CLI 保持 `--input-file` 的 2 MiB 上限，以有界读取在 JSON 解析前校验；可用 `--input-error-file` 写入不含正文的结构化拒绝 `INPUT_ENVELOPE_TOO_LARGE`。Arena Runner 将该原因及公开输入准备失败 `PUBLIC_INPUT_NOT_ACCESSIBLE` 投影到既有 outcome，不再统一报告缺少 Core Turn。媒体工具失败仍是可恢复工具结果，解码失败 details.reason 为 `MEDIA_PREPROCESS_FAILED`，不伪造一次终止 Turn。
 
 项目指令由 Engine 在每个 Turn 首次模型请求前加载，并保存为 `instructionSnapshot`。按工作区根到 Thread `cwd` 的目录链读取 `AGENTS.md`，来源路径随正文写入快照；不新增 API 字段，已有仅根文件项目保持兼容。正文合计超过 32 KiB、无效 UTF-8、符号链接或超过 64 层的目录链使 Turn 在请求模型前失败，不截断规则。作用域、优先级与 cwd 路径别名见[客户端指南](../guides/clients.md#历史恢复与观测)。
+
+Shared Browser 的旧 Thread 固定工具包追加已实现，方法为 `areal/thread/tools/attach`；请求、回执、存储版本与回退限制见[Browser 契约](browser.md#10-旧-thread-与多客户端新增-core-接口)。工具准备与只读观察订阅仍是设计契约；`thread/resume` 行为未改变。

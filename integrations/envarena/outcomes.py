@@ -13,7 +13,9 @@ def runner_outcome(code, source, reason, kind="infrastructure"):
     }
 
 
-def core_outcome(threads):
+def core_outcome(threads, entry_thread_id=None):
+    if entry_thread_id is not None:
+        threads = [t for t in threads if t.get("id") == entry_thread_id]
     # 根线程先于子线程，避免文件枚举顺序改变主任务归因。
     ordered = sorted(threads, key=lambda t: bool(t.get("parentThreadId")))
     for thread in ordered:
@@ -31,7 +33,15 @@ def core_outcome(threads):
     return None
 
 
-def finalize(result, threads=(), *, timed_out=False, interrupted=False, adapter_error=False):
+def finalize(
+    result,
+    threads=(),
+    *,
+    timed_out=False,
+    interrupted=False,
+    adapter_error=False,
+    entry_thread_id=None,
+):
     if result["status"] == "OK":
         outcome = runner_outcome("AGENT_COMPLETED", "runner", "completed", "success")
     elif adapter_error:
@@ -46,7 +56,7 @@ def finalize(result, threads=(), *, timed_out=False, interrupted=False, adapter_
         outcome = runner_outcome("HARNESS_INTERRUPTED", "runner_signal", "external_signal")
     else:
         outcome = (
-            core_outcome(threads)
+            core_outcome(threads, entry_thread_id)
             or result.get("launch_outcome")
             or runner_outcome("HARNESS_INTERNAL_ERROR", "runner", "missing_terminal_outcome")
         )
@@ -55,7 +65,7 @@ def finalize(result, threads=(), *, timed_out=False, interrupted=False, adapter_
     if adapter_error:
         # 收集/适配失败仍作为主因；同时保存模型原因，不能因后续错误抹掉证据。
         raw["adapter_error"] = {"message": result.get("error")}
-        original = core_outcome(threads)
+        original = core_outcome(threads, entry_thread_id)
         if original is not None:
             raw["core_outcome"] = original
             raw["core_errors"] = [
@@ -66,6 +76,7 @@ def finalize(result, threads=(), *, timed_out=False, interrupted=False, adapter_
                     "error": turn.get("error"),
                 }
                 for thread in threads
+                if entry_thread_id is None or thread.get("id") == entry_thread_id
                 for turn in thread.get("turns", [])
                 if turn.get("status") == "failed"
             ]

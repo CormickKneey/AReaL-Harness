@@ -21,13 +21,14 @@ const { workspaceCommand } = require('./workspace.cjs');
 const { CoreWorktrees } = require('./worktrees.cjs');
 const { ProjectlessWorkspaces } = require('./projectless.cjs');
 const { inspectCoreCapabilities, projectCoreCapabilities } = require('./core-capabilities.cjs');
+const { definition: browserTool, failure: browserFailure } = require('./browser-tool.cjs');
 
 const workgroupMutationMethods = new Set(['areal/workgroup/start', 'areal/workgroup/revise', 'areal/workflow/start']);
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 /** 每个项目连接公开的共享 Core 服务；这里只保留可重建投影与客户端受理回执。 */
 class CoreBackend {
-  constructor({ binary, home, harnessHome = join(home, 'harness'), config, desktopConfig, userHome, toolExtensions, workgroupPolicy, workgroupToolchain, desktopProcesses = false, defaultProfile, encryption, onChange = () => {} }) {
+  constructor({ binary, home, harnessHome = join(home, 'harness'), config, desktopConfig, userHome, toolExtensions, workgroupPolicy, workgroupToolchain, sandboxProfile, desktopProcesses = false, defaultProfile, encryption, onChange = () => {} }) {
     if (!binary || !isAbsolute(binary)) throw new Error('请设置 AREAL_CORE_BIN 为 areal 可执行文件的绝对路径');
     this.binary = binary;
     this.home = home;
@@ -37,6 +38,7 @@ class CoreBackend {
     this.workgroupPolicy = workgroupPolicy;
     this.workgroupToolchain = workgroupToolchain;
     this.desktopProcesses = desktopProcesses;
+    this.sandboxProfile = sandboxProfile;
     this.defaultProfile = defaultProfile;
     this.userHome = userHome;
     this.desktopConfig = desktopConfig;
@@ -114,7 +116,9 @@ class CoreBackend {
       // 配置会话的协议回复只在任务创建区展示，不混入普通聊天导航。
       const state = snapshot?.threads ? {...snapshot, threads: Object.fromEntries(Object.entries(snapshot.threads).filter(([id, thread]) =>
         !isTaskDraftConfiguration(live.configurations?.[id] ?? thread.desktop?.configuration)))} : snapshot;
-      return { ...project, backend: 'areal', core: projectCoreCapabilities(this.binary, live?.client?.capabilities), state: state && live.resourceInitializing ? {...state, connected:false} : state,
+      return { ...project, backend: 'areal', core: { ...projectCoreCapabilities(this.binary, live?.client?.capabilities),
+        instanceId: live?.service?.serviceId ?? null, connectionGeneration: live?.connectionGeneration ?? 0 },
+        state: state && live.resourceInitializing ? {...state, connected:false} : state,
         pending: (live?.pending ?? []).map(entry => ({ ...entry, awaitingResponse: this.awaitingResponses.has(entry) })), outcomes: live?.outcomes ?? {}, models: this.providers.catalog(live?.models ?? [], live), profiles: live?.profiles ?? [],
         configurations: live?.configurations ?? {},
         summaries: live?.summaries ?? [], summariesLoaded: live?.summariesLoaded === true, error: live?.error ?? null };
@@ -178,6 +182,7 @@ class CoreBackend {
     const args = ['--workspace', project.root, '--data-dir', dataDir, '--scratch', scratch, '--allow-write'];
     if (this.desktopProcesses) args.push('--allow-concurrent-writes', '--desktop-process-timeout-ms', '86400000');
     if (this.config) args.push('--config', this.config);
+    if (this.sandboxProfile) args.push('--sandbox-profile', this.sandboxProfile);
     if (this.workgroupPolicy) args.push('--workgroup-policy', this.workgroupPolicy);
     if (this.workgroupToolchain) args.push('--workgroup-toolchain', this.workgroupToolchain);
     const resourceDeployment = await this.resources.deployment(project);
@@ -267,8 +272,20 @@ class CoreBackend {
     project.summariesLoaded = false;
     const client = new CoreClient({ createSocket: () => new WebSocket(project.endpoint, {
       headers: { Authorization: `Bearer ${project.token}` }, followRedirects: false, maxPayload: 4 * 1024 * 1024,
-    }) });
+    }), onServerRequest: async (method, params, context) => {
+      if (!['item/tool/call', 'areal/browser/prepare'].includes(method) || params?.tool !== 'browser_v1') throw new Error('Unsupported client tool');
+      if (!this.currentConnection(project, client)) return browserFailure('host_unavailable', 'Desktop connection changed');
+      // Core invokes only tools bound to this connection. The local Thread
+      // projection can lag the committed attachment until its event arrives.
+      return this.browserRead?.({ projectId: project.id, threadId: params.threadId,
+        turnId: params.turnId, callId: params.callId, toolHostGeneration: params.hostGeneration, arguments: params.arguments,
+        phase: method === 'areal/browser/prepare' ? 'prepare' : 'execute', browserApproval: params.browserApproval,
+        coreInstanceId: project.service?.serviceId, coreGeneration: project.service?.generation,
+        signal: context.signal })
+        ?? browserFailure('host_unavailable', 'Desktop browser is unavailable');
+    } });
     project.client = client;
+    project.connectionGeneration = (project.connectionGeneration ?? 0) + 1;
     client.onNotification((method, params) => {
       if (!this.currentConnection(project, client)) return;
       if (method === 'areal/thread/configured' && params?.threadId && params.configuration) {
@@ -339,7 +356,10 @@ class CoreBackend {
       const data = [];
       let cursor;
       do {
-        const page = await client.request('thread/list', { limit: 100, ...(cursor ? { cursor } : {}) });
+        const classified = client.capabilities?.methods?.includes('areal/conversation/list');
+        const page = await client.request(classified ? 'areal/conversation/list' : 'thread/list', {
+          limit: 100, ...(classified ? { view: 'main', includeArchived: true } : {}), ...(cursor ? { cursor } : {}),
+        });
         data.push(...page.data.filter(thread => !isTaskDraftConfiguration(thread.desktop?.configuration)));
         cursor = page.nextCursor;
       } while (cursor);
@@ -365,14 +385,23 @@ class CoreBackend {
       this.onChange();
       return;
     }
-    const resumed = await client.request('thread/resume', { threadId }, {
-      onResult: result => { if (this.currentConnection(project, client)) project.model.replace(result.thread); },
+    if (!client.capabilities?.methods?.includes('areal/thread/observe')) {
+      throw new Error('当前 Core 不支持安全观察已有聊天；请更新 Core 后重新连接');
+    }
+    const resumed = await client.request('areal/thread/observe', { threadId }, {
+      onResult: result => { if (this.currentConnection(project, client) && result.thread?.id === threadId) project.model.replace(result.thread); },
     });
     this.requireConnection(project, client);
+    if (resumed.thread?.id !== threadId) throw new Error('恢复结果与目标会话不匹配');
     if (resumed.thread?.desktop?.archived) {
       project.configurations[threadId] = resumed.thread.desktop.configuration;
       project.model.setQueue(threadId, resumed.thread.desktop.queue);
       project.model.setInteractions(threadId, { revision: resumed.thread.desktop.interactionRevision, data: resumed.thread.desktop.interactions });
+      this.onChange();
+      return;
+    }
+    if (resumed.thread?.conversation?.kind === 'side') {
+      project.configurations[threadId] = resumed.thread.desktop?.configuration;
       this.onChange();
       return;
     }
@@ -383,6 +412,28 @@ class CoreBackend {
       this.refreshConfiguration(project, threadId),
       this.refreshQueue(project, threadId),
     ]);
+  }
+
+  async bindBrowserHostForClaim(project, threadId) {
+    const client = project.client;
+    if (!client?.capabilities?.methods?.includes('areal/thread/observe')) {
+      throw new Error('当前 Core 不支持安全观察已有聊天；请更新 Core 后重新连接');
+    }
+    // A local, explicit page claim may rebind an idle host. Read Core's
+    // current state first; the Core checks idle state and host ownership again.
+    const observed = await client.request('areal/thread/observe', { threadId }, {
+      onResult: result => { if (this.currentConnection(project, client)) project.model.replace(result.thread); },
+    });
+    this.requireConnection(project, client);
+    const thread = observed.thread;
+    if (!thread?.dynamicTools?.some(tool => tool.name === 'browser_v1')
+      || thread.desktop?.archived || thread.status?.type !== 'idle') {
+      throw new Error('聊天正在执行或浏览器未启用，请刷新后再认领页面');
+    }
+    await client.request('thread/resume', { threadId }, {
+      onResult: result => { if (this.currentConnection(project, client)) project.model.replace(result.thread); },
+    });
+    this.requireConnection(project, client);
   }
 
   async refreshQueue(project, threadId) {
@@ -596,7 +647,7 @@ class CoreBackend {
   }
 
   async submit(project, method, parameters, { requestId } = {}) {
-    if (requestId !== undefined && (!(workgroupMutationMethods.has(method) || taskMutationMethods.has(method) || ['areal/agent/spawn', 'areal/process/start', 'areal/thread/start', ...['update','remove','reorder','pause','resume','steer'].map(name => `areal/queue/${name}`)].includes(method)) || typeof requestId !== 'string' || !/^[0-9a-f-]{36}$/.test(requestId))) throw new Error('无效请求标识');
+    if (requestId !== undefined && (!(workgroupMutationMethods.has(method) || taskMutationMethods.has(method) || ['areal/agent/spawn', 'areal/process/start', 'areal/thread/start', 'areal/thread/fork', 'areal/side/start', 'areal/thread/tools/attach', ...['update','remove','reorder','pause','resume','steer'].map(name => `areal/queue/${name}`)].includes(method)) || typeof requestId !== 'string' || !/^[0-9a-f-]{36}$/.test(requestId))) throw new Error('无效请求标识');
     const params = { ...parameters, requestId: requestId ?? randomUUID() };
     const entry = { method, params };
     // 活跃请求仅保存在内存；重启后仍在恢复日志中的请求应显示为结果未知。
@@ -608,11 +659,15 @@ class CoreBackend {
         if (project.configurationChanges?.has(parameters.threadId)) {
           throw new Error('会话配置正在更新，请稍后再发送任务');
         }
-        const conflicting = pending.find(value => value.params.threadId === parameters.threadId);
+        const conflicting = ['areal/thread/fork', 'areal/side/start'].includes(method)
+          ? pending.find(value => value.method === method && value.params.sourceThreadId === parameters.sourceThreadId)
+          : pending.find(value => value.params.threadId === parameters.threadId);
         if (conflicting) {
-          throw new Error(this.awaitingResponses.has(conflicting)
+          const awaiting = this.awaitingResponses.has(conflicting);
+          throw Object.assign(new Error(awaiting
             ? '当前操作正在等待响应，请稍后再试'
-            : '上一次提交结果未知，请先查询受理结果');
+            : '上一次提交结果未知，请先查询受理结果'),
+          awaiting ? {} : { submissionUnknown: true, requestId: conflicting.params.requestId });
         }
         return [...pending, entry];
       });
@@ -679,6 +734,17 @@ class CoreBackend {
       return await project.client.request(method, method === 'areal/agent/spawn' ? spawn : method === 'turn/steer' ? steer : params);
     }
     catch (error) {
+      if (['areal/thread/fork', 'areal/side/start'].includes(method) && (error.code === -32603 || typeof error.code !== 'number')) {
+        try {
+          const receipts = await project.client.request('areal/request/read', { requestId: params.requestId });
+          const receipt = receipts.data.find(item => item.method === method);
+          if (typeof receipt?.result?.threadId === 'string') {
+            const result = await project.client.request('thread/read', { threadId: receipt.result.threadId, includeTurns: false });
+            return { thread: result.thread, turn: result.thread.turns?.[0], requestId: params.requestId };
+          }
+        } catch { /* 保留原业务键，供用户显式核对。 */ }
+        throw Object.assign(new Error('会话创建结果待核对；不会自动重试'), { submissionUnknown: true, requestId: params.requestId });
+      }
       // Task receipts and Agent spawn receipts are not publicly queryable. An
       // internal error may follow a durable write; retain the journal entry.
       if (taskMutationMethods.has(method) || method === 'areal/agent/spawn' || method.startsWith('areal/workgroup/') || method === 'areal/workflow/start') {
@@ -689,7 +755,9 @@ class CoreBackend {
       const management = managementMethods.has(method);
       const processMutation = method.startsWith('areal/process/');
       const receiptMethod = processMutation && method !== 'areal/process/start' ? 'areal/process/control' : method;
-      if ((!management && !threadMutationMethods.has(method) && method !== 'areal/turn/enqueue' && !processMutation) || error.submissionUnknown || typeof error.code !== 'number') throw error;
+      if ((!management && !threadMutationMethods.has(method) && method !== 'areal/turn/enqueue'
+        && method !== 'areal/thread/tools/attach' && !processMutation)
+        || error.submissionUnknown || typeof error.code !== 'number') throw error;
       // 入队后的推进或管理日志落盘仍可能返回 RPC 错误；先核对原业务键，不能恢复草稿造成重复入队。
       let receipt;
       try {
@@ -761,7 +829,13 @@ class CoreBackend {
           message: receipt.response?.error?.message,
         } }));
       }
-      const threadId = entry.params.threadId ?? receipt.threadId ?? receipt.result?.thread?.id;
+      const threadId = entry.params.threadId ?? receipt.threadId ?? receipt.result?.threadId ?? receipt.result?.thread?.id;
+      if (['areal/thread/fork', 'areal/side/start'].includes(entry.method) && threadId) {
+        // 创建收据属于新目标；保留结果给发起端的显式核对路径。
+        await this.changeOutcomes(project, outcomes => ({ ...outcomes, [entry.params.requestId]: {
+          accepted: true, method: entry.method, sourceThreadId: entry.params.sourceThreadId, threadId,
+        } }));
+      }
       if (entry.method === 'areal/thread/archive') await this.listThreads(project);
       if (threadId) await this.openThread(project, threadId);
       await this.changePending(project, pending => pending.filter(value => value !== entry));
@@ -854,6 +928,23 @@ class CoreBackend {
       case 'manage': return manage(this, project, request);
       case 'list': await this.listThreads(project); break;
       case 'open': await this.openThread(project, threadId); break;
+      case 'attachBrowser': {
+        if (!project.client.capabilities?.methods?.includes('areal/thread/tools/attach')
+          || project.client.capabilities?.features?.browserToolAttachment !== true
+          || !project.client.capabilities?.browserToolBundles?.some(bundle => bundle.bundleId === 'areal.browser.v1')) {
+          throw new Error('当前 Core 不支持在已有聊天启用浏览器');
+        }
+        const existing = project.model.state.threads[threadId];
+        if (!existing || existing.desktop?.archived || existing.status?.type !== 'idle'
+          || existing.toolsetRevision !== request.expectedToolsetRevision && (existing.toolsetRevision ?? 0) !== request.expectedToolsetRevision) {
+          throw new Error('聊天状态或工具版本已变化，请刷新后重试');
+        }
+        const result = await this.submit(project, 'areal/thread/tools/attach', {
+          threadId, expectedToolsetRevision: request.expectedToolsetRevision, bundleId: 'areal.browser.v1',
+        });
+        await this.openThread(project, threadId);
+        return result;
+      }
       case 'configure': await this.configureThread(project, threadId, request); break;
       case 'queue': {
         if (!request.requestId) return this.refreshQueue(project, threadId);
@@ -870,6 +961,7 @@ class CoreBackend {
       case 'create': {
         await this.resources.beforeCreate(project);
         const { thread } = await this.submit(project, 'areal/thread/start', { cwd: project.root,
+          ...(request.browserEnabled === true ? { dynamicTools: [browserTool] } : {}),
           ...(request.parameters ? { parameters: request.parameters } : {}),
           ...(request.model ? { model: request.model } : {}),
           ...((request.profile ?? project.resourceProfile ?? this.defaultProfile) ? { agentProfile: request.profile ?? project.resourceProfile ?? this.defaultProfile } : {}),
@@ -877,6 +969,62 @@ class CoreBackend {
         await this.openThread(project, thread.id);
         await this.listThreads(project);
         return { threadId: thread.id };
+      }
+      case 'fork': {
+        if (!project.client.capabilities?.methods?.includes('areal/thread/fork')) throw new Error('当前 Core 不支持从此轮次创建分支');
+        const result = await this.submit(project, 'areal/thread/fork', {
+          sourceThreadId: request.sourceThreadId, anchor: request.anchor, workspaceMode: 'sharedCurrent',
+          ...(request.target ? { target: request.target } : {}),
+        }, { requestId: request.requestId });
+        // 创建收据已确认受理；后续投影失败不能把已提交的创建显示成可重试错误。
+        try { await this.openThread(project, result.thread.id); await this.listThreads(project); }
+        catch { /* 调用方仍可凭 threadId 打开已提交目标。 */ }
+        return { threadId: result.thread.id, requestId: result.requestId };
+      }
+      case 'side': {
+        if (!project.client.capabilities?.methods?.includes('areal/side/start')) throw new Error('当前 Core 不支持旁路讨论');
+        if (request.operation === 'list') {
+          if (!project.client.capabilities?.methods?.includes('areal/conversation/list')) throw new Error('当前 Core 不支持相关讨论列表');
+          return project.client.request('areal/conversation/list', { view: 'side', sourceThreadId: request.sourceThreadId,
+            includeArchived: request.includeArchived === true, limit: 30, ...(request.cursor ? { cursor: request.cursor } : {}) });
+        }
+        if (request.operation === 'context') return project.client.request('areal/side/context/read', {
+          threadId: request.threadId, ...(request.cursor ? { cursor: request.cursor } : {}),
+          ...(request.evidenceRef ? { evidenceRef: request.evidenceRef } : {}),
+          ...(request.maxBytes ? { maxBytes: request.maxBytes } : {}),
+        });
+        if (request.operation === 'recover') {
+          const receipts = await project.client.request('areal/request/read', { requestId: request.requestId });
+          const receipt = receipts.data?.find(item => item.method === 'areal/side/start');
+          const id = receipt?.result?.threadId;
+          if (!id) return { confirmed: false };
+          await this.changeOutcomes(project, outcomes => ({ ...outcomes, [request.requestId]: {
+            accepted: true, method: 'areal/side/start', sourceThreadId: request.sourceThreadId, threadId: id,
+          } }));
+          await this.changePending(project, pending => pending.filter(item => item.params.requestId !== request.requestId));
+          // 收据已确认；恢复投影失败不能推翻受理结果或留下待重发的首问。
+          try { await this.openThread(project, id); } catch { /* 可凭目标身份再次打开。 */ }
+          return { confirmed: true, threadId: id };
+        }
+        if (request.operation === 'send') {
+          const current = project.model.state.threads[request.threadId];
+          if (current?.conversation?.kind !== 'side') throw new Error('目标不是旁路讨论');
+          const result = await this.submit(project, 'areal/turn/start', { threadId: request.threadId,
+            input: [{ type: 'text', text: request.text }] });
+          // 追问已受理；快照读取失败只能通过重新打开恢复，不能重发输入。
+          try { await this.openThread(project, request.threadId); } catch { /* 保留明确受理结果。 */ }
+          return result;
+        }
+        const result = await this.submit(project, 'areal/side/start', {
+          sourceThreadId: request.sourceThreadId, workspaceAccess: request.workspaceAccess === 'readOnly' ? 'readOnly' : 'none',
+          ...(request.selection ? { selection: request.selection } : {}),
+          ...(request.anchor ? { anchor: request.anchor } : {}),
+          input: [{ type: 'text', text: request.text }],
+        }, { requestId: request.requestId });
+        // 与 Fork 一样，投影刷新不改变 Core 已确认的创建结果。
+        try { await this.openThread(project, result.thread.id); await this.listThreads(project); }
+        catch { /* 调用方仍可凭 threadId 打开已提交目标。 */ }
+        return { threadId: result.thread.id, turnId: result.turn?.id, requestId: result.requestId };
       }
       case 'send': {
         const input = messageInput(this, request);

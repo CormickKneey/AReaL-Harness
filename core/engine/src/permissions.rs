@@ -45,10 +45,20 @@ impl Engine {
         generation: Option<&str>,
         restrictions: &Value,
     ) -> anyhow::Result<PermissionGrant> {
+        // A browser session grant is scoped to the exact claimed page, Origin and
+        // operation kind. The prepared target remains in each approval request;
+        // its short-lived ID must not make a remembered local-site grant useless.
+        let grant_arguments = if tool == "browser_v1" && arguments["plan"].is_object() {
+            json!({"origin":arguments["plan"]["origin"],"targetOrigin":arguments["plan"]["targetOrigin"],
+                "pageId":arguments["plan"]["pageId"],
+                "operation":arguments["plan"]["operation"],"actionKind":arguments["plan"]["action"]["kind"]})
+        } else {
+            arguments.clone()
+        };
         let key = format!(
             "{:x}",
             Sha256::digest(serde_json::to_vec(&json!({
-                "tool":tool,"arguments":arguments,"generation":generation,
+                "tool":tool,"arguments":grant_arguments,"generation":generation,
                 "workspace":self.default_cwd(),"policy":self.permission_config(),"restrictions":restrictions,
                 "runtime":self.runtime_capabilities()["capabilities"],
             }))?)
@@ -146,6 +156,7 @@ impl Engine {
                 if matches!(
                     tool,
                     "ask_user_question"
+                        | "development_service_inspect"
                         | "read_tool_result"
                         | "read_history"
                         | "plan_update"

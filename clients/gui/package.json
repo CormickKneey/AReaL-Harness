@@ -18,10 +18,13 @@
     "test:model-selection": "node scripts/model-selection-smoke.mjs",
     "test:connection": "node scripts/connection-smoke.mjs",
     "test:architecture": "node scripts/architecture-smoke.mjs",
+    "test:conversation-derivation": "node scripts/conversation-derivation-smoke.mjs",
     "test:e2e": "node scripts/migration-smoke.mjs",
     "sign:mac": "node scripts/notarize-macos.mjs",
     "test:update": "node scripts/update-smoke.mjs",
-    "test:core-process": "node scripts/core-process-smoke.mjs"
+    "test:core-process": "node scripts/core-process-smoke.mjs",
+    "test:browser-feasibility": "node scripts/browser-feasibility.mjs",
+    "test:browser-attach": "node scripts/browser-attach-smoke.mjs"
   },
   "devDependencies": {
     "prettier": "3.9.8"

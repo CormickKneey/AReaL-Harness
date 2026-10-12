@@ -19,3 +19,7 @@
 每篇维护文档使用同目录的 `.md`（中文）和 `.en.md`（英文）配对，顶部可切换。两种语言同时更新；机器 schema、代码及共享图表只保留一份。API 参数以契约和链接的类型/schema 为准，使用指南不重复整套接口。
 
 - [安装与升级](guides/installation.md) · [发行流程](development/releasing.md)
+
+共享浏览器设计提案：[规格](design/browser.md) · [交互](design/browser-ux.md) · [API](api/browser.md) · [行为验收](development/browser-testing.md) · [原生方案](adr/0003-native-view-and-driver.md)。
+
+会话派生设计决策：[独立来源关系](adr/0008-conversation-origin.md) · [不可变快照](adr/0009-detached-history-snapshots.md) · [持久只读旁路](adr/0010-persistent-read-only-side.md) · [对话与文件](adr/0011-conversation-not-files.md) · [扩展协议](adr/0012-explicit-areal-contract.md)。

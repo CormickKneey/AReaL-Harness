@@ -620,6 +620,7 @@ async fn legacy_text_sessions_load_and_upgrade_on_next_write() {
         let dir = tempfile::tempdir().unwrap();
         let thread_id = uuid::Uuid::new_v4().to_string();
         let thread = Thread {
+            conversation: None,
             history_archive: None,
             goals: Default::default(),
             goal_owner: None,
@@ -638,6 +639,7 @@ async fn legacy_text_sessions_load_and_upgrade_on_next_write() {
             ephemeral: false,
             context_checkpoint: None,
             dynamic_tools: Vec::new(),
+            toolset_revision: 0,
             turns: vec![Turn {
                 started_at: None,
                 completed_at: None,
@@ -685,6 +687,6 @@ async fn legacy_text_sessions_load_and_upgrade_on_next_write() {
             &std::fs::read(dir.path().join(format!("{thread_id}.json"))).unwrap(),
         )
         .unwrap();
-        assert_eq!(record["version"], 13);
+        assert_eq!(record["version"], 14);
     }
 }

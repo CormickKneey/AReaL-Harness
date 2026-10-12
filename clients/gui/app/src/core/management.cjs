@@ -5,7 +5,7 @@ const { workgroupArtifactFile } = require('./workgroup-artifacts.cjs');
 const mutations = {
   providerSave: 'areal/provider/upsert', providerRemove: 'areal/provider/remove',
   mcpSave: 'areal/mcp/configure', mcpConnect: 'areal/mcp/connect', mcpDisconnect: 'areal/mcp/disconnect',
-  archive: 'areal/thread/archive',
+  archive: 'areal/thread/archive', unarchive: 'areal/conversation/unarchive',
   processCloseStdin: 'areal/process/closeStdin', processStart: 'areal/process/start', processWrite: 'areal/process/write', processResize: 'areal/process/resize', processTerminate: 'areal/process/terminate',
   goalCreate: 'areal/goal/create', goalUpdate: 'areal/goal/update', goalPause: 'areal/goal/pause', goalResume: 'areal/goal/resume', goalClear: 'areal/goal/clear',
 };
@@ -15,7 +15,7 @@ const managementMethods = new Set(['areal/blob/release', ...Object.values(mutati
 const fields = {
   providerSave: ['provider', 'expectedRevision'], providerRemove: ['id', 'expectedRevision'],
   mcpSave: ['id', 'expectedRevision', 'config'], mcpConnect: ['id', 'expectedRevision'], mcpDisconnect: ['id', 'expectedRevision'],
-  archive: ['threadId'],
+  archive: ['threadId'], unarchive: ['threadId'],
   processStart: ['threadId', 'lifetime', 'argv', 'cwd', 'tty', 'cols', 'rows', 'timeoutMs'],
   processCloseStdin: ['threadId', 'id'], processWrite: ['threadId', 'id', 'dataBase64'], processResize: ['threadId', 'id', 'cols', 'rows'], processTerminate: ['threadId', 'id'],
   goalCreate: ['threadId', 'expectedRevision', 'objective', 'tokenBudget', 'maxTurns', 'maxActiveSeconds', 'inferLimits'],
@@ -27,6 +27,7 @@ const reads = {
   profile: ['areal/profile/read', ['id', 'revision']], skills: ['areal/skill/list', ['threadId', 'agentProfile']],
   skill: ['areal/skill/read', ['threadId', 'agentProfile', 'skill', 'resource', 'offset', 'maxBytes']],
   inspect: ['areal/thread/inspect', ['threadId']], context: ['areal/context/read', ['threadId', 'offset', 'limit']],
+  inheritedHistory: ['areal/conversation/history', ['threadId', 'view', 'cursor', 'maxBytes']],
   plan: ['areal/plan/read', ['threadId']], processes: ['areal/process/list', ['threadId']],
   process: ['areal/process/get', ['threadId', 'id']],
   processWait: ['areal/process/wait', ['threadId', 'id', 'timeoutMs']],
@@ -205,7 +206,7 @@ async function manage(backend, project, request) {
     const models = await project.client.request('areal/model/list');
     project.models = models.data ?? [];
   }
-  if (operation === 'archive') {
+  if (operation === 'archive' || operation === 'unarchive') {
     const snapshot = await project.client.request('thread/read', { threadId: request.threadId, includeTurns: true });
     project.model.replace(snapshot.thread);
     await backend.listThreads(project);

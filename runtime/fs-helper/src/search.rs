@@ -33,6 +33,29 @@ pub fn execute(request: Request) -> Result<Value, String> {
     search(request).map_err(|e| format!("search failed: {e}"))
 }
 
+pub fn execute_scoped(
+    root: &str,
+    relative: &str,
+    pattern: String,
+    glob: Option<String>,
+    context: usize,
+    limit: usize,
+) -> Result<Value, String> {
+    let path = if relative.is_empty() || relative == "." {
+        "workspace://repo".to_owned()
+    } else {
+        format!("workspace://repo/{relative}")
+    };
+    execute(Request {
+        path,
+        roots: BTreeMap::from([("repo".into(), Some(root.into()))]),
+        pattern,
+        glob,
+        context,
+        limit,
+    })
+}
+
 fn search(request: Request) -> Result<Value, Box<dyn std::error::Error>> {
     if request.context > 20 || request.limit == 0 || request.limit > 1000 {
         return Err("invalid search context or limit".into());

@@ -52,6 +52,7 @@ export function Composer({
   onPanel,
   onNew,
   onOpenTask,
+  onSide,
 }: {
   project: Data;
   thread: Data;
@@ -60,6 +61,7 @@ export function Composer({
   onPanel: (name: string) => void;
   onNew: () => void;
   onOpenTask?: (target: { projectId: string; taskId: string; runId: string }) => void;
+  onSide?: (draft: string) => void;
 }) {
   const prefs = useApplicationPreferences();
   const key = `areal-gui:draft:${project.id}:${thread.id}`;
@@ -165,6 +167,17 @@ export function Composer({
     if (thread.goals?.goal && goalMode) changeGoalMode(false);
   }, [thread.goals?.goal?.id]);
   const submit = async (value: string, invert = false, approvePlan = false) => {
+    const sideCommand = /^\/side(?:\s|$)/i.exec(value);
+    if (sideCommand && (!onSide || files.length)) {
+      setDeliveryError(files.length ? "旁路首问仅接受文本；附件仍保留在主草稿。" : "当前会话不支持旁路讨论。");
+      return;
+    }
+    if (sideCommand && onSide) {
+      const question = value.slice(sideCommand[0].length);
+      onSide(question);
+      api.current?.clear(); setText(""); localStorage.removeItem(key);
+      return;
+    }
     if (queueEditor.edit) { await queueEditor.save(); return; }
     if (disabled || sending.has(key) || (!value.trim() && !files.length && !comments.length && !skills.selected.length)) return;
     if (approvePlan && (!planReady || text.trim() || files.length || comments.length)) return;
@@ -220,6 +233,7 @@ export function Composer({
     } catch (cause) { setAdmissionError((cause as Error).message); } finally { markSending(key, false); }
   };
   const catalogActions: ComposerCatalogEntry[] = [
+    ...(onSide ? [{ value: "side", label: "旁路讨论", description: "基于当前会话快照独立提问", icon: <Lightbulb />, group: "功能" as const, run: () => onSide("") }] : []),
     { value: "upload", label: "上传文件", description: "添加图片、文档或其他文件", icon: <AttachmentIcon />, group: "功能", run: () => upload.current?.click() },
     { value: "mcp", label: "MCP", description: "查看服务器与连接状态", icon: <ComposerMcpIcon />, group: "功能", run: () => setMcpOpen(true) },
     { value: "files", label: "工作区文件", description: "引用当前项目中的文件", icon: <FileTree />, group: "功能", run: () => onPanel("文件") },
@@ -320,6 +334,7 @@ export function Composer({
         onChange={(value) => {
           setText(value);
           localStorage.setItem(key, value);
+          localStorage.setItem(`${key}:version`, String(Number(localStorage.getItem(`${key}:version`) ?? 0) + 1));
         }}
         onSubmit={(value) => {
           void submit(value);

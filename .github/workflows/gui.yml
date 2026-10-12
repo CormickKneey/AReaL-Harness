@@ -85,6 +85,15 @@ jobs:
         run: pnpm --dir clients/gui run test:model-selection 2>&1 | tee target/ci/gui/model-selection.log
       - name: Verify queue workflow
         run: pnpm --dir clients/gui run test:queue 2>&1 | tee target/ci/gui/queue.log
+      - name: Verify conversation derivation workflow
+        run: pnpm --dir clients/gui run test:conversation-derivation 2>&1 | tee target/ci/gui/conversation-derivation.log
+      - name: Collect GUI evidence
+        if: always()
+        run: |
+          mkdir -p target/ci/gui
+          if [ -d .scratch/gui-evidence ]; then
+            cp -R .scratch/gui-evidence target/ci/gui/gui-evidence
+          fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:

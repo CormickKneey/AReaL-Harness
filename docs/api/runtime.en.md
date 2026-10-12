@@ -84,6 +84,7 @@ fs.execute is available only with a trusted helper. command.kind selects:
 | read | `path,offset?=0,maxBytes` | `dataBase64,sha256,size,nextOffset,eof` |
 | stat | `path` | `kind,size` |
 | list | `path,after?,limit` | `entries,nextCursor` |
+| search | `path,pattern,glob?,context,limit` | `matches[{path,line,text,kind}],limited,guidance` |
 | write | `path,dataBase64,expected` | `sha256,size` |
 | applyPatch | `path,oldText,newText,expectedSha256` | `sha256,size` |
 | applyPatches | `path,patches[{oldText,newText}],expectedSha256` | `sha256,size` |
@@ -95,6 +96,8 @@ Staging and commit are separately auditable operations, not a multi-file transac
 expected is `{kind:"absent"}` or `{kind:"sha256",value:"digest"}`. read sha256 always covers the complete file; offsets are bytes. Files are limited to 8 MiB, reads/writes to 64 KiB, and combined patch old/new text to 64 KiB with a nonempty unique match. applyPatch remains a compatibility entry point sharing the one-element applyPatches implementation. applyPatches accepts at most 32 replacements and writes only after every replacement matches uniquely against the conditional version. Stale digests, existing create targets and ambiguous patches return CONFLICT.
 
 list pages have at most 256 entries/about 32 KiB, scanning at most 4096 UTF-8 names. Directory pagination is not a snapshot. Helpers use directory descriptors and NOFOLLOW; ordinary reads/writes reject symlinks, hardlinks and special files, with fsync for conditional replacement.
+
+`search` is a read-only native `FileCommand` that searches a file or directory authorized by the current Scope using the regular expression `pattern`, with an optional path-filtering `glob`. Required `context` is 0–20 and required `limit` is 1–1000; the limit counts matching lines, excluding context lines. Result rows contain a host file `path`, a line number or null in `line`, UTF-8 text or null in `text`, and `kind` of `match` or `context`. Exceeding the match limit, a 64 KiB line, 8 MiB of accumulated result-line bytes, or 13000 bytes of serialized result rows sets `limited=true`. Follow `guidance` to narrow the path or pattern; empty results mean no matches only when `limited=false`. Search honors workspace ignore rules, does not consult host rg configuration and does not follow symlinks. This branch extends the existing `fs.execute` command union; older Runtimes that do not recognize `search` reject the request, and the SDK does not automatically downgrade or retry.
 
 By default helpers coordinate by file and commands by write root (writeSerialization=conflictingPaths). Explicit command bypass uses filePaths. External processes do not participate; external CAS/cross-file transactions are not guaranteed. Lost helper results or cleanup failure after commit become UNKNOWN without replay.
 
