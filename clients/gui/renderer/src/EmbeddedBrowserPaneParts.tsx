@@ -46,6 +46,8 @@ export function BrowserToolbar({
   onReload,
   onToggleResponsiveMode,
   onSubmit,
+  annotationActions,
+  onToggleDetails,
   isResponsiveMode,
 }: {
   addressValue: string;
@@ -62,6 +64,8 @@ export function BrowserToolbar({
   onReload: () => void;
   onToggleResponsiveMode: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  annotationActions?: ReactNode;
+  onToggleDetails?: () => void;
   isResponsiveMode: boolean;
 }) {
   const selectOnPointerUp = useRef(false);
@@ -133,6 +137,7 @@ export function BrowserToolbar({
         active={isResponsiveMode}
         pressed={isResponsiveMode}
       />
+      {annotationActions}
       <BrowserToolbarMoreMenu
         canOpenExternal={
           browserState.isReady && isDefaultBrowserOpenableUrl(browserState.currentUrl)
@@ -141,6 +146,7 @@ export function BrowserToolbar({
         formatMessage={formatMessage}
         onOpenExternal={onOpenExternal}
         onOpenDevTools={onOpenDevTools}
+        onToggleDetails={onToggleDetails}
       />
     </form>
   );
@@ -152,12 +158,14 @@ function BrowserToolbarMoreMenu({
   formatMessage,
   onOpenDevTools,
   onOpenExternal,
+  onToggleDetails,
 }: {
   canOpenDevTools: boolean;
   canOpenExternal: boolean;
   formatMessage: (descriptor: { id: string }) => string;
   onOpenDevTools: () => void;
   onOpenExternal: () => void;
+  onToggleDetails?: () => void;
 }) {
   const moreLabel = formatMessage({ id: "browser.more" });
   return (
@@ -194,6 +202,10 @@ function BrowserToolbarMoreMenu({
           <Bug className="size-4" />
           <span>{formatMessage({ id: "browser.devtools" })}</span>
         </DropdownMenuItem>
+        {onToggleDetails && <DropdownMenuItem onClick={onToggleDetails}>
+          <Globe className="size-4" />
+          <span>{formatMessage({ id: "browser.details" })}</span>
+        </DropdownMenuItem>}
       </DropdownMenuContent>
     </DropdownMenu>
   );

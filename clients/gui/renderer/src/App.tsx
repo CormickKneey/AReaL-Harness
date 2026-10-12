@@ -355,6 +355,12 @@ function AppContent({ services }: { services: PlatformServices }) {
   }, [project?.id, threadId, noProject]);
   const previewOwner = React.useRef("");
   previewOwner.current = `${project?.id ?? ""}:${threadId}`;
+  useEffect(() => services.onPreviewEvent?.(event => {
+    // 仅呈现当前聊天已由 Core 批准的页面，不切换后台聊天或重放导航。
+    if (event.kind !== 'reveal' || previewOwner.current !== `${event.projectId}:${event.threadId}`) return;
+    setWorkspaceView('split');
+    setPanel('预览');
+  }), [services]);
   const terminalState = useTerminalWorkspace(terminalOwner(project?.id ?? "", threadId));
   const panelOwner = `${project?.id ?? ""}:${threadId}`;
   React.useLayoutEffect(() => {
@@ -1012,9 +1018,6 @@ function AppContent({ services }: { services: PlatformServices }) {
           initialUrl={previewSource === `${project.id}:${threadId}` ? previewUrl : ""}
           initialRequest={previewRequest}
           fullAddress={library.settings?.browserFullAddress === true}
-          browserEnabled={thread?.dynamicTools?.some((tool: Data) => tool.name === 'browser_v1') === true}
-          browserAvailable={project.core?.features?.browserToolAttachment === true && thread?.status?.type === 'idle' && !thread?.desktop?.archived}
-          toolsetRevision={thread?.toolsetRevision ?? 0}
           thread={thread}
           action={resourceAction}
           onReview={turnId => { setReviewRequest({ owner: panelOwner, turnId }); setPanel("改动"); }}

@@ -64,6 +64,8 @@ Optional [research agents](../guides/tools.en.md#research-agents) use Core-manag
 
 Engine’s `diagnostics` module bounds non-authoritative diagnostic retention; server wires startup and periodic collection. service-host manages leases and cleanup for host/launcher logs and handshake temporary directories. Diagnostic cleanup preserves history and Goal recovery semantics; policies are described in [Core API](../api/core.en.md#recovery) and the [local service contract](../api/local-service.en.md).
 
+Ordinary Shared Browser loading uses Chromium system proxy, DNS, and site policies. Main isolates active control ports and exposes no product bridge to pages. The adapter binds a new user send to its exact Turn and GUI connection; the first Core-approved discovery lazily binds the current native Page without stealing a host through `thread/resume`. Main fences page reads and actions before dispatching human keyboard or mouse input, drains pending synthetic input, then delivers the first human event. Core read and action permissions bind the Page, control generation, and concrete plan; UNKNOWN is never replayed. See the [Browser contract](../api/browser.en.md) for the flow and limits.
+
 ## Repository layout
 
 Desktop ownership follows the [migration decision](../adr/0001-desktop-client-module.en.md). The independent Electron adapter retains OS credentials and subscription forwarding and connects through the public shared-service API. GUI exit preserves Core work. See the [GUI guide](../../clients/gui/README.en.md) for builds, isolation and local packages. Mobile source migration is deferred.

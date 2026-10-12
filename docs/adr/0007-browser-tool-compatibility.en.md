@@ -2,9 +2,9 @@
 
 # Preserve Threads with explicit append-only tool attachment and observer subscriptions
 
-**Status: proposed; not implemented**
+**Status: accepted; fixed Browser v1 bundle attachment and observer subscriptions are implemented.**
 
-Dynamic tool definitions are currently immutable, while thread/resume also concerns host binding. Add a bounded idle-time attachment for the trusted Browser v1 bundle and atomic observation without ToolHost rebinding. Never replace existing tool definitions. Keep the dispatcher envelope fixed; capabilities and strict secondary schemas govern supported operations.
+Existing dynamic tool definitions remain immutable, while thread/resume also concerns host binding. Use bounded idle-time attachment for the trusted Browser v1 bundle and atomic observation without ToolHost rebinding. When the user sends a new message to an idle older chat, the GUI appends the fixed bundle subject to capability negotiation. This neither reads a page nor resumes old requests. Only an actual Browser call approved by Core claims the page. Never replace existing tool definitions. Keep the dispatcher envelope fixed; capabilities and strict secondary schemas govern supported operations.
 
 ## Considered options
 

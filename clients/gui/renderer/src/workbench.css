@@ -1824,6 +1824,8 @@ button.composer-project:hover > svg,
 .preview-toolbar { height: 48px; flex: none; padding: 0 12px; gap: 6px; }
 .preview-toolbar input { height: 28px; padding: 0 8px; border-radius: 8px; }
 .preview-toolbar button { flex-shrink: 0; }
+.browser-details { max-height: 40%; flex-shrink: 0; overflow: auto; }
+.browser-details .preview-viewport-toolbar { flex-wrap: wrap; gap: 8px; }
 .preview-stage { flex: 1; min-height: 0; position: relative; display: flex; justify-content: center; overflow: hidden; }
 .preview-stage .preview-webview { height: 100%; margin: 0; }
 .preview-placeholder { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; text-align: center; color: var(--color-foreground-subtle); }

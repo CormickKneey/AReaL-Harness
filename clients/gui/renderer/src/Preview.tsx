@@ -6,8 +6,9 @@ import {
 // Core owns isolated native pages; the copied ZCode parts own the presentation.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "./components/ui/button.js";
+import { Crop, MousePointer2 } from "lucide-react";
+import { ControlHintTooltip } from "./ControlHintTooltip.js";
 import type { PlatformServices, Data } from "./services.js";
-import { call } from "./services.js";
 import { BrowserRegionAnnotation, type RegionDraft } from "./BrowserRegionAnnotation.js";
 import { attachmentDrafts, sending, stageThreadDraft } from "./Composer.js";
 import { BrowserVerificationCard } from "./BrowserVerificationCard.js";
@@ -26,9 +27,6 @@ export function Preview({
   initialUrl,
   initialRequest = 0,
   fullAddress = false,
-  browserEnabled = false,
-  browserAvailable = false,
-  toolsetRevision = 0,
   thread,
   action,
   onReview,
@@ -40,9 +38,6 @@ export function Preview({
   initialUrl: string;
   initialRequest?: number;
   fullAddress?: boolean;
-  browserEnabled?: boolean;
-  browserAvailable?: boolean;
-  toolsetRevision?: number;
   thread?: Data;
   action: Action;
   onReview: (turnId: string) => void;
@@ -54,9 +49,9 @@ export function Preview({
   const [state, setState] = useState<Data>({});
   const [error, setError] = useState("");
   const [responsive, setResponsive] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [width, setWidth] = useState(390);
   const [addressFocused, setAddressFocused] = useState(false);
-  const [claiming, setClaiming] = useState(false);
   const [annotationState, setAnnotationState] = useState<{ owner: string; draft: RegionDraft | null }>(() => ({ owner, draft: regionDrafts.get(owner) ?? null }));
   const annotating = annotationState.owner === owner ? annotationState.draft : regionDrafts.get(owner) ?? null;
   const [annotationBusyOwner, setAnnotationBusyOwner] = useState<string | null>(null);
@@ -554,18 +549,6 @@ export function Preview({
       {state.browser?.stateLoss && <div className="preview-viewport-toolbar" role="status">
         {state.browser.stateLoss}
       </div>}
-      {browserEnabled && state.url && <div className="preview-viewport-toolbar" role="status" aria-hidden={!batch}
-        style={{ visibility: batch ? 'visible' : 'hidden' }}>
-        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          浏览步骤 {batch?.completed ?? 0}/{batch?.total ?? 0} · {batch?.status === 'running' ? '进行中'
-            : batch?.status === 'confirmed' ? '已确认输入，仍需检查页面结果'
-              : batch?.status === 'unknown' ? '结果未知，请检查聊天记录'
-                : '已停止，剩余步骤未执行'}
-        </span>
-      </div>}
-      {browserEnabled && <div className="preview-viewport-toolbar" role="note">
-        临时登录只在当前浏览工作区使用；关闭工作区或重启后可能需要重新登录。
-      </div>}
       <BrowserToolbar
         addressValue={address}
         browserState={{
@@ -576,6 +559,19 @@ export function Preview({
           currentUrl: state.url ?? "",
         }}
         formatMessage={browserLabel}
+        onToggleDetails={() => setDetailsOpen(value => !value)}
+        annotationActions={state.url ? <>
+          <ControlHintTooltip title="截取区域并标注">
+            <Button ref={annotationControl} type="button" size="icon-md" variant="ghost" aria-label="截取区域并标注"
+              disabled={annotationBusy || styleBusy || !!keyboardCapture || !!styleTrial || !!annotating || state.browser?.control === 'transferring'}
+              onClick={() => void startAnnotation()}><Crop className="size-4" /></Button>
+          </ControlHintTooltip>
+          <ControlHintTooltip title="选择元素并标注">
+            <Button type="button" size="icon-md" variant="ghost" aria-label="选择元素并标注"
+              disabled={annotationBusy || styleBusy || !!keyboardCapture || !!styleTrial || !!annotating || state.browser?.control === 'transferring'}
+              onClick={() => void startAnnotation('element')}><MousePointer2 className="size-4" /></Button>
+          </ControlHintTooltip>
+        </> : undefined}
         onAddressChange={(value) => {
           editing.current = true;
           setUrl(value);
@@ -602,37 +598,20 @@ export function Preview({
           void request("navigate", { url });
         }}
       />
-      {browserEnabled && state.url && <div className="preview-viewport-toolbar" role="group" aria-label="共享浏览器控制">
-        <span>{state.browser?.control === 'agent' ? 'Agent 可观察当前页'
-          : state.browser?.control === 'transferring' ? '正在释放 Agent 输入，暂不能操作页面'
-            : '你控制当前页；人工期间的内容不会补发给 Agent，此前已交付的内容不会撤回'}</span>
-        {state.browser?.control === 'transferring' ? <>
-          <Button type="button" size="sm" onClick={() => void request('stop')}>停止加载</Button>
-          <Button type="button" size="sm" onClick={() => void request('release', { userIntent: true })}>关闭页面</Button>
-          {state.browser.transferError && <span role="alert">{state.browser.transferError}</span>}
-        </> : state.browser?.control === 'agent'
-          ? <Button type="button" size="sm" onClick={() => void request('takeover')}>接管页面</Button>
-          : <>
-            {uninspectedUnknown && <span role="status">原浏览器动作结果 UNKNOWN。请先到聊天记录核查并确认；交还不会重试该动作。</span>}
-            <Button type="button" size="sm" disabled={claiming || uninspectedUnknown || !!state.loading || !!state.error
-              || !!styleTrial || !!state.browser?.frameOriginGrant
-              || !!state.browser?.downloadIntentExpiresAt || (state.workspace?.fileReceipts ?? []).some((receipt: Data) =>
-                receipt.pageId === state.browser?.pageId && ['choosing', 'downloading', 'interrupted'].includes(receipt.status))}
-            onClick={() => {
-              setClaiming(true);
-              void (async () => {
-                try {
-                  const next = await services.preview({ operation: 'claim', projectId, threadId,
-                    pageId: stateRef.current.browser?.pageId });
-                  if (mounted.current && current.current === owner) setState(next);
-                  await call(services, 'send', { projectId, threadId, text: '请使用 browser_v1 检查我刚授权的当前页面，先 describe，再 observe，并报告页面实际内容。' });
-                } catch (e) { if (mounted.current && current.current === owner) setError(e instanceof Error ? e.message : String(e)); }
-                finally { if (mounted.current && current.current === owner) setClaiming(false); }
-              })();
-            }}>交还并让 Agent 检查当前页</Button>
-          </>}
+      {state.browser?.control === 'transferring' && <div className="preview-viewport-toolbar" role="status">
+        <span>{state.browser.transferError || '正在停止浏览器动作…'}</span>
+        <Button type="button" size="sm" onClick={() => void request('stop')}>停止加载</Button>
+        <Button type="button" size="sm" onClick={() => void request('release', { userIntent: true })}>关闭页面</Button>
       </div>}
-      {browserEnabled && state.url && <div className="preview-viewport-toolbar" role="group" aria-label="网页文件交接">
+      {uninspectedUnknown && <div className="preview-viewport-toolbar" role="status">上次浏览器操作的结果待核对，请在聊天中确认后继续。</div>}
+      {annotationBusy && !annotating && <div className="preview-viewport-toolbar" role="status">在页面中点击要标注的元素；按 Esc 取消。</div>}
+      {batch?.status === 'running' && <div className="preview-viewport-toolbar" role="status">正在浏览 · {batch.completed}/{batch.total}</div>}
+      {detailsOpen && <div className="browser-details" aria-label="浏览器详情">
+        <div className="preview-viewport-toolbar">
+          <span>临时登录仅在当前浏览工作区使用。</span>
+          <Button type="button" size="sm" variant="ghost" onClick={() => setDetailsOpen(false)}>关闭详情</Button>
+        </div>
+      {state.url && <div className="preview-viewport-toolbar" role="group" aria-label="网页文件交接">
         {state.browser?.control === 'human' ? <>
           <Button type="button" size="sm" disabled={!!state.browser?.downloadIntentExpiresAt || !!annotating || !!styleTrial}
             onClick={() => void request('allowNextDownload', { userIntent: true })}>允许下一次下载</Button>
@@ -641,9 +620,9 @@ export function Preview({
             <Button type="button" size="sm" onClick={() => void request('cancelFileHandoff')}>取消下载许可</Button>
           </>}
           <span>上传请在网页中使用文件选择控件；系统选择器取消后可继续操作。</span>
-        </> : <span>文件选择需要先接管页面。</span>}
+        </> : <span>直接操作页面可选择文件。</span>}
       </div>}
-      {browserEnabled && (state.workspace?.fileReceipts ?? []).length > 0 &&
+      {(state.workspace?.fileReceipts ?? []).length > 0 &&
         <div className="preview-viewport-toolbar preview-file-status" role="list" aria-label="网页下载状态">
           {(state.workspace.fileReceipts as Data[]).map((receipt: Data) => <div role="listitem" key={receipt.id}>
             {receipt.name || '未命名下载'} · 页面 {receipt.pageOrigin || '未知'} · 发起者 {receipt.initiator === 'unknown' ? '未知' : receipt.initiator}
@@ -656,7 +635,7 @@ export function Preview({
                 onClick={() => void request('cancelDownload', { downloadId: receipt.id, userIntent: true })}>取消下载</Button>}
           </div>)}
         </div>}
-      {browserEnabled && state.url && state.browser?.control === 'human' &&
+      {state.url && state.browser?.control === 'human' &&
         <div className="preview-viewport-toolbar" role="group" aria-label="嵌入站点授权">
           {state.browser.frameOriginGrant ? <>
             <span role="status">嵌入站点 {state.browser.frameOriginGrant.origin} · 仅人工操作，iframe 使用区域标注</span>
@@ -668,18 +647,13 @@ export function Preview({
           </> : <Button type="button" size="sm" disabled={!!annotating || !!styleTrial || annotationBusy}
             onClick={() => void request('authorizeFrameOrigin', { userIntent: true })}>授权当前页面的嵌入站点</Button>}
         </div>}
-      {browserEnabled && state.url && <div className="preview-viewport-toolbar" role="group" aria-label="页面标注">
-        <Button ref={annotationControl} type="button" size="sm" disabled={annotationBusy || styleBusy || !!keyboardCapture || !!styleTrial || !!annotating || state.browser?.control === 'transferring'}
-          onClick={() => void startAnnotation()}>截取区域并标注</Button>
-        <Button type="button" size="sm" disabled={annotationBusy || styleBusy || !!keyboardCapture || !!styleTrial || !!annotating || state.browser?.control === 'transferring'}
-          onClick={() => void startAnnotation('element')}>选择元素并标注</Button>
-        <Button ref={styleControl} type="button" size="sm" disabled={annotationBusy || styleBusy || !!keyboardCapture || !!styleTrial || !!annotating || state.browser?.control === 'transferring'}
-          onClick={event => void startStyleTrial(event.detail === 0)}>选择元素并试改</Button>
-        <span>F6 返回应用；键盘选择使用截图坐标。</span>
-        <span role="status" aria-hidden={!annotationBusy || !!annotating}
-          style={{ visibility: annotationBusy && !annotating ? 'visible' : 'hidden' }}>
-          在页面中点击要标注的元素；按 Esc 取消。
-        </span>
+        {state.url && <div className="preview-viewport-toolbar">
+          <Button ref={styleControl} type="button" size="sm" disabled={annotationBusy || styleBusy || !!keyboardCapture || !!styleTrial || !!annotating || state.browser?.control === 'transferring'}
+            onClick={event => void startStyleTrial(event.detail === 0)}>选择元素并试改</Button>
+          <span>F6 返回应用；键盘选择使用截图坐标。</span>
+        </div>}
+        {thread && <BrowserVerificationCard thread={thread} projectId={projectId} action={action} onReview={onReview} onTool={onTool}
+          trialActive={!!styleTrial && !styleTrial.cleared || !!state.browser?.trialActive} />}
       </div>}
       {styleTrial && <BrowserStyleTrial draft={styleTrial} busy={styleBusy}
         onApply={(property, value) => void changeStyleTrial('applyStyleTrial', property, value)}
@@ -687,17 +661,6 @@ export function Preview({
         onRedo={() => void changeStyleTrial('redoStyleTrial')}
         onIntent={value => updateStyleTrial({ ...styleTrial, intent: value })}
         onStage={() => void stageStyleTrial()} onCancel={() => void cancelStyleTrial()} />}
-      {!browserEnabled && browserAvailable && state.url && <div className="preview-viewport-toolbar">
-        <span>当前仅供你浏览；启用后，还需将当前页交给 Agent 才能读取或操作。</span>
-        <Button type="button" size="sm" disabled={claiming} onClick={() => {
-          setClaiming(true);
-          void call(services, 'attachBrowser', { projectId, threadId, expectedToolsetRevision: toolsetRevision })
-            .catch((e) => { if (mounted.current && current.current === owner) setError(e instanceof Error ? e.message : String(e)); })
-            .finally(() => { if (mounted.current && current.current === owner) setClaiming(false); });
-        }}>在当前聊天启用浏览器</Button>
-      </div>}
-      {browserEnabled && thread && <BrowserVerificationCard thread={thread} projectId={projectId} action={action} onReview={onReview} onTool={onTool}
-        trialActive={!!styleTrial && !styleTrial.cleared || !!state.browser?.trialActive} />}
       {responsive && (
         <div className="preview-viewport-toolbar">
           <label>
@@ -770,6 +733,7 @@ function browserLabel({ id }: { id: string }): string {
         "browser.more": "浏览器更多操作",
         "browser.openExternal": "在默认浏览器打开",
         "browser.devtools": "开发者工具",
+        "browser.details": "浏览器详情",
         "browser.title": "浏览器",
         "browser.empty": "粘贴或输入网址，按 Enter 打开页面。",
         "browser.loadError.title": "无法打开网页",
