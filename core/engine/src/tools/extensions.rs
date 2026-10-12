@@ -161,6 +161,8 @@ impl Invocation<'_> {
                 return Err(invalid("browser host returned an invalid plan"));
             }
             self.edit(|execution, _| {
+                // 审批计划留在审计记录，模型回放只使用经 hooks 校验的规范参数。
+                execution.model_arguments = Some(arguments.clone());
                 execution.effective_arguments = Some(json!({"arguments":arguments,"plan":prepared}))
             })
             .await?;

@@ -133,6 +133,110 @@ async fn model_history_keeps_short_references_and_preserves_runtime_audit() {
     engine.shutdown().await;
 }
 
+#[tokio::test]
+async fn browser_history_keeps_plan_private_and_preserves_rejected_arguments() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = Engine::open(dir.path(), Arc::new(PendingModel), Limits::default()).unwrap();
+    let mut thread = engine.create("/fixture".into()).await.unwrap();
+    let original = json!({"operation":"observe","parameters":{"pageId":"old"}});
+    let canonical = json!({"operation":"observe","parameters":{"pageId":"hook-current"}});
+    let audit = json!({"arguments":canonical,"plan":{"preparedActionId":"private-plan","fingerprint":"private-digest"}});
+    let rejected = json!({"arguments":canonical,"plan":{"preparedActionId":"model-forged"}});
+    let mut items = Vec::new();
+    let mut expected = Vec::new();
+    for (id, tool, backend, input, model, effective, want) in [
+        (
+            "new",
+            "browser_v1",
+            "client",
+            original.clone(),
+            Some(canonical.clone()),
+            Some(audit.clone()),
+            canonical.clone(),
+        ),
+        (
+            "legacy",
+            "browser_v1",
+            "client",
+            original.clone(),
+            None,
+            Some(audit.clone()),
+            canonical.clone(),
+        ),
+        (
+            "rejected",
+            "browser_v1",
+            "client",
+            rejected.clone(),
+            None,
+            None,
+            rejected.clone(),
+        ),
+        (
+            "other",
+            "fixture",
+            "client",
+            original.clone(),
+            None,
+            Some(audit.clone()),
+            audit.clone(),
+        ),
+        (
+            "runtime",
+            "browser_v1",
+            "runtime",
+            original.clone(),
+            None,
+            Some(audit.clone()),
+            audit.clone(),
+        ),
+    ] {
+        items.push(serde_json::from_value::<Item>(json!({
+            "type":"dynamicToolCall","id":id,"tool":tool,"callId":id,"arguments":input,
+            "status":"completed","success":id!="rejected","contentItems":[{"type":"inputText","text":"receipt"}],
+            "execution":{"backend":backend,"runtimeEpoch":"runtime","scopeId":"scope","operationId":id,
+                "outcome":if id=="rejected" {"failed"} else {"succeeded"},
+                "modelArguments":model,"effectiveArguments":effective}
+        })).unwrap());
+        expected.push(want);
+    }
+    thread.turns.push(Turn {
+        started_at: None,
+        completed_at: None,
+        duration_ms: None,
+        goal: None,
+        configuration: None,
+        instruction_snapshot: None,
+        id: "turn".into(),
+        status: TurnStatus::Completed,
+        error: None,
+        usage: None,
+        items,
+    });
+    let saved = serde_json::to_value(&thread).unwrap();
+    let restored: Thread = serde_json::from_value(saved.clone()).unwrap();
+    let messages = history(&restored, &engine.store).unwrap();
+    let calls: Vec<_> = messages
+        .iter()
+        .flat_map(|message| &message.tool_calls)
+        .collect();
+    for (call, wanted) in calls.iter().zip(expected) {
+        let actual: Value =
+            serde_json::from_str(call["function"]["arguments"].as_str().unwrap()).unwrap();
+        assert_eq!(actual, wanted);
+    }
+    assert_eq!(
+        serde_json::to_value(&restored).unwrap(),
+        saved,
+        "投影不改写审计原文"
+    );
+    assert_eq!(
+        saved["turns"][0]["items"][1]["execution"]["effectiveArguments"],
+        audit
+    );
+    engine.shutdown().await;
+}
+
 #[test]
 fn long_task_input_is_accepted_and_utf8_limit_covers_all_parts() {
     let caps = model::ModelCapabilities::text();

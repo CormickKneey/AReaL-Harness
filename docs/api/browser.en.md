@@ -171,6 +171,8 @@ Ordinary human public/local browsing uses Chromium system proxy, DNS, redirects,
 
 Do not expose cookie/storage export, browser-wide CDP, arbitrary evaluate or host paths. Diagnostics are scoped and permissioned. Redact password/token values, sensitive query items and Authorization/Cookie/Set-Cookie. Current capture refuses known sensitive forms or incomplete privacy checks rather than masking images; unknown secrets are not guaranteed detected, and Agent capture requires Core permission for the current Page and epoch. Manual sensitive flows use takeover. Downloads and user-selected uploads require separate authorization; no automatic executable launch.
 
+Core records model tool arguments separately from internal approval plans. Subsequent model history replays only the canonical post-hook arguments; plans remain in the audit fields. For existing Browser/client records, projection extracts canonical arguments from the internal audit envelope without rewriting authoritative history or accepting model-supplied `arguments/plan` envelopes.
+
 ### Trust model and residual risk
 
 The primary threats are hostile web content, model mistakes, cross-Thread routing and untrusted Renderer input. Core, the authenticated desktop adapter and Main are trusted. This design does not defend against compromised Main, an OS administrator or another tool already granted unrestricted disk/network execution. Browser restrictions do not sandbox independently authorized host execution.
