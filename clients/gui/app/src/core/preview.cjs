@@ -1529,13 +1529,10 @@ class CorePreview {
       if (destination.origin !== intent.targetOrigin || destination.pathname !== intent.targetPath) return false;
       if (intent.kind !== 'public_search') return intent.targetUrl === destination.href;
       if (intent.pageGeneration !== page.pageGeneration || intent.expiresAt < Date.now()) return false;
-      const expected = new URLSearchParams(intent.submittedFields);
-      for (const name of new Set(expected.keys())) {
-        const values = expected.getAll(name), actual = destination.searchParams.getAll(name);
-        // 网页可省略空的提交按钮，并添加跳转参数；已批准的字段值与重数必须保持不变。
-        if (name !== intent.queryName && !actual.length && values.every(value => value === '')) continue;
-        if (!isDeepStrictEqual(actual, values)) return false;
-      }
+      if (typeof intent.queryName !== 'string' || !intent.queryName) return false;
+      const values = new URLSearchParams(intent.submittedFields).getAll(intent.queryName);
+      // 网站脚本可改写辅助参数；延续权限仅绑定已批准查询的完整值与重数。
+      if (!values.length || !isDeepStrictEqual(destination.searchParams.getAll(intent.queryName), values)) return false;
       // 保留一次搜索的短时跳转链；导航不续期，人工撤权或下一次动作会清除此意图。
       page.approvedActionNavigation = intent;
       return true;

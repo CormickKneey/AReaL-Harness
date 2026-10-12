@@ -224,14 +224,17 @@ test('approved public search retains a bounded exact-query navigation chain', ()
   const expiresAt = live.approvedActionNavigation.expiresAt;
   assert.equal(preview.acceptActionNavigation(live, 'https://search.example/search?q=AI+Agent&form=QBLH&rdr=1'), true);
   assert.equal(live.approvedActionNavigation.expiresAt, expiresAt, 'redirects cannot renew the deadline');
+  const rewritten = page();
+  rewritten.approvedActionNavigation.submittedFields = [['go', 'Search'], ['q', 'AI Agent'], ['qs', 'ds'], ['form', 'QBRE']];
+  assert.equal(preview.acceptActionNavigation(rewritten, 'https://search.example/search?q=AI+Agent&qs=n&form=QBRE&sp=-1'), true, 'site JavaScript can omit submitter and rewrite auxiliary fields');
+  assert.equal(preview.acceptActionNavigation(rewritten, 'https://search.example/search?q=AI+Agent'), true);
+  assert.equal(preview.acceptActionNavigation(rewritten, 'https://search.example/search?q=AI+Agent&q=AI+Agent'), false, 'query multiplicity stays exact');
   for (const url of [
     'https://other.example/search?q=AI+Agent&form=QBLH',
     'https://search.example/other?q=AI+Agent&form=QBLH',
     'https://search.example/search?q=changed&form=QBLH',
     'https://search.example/search?q=AI+Agent&q=changed&form=QBLH',
-    'https://search.example/search?q=AI+Agent',
     'https://search.example/search?form=QBLH',
-    'https://search.example/search?q=AI+Agent&form=changed',
     'https://user:secret@search.example/search?q=AI+Agent&form=QBLH',
   ]) { const p = page(); assert.equal(preview.acceptActionNavigation(p, url), false); assert.equal(p.approvedActionNavigation, null); }
   const expired = page(); expired.approvedActionNavigation.expiresAt = Date.now() - 1;
