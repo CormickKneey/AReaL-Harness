@@ -39,10 +39,37 @@ test('sensitive field subtree stays concealed independently of allowed query',as
 
 test('AX child reading order exposes early query under budget despite late native array position',async()=>{
  const root={nodeId:'root',role:{value:'RootWebArea'},name:{value:'Page'},childIds:['header','footer']};
- const header={nodeId:'header',parentId:'root',role:{value:'generic'},name:{value:''},childIds:['1']};
+ const header={nodeId:'header',parentId:'root',role:{value:'generic'},name:{value:''},description:{value:'Header container'},childIds:['1']};
  const queryField={...field('1','Search privately',''),parentId:'header'};
  const footer={...label('8','Footer'),childIds:['9']};
  const footerText={nodeId:'9',parentId:'8',role:{value:'StaticText'},name:{value:'Footer text'}};
  const r=await observe({noIntent:true,nodesOverride:[root,footer,footerText,header,queryField],budget:{nodes:3,textBytes:64000}});
  const q=r.result.nodes.find(n=>n.name==='Search privately');assert.ok(q?.ref);assert.equal(q.parent,r.result.nodes.find(n=>n.role==='generic').id);assert.equal(r.result.truncated,true);
+});
+
+test('anonymous structure and duplicate inline text do not consume semantic node budget',async()=>{
+ const nodes=[{nodeId:'root',role:{value:'RootWebArea'},name:{value:'Results'},childIds:['g0']}];
+ for(let i=0;i<100;i++)nodes.push({nodeId:'g'+i,parentId:i?'g'+(i-1):'root',role:{value:'generic'},name:{value:''},childIds:i<99?['g'+(i+1)]:['a1','a2','a3','orphan']});
+ for(let i=1;i<=3;i++)nodes.push(
+  {nodeId:'a'+i,parentId:'g99',role:{value:'article'},name:{value:''},childIds:['h'+i]},
+  {nodeId:'h'+i,parentId:'a'+i,role:{value:'heading'},name:{value:'Result '+i},childIds:['t'+i]},
+  {nodeId:'t'+i,parentId:'h'+i,role:{value:'StaticText'},name:{value:'Result '+i},childIds:['i'+i]},
+  {nodeId:'i'+i,parentId:'t'+i,role:{value:'InlineTextBox'},name:{value:'Result '+i}});
+ nodes.push({nodeId:'orphan',parentId:'g99',role:{value:'InlineTextBox'},name:{value:'Unique inline text'}});
+ const r=await observe({noIntent:true,nodesOverride:nodes,budget:{nodes:13,textBytes:64000}});
+ assert.equal(r.result.nodes.some(n=>n.role==='generic'),false);
+ for(let i=1;i<=3;i++){const h=r.result.nodes.find(n=>n.role==='heading'&&n.name==='Result '+i);assert.ok(h);assert.equal(r.result.nodes.find(n=>n.id===h.parent).role,'article');}
+ assert.equal(r.result.nodes.filter(n=>n.role==='InlineTextBox').length,1);assert.ok(r.result.nodes.some(n=>n.name==='Unique inline text'));assert.equal(r.result.truncated,false);
+});
+test('projection keeps generic metadata, distinct inline text, and frame identity',async()=>{
+ const nodes=[{nodeId:'root',role:{value:'RootWebArea'},name:{value:'Page'}},
+  {nodeId:'1',parentId:'root',role:{value:'generic'},name:{value:'Named'}},
+  {nodeId:'2',parentId:'root',role:{value:'generic'},name:{value:''},properties:[{name:'disabled',value:{value:true}}]},
+  {nodeId:'3',parentId:'root',role:{value:'generic'},name:{value:''},frameId:'child'},
+  {nodeId:'4',parentId:'root',role:{value:'StaticText'},name:{value:'Full text'}},
+  {nodeId:'5',parentId:'4',role:{value:'InlineTextBox'},name:{value:'Different text'}}];
+ const r=await observe({noIntent:true,nodesOverride:nodes});assert.equal(r.result.nodes.length,6);assert.ok(r.result.nodes.some(n=>n.frameId==='child'));assert.ok(r.result.nodes.some(n=>n.name==='Different text'));
+});
+test('omitted anonymous parents do not remove private field echo taint',async()=>{
+ const r=await observe({realClassification:true,nodes:[{nodeId:'wrapper',parentId:'root',role:{value:'generic'},name:{value:''}}, {...field('6','Notes'),parentId:'wrapper'}]});hidden(r);assert.equal(r.result.nodes.some(n=>n.name===query),false);
 });

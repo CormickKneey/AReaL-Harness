@@ -2248,6 +2248,15 @@ class CorePreview {
         const propertySensitive = (node.properties ?? []).some(property => sensitive.test(String(property.name)) || sensitive.test(String(property.value?.value)));
         const sensitiveNode = sensitiveNodes.has(node.nodeId) || sensitiveChild(node) || propertySensitive;
         const concealed = sensitiveNode || fieldChild(node) || fieldEcho(rawName);
+        // 隐私集合已覆盖完整 AX 树；只在最终投影省略无信息结构和逐字重复的行内文本。
+        // 带名称、状态、值、描述或 Frame 身份的节点保留，父关联仍指向最近已输出祖先。
+        const metadata = node.frameId || String(node.value?.value ?? '')
+          || String(node.description?.value ?? '') || (node.properties ?? []).length;
+        const nativeParent = nodesById.get(node.parentId);
+        if (!concealed && !metadata && (role === 'generic' && !rawName
+          || role === 'InlineTextBox' && String(nativeParent?.role?.value ?? '') === 'StaticText'
+            && rawName === String(nativeParent.name?.value ?? '')
+            && node.frameId === nativeParent.frameId)) continue;
         const name = concealed ? '[redacted]' : safeText(rawName);
         const value = concealed || /textField|passwordField|textbox|searchbox|comboBox/i.test(role)
           || sensitive.test(rawName) || propertySensitive || fieldEcho(String(node.value?.value ?? ''))
