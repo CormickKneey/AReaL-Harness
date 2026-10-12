@@ -1431,7 +1431,7 @@ class CorePreview {
     return { identity, backendNodeId, x, y, viewport,
       role: safeText(node.role?.value, 80), name: safeText(node.name?.value, 256) };
   }
-  async publicActionSemantics(page, c, target, action) {
+  async publicActionSemantics(page, c, target, action, requireQueryField = false) {
     const frames = await c.debugger.sendCommand('Page.getFrameTree');
     const world = await c.debugger.sendCommand('Page.createIsolatedWorld', { frameId: frames.frameTree.frame.id,
       worldName: 'areal-browser-action-semantics' });
@@ -1457,7 +1457,7 @@ class CorePreview {
             && sensitive.test([item.type, item.name, item.id, item.autocomplete, item.getAttribute('aria-label')].join(' ')));
           const submits = kind === 'click' && /^(submit|image)$/.test(el.type) || kind === 'press' && key === 'Enter' && field;
           const submitter = kind === 'click' ? el : controls.find(item => /^(submit|image)$/.test(item.type));
-          let submittedFields = null, query = null, queryName = null;
+          let submittedFields = null, query = null, queryName = null, isQueryField = false;
           if (search && submits && !privateForm && controls.length <= 128) {
             const fields = [];
             const target = submitter?.getAttribute('formtarget') || form.target;
@@ -1486,12 +1486,13 @@ class CorePreview {
               && (/^(q|query|search|search_query)$/i.test(item.name) || item.type === 'search'));
             const queryControl = queryControls.includes(el) ? el : queryControls.length === 1 ? queryControls[0] : null;
             queryName = queryControl?.name ?? null;
+            isQueryField = queryControl === el;
             const queryField = fields.find(entry => entry[0] === queryName);
             if (valid && queryField && new TextEncoder().encode(JSON.stringify(fields)).length <= 8192) {
               submittedFields = fields; query = queryField[1];
             }
           }
-          return { field, sensitive: privateForm, submittedFields, query, queryName,
+          return { field, sensitive: privateForm, submittedFields, query, queryName, queryField: isQueryField,
             search, method: form ? (submits && submitter?.getAttribute('formmethod') || form.method || 'get').toLowerCase() : null,
             destination: el.closest('a[href]')?.href || (form ? submits && submitter?.hasAttribute('formaction') ? submitter.formAction : form.action : null),
             link: !!el.closest('a[href]'), download: !!el.closest('a[download]'),
@@ -1500,7 +1501,7 @@ class CorePreview {
         }` });
       facts = result.result?.value;
     } finally { await c.debugger.sendCommand('Runtime.releaseObject', { objectId }).catch(() => {}); }
-    if (!facts || facts.sensitive) throw new Error('human_takeover_required');
+    if (!facts || facts.sensitive || (requireQueryField && !facts.queryField)) throw new Error('human_takeover_required');
     if (action.kind === 'fill' && facts.field && /^(text|search|textarea)$/.test(facts.type))
       return { kind: 'edit_field' };
     if (action.kind === 'press' && action.key !== 'Enter' && facts.field) return { kind: 'field_key' };
@@ -2189,11 +2190,36 @@ class CorePreview {
         .map(node => node.nodeId));
       const fieldNodes = new Set(nodes.filter(node => /^(textField|passwordField|textbox|searchbox|comboBox)$/i
         .test(String(node.role?.value ?? ''))).map(node => node.nodeId));
-      const fieldValues = [...new Set(nodes.filter(node => fieldNodes.has(node.nodeId))
-        .map(node => String(node.value?.value ?? '')).filter(Boolean))];
-      const fieldEcho = text => fieldValues.some(value => text === value || (value.length >= 3 && text.includes(value)));
       const sensitiveChild = node => { for (let id = node.parentId; id; id = parent.get(id)) if (sensitiveNodes.has(id)) return true; return false; };
       const fieldChild = node => { for (let id = node.parentId; id; id = parent.get(id)) if (fieldNodes.has(id)) return true; return false; };
+      const searchIntent = page.approvedActionNavigation, publicSearchFields = new Set();
+      // 只豁免已批准且实际到达当前结果页的搜索字段；字段值及其子树仍不向模型投影。
+      // 重用隔离世界的 GET/敏感表单判据，未知字段或同值私密字段继续污染回显集合。
+      if (searchIntent?.kind === 'public_search' && searchIntent.controlEpoch === epoch
+        && searchIntent.pageGeneration === page.pageGeneration && searchIntent.expiresAt >= Date.now()) {
+        const destination = new URL(c.getURL());
+        const queries = new URLSearchParams(searchIntent.submittedFields).getAll(searchIntent.queryName);
+        if (destination.origin === searchIntent.targetOrigin && destination.pathname === searchIntent.targetPath
+          && queries.length && isDeepStrictEqual(destination.searchParams.getAll(searchIntent.queryName), queries)) {
+          for (const node of nodes) {
+            if (!fieldNodes.has(node.nodeId) || sensitiveNodes.has(node.nodeId) || sensitiveChild(node)
+              || !node.backendDOMNodeId || String(node.value?.value ?? '') !== searchIntent.query) continue;
+            const semantics = await Promise.race([this.publicActionSemantics(page, c,
+              { backendNodeId: node.backendDOMNodeId }, { kind: 'press', key: 'Enter' }, true).catch(() => null), cancelled]);
+            if (semantics?.kind === 'public_search' && semantics.method === 'GET'
+              && semantics.query === searchIntent.query && semantics.queryName === searchIntent.queryName
+              && semantics.targetOrigin === searchIntent.targetOrigin && semantics.targetPath === searchIntent.targetPath
+              && isDeepStrictEqual(new URLSearchParams(semantics.submittedFields).getAll(semantics.queryName), queries))
+              publicSearchFields.add(node.nodeId);
+          }
+        }
+        if (page.approvedActionNavigation !== searchIntent || searchIntent.expiresAt < Date.now()) publicSearchFields.clear();
+      }
+      if (!this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== epoch
+        || page.documentGeneration !== documentGeneration || c.isDestroyed()) throw new Error('Browser observation was revoked');
+      const fieldValues = [...new Set(nodes.filter(node => fieldNodes.has(node.nodeId) && !publicSearchFields.has(node.nodeId))
+        .map(node => String(node.value?.value ?? '')).filter(Boolean))];
+      const fieldEcho = text => fieldValues.some(value => text === value || (value.length >= 3 && text.includes(value)));
       const limitNodes = parameters.budget?.nodes ?? 200;
       const limitBytes = parameters.budget?.textBytes ?? 32 * 1024;
       const nextRefs = new Map();
