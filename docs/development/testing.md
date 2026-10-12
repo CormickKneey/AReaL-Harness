@@ -37,6 +37,8 @@ Composer 和队列 smoke 共用 `clients/gui/scripts/smoke-navigation.mjs` 的�
 
 失败状态与截图采集各最多等待 10 秒，derivation 的 Electron 退出最多等待 20 秒，超时记入证据而不覆盖原始失败。CI 的 derivation 步骤限制为 10 分钟，避免故障采集阻止后续 artifact 上传；`make script-test` 验证诊断超时与原错误传播。
 
+derivation 的连续录屏需要 Playwright 固定版本的 FFmpeg，不能只安装 Electron/npm 包。GUI CI 使用 `pnpm --dir clients/gui --filter @areal/gui-desktop exec playwright-core install ffmpeg` 安装；本地首次运行此 smoke 前也执行该命令。
+
 Linux 回收测试使用随 `cargo test -p areal-runtime-exec-native` 构建的 `areal-runtime-reaper`。若单独运行 `--lib`，先执行 `cargo build --locked -p areal-runtime-exec-native --bin areal-runtime-reaper`，且构建和测试须使用相同 profile。macOS 后代测试让祖先存活至跟踪窗口内再退出，验证已观察后代清理；不把该测试解释为快速孤儿化的完整保证。
 
 macOS Python/scratch 的独立回归（本地模型，不需要供应商密钥）：

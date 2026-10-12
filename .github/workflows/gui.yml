@@ -65,6 +65,7 @@ jobs:
           rustup show
           if ! command -v cmake; then brew install cmake; fi
           make gui-install
+          pnpm --dir clients/gui --filter @areal/gui-desktop exec playwright-core install ffmpeg
       - name: Check GUI types and public boundaries
         run: |
           pnpm --dir clients/gui typecheck 2>&1 | tee target/ci/gui/typecheck.log
