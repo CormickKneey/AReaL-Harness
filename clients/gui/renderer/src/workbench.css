@@ -1715,6 +1715,8 @@ button.composer-project:hover > svg,
 .work-area[data-workspace-view="panel"] .conversation-status-rail { visibility: hidden; pointer-events: none; }
 .work-area[data-workspace-view] > .work-surface > :is(.notice, .error-banner) { pointer-events: auto; }
 .work-area[data-workspace-view="panel"] :is(.active-composer, .draft-composer) { position: absolute; inset: auto 0 0; width: min(100%, var(--reading-width, 768px)); margin: auto; visibility: visible; pointer-events: auto; }
+/* 满屏 Side 自有输入器；主草稿保持挂载，但不能盖住 Side 的模型与发送操作。 */
+.work-area[data-workspace-view="panel"]:has(> .workspace-side-panel .side-chat-pane) > .work-surface :is(.active-composer, .draft-composer) { visibility: hidden; pointer-events: none; }
 .work-area[data-workspace-view="panel"] .composer-surface { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; padding: 4px 12px; gap: 8px; border-radius: 28px; }
 .work-area[data-workspace-view="panel"] .composer-surface > :not(.composer-editor):not(.composer-toolbar) { grid-column: 1 / -1; grid-row: 1; }
 .work-area[data-workspace-view="panel"] .composer-surface:has(> :not(.composer-editor):not(.composer-toolbar)) :is(.composer-editor, [data-composer-leading-actions], [data-composer-trailing-actions]) { grid-row: 2; }
