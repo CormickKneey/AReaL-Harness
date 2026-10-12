@@ -70,6 +70,20 @@ const toolSse = (name, args) => [
 ].map(value => `data: ${JSON.stringify(value)}\n\n`).join("") + "data: [DONE]\n\n";
 
 async function state() { return page.evaluate(() => window.arealDesktop.snapshot()); }
+async function showMainConversation() {
+  const input = page.getByTestId("chat-input");
+  if (!await input.isVisible()) {
+    await page.getByRole("region", { name: "旁路讨论" }).getByRole("button", { name: "返回主会话", exact: true }).click();
+    await input.waitFor();
+  }
+}
+async function showSideConversation() {
+  const input = page.getByRole("region", { name: "旁路讨论" }).getByRole("textbox", { name: "随心输入" });
+  if (!await input.isVisible()) {
+    await page.getByRole("button", { name: "展开侧边面板", exact: true }).click();
+    await input.waitFor();
+  }
+}
 async function until(predicate, label) {
   const end = Date.now() + 45000;
   while (Date.now() < end) {
@@ -583,7 +597,10 @@ try {
   assert.equal(await page.evaluate(() => Object.entries(localStorage).find(([key]) => key.endsWith(':bring-back'))?.[1]), previewIdentity,
     "switching Side must retain edited text, owner and insertionId");
   const concurrentDraft = `${mainDraftSentinel}\n确认前的并发草稿修改`;
+  await showMainConversation();
   await page.getByTestId("chat-input").fill(concurrentDraft);
+  await showSideConversation();
+  await preview.waitFor();
   const commandsBeforeInsert = (await app.evaluate(() => globalThis.__scfMutations)).length;
   await preview.getByRole("button", { name: "确认插入主草稿" }).click();
   await sidePane.getByText("已追加到更新后的主会话草稿；请检查再发送。", { exact: true }).waitFor();
@@ -793,6 +810,7 @@ try {
   await showRelated(sidePane);
   await related.getByRole("button", { name: new RegExp(sideQuestion) }).click();
   // 单模型名额由真实 HTTP 流占用；验证两边的停止都不取消另一会话。
+  await showMainConversation();
   await page.getByTestId("chat-input").fill(capacitySourceQuestion);
   await page.locator(".composer-dock:not(.side-chat-composer)").getByRole("button", { name: "发送", exact: true }).click();
   await until(s => heldResponses.has(capacitySourceQuestion)
@@ -854,6 +872,7 @@ try {
   await sidePane.getByRole("button", { name: "发送", exact: true }).click();
   await until(s => heldResponses.has(capacitySideQuestion)
     && s.projects[0]?.state?.threads?.[sideThreadId]?.desktop?.sideCapacityStatus === "available", "Side owns the single model slot");
+  await showMainConversation();
   await page.getByTestId("chat-input").fill("等待模型名额的来源问题");
   await page.locator(".composer-dock:not(.side-chat-composer)").getByRole("button", { name: "发送", exact: true }).click();
   await until(s => s.projects[0]?.state?.threads?.[sourceThreadId]?.turns?.at(-1)?.status === "inProgress", "source waits while Side runs");
@@ -863,6 +882,7 @@ try {
   heldResponses.get(capacitySideQuestion)(); heldResponses.delete(capacitySideQuestion);
   await until(s => s.projects[0]?.state?.threads?.[sideThreadId]?.turns?.at(-1)?.status === "completed", "Side completes after source Stop");
   checks.push("AC34/50/72: visible single-slot waiting, independent Side Stop and source Stop, no deadlock or cancellation cascade");
+  await showSideConversation();
   const beforeDisconnect = (await state()).projects[0];
   await app.evaluate(() => globalThis.__scfConnection.socket.terminate());
   await until(s => s.connection?.state === "unavailable", "GUI-to-Core transport disconnect");
