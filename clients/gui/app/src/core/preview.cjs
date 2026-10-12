@@ -2173,7 +2173,23 @@ class CorePreview {
         page.needsObservation = false;
         return { ...base, capturedAt: new Date().toISOString(), viewport: { ...base.viewport, bitmapWidth: size.width, bitmapHeight: size.height }, mimeType: 'image/png', imageBase64: png.toString('base64'), byteLength: png.length };
       }
-      const lines = [], entries = [], nodes = tree.nodes ?? [];
+      const lines = [], entries = [], nodes = [], rawNodes = tree.nodes ?? [];
+      const nodesById = new Map(rawNodes.map(node => [node.nodeId, node])), visitedNodes = new Set();
+      // 原生数组可按增量分配次序返回；预算按 AX 父子阅读顺序裁剪，避免顶部控件被尾部索引遗漏。
+      const appendTree = root => {
+        const pending = [root];
+        while (pending.length) {
+          const node = pending.pop();
+          if (visitedNodes.has(node.nodeId)) continue;
+          visitedNodes.add(node.nodeId); nodes.push(node);
+          for (const id of [...(node.childIds ?? [])].reverse()) {
+            const child = nodesById.get(id);
+            if (child) pending.push(child);
+          }
+        }
+      };
+      for (const node of rawNodes) if (!node.parentId || !nodesById.has(node.parentId)) appendTree(node);
+      for (const node of rawNodes) appendTree(node);
       const liveIdentities = new Set(nodes.filter(node => node.backendDOMNodeId).map(node =>
         JSON.stringify([page.pageGeneration, documentGeneration, epoch, node.frameId ?? 'main', node.backendDOMNodeId])));
       const requestedIdentity = parameters.rootRef && [...page.refs].find(([, ref]) => ref === parameters.rootRef)?.[0];

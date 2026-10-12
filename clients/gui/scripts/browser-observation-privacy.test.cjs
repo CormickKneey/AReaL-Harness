@@ -8,7 +8,7 @@ function label(id,name,parentId='root') {return {nodeId:id,parentId,backendDOMNo
 async function observe(options={}) {
  const url=options.url??'https://search.example/search?q=AI+Agent';
  const intent={kind:'public_search',method:'GET',query,queryName:'q',submittedFields:[['q',query]],targetOrigin:'https://search.example',targetPath:'/search',controlEpoch:2,pageGeneration:1,expiresAt:Date.now()+30000,...options.intent};
- const nodes=[{nodeId:'root',role:{value:'RootWebArea'},name:{value:'Search results'}},field('1','Search'),label('2','What Are AI Agents? | IBM'),label('3','What are AI Agents? - AWS'),label('4','AI agent - Wikipedia'),label('5',query,'1'),...options.nodes??[]];
+ const nodes=options.nodesOverride??[{nodeId:'root',role:{value:'RootWebArea'},name:{value:'Search results'}},field('1','Search'),label('2','What Are AI Agents? | IBM'),label('3','What are AI Agents? - AWS'),label('4','AI agent - Wikipedia'),label('5',query,'1'),...options.nodes??[]];
  const form={method:'get',action:'https://search.example/search',target:'',acceptCharset:'UTF-8',getAttribute:name=>name==='role'?'search':null};
  const elements=[1,6].map(id=>({tagName:'INPUT',type:'text',name:id===1?'q':'notes',id:String(id),value:query,autocomplete:'',form,
   getAttribute:()=>null,hasAttribute:()=>false,matches:()=>false,closest:selector=>selector==='form'?form:null}));form.elements=elements;
@@ -19,7 +19,7 @@ async function observe(options={}) {
  let classificationCalls=0;
  const ctx={browserHostId:'host',hostGeneration:1,page:()=>page,owns:()=>true,pageStillOwned:()=>true,window:{webContents:{getZoomFactor:()=>1}},
  publicActionSemantics:async(_page,_c,target,action,requireQueryField)=>{classificationCalls++;if(options.realClassification)return CorePreview.prototype.publicActionSemantics.call(ctx,_page,_c,target,action,requireQueryField);if(options.classificationFailure)throw Error('native unavailable');if(options.classificationRevoke){page.control='human';page.controlEpoch++;page.activeRead.cancel();return null;}if(options.classificationNavigate){page.documentGeneration++;page.activeRead.cancel();return null;}return target.backendNodeId===1?{...intent,...options.semantics}:null;}};
- const result=await CorePreview.prototype.observe.call(ctx,{operation:'observe',parameters:{budget:{nodes:1000,textBytes:64000}},projectId:'project',threadId:'thread',pageId:'page',coreInstanceId:'core',coreGeneration:'generation',browserHostId:'host',hostGeneration:1,pageGeneration:1,controlEpoch:2});
+ const result=await CorePreview.prototype.observe.call(ctx,{operation:'observe',parameters:{budget:options.budget??{nodes:1000,textBytes:64000}},projectId:'project',threadId:'thread',pageId:'page',coreInstanceId:'core',coreGeneration:'generation',browserHostId:'host',hostGeneration:1,pageGeneration:1,controlEpoch:2});
  return {result,page,classificationCalls};
 }
 const title=r=>r.result.nodes.find(n=>n.name==='What Are AI Agents? | IBM');
@@ -36,3 +36,13 @@ test('native classification canceled by takeover cannot publish',async()=>{await
 test('native classification canceled by navigation cannot publish',async()=>{await assert.rejects(observe({classificationNavigate:true}),/revoked/);});
 
 test('sensitive field subtree stays concealed independently of allowed query',async()=>{const r=await observe({nodes:[field('6','Password','private'),label('7','AI Agent protected','6')]});assert.equal(r.result.nodes.some(n=>n.name==='AI Agent protected'),false);assert.ok(title(r));});
+
+test('AX child reading order exposes early query under budget despite late native array position',async()=>{
+ const root={nodeId:'root',role:{value:'RootWebArea'},name:{value:'Page'},childIds:['header','footer']};
+ const header={nodeId:'header',parentId:'root',role:{value:'generic'},name:{value:''},childIds:['1']};
+ const queryField={...field('1','Search privately',''),parentId:'header'};
+ const footer={...label('8','Footer'),childIds:['9']};
+ const footerText={nodeId:'9',parentId:'8',role:{value:'StaticText'},name:{value:'Footer text'}};
+ const r=await observe({noIntent:true,nodesOverride:[root,footer,footerText,header,queryField],budget:{nodes:3,textBytes:64000}});
+ const q=r.result.nodes.find(n=>n.name==='Search privately');assert.ok(q?.ref);assert.equal(q.parent,r.result.nodes.find(n=>n.role==='generic').id);assert.equal(r.result.truncated,true);
+});
