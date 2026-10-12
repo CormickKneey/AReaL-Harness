@@ -2010,7 +2010,7 @@ class CorePreview {
         await Promise.race([(async () => {
           live();
           page.approvedActionNavigation = navigationIntent ? { ...navigationIntent,
-            controlEpoch: page.controlEpoch, pageGeneration: page.pageGeneration, expiresAt: Date.now() + 12000 } : null;
+            controlEpoch: page.controlEpoch, pageGeneration: page.pageGeneration, expiresAt: Date.now() + 30000 } : null;
           if (request.parameters.action.kind === 'drag') {
             const { from, to, steps } = target;
             await input({ type: 'mouseMoved', x: from.x, y: from.y, button: 'none' });

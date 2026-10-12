@@ -215,7 +215,7 @@ test('public search ignores empty unnamed file helpers but still refuses sensiti
 // 先复现真实搜索的二次同路径跳转；反例覆盖查询篡改、重复参数、超时及人工换代。
 test('approved public search retains a bounded exact-query navigation chain', () => {
   const preview = Object.create(CorePreview.prototype);
-  const intent = { kind: 'public_search', controlEpoch: 3, pageGeneration: 1, expiresAt: Date.now() + 12000,
+  const intent = { kind: 'public_search', controlEpoch: 3, pageGeneration: 1, expiresAt: Date.now() + 30000,
     targetOrigin: 'https://search.example', targetPath: '/search', queryName: 'q',
     submittedFields: [['search', ''], ['q', 'AI Agent'], ['form', 'QBLH']] };
   const page = () => ({ control: 'agent', controlEpoch: 3, pageGeneration: 1, approvedActionNavigation: structuredClone(intent) });
