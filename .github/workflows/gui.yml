@@ -88,6 +88,7 @@ jobs:
       - name: Verify queue workflow
         run: pnpm --dir clients/gui run test:queue 2>&1 | tee target/ci/gui/queue.log
       - name: Verify conversation derivation workflow
+        timeout-minutes: 10
         run: pnpm --dir clients/gui run test:conversation-derivation 2>&1 | tee target/ci/gui/conversation-derivation.log
       - name: Collect GUI evidence
         if: always()

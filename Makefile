@@ -115,6 +115,7 @@ script-test: ## 启动器、Web 投影、perf 与文档的离线回归
 	python3 scripts/check-docs.py
 	node --test scripts/web-progress.test.mjs
 	node --test scripts/local-service-wait.test.mjs
+	node --test clients/gui/scripts/smoke-deadline.test.mjs
 	python3 -m unittest discover -s scripts/tests
 	python3 -m unittest discover -s integrations/envarena
 	python3 tests/perf/perf.py self-test

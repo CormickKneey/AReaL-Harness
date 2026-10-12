@@ -1,5 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { withSmokeDeadline } from "./smoke-deadline.mjs";
 
 export async function createProjectConversation(page, projectName) {
   await page
@@ -41,7 +42,7 @@ export async function captureSmokeFailure(page, scratch, error) {
   try {
     Object.assign(
       state,
-      await page.evaluate(() => {
+      await withSmokeDeadline("failure state capture", () => page.evaluate(() => {
         const workbench = document.querySelector('[data-testid="areal-workbench"]');
         return {
           url: location.href,
@@ -51,18 +52,19 @@ export async function captureSmokeFailure(page, scratch, error) {
           sidebarCollapsed: document.querySelector(".sidebar")?.dataset.collapsed,
           body: document.body.innerText.slice(0, 16384),
         };
-      }),
+      })),
     );
   } catch (failure) {
     state.stateCaptureError = failure.message;
   }
   try {
     // 保留整窗而非 Composer 裁剪；导航失败时侧栏和空白区也是证据。
-    await page.screenshot({
+    await withSmokeDeadline("failure screenshot capture", () => page.screenshot({
       path: join(scratch, "failure-window.png"),
       scale: "css",
       animations: "disabled",
-    });
+      timeout: 10000,
+    }));
     files.push("failure-window.png");
   } catch (failure) {
     state.screenshotError = failure.message;

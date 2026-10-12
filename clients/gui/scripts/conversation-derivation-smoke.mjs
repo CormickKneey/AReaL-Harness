@@ -8,6 +8,7 @@ import { mkdtemp, mkdir, readFile, writeFile, readdir, stat, cp, rm } from "node
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { captureSmokeFailure, selectConversation } from "./smoke-navigation.mjs";
+import { withSmokeDeadline } from "./smoke-deadline.mjs";
 
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const root = resolve(gui, "../..");
@@ -279,6 +280,8 @@ try {
   page = await app.firstWindow();
   page.setDefaultTimeout(15000);
   page.on("pageerror", error => pageErrors.push(error.message));
+  page.on("console", message => { if (message.type() === "error") events.push({ rendererConsoleError: message.text() }); });
+  page.on("crash", () => events.push({ rendererCrashed: true }));
   await page.getByTestId("areal-workbench").waitFor({ timeout: 120000 });
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 960));
   windowBounds = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBounds());
@@ -954,6 +957,11 @@ try {
   failure = error.stack ?? String(error);
   console.error(error);
   await writeFile(join(scratch, "failure.log"), [failure, ...electronStderr, ...pageErrors].join("\n"));
+  if (app) try {
+    events.push({ failureWindows: await withSmokeDeadline("native window diagnostics", () => app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows().map(window => ({ url: window.webContents.getURL(), visible: window.isVisible(),
+        loading: window.webContents.isLoading(), crashed: window.webContents.isCrashed() })))) });
+  } catch (diagnosticError) { events.push({ windowDiagnosticError: diagnosticError.message }); }
   if (page) frames.push(...(await captureSmokeFailure(page, scratch, error)).filter(name => name.endsWith(".png")));
   process.exitCode = 1;
 } finally {
@@ -961,12 +969,14 @@ try {
   for (const release of heldResponses.values()) release();
   heldResponses.clear();
   if (app) {
-    if (!firstMutations.length) try { firstMutations = await app.evaluate(() => globalThis.__scfMutations ?? []); } catch (error) { events.push({ requestCaptureError: error.message }); }
+    if (!firstMutations.length) try { firstMutations = await withSmokeDeadline("mutation evidence", () => app.evaluate(() => globalThis.__scfMutations ?? [])); } catch (error) { events.push({ requestCaptureError: error.message }); }
     try {
-      await app.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 1 }); });
-      if (videoPath) restartVideoPath = await page?.video()?.path();
-      else videoPath = await page?.video()?.path();
-      await app.close();
+      await withSmokeDeadline("Electron cleanup", async () => {
+        await app.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 1 }); });
+        if (videoPath) restartVideoPath = await page?.video()?.path();
+        else videoPath = await page?.video()?.path();
+        await app.close();
+      }, 20000);
     } catch (error) {
       events.push({ electronCloseError: error.message }); process.exitCode = 1;
       try { app.process()?.kill("SIGTERM"); } catch {}

@@ -35,6 +35,8 @@ Composer and queue smoke share navigation and narrow-window steps in `clients/gu
 
 ## Python and scratch
 
+Failure state and screenshot capture each wait at most 10 seconds; derivation Electron cleanup waits at most 20 seconds. Timeouts enter the evidence without replacing the original failure. CI limits the derivation step to 10 minutes so failed diagnostics cannot block subsequent artifact upload. `make script-test` verifies diagnostic deadlines and propagation of original errors.
+
 Linux reaping tests use `areal-runtime-reaper`, built by `cargo test -p areal-runtime-exec-native`. For a standalone `--lib` run, first run `cargo build --locked -p areal-runtime-exec-native --bin areal-runtime-reaper` with the same profile as the tests. macOS descendant tests keep ancestors alive through the tracking window before exit to verify cleanup of observed descendants; they do not establish a complete guarantee against rapid orphaning.
 
 Independent macOS Python/scratch regression (local model, no provider credentials):
