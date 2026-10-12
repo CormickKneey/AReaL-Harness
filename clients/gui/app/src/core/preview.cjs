@@ -306,6 +306,7 @@ class CorePreview {
     // A call identity is retained for this host lifetime. Losing a transport
     // reply must never turn a repeated call into permission to replay a prefix.
     this.batchCalls = new Map();
+    window.on('blur', () => this.cancelHumanGesture(this.humanMouseGesture?.page));
     // 人工输入来源只在 Main 记录；Renderer 没有通用 sendInputEvent 能力。
     window.webContents.on('before-mouse-event', (event, mouse) => {
       const page = this.pages.get(this.owner);
@@ -313,10 +314,12 @@ class CorePreview {
       const bounds = page.view.getBounds();
       const x = Math.round(mouse.x - bounds.x), y = Math.round(mouse.y - bounds.y);
       const inside = x >= 0 && y >= 0 && x < bounds.width && y < bounds.height;
+      const gesture = this.humanMouseGesture;
+      const continuation = gesture?.page === page && ['mouseUp', 'mouseMove'].includes(mouse.type);
       if (mouse.type === 'mouseDown' && !inside) this.nativeInputOwner = null;
-      if (!inside || page.view.getVisible() || !page.requestedVisible
-        || !['agent', 'transferring'].includes(page.control)
-        || !['mouseDown', 'mouseUp', 'mouseWheel'].includes(mouse.type)) return;
+      if ((!inside && !continuation) || (!continuation && page.view.getVisible()) || !page.requestedVisible
+        || (!continuation && !['agent', 'transferring'].includes(page.control))
+        || !['mouseDown', 'mouseUp', 'mouseWheel', 'mouseMove'].includes(mouse.type)) return;
       event.preventDefault(); this.nativeInputOwner = page.id;
       void this.humanInput(page.projectId, page.threadId, page.id, { ...mouse, x, y }).catch(() => {});
     });
@@ -468,6 +471,7 @@ class CorePreview {
       || page.coreInstanceId !== this.coreIdentity(page.projectId)) this.release(key);
   }
   closeNative(page) {
+    this.cancelHumanGesture(page);
     if (!page.view) return;
     page.styleTrial = null;
     const c = page.view.webContents;
@@ -671,6 +675,15 @@ class CorePreview {
       pending.push(this.humanInput(page.projectId, page.threadId, page.id, { type: 'char', keyCode: input.key, modifiers }));
     await Promise.all(pending);
   }
+  cancelHumanGesture(page) {
+    const gesture = this.humanMouseGesture;
+    if (!gesture || gesture.page !== page) return;
+    this.humanMouseGesture = null; gesture.cancelled = true;
+    const c = page.view?.webContents;
+    if (gesture.delivered && c && !c.isDestroyed() && page.pageGeneration === gesture.generation
+      && page.documentGeneration === gesture.document)
+      c.sendInputEvent({ type: 'mouseUp', button: gesture.button, x: -1, y: -1 });
+  }
   async humanInput(projectId, threadId, pageId, input) {
     const page = this.page(projectId, threadId, pageId);
     const c = page?.view?.webContents;
@@ -681,21 +694,29 @@ class CorePreview {
       && this.window.isVisible() && !this.window.isMinimized() && this.window.isFocused();
     if (!current()) throw new Error('人工输入页面已变化');
     const bounds = page.view.getBounds();
+    const gesture = this.humanMouseGesture;
+    const continuation = gesture?.page === page && gesture.generation === page.pageGeneration
+      && gesture.document === page.documentGeneration && ['mouseUp', 'mouseMove'].includes(input.type)
+      && (input.type !== 'mouseUp' || input.button === gesture.button);
     if (input.type.startsWith('mouse') && (!Number.isSafeInteger(input.x) || !Number.isSafeInteger(input.y)
-      || input.x < 0 || input.y < 0 || input.x >= bounds.width || input.y >= bounds.height))
+      || (!continuation && (input.x < 0 || input.y < 0 || input.x >= bounds.width || input.y >= bounds.height))))
       throw new Error('人工输入坐标已变化');
     // fence 必须在首个 await 之前完成，后续输入按同一代次串行交付。
     // 隐藏 View 仍可能保留焦点；先迁到 Main，让 drain 期间的真实 up/char 继续进入 Main 队列。
     if (c.isFocused?.()) { this.nativeInputOwner = page.id; this.window.webContents.focus(); }
     this.noteHumanInput(page);
     const epoch = page.controlEpoch, generation = page.pageGeneration, document = page.documentGeneration;
+    if (input.type === 'mouseDown') this.humanMouseGesture = { page, generation, document, button: input.button };
+    const ownedGesture = this.humanMouseGesture;
     const deliver = async () => {
       if (page.control === 'transferring') await this.convergeInput(page);
-      if (!current() || page.control !== 'human' || page.controlEpoch !== epoch
+      if (!current() || ownedGesture?.cancelled || page.control !== 'human' || page.controlEpoch !== epoch
         || page.pageGeneration !== generation || page.documentGeneration !== document)
         throw new Error('人工输入页面已变化');
       c.focus();
       c.sendInputEvent(input);
+      if (input.type === 'mouseDown' && ownedGesture) ownedGesture.delivered = true;
+      if (input.type === 'mouseUp' && this.humanMouseGesture === ownedGesture) this.humanMouseGesture = null;
       return this.state(page);
     };
     const pending = (page.humanInputPending ?? Promise.resolve()).then(deliver);
@@ -709,7 +730,7 @@ class CorePreview {
       || !page.view.webContents.getURL()
       || !this.owns(projectId, threadId)) throw new Error('当前聊天没有可认领的页面');
     if (page.frameGrant) throw new Error('请先撤销嵌入站点授权并关闭页面，再交还 Agent');
-    if (page.control !== 'human' || page.claiming || page.activeSelection || page.annotationCaptureId
+    if (page.control !== 'human' || this.humanMouseGesture?.page === page || page.claiming || page.activeSelection || page.annotationCaptureId
       || page.activeRead || page.activePrepare || page.activeAction || page.fileHandoff || page.downloads.size)
       throw new Error('浏览页面当前不可认领');
     if (page.styleTrial && !(await this.clearStyleTrial(page)).cleared)
@@ -1404,16 +1425,52 @@ class CorePreview {
     let facts;
     try {
       const result = await c.debugger.sendCommand('Runtime.callFunctionOn', { objectId, returnByValue: true,
-        functionDeclaration: `function () {
+        arguments: [{ value: action.kind }, { value: action.key ?? null }],
+        functionDeclaration: `function (kind, key) {
           const el = this, form = el.form || el.closest('form');
           const field = /^(INPUT|TEXTAREA)$/.test(el.tagName);
           const tokens = [el.type, el.name, el.id, el.autocomplete, el.getAttribute('aria-label')].join(' ');
           const sensitive = /password|passcode|secret|token|api.?key|credit.?card|cc-|cvv|authorization|one.?time.?code|credential|file/i;
           const search = !!form && (form.getAttribute('role') === 'search' || el.type === 'search'
             || Array.from(form.elements).some(item => /^(q|query|search|search_query)$/i.test(item.name)));
-          return { field, sensitive: sensitive.test(tokens) || !!form && Array.from(form.elements).some(item => sensitive.test([item.type, item.name, item.autocomplete].join(' '))),
-            search, method: form ? (el.getAttribute('formmethod') || form.method || 'get').toLowerCase() : null,
-            destination: el.closest('a[href]')?.href || (form ? el.getAttribute('formaction') || form.action : null),
+          const controls = form ? Array.from(form.elements) : [];
+          const privateForm = sensitive.test(tokens) || controls.some(item => sensitive.test([item.type, item.name, item.id, item.autocomplete, item.getAttribute('aria-label')].join(' ')));
+          const submits = kind === 'click' && /^(submit|image)$/.test(el.type) || kind === 'press' && key === 'Enter' && field;
+          const submitter = kind === 'click' ? el : controls.find(item => /^(submit|image)$/.test(item.type));
+          let submittedFields = null, query = null;
+          if (search && submits && !privateForm && controls.length <= 128) {
+            const fields = [];
+            const target = submitter?.getAttribute('formtarget') || form.target;
+            const charset = (form.acceptCharset || document.characterSet).toLowerCase().replace(/-/g, '');
+            let valid = (!target || target === '_self') && charset === 'utf8'
+              && (!submitter || (submitter.type !== 'image' && !submitter.matches(':disabled')));
+            // 不构造 FormData(form)：该 API 会触发网页 formdata 事件，审批读取不能改变页面。
+            for (const item of controls) {
+              if (!/^(INPUT|TEXTAREA|SELECT|BUTTON|FIELDSET|OUTPUT)$/.test(item.tagName)) { valid = false; break; }
+              if (!item.name || item.matches(':disabled') || /^(FIELDSET|OUTPUT)$/.test(item.tagName)) continue;
+              if (item.hasAttribute('dirname')) { valid = false; break; }
+              if (/^(button|reset)$/.test(item.type) || /^(submit|image)$/.test(item.type) && item !== submitter) continue;
+              if (/^(checkbox|radio)$/.test(item.type) && !item.checked) continue;
+              if (item.type === 'image' || item.type === 'file') { valid = false; break; }
+              const values = item.tagName === 'SELECT'
+                ? Array.from(item.selectedOptions).filter(option => !option.disabled && !option.closest('optgroup[disabled]')).map(option => option.value)
+                : [item.name === '_charset_' && item.type === 'hidden' ? 'UTF-8' : item.value];
+              for (const value of values) {
+                if (typeof value !== 'string' || item.name.length > 128 || value.length > 4096 || fields.length >= 64) { valid = false; break; }
+                fields.push([item.name.replace(/\\r?\\n|\\r/g, '\\r\\n'), value.replace(/\\r?\\n|\\r/g, '\\r\\n')]);
+              }
+              if (!valid) break;
+            }
+            const queryName = controls.find(item => /^(q|query|search|search_query)$/i.test(item.name))?.name
+              || controls.find(item => item.type === 'search')?.name;
+            const queryField = fields.find(entry => entry[0] === queryName);
+            if (valid && queryField && new TextEncoder().encode(JSON.stringify(fields)).length <= 8192) {
+              submittedFields = fields; query = queryField[1];
+            }
+          }
+          return { field, sensitive: privateForm, submittedFields, query,
+            search, method: form ? (submits && submitter?.getAttribute('formmethod') || form.method || 'get').toLowerCase() : null,
+            destination: el.closest('a[href]')?.href || (form ? submits && submitter?.hasAttribute('formaction') ? submitter.formAction : form.action : null),
             link: !!el.closest('a[href]'), download: !!el.closest('a[download]'),
             submit: !!form && /^(submit|image)$/.test(el.type),
             type: el.type || '', role: el.getAttribute('role') || '' };
@@ -1426,13 +1483,16 @@ class CorePreview {
     if (action.kind === 'press' && action.key !== 'Enter' && facts.field) return { kind: 'field_key' };
     const searchSubmit = facts.search && facts.method === 'get'
       && ((action.kind === 'press' && action.key === 'Enter' && facts.field) || (action.kind === 'click' && facts.submit));
+    if (searchSubmit && (!Array.isArray(facts.submittedFields) || typeof facts.query !== 'string'))
+      throw new Error('human_takeover_required');
     if (searchSubmit || (action.kind === 'click' && facts.link && !facts.download)) {
       let destination;
       try { destination = new URL(webUrl(facts.destination)); } catch { throw new Error('human_takeover_required'); }
       if (!page.networkPolicy.canAuthorize(destination.href)) throw new Error('human_takeover_required');
       return { kind: searchSubmit ? 'public_search' : 'link_navigation', method: 'GET',
         targetOrigin: destination.origin, targetPath: destination.pathname,
-        ...(searchSubmit ? {} : { targetUrl: destination.href }) };
+        ...(searchSubmit ? { query: facts.query, submittedFields: facts.submittedFields,
+          encodedQuery: new URLSearchParams(facts.submittedFields).toString() } : { targetUrl: destination.href }) };
     }
     if (action.kind === 'click' && facts.field) return { kind: 'focus_field' };
     throw new Error('human_takeover_required');
@@ -2508,6 +2568,8 @@ class CorePreview {
     });
     c.on('before-mouse-event', (event, mouse) => {
       if (!this.pageStillOwned(page)) { event.preventDefault(); return; }
+      if (page.control === 'human' && mouse.type === 'mouseUp' && this.humanMouseGesture?.page === page)
+        this.humanMouseGesture = null;
       if (page.control === 'human' && mouse.type === 'mouseDown' && c.isFocused())
         page.userPopupIntentUntil = Date.now() + 1000;
       if (page.control === 'agent' && page.view.getVisible() && ['mouseDown', 'mouseWheel'].includes(mouse.type)) {
@@ -2673,6 +2735,7 @@ class CorePreview {
       return this.state(page);
     }
     if (request.operation === 'hide') {
+      this.cancelHumanGesture(page ?? this.pages.get(this.owner));
       const hidden = page ?? (!request.projectId ? this.pages.get(this.owner) : null);
       const frozen = hidden?.annotationCapture;
       // 只有本页当前截图凭据允许标注临时隐藏；卸载和普通隐藏必须销毁授权文档。
@@ -2821,6 +2884,7 @@ class CorePreview {
         if (this.owner !== key) {
           const outgoing = this.pages.get(this.owner);
           if (outgoing) {
+            this.cancelHumanGesture(outgoing);
             outgoing.requestedVisible = false;
             if (outgoing.frameGrant) {
               outgoing.activeRead?.cancel(); this.closeNative(outgoing);

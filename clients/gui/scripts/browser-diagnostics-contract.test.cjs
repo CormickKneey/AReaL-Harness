@@ -105,3 +105,43 @@ test('takeover drains prior native receipts before releasing held key and mouse'
   assert.equal(page.control, 'human');
   assert.equal(page.heldKeys.size + page.heldButtons.size + page.inputPending.size, 0);
 });
+
+test('a queued physical release outside the page completes its owned gesture', async () => {
+  const log = [];
+  let finish;
+  const drain = new Promise(resolve => { finish = resolve; });
+  const page = { id: 'page', coreInstanceId: 'core', projectId: 'project', threadId: 'thread',
+    control: 'agent', controlEpoch: 1, pageGeneration: 1, documentGeneration: 1, requestedVisible: true,
+    view: { getBounds: () => ({ width: 500, height: 300 }), webContents: { isDestroyed: () => false,
+      focus() {}, sendInputEvent: input => log.push(input.type) } } };
+  const preview = Object.create(CorePreview.prototype);
+  Object.assign(preview, { page: () => page, pageStillOwned: () => true,
+    owner: JSON.stringify(['core', 'project', 'thread', 'page']),
+    selected: new Map([[JSON.stringify(['core', 'project', 'thread']), 'page']]),
+    window: { isVisible: () => true, isMinimized: () => false, isFocused: () => true }, state: () => ({}),
+    revoke: () => { if (page.control === 'agent') { page.control = 'transferring'; page.controlEpoch++; } },
+    convergeInput: async () => { await drain; page.control = 'human'; } });
+  const down = preview.humanInput('project', 'thread', 'page', { type: 'mouseDown', x: 5, y: 10, button: 'left' });
+  const up = preview.humanInput('project', 'thread', 'page', { type: 'mouseUp', x: -10, y: 400, button: 'left' });
+  finish(); await Promise.all([down, up]);
+  assert.deepEqual(log, ['mouseDown', 'mouseUp']);
+});
+
+test('public search approval includes exact successful form values and refuses unknown payloads', async () => {
+  const preview = Object.create(CorePreview.prototype);
+  let fields = [['q', 'AI Agent'], ['hl', 'en']];
+  const c = { debugger: { sendCommand: async method => method === 'Page.getFrameTree' ? { frameTree: { frame: { id: 'main' } } }
+    : method === 'Page.createIsolatedWorld' ? { executionContextId: 7 }
+    : method === 'DOM.resolveNode' ? { object: { objectId: 'query' } }
+    : method === 'Runtime.callFunctionOn' ? { result: { value: { field: true, search: true, method: 'get',
+      destination: 'https://search.example/search', submittedFields: fields, query: fields?.[0]?.[1] } } } : {} } };
+  const page = { networkPolicy: { canAuthorize: () => true } };
+  const action = { kind: 'press', key: 'Enter' }, target = { backendNodeId: 1 };
+  const approved = await preview.publicActionSemantics(page, c, target, action);
+  assert.equal(approved.query, 'AI Agent');
+  assert.deepEqual(approved.submittedFields, fields);
+  fields = [['q', 'changed'], ['hl', 'en']];
+  assert.notDeepEqual(await preview.publicActionSemantics(page, c, target, action), approved);
+  fields = null;
+  await assert.rejects(preview.publicActionSemantics(page, c, target, action), /human_takeover_required/);
+});
