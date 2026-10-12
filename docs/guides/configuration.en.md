@@ -276,6 +276,79 @@ See [Skills](skills.en.md) for discovery, [tools](tools.en.md) for extensions an
 
 Tool result views are configured in the JSON file named by `[tools] extensions_file`, under `policy.resultViews`: `mode` is `off`, `observe` (default) or `on`, with `searchGroups` and `repeatLines` switches. Large-result snapshots and bundled rg work independently of this switch. See [tools](tools.en.md) for quotas and retrieval.
 
+## Persistent trajectory export
+
+`[trajectory]` enables optional collection for local TUI, GUI, `exec`, and services. It is disabled by default. Core places trajectory Events/Logs in a bounded memory buffer; a background thread saves them to a user-level disk queue. An independent process normally waits for the owning Turn's terminal record, then uploads individual records as standard OTLP HTTP/protobuf. It can also deliver incomplete persisted records after the producer exits or crashes. To avoid indefinite backlog when a terminal event is lost, a record becomes eligible five minutes after enqueueing even if its producer is still alive. A long Turn may therefore upload partial content first and append its terminal event later. Receivers must treat content without a terminal event as incomplete, not infer success. Agent responses and shutdown do not wait for network uploads. After an owned CLI exits, the uploader can continue processing records already on disk. This feature does not depend on Arena or a particular object store: receivers own archiving, indexing, analysis-source registration, and training-data management. An OSS object URL is not an OTLP receiver.
+
+```toml
+[trajectory]
+enabled = true
+endpoint = "https://collector.example.com"
+# Choose either headers_env or headers_file; both refer to credentials.
+headers_file = "/absolute/private/trajectory-headers.txt"
+# The default user configuration uses <AREAL_HARNESS_HOME>/trajectory; other files get isolated queues.
+max_disk_bytes = 268435456
+max_memory_bytes = 16777216
+max_batch_bytes = 4194304
+max_records = 2000
+max_retries = 6
+retry_initial_seconds = 5
+retry_max_seconds = 300
+request_timeout_seconds = 10
+upload_interval_ms = 1000
+```
+
+`endpoint` is an HTTP(S) base URL. `/v1/logs` is appended unless already present; user information, query parameters, and fragments are forbidden. Credentials use the standard comma-separated OTEL `key=percent-encoded-value` format, such as `authorization=Bearer%20TOKEN`. `headers_env` references the environment snapshot inherited when the independent uploader starts; restarting Core does not necessarily refresh an already-running uploader. Prefer `headers_file` for persistent setup or credential rotation. It must reference a regular private file with mode 0600, at most 16 KiB, and is reread before each send. These references are mutually exclusive. Relative paths resolve against the TOML directory. Credential values never appear in configuration diagnostics, CLI status, or the GUI.
+
+| Field | Default and constraints |
+|---|---|
+| `enabled` | `false`; collection requires explicit opt-in |
+| `spool_dir` | The default user configuration uses `<AREAL_HARNESS_HOME>/trajectory`; other files use `<AREAL_HARNESS_HOME>/trajectory-sources/<source_id>`. Core and CLI runs using the same configuration share its queue across workspaces |
+| `max_disk_bytes` | 256 MiB, 1–1 TiB; limits telemetry copies, excluding authoritative conversation history |
+| `max_memory_bytes` | 16 MiB, 1–1 GiB; collection-buffer byte budget |
+| `max_batch_bytes` | 4 MiB, 1–64 MiB, no larger than memory or disk budgets; maximum single OTLP payload, currently persisted and sent per record |
+| `max_records` | 2000, 1–10000; maximum retained delivery records |
+| `max_retries` | 6, 0–100; automatic retries after the initial attempt |
+| `retry_initial_seconds` / `retry_max_seconds` | 5 / 300 seconds, 1–86400; maximum must cover initial delay |
+| `request_timeout_seconds` | 10 seconds, 1–86400; network request timeout |
+| `upload_interval_ms` | 1000 milliseconds, 1–86400000; interval for the single upload worker |
+
+Upload failures use bounded backoff. Exhausted records remain available for manual retry. A full memory buffer or oversized record drops that telemetry copy and increments a counter; disk or record limits evict old copies in order and record the eviction. Whole events rejected before queue admission because of identity capacity, sequence contention, or memory limits also increment `dropped_memory`, persisted by the background worker on a best-effort basis. Individual field truncation uses the trajectory truncation flag without counting another dropped event. Successful uploads release local payloads while retaining bounded status metadata. These policies do not delete authoritative Core history or change Turn outcomes. This is not a zero-loss path: events and diagnostic counters still in memory can be lost on forced termination, graceful exit waits only briefly for local persistence, and retried uploads may create duplicates. Receivers should deduplicate by record identity.
+
+Installation identity loading, queue initialization, history cleanup, and JSON projection run in the background. Message and tool content becomes nested OTLP values within shared memory, node-count, and 32-level depth budgets. Over-budget projection preserves the complete original JSON string and marks `areal.capture.json_fallback=true`; this does not indicate missing content. Only actual capture-field loss is marked `areal.capture.truncated=true`. Invalid JSON and values that cannot be represented losslessly remain unchanged; structured projection is not guaranteed for every value. The memory limit bounds added capture buffers, not the RSS of the entire Core process.
+
+Queue ownership derives from the effective configuration file's canonical absolute path. The internal `source_id` cannot be set in TOML; content updates and path aliases for the same file retain its identity. Multiple Core instances using that configuration share its queue, while separate configurations get separate queues so another configuration cannot change its enablement or destination. Explicitly selecting the same `spool_dir` does not merge ownership: a different existing owner produces a configuration conflict without overwriting control or reading that configuration's trajectories. The script's `--default-spool` restores the default isolated location; the old queue remains in place. Background initialization checks the source file’s internal revision under the queue lock, preventing a delayed startup snapshot from overwriting newer control. Direct TOML edits still apply on the next startup. The `trajectory suspend` command is internal to the configuration script.
+
+Use the Python 3.11+ configuration script to persistently enable or disable export. Configuration selection follows `--config`, then `AREAL_HARNESS_CONFIG`, then `config.toml` under home. Home follows `--home`, `AREAL_HARNESS_HOME`, or `~/.areal`. The script preserves unrelated configuration and comments, only replaces `[trajectory]`, backs up changed files to `config.toml.trajectory.bak`, and writes atomically. Without `--enable` or `--disable`, it preserves existing enablement and defaults to disabled on first use; updating an address or credentials does not silently disable collection. To explicitly set the default action, change `DEFAULT_ENABLED` from `None` to a boolean at the top of the script. Other defaults can also be edited or overridden by arguments.
+
+```sh
+python3 scripts/configure-trajectory.py --enable \
+  --endpoint https://collector.example.com \
+  --headers-env AREAL_EXPORT_HEADERS \
+  --areal-binary target/debug/areal
+python3 scripts/configure-trajectory.py --disable --areal-binary target/debug/areal
+# Isolated configuration; does not modify the default user configuration.
+python3 scripts/configure-trajectory.py --home /absolute/test-home \
+  --config /absolute/test-home/config.toml \
+  --enable --endpoint http://127.0.0.1:4318 --areal-binary target/debug/areal
+```
+
+The script's `--headers-env` reads encoded headers from the current environment and stores them in a private file under home, so subsequent GUI/CLI launches do not depend on that terminal environment. `--headers-file` copies an existing file; `--clear-headers` removes references. Before changing an existing configuration’s destination or queue, the script pauses its previous queue through a current areal binary. If pausing fails or that binary is unavailable, it reports an error and preserves the configuration and credentials. A new destination gets a separate credential file, preventing old in-flight requests from reading its credentials; rotation for the same destination keeps a stable reference. Old queue data stays in place and is neither migrated nor redirected. The script does not print credentials, restart Core, or cancel Agent work. When a current `areal` binary is available, it invokes `trajectory sync-config` to update persistent control; otherwise it saves the file and reports that control has not been applied. Disabling control prevents subsequent queue insertion and sends; an in-flight HTTP request may run until its current timeout. Existing Core instances still need a safe restart to apply collection parameter changes. Export configuration participates in the deployment fingerprint, so shared services do not silently ignore changes.
+
+```sh
+target/debug/areal trajectory status --config /absolute/config.toml
+target/debug/areal trajectory retry --config /absolute/config.toml
+target/debug/areal trajectory sync-config --config /absolute/config.toml
+```
+
+All three commands return JSON. `status` starts neither Agent work nor uploads. It reports current file configuration, uploader state, queue counts/bytes, drop/eviction counters, safe error categories, and the latest 100 delivery records. Records may include Turn, event name, model, Harness version, event time, and execution duration. The model-name index retains a UTF-8 prefix of up to 1024 bytes and appends an ellipsis when longer; the original trajectory payload remains intact. Missing fields in older records remain unknown. `created_at` / `uploaded_at` represent local record creation and successful delivery respectively, separate from the event's `occurred_at` and `execution_duration_ms`. `retry` requeues and wakes the uploader without waiting for remote success. `sync-config` applies export control without reassembling an existing Core. Explicit `retry` and enabled `sync-config` bypass the five-second automatic spawn throttle, allowing immediate wakeup after rapid disable/re-enable or worker exit. Automatic recovery retains throttling, and a cross-process lease keeps one uploader active. Each child-process startup handshake waits at most five seconds for the local lease, without waiting for remote uploads; queue and startup lock waits are separate. If a backlog remains, inspect uploader state and error categories through `status`. GUI “Settings → Data flywheel” exposes the same state, refresh, and retry. Local TUI/exec processes warn at most once per launch. Configuration and queue checks run in the background, with startup waiting at most 20 ms; it continues silently on timeout, and status on slow storage remains available through `status` or settings. The GUI checks once on initial connection and marks the settings entry without adding errors to chat content.
+
+Invalid addresses, unavailable credentials, and upload failures affect only collection/export state. Configuration validation rejects invalid field types, capacity ranges, and conflicts. Payload content is the same as the OpenTelemetry trajectories below, including actual input, reasoning, tool arguments, and results; choose a receiver suitable for this content before enabling export. Persistent export and standard `OTEL_*` observability settings can be used independently; configuring both for the same destination may produce duplicate data.
+
+Each event is constrained by both memory and payload limits. Background copies and encoding conservatively reserve eight times the estimated content size, so the default queue accepts events below roughly 1 MiB including logical input, final request, output, and metadata. `max_batch_bytes=4 MiB` does not guarantee capture of a 4 MiB event. For long contexts, explicitly increase `max_memory_bytes` (for example to 64 MiB) and inspect drops and completeness; all concurrent requests still share that budget.
+
+Capture memory is partitioned into one quarter for Engine content construction, one quarter for event fields, and one half for background copies and encoding. Streaming output, summaries, and input serialization reserve shared capacity before allocating; exhaustion stops capture of that copy while the business stream continues. Final model requests include tool schemas and effective settings, alongside build and response-model identity. Event sequences and terminal manifests detect missing whole events. See the [durable trajectory protocol](../api/core.en.md#durable-trajectory-protocol) for fields, digests, and training boundaries. Setting only `RUST_LOG=info` neither enables raw trajectory capture nor prints its content to the terminal.
+
 ## OpenTelemetry trajectory reporting
 
 Core uses the open-source OpenTelemetry SDK to export Traces and Events/Logs over standard OTLP HTTP/protobuf. Reporting is disabled without an endpoint, and export failures do not change Turn outcomes. Core reads configuration at startup; restart the service after changes.

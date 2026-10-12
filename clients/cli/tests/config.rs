@@ -41,6 +41,8 @@ fn help_and_version_do_not_require_model_or_valid_telemetry() {
         vec!["upgrade", "--help"],
         vec!["config", "--help"],
         vec!["config", "show", "--help"],
+        vec!["trajectory", "--help"],
+        vec!["trajectory", "status", "--help"],
     ] {
         let out = invoke(
             temp.path(),
@@ -60,6 +62,141 @@ fn help_and_version_do_not_require_model_or_valid_telemetry() {
         }
     }
     assert!(!temp.path().join("home").exists());
+}
+
+#[test]
+fn trajectory_management_is_model_independent_and_does_not_start_disabled_export() {
+    let temp = tempfile::tempdir().unwrap();
+    for action in ["status", "retry", "sync-config"] {
+        let out = invoke(
+            temp.path(),
+            &["trajectory", action],
+            &[("OTEL_EXPORTER_OTLP_ENDPOINT", "invalid")],
+        );
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(out.stderr.is_empty());
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["enabled"], false);
+        assert_eq!(value["state"], "disabled");
+        assert_eq!(value["worker_running"], false);
+        assert_eq!(value["queue"]["pending"], 0);
+        assert_eq!(
+            value["configPath"],
+            temp.path().join("home/config.toml").to_str().unwrap()
+        );
+    }
+    assert!(!temp.path().join("home").exists());
+}
+
+#[test]
+fn trajectory_status_reports_invalid_destination_without_echoing_credentials() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::write(temp.path().join("config.toml"), "schema_version=2\n[trajectory]\nenabled=true\nendpoint='https://user:private-token@example.com?token=private-query'\n").unwrap();
+    let out = invoke(
+        temp.path(),
+        &["trajectory", "status", "--config", "config.toml"],
+        &[],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["state"], "invalid");
+    assert_eq!(value["last_error"], "invalid_endpoint");
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(!text.contains("private-token"));
+    assert!(!text.contains("private-query"));
+    assert!(out.stderr.is_empty());
+    assert!(!temp.path().join("home").exists());
+}
+
+#[test]
+fn trajectory_suspend_reads_under_config_writer_lock_without_mutating_the_file() {
+    use fs2::FileExt;
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("config.toml");
+    let original =
+        "schema_version=2\n[trajectory]\nenabled=true\nendpoint='invalid'\nspool_dir='queue'\n";
+    fs::write(&path, original).unwrap();
+    let sync = invoke(
+        temp.path(),
+        &["trajectory", "sync-config", "--config", "config.toml"],
+        &[],
+    );
+    assert!(
+        sync.status.success(),
+        "{}",
+        String::from_utf8_lossy(&sync.stderr)
+    );
+    let lock = fs::File::create(temp.path().join(".config.toml.lock")).unwrap();
+    lock.lock_exclusive().unwrap();
+    let suspended = invoke(
+        temp.path(),
+        &["trajectory", "suspend", "--config", "config.toml"],
+        &[],
+    );
+    assert!(
+        suspended.status.success(),
+        "{}",
+        String::from_utf8_lossy(&suspended.stderr)
+    );
+    assert_eq!(fs::read_to_string(&path).unwrap(), original);
+    let control: serde_json::Value =
+        serde_json::from_slice(&fs::read(temp.path().join("queue/control.json")).unwrap()).unwrap();
+    assert_eq!(control["enabled"], false);
+    assert_eq!(control["endpoint"], "invalid");
+    assert!(suspended.stderr.is_empty());
+}
+
+#[test]
+fn local_startup_warns_once_on_stderr_and_remote_exec_ignores_local_trajectory() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::write(temp.path().join("config.toml"), "schema_version=2\n[trajectory]\nenabled=true\nendpoint='https://user:private-token@example.com?token=private-query'\n").unwrap();
+    let notice = "轨迹导出需要处理";
+    for args in [
+        vec![
+            "exec",
+            "hello",
+            "--workspace",
+            "missing",
+            "--config",
+            "config.toml",
+        ],
+        vec![
+            "--prompt",
+            "hello",
+            "--workspace",
+            "missing",
+            "--config",
+            "config.toml",
+        ],
+    ] {
+        let out = invoke(temp.path(), &args, &[]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(stderr.matches(notice).count(), 1, "{stderr}");
+        assert!(!String::from_utf8_lossy(&out.stdout).contains(notice));
+        assert!(!stderr.contains("private-token"));
+        assert!(!stderr.contains("private-query"));
+    }
+    let remote = invoke(
+        temp.path(),
+        &[
+            "exec",
+            "hello",
+            "--endpoint",
+            "ws://127.0.0.1:1",
+            "--auth-file",
+            "missing-auth",
+        ],
+        &[("AREAL_HARNESS_CONFIG", "config.toml")],
+    );
+    assert!(!String::from_utf8_lossy(&remote.stderr).contains(notice));
 }
 
 #[test]

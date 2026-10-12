@@ -60,6 +60,211 @@ fn failure(i: &ConfigInputs) -> ConfigError {
 }
 
 #[test]
+fn trajectory_defaults_are_disabled_and_shared_across_core_data_directories() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut i = inputs(temp.path());
+    i.overrides.data_dir = Some(temp.path().join("run-a"));
+    let a = load_config(&i).unwrap();
+    i.overrides.data_dir = Some(temp.path().join("run-b"));
+    let b = load_config(&i).unwrap();
+    assert!(!a.trajectory.enabled);
+    assert_eq!(
+        a.trajectory.spool_dir,
+        temp.path().join(".areal/trajectory")
+    );
+    assert_eq!(a.trajectory.spool_dir, b.trajectory.spool_dir);
+    assert_eq!(a.trajectory.source_id, b.trajectory.source_id);
+    assert_eq!(a.trajectory.source_id.len(), 64);
+    assert_eq!(a.trajectory.max_disk_bytes, 256 * 1024 * 1024);
+    assert_eq!(a.trajectory.max_memory_bytes, 16 * 1024 * 1024);
+    assert_eq!(a.trajectory.max_retries, 6);
+}
+
+#[test]
+fn trajectory_configuration_identity_isolates_files_and_preserves_default_queue() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut i = inputs(temp.path());
+    let before_creation = load_config(&i).unwrap().trajectory;
+    assert_eq!(before_creation.source_revision, "missing");
+    fs::create_dir_all(temp.path().join(".areal")).unwrap();
+    let default = temp.path().join(".areal/config.toml");
+    fs::write(&default, "schema_version=2\n").unwrap();
+    i.config_file = Some(default);
+    let explicit_default = load_config(&i).unwrap().trajectory;
+    assert_eq!(before_creation.source_id, explicit_default.source_id);
+    assert_eq!(before_creation.spool_dir, explicit_default.spool_dir);
+    assert_eq!(explicit_default.source_revision.len(), 64);
+    let a = temp.path().join("first.toml");
+    let b = temp.path().join("second.toml");
+    fs::write(&a, "schema_version=2\n[trajectory]\nenabled=true\n").unwrap();
+    fs::write(&b, "schema_version=2\n").unwrap();
+    i.config_file = Some(a.clone());
+    let first = load_config(&i).unwrap().trajectory;
+    i.config_file = Some(b);
+    let second = load_config(&i).unwrap().trajectory;
+    assert_ne!(first.source_id, second.source_id);
+    assert_ne!(first.spool_dir, second.spool_dir);
+    assert_eq!(
+        first.spool_dir,
+        temp.path()
+            .join(".areal/trajectory-sources")
+            .join(&first.source_id)
+    );
+    i.config_file = None;
+    set(&mut i, "AREAL_HARNESS_CONFIG", a.to_str().unwrap());
+    let from_env = load_config(&i).unwrap().trajectory;
+    assert_eq!(first.source_id, from_env.source_id);
+    assert_eq!(first.spool_dir, from_env.spool_dir);
+    // 配置内容和限额更新不能更换归属，否则旧积压将失去管理入口。
+    fs::write(&a, "schema_version=2\n[trajectory]\nmax_retries=3\n").unwrap();
+    assert_eq!(
+        first.source_id,
+        load_config(&i).unwrap().trajectory.source_id
+    );
+    assert_ne!(
+        first.source_revision,
+        load_config(&i).unwrap().trajectory.source_revision
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn trajectory_identity_resolves_file_and_parent_aliases_before_and_after_creation() {
+    let temp = tempfile::tempdir().unwrap();
+    let real = temp.path().join("real");
+    fs::create_dir(&real).unwrap();
+    let alias = temp.path().join("alias");
+    std::os::unix::fs::symlink(&real, &alias).unwrap();
+    let mut i = inputs(temp.path());
+    set(
+        &mut i,
+        "AREAL_HARNESS_HOME",
+        alias.join("new-home").to_str().unwrap(),
+    );
+    let before = load_config(&i).unwrap().trajectory;
+    fs::create_dir(real.join("new-home")).unwrap();
+    let path = real.join("new-home/config.toml");
+    fs::write(&path, "schema_version=2\n").unwrap();
+    set(
+        &mut i,
+        "AREAL_HARNESS_HOME",
+        real.join("new-home").to_str().unwrap(),
+    );
+    let after = load_config(&i).unwrap().trajectory;
+    assert_eq!(before.source_id, after.source_id);
+    let file_alias = temp.path().join("config-link.toml");
+    std::os::unix::fs::symlink(&path, &file_alias).unwrap();
+    i.config_file = Some(file_alias);
+    let aliased = load_config(&i).unwrap().trajectory;
+    assert_eq!(after.source_id, aliased.source_id);
+    assert_eq!(after.spool_dir, aliased.spool_dir);
+    assert_eq!(after.source_file, aliased.source_file);
+}
+
+#[test]
+fn trajectory_source_revision_preserves_raw_snapshot_without_changing_deployment_identity() {
+    use sha2::{Digest, Sha256};
+    let temp = tempfile::tempdir().unwrap();
+    let mut i = inputs(temp.path());
+    let original = "schema_version=2\n# exact file snapshot\n[model]\nname='first'\n";
+    write(&mut i, original);
+    let first = load_config(&i).unwrap().trajectory;
+    assert_eq!(
+        first.source_revision,
+        format!("{:x}", Sha256::digest(original.as_bytes()))
+    );
+    write(&mut i, &original.replace("first", "second"));
+    let second = load_config(&i).unwrap().trajectory;
+    assert_ne!(first.source_revision, second.source_revision);
+    assert_eq!(first.diagnostic(), second.diagnostic());
+    let mut serialized = serde_json::to_value(&second).unwrap();
+    assert!(serialized.get("source_file").is_some());
+    assert_eq!(serialized["source_revision"], second.source_revision);
+    for field in ["source_id", "source_file", "source_revision"] {
+        serialized.as_object_mut().unwrap().remove(field);
+    }
+    let legacy: TrajectoryConfig = serde_json::from_value(serialized).unwrap();
+    assert!(legacy.source_id.is_empty() && legacy.source_revision.is_empty());
+    assert!(legacy.source_file.is_none());
+}
+
+#[test]
+fn trajectory_configuration_resolves_paths_without_reading_credentials() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut i = inputs(temp.path());
+    write(
+        &mut i,
+        "schema_version=2\n[trajectory]\nenabled=true\nendpoint='not a URL'\nspool_dir='spool'\nheaders_file='missing.headers'\nmax_retries=0\n",
+    );
+    let config = load_config(&i).unwrap();
+    assert!(config.trajectory.enabled);
+    assert_eq!(config.trajectory.spool_dir, temp.path().join("spool"));
+    assert_eq!(
+        config.trajectory.headers_file,
+        Some(temp.path().join("missing.headers"))
+    );
+    assert_eq!(config.trajectory.max_retries, 0);
+    // 运行时错误不阻止正常 Agent 配置加载，诊断也不回显非法地址。
+    assert_eq!(
+        config.diagnostic(false)["trajectory"]["endpoint"],
+        "<invalid>"
+    );
+    assert!(!config.diagnostic(false).to_string().contains("not a URL"));
+    assert!(!temp.path().join("spool").exists());
+}
+
+#[test]
+fn trajectory_diagnostics_redact_endpoint_and_preserve_change_identity() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut i = inputs(temp.path());
+    write(
+        &mut i,
+        "schema_version=2\n[trajectory]\nendpoint='https://name:secret@example.com/prefix?token=hidden#private'\n",
+    );
+    let before = load_config(&i).unwrap().diagnostic(false)["trajectory"].clone();
+    assert_eq!(before["endpoint"], "https://example.com/prefix");
+    assert!(!before.to_string().contains("secret"));
+    assert!(!before.to_string().contains("hidden"));
+    write(
+        &mut i,
+        "schema_version=2\n[trajectory]\nendpoint='https://name:other@example.com/prefix?token=changed'\n",
+    );
+    let after = load_config(&i).unwrap().diagnostic(false)["trajectory"].clone();
+    assert_eq!(before["endpoint"], after["endpoint"]);
+    assert_ne!(
+        before["endpoint_fingerprint"],
+        after["endpoint_fingerprint"]
+    );
+}
+
+#[test]
+fn trajectory_rejects_structural_errors_and_unbounded_capacity() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut i = inputs(temp.path());
+    for settings in [
+        "enabled='true'",
+        "unknown=1",
+        "source_id='forged-owner'",
+        "source_file='/forged/file'",
+        "source_revision='forged-version'",
+        "max_disk_bytes=0",
+        "max_records=-1",
+        "max_records=10001",
+        "headers_env='HEADERS'\nheaders_file='headers.txt'",
+        "max_retries=101",
+        "max_memory_bytes=1",
+        "retry_initial_seconds=301",
+        "upload_interval_ms=0",
+    ] {
+        write(
+            &mut i,
+            &format!("schema_version=2\n[trajectory]\n{settings}\n"),
+        );
+        assert!(load_config(&i).is_err(), "{settings}");
+    }
+}
+
+#[test]
 fn goals_have_unlimited_default_budgets_and_validate_overrides() {
     let temp = tempfile::tempdir().unwrap();
     let mut i = inputs(temp.path());
