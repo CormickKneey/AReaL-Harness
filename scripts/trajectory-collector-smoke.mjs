@@ -45,6 +45,7 @@ let recovering = false;
 let rejected = 0;
 let core;
 let collector;
+let collectorVersionProbe;
 let configured = false;
 const env = {
   ...Object.fromEntries(
@@ -76,10 +77,12 @@ async function until(check, label, timeout = 20000) {
   throw Error(`timeout: ${label}`);
 }
 function launch(path, args, environment = env) {
+  const started = Date.now();
   const child = spawnNative(path, args, { stdio: ["ignore", "pipe", "pipe"], env: environment });
   children.add(child);
   let stdout = "",
     stderr = "";
+  let outcome;
   child.stdout.on("data", (chunk) => {
     stdout = (stdout + chunk).slice(-1048576);
   });
@@ -90,23 +93,41 @@ function launch(path, args, environment = env) {
     child.once("error", reject);
     child.once("close", (code, signal) => {
       children.delete(child);
+      outcome = { code, signal, elapsedMs: Date.now() - started };
       resolve({ code, signal, stdout, stderr });
     });
   });
-  return { child, done, stderr: () => stderr };
-}
-async function complete(process, timeout = 20000) {
-  return Promise.race([
-    process.done,
-    delay(timeout, undefined, { ref: false }).then(() => {
-      process.child.kill("SIGKILL");
-      throw Error("child deadline exceeded");
+  return {
+    child,
+    done,
+    stderr: () => stderr,
+    snapshot: () => ({
+      ...outcome,
+      elapsedMs: outcome?.elapsedMs ?? Date.now() - started,
+      stdout,
+      stderr,
     }),
-  ]);
+  };
+}
+async function complete(process, timeout = 20000, label = "child") {
+  const timer = new AbortController();
+  try {
+    return await Promise.race([
+      process.done,
+      delay(timeout, undefined, { ref: false, signal: timer.signal }).then(() => {
+        process.timedOut = true;
+        process.child.kill("SIGKILL");
+        throw Error(`${label} deadline exceeded (${timeout} ms)`);
+      }),
+    ]);
+  } finally {
+    timer.abort();
+  }
 }
 async function stop(process) {
   if (!process) return;
-  process.child.kill("SIGTERM");
+  // PID 握手之前 kill 会排队；清理不能把已排队的强制终止降为 SIGTERM。
+  if (!process.timedOut) process.child.kill("SIGTERM");
   await complete(process, 10000);
 }
 async function records() {
@@ -330,10 +351,12 @@ function verify(rows, installation) {
 try {
   await execute("tar", ["-xzf", archive, "-C", directory, "otelcol-contrib"], { timeout: 20000 });
   const collectorBinary = join(directory, "otelcol-contrib");
-  const version = await complete(launch(collectorBinary, ["--version"]), 10000);
+  report.collectorBinarySha256 = await fileHash(collectorBinary);
+  collectorVersionProbe = launch(collectorBinary, ["--version"]);
+  // 官方发行二进制冷启动有本地加载开销；只扩大版本预检，整体期限与行为断言不变。
+  const version = await complete(collectorVersionProbe, 30000, "Collector version");
   assert.equal(version.code, 0, version.stderr);
   assert(version.stdout.includes(pins.version));
-  report.collectorBinarySha256 = await fileHash(collectorBinary);
   for (const server of [...sinks, model, ingress]) {
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
@@ -465,6 +488,8 @@ try {
       cleanupErrors.push(error.message);
     }
   };
+  await cleanup(() => stop(collectorVersionProbe));
+  report.collectorVersionProbe = collectorVersionProbe?.snapshot();
   await cleanup(() => stop(core));
   if (configured) {
     await cleanup(async () => {
