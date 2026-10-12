@@ -38,6 +38,8 @@
 
 同文档且完整 URL 未变的 history 更新只使旧读取、Ref 和计划失效，不撤销或恢复当前控制权；URL 变化或新文档仍遵守原导航授权规则。
 
+主文档 Ref `press` 的原生 keyDown 已确认后，若只有非目标子 Frame 导航使全页观察代次失效，可在主文档、原生 Page、Host/Core 归属、控制和视口均未变化且未取消时完成该按键的唯一 keyUp。该例外只结束已确认的输入，不允许复用旧 Ref、继续其他输入或扩大导航许可；旧读取计划仍失效，后续动作须 fresh observe 并经 Core 权限检查。回执仍为 `inputConfirmed:true / verification:not_checked`；ACK 丢失或其他 fence 失效仍保持 UNKNOWN，不重放。
+
 ## 1. 两条既有连接与一个新能力
 
 批量执行在既有 `browser_v1` 包络新增 `runBatch`，不修改持久化工具定义。参数为 `{pageId, snapshotId, steps}`，包含 1–8 步；每步为已有 `act` 动作（`{operation:"act", snapshotId, action}`）或有界等待（`{operation:"wait", timeoutMs, condition?}`）。所有步骤使用同一 Page 与已观察快照，不允许导航、新页面、任意代码、隐式网络工具或文件权限。截图坐标仅可用于首步，因为输入会使截图失效；已知等待总时长不能超过内部 29 秒执行预算。Core 准备并批准具体完整序列；Main 私有保存逐步计划，在每次派发前检查原生目标和控制 fence。结果包含逐步已确认回执与 `verification:not_checked`；后续确定拒绝时剩余步骤标为 `not_sent`。任一步不确定则整个工具为 UNKNOWN，并在 Core 错误详情保留已确认前缀。相同 call 身份共享运行中或已完成结果，参数变化拒绝。Preview 沿既有 Page operation 投影显示进度。

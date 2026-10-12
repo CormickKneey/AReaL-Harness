@@ -1992,14 +1992,22 @@ class CorePreview {
         // If the native page still owns local keyboard focus, do not dispatch.
         // before-input-event cannot distinguish a physical key from CDP echo.
         if (this.window.isFocused() && c.isFocused()) throw new Error('not_sent');
-        const live = () => {
+        const live = (releaseFrame = null) => {
+          // Ref press 仅接受主文档；已确认 keyDown 的单次释放可跨子 Frame 失效，不能继续旧 Ref 动作。
+          const releaseCurrent = releaseFrame !== null && (page.frameDocumentGeneration ?? 0) === releaseFrame
+            && page.view?.webContents === c && page.pageGeneration === saved.plan.pageGeneration
+            && this.browserHostId === request.browserHostId && this.hostGeneration === request.hostGeneration
+            && page.coreInstanceId === request.coreInstanceId;
           if (action.cancelled || request.batchGuard?.() || !this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== saved.plan.controlEpoch
-            || (page.documentGeneration !== saved.plan.documentEpoch && page.documentGeneration !== action.navigationDocument)
+            || (page.documentGeneration !== saved.plan.documentEpoch && page.documentGeneration !== action.navigationDocument && !releaseCurrent)
             || page.viewportRevision !== saved.plan.viewportRevision
             || c.isDestroyed()) throw new Error(action.dispatched ? 'outcome_unknown' : 'plan_stale');
         };
         const input = params => { live(); action.dispatched = true; return this.dispatchInput(page, 'Input.dispatchMouseEvent', params); };
-        const keyboard = params => { live(); action.dispatched = true; return this.dispatchInput(page, 'Input.dispatchKeyEvent', params); };
+        const keyboard = (params, releaseFrame = null) => {
+          live(params.type === 'keyUp' && page.heldKeys.has(params.key) ? releaseFrame : null);
+          action.dispatched = true; return this.dispatchInput(page, 'Input.dispatchKeyEvent', params);
+        };
         const click = async point => {
           await input({ type: 'mousePressed', x: point.x, y: point.y, button: 'left', clickCount: 1 });
           await input({ type: 'mouseReleased', x: point.x, y: point.y, button: 'left', clickCount: 1 });
@@ -2033,9 +2041,11 @@ class CorePreview {
             const code = { Enter: 13, Tab: 9, Escape: 27, Backspace: 8,
               ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40 }[key];
             const text = key === 'Enter' ? '\r' : undefined;
+            const releaseFrame = request.parameters.action.kind === 'press' ? page.frameDocumentGeneration ?? 0 : null;
             await keyboard({ type: 'keyDown', key, code: key, windowsVirtualKeyCode: code,
               ...(text ? { text, unmodifiedText: text } : {}) });
-            await keyboard({ type: 'keyUp', key, code: key, windowsVirtualKeyCode: code });
+            // 仅成功 await 原生 keyDown ACK 后授予该 keyUp 释放资格；丢失 ACK 仍由撤权清理收敛。
+            await keyboard({ type: 'keyUp', key, code: key, windowsVirtualKeyCode: code }, releaseFrame);
           }
         })(), stop]);
       }

@@ -40,6 +40,8 @@ Bounded execution adds `runBatch` to the existing `browser_v1` envelope without 
 
 Same-document history updates with an unchanged full URL invalidate old reads, Refs and plans without revoking or restoring current control. URL changes and new documents retain the existing navigation authorization rules.
 
+After the native keyDown of a main-document Ref `press` is acknowledged, navigation of a non-target child Frame may invalidate the whole-page observation epoch without preventing the matching single keyUp, provided the main document, native Page, Host/Core ownership, control and viewport remain unchanged and the action is not cancelled. This exception only finishes acknowledged input; it does not reuse stale Refs, continue other input or broaden navigation permission. Old read plans remain invalid, and subsequent actions require fresh observation and Core permission checks. The receipt remains `inputConfirmed:true / verification:not_checked`; lost ACKs or other invalid fences remain UNKNOWN without replay.
+
 ## 1. Existing connections, new host capability
 
 Reuse Core ↔ independent desktop adapter and the adapter’s authenticated local connection ↔ Electron Main. Renderer has no Core credentials. The latter channel carries bounded reverse Browser requests/replies/cancellation under its existing authentication, without a public browser port.
