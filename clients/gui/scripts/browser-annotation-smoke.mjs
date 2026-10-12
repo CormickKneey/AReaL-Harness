@@ -397,7 +397,10 @@ try {
     try{await connection.request('hello',{protocol:metadata.protocol,identity:metadata.identity});
       const resources=await connection.request('resources',{operation:'inspect'});
       assert.ok(resources.every(p=>!p.activeTurns&&!p.unresolvedTools&&!p.resources.length));
-      facts.cleanup={pid:metadata.pid,resources:resources.map(p=>({activeTurns:p.activeTurns,unresolvedTools:p.unresolvedTools,resources:p.resources.length})),stopACK:await connection.request('stopService',{protocol:metadata.protocol,forUpdate:false},true)};
+      facts.cleanup={pid:metadata.pid,resources:resources.map(p=>({activeTurns:p.activeTurns,unresolvedTools:p.unresolvedTools,resources:p.resources.length})),stopACK:await until(async()=>{
+        try{return await connection.request('stopService',{protocol:metadata.protocol,forUpdate:false},true);}
+        catch(error){if(error.message==='后台仍有任务、可执行的排队消息或操作，完成或暂停队列后重试')return null;throw error;}
+      },'isolated adapter close operations settle before safe stop')};
     }finally{connection.close();}
     await waitForServiceExit(home,metadata);facts.cleanup.serviceExited=true;
   }catch(e){errors.push('Cleanup: '+e.message);passed=false;}
