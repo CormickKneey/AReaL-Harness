@@ -378,6 +378,7 @@ dependencies = [
  "areal-runtime-protocol",
  "clap",
  "fs2",
+ "httpdate",
  "libc",
  "opentelemetry",
  "opentelemetry-otlp",

@@ -53,8 +53,10 @@ pub(super) struct Record {
     pub payload_present: bool,
     pub sha256: String,
 }
-#[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(super) struct Statistics {
+    #[serde(default)]
+    pub destination: String,
     pub uploaded: u64,
     pub evicted: u64,
     pub dropped_memory: u64,
@@ -142,10 +144,44 @@ pub(super) fn read<T: serde::de::DeserializeOwned>(
     Ok(serde_json::from_slice(&bytes)?)
 }
 pub(super) fn stats(root: &Path) -> Statistics {
-    read(root, "statistics.json", 8192).unwrap_or_default()
+    let mut stats = read(root, "statistics.json", 8192).unwrap_or_default();
+    if let Ok(control) = read::<TrajectoryConfig>(root, "control.json", 16384) {
+        bind_destination(&mut stats, &destination(&control));
+    }
+    stats
 }
 pub(super) fn save_stats(root: &Path, stats: &Statistics) -> Result<()> {
     atomic(root, "statistics.json", &serde_json::to_vec(stats)?)
+}
+pub(super) fn bind_destination(stats: &mut Statistics, destination: &str) {
+    if !stats.destination.is_empty() && stats.destination != destination {
+        stats.not_before = 0;
+        stats.consecutive_failures = 0;
+        clear_upload_error(stats);
+    }
+    // 旧统计没有指纹时沿用对应 control 的退避；升级不能提前重试同一接收端。
+    stats.destination = destination.into();
+}
+fn clear_upload_error(stats: &mut Statistics) {
+    if matches!(
+        stats.last_error.as_deref(),
+        Some(
+            "invalid_endpoint"
+                | "credential_unavailable"
+                | "upload_timeout"
+                | "connection_failed"
+                | "rate_limited"
+                | "remote_unavailable"
+                | "authentication_rejected"
+                | "request_rejected"
+                | "invalid_otlp_response"
+                | "response_interrupted"
+                | "otlp_partial_rejection"
+                | "payload_unavailable"
+        )
+    ) {
+        stats.last_error = None;
+    }
 }
 // 完成记录先于统计持久化；崩溃恢复不能把已确认完成的上传误算成失败或重复计数。
 pub(super) fn recover_statistics(records: &[Record], stats: &mut Statistics) {
@@ -156,27 +192,11 @@ pub(super) fn recover_statistics(records: &[Record], stats: &mut Statistics) {
         {
             stats.uploaded = sequence;
             stats.last_success_at = record.uploaded_at;
-            stats.consecutive_failures = 0;
-            stats.not_before = record.completion_not_before.unwrap_or(stats.not_before);
-            // 只清除被该 ACK 覆盖的传输错误，保留之后发生的采集/磁盘容量告警。
-            if matches!(
-                stats.last_error.as_deref(),
-                Some(
-                    "invalid_endpoint"
-                        | "credential_unavailable"
-                        | "upload_timeout"
-                        | "connection_failed"
-                        | "rate_limited"
-                        | "remote_unavailable"
-                        | "authentication_rejected"
-                        | "request_rejected"
-                        | "invalid_otlp_response"
-                        | "response_interrupted"
-                        | "otlp_partial_rejection"
-                        | "payload_unavailable"
-                )
-            ) {
-                stats.last_error = None;
+            if record.destination == stats.destination {
+                stats.consecutive_failures = 0;
+                stats.not_before = record.completion_not_before.unwrap_or(stats.not_before);
+                // 只清除同接收端被该 ACK 覆盖的传输错误，保留采集/磁盘容量告警。
+                clear_upload_error(stats);
             }
         }
     }

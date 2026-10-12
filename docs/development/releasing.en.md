@@ -37,6 +37,12 @@ python3 -m unittest discover -s scripts/tests -p test_release.py
 
 The formula installs `bin`, `libexec`, LICENSE and the manifest, preserving Core's relative helper discovery. Linux installs versions into separate directories and atomically switches only the entry symlink. Configuration and history remain outside installer ownership. Validation failure must not switch the entry point.
 
+## Optional platform adapter package
+
+[Optional EnvArena adapter](../../.github/workflows/arena-package.yml) runs only through manual `workflow_dispatch`. It produces a Linux musl zipapp for the platform runner and verification artifacts; it does not publish to an Arena Registry or upload trajectories, and is not a prerequisite for standalone bundles or the installer above. Regular pull requests do not run it. Adapter scripts moved from `scripts/` to `integrations/envarena/`; see the [benchmark adapter guide](../benchmarks/README.en.md#arena-lazy-public-inputs) for commands and native Linux validation.
+
+Do not require the optional adapter job in regular pull-request branch protection. Remove any existing required `Arena package` check in repository settings separately; workflow files do not change that setting.
+
 ## GUI releases
 
 GUI versions are declared by `clients/gui/package.json` and `clients/gui/app/package.json`, independently of Cargo/CLI. Publish to `areal-project/AReaL-Harness` using `gui-v<version>` tags; CLI tags remain `v<version>`. GUI releases are not GitHub Latest, preserving the CLI installer's Latest semantics.

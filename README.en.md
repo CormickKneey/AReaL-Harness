@@ -22,7 +22,7 @@
 - **Long-Horizon Tasks**: Advance work across multiple stages with persistent sessions, task plans, and recovery mechanisms.
 - **Efficient Execution**: Use Rust and Tokio for asynchronous execution and layered concurrency control, aiming for high throughput with low runtime overhead.
 
-See [capabilities and limitations](docs/features.en.md) for the implemented scope and its boundaries.
+See [capabilities and limitations](docs/features.en.md) for the implemented scope and its boundaries. Core, Runtime, standalone releases and standard OTLP trajectory export do not depend on Arena; platform adapters integrate optionally through public interfaces.
 
 ## 🖥️ TUI
 

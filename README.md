@@ -22,7 +22,7 @@
 - **Long-Horizon Tasks**：围绕持久会话、任务计划与恢复机制，推进多阶段工作。
 - **Efficient Execution**：基于 Rust + Tokio 异步执行与分层并发控制，追求高吞吐、低运行时开销。
 
-已实现范围与限制集中维护在[当前能力与边界](docs/features.md)。
+已实现范围与限制集中维护在[当前能力与边界](docs/features.md)。Core、Runtime、独立发行包和标准 OTLP 轨迹导出不依赖 Arena；平台适配器通过公开接口可选接入。
 
 ## 🖥️ TUI
 

@@ -44,10 +44,13 @@ Binary-only changes automatically restart an idle shared service, so manual rest
 | Native integration | `make verify-harness`, including regular regression |
 | Unified delegation integration | `make unified-execution-smoke`: real Runtime candidate composition, delivery receipts, parent ownership, cancellation, and recovery; included in `make harness-smoke` / `make verify-native`; Linux CI runs it in the supported container with Bubblewrap user namespaces, while `make verify` remains portable |
 | CI native delta | `make verify-native`, native backend and Harness integration smoke only |
+| Optional EnvArena adapter | `make envarena-check` / `make envarena-smoke`; excluded from default checks |
 | Capacity | `make capacity`, run separately |
 | Documentation only | `python3 scripts/check-docs.py`; also compare commands with implementation |
 
 The unified delegation smoke defaults to `target/debug`; set `AREAL_UNIFIED_BIN_DIR` to the complete installed bundle’s `bin` directory and `AREAL_UNIFIED_EVIDENCE_DIR` to retain full Core/Runtime stderr. Independent workers always use the native sandbox. Linux requires working Bubblewrap user/mount/PID namespaces; workers do not inherit the parent launcher’s full-access mode.
+
+`make integration-boundaries` checks that the product, release entry points and default Make dependency graph do not load optional platform adapters; `make script-test` includes it. `make envarena-check` separately maintains formatting, static checks and unit tests for adapter Python sources.
 
 See [testing](testing.en.md) for coverage. Pass arguments with `make tui ARGS='--prompt hello'`. `make release` writes to `target/release`; `make docs` generates Rust API documentation.
 

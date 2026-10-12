@@ -149,7 +149,9 @@ def parse_args(argv=None):
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--enable", action="store_true")
     action.add_argument("--disable", action="store_true")
-    parser.add_argument("--endpoint", help="OTLP HTTP/protobuf 基地址，自动追加 /v1/logs")
+    parser.add_argument(
+        "--endpoint", help="OTLP HTTP/protobuf 基地址，自动追加 /v1/logs；换地址不沿用旧凭据"
+    )
     spool = parser.add_mutually_exclusive_group()
     spool.add_argument("--spool-dir", type=Path)
     spool.add_argument(
@@ -295,6 +297,9 @@ def configure(args):
             raise ConfigurationError("最大退避时间不得小于初始退避时间")
         if values["enabled"] and not values["endpoint"]:
             raise ConfigurationError("启用前请通过 --endpoint 或脚本 DEFAULT_ENDPOINT 配置接收地址")
+        # 与队列的目的地身份一致：地址文本改变也不能隐式转交旧接收端凭据。
+        endpoint_changed = values["endpoint"] != existing.get("endpoint", "")
+        had_credentials = any(field in values for field in ("headers_env", "headers_file"))
         secret = None
         if args.headers_env:
             secret = os.environ.get(args.headers_env)
@@ -302,11 +307,17 @@ def configure(args):
                 raise ConfigurationError("指定的认证环境变量未设置或为空")
         elif args.headers_file:
             secret = regular_text(args.headers_file.expanduser(), 16384).strip()
-        elif DEFAULT_HEADERS and not args.clear_headers:
+        elif (
+            DEFAULT_HEADERS
+            and not args.clear_headers
+            and values["endpoint"] == DEFAULT_ENDPOINT
+            and DEFAULT_ENDPOINT
+        ):
             secret = DEFAULT_HEADERS
-        if args.clear_headers or secret is not None:
+        if args.clear_headers or secret is not None or endpoint_changed:
             values.pop("headers_env", None)
             values.pop("headers_file", None)
+        credentials_cleared = endpoint_changed and had_credentials and secret is None
         credential_update = None
         if secret is not None:
             if not secret or len(secret.encode()) > 16384 or any(ord(c) < 32 for c in secret):
@@ -353,10 +364,13 @@ def configure(args):
                 "enabled": values["enabled"],
                 "changed": changed,
                 "controlApplied": applied,
+                "credentialsCleared": credentials_cleared,
             },
             ensure_ascii=False,
         )
     )
+    if credentials_cleared:
+        print("接收地址已改变，未沿用原接收端凭据；新接收端如需认证，请显式配置。", file=sys.stderr)
     if not applied:
         print(
             "配置已保存，导出控制尚未即时应用；请使用新版 areal trajectory sync-config --config 指定文件，或重新启动 Core。",

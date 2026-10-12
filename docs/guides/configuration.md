@@ -313,7 +313,7 @@ upload_interval_ms = 1000
 | `request_timeout_seconds` | 10 秒，1–86400；单次网络请求超时 |
 | `upload_interval_ms` | 1000 毫秒，1–86400000；单 worker 发送间隔 |
 
-上传失败按有上限的退避处理，耗尽重试后保留失败记录供人工重试。内存缓冲满或单条内容超限时丢弃该遥测副本并累计计数；磁盘/记录额度不足时按顺序回收旧副本并记录淘汰。事件在进入队列前因身份、序号竞争或内存限制被整体丢弃，也计入 `dropped_memory`，由后台尽力保存；单个字段截断使用轨迹中的截断标记，不重复计为整事件丢弃。上传成功后释放本地正文，保留有界状态元数据。这些策略不删除 Core 的权威会话历史，也不改变 Turn 成败。此路径不提供零丢失保证：强杀前尚未落盘的事件和诊断计数可能丢失，正常退出只短暂等待本地落盘，上传重试可能产生重复记录，接收端应按记录身份去重。
+网络故障与 OTLP 可重试状态码 429、502、503、504 按指数退避处理，其它 4xx/5xx 保留为失败而不自动重试。支持秒数及 HTTP-date 两种 `Retry-After`；`retry_max_seconds` 只限制本地退避，不截短接收端要求的等待时间。同一地址重启保留已保存的等待下限；切换地址不继承旧地址的全局退避，也不改写旧记录自身的重试时间。被标记 `destination_changed` 的旧记录须切回原地址并显式 `retry` 才重新排队，此操作重置该记录的重试预算和等待时间。只有 HTTP 200、`application/x-protobuf` 响应类型和有效 protobuf ACK 才确认送达，部分拒收不自动重试。耗尽重试后保留失败记录供人工重试。内存缓冲满或单条内容超限时丢弃该遥测副本并累计计数；磁盘/记录额度不足时按顺序回收旧副本并记录淘汰。事件在进入队列前因身份、序号竞争或内存限制被整体丢弃，也计入 `dropped_memory`，由后台尽力保存；单个字段截断使用轨迹中的截断标记，不重复计为整事件丢弃。上传成功后释放本地正文，保留有界状态元数据。这些策略不删除 Core 的权威会话历史，也不改变 Turn 成败。此路径不提供零丢失保证：强杀前尚未落盘的事件和诊断计数可能丢失，正常退出只短暂等待本地落盘，上传重试可能产生重复记录，接收端应按记录身份去重。
 
 安装标识读取、队列初始化、历史清理及 JSON 结构化均在后台执行。消息和工具内容在共享内存、节点数及 32 层深度预算内转换为嵌套 OTLP 值；结构化超出预算时保留完整原 JSON 字符串并标记 `areal.capture.json_fallback=true`，不代表内容丢失；只有采集字段确实丢失才标记 `areal.capture.truncated=true`。非法 JSON 或无法无损表示的值保留原文，不保证所有内容都成功结构化。内存额度约束新增采集缓冲，不能等同于整个 Core 进程的 RSS 上限。
 
@@ -333,7 +333,7 @@ python3 scripts/configure-trajectory.py --home /absolute/test-home \
   --enable --endpoint http://127.0.0.1:4318 --areal-binary target/debug/areal
 ```
 
-脚本的 `--headers-env` 从当前环境读取编码头，并保存到 home 下的私有凭据文件，使后续 GUI/CLI 启动不依赖该终端环境；`--headers-file` 复制已有文件，`--clear-headers` 清除引用。切换已有配置的接收地址或队列前，脚本通过新版 areal 暂停原队列；暂停失败或缺少新版 binary 时保留原配置和凭据并报错。新接收地址使用独立的凭据文件，旧在途请求不会读到新地址的凭据；同一地址的凭据轮换保持引用稳定。原队列的数据留在原位，不迁移或改发到新地址。脚本不回显凭据，也不重启或取消 Agent。找到新版 `areal` 时会执行 `trajectory sync-config` 更新持久控制；找不到时仍保存配置并提示尚未应用。停用控制阻止后续入队和发送，在途 HTTP 请求最多等待当前超时；修改已经运行的 Core 的采集参数仍需安全重启。部署指纹包含轨迹配置，已有共享服务不会静默忽略更改。
+脚本的 `--headers-env` 从当前环境读取编码头，并保存到 home 下的私有凭据文件，使后续 GUI/CLI 启动不依赖该终端环境；`--headers-file` 复制已有文件，`--clear-headers` 清除引用。切换已有配置的接收地址或队列前，脚本通过新版 areal 暂停原队列；暂停失败或缺少新版 binary 时保留原配置和凭据并报错。接收地址文本变化时不继承旧 `headers_env` / `headers_file`：未显式提供新凭据则清除引用，JSON 输出 `credentialsCleared=true` 并提示；旧凭据文件保留。提供新凭据时使用新地址独立的文件，旧在途请求不会读到新地址的凭据；同一地址的凭据保留及轮换保持引用稳定。脚本内 `DEFAULT_HEADERS` 仅用于与非空 `DEFAULT_ENDPOINT` 完全一致的地址，命令行覆盖到其它地址时不转交它。原队列的数据留在原位，不迁移或改发到新地址。脚本不回显凭据，也不重启或取消 Agent。找到新版 `areal` 时会执行 `trajectory sync-config` 更新持久控制；找不到时仍保存配置并提示尚未应用。停用控制阻止后续入队和发送，在途 HTTP 请求最多等待当前超时；修改已经运行的 Core 的采集参数仍需安全重启。部署指纹包含轨迹配置，已有共享服务不会静默忽略更改。
 
 ```sh
 target/debug/areal trajectory status --config /absolute/config.toml
@@ -354,6 +354,38 @@ GUI 的「设置 → 数据飞轮」在页面可见且连接正常时每 2.5 秒
 单条事件同时受内存预算和发送上限约束：后台为副本和编码保守预留八倍空间，默认配置下可进入队列的单条内容约小于 1 MiB（含逻辑输入、最终请求、输出及元数据）。`max_batch_bytes=4 MiB` 不是保证可捕获 4 MiB 事件；长上下文可显式提高 `max_memory_bytes`（例如 64 MiB）后观察丢弃和完整性状态，预算仍为所有并发请求共享。
 
 采集内存分为 Engine 内容构造四分之一、事件字段四分之一、后台副本和编码二分之一。流式输出、摘要及输入序列化都在分配前取得共享额度；超限停止该副本的采集，业务流继续。最终模型请求包含工具 schema 与有效参数，并保留构建提交和响应模型身份。事件序号和终态清单用于检测整条事件丢失；字段、摘要和训练边界见[持久轨迹协议](../api/core.md#持久轨迹协议)。仅设置 `RUST_LOG=info` 不会启用原始轨迹采集或把内容写到终端。
+
+### 通过标准 Collector 同时发送到多个接收端
+
+Harness 的采集与持久上传不依赖任何平台 SDK、域名或认证头。传输使用标准 OTLP HTTP/protobuf；`areal.*` 是公开的 Harness 轨迹语义扩展，不是接收平台的私有传输协议。通用 OTLP 后端可以接收和保存这些字段，理解 Turn 完整性或生成训练样本仍需使用[轨迹契约](../api/core.md#持久轨迹协议)。当前持久上传配置只有一个目的地；多目的地使用 **Harness → OpenTelemetry Collector → 各后端**，无需在 Harness 中加入平台路由代码，也不靠重复开启两个语义不同的 `OTEL_*` / 持久通道模拟可靠扇出。
+
+[中立配置](../../examples/telemetry/collector-fanout.yaml)针对官方 `otelcol-contrib 0.143.0`，版本、官方来源和发行归档 SHA256 固定在 [collector-pins.json](../../examples/telemetry/collector-pins.json)。将 Collector 置于用户本机或受信任的单用户 sidecar，通过环境提供两个完整 Logs 地址和私有存储目录：
+
+```sh
+export OTEL_FANOUT_STORAGE=/absolute/private/collector-storage
+export OTEL_BACKEND_A_LOGS_ENDPOINT=https://backend-a.example/v1/logs
+export OTEL_BACKEND_B_LOGS_ENDPOINT=https://backend-b.example/custom/logs
+/path/to/otelcol-contrib --config examples/telemetry/collector-fanout.yaml
+# 在另一终端配置 Harness；接收器默认仅监听 127.0.0.1:4318。
+python3 scripts/configure-trajectory.py --enable --endpoint http://127.0.0.1:4318 \
+  --clear-headers --areal-binary target/debug/areal
+```
+
+各后端的 `headers`、TLS/客户端证书在对应的 Collector exporter 中独立配置，并引用受保护的环境变量或认证扩展。Harness 不转发它们。共享 Collector 使用单一后端 token 时，后端看到的是 Collector 的认证账号；不会自动保留各发送者的用户归属。需要按人隔离时，使用每用户 Collector/出口身份，或经过审计的认证与租户路由，不把生产端自报的属性当作认证身份。
+
+两个 exporter 分别持久排队、独立 ACK/重试；示例单请求上限 4 MiB、每出口待发送队列按序列化字节计 8 MiB（`sizer: bytes`，不是请求数）、单消费者、有限 10 分钟重试。存储开启 `fsync` 和启动/回落压缩。队列字节限制**不是**文件存储数据库的硬磁盘配额，压缩临时文件、数据库空间和日志仍需独立 volume/quota、容量监控及保留策略；内存限制器也不是进程 RSS 的硬上限。队列满、永久拒收、重试期限耗尽或磁盘故障仍可能丢数据；队列满时上游重试还可能让已成功后端收到重复事件，须按事件身份去重。Harness 原有内存/磁盘预算独立生效。
+
+Harness 的 `uploaded` 只证明直接接收端 Collector 已 ACK，不证明所有最终后端已存储。末端状态由 Collector 队列指标和各接收端确认；不要把多跳 OTLP 宣称为跨后端原子提交或零丢失。上述行为遵循 [OTLP 多目的地建议](https://opentelemetry.io/docs/specs/otlp/#multi-destination-exporting)与 [Collector 持久队列](https://opentelemetry.io/docs/collector/resiliency/)。
+
+可用仓库的有界本地互通检查验证官方实现。先从固定 release 下载当前平台归档；脚本不自动下载或安装，启动前验证 pins 中的 SHA256：
+
+```sh
+AREAL_OTELCOL_ARCHIVE=/absolute/otelcol-contrib_0.143.0_darwin_arm64.tar.gz \
+AREAL_COLLECTOR_SMOKE_OUTPUT=/absolute/collector-evidence \
+  node scripts/trajectory-collector-smoke.mjs
+```
+
+该检查使用隔离 Core、真实本地模型与官方 Collector；两个中立 HTTP 接收端分别正常接收和返回 503，正常后端先收齐、Agent 返回后再强杀/重启 Collector，验证故障后端从持久队列补传。入站保持 Harness 原生 protobuf，经只保存字节的回环代理取证；Collector 用标准 OTLP JSON 编码输出，以核对两端完整资源、事件身份、序号清单和实际模型请求 SHA256。输出目录可保存原始 protobuf、实际模型请求和回读内容，不包含真实用户凭据。此检查独立运行，不要求普通构建安装 Collector。
 
 ## OpenTelemetry 轨迹上报
 
@@ -385,7 +417,7 @@ export OTEL_EXPORTER_OTLP_TIMEOUT=10000
 | `OTEL_TRACES_EXPORTER`、`OTEL_LOGS_EXPORTER` | `otlp` 或 `none`；可分别关闭信号 |
 | `OTEL_TRACES_SAMPLER`、`OTEL_TRACES_SAMPLER_ARG` | 使用 SDK 的标准 Trace 采样配置 |
 | `OTEL_BSP_*`、`OTEL_BLRP_*` | 使用 SDK 的标准 Trace/Log 批量队列和调度配置 |
-| `OTEL_SDK_DISABLED=true` | 关闭全部遥测 |
+| `OTEL_SDK_DISABLED=true` | 关闭标准 OTEL 导出通道；`trajectory.enabled` 独立控制持久轨迹 |
 
 轨迹记录 Turn、每次模型请求、工具调用和上下文压缩。模型请求使用 `gen_ai.*` 属性与 `gen_ai.client.inference.operation.details` 事件，消息按 OpenTelemetry GenAI 的 `role` / `parts` 结构记录，Span 中为 JSON 字符串，Logs 中为结构化属性。模型输入（含系统指令）、输出、推理文本、工具参数与结果均保留实际内容，没有脱敏逻辑或脱敏开关；媒体保留 Engine 收到的引用或内联数据。重试按独立请求记录，取消时保留已收到的输出并标记未完成。
 

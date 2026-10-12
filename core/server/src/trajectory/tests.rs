@@ -575,6 +575,137 @@ fn authentication_rotation_keeps_destination_but_endpoint_change_never_redirects
     assert_eq!(view["queue"]["failed"], 1);
     assert_eq!(view["records"][0]["error"], "destination_changed");
 }
+
+#[test]
+fn destination_switch_releases_old_throttle_without_redirecting_payloads() {
+    let d = tempfile::tempdir().unwrap();
+    let old = config(d.path());
+    configure(&old).unwrap();
+    let body = event("old", true, 0);
+    queue::enqueue(&old, &body, None).unwrap();
+    let record = worker::pick(&old).unwrap().unwrap();
+    worker::settle(
+        &old,
+        &record,
+        worker::Outcome::Retry("rate_limited", Some(86_400)),
+    )
+    .unwrap();
+    let throttled = queue::stats(d.path());
+    assert!(throttled.not_before >= now() + 86_399_000);
+    configure(&old).unwrap();
+    assert_eq!(queue::stats(d.path()).not_before, throttled.not_before);
+    assert!(worker::pick(&old).unwrap().is_none());
+
+    let mut new = old.clone();
+    new.endpoint = "http://127.0.0.1:2".into();
+    configure(&new).unwrap();
+    let stats = queue::stats(d.path());
+    assert_eq!(stats.destination, destination(&new));
+    assert_eq!(stats.not_before, 0);
+    assert_eq!(stats.consecutive_failures, 0);
+    assert_eq!(stats.last_error, None);
+    assert!(worker::pick(&new).unwrap().is_none());
+    queue::enqueue(&new, &event("new", true, 0), None).unwrap();
+    let selected = worker::pick(&new).unwrap().unwrap();
+    assert_eq!(selected.turn_id, "new");
+    let retained = queue::records(d.path(), new.max_disk_bytes)
+        .unwrap()
+        .into_iter()
+        .find(|r| r.id == record.id)
+        .unwrap();
+    assert_eq!(retained.error.as_deref(), Some("destination_changed"));
+    assert_eq!(retained.destination, destination(&old));
+    assert_eq!(
+        queue::payload(d.path(), &retained, old.max_batch_bytes).unwrap(),
+        body
+    );
+}
+
+#[test]
+fn old_inflight_outcomes_and_ack_recovery_do_not_override_new_destination_state() {
+    for outcome in [
+        worker::Outcome::Retry("rate_limited", Some(86_400)),
+        worker::Outcome::Failed("authentication_rejected"),
+        worker::Outcome::Success,
+    ] {
+        let d = tempfile::tempdir().unwrap();
+        let old = config(d.path());
+        configure(&old).unwrap();
+        queue::enqueue(&old, &event("old", true, 0), None).unwrap();
+        let record = worker::pick(&old).unwrap().unwrap();
+        let mut new = old.clone();
+        new.endpoint = "http://127.0.0.1:2".into();
+        configure(&new).unwrap();
+        let mut expected = queue::stats(d.path());
+        expected.not_before = now() + 123_000;
+        expected.consecutive_failures = 3;
+        expected.last_error = Some("remote_unavailable".into());
+        queue::save_stats(d.path(), &expected).unwrap();
+        let success = matches!(outcome, worker::Outcome::Success);
+        if success {
+            // 模拟旧请求 ACK 已持久确认，但统计未落盘；重启也不能清新接收端退避。
+            queue::fail_next_write("statistics.json".into());
+            assert!(worker::settle(&old, &record, outcome).is_err());
+        } else {
+            worker::settle(&old, &record, outcome).unwrap();
+        }
+        let records = queue::records(d.path(), new.max_disk_bytes).unwrap();
+        let mut actual = queue::stats(d.path());
+        queue::recover_statistics(&records, &mut actual);
+        assert_eq!(actual.destination, expected.destination);
+        assert_eq!(actual.not_before, expected.not_before);
+        assert_eq!(actual.consecutive_failures, expected.consecutive_failures);
+        assert_eq!(actual.last_error, expected.last_error);
+        assert_eq!(actual.uploaded, u64::from(success));
+        assert_eq!(records[0].payload_present, !success);
+        assert_eq!(records[0].destination, destination(&old));
+    }
+}
+
+#[test]
+fn legacy_statistics_keep_same_destination_delay_and_survive_interrupted_switch() {
+    let d = tempfile::tempdir().unwrap();
+    let old = config(d.path());
+    configure(&old).unwrap();
+    let mut original = queue::stats(d.path());
+    original.not_before = now() + 86_400_000;
+    original.consecutive_failures = 4;
+    original.last_error = Some("rate_limited".into());
+    let mut legacy = serde_json::to_value(&original).unwrap();
+    legacy.as_object_mut().unwrap().remove("destination");
+    queue::atomic(
+        d.path(),
+        "statistics.json",
+        &serde_json::to_vec(&legacy).unwrap(),
+    )
+    .unwrap();
+    configure(&old).unwrap();
+    assert_eq!(queue::stats(d.path()), original);
+
+    // 旧文件升级时切换：若新 control 写失败，旧接收端的 deadline 仍然完整。
+    queue::atomic(
+        d.path(),
+        "statistics.json",
+        &serde_json::to_vec(&legacy).unwrap(),
+    )
+    .unwrap();
+    let mut new = old.clone();
+    new.endpoint = "http://127.0.0.1:2".into();
+    queue::fail_next_write("control.json".into());
+    assert!(configure(&new).is_err());
+    let saved: queue::Statistics = queue::read(d.path(), "statistics.json", 8192).unwrap();
+    assert_eq!(saved, original);
+
+    // 模拟 control 已发布、更新统计前崩溃，读取/重启仍按新地址解除旧退避。
+    queue::atomic(d.path(), "control.json", &serde_json::to_vec(&new).unwrap()).unwrap();
+    let resumed = queue::stats(d.path());
+    assert_eq!(resumed.destination, destination(&new));
+    assert_eq!(resumed.not_before, 0);
+    assert_eq!(resumed.consecutive_failures, 0);
+    assert_eq!(resumed.last_error, None);
+    configure(&new).unwrap();
+    assert_eq!(queue::stats(d.path()), resumed);
+}
 #[test]
 fn completion_of_evicted_inflight_record_does_not_resurrect_it() {
     let d = tempfile::tempdir().unwrap();
@@ -668,6 +799,24 @@ fn backoff_is_bounded_and_honors_retry_after() {
     assert_eq!(worker::backoff(&c, 2, None, 0), 2000);
     assert_eq!(worker::backoff(&c, 1, Some(8), 0), 8000);
     assert_eq!(worker::backoff(&c, 100, None, 0), 10_000);
+    assert_eq!(worker::backoff(&c, 1, Some(60), 0), 60_000);
+    assert_eq!(worker::backoff(&c, 100, Some(u64::MAX), 0), u64::MAX);
+}
+
+#[test]
+fn retry_after_accepts_http_dates_and_never_rounds_before_server_deadline() {
+    use std::time::UNIX_EPOCH;
+    let at = UNIX_EPOCH + Duration::from_millis(1_700_000_000_500);
+    let date = httpdate::fmt_http_date(at + Duration::from_secs(61));
+    assert_eq!(worker::retry_after(&date, at), Some(61));
+    assert_eq!(worker::retry_after(" 120 ", at), Some(120));
+    assert_eq!(
+        worker::retry_after("Thu, 01 Jan 1970 00:00:00 GMT", at),
+        Some(0)
+    );
+    for invalid in ["", "-1", "+1", "1.5", "tomorrow", "18446744073709551616"] {
+        assert_eq!(worker::retry_after(invalid, at), None, "{invalid}");
+    }
 }
 #[test]
 fn capture_is_nonblocking_when_spool_lock_is_held() {
@@ -728,14 +877,14 @@ async fn otlp_response_validation_handles_throttle_partial_failure_and_broken_bo
         worker::Outcome::Retry("rate_limited", Some(7))
     ));
     c.endpoint = http_fixture(
-        b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\n".to_vec(),
+        b"HTTP/1.1 200 OK\r\nContent-Type: application/x-protobuf\r\nContent-Length: 10\r\nConnection: close\r\n\r\n".to_vec(),
     );
     assert!(matches!(
         worker::upload(&client, &c, vec![0]).await,
         worker::Outcome::Retry("response_interrupted", _)
     ));
     c.endpoint = http_fixture(
-        b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\n<html".to_vec(),
+        b"HTTP/1.1 200 OK\r\nContent-Type: application/x-protobuf\r\nContent-Length: 5\r\nConnection: close\r\n\r\n<html".to_vec(),
     );
     assert!(matches!(
         worker::upload(&client, &c, vec![0]).await,
@@ -752,7 +901,7 @@ async fn otlp_response_validation_handles_throttle_partial_failure_and_broken_bo
     }
     .encode_to_vec();
     let mut response = format!(
-        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nContent-Type: application/x-protobuf\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     )
     .into_bytes();
@@ -763,9 +912,115 @@ async fn otlp_response_validation_handles_throttle_partial_failure_and_broken_bo
         worker::Outcome::Failed("otlp_partial_rejection")
     ));
     c.endpoint =
-        http_fixture(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec());
+        http_fixture(b"HTTP/1.1 200 OK\r\nContent-Type: application/x-protobuf\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec());
     assert!(matches!(
         worker::upload(&client, &c, vec![0]).await,
         worker::Outcome::Success
     ));
+}
+
+#[tokio::test]
+async fn otlp_http_retries_only_standard_codes_and_validates_ack_media_type() {
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let mut c = config(Path::new("/unused"));
+    for status in [400, 401, 403, 408, 413, 500, 501, 505, 599] {
+        c.endpoint = http_fixture(
+            format!("HTTP/1.1 {status} Fixture\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .into_bytes(),
+        );
+        assert!(
+            matches!(
+                worker::upload(&client, &c, vec![0]).await,
+                worker::Outcome::Failed(_)
+            ),
+            "{status}"
+        );
+    }
+    for status in [429, 502, 503, 504] {
+        c.endpoint = http_fixture(format!("HTTP/1.1 {status} Fixture\r\nRetry-After: 60\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").into_bytes());
+        assert!(
+            matches!(
+                worker::upload(&client, &c, vec![0]).await,
+                worker::Outcome::Retry(_, Some(60))
+            ),
+            "{status}"
+        );
+    }
+    let date = httpdate::fmt_http_date(std::time::SystemTime::now() + Duration::from_secs(120));
+    c.endpoint = http_fixture(format!("HTTP/1.1 503 Fixture\r\nRetry-After: {date}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").into_bytes());
+    assert!(matches!(
+        worker::upload(&client, &c, vec![0]).await,
+        worker::Outcome::Retry(_, Some(110..=120))
+    ));
+    for content_type in [
+        "",
+        "Content-Type: text/plain\r\n",
+        "Content-Type: application/json\r\n",
+    ] {
+        c.endpoint = http_fixture(
+            format!(
+                "HTTP/1.1 200 OK\r\n{content_type}Content-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+            .into_bytes(),
+        );
+        assert!(matches!(
+            worker::upload(&client, &c, vec![0]).await,
+            worker::Outcome::Failed("invalid_otlp_response")
+        ));
+    }
+    c.endpoint = http_fixture(b"HTTP/1.1 200 OK\r\nContent-Type: Application/X-Protobuf; charset=binary\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec());
+    assert!(matches!(
+        worker::upload(&client, &c, vec![0]).await,
+        worker::Outcome::Success
+    ));
+}
+
+#[tokio::test]
+async fn remote_retry_deadline_and_invalid_ack_preserve_durable_payload() {
+    let d = tempfile::tempdir().unwrap();
+    let mut c = config(d.path());
+    let payload = event("delayed", true, 0);
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    c.endpoint = http_fixture(
+        b"HTTP/1.1 503 Busy\r\nRetry-After: 120\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            .to_vec(),
+    );
+    configure(&c).unwrap();
+    queue::enqueue(&c, &payload, None).unwrap();
+    let record = worker::pick(&c).unwrap().unwrap();
+    let before = now();
+    let outcome = worker::upload(&client, &c, payload.clone()).await;
+    worker::settle(&c, &record, outcome).unwrap();
+    let saved = queue::records(d.path(), c.max_disk_bytes)
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(saved.status, "pending");
+    assert!(saved.next_attempt_at.unwrap() >= before + 120_000);
+    assert_eq!(
+        queue::payload(d.path(), &saved, c.max_batch_bytes).unwrap(),
+        payload
+    );
+    // 重开配置不能清掉接收端退避；进程恢复仍不允许立即发送。
+    configure(&c.clone()).unwrap();
+    assert!(worker::pick(&c).unwrap().is_none());
+
+    let d = tempfile::tempdir().unwrap();
+    c.spool_dir = d.path().into();
+    c.endpoint = http_fixture(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec());
+    configure(&c).unwrap();
+    queue::enqueue(&c, &payload, None).unwrap();
+    let record = worker::pick(&c).unwrap().unwrap();
+    let outcome = worker::upload(&client, &c, payload.clone()).await;
+    worker::settle(&c, &record, outcome).unwrap();
+    let saved = queue::records(d.path(), c.max_disk_bytes)
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(saved.status, "failed");
+    assert_eq!(saved.error.as_deref(), Some("invalid_otlp_response"));
+    assert_eq!(
+        queue::payload(d.path(), &saved, c.max_batch_bytes).unwrap(),
+        payload
+    );
 }

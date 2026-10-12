@@ -325,6 +325,88 @@ mode = "YOLO"
                 self.assertFalse((home / "trajectory-credentials").exists())
                 self.assertFalse((home / "config.toml.trajectory.bak").exists())
 
+    def test_endpoint_change_does_not_forward_file_or_environment_credentials(self):
+        for field in ("headers_file", "headers_env"):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                home = Path(directory)
+                credential = home / "original-headers.txt"
+                credential.write_text("authorization=old-private-token")
+                reference = str(credential) if field == "headers_file" else "OLD_HEADERS"
+                config = home / "config.toml"
+                original = (
+                    "schema_version=2\n[trajectory]\nenabled=true\n"
+                    'endpoint="https://old.example"\n'
+                    f"{field}={json.dumps(reference)}\n"
+                )
+                config.write_text(original)
+                calls = []
+
+                def control(argv, **_kwargs):
+                    calls.append(argv[2])
+                    if argv[2] == "suspend":
+                        self.assertEqual(config.read_text(), original)
+                    else:
+                        values = tomllib.loads(config.read_text())["trajectory"]
+                        self.assertEqual(values["endpoint"], "https://new.example")
+                        self.assertNotIn("headers_file", values)
+                        self.assertNotIn("headers_env", values)
+                    return MODULE.subprocess.CompletedProcess(argv, 0)
+
+                with patch.object(MODULE.subprocess, "run", side_effect=control):
+                    code, stdout, stderr = self.run_script(
+                        home,
+                        "--endpoint",
+                        "https://new.example",
+                        environment={"OLD_HEADERS": "authorization=old-private-token"},
+                        binary="/safe/areal",
+                    )
+                self.assertEqual(code, 0)
+                self.assertTrue(json.loads(stdout)["credentialsCleared"])
+                self.assertEqual(calls, ["suspend", "sync-config"])
+                self.assertEqual(credential.read_text(), "authorization=old-private-token")
+                self.assertNotIn("old-private-token", stdout + stderr + config.read_text())
+
+    def test_same_destination_keeps_credentials_and_failed_switch_leaves_them_intact(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            config = home / "config.toml"
+            config.write_text(
+                "schema_version=2\n[trajectory]\nenabled=true\n"
+                'endpoint="https://old.example"\nheaders_env="OLD_HEADERS"\n'
+            )
+            code, stdout, _ = self.run_script(home, "--endpoint", "https://old.example")
+            self.assertEqual(code, 0)
+            self.assertFalse(json.loads(stdout)["credentialsCleared"])
+            before = config.read_text()
+            self.assertEqual(tomllib.loads(before)["trajectory"]["headers_env"], "OLD_HEADERS")
+            code, _, _ = self.run_script(home, "--endpoint", "https://new.example")
+            self.assertEqual(code, 1)
+            self.assertEqual(config.read_text(), before)
+
+    def test_script_default_credentials_are_scoped_to_its_default_endpoint(self):
+        for override, expected in ((None, True), ("https://different.example", False)):
+            with (
+                self.subTest(override=override),
+                tempfile.TemporaryDirectory() as directory,
+                patch.object(MODULE, "DEFAULT_ENDPOINT", "https://configured.example"),
+                patch.object(MODULE, "DEFAULT_HEADERS", "authorization=default-private-token"),
+            ):
+                home = Path(directory)
+                arguments = ("--endpoint", override) if override else ()
+                code, stdout, stderr = self.run_script(home, "--enable", *arguments)
+                self.assertEqual(code, 0)
+                content = (home / "config.toml").read_text()
+                values = tomllib.loads(content)["trajectory"]
+                self.assertEqual("headers_file" in values, expected)
+                self.assertNotIn("default-private-token", stdout + stderr + content)
+                if expected:
+                    self.assertEqual(
+                        Path(values["headers_file"]).read_text(),
+                        "authorization=default-private-token",
+                    )
+                else:
+                    self.assertFalse((home / "trajectory-credentials").exists())
+
     def test_editor_change_during_control_transition_is_not_overwritten(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)

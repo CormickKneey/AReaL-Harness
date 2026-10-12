@@ -319,6 +319,10 @@ Task Mode 在 Goal 之上提供 foreground/scheduled/background 任务、TaskRun
 
 ### 持久轨迹协议
 
+传输使用标准 OTLP HTTP/protobuf 的 `ExportLogsServiceRequest`，不是 Arena 私有请求。`areal.trajectory/v1` 是本项目公开的、带版本的 Agent 轨迹语义约定，`areal.*` 是自定义 OTLP 属性，不是 OpenTelemetry 标准属性。任意标准 Collector 可以接收并转发这些日志；独立接收端和其它生产者可依据本节实现轨迹解析，不需要安装 Harness 或 Arena 的包。普通日志缺少 Turn 身份或终态时，不能推断为完整 Agent 轨迹。
+
+Harness 使用 `service.name=areal-core` 标明自身，并通过 `service.instance.id`、`areal.thread.id` 和 `areal.turn.id` 标识安装实例、会话与轮次；该服务名不是接收端必须绑定的产品身份。接收端认证决定数据归属，日志中的属性不能替代认证账号。Collector 分发时应保留事件身份、原始请求字符串、版本、时间和清单，不能通过重写属性或丢弃事件后继续宣称原轨迹完整。多个接收端的配置与故障边界见[多接收端分发](../guides/configuration.md#持久轨迹导出)。
+
 持久 OTLP Logs 通道在每个 Turn 的事件中附加 `areal.trajectory.schema_version=areal.trajectory/v1`、`areal.event.id`（UUID）和从 1 开始的 `areal.event.sequence`。`areal.turn.completed` 附带 `areal.turn.event_count`（含终态）与 `areal.turn.events_sha256`：按序号把 UTF-8 `sequence:event_id\n` 拼接后计算 SHA-256。序号在尝试排队前分配，因此内存拒收、磁盘淘汰、传输缺失会留下缺口。接收端只有在清单、连续序号、唯一身份全部匹配，且无采集截断时才能确认送达完整；终态缺失、旧协议或协议字段缺失须保留未知，不能从 DONE 推导完整。正常执行结果与送达完整性独立。
 
 | 属性                                                                 | 契约                                                                                                                                                           |

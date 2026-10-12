@@ -7,7 +7,7 @@ use std::{
     fs::OpenOptions,
     io::Read,
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 pub(super) fn headers(config: &TrajectoryConfig) -> Result<HeaderMap> {
@@ -121,8 +121,9 @@ pub(super) async fn upload(
         .headers()
         .get("retry-after")
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.parse::<u64>().ok());
-    if matches!(status, 408 | 429 | 502 | 503 | 504) || status >= 500 {
+        .and_then(|v| retry_after(v, SystemTime::now()));
+    // OTLP 明确禁止重试其它 4xx/5xx；不能把永久协议错误反复送给接收端。
+    if matches!(status, 429 | 502 | 503 | 504) {
         return Outcome::Retry(
             if status == 429 {
                 "rate_limited"
@@ -138,6 +139,16 @@ pub(super) async fn upload(
         } else {
             "request_rejected"
         });
+    }
+    if !response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("application/x-protobuf"))
+    {
+        // 空正文也是合法 protobuf ACK，必须同时检查类型，避免把普通 HTTP 200 当作送达。
+        return Outcome::Failed("invalid_otlp_response");
     }
     let mut body = Vec::new();
     loop {
@@ -165,6 +176,21 @@ pub(super) async fn upload(
     }
 }
 
+pub(super) fn retry_after(value: &str, at: SystemTime) -> Option<u64> {
+    let value = value.trim();
+    if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return value.parse().ok();
+    }
+    let date = httpdate::parse_http_date(value).ok()?;
+    let delay = date.duration_since(at).unwrap_or_default();
+    // 向上取整，不能在 HTTP-date 指定的时刻之前重试。
+    Some(
+        delay
+            .as_secs()
+            .saturating_add(u64::from(delay.subsec_nanos() != 0)),
+    )
+}
+
 pub(super) fn backoff(
     config: &TrajectoryConfig,
     failures: u32,
@@ -177,8 +203,9 @@ pub(super) fn backoff(
     );
     let seconds = base
         .saturating_add(jitter % (base / 4 + 1))
-        .max(after.unwrap_or(0))
-        .min(config.retry_max_seconds);
+        .min(config.retry_max_seconds)
+        // 本地上限只约束客户端退避；接收端要求的等待时间是不可截短的下限。
+        .max(after.unwrap_or(0));
     seconds.saturating_mul(1000)
 }
 
@@ -260,14 +287,17 @@ pub(super) fn settle(config: &TrajectoryConfig, record: &Record, outcome: Outcom
         return Ok(());
     }
     let mut totals = queue::stats(root);
-    totals.not_before = now().saturating_add(config.upload_interval_ms);
+    let active_destination = totals.destination == current.destination;
+    if active_destination {
+        totals.not_before = now().saturating_add(config.upload_interval_ms);
+    }
     match outcome {
         Outcome::Success => {
             let mut previous = current.clone();
             current.status = "uploaded".into();
             current.uploaded_at = Some(now());
             current.completion_sequence = Some(totals.uploaded.saturating_add(1));
-            current.completion_not_before = Some(totals.not_before);
+            current.completion_not_before = active_destination.then_some(totals.not_before);
             current.next_attempt_at = None;
             current.error = None;
             current.payload_present = false;
@@ -276,14 +306,24 @@ pub(super) fn settle(config: &TrajectoryConfig, record: &Record, outcome: Outcom
             queue::remove_payload(root, &mut previous)?;
             totals.uploaded = current.completion_sequence.unwrap();
             totals.last_success_at = Some(now());
-            totals.last_error = None;
-            totals.consecutive_failures = 0;
+            if active_destination {
+                totals.last_error = None;
+                totals.consecutive_failures = 0;
+            }
         }
         Outcome::Failed(error) => {
             current.status = "failed".into();
             current.error = Some(error.into());
             current.next_attempt_at = None;
-            totals.last_error = Some(error.into());
+            if active_destination {
+                totals.last_error = Some(error.into());
+            }
+        }
+        Outcome::Retry(_, _) if !active_destination => {
+            // 旧在途请求只能结算旧副本，不能把接收端的限流传播到新目的地。
+            current.status = "failed".into();
+            current.error = Some("destination_changed".into());
+            current.next_attempt_at = None;
         }
         Outcome::Retry(error, after) => {
             totals.consecutive_failures = totals.consecutive_failures.saturating_add(1);

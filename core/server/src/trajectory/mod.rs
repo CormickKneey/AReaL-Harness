@@ -121,20 +121,29 @@ fn configure_inner(config: &TrajectoryConfig, startup: bool) -> Result<()> {
                 "configuration_snapshot_expired"
             );
         }
-        if let Some(control) = persisted_control(root)? {
+        let previous = persisted_control(root)?;
+        if let Some(control) = &previous {
             anyhow::ensure!(
-                owns_control(config, &control),
+                owns_control(config, control),
                 "spool_configuration_conflict"
             );
             anyhow::ensure!(
                 !startup
                     || control.source_revision != config.source_revision
-                    || same_settings(config, &control),
+                    || same_settings(config, control),
                 "configuration_control_changed"
             );
         }
-        queue::atomic(root, "control.json", &serde_json::to_vec(config)?)?;
         let mut totals = queue::stats(root);
+        if previous
+            .as_ref()
+            .is_some_and(|control| destination(control) != destination(config))
+        {
+            // 先固定旧统计归属，再发布新地址；两次写之间崩溃也不能把旧退避归给新后端。
+            queue::save_stats(root, &totals)?;
+        }
+        queue::atomic(root, "control.json", &serde_json::to_vec(config)?)?;
+        queue::bind_destination(&mut totals, &destination(config));
         queue::prune(config, 0, false, &mut totals)?;
         queue::save_stats(root, &totals)?;
     }

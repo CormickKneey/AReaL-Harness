@@ -7,7 +7,7 @@ Install dependencies using the [development guide](README.en.md). Regular tests 
 | Entry point | Coverage |
 |---|---|
 | `make verify` | Cordis pin, formatting, static checks, Rust workspace, both SDKs, Python, documentation, TUI and unified delegation smoke |
-| `make script-test` | Launcher, Web reasoning/wait/cancel projections, benchmark statistics/evidence and documentation links/language pairs |
+| `make script-test` | Launcher, Web reasoning/wait/cancel projections, benchmark statistics/evidence, adapter dependency boundaries and documentation links/language pairs |
 | `make test-core` / `make test-protocol` | Engine / app-server |
 | `make test-concurrency` | Concurrency primitives |
 | `make verify-runtime` | Runtime unit tests and real file, process, permission and shutdown smoke |
@@ -60,7 +60,7 @@ python3 scripts/native-agents-smoke.py --bin-dir target/debug --sandbox-profile 
 
 Native tools/agent smoke tests use a local fixed-response HTTP model, the standard launcher and temporary workspaces without external model services. They cover file CAS, search, verification receipts, images, no delegation, a single Worker, synchronous waits, budget failures, parent cancellation and default asynchronous dispatch. The asynchronous case requires parent progress before three Worker requests finish and checks parent/child sampling parameters. Stream tests cover same-frame/tail length usage, EOF/cancellation, no UNKNOWN replay, post-compaction handles and cross-Turn boundaries.
 
-`make harness-smoke` also runs `python3 scripts/arena-input-smoke.py --bin-dir target/debug`. The real launcher, CLI, Core and Runtime verify that a task larger than 2 MiB starts through a short bootstrap; task text, manifest, PNG and selected GIF frames are read on demand; images reach the local model request; public inputs reject writes and retain their integrity. Directly oversized CLI input produces a structured error before any model request. This does not evaluate a real model. Engine unit tests separately cover serialized byte boundaries and successful WebSocket deltas whose full replay would exceed the wire budget.
+Optional `make envarena-smoke` runs `python3 integrations/envarena/arena-input-smoke.py --bin-dir target/debug`. The real launcher, CLI, Core and Runtime verify that a task larger than 2 MiB starts through a short bootstrap; task text, manifest, PNG and selected GIF frames are read on demand; images reach the local model request; public inputs reject writes and retain their integrity. Directly oversized CLI input produces a structured error before any model request. This does not evaluate a real model. Engine unit tests separately cover serialized byte boundaries and successful WebSocket deltas whose full replay would exceed the wire budget.
 
 Request-budget tests cover `MAX_MODEL_ROUNDS` classification when Chat Completions or Responses returns tools in the final round, with no tool execution or retries and the original budget audit preserved. Ordinary tool-call budget exhaustion and invalid indices must retain their own classifications. Desktop CLI acceptance also checks the corresponding `error_max_turns` result. Goal HTTP regressions verify that output-token caps and tool count/buffer budgets survive shared pools, while unknown usage from failed requests prevents retries and tool execution.
 
@@ -91,9 +91,22 @@ Outer-container relaxations apply only to the explicitly selected controlled pro
 
 `make capacity` runs these sequentially; regular verification excludes them. Report hardware, build mode, storage and model fixtures. These figures do not measure real LLM throughput.
 
+## Optional platform adapters
+
+The EnvArena adapter and its dedicated scripts live in `integrations/envarena/`. Former `scripts/package-arena.py`, `scripts/arena-input-smoke.py`, `scripts/fetch-arena-fixtures.py` and `scripts/tests/test_package_arena.py` moved there. Regular `make fmt`, `make lint`, `make script-test`, `make verify` and `make harness-smoke` do not load the adapter. Its tests remain available through explicit commands:
+
+```sh
+make envarena-check  # Adapter Ruff formatting/static checks and all offline unit tests
+make envarena-smoke  # Build the standalone product, then run real local input smoke
+```
+
+`make integration-boundaries` is a development check requiring a Git checkout. Included in `make script-test`, it checks product sources/dependency manifests, release/install entry points, the default Make graph and workflows. Regressions cover reintroduced platform paths, indirect recursive Make calls and automatic workflow triggers. The generic Rust `id-arena` allocator is not a platform dependency. Runtime, Engine and native tool tests continue to cover generic files/images, read-only directories and request budgets.
+
+[Optional EnvArena adapter](../../.github/workflows/arena-package.yml) runs only through manual `workflow_dispatch` to build the Linux musl zipapp, validate the final archive and hash-pinned public inputs, and preserve candidate artifacts. Regular PR checks, standard OTLP export and standalone releases do not depend on it. It neither contacts Arena services nor publishes Registry versions. Full archive acceptance requires native Linux container capabilities; local unit tests do not replace it.
+
 ## CI and contracts
 
-macOS and Linux host checks share one matrix definition. `fail-fast: false` ensures a failure on one platform does not cancel coverage on the other. macOS uses `make setup-node` for native smoke and SDK Node dependencies; Linux `make setup` continues to install all locked formatting tools. Native validation runs Runtime, Harness, desktop API and Workgroup smoke in one child Make invocation, sharing one workspace build. Docker copies only the required CLI/TUI/Web clients and excludes GUI from its build context. All existing checks and tests remain.
+macOS and Linux host checks share one matrix definition. `fail-fast: false` ensures a failure on one platform does not cancel coverage on the other. macOS uses `make setup-node` for native smoke and SDK Node dependencies; Linux `make setup` continues to install all locked formatting tools. Native validation runs Runtime, Harness, desktop API and Workgroup smoke in one child Make invocation, sharing one workspace build. Docker copies only the required CLI/TUI/Web clients and excludes GUI from its build context. Native Runtime and Harness coverage is retained; EnvArena-specific checks run through the explicit entry points above.
 
 `harness-smoke.mjs` checks root/nested `AGENTS.md` ordering, unrelated-directory isolation, missing files, per-Turn refresh, the 32 KiB boundary, UTF-8 and symlink rejection through real Core/Runtime model requests.
 

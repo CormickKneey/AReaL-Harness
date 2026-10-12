@@ -37,6 +37,12 @@ python3 -m unittest discover -s scripts/tests -p test_release.py
 
 Homebrew formula 安装 `bin`、`libexec`、LICENSE 和 manifest，避免改变 Core 查找 helper 的相对路径。Linux 安装器将不同版本放在不同目录，只原子替换入口符号链接；用户配置与历史不由安装器维护。校验失败不得切换入口。
 
+## 可选平台适配包
+
+[Optional EnvArena adapter](../../.github/workflows/arena-package.yml) 仅由 `workflow_dispatch` 手动触发，生成平台 runner 的 Linux musl zipapp 和验收 artifact；不发布 Arena Registry、不上传轨迹，也不是上述独立发行包或安装器的前置条件。普通 PR 不运行此工作流。专用脚本已从 `scripts/` 移至 `integrations/envarena/`，命令和原生 Linux 验收见[评测适配指南](../benchmarks/README.md#arena-按需公开输入)。
+
+维护仓库保护规则时，不要将可选适配器 job 设为普通 PR 的必需检查；若已有旧 `Arena package` 必需规则，需在仓库设置中移除。该设置独立于工作流文件。
+
 ## GUI 发布
 
 GUI 版本由 `clients/gui/package.json` 和 `clients/gui/app/package.json` 共同声明，与 Cargo/CLI 版本独立。发布地址统一为 `areal-project/AReaL-Harness`；版本 Release 使用 `gui-v<版本>` 标签，CLI 继续使用 `v<版本>`。GUI Release 不设为 GitHub Latest，避免改变 CLI 安装器的 Latest 语义。

@@ -6,7 +6,7 @@ PREFIX ?= /usr/local
 DESTDIR ?=
 
 ARGS ?=
-PYTHON_SOURCES := scripts tests integrations/envarena
+PYTHON_SOURCES := scripts tests
 WORKGROUP_ENV = AREAL_WORKGROUP_RUNTIME="$(CURDIR)/target/debug/areal-runtime" AREAL_WORKGROUP_HELPER="$(CURDIR)/target/debug/areal-runtime-fs"
 
 # Make 将 -- 后的单词视为目标；附加参数统一通过 ARGS 传递。
@@ -19,7 +19,7 @@ endif
 	capacity capacity-primitives capacity-core perf runtime test-runtime runtime-smoke verify-runtime \
 	cordis-pin update-cordis sdk-test harness harness-smoke verify-harness \
 	setup setup-node sdk-build script-test workgroup-smoke unified-execution-smoke capacity-workgroup local-service-smoke \
-	verify-native
+	verify-native integration-boundaries envarena-check envarena-smoke
 
 help: ## 显示常用操作（默认目标）
 	@printf '%s\n' '用法：make <target> [ARGS="..."]' ''
@@ -111,19 +111,28 @@ sdk-test: ## 编译两套 SDK 并验证 Runtime 与插件行为
 	npm --prefix runtime/sdk-typescript test
 	npm --prefix core/sdk-typescript test
 
-script-test: ## 启动器、Web 投影、perf 与文档的离线回归
+integration-boundaries: ## 检查独立构建、发行与产品代码不依赖可选平台适配器
+	python3 scripts/check-integration-boundaries.py
+
+script-test: integration-boundaries ## 启动器、Web 投影、perf 与文档的离线回归
 	python3 scripts/check-docs.py
 	node --test scripts/web-progress.test.mjs
 	python3 -m unittest discover -s scripts/tests
-	python3 -m unittest discover -s integrations/envarena
 	python3 tests/perf/perf.py self-test
+
+envarena-check: ## 可选 EnvArena 适配器的格式、静态与离线单元检查
+	uv run --locked --only-group dev ruff format --check integrations/envarena
+	uv run --locked --only-group dev ruff check integrations/envarena
+	python3 -m unittest discover -s integrations/envarena
+
+envarena-smoke: build ## 可选 EnvArena 输入交付的真实 CLI/Core/Runtime 本地回归
+	python3 integrations/envarena/arena-input-smoke.py --bin-dir target/debug $(ARGS)
 
 harness: ## 通过可信独立启动器启动工具 Harness；ARGS 指定工作区与数据目录
 	python3 scripts/launch.py $(ARGS)
 
 harness-smoke: build sdk-build ## 原生 SDK 与完整读改测试/强杀恢复
 	python3 scripts/native-tools-smoke.py --bin-dir target/debug
-	python3 scripts/arena-input-smoke.py --bin-dir target/debug
 	python3 scripts/native-python-smoke.py --bin-dir target/debug
 	python3 scripts/runtime-sdk-smoke.py
 	node scripts/harness-smoke.mjs
