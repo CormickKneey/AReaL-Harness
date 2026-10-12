@@ -1172,7 +1172,7 @@ mod cancellation_usage_tests {
         }
         for mode in ["cancel", "steer", "child-steer"] {
             let capture = Capture::default();
-            let _subscriber = tracing::subscriber::set_default(
+            let _subscriber = trajectory::test_support::capture(
                 tracing_subscriber::registry().with(capture.clone()),
             );
             let dir = tempfile::tempdir().unwrap();

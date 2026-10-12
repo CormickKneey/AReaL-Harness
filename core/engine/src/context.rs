@@ -1000,7 +1000,7 @@ mod budget_tests {
         }
         let capture = Capture::default();
         let _subscriber =
-            tracing::subscriber::set_default(tracing_subscriber::registry().with(capture.clone()));
+            trajectory::test_support::capture(tracing_subscriber::registry().with(capture.clone()));
         let dir = tempfile::tempdir().unwrap();
         let model = Arc::new(ModelFixture::default());
         let engine = Engine::open(
@@ -1043,7 +1043,23 @@ mod budget_tests {
         let event = observed
             .iter()
             .find(|event| event.get("gen_ai.input.messages") == Some(&sent[0]))
-            .expect("trace must contain exact fitted model input");
+            .unwrap_or_else(|| {
+                let diagnostics: Vec<_> = observed
+                    .iter()
+                    .map(|event| {
+                        (
+                            event.get("event.name"),
+                            event.get("areal.thread.id"),
+                            event.get("gen_ai.input.messages").map(String::len),
+                            event.get("areal.capture.truncated"),
+                        )
+                    })
+                    .collect();
+                panic!(
+                    "trace must contain exact fitted model input ({} bytes); observed={diagnostics:?}",
+                    sent[0].len()
+                );
+            });
         assert_eq!(event["areal.thread.id"], thread.id);
         assert_eq!(
             event["event.name"],

@@ -787,6 +787,63 @@ pub(crate) mod test_support {
         span::{Attributes, Id, Record},
     };
     use tracing_subscriber::{Layer, layer::Context, registry::LookupSpan};
+
+    pub(crate) struct CaptureGuard {
+        // 先恢复原线程订阅，再释放用于兴趣合并的后台 Dispatch。
+        _default: tracing::dispatcher::DefaultGuard,
+        _background: tracing::Dispatch,
+    }
+
+    pub(crate) fn capture<S: Subscriber + Send + Sync + 'static>(subscriber: S) -> CaptureGuard {
+        // 并行测试共享静态 callsite。保留第二个已注册 Dispatch，使 tracing
+        // 合并所有订阅的兴趣；否则唯一线程局部订阅可能被未订阅线程的首次
+        // callsite 注册缓存为 never。这个 Dispatch 不安装到任何线程，不输出日志。
+        let background = tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
+        let default = tracing::subscriber::set_default(subscriber);
+        CaptureGuard {
+            _default: default,
+            _background: background,
+        }
+    }
+
+    #[test]
+    fn capture_survives_foreign_first_callsite_and_restores_thread_default() {
+        use tracing_subscriber::prelude::*;
+
+        fn operation() -> bool {
+            let span = tracing::info_span!(target: super::TARGET, "foreign-first-capture-fixture",
+                areal.thread.id = "guard-fixture");
+            let enabled = !span.is_disabled();
+            let mut operation = super::Operation::with_budget(
+                span,
+                "gen_ai.client.inference.operation.details",
+                Arc::new(super::Budget::new(4096)),
+            );
+            operation.finish(None);
+            enabled
+        }
+
+        let observed = Capture::default();
+        let guard = capture(tracing_subscriber::registry().with(observed.clone()));
+        // 先由没有订阅的线程触发冷 span 和真实 Operation::finish event。
+        assert!(!std::thread::spawn(operation).join().unwrap());
+        assert!(observed.0.lock().unwrap().is_empty());
+        assert!(operation());
+        {
+            let events = observed.0.lock().unwrap();
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0]["areal.thread.id"], "guard-fixture");
+            assert_eq!(
+                events[0]["event.name"],
+                "gen_ai.client.inference.operation.details"
+            );
+        }
+        assert!(!std::thread::spawn(operation).join().unwrap());
+        drop(guard);
+        assert!(!operation());
+        assert_eq!(observed.0.lock().unwrap().len(), 1);
+    }
+
     #[derive(Default)]
     struct Fields(BTreeMap<String, String>);
     impl Visit for Fields {
@@ -854,7 +911,7 @@ mod capture_budget_tests {
     fn unending_summary_and_parallel_operations_share_a_released_budget() {
         let capture = Capture::default();
         let _subscriber =
-            tracing::subscriber::set_default(tracing_subscriber::registry().with(capture.clone()));
+            super::test_support::capture(tracing_subscriber::registry().with(capture.clone()));
         let budget = Arc::new(Budget::new(4096));
         let mut operations: Vec<_> = (0..8)
             .map(|_| Operation::with_budget(span(), "summary", budget.clone()))
@@ -893,7 +950,7 @@ mod capture_budget_tests {
     fn streamed_escaping_preserves_text_and_non_text_part_order() {
         let capture = Capture::default();
         let _subscriber =
-            tracing::subscriber::set_default(tracing_subscriber::registry().with(capture.clone()));
+            super::test_support::capture(tracing_subscriber::registry().with(capture.clone()));
         let budget = Arc::new(Budget::new(16 * 1024));
         let mut operation = Operation::with_budget(span(), "details", budget.clone());
         let fragments = ["引号\"", "\\反斜杠\n", "\t\u{0000}🍎"];
