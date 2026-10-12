@@ -666,9 +666,10 @@ class CorePreview {
   async humanKey(page, input) {
     const modifiers = ['shift', 'control', 'alt', 'meta'].filter(name => input[name]);
     const keyCode = input.key === ' ' ? 'Space' : input.key;
-    await this.humanInput(page.projectId, page.threadId, page.id, { type: input.type, keyCode, modifiers });
+    const pending = [this.humanInput(page.projectId, page.threadId, page.id, { type: input.type, keyCode, modifiers })];
     if (input.type === 'keyDown' && input.key.length === 1 && !input.control && !input.meta && !input.isComposing)
-      await this.humanInput(page.projectId, page.threadId, page.id, { type: 'char', keyCode: input.key, modifiers });
+      pending.push(this.humanInput(page.projectId, page.threadId, page.id, { type: 'char', keyCode: input.key, modifiers }));
+    await Promise.all(pending);
   }
   async humanInput(projectId, threadId, pageId, input) {
     const page = this.page(projectId, threadId, pageId);
@@ -684,6 +685,8 @@ class CorePreview {
       || input.x < 0 || input.y < 0 || input.x >= bounds.width || input.y >= bounds.height))
       throw new Error('人工输入坐标已变化');
     // fence 必须在首个 await 之前完成，后续输入按同一代次串行交付。
+    // 隐藏 View 仍可能保留焦点；先迁到 Main，让 drain 期间的真实 up/char 继续进入 Main 队列。
+    if (c.isFocused?.()) { this.nativeInputOwner = page.id; this.window.webContents.focus(); }
     this.noteHumanInput(page);
     const epoch = page.controlEpoch, generation = page.pageGeneration, document = page.documentGeneration;
     const deliver = async () => {
@@ -1391,7 +1394,11 @@ class CorePreview {
       role: safeText(node.role?.value, 80), name: safeText(node.name?.value, 256) };
   }
   async publicActionSemantics(page, c, target, action) {
-    const resolved = await c.debugger.sendCommand('DOM.resolveNode', { backendNodeId: target.backendNodeId });
+    const frames = await c.debugger.sendCommand('Page.getFrameTree');
+    const world = await c.debugger.sendCommand('Page.createIsolatedWorld', { frameId: frames.frameTree.frame.id,
+      worldName: 'areal-browser-action-semantics' });
+    const resolved = await c.debugger.sendCommand('DOM.resolveNode', { backendNodeId: target.backendNodeId,
+      executionContextId: world.executionContextId });
     const objectId = resolved.object?.objectId;
     if (!objectId) throw new Error('target_unavailable');
     let facts;

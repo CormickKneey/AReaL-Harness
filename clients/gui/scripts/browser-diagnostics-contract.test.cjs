@@ -44,8 +44,10 @@ test('direct human input fences before drain and delivers only after convergence
     convergeInput: async () => { await drained; page.control = 'human'; }, state: () => ({}) });
   const pending = preview.humanInput('project', 'thread', 'page', { type: 'mouseDown', x: 10, y: 12, button: 'left' });
   assert.deepEqual(log, ['fence']);
-  finish(); await pending;
-  assert.deepEqual(log, ['fence', 'mouseDown']);
+  preview.revoke = () => {};
+  const up = preview.humanInput('project', 'thread', 'page', { type: 'mouseUp', x: 10, y: 12, button: 'left' });
+  finish(); await Promise.all([pending, up]);
+  assert.deepEqual(log, ['fence', 'mouseDown', 'mouseUp']);
 });
 
 test('human input never delivers to a replacement document while draining', async () => {
@@ -65,4 +67,41 @@ test('human input never delivers to a replacement document while draining', asyn
   await new Promise(resolve => setImmediate(resolve));
   page.documentGeneration++; finish();
   await assert.rejects(pending, /页面|input/);
+});
+
+test('keyDown and character are queued ahead of a physical keyUp during drain', async () => {
+  const log = [];
+  let finish;
+  const drained = new Promise(resolve => { finish = resolve; });
+  const preview = Object.create(CorePreview.prototype);
+  preview.humanInput = async (_project, _thread, _page, input) => { log.push(input.type); await drained; };
+  const page = { projectId: 'project', threadId: 'thread', id: 'page' };
+  const down = preview.humanKey(page, { type: 'keyDown', key: 'a' });
+  const up = preview.humanKey(page, { type: 'keyUp', key: 'a' });
+  assert.deepEqual(log, ['keyDown', 'char', 'keyUp']);
+  finish(); await Promise.all([down, up]);
+});
+
+test('takeover drains prior native receipts before releasing held key and mouse', async () => {
+  const log = [];
+  let finish;
+  const receipt = new Promise(resolve => { finish = resolve; });
+  const page = { control: 'transferring', controlEpoch: 3, requestedVisible: true,
+    coreInstanceId: 'core', projectId: 'project', threadId: 'thread', id: 'page',
+    heldKeys: new Map([['a', { key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65 }]]),
+    heldButtons: new Map([['left', { x: 10, y: 12 }]]), inputPending: new Set([receipt]) };
+  receipt.then(() => page.inputPending.delete(receipt));
+  page.view = { setVisible() {}, webContents: { isDestroyed: () => false,
+    debugger: { isAttached: () => true, sendCommand: async (method, params) => { log.push([method, params.type]); },
+      detach: () => log.push(['detach']) } } };
+  const preview = Object.create(CorePreview.prototype);
+  Object.assign(preview, { pageStillOwned: () => true, changed() {},
+    owner: JSON.stringify(['core', 'project', 'thread', 'page']) });
+  const pending = preview.convergeInput(page);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(log, []); assert.equal(page.control, 'transferring');
+  finish(); await pending;
+  assert.deepEqual(log, [['Input.dispatchKeyEvent', 'keyUp'], ['Input.dispatchMouseEvent', 'mouseReleased'], ['detach']]);
+  assert.equal(page.control, 'human');
+  assert.equal(page.heldKeys.size + page.heldButtons.size + page.inputPending.size, 0);
 });
