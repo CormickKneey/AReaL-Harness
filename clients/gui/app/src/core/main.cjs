@@ -173,7 +173,7 @@ app.whenReady().then(async () => {
       threadId: request.threadId, turnId: request.turnId, callId: request.callId, pageId: request.pageId,
       browserHostId: request.browserHostId, hostGeneration: request.hostGeneration,
       pageGeneration: request.pageGeneration, controlEpoch: request.controlEpoch,
-      error: /Human controls|revoked/.test(error.message) ? 'human_control'
+      error: error.message === 'human_control' || /Human controls|revoked/.test(error.message) ? 'human_control'
         : error.message === 'stale_ref' ? 'stale_ref'
         : /plan_stale/.test(error.message) ? 'plan_stale'
         : error.message === 'human_takeover_required' ? 'human_takeover_required'

@@ -277,7 +277,7 @@ test('same-document unchanged URL invalidates observations without revoking curr
   }
   const live = setup();
   for (let i = 1; i <= 3; i++) {
-    live.page.refs.set('old', 'r1'); live.page.plans.set('old', {}); live.page.needsObservation = false;
+    live.page.refs.set('old', 'r1'); live.page.plans.set('old', { plan: { operation: 'act' } }); live.page.needsObservation = false;
     live.c.emit('did-start-navigation', {}, 'https://search.example/', true, true);
     assert.equal(live.page.control, 'agent'); assert.equal(live.page.controlEpoch, 3);
     assert.equal(live.page.documentGeneration, i); assert.equal(live.page.activeAction.navigationDocument, i);

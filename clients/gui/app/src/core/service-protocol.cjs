@@ -421,7 +421,7 @@ class DesktopService {
       browserHostId: claim.browserHostId, hostGeneration: claim.hostGeneration, available: true,
       operations: ['describe', 'observe', 'capture', 'act', 'wait', 'navigate', 'newPage', 'diagnostics', 'runBatch'],
       instructions: 'Use navigate with a listed pageId and a URL to open a site, then observe to obtain current refs. Fill the search field and press Enter to submit an approved public search. describe creates or reuses the visible page after Core approval; no development service is needed. Human input revokes access; only a new explicit chat request can authorize re-entry.',
-      parameterGuide: 'Replace pageId with an ID from pages, snapshotId with the latest observe.observationId, and ref with a ref from that observation. act takes one nested action object. Observe again after fill before submitting with press Enter.',
+      parameterGuide: 'Every new user request starts with describe and a fresh observe; never reuse earlier-turn snapshotId or refs. Replace pageId with an ID from pages, snapshotId with the latest observe.observationId, and ref with a ref from that observation. act takes one nested action object. Observe again after fill before submitting with press Enter.',
       examples: [
         { operation: 'observe', parameters: { pageId: '<pageId>' } },
         { operation: 'act', parameters: { pageId: '<pageId>', snapshotId: '<observe.observationId>',

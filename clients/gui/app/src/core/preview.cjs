@@ -65,6 +65,13 @@ async function batchWithin(promise, deadline) {
 }
 const viewportScript = `({width:innerWidth,height:innerHeight,scrollX,scrollY,deviceScaleFactor:devicePixelRatio})`;
 const coordinateKinds = new Set(['clickAt', 'drag', 'pressAt']);
+const documentReadyWait = (operation, parameters) => operation === 'wait' && parameters?.condition?.kind === 'documentReady';
+function invalidateDocumentPlans(page) {
+  // Readiness has no element target: keep only same-Origin, same-control waits.
+  for (const [id, record] of page.plans) {
+    if (!documentReadyWait(record.plan.operation, record.plan.action)) page.plans.delete(id);
+  }
+}
 function viewportFacts(window, page, viewport) {
   const pageZoom = page.view.webContents.getZoomFactor();
   const guiZoom = window.webContents.getZoomFactor();
@@ -1837,6 +1844,7 @@ class CorePreview {
     if (['navigate', 'newPage'].includes(request.operation)) return this.prepareNavigation(request);
     const { page, c } = this.actionPage(request);
     const initialDocument = page.documentGeneration;
+    const readiness = documentReadyWait(request.operation, request.parameters);
     for (const [id, record] of page.plans) if (record.plan.expiresAt < Date.now()) page.plans.delete(id);
     if (page.activeRead || page.activePrepare || page.activeAction
       || page.activeBatch
@@ -1844,7 +1852,9 @@ class CorePreview {
     const url = new URL(c.getURL());
     const local = ['http:', 'https:'].includes(url.protocol) && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
     if (!local && !['http:', 'https:'].includes(url.protocol)) throw new Error('human_takeover_required');
-    if (page.needsObservation || (request.operation === 'act' && request.parameters.snapshotId !== page.lastObservation)) throw new Error('stale_ref');
+    const needsRefs = request.operation === 'act' || request.parameters.condition?.kind === 'accessibleName';
+    if ((needsRefs && (page.needsObservation || page.lastObservationTurnId !== request.turnId))
+      || (request.operation === 'act' && request.parameters.snapshotId !== page.lastObservation)) throw new Error('stale_ref');
     const coordinate = request.operation === 'act' && coordinateKinds.has(request.parameters.action.kind);
     const capture = coordinate ? page.lastCapture : null;
     if (coordinate && (!capture || capture.observationId !== request.parameters.snapshotId
@@ -1863,15 +1873,15 @@ class CorePreview {
         && !/^(textField|textbox|searchbox|comboBox|spinbutton)$/i.test(target.role))
         throw new Error('target_unavailable');
       const semantics = !local && target ? await this.publicActionSemantics(page, c, target, request.parameters.action) : null;
-      const viewport = await (request.batchDeadline
+      const viewport = readiness ? null : await (request.batchDeadline
         ? batchWithin(readIsolated(c, viewportScript), request.batchDeadline)
         : readIsolated(c, viewportScript));
-      const viewportKey = viewportFacts(this.window, page, viewport).key;
+      const viewportKey = readiness ? null : viewportFacts(this.window, page, viewport).key;
       if ((request.batchDeadline && performance.now() >= request.batchDeadline)
         || !this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== request.controlEpoch
-        || page.pageGeneration !== request.pageGeneration || page.documentGeneration !== initialDocument || c.isDestroyed()
-        || c.getURL() !== url.href) throw new Error('plan_stale');
-      if (page.viewportKey !== viewportKey) { page.viewportKey = viewportKey; page.viewportRevision++; }
+        || page.pageGeneration !== request.pageGeneration || (!readiness && page.documentGeneration !== initialDocument) || c.isDestroyed()
+        || (readiness ? new URL(c.getURL()).origin !== url.origin : c.getURL() !== url.href)) throw new Error('plan_stale');
+      if (!readiness && page.viewportKey !== viewportKey) { page.viewportKey = viewportKey; page.viewportRevision++; }
       if (coordinate && (capture.viewportKey !== viewportKey || capture.url !== url.href)) throw new Error('plan_stale');
       const plan = { preparedActionId: randomUUID(), operation: request.operation, pageId: page.id,
         origin: url.origin, url: observationUrl(url.href),
@@ -1909,19 +1919,20 @@ class CorePreview {
     const { page, c } = this.actionPage(request);
     const approved = request.browserApproval?.plan;
     const saved = approved && page.plans.get(approved.preparedActionId);
-    const nowViewport = await (request.batchDeadline
+    const readiness = documentReadyWait(request.operation, request.parameters);
+    const nowViewport = readiness ? null : await (request.batchDeadline
       ? batchWithin(readIsolated(c, viewportScript), request.batchDeadline)
       : readIsolated(c, viewportScript));
-    const nowKey = viewportFacts(this.window, page, nowViewport).key;
+    const nowKey = readiness ? null : viewportFacts(this.window, page, nowViewport).key;
     if (request.batchGuard?.()) throw new Error('not_sent');
     if (!saved || !isDeepStrictEqual(approved, saved.plan)
       || saved.plan.threadId !== request.threadId || saved.plan.turnId !== request.turnId
       || saved.plan.callId !== request.callId || saved.plan.operation !== request.operation
       || saved.plan.pageId !== request.pageId || saved.plan.expiresAt < Date.now()
-      || saved.plan.origin !== new URL(c.getURL()).origin || saved.pageUrl !== c.getURL()
-      || saved.plan.pageGeneration !== page.pageGeneration || saved.plan.documentEpoch !== page.documentGeneration
-      || saved.plan.controlEpoch !== page.controlEpoch || saved.plan.viewportRevision !== page.viewportRevision
-      || saved.plan.viewportKey !== nowKey
+      || saved.plan.origin !== new URL(c.getURL()).origin || (!readiness && saved.pageUrl !== c.getURL())
+      || saved.plan.pageGeneration !== page.pageGeneration || (!readiness && saved.plan.documentEpoch !== page.documentGeneration)
+      || saved.plan.controlEpoch !== page.controlEpoch || (!readiness && saved.plan.viewportRevision !== page.viewportRevision)
+      || (!readiness && saved.plan.viewportKey !== nowKey)
       || (coordinateKinds.has(request.parameters.action?.kind)
         && page.lastCapture?.observationId !== saved.plan.target?.captureId)
       || saved.plan.snapshotId !== (request.operation === 'act' ? request.parameters.snapshotId : null)
@@ -1956,14 +1967,16 @@ class CorePreview {
           if (!c.debugger.isAttached()) c.debugger.attach('1.3');
           const current = () => {
             this.actionPage(request);
-            if (action.cancelled || request.batchGuard?.() || c.getURL() !== saved.pageUrl
-              || page.documentGeneration !== saved.plan.documentEpoch) throw new Error('plan_stale');
+            if (action.cancelled || request.batchGuard?.() || new URL(c.getURL()).origin !== saved.plan.origin
+              || (!readiness && (c.getURL() !== saved.pageUrl || page.documentGeneration !== saved.plan.documentEpoch))) throw new Error('plan_stale');
           };
           const read = async promise => {
+            const document = page.documentGeneration;
             try { return await Promise.race([nativeWithin(promise, expires), stop]); }
             catch (error) {
               current();
               if (performance.now() >= expires) throw new Error('condition_timeout');
+              if (readiness && (c.isLoadingMainFrame() || page.documentGeneration !== document)) return null;
               throw error;
             }
           };
@@ -1971,8 +1984,10 @@ class CorePreview {
             current();
             let matched;
             if (condition.kind === 'documentReady') {
-              const state = await read(readIsolated(c, 'document.readyState'));
-              matched = state === condition.state || (condition.state === 'interactive' && state === 'complete');
+              const document = page.documentGeneration;
+              const state = c.isLoadingMainFrame() ? null : await read(readIsolated(c, 'document.readyState'));
+              matched = page.documentGeneration === document && !c.isLoadingMainFrame()
+                && (state === condition.state || (condition.state === 'interactive' && state === 'complete'));
             } else {
               const node = this.refNode(page, condition.ref);
               if (node.identity !== saved.waitIdentity) throw new Error('stale_ref');
@@ -2119,12 +2134,13 @@ class CorePreview {
     if (!c) throw new Error('Browser page is unavailable');
     if (page.crashed || c.isDestroyed() || c.isDevToolsOpened()) throw new Error('Browser page is unavailable');
     if (page.activeRead || page.activePrepare || page.activeAction) throw new Error('Browser page is busy');
+    const epoch = page.controlEpoch, documentGeneration = page.documentGeneration;
     let cancel;
-    const cancelled = new Promise((_, reject) => { cancel = () => reject(new Error('Browser observation was revoked')); });
+    const invalidation = () => page.control !== 'agent' || page.controlEpoch !== epoch ? 'human_control' : 'plan_stale';
+    const cancelled = new Promise((_, reject) => { cancel = reason => reject(new Error(reason ?? invalidation())); });
     const read = { requestId: request.requestId, cancel };
     page.activeRead = read;
-    const epoch = page.controlEpoch, documentGeneration = page.documentGeneration;
-    const timer = setTimeout(cancel, 10000);
+    const timer = setTimeout(() => cancel('condition_timeout'), 10000);
     try {
       if (!c.debugger.isAttached()) c.debugger.attach('1.3');
       const operation = request.operation;
@@ -2148,7 +2164,7 @@ class CorePreview {
       const viewportKey = facts.key;
       if (page.viewportKey !== viewportKey) { page.viewportKey = viewportKey; page.viewportRevision++; }
       if (!this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== epoch
-        || page.documentGeneration !== documentGeneration || c.isDestroyed()) throw new Error('Browser observation was revoked');
+        || page.documentGeneration !== documentGeneration || c.isDestroyed()) throw new Error(invalidation());
       const base = { observationId: randomUUID(), coreInstanceId, coreGeneration, projectId, threadId, turnId, callId, pageId,
         browserHostId, hostGeneration, pageGeneration, nativeWebContentsId: c.id,
         url: observationUrl(c.getURL()), title: safeText(c.getTitle(), 256), documentEpoch: documentGeneration,
@@ -2169,7 +2185,7 @@ class CorePreview {
           image = await Promise.race([c.capturePage(), cancelled]);
           if (!this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== epoch
             || page.documentGeneration !== documentGeneration)
-            throw new Error('Browser observation was revoked');
+            throw new Error(invalidation());
           postSensitive = await Promise.race([readIsolated(c, sensitiveCaptureScript()), cancelled]);
         } finally {
           if (page.control === 'agent' && page.controlEpoch === epoch) changed = await Promise.race([
@@ -2188,8 +2204,9 @@ class CorePreview {
         const png = image.toPNG();
         if (png.length > 2 * 1024 * 1024) throw new Error('Screenshot byte budget exceeded');
         if (!this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== epoch)
-          throw new Error('Browser observation was revoked');
+          throw new Error(invalidation());
         page.lastObservation = base.observationId;
+        page.lastObservationTurnId = turnId;
         page.lastCapture = { observationId: base.observationId, pageGeneration: page.pageGeneration,
           documentEpoch: documentGeneration, controlEpoch: epoch, viewportRevision: page.viewportRevision,
           viewportKey, url: c.getURL(), width: viewport.width, height: viewport.height,
@@ -2256,7 +2273,7 @@ class CorePreview {
         if (page.approvedActionNavigation !== searchIntent || searchIntent.expiresAt < Date.now()) publicSearchFields.clear();
       }
       if (!this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== epoch
-        || page.documentGeneration !== documentGeneration || c.isDestroyed()) throw new Error('Browser observation was revoked');
+        || page.documentGeneration !== documentGeneration || c.isDestroyed()) throw new Error(invalidation());
       const fieldValues = [...new Set(nodes.filter(node => fieldNodes.has(node.nodeId) && !publicSearchFields.has(node.nodeId))
         .map(node => String(node.value?.value ?? '')).filter(Boolean))];
       const fieldEcho = text => fieldValues.some(value => text === value || (value.length >= 3 && text.includes(value)));
@@ -2335,8 +2352,9 @@ class CorePreview {
       };
       walkFrames(frames.frameTree, true);
       if (!this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== epoch)
-        throw new Error('Browser observation was revoked');
+        throw new Error(invalidation());
       page.lastObservation = base.observationId;
+      page.lastObservationTurnId = turnId;
       page.needsObservation = false;
       return { ...base, frameCoverage: { main: 'covered', childFrames },
         shadowCoverage: 'not-distinguished-by-accessibility-tree', dynamicCoverage: 'snapshot-at-capturedAt',
@@ -2604,7 +2622,7 @@ class CorePreview {
           if (inPlace) page.styleTrial.stale = true;
           else page.styleTrial = null;
         }
-        page.activeRead?.cancel();
+        page.activeRead?.cancel('plan_stale');
         // 同文档且完整 URL 未变的 history 更新不产生新导航权限；旧观察仍在下方失效。
         const unchangedDocument = inPlace === true && !!page.committedUrl && url === page.committedUrl;
         const approvedAction = !unchangedDocument && this.acceptActionNavigation(page, url);
@@ -2616,7 +2634,7 @@ class CorePreview {
         this.cancelHumanGesture(page);
         if ((approvedAction || (unchangedDocument && page.control === 'agent')) && page.activeAction) page.activeAction.navigationDocument = page.documentGeneration;
         page.needsObservation = true;
-        page.refs.clear(); page.plans.clear();
+        page.refs.clear(); invalidateDocumentPlans(page);
         page.url = url;
         page.error = "";
       } else {
@@ -2624,8 +2642,8 @@ class CorePreview {
         this.cancelHumanGesture(page);
         // 按键释放可完成，但后续动作仍须重新观察，不能沿用子 Frame 变化前的计划。
         page.needsObservation = true;
-        page.refs.clear(); page.plans.clear();
-        page.activeRead?.cancel();
+        page.refs.clear(); invalidateDocumentPlans(page);
+        page.activeRead?.cancel('plan_stale');
       }
       if (this.pageStillOwned(page)) this.changed(page);
     });
