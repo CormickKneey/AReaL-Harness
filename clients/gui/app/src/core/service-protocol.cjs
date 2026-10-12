@@ -293,7 +293,7 @@ class DesktopService {
             ?.filter(turn => turn.status === 'inProgress').map(turn => turn.id) ?? []);
           for (const previous of entries) if (previous.accepted?.turnId && !activeTurns.has(previous.accepted.turnId))
             this.forgetBrowserEntrypoint(entryKey, previous);
-          // Core admits at most 128 queue items, plus this thread's active turn.
+          // Core 最多受理 128 个排队项，另保留本聊天的活动轮次。
           if (entries.size >= 129) throw new Error('Browser entry capacity reached');
           entry.ready = new Promise(resolve => { entry.resolve = value => { entry.accepted ??= value; resolve(value); }; });
           entries.add(entry); this.browserEntrypoints.set(entryKey, entries);
@@ -341,8 +341,8 @@ class DesktopService {
     if (entries?.size === 0) this.browserEntrypoints.delete(key);
   }
   async browserEntrypoint(request, key) {
-    // Keep each admitted message's capability independent. Reading this queue is
-    // read-only; no event order or "next turn" guess can authorize a callback.
+    // 每条已受理消息独立持有入口；队列查询只读，
+    // 事件顺序或对下一轮次的猜测均不能授权回调。
     let queue;
     for (const entry of [...this.browserEntrypoints.get(key) ?? []]) {
       const accepted = await entry.ready;
@@ -370,7 +370,7 @@ class DesktopService {
   async bootstrapBrowser(request, key) {
     const entry = await this.browserEntrypoint(request, key);
     if (!entry || !this.browserEntrypoints.get(key)?.has(entry)) return;
-    this.forgetBrowserEntrypoint(key, entry); // Consume only this accepted message; never replay it.
+    this.forgetBrowserEntrypoint(key, entry); // 仅消费这条已受理消息的入口，不重放。
     if (request.signal?.aborted || this.browserPending.size >= 8) return;
     const requestId = ++this.nextBrowserId;
     await new Promise((resolve, reject) => {

@@ -420,8 +420,8 @@ class CoreBackend {
     });
     this.requireConnection(project, client);
     if (thread.desktop?.archived || thread.parentThreadId || thread.status?.type !== 'idle') return;
-    // The fixed bundle append also safely reconnects its original idle ToolHost.
-    // Core refuses a live different owner and preserves all existing definitions.
+    // 固定工具包追加也安全重连原空闲 ToolHost；
+    // Core 拒绝不同的在线所有者，并保留全部既有工具定义。
     await this.submit(project, 'areal/thread/tools/attach', {
       threadId, expectedToolsetRevision: thread.toolsetRevision ?? 0, bundleId: 'areal.browser.v1',
     });
