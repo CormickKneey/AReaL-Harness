@@ -2520,12 +2520,16 @@ class CorePreview {
           else page.styleTrial = null;
         }
         page.activeRead?.cancel();
-        const approvedAction = this.acceptActionNavigation(page, url);
-        if (page.approvedNavigation === url) page.approvedNavigation = null;
-        else if (!approvedAction) this.revoke(page);
+        // 同文档且完整 URL 未变的 history 更新不产生新导航权限；旧观察仍在下方失效。
+        const unchangedDocument = inPlace === true && !!page.committedUrl && url === page.committedUrl;
+        const approvedAction = !unchangedDocument && this.acceptActionNavigation(page, url);
+        if (!unchangedDocument) {
+          if (page.approvedNavigation === url) page.approvedNavigation = null;
+          else if (!approvedAction) this.revoke(page);
+        }
         page.documentGeneration++;
         this.cancelHumanGesture(page);
-        if (approvedAction && page.activeAction) page.activeAction.navigationDocument = page.documentGeneration;
+        if ((approvedAction || (unchangedDocument && page.control === 'agent')) && page.activeAction) page.activeAction.navigationDocument = page.documentGeneration;
         page.needsObservation = true;
         page.refs.clear(); page.plans.clear();
         page.url = url;

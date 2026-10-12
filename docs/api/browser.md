@@ -36,6 +36,8 @@
 
 每页私有 Ref 缓存最多保留 1000 个存活身份，优先保留本次观察发出的 Ref；较旧的被驱逐 Ref 返回 `stale_ref`，公开 ID 不复用。原生截图前后均检查已知敏感字段，包括带可选 section 前缀的密码、支付安全码和一次性验证码自动填充 token，并在截图期间观察到 DOM 变更时拒绝图片。栅栏覆盖主文档、可读 Frame 和开放 Shadow root；短暂的 Canvas 像素或不可读的封闭 Shadow 内容无法证明安全，含未知秘密的页面不适合自动截图。
 
+同文档且完整 URL 未变的 history 更新只使旧读取、Ref 和计划失效，不撤销或恢复当前控制权；URL 变化或新文档仍遵守原导航授权规则。
+
 ## 1. 两条既有连接与一个新能力
 
 批量执行在既有 `browser_v1` 包络新增 `runBatch`，不修改持久化工具定义。参数为 `{pageId, snapshotId, steps}`，包含 1–8 步；每步为已有 `act` 动作（`{operation:"act", snapshotId, action}`）或有界等待（`{operation:"wait", timeoutMs, condition?}`）。所有步骤使用同一 Page 与已观察快照，不允许导航、新页面、任意代码、隐式网络工具或文件权限。截图坐标仅可用于首步，因为输入会使截图失效；已知等待总时长不能超过内部 29 秒执行预算。Core 准备并批准具体完整序列；Main 私有保存逐步计划，在每次派发前检查原生目标和控制 fence。结果包含逐步已确认回执与 `verification:not_checked`；后续确定拒绝时剩余步骤标为 `not_sent`。任一步不确定则整个工具为 UNKNOWN，并在 Core 错误详情保留已确认前缀。相同 call 身份共享运行中或已完成结果，参数变化拒绝。Preview 沿既有 Page operation 投影显示进度。

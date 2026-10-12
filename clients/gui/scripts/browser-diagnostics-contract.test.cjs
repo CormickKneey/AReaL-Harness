@@ -253,3 +253,54 @@ test('approved public search retains a bounded exact-query navigation chain', ()
   assert.equal(preview.acceptActionNavigation(link, 'https://search.example/article?id=1'), true);
   assert.equal(preview.acceptActionNavigation(link, 'https://search.example/article?id=1'), false, 'link approval remains single-use');
 });
+
+// 真实首页加载触发多次同 URL replaceState；读取仍失效，控制权不能因此被误撤销。
+test('same-document unchanged URL invalidates observations without revoking current control', () => {
+  const { EventEmitter } = require('node:events');
+  function setup(control = 'agent') {
+    const c = new EventEmitter(); c.debugger = new EventEmitter(); c.session = new EventEmitter();
+    c.session.setPermissionRequestHandler = c.session.setPermissionCheckHandler = () => {};
+    c.setWindowOpenHandler = () => {};
+    class View { constructor() { this.webContents = c; } setVisible() {} }
+    const window = new EventEmitter(); window.webContents = new EventEmitter();
+    window.contentView = { addChildView() {} };
+    const preview = new CorePreview(window, View, () => true, () => ({}), () => 'core');
+    preview.reservePageSlot = preview.changed = () => {};
+    preview.ensureWorkspaceContext = () => ({});
+    preview.convergeInput = async () => {};
+    const page = preview.create(JSON.stringify(['core', 'project', 'thread', 'page']), 'project', 'thread', { id: 'page' });
+    let readsCancelled = 0, actionsCancelled = 0;
+    Object.assign(page, { control, controlEpoch: 3, url: 'https://search.example/', committedUrl: 'https://search.example/',
+      activeRead: { cancel() { readsCancelled++; } },
+      activeAction: control === 'agent' ? { cancel() { actionsCancelled++; } } : null });
+    return { page, c, counts: () => ({ readsCancelled, actionsCancelled }) };
+  }
+  const live = setup();
+  for (let i = 1; i <= 3; i++) {
+    live.page.refs.set('old', 'r1'); live.page.plans.set('old', {}); live.page.needsObservation = false;
+    live.c.emit('did-start-navigation', {}, 'https://search.example/', true, true);
+    assert.equal(live.page.control, 'agent'); assert.equal(live.page.controlEpoch, 3);
+    assert.equal(live.page.documentGeneration, i); assert.equal(live.page.activeAction.navigationDocument, i);
+    assert.equal(live.page.refs.size, 0); assert.equal(live.page.plans.size, 0); assert.equal(live.page.needsObservation, true);
+  }
+  assert.deepEqual(live.counts(), { readsCancelled: 3, actionsCancelled: 0 });
+  const pending = setup();
+  const intent = { kind: 'public_search', targetOrigin: 'https://search.example', targetPath: '/search',
+    controlEpoch: 3, pageGeneration: 1, queryName: 'q', submittedFields: [['q', 'query']], expiresAt: Date.now() + 30000 };
+  pending.page.approvedActionNavigation = intent; pending.page.approvedNavigation = 'https://search.example/search?q=query';
+  pending.c.emit('did-start-navigation', {}, 'https://search.example/', true, true);
+  assert.equal(pending.page.approvedActionNavigation, intent, 'history event cannot consume pending search intent');
+  assert.equal(pending.page.approvedNavigation, 'https://search.example/search?q=query');
+  const provisional = setup(); provisional.page.url = 'https://search.example/pending';
+  provisional.c.emit('did-start-navigation', {}, provisional.page.url, true, true);
+  assert.equal(provisional.page.control, 'transferring', 'provisional URL is not a committed document');
+
+  for (const [url, inPlace] of [['https://search.example/?q=changed', true], ['https://search.example/#other', true],
+    ['https://search.example/other', true], ['https://search.example/', false]]) {
+    const changed = setup(); changed.c.emit('did-start-navigation', {}, url, inPlace, true);
+    assert.equal(changed.page.control, 'transferring'); assert.equal(changed.page.controlEpoch, 4);
+    assert.equal(changed.counts().actionsCancelled, 1);
+  }
+  const human = setup('human'); human.c.emit('did-start-navigation', {}, 'https://search.example/', true, true);
+  assert.equal(human.page.control, 'human'); assert.equal(human.page.controlEpoch, 3);
+});
