@@ -370,9 +370,12 @@ impl Engine {
             .read_fork_snapshot_with_sources(&history_seed.snapshot_id)
             .map_err(|e| Error::Storage(e.to_string()))?;
         for (turn, source_thread_id) in turns.into_iter().zip(source_ids) {
+            let presentation = json!({"id":turn.id,"status":turn.status,"error":turn.error,
+                "startedAt":turn.started_at,"completedAt":turn.completed_at,
+                "durationMs":turn.duration_ms,"goal":turn.goal});
             for item in turn.items {
                 entries.push(json!({"sourceThreadId":source_thread_id,
-                    "sourceTurnId":turn.id,"sourceItemId":item.id(),"sourceTurnStatus":turn.status,"item":item}));
+                    "sourceTurnId":turn.id,"sourceItemId":item.id(),"sourceTurnStatus":turn.status,"turn":presentation,"item":item}));
             }
         }
         if index > entries.len() || index == entries.len() && offset != 0 {

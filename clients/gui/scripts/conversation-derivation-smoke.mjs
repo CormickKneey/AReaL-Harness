@@ -382,7 +382,7 @@ try {
   await forkDialog.getByRole("button", { name: "取消", exact: true }).click();
   await selectConversation(page, lostResult.resultThreadId);
   checks.push("AC27: discarded GUI response after a real committed Fork shows reconciliation instead of resend; exactly one idle target exists and manual navigation opens it");
-  await page.getByRole("region", { name: "继承的对话历史", exact: true }).waitFor();
+  await page.locator(".messages .message-column").waitFor();
   targetThreadId = await page.getByTestId("areal-workbench").getAttribute("data-thread-id");
   assert.ok(targetThreadId && targetThreadId !== sourceThreadId);
   assert.equal(requests.length, beforeCreation.modelRequests, "fork creation must not call the model");
@@ -392,35 +392,16 @@ try {
   assert.equal(target.conversation?.origin?.sourceThreadId, sourceThreadId);
   assert.equal(target.conversation?.origin?.sourceTurnId, anchorTurnId);
   assert.equal(target.turns?.length, 0, "target starts with empty local turns");
-  const inherited = page.getByRole("region", { name: "继承的对话历史", exact: true });
-  const expandHistory = inherited.getByRole("button", { name: /^展开继承历史/ });
-  assert.equal(await expandHistory.getAttribute("aria-expanded"), "false");
-  await expandHistory.click();
-  // 用户原文与模型回显都含 head；只断言持久来源用户消息这一项。
-  await inherited.locator(".fork-history-item").filter({ has: page.getByText("原提问", { exact: true }) })
-    .locator("[data-inherited-content]").getByText(`${head} ${unicodeExcerpt}`, { exact: true }).waitFor();
+  const inherited = page.locator(".messages .message-column");
+  await inherited.locator(".user-bubble").getByText(`${head} ${unicodeExcerpt}`, { exact: true }).waitFor();
+  assert.equal(await page.getByRole("button", { name: /继承历史/ }).count(), 0, "Fork history must be directly visible without a disclosure");
   assert.equal(await inherited.getByText(future, { exact: false }).count(), 0, "future source Turn must not appear in inherited history");
-  assert.match(await inherited.innerText(), /当前共享工作区/);
-  assert.match(await inherited.innerText(), /第 1 轮之后/);
-  const inheritedBeforeCollapse = await inherited.locator('[data-inherited-content]').allTextContents();
-  await inherited.getByRole("button", { name: /^收起继承历史/ }).click();
-  assert.ok(await inherited.getByText("当前共享工作区", { exact: false }).isVisible());
-  await inherited.getByRole("button", { name: /^展开继承历史/ }).click();
-  assert.deepEqual(await inherited.locator('[data-inherited-content]').allTextContents(), inheritedBeforeCollapse,
-    "collapsing inherited history must preserve the frozen prefix");
+  assert.ok(await inherited.locator(`[data-turn-id="${anchorTurnId}"] .assistant-message-final .conversation-markdown`).count(), "inherited answers reuse the main Markdown component");
   assert.equal((await page.getByTestId("chat-input").innerText()).trim(), "");
   await shot("02-fork-empty.png");
-  const sourceTitle = (await state()).projects[0].state.threads[sourceThreadId].preview;
-  await inherited.getByRole("button", { name: sourceTitle || "来源会话", exact: true }).click();
-  await page.waitForFunction(id => document.querySelector('[data-testid="areal-workbench"]')?.dataset.threadId === id, sourceThreadId);
-  assert.ok(await page.locator(`[data-turn-id="${anchorTurnId}"]`).isVisible());
-  await selectConversation(page, targetThreadId);
-
   checks.push("AC01/02/06: older Turn GUI fork is idle, empty, source-owned, current shared workspace and bounded inherited history");
-  const expandNestedHistory = inherited.getByRole("button", { name: /^展开继承历史/ });
-  if (await expandNestedHistory.count()) await expandNestedHistory.click();
   const requestsBeforeNested = requests.length;
-  await inherited.getByRole("button", { name: `继承轮次操作 ${anchorTurnId}`, exact: true }).click();
+  await inherited.locator(`[data-turn-id="${anchorTurnId}"]`).getByRole("button", { name: /^轮次操作 / }).click();
   await page.getByRole("menuitem", { name: "在此轮之后分支", exact: true }).click();
   await forkDialog.getByRole("button", { name: "创建分支", exact: true }).click();
   await page.waitForFunction(id => {
@@ -630,22 +611,16 @@ try {
   assert.equal((await state()).projects[0].state.threads[sideThreadId].id, sideThreadId);
   checks.push("AC47/52/53/54/55/74: bring-back appends to the concurrent main draft with its attachment and model; edited preview survives Side switching; Chromium composition Enter submits neither editor; narrow return restores the original trigger or main editor fallback");
   const activeAnchor = page.locator(`[data-turn-id="${activeTurnId}"]`);
-  await activeAnchor.getByRole("button", { name: /^轮次操作 / }).click();
-  const afterActive = page.getByRole("menuitem", { name: "在此轮之后分支", exact: true });
-  assert.ok(await afterActive.isDisabled(), "after an active Turn must explain that it is disabled");
-  await page.getByText("此轮仍在运行；可选择轮次之前", { exact: true }).waitFor();
+  assert.equal(await activeAnchor.getByRole("button", { name: /^轮次操作 / }).count(), 0, "streaming turns have no menu");
+  assert.equal(await activeAnchor.getByRole("button", { name: "从此轮创建聊天分支", exact: true }).count(), 0, "streaming turns have no Fork action");
   const requestsBeforeActiveFork = requests.length;
-  await page.getByRole("menuitem", { name: "在此轮之前分支", exact: true }).click();
-  await forkDialog.waitFor();
-  const beforeConfirmation = await forkDialog.innerText();
-  assert.match(beforeConfirmation, /此轮之前/);
-  events.push({ beforeConfirmation });
-  await forkDialog.getByRole("button", { name: "创建分支", exact: true }).click();
-  await page.waitForFunction(id => {
-    const current = document.querySelector('[data-testid="areal-workbench"]')?.dataset.threadId;
-    return current && current !== id;
-  }, sourceThreadId);
-  beforeThreadId = await page.getByTestId("areal-workbench").getAttribute("data-thread-id");
+  // Core still supports the safe before boundary; the streaming GUI exposes no action row.
+  const beforeResult = await page.evaluate(async ({ projectId, sourceThreadId, activeTurnId }) => window.arealDesktop.command("fork", {
+    projectId, sourceThreadId, anchor: { turnId: activeTurnId, boundary: "before" }, workspaceMode: "sharedCurrent"
+  }), { projectId, sourceThreadId, activeTurnId });
+  assert.ok(beforeResult.ok, JSON.stringify(beforeResult));
+  beforeThreadId = beforeResult.value.threadId;
+  await selectConversation(page, beforeThreadId);
   const beforeSnapshot = await state();
   const beforeThread = beforeSnapshot.projects[0].state.threads[beforeThreadId];
   assert.equal(beforeThread.conversation?.origin?.sourceTurnId, activeTurnId);
@@ -653,9 +628,7 @@ try {
   assert.equal(beforeThread.turns?.length, 0);
   assert.equal(beforeSnapshot.projects[0].state.threads[sourceThreadId].turns.at(-1).status, "inProgress");
   assert.equal(requests.length, requestsBeforeActiveFork);
-  const beforeHistory = page.getByRole("region", { name: "继承的对话历史", exact: true });
-  const expandBeforeHistory = beforeHistory.getByRole("button", { name: /^展开继承历史/ });
-  if (await expandBeforeHistory.count()) await expandBeforeHistory.click();
+  const beforeHistory = page.locator(".messages .message-column");
   await beforeHistory.getByText(future, { exact: true }).waitFor();
   assert.equal(await beforeHistory.getByText(activeQuestion, { exact: false }).count(), 0);
   await shot("07-before-active.png");
@@ -663,19 +636,23 @@ try {
   await until(s => s.projects[0]?.state?.threads?.[sourceThreadId]?.turns?.at(-1)?.status === "completed", "source completes independently");
   assert.ok(JSON.stringify((await state()).projects[0].state.threads[sourceThreadId].turns.at(-1)).includes("finished"));
   assert.equal(await hash(fixturePath), workspaceBefore);
-  checks.push("AC18/19: active Turn after is disabled, before creates an idle exact prefix, and the source completes independently");
+  checks.push("AC18/19: active Turn actions are hidden, Core before creates an idle exact prefix, and the source completes independently");
   await selectConversation(page, sourceThreadId);
   const completedTool = (await state()).projects[0].state.threads[sourceThreadId].turns
     .find(turn => turn.id === activeTurnId).items.find(item => item.type === "dynamicToolCall" && item.execution?.resultSnapshot);
   assert.match(completedTool.execution?.resultSnapshot?.uri ?? "", /^areal:\/\/blob\//);
   const requestsBeforeRawFork = requests.length;
+  const completedActions = activeAnchor.locator(".message-actions").filter({ has: page.getByRole("button", { name: "从此轮创建聊天分支", exact: true }) });
+  assert.equal(await completedActions.getByRole("button", { name: "复制消息", exact: true }).count(), 1, "completed Fork and copy share one action row");
   await activeAnchor.getByRole("button", { name: /^轮次操作 / }).click();
   await page.getByRole("menuitem", { name: "在此轮之后分支", exact: true }).click();
   await forkDialog.getByRole("button", { name: "创建分支", exact: true }).click();
   await page.waitForFunction(id => document.querySelector('[data-testid="areal-workbench"]')?.dataset.threadId !== id, sourceThreadId);
   rawThreadId = await page.getByTestId("areal-workbench").getAttribute("data-thread-id");
-  const rawHistory = page.getByRole("region", { name: "继承的对话历史", exact: true });
-  await rawHistory.getByRole("button", { name: /^展开继承历史/ }).click();
+  const rawHistory = page.locator(".messages .message-column");
+  await rawHistory.getByRole("button", { name: /^用时 / }).last().click();
+  await rawHistory.locator(`[data-turn-id="${activeTurnId}"]`).getByRole("button", { name: "执行过程", exact: true }).click();
+  await rawHistory.locator(`[data-tool-id="${completedTool.id}"]`).getByRole("button").first().click();
   const rawDownload = rawHistory.getByRole("button", { name: "下载附件 原始结果", exact: true });
   await rawDownload.waitFor();
   assert.equal(await rawHistory.getByRole("button", { name: /^(批准|拒绝|停止|终止|重试)/ }).count(), 0);
@@ -952,9 +929,8 @@ try {
   checks.push("AC21: real restarted Core restores persisted UNKNOWN; GUI disables the unsafe boundary, offers source inspection, retains the draft and leaves the earlier boundary available without execution");
   await selectConversation(page, rawThreadId);
   await page.getByTestId("chat-input").fill("冷历史损坏时保留这份草稿");
-  const corruptHistory = page.getByRole("region", { name: "继承的对话历史", exact: true });
-  await corruptHistory.getByRole("button", { name: /^展开继承历史/ }).click();
-  await corruptHistory.getByRole("button", { name: `继承轮次操作 ${activeTurnId}`, exact: true }).click();
+  const corruptHistory = page.locator(".messages .message-column");
+  await corruptHistory.locator(`[data-turn-id="${activeTurnId}"]`).getByRole("button", { name: /^轮次操作 / }).click();
   await page.getByRole("menuitem", { name: "在此轮之后分支", exact: true }).click();
   const rawSnapshot = (await state()).projects[0].state.threads[rawThreadId].conversation.historySeed.snapshotId;
   const snapshotPath = join(scratch, "core", projectId, "state", "history", rawSnapshot);

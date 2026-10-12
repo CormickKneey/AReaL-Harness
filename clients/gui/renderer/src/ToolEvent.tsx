@@ -98,6 +98,8 @@ export function ToolEvent({ item, onFile, onAgent, turnId, readTurnReview, actio
             {item.execution?.exitCode != null && <small>退出码 {item.execution.exitCode}</small>}
         </div>
       )}
+      {open && action && projectId && threadId && item.execution?.resultSnapshot?.uri &&
+        <SentAttachment part={{ type: "file", uri: item.execution.resultSnapshot.uri, name: "原始结果" }} projectId={projectId} threadId={threadId} action={action} />}
     </div>
   );
 }

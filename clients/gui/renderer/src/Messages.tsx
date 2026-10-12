@@ -1,3 +1,4 @@
+import { useForkHistory } from "./ForkHistory.js";
 import { UnknownToolInspection } from "./UnknownToolInspection.js";
 import { TurnNavigation } from "./TurnNavigation.js";
 import { executionOutcome, executionSegments, goalContinuationLabel, turnFailureMessage } from "./conversationPresentation.js";
@@ -33,7 +34,7 @@ function commandResourceLabel(tool: Data) {
 }
 export function Messages({
   project,
-  thread,
+  thread: localThread,
   action,
   dark,
   onLink,
@@ -62,6 +63,9 @@ export function Messages({
   onReview: (turnId: string) => void;
   readTurnReview: (turnId: string, itemId?: string) => Promise<Data>;
 }) {
+  const inherited = useForkHistory(project.id, localThread, action);
+  const thread: Data = { ...localThread, turns: [...inherited.turns, ...(localThread.turns ?? [])] };
+  const inheritedIds = new Set(inherited.turns.map(turn => turn.id));
   const responseSpace = useRef<HTMLDivElement>(null);
   const container = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
@@ -287,12 +291,15 @@ export function Messages({
     >
       <div className="message-column">
         {beforeTurns}
+        {inherited.loading && <p role="status">正在加载继承历史…</p>}
+        {inherited.error && <p role="alert">继承历史读取失败：{inherited.error}</p>}
         {thread.desktop?.archived && (
           <p role="status" className="notice">
             此任务已归档，历史只读。
           </p>
         )}
         {(thread.turns ?? []).map((turn: Data, turnIndex: number) => {
+          const isInherited = inheritedIds.has(turn.id);
           const earlierIssue = prefixIssue.slice(0, turnIndex).find(Boolean);
           const currentIssue = prefixIssue[turnIndex];
           const inspectTurn = earlierIssue || (turn.status === "inProgress" ? "" : currentIssue);
@@ -393,7 +400,7 @@ export function Messages({
               return <TurnExecution key={item.id} active={index === segments.length - 1} items={item.items} turn={turn} project={project} threadId={thread.id}
                 hasTurnSummary={group.progress && turn.status === "completed" && hasReadingSummary}
                 renderItem={(entry: Data, disclosure) => {
-                  if (entry.type === "dynamicToolCall") return <div data-side-item-id={entry.id} key={entry.id}><ToolEvent item={entry} {...disclosure} onFile={onFile} onAgent={onAgent} turnId={turn.id} action={action} projectId={project.id} threadId={thread.id} readTurnReview={turn.status === "completed" ? readTurnReview : undefined} /></div>;
+                  if (entry.type === "dynamicToolCall") return <div data-side-item-id={entry.id} key={entry.id}><ToolEvent item={entry} {...disclosure} onFile={onFile} onAgent={isInherited ? undefined : onAgent} turnId={turn.id} action={action} projectId={project.id} threadId={thread.id} readTurnReview={turn.status === "completed" ? readTurnReview : undefined} /></div>;
                   if (entry.type === "modelContext") return null;
                   return <details className="tool-call" key={entry.id}><summary>{entry.type}</summary><pre>{JSON.stringify(entry, null, 2)}</pre></details>;
                 }} />;
@@ -409,11 +416,10 @@ export function Messages({
                 <TurnElapsed turn={turn} connected={!!project.state?.connected} />}
             </Fragment>;
             })}
-            {(turn.items ?? []).filter((item: Data) => item.type === "dynamicToolCall").map((item: Data) =>
+            {!isInherited && (turn.items ?? []).filter((item: Data) => item.type === "dynamicToolCall").map((item: Data) =>
               <UnknownToolInspection key={`${project.id}:${thread.id}:${item.id}`} item={item} project={project} thread={thread} action={action} />)}
             <TurnFileSummary turn={turn} readTurnReview={readTurnReview} onFile={onFile} onReview={onReview} />
             {responseMessage && turn.status !== "inProgress" && <MessageActions text={responseMessage.text}><TurnHookStats turn={turn} />{forkControls}{responseActions?.(responseMessage)}</MessageActions>}
-            {canFork && (!responseMessage || turn.status === "inProgress") && <div className="message-actions">{forkControls}</div>}
             {canFork && forkError?.turnId === turn.id && <p role="alert" className="notice">{forkError?.message}</p>}
             {turn.status === "inProgress" && (!segments.length || ["userMessage", "agentMessage", "agentMedia"].includes(segments.at(-1)?.type)) && (
               <TurnExecution items={[]} turn={turn} project={project} threadId={thread.id} renderItem={() => null} />

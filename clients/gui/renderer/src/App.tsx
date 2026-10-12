@@ -34,7 +34,6 @@ import { MemoTaskItem } from "./TaskListItem.js";
 import { DndContext, DragOverlay } from "@dnd-kit/core";
 import { SidebarDragSurface, useSidebarDrag, type SidebarDragSource } from "./sidebarDrag.js";
 import { Messages } from "./Messages.js";
-import { ForkHistory } from "./ForkHistory.js";
 import { ForkTargetDialog } from "./ForkTargetDialog.js";
 import { ConversationDraftEmptyState } from "./ConversationDraftEmptyState.js";
 import { NewTaskButtonGroup } from "./NewTaskButtonGroup.js";
@@ -1126,24 +1125,6 @@ function AppContent({ services }: { services: PlatformServices }) {
     return new Promise(resolve => setForkIntent({ projectId: owner, sourceThreadId, turnId, boundary,
       title: thread.preview || "当前会话", models: project.models ?? [], profiles: project.profiles ?? [], route, anchor: anchor ?? document.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(turnId)}"] .icon-button`) ?? undefined, resolve }));
   };
-  const openForkOrigin = (sourceId: string, turnId: string) => {
-    if (!project) return;
-    const route = `${project.id}:${sourceId}`;
-    void open(project.id, sourceId).then(() => requestAnimationFrame(() => {
-      // 冷继承页按需到达；导航始终使用来源和稳定轮次 ID。
-      const locate = () => {
-        if (activeConversation.current !== route) return true;
-        const target = document.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(turnId)}"]`);
-        if (!target) return false;
-        target.scrollIntoView({ block: "center" }); return true;
-      };
-      document.querySelector<HTMLElement>('[aria-controls^="fork-history-"][aria-expanded="false"]')?.click();
-      if (locate()) return;
-      const observer = new MutationObserver(() => { if (locate()) { observer.disconnect(); clearTimeout(timeout); } });
-      const timeout = setTimeout(() => { observer.disconnect(); }, 10000);
-      observer.observe(document.querySelector('[data-testid="chat-view"]') ?? document.body, { childList: true, subtree: true });
-    })).catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
-  };
   const openSideSelection = (selection: Data, excerpt: string, anchor?: Data) => {
     if (!project || !thread) return;
     rememberSideTrigger();
@@ -1462,10 +1443,6 @@ function AppContent({ services }: { services: PlatformServices }) {
                           project={project}
                           thread={thread}
                           action={action}
-                          beforeTurns={thread.conversation?.kind === "fork" ? <ForkHistory projectId={project.id} thread={thread} source={project.state?.threads?.[thread.conversation.origin?.sourceThreadId] ?? project.summaries?.find((summary: Data) => summary.id === thread.conversation.origin?.sourceThreadId)} action={resourceAction}
-                            onOrigin={openForkOrigin}
-                            onFork={project.core?.features?.forkPreview === true && !thread.desktop?.archived ? forkFromTurn : undefined}
-                            onSideSelection={project.core?.features?.sidePreview === true && !thread.desktop?.archived ? openSideSelection : undefined} /> : undefined}
                           onFork={forkFromTurn}
                           onSideSelection={project.core?.features?.sidePreview === true && !thread.desktop?.archived ? openSideSelection : undefined}
                           dark={dark}
