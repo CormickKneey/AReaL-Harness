@@ -4,6 +4,7 @@ use areal_engine::{
     tools::ToolExtensions,
 };
 use areal_mcp::{Connections, ServerConfig};
+use areal_protocol::desktop::{ForkAnchor, ForkThread};
 use areal_protocol::{Input, Item, TurnStatus};
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -18,6 +19,66 @@ use tokio_util::sync::CancellationToken;
 struct RetrievalModel {
     original_view: Mutex<Option<String>>,
     pages: Mutex<Vec<String>>,
+}
+
+#[derive(Default)]
+struct ForkResultModel {
+    pages: Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl Model for ForkResultModel {
+    fn name(&self) -> &str {
+        "fork-result-fixture"
+    }
+    async fn stream(&self, _: Vec<Message>) -> anyhow::Result<ModelStream> {
+        unreachable!()
+    }
+    async fn chat(&self, messages: Vec<Message>, tools: Vec<Value>) -> anyhow::Result<ModelStream> {
+        assert!(
+            tools
+                .iter()
+                .any(|tool| tool["function"]["name"] == "read_tool_result")
+        );
+        let last = messages.last().unwrap();
+        let result_id = messages
+            .iter()
+            .filter(|message| message.role == "tool")
+            .filter_map(|message| serde_json::from_str::<Value>(&message.text_content()).ok())
+            .find_map(|value| value["rawResult"]["resultId"].as_str().map(str::to_owned))
+            .unwrap();
+        let event = if last.role == "user" {
+            ModelEvent::ToolCall(ToolCall {
+                id: "fork-page-0".into(),
+                name: "read_tool_result".into(),
+                arguments: json!({"resultId":result_id}).to_string(),
+            })
+        } else {
+            let page: Value = serde_json::from_str(&last.text_content()).unwrap();
+            self.pages
+                .lock()
+                .unwrap()
+                .push(page["text"].as_str().unwrap().into());
+            if page["eof"] == true {
+                let raw: Value =
+                    serde_json::from_str(&self.pages.lock().unwrap().concat()).unwrap();
+                assert!(
+                    raw["contentItems"][0]["text"]
+                        .as_str()
+                        .unwrap()
+                        .contains("关键值:violet")
+                );
+                ModelEvent::text("Inherited raw bytes recovered")
+            } else {
+                ModelEvent::ToolCall(ToolCall {
+                    id: format!("fork-page-{}", self.pages.lock().unwrap().len()),
+                    name: "read_tool_result".into(),
+                    arguments: json!({"resultId":result_id,"after":page["nextCursor"]}).to_string(),
+                })
+            }
+        };
+        Ok(Box::pin(futures_util::stream::iter([Ok(event)])))
+    }
 }
 
 #[async_trait]
@@ -139,6 +200,39 @@ async fn actual_mcp_large_result_is_retrieved_once_with_stable_history() {
         })
         .collect();
     assert_eq!(snapshots, ["mcp__fixture__echo"]);
+    let fork = engine
+        .fork_thread(
+            "result-owner".into(),
+            ForkThread {
+                request_id: "raw-result-fork".into(),
+                source_thread_id: thread.id.clone(),
+                anchor: ForkAnchor {
+                    turn_id: done.turns[0].id.clone(),
+                    boundary: "after".into(),
+                },
+                workspace_mode: "sharedCurrent".into(),
+                target: None,
+            },
+        )
+        .await
+        .unwrap();
+    let fork_model = Arc::new(ForkResultModel::default());
+    engine.register_default_model("fork-result-reader".into(), fork_model.clone(), true);
+    engine
+        .start(&fork.id, vec![Input::text("Read inherited original bytes")])
+        .await
+        .unwrap();
+    let continued = tokio::time::timeout(Duration::from_secs(15), engine.wait(&fork.id))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        continued.turns[0].status,
+        TurnStatus::Completed,
+        "{:?}",
+        continued.turns[0].error
+    );
+    assert!(fork_model.pages.lock().unwrap().len() >= 4);
     engine.shutdown().await;
     connections.shutdown().await.unwrap();
     let calls = std::fs::read_to_string(log)

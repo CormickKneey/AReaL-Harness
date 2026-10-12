@@ -439,6 +439,11 @@ pub(crate) fn valid(field: &str, entry: &Entry) -> Result<()> {
         "model_concurrency"
         | "max_threads"
         | "max_active_turns"
+        | "max_side_turns_per_source"
+        | "max_side_turns_per_deployment"
+        | "max_side_model_rounds"
+        | "max_side_tool_calls"
+        | "max_side_turn_seconds"
         | "max_children_per_turn"
         | "max_agent_depth"
         | "max_output_tokens"
@@ -587,6 +592,11 @@ pub(crate) fn load_mode(
         ("goals.turn_model_rounds", "0"),
         ("limits.max_threads", "20000"),
         ("limits.max_active_turns", "256"),
+        ("limits.max_side_turns_per_source", "2"),
+        ("limits.max_side_turns_per_deployment", "8"),
+        ("limits.max_side_model_rounds", "8"),
+        ("limits.max_side_tool_calls", "16"),
+        ("limits.max_side_turn_seconds", "300"),
         ("limits.max_children_per_turn", "64"),
         ("limits.max_agent_depth", "8"),
         ("limits.stream_idle_timeout_seconds", "30"),
@@ -940,6 +950,23 @@ pub(crate) fn load_mode(
         model_concurrency: values["limits.model_concurrency"].value.parse().unwrap(),
         max_threads: values["limits.max_threads"].value.parse().unwrap(),
         max_active_turns: values["limits.max_active_turns"].value.parse().unwrap(),
+        max_side_turns_per_source: values["limits.max_side_turns_per_source"]
+            .value
+            .parse()
+            .unwrap(),
+        max_side_turns_per_deployment: values["limits.max_side_turns_per_deployment"]
+            .value
+            .parse()
+            .unwrap(),
+        max_side_model_rounds: values["limits.max_side_model_rounds"]
+            .value
+            .parse()
+            .unwrap(),
+        max_side_tool_calls: values["limits.max_side_tool_calls"].value.parse().unwrap(),
+        max_side_turn_seconds: values["limits.max_side_turn_seconds"]
+            .value
+            .parse()
+            .unwrap(),
         max_children_per_turn: values["limits.max_children_per_turn"]
             .value
             .parse()

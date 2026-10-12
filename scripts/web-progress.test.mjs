@@ -170,7 +170,7 @@ test("sidebar archives a confirmed session, keeps failed archives visible, and s
   c.run(`pending.get(${request.id}).resolve({archived:true})`);
   await Promise.resolve();
   const resume = c.requests.at(-1);
-  assert.equal(resume.method, "thread/resume");
+  assert.equal(resume.method, "areal/thread/observe");
   assert.equal(resume.params.threadId, "second");
   c.run(`pending.get(${resume.id}).resolve({thread:{id:"second",cwd:"/workspace",turns:[]}})`);
   await archive;
@@ -274,7 +274,7 @@ test("a successful interrupt clears the stopping label when the terminal event a
   c.run(`pending.get(${interrupt.id}).resolve({})`);
   await Promise.resolve();
   const refresh = c.requests.at(-1);
-  assert.equal(refresh.method, "thread/resume");
+  assert.equal(refresh.method, "areal/thread/observe");
   c.run(
     `pending.get(${refresh.id}).resolve({thread:{id:"thread",turns:[${JSON.stringify(turn)}]}})`,
   );
@@ -331,7 +331,7 @@ test("stop pauses an active goal during reasoning and between turns", async () =
     );
     for (let i = 0; i < 4; i++) await Promise.resolve();
     const refresh = c.requests.at(-1);
-    assert.equal(refresh.method, "thread/resume");
+    assert.equal(refresh.method, "areal/thread/observe");
     const snapshot = {
       id: "thread",
       turns: [{ id: "turn", status: "interrupted", items: [] }],

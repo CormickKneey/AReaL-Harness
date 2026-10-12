@@ -155,6 +155,14 @@ class ReleaseTests(unittest.TestCase):
         source = repository / "target/debug"
         source.mkdir(parents=True)
         (repository / "LICENSE").write_text("fixture license")
+        (repository / "schemas").mkdir()
+        (repository / "schemas/areal-core-v1.json").write_text(
+            json.dumps({"apiVersion": "fixture-api-v1"})
+        )
+        (repository / "core/engine/src").mkdir(parents=True)
+        (repository / "core/engine/src/store.rs").write_text(
+            "pub(crate) const STATE_VERSION: u32 = 42;\n"
+        )
         names = ["areal", "areal-runtime", "areal-runtime-fs"]
         for name in names:
             (source / name).write_bytes(b"signed build artifact: " + name.encode())
@@ -192,6 +200,8 @@ class ReleaseTests(unittest.TestCase):
                 if valid:
                     package.main()
                     manifest = json.loads((destination / "manifest.json").read_text())
+                    self.assertEqual(manifest["apiVersion"], "fixture-api-v1")
+                    self.assertEqual(manifest["stateVersion"], 42)
                     self.assertEqual(len(calls), len(names))
                     for name in names:
                         relative = Path("bin" if name == "areal" else "libexec/areal") / name

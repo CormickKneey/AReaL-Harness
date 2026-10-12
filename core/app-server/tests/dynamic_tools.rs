@@ -88,6 +88,29 @@ async fn connected(url: &str) -> Socket {
     send(&mut socket, json!({"method":"initialized"})).await;
     socket
 }
+
+#[tokio::test]
+async fn embedded_socket_does_not_advertise_desktop_browser_attachment() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = Engine::open(dir.path(), Arc::new(FixtureModel), Limits::default()).unwrap();
+    let (url, stop, server) = serve(engine).await;
+    let mut socket = connected(&url).await;
+    let reply = call(
+        &mut socket,
+        "areal/capabilities",
+        json!({"apiVersion":"areal.core.v1"}),
+    )
+    .await;
+    assert!(
+        !reply["result"]["methods"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|method| method == "areal/thread/tools/attach")
+    );
+    stop.cancel();
+    server.await.unwrap().unwrap();
+}
 async fn tool_request(socket: &mut Socket) -> Value {
     loop {
         let value = receive(socket).await;

@@ -37,6 +37,8 @@ runtimeRead/runtimeWrite 由宿主创建，示例导入路径相对仓库根。�
 
 最多 128 在途、16 保留控制；帧限 128 KiB。畸形/未知 ID/EOF/超时封闭传输，结果可能 UNKNOWN。pages 保留 gap/truncated/closed；bytes/text 遇输出丢失抛 OutputGapError，并按 stdout/stderr/pty 分别持续解码。close 等待清理，disconnect 不表示清理成功。
 
+`FileCommand` 的 `search` 分支接受 `path`、正则表达式 `pattern`、可选 `glob`、必填 `context`（0–20）与 `limit`（1–1000）。`files.execute` 的 `FileResult` 推导为 `{matches: {path: string; line: number | null; text: string | null; kind: string}[]; limited: boolean; guidance: string}`，行的 `kind` 为 `match` 或 `context`。`limited=true` 时按 `guidance` 缩小搜索范围；详细结果边界见 [Runtime 文件契约](runtime.md#文件)。这是既有命令联合类型的新增分支，旧 Runtime 不认识该分支时拒绝请求，SDK 不自动降级或重试。
+
 `FileCommand` 的 `applyPatches` 分支接受 `patches: TextPatch[]` 和 `expectedSha256`；1–32 个替换在同一 CAS 操作中依次匹配，任一失败不写入，成功返回 `FileWrite`。`applyPatch` 仅作为 Runtime/SDK 兼容入口保留，与单元素 `applyPatches` 共用实现；模型侧统一使用 `fs_apply_patches`。
 
 ## @areal/plugins

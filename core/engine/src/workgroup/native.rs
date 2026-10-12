@@ -232,6 +232,9 @@ impl Model for SharedModel {
     fn provider(&self) -> &str {
         self.inner.provider()
     }
+    fn replay_protocol(&self) -> Option<crate::model::ModelProtocol> {
+        self.inner.replay_protocol()
+    }
     fn capabilities(&self) -> crate::model::ModelCapabilities {
         self.inner.capabilities()
     }

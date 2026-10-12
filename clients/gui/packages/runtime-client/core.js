@@ -1,19 +1,24 @@
 /** AReaL Core app-server 客户端。认证与 socket 创建由可信平台宿主提供。 */
 export class CoreRpcError extends Error {
-  constructor(message, { code, method, cause, submissionUnknown = false } = {}) {
+  constructor(message, { code, method, data, cause, submissionUnknown = false } = {}) {
     super(message, { cause });
     this.name = 'CoreRpcError';
     this.code = code;
     this.method = method;
+    this.data = data;
+    this.reason = data?.reason;
+    this.requestId = data?.requestId;
     this.submissionUnknown = submissionUnknown;
   }
 }
 
 export class CoreClient {
-  constructor({ createSocket, timeoutMs = 30_000 }) {
+  constructor({ createSocket, timeoutMs = 30_000, onServerRequest }) {
     this.createSocket = createSocket;
+    this.onServerRequest = onServerRequest;
     this.timeoutMs = timeoutMs;
     this.pending = new Map();
+    this.serverRequests = new Map();
     this.listeners = new Set();
     this.closeListeners = new Set();
     this.nextId = 0;
@@ -100,8 +105,23 @@ export class CoreClient {
     catch { this.close(); return; }
     if (!message || typeof message !== 'object' || Array.isArray(message)) { this.close(); return; }
     if (message.method && message.id !== undefined) {
-      // 首版只观察 Core 工具，未注册 Renderer 动态工具执行宿主。
-      this.socket.send(JSON.stringify({ id: message.id, error: { code: -32601, message: 'Client tool host is not available' } }));
+      if (!['item/tool/call', 'areal/browser/prepare'].includes(message.method) || !this.onServerRequest) {
+        this.socket.send(JSON.stringify({ id: message.id, error: { code: -32601, message: 'Client tool host is not available' } }));
+        return;
+      }
+      const socket = this.socket;
+      const controller = new AbortController();
+      this.serverRequests.set(String(message.id), controller);
+      void Promise.resolve().then(() => this.onServerRequest(message.method, message.params,
+        { requestId: String(message.id), signal: controller.signal })).then(result => {
+        this.serverRequests.delete(String(message.id));
+        if (!this.closed && this.socket === socket && socket.readyState === 1)
+          socket.send(JSON.stringify({ id: message.id, result }));
+      }, () => {
+        this.serverRequests.delete(String(message.id));
+        if (!this.closed && this.socket === socket && socket.readyState === 1)
+          socket.send(JSON.stringify({ id: message.id, error: { code: -32603, message: 'Client tool host failed' } }));
+      });
       return;
     }
     if (message.id !== undefined) {
@@ -110,7 +130,7 @@ export class CoreClient {
       this.pending.delete(message.id);
       clearTimeout(entry.timer);
       if (message.error) {
-        entry.reject(new CoreRpcError(message.error.message, { code: message.error.code, method: entry.method }));
+        entry.reject(new CoreRpcError(message.error.message, { code: message.error.code, method: entry.method, data: message.error.data }));
       } else {
         try {
           // 同一 socket 批次可能紧跟增量；快照必须在消息分派栈内先建立。
@@ -121,6 +141,7 @@ export class CoreClient {
       return;
     }
     if (typeof message.method === 'string') {
+      if (message.method === 'areal/tool/cancelled') this.serverRequests.get(String(message.params?.requestId))?.abort();
       for (const listener of this.listeners) listener(message.method, message.params);
     }
   }
@@ -136,6 +157,8 @@ export class CoreClient {
       }));
     }
     this.pending.clear();
+    for (const controller of this.serverRequests.values()) controller.abort();
+    this.serverRequests.clear();
     for (const listener of this.closeListeners) listener();
   }
 

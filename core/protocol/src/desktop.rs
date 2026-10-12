@@ -4,6 +4,23 @@ use serde::{Deserialize, Serialize};
 pub const API_VERSION: &str = "areal.core.v1";
 pub const MAX_SUBSCRIPTIONS: usize = 128;
 
+pub const BROWSER_V1_BUNDLE: &str = "areal.browser.v1";
+
+/// 已部署的 Browser 工具包；追加请求只选择此身份，不接受客户端定义。
+pub fn browser_v1_tool() -> super::ToolDefinition {
+    super::ToolDefinition {
+        name: "browser_v1".into(),
+        description: "Inspect and navigate authorized pages in this desktop thread. Call describe first; page changes require Core approval.".into(),
+        input_schema: serde_json::json!({
+            "type":"object",
+            "properties":{"operation":{"type":"string"},"parameters":{"type":"object"}},
+            "required":["operation","parameters"],
+            "additionalProperties":false
+        }),
+        output_schema: None,
+    }
+}
+
 pub const METHODS: &[&str] = &[
     "initialize",
     "model/list",
@@ -11,11 +28,13 @@ pub const METHODS: &[&str] = &[
     "thread/list",
     "thread/read",
     "thread/resume",
+    "areal/thread/observe",
     "turn/start",
     "turn/steer",
     "turn/interrupt",
     "areal/capabilities",
     "areal/subscription/remove",
+    "areal/thread/tools/attach",
     "areal/agent/spawn",
     "areal/agent/delegate",
     "areal/execution/list",
@@ -27,6 +46,93 @@ pub const METHODS: &[&str] = &[
     "areal/agent/list",
     "areal/tool/acknowledge",
 ];
+
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AttachBrowserTools {
+    pub request_id: String,
+    pub thread_id: String,
+    pub expected_toolset_revision: u64,
+    pub bundle_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ObserveThread {
+    pub thread_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ForkAnchor {
+    pub turn_id: String,
+    pub boundary: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ForkThread {
+    pub request_id: String,
+    pub source_thread_id: String,
+    pub anchor: ForkAnchor,
+    pub workspace_mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<ForkTarget>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ForkTarget {
+    #[serde(default)]
+    pub agent_profile: Option<VersionRef>,
+    #[serde(default)]
+    pub model: Option<ModelRef>,
+    #[serde(default)]
+    pub parameters: Option<ModelParameters>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SideAnchor {
+    pub kind: String,
+    pub turn_id: Option<String>,
+    pub boundary: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SideStart {
+    pub request_id: String,
+    pub source_thread_id: String,
+    pub anchor: Option<SideAnchor>,
+    pub selection: Option<SideSelection>,
+    pub workspace_access: String,
+    pub model: Option<ModelRef>,
+    pub parameters: Option<ModelParameters>,
+    pub input: Vec<super::Input>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum SideSelection {
+    ItemRange {
+        turn_id: String,
+        item_id: String,
+        start_utf8: usize,
+        end_utf8: usize,
+        text_sha256: String,
+    },
+    UserQuote {
+        text: String,
+        claimed_turn_id: Option<String>,
+        claimed_item_id: Option<String>,
+    },
+}
 pub const NOTIFICATIONS: &[&str] = &[
     "areal/goal/updated",
     "areal/goal/cleared",
@@ -44,11 +150,14 @@ pub const NOTIFICATIONS: &[&str] = &[
     "areal/tool/cancelled",
     "areal/thread/configured",
     "areal/thread/archived",
+    "areal/thread/unarchived",
     "areal/plan/updated",
     "areal/queue/updated",
+    "areal/side/capacity",
     "areal/task/updated",
     "areal/interaction/requested",
     "areal/interaction/resolved",
+    "areal/thread/tools/attached",
     "areal/process/updated",
     "areal/server/draining",
     "areal/server/configurationChanged",
@@ -283,6 +392,9 @@ pub struct PermissionGrant {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DesktopState {
+    /// 只在读取活跃 Side 时由 Core 投影；历史快照不承载模型等待状态。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side_capacity_status: Option<String>,
     #[serde(default)]
     pub executions: Vec<crate::delegation::ExecutionRecord>,
     #[serde(default)]

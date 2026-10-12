@@ -65,12 +65,15 @@ jobs:
           rustup show
           if ! command -v cmake; then brew install cmake; fi
           make gui-install
+          pnpm --dir clients/gui --filter @areal/gui-desktop exec playwright-core install ffmpeg
       - name: Check GUI types and public boundaries
         run: |
           pnpm --dir clients/gui typecheck 2>&1 | tee target/ci/gui/typecheck.log
           pnpm --dir clients/gui run verify 2>&1 | tee target/ci/gui/public.log
       - name: Verify native Core process lifecycle
         run: pnpm --dir clients/gui run test:core-process 2>&1 | tee target/ci/gui/core-process.log
+      - name: Check Browser contracts and evidence
+        run: pnpm --dir clients/gui run test:browser-contracts 2>&1 | tee target/ci/gui/browser-contracts.log
       - name: Build Core and GUI
         run: |
           make build 2>&1 | tee target/ci/gui/core-build.log
@@ -85,6 +88,16 @@ jobs:
         run: pnpm --dir clients/gui run test:model-selection 2>&1 | tee target/ci/gui/model-selection.log
       - name: Verify queue workflow
         run: pnpm --dir clients/gui run test:queue 2>&1 | tee target/ci/gui/queue.log
+      - name: Verify conversation derivation workflow
+        timeout-minutes: 10
+        run: pnpm --dir clients/gui run test:conversation-derivation 2>&1 | tee target/ci/gui/conversation-derivation.log
+      - name: Collect GUI evidence
+        if: always()
+        run: |
+          mkdir -p target/ci/gui
+          if [ -d .scratch/gui-evidence ]; then
+            cp -R .scratch/gui-evidence target/ci/gui/gui-evidence
+          fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
@@ -94,4 +107,6 @@ jobs:
             /private/tmp/areal-gui-*/
             /private/tmp/ams-*/
             /private/tmp/areal-core-process-*/
+            /private/tmp/areal-browser-*/
+            /private/tmp/shared-browser-06-evidence-*/
           retention-days: 7

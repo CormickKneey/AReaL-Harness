@@ -37,6 +37,12 @@ In the model-selection smoke, only settings-operation settlement after applying 
 
 ## Python and scratch
 
+Failure state and screenshot capture each wait at most 10 seconds; derivation Electron cleanup waits at most 20 seconds. Timeouts enter the evidence without replacing the original failure. CI limits the derivation step to 10 minutes so failed diagnostics cannot block subsequent artifact upload. `make script-test` verifies diagnostic deadlines and propagation of original errors.
+
+Continuous derivation video requires the FFmpeg build pinned by Playwright; installing Electron/npm packages alone is insufficient. GUI CI installs it with `pnpm --dir clients/gui --filter @areal/gui-desktop exec playwright-core install ffmpeg`. Run the same command locally before the first invocation of this smoke.
+
+A full-view Side uses its own Composer. The main draft stays mounted but hidden so its floating actions cannot cover Side model selection or submission; split view still shows both Composers. Derivation smoke checks Side model selection and first-question submission through actual clicks and verifies retention of the main draft.
+
 Linux reaping tests use `areal-runtime-reaper`, built by `cargo test -p areal-runtime-exec-native`. For a standalone `--lib` run, first run `cargo build --locked -p areal-runtime-exec-native --bin areal-runtime-reaper` with the same profile as the tests. macOS descendant tests keep ancestors alive through the tracking window before exit to verify cleanup of observed descendants; they do not establish a complete guarantee against rapid orphaning.
 
 Independent macOS Python/scratch regression (local model, no provider credentials):

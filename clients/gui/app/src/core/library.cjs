@@ -60,6 +60,8 @@ class CoreLibrary {
     // receipts and other execution state, none of which belongs in this cache.
     const navigationSummaries = summaries.map(summary => ({
       id: summary.id,
+      ...(typeof summary.parentThreadId === 'string' ? { parentThreadId: summary.parentThreadId } : {}),
+      ...(typeof summary.conversation?.kind === 'string' ? { conversation: { kind: summary.conversation.kind } } : {}),
       ...(typeof summary.name === 'string' ? { name: summary.name } : {}),
       ...(typeof summary.preview === 'string' ? { preview: summary.preview } : {}),
       ...(Number.isFinite(summary.createdAt) ? { createdAt: summary.createdAt } : {}),

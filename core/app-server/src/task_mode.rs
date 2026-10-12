@@ -43,6 +43,7 @@ pub(crate) async fn authorize(
         return Err(RpcError {
             code: -32003,
             message: "task permission denied".into(),
+            data: None,
         });
     }
     Ok(task)
@@ -69,6 +70,7 @@ pub(crate) async fn dispatch(
                 return Err(RpcError {
                     code: -32003,
                     message: "task binding permission denied".into(),
+                    data: None,
                 });
             }
             engine

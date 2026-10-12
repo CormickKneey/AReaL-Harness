@@ -20,11 +20,15 @@ make gui
 
 `AREAL_CORE_BIN` 可指定可信 Core 的绝对路径；开发默认使用仓库 `target/debug/areal`。默认使用独立的 `AReaL Harness GUI Dev/<工作树摘要>` 数据目录；安装版使用 `AReaL Harness GUI`。不导入或替换旧桌面安装与数据。`AREAL_GUI_USER_DATA`、`AREAL_CORE_HOME`、`AREAL_HARNESS_SERVICE_HOME` 可显式设置隔离目录。模型配置默认与 CLI 共用 `~/.areal/config.toml`，由 Core 统一解析、校验和保存；`AREAL_HARNESS_HOME` 可修改 Core 配置 home，`AREAL_CORE_CONFIG` 可显式选择其他文件。首次读取不创建配置，首次保存由 Core 创建默认文件；旧 GUI 隔离目录中的配置不会自动合并。
 
+启动 GUI 前可显式设置 `AREAL_CORE_SANDBOX_PROFILE=native`，或在 `areal service ensure/restart` 使用 `--sandbox-profile native`，请求原生 Runtime 沙箱。默认仍为 `full-access`。此选择纳入部署兼容性；切换时需先停止活动任务并显式重启服务。只有 Core 验证原生隔离能力后，Side 对话才提供只读访问当前工作区文件的选项。原生隔离不可用时启动失败，不降级为 full-access。
+
 配置文件按 `AREAL_CORE_CONFIG`、`AREAL_HARNESS_CONFIG`、Core 配置 home 下的 `config.toml` 顺序选择。配置 home 优先使用 `AREAL_HARNESS_HOME`，否则使用 `AREAL_CORE_USER_HOME` 指定的用户目录（省略时为当前用户 home）下的 `.areal`。显式文件的相对路径在 GUI 启动目录解析；实际配置路径和配置 home 均参与后台身份校验，即使服务登记目录相同，切换配置 home 也不会误接旧后台。尚未创建的默认文件首次保存不改变后台身份。同一 GUI 后台的不同项目沿用这份配置，设置页不随项目切换选择另一份上传配置。
 
 macOS 开发和安装版均需要可执行的 `/usr/bin/python3`，供 Runtime 及可信工具助手启动中转；可通过 `xcode-select --install` 安装 Xcode Command Line Tools。该解释器不随应用打包；共享服务在启动前检查可用性并返回明确错误。
 
 ## Composer
+
+权限审批和 Ask User 共用固定在对话底部的交互卡片。审批默认显示拒绝与允许一次，Core 允许记住授权时才提供任务／项目范围菜单；原有授权条件和状态核对保持不变。问题支持选项、自由回答和逐题填写；“跳过”或关闭仅暂时收起，保留草稿和待回答入口，不提交空答案或停止任务。提问期间输入框保持紧凑，审批期间保留并隐藏普通输入草稿；回答回显来自 Core 已保存的工具历史。`pnpm --dir clients/gui run test:interactions` 使用隔离的真实 Electron/Core/Runtime 和确定性本地模型验证审批、回答及历史恢复，不替代真实供应商或安装包验收。
 
 模型设置分别显示已保存的“已启用／未启用”、Core 的“环境变量凭据／已保存凭据／无需认证”及就绪状态和“待应用／已应用”；未保存修改另行提示。保存不改变运行中的项目，应用配置后刷新 Composer 的模型目录。保存或应用尚未完成时，设置返回与分类按钮暂时禁用，完成后恢复，避免导航点击被静默丢弃。状态与共享配置接口见[配置指南](../../docs/guides/configuration.md#gui-与-cli-共享模型目录)。
 
@@ -35,6 +39,16 @@ macOS 开发和安装版均需要可执行的 `/usr/bin/python3`，供 Runtime �
 新一次发送或调整方向会清除上一操作的界面错误提示；本次失败仍显示原因并保留草稿，受理结果未知的消息不会自动重发。
 
 图片显示缩略图，UTF-8 文本附件可通过“在文本框中显示”追加到正文。超过 200 字符或至少 5 行的粘贴折叠为文本卡片，展开上限为 1 MiB；文件与技能删除不影响正文。目标模式在原输入区编写，创建目标只消费正文，其余附件继续保留。`pnpm --dir clients/gui run test:composer` 使用隔离 Electron/Core/Runtime 验证这些路径。
+
+内置浏览器工具栏的“批注”位于导航按钮和地址栏之间。点击后冻结经过隐私检查的原生页面截图，可点选元素或框选区域；就地填写说明并确认，加入当前聊天 Composer 的标注附件。可连续确认多条，展开附件逐条编辑或删除，发送时经既有 Core 媒体通道提交选区裁图和说明。正文保持独立；未确认标注、空白说明或结果待核对的提交不能发送。上传失败保留草稿，不自动重试。已发送消息从 Core 历史关联原图片与说明；未发送图片和标注随当前窗口附件草稿存活，不跨窗口重启保存。`pnpm --dir clients/gui run test:browser-annotations` 使用隔离 Electron/Core 与本地模型验证同页、多条、跨聊天隔离、上传拒绝和历史回取，不替代真人输入或安装包验收。
+
+Browser 工具在每次新用户请求中先 `describe`，再重新观察，拒绝跨轮次使用旧 Ref/快照。导航后的 `documentReady` 等待不依赖元素观察，可跨越同一已授权 Origin 的文档加载；页面变化导致的在途观察失效返回 `plan_stale`，人工接管返回 `human_control`。`node clients/gui/scripts/browser-google-smoke.mjs` 从仓库根运行隔离的真实 Electron/Core 与 Google 页面，使用确定性本地模型验证打开、搜索 `AI Agent`、读取结果及旧 Ref/撤权拒绝，并保留 GUI/原生截图与历史；不替代真实供应商或安装包验收。 Google 触发验证码时不算结果读取通过；本地回归可设置 `AREAL_BROWSER_LOCAL_SEARCH=1`，证据明确标为合成搜索页面。
+
+## Fork 与侧边聊天
+
+每轮完成回复下方的“分支”打开紧凑浮层，在当前工作树中创建独立聊天并保留所选历史边界；文件保持当前状态，不提供新工作树选项。更多轮次操作仍提供之前/之后的边界检查。未知创建结果先核对受理状态，不重发。
+
+在主输入框使用 `/side` 打开右侧聊天。两侧复用 `Messages` 和 `ConversationComposer`（Lexical 输入框、工具栏、`ComposerModelMenu`），各自保留草稿与提交状态。Side 首问可选择 Core 目录中的模型和思考强度，后续配置只作用于该 Side；文件访问与只读策略继续由 Core/Runtime 约束。相关讨论、冻结证据与草稿恢复仍可通过侧栏入口访问；带回回复先预览，再追加到主草稿，不自动发送。
 
 ## 子任务与交付
 
@@ -58,11 +72,11 @@ macOS 桌面适配器通过系统 `/usr/bin/python3` 保留可信 Core 命令的
 
 Renderer 仅通过窄 preload IPC 访问桌面适配器。独立适配器使用 `areal service ensure/restart/stop --json` 连接 Core，不直接管理持久 Core 服务的 PID。退出 GUI 断开界面并结算 GUI 拥有的终端，Core Turn/Goal 和已配置的定时任务继续执行；重新打开按权威快照恢复，不自动重放提交。停止后台服务是显式操作，忙碌时拒绝安全停止。
 
-Core 观察连接意外关闭时，项目连接所有者以 500ms 起步、最长 30s 的退避重试，通过 `service status --instance` 发现兼容的运行中实例，恢复 Thread/Task 快照、订阅和通知基线。`thread/resume` 同时重建工具宿主绑定；恢复不重新提交任务、不同步 Provider/MCP 配置，也不执行配置 revision 屏障。旧连接的消息与异步结果失去投影写入资格。显式停止、适配器关闭、停止中的 Core 或部署指纹不兼容会阻止自动恢复；重新连接需显式操作。
+Core 观察连接意外关闭时，项目连接所有者以 500ms 起步、最长 30s 的退避重试，通过 `service status --instance` 发现兼容的运行中实例，并用原子 `areal/thread/observe` 恢复 Thread/Task 快照、订阅和通知基线。观察恢复不重绑工具宿主；用户显式认领原生页时，才读取权威状态并在 Thread 空闲时尝试 `thread/resume` 绑定，仍受 Core 宿主冲突检查约束。恢复不重新提交任务、不同步 Provider/MCP 配置，也不执行配置 revision 屏障。旧连接的消息与异步结果失去投影写入资格。显式停止、适配器关闭、停止中的 Core 或部署指纹不兼容会阻止自动恢复；重新连接需显式操作。
 
 桌面命令名、作用域、入口参数外形与错误字段由 `@areal/workbench/desktop-contract` 共享；会话配置具有具体参数类型，其他命令仍依赖运行时作用域校验。Main 保留 IPC 来源验证。嵌套配置和执行规则归 Core；字符串或数字 `code`、`submissionUnknown`、`requestId` 穿过适配器和 Main，供界面核对未知结果。
 
-原生预览由 Main 按项目/Thread 归属管理，最多缓存 8 个页面，优先释放最久未访问的非当前页面。隐藏面板保留页面；归档任务、隐藏项目和窗口退出释放对应 WebContents，迟到的 show 请求不能复活已失效归属。驱逐后按界面保存的 URL 重建，崩溃后按页面 URL 重建；导航历史、页面内存及驱逐前的 Session 状态不保证恢复。该上限约束原生页面数量，不是整个 Electron 进程内存或 Session 对象数量的配额。预览仍使用独立临时 Session，不暴露 preload、Node 或产品 bridge。
+原生预览由 Main 按项目/Thread 归属管理，每窗口最多 8 个原生页面、每 Workspace 最多 4 个逻辑页面。空闲 LRU 驱逐排除执行中、控制交接中、可见人工页、准备计划和文件交接页；没有候选时拒绝新页。隐藏面板保留页面；归档任务、隐藏项目和窗口退出释放对应 WebContents，迟到的 show 请求不能复活已失效归属。驱逐保留同一 Page shell 的 URL/标题并报告状态损失，重开提升 pageGeneration；导航历史和页面内存不保证恢复，未知操作不会自动重放。同 Workspace 的兄弟页共享临时 Session，最后引用释放后清除临时状态；不同 Workspace 隔离。上限约束原生页面数量，不是整个 Electron 进程内存配额。预览不暴露 preload、Node 或产品 bridge。
 
 适配器保留已有凭据加密、订阅转发和手机配对职责，不运行另一套 Agent 循环。订阅转发的本地能力令牌和固定 loopback 端口在私有目录的 0600 文件中持久化；上游账号/API 凭据继续使用系统安全存储。适配器退出会中断当时的转发 HTTP 响应；稳定地址允许后续请求恢复，不保证崩溃中的流继续。GUI 正常退出保留适配器。
 

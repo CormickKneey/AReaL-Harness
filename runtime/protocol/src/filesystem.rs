@@ -72,6 +72,13 @@ pub enum FileCommand {
         after: Option<String>,
         limit: usize,
     },
+    Search {
+        path: String,
+        pattern: String,
+        glob: Option<String>,
+        context: usize,
+        limit: usize,
+    },
     Write {
         path: String,
         data_base64: String,
@@ -115,6 +122,7 @@ impl FileCommand {
             Self::Read { path, .. }
             | Self::Stat { path }
             | Self::List { path, .. }
+            | Self::Search { path, .. }
             | Self::Write { path, .. }
             | Self::StageFileChunk { path, .. }
             | Self::CommitFile { path, .. }
@@ -128,6 +136,7 @@ impl FileCommand {
             Self::Read { path, .. }
             | Self::Stat { path }
             | Self::List { path, .. }
+            | Self::Search { path, .. }
             | Self::Write { path, .. }
             | Self::StageFileChunk { path, .. }
             | Self::CommitFile { path, .. }

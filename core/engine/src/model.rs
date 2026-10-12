@@ -518,6 +518,10 @@ pub trait Model: Send + Sync {
     fn capabilities(&self) -> ModelCapabilities {
         ModelCapabilities::text()
     }
+    /// 只有明确声明线协议的适配器才能继承 Provider 原生上下文。
+    fn replay_protocol(&self) -> Option<ModelProtocol> {
+        None
+    }
     async fn stream(&self, messages: Vec<Message>) -> Result<ModelStream>;
     async fn chat(
         &self,
@@ -858,6 +862,9 @@ impl HttpModel {
 
 #[async_trait]
 impl Model for HttpModel {
+    fn replay_protocol(&self) -> Option<ModelProtocol> {
+        Some(self.protocol)
+    }
     async fn chat_limited(
         &self,
         messages: Vec<Message>,

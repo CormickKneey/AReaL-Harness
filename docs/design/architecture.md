@@ -68,6 +68,10 @@ Task Mode 由 `core/engine/src/task_mode` 管理 Task/TaskRun、定时触发、�
 
 Engine 的 `diagnostics` 模块对非权威排障制品执行有界保留，server 装配启动与周期清理；service-host 管理宿主/launcher 日志与握手临时目录的租约回收。诊断回收不改变历史与 Goal 账本的恢复语义，策略见 [Core API](../api/core.md#recovery) 和 [本地服务契约](../api/local-service.md)。
 
+Fork 与 Side 的开发预览复用上述 Core/Runtime 所有权：Engine 创建独立根 Thread/Session，Store 为目标持有不可变继承或参考快照；`conversation.origin` 不承担 Agent 委派、取消或权限继承。Fork 只分支对话，使用当前共享工作区；Side 的持久只读角色在旧执行入口、模型工具和 Runtime Scope 中校验。主会话与 Side 共用 `Messages` 与 `ConversationComposer` 展示边界（Lexical 输入与模型目录菜单）；各自控制器保留草稿、首问回执与配置归属。Renderer 只投影分页历史、相关讨论和草稿回传；关闭面板不结束 Core 工作，回传只追加本地草稿。协议与权限边界见[桌面 API](../api/desktop.md#turn-fork-开发预览)。源码实现与局部验证不等于完整 P0 验收；原生桌面路径、完整组合验收、安装包与真实供应商证据仍需分别完成。
+
+共享 Browser 的普通网络加载使用 Chromium 的系统代理、DNS 与站点策略；Main 只隔离活动控制端口，网页不取得产品 bridge。适配器把用户新发送绑定到确切 Turn 和 GUI 连接，首次经 Core 审批的工具发现才懒绑定当前原生页；不以 `thread/resume` 抢宿主。人工键鼠事件由 Main 在派发前撤销页面读取与动作代次，排空在途输入后交付首个用户事件。Core 的读取和动作许可绑定页面、控制代次及具体计划，UNKNOWN 不重放。产品流程及局限见 [Browser 契约](../api/browser.md)。
+
 ## 仓库目录
 
 桌面客户端归属见[迁移决策](../adr/0001-desktop-client-module.md)。`clients/gui` 的独立 Electron 适配器保留系统凭据与订阅转发，通过共享服务公共入口连接 Core；退出 GUI 不终止 Core 任务。GUI 构建、数据隔离与本地包见 [GUI 指南](../../clients/gui/README.md)。移动端源码后续迁移。
@@ -109,3 +113,5 @@ Core `permissions` 负责审批模式、规则优先级与精确请求记忆；C
 `core/engine/src/delegation.rs` 是统一委派与执行投影门面，记录身份、所有权和后端引用；原 Thread/Turn 与 Workgroup 保留各自执行状态。共享作者租约、隔离快照和交付由 Core 协调，Runtime 不选择策略。`workgroup/delivery.rs` 组合候选、调用可信验收并持久化逐项交付回执，`runtime/fs-helper/src/delivery.rs` 实现受控分块提交与条件删除。Clients 只显示统一子任务与交付投影，高级历史入口保持兼容。接口见 [统一委派](../api/core.md#agent-tools)。
 
 Arena 公开输入物化与清单属于 Runner；只读目录身份、文件操作拒绝及 OS 挂载保护属于 Runtime。Core 的媒体工具生成有界派生图与动画视图，模型适配器计量最终请求字节；职责不进入 Runner 的模型循环。契约见[工具](../guides/tools.md)、[Runtime](../api/runtime.md)和[评测](../benchmarks/README.md)。
+
+共享 Browser 沿用 Core 会话、审批与历史所有权，独立桌面适配器负责认证工具回调，Electron Main 拥有原生页面，Renderer 投影状态。已实现能力通过 Host 发现；持久 Profile 与云浏览器等延期能力仍属于设计范围之外。契约和限制见[Browser 规格](browser.md)、[Browser API](../api/browser.md)及[所有权决策](../adr/0002-shared-browser-ownership.md)。人工独立 Frame 授权与逐 Frame 截图隐私检查也归 Main，绑定当前 Human Page，不授予 Agent 跨源权限，复用既有 ThreadBlob/MediaRef。源码实现不等于安装版或真人验收通过。

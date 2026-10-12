@@ -28,6 +28,7 @@ function serviceOptions(app) {
     harnessHome: process.env.AREAL_HARNESS_SERVICE_HOME || process.env.AREAL_HARNESS_HOME || join(app.getPath('home'), '.areal', 'gui', createHash('sha256').update(resolve(serviceHome(app))).digest('hex').slice(0, 12)),
     userHome: process.env.AREAL_CORE_USER_HOME, config: config ? resolve(config) : undefined, configHome,
     toolExtensions: process.env.AREAL_HARNESS_TOOL_EXTENSIONS,
+    sandboxProfile: process.env.AREAL_CORE_SANDBOX_PROFILE,
     workgroupPolicy: process.env.AREAL_CORE_WORKGROUP_POLICY,
     workgroupToolchain: process.env.AREAL_CORE_WORKGROUP_TOOLCHAIN,
     desktopConfig: process.env.AREAL_CORE_DESKTOP_CONFIG || join(__dirname, 'desktop-profile.json'),
@@ -72,7 +73,7 @@ async function serviceIdentity(options) {
   hash.update(JSON.stringify({ config: configurationIdentity(options.config || join(configHome, 'config.toml')), configHome: configurationIdentity(configHome) }));
   for (const path of [options.desktopConfig, options.workgroupPolicy]) if (path) hash.update(readFileSync(path));
   if (options.workgroupToolchain) hash.update(realpathSync(options.workgroupToolchain));
-  hash.update(JSON.stringify({ harnessHome: options.harnessHome, userHome: options.userHome, toolExtensions: options.toolExtensions, desktopProcesses: options.desktopProcesses, defaultProfile: options.defaultProfile }));
+  hash.update(JSON.stringify({ harnessHome: options.harnessHome, userHome: options.userHome, toolExtensions: options.toolExtensions, sandboxProfile: options.sandboxProfile || 'full-access', desktopProcesses: options.desktopProcesses, defaultProfile: options.defaultProfile }));
   return hash.digest('hex');
 }
 module.exports = { configureUserData, serviceHome, serviceOptions, serviceIdentity };

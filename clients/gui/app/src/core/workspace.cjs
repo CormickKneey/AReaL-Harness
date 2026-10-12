@@ -30,7 +30,37 @@ async function workspaceCommand(backend, request) {
       if (typeof request.threadId !== 'string' || typeof request.turnId !== 'string') throw new Error('请选择已完成的任务轮次');
       const live = await backend.start(project.id);
       const result = await live.client.request('thread/read', { threadId: request.threadId, includeTurns: true });
-      const turn = result.thread?.turns.find(turn => turn.id === request.turnId);
+      let turn = result.thread?.turns.find(turn => turn.id === request.turnId);
+      if (!turn && result.thread?.conversation?.kind === 'fork') {
+        // Read only the target-owned frozen prefix; never substitute the source's live history.
+        let cursor, partial = '', partialItemId;
+        do {
+          const page = await live.client.request('areal/conversation/history', {
+            threadId: request.threadId, view: 'inherited', maxBytes: 262144, ...(cursor ? { cursor } : {}),
+          });
+          if (page.snapshotId !== result.thread.conversation.historySeed.snapshotId) throw new Error('继承历史快照已变化');
+          for (let entry of page.data ?? []) {
+            if (entry.fragment) {
+              if (entry.fragment.offsetUtf8 !== Buffer.byteLength(partial) || partial && partialItemId !== entry.sourceItemId) throw new Error('继承历史分片不连续');
+              partialItemId = entry.sourceItemId;
+              partial += entry.fragment.text;
+              const bytes = Buffer.byteLength(partial);
+              if (bytes > entry.fragment.totalBytes) throw new Error('继承历史分片长度无效');
+              if (bytes < entry.fragment.totalBytes) continue;
+              entry = JSON.parse(partial); partial = ''; partialItemId = undefined;
+            } else if (partial) throw new Error('继承历史分片不连续');
+            if (entry.sourceTurnId !== request.turnId) continue;
+            turn ??= { ...entry.turn, id: request.turnId, status: entry.sourceTurnStatus, items: [] };
+            turn.items.push(entry.item);
+          }
+          if (page.complete) {
+            if (partial) throw new Error('继承历史分片不完整');
+            break;
+          }
+          if (!page.nextCursor || page.nextCursor === cursor) throw new Error('继承历史游标未推进');
+          cursor = page.nextCursor;
+        } while (cursor);
+      }
       if (!turn) throw new Error('轮次不属于当前任务');
       return git.reviewTurnFiles(project.root, turn, { itemId: request.itemId });
     }

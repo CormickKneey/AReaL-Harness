@@ -207,6 +207,11 @@ try {
   );
   assert.equal((await cli(["web", "--json", ...local])).generation, current.generation);
   assert.equal((await ensure(["--runtime-max-processes", "4"])).generation, current.generation);
+  assert.equal((await ensure(["--sandbox-profile", "full-access"])).generation, current.generation);
+  await rejected(
+    () => ensure(["--sandbox-profile", "native"]),
+    /configuration conflict.*permissions/s,
+  );
   await assert.rejects(
     () => ensure(["--runtime-max-processes", "32"]),
     (error) => {

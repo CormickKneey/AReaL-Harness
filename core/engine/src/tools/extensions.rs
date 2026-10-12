@@ -52,6 +52,38 @@ impl Invocation<'_> {
         self.validate(&arguments)?;
         {
             let state = self.cell.state.lock().await;
+            if state.thread.is_side()
+                && !(self.call.name == "side_context_read"
+                    && matches!(self.entry.backend, Backend::Core))
+                && !(state.thread.side_workspace_read()
+                    && super::side_file_tool(&self.call.name, &self.entry.backend))
+            {
+                return Err(rt::Error::new(
+                    rt::ErrorCode::PermissionDenied,
+                    "SIDE_POLICY_VIOLATION",
+                ));
+            }
+            if state.thread.side_workspace_read()
+                && super::side_file_tool(&self.call.name, &self.entry.backend)
+            {
+                if !self.engine.side_workspace_read_available() {
+                    return Err(rt::Error::new(
+                        rt::ErrorCode::Unavailable,
+                        "WORKSPACE_READ_UNAVAILABLE",
+                    ));
+                }
+                let path = arguments.get("path").and_then(Value::as_str).unwrap_or(".");
+                let runtime = self.engine.runtime.as_ref().ok_or_else(|| {
+                    rt::Error::new(rt::ErrorCode::Unavailable, "WORKSPACE_READ_UNAVAILABLE")
+                })?;
+                let uri = super::resource_uri(path, runtime).map_err(invalid)?;
+                if uri != "workspace://repo" && !uri.starts_with("workspace://repo/") {
+                    return Err(rt::Error::new(
+                        rt::ErrorCode::PermissionDenied,
+                        "SIDE_POLICY_VIOLATION",
+                    ));
+                }
+            }
             if state
                 .thread
                 .turns
@@ -93,7 +125,7 @@ impl Invocation<'_> {
                     self.cancel,
                 )
                 .await?;
-            return self.invoke(&arguments).await;
+            return self.invoke(&arguments, None).await;
         }
         for hook in self.hooks(HookEvent::PreToolUse) {
             let response = self.hook(hook, &arguments, None).await?;
@@ -133,23 +165,87 @@ impl Invocation<'_> {
                 .await?;
             }
         }
+        let browser_plan = if self.call.name == "browser_v1"
+            && matches!(self.entry.backend, Backend::Client)
+            && matches!(
+                arguments["operation"].as_str(),
+                Some(
+                    "act"
+                        | "wait"
+                        | "navigate"
+                        | "newPage"
+                        | "runBatch"
+                        | "observe"
+                        | "capture"
+                        | "diagnostics"
+                )
+            ) {
+            let host = self
+                .host
+                .as_ref()
+                .ok_or_else(|| invalid("browser host unavailable"))?;
+            let prepared = host.prepare_browser(json!({"threadId":self.thread_id,"turnId":self.turn_id,
+                "callId":self.call.id,"tool":"browser_v1","arguments":arguments,"hostGeneration":host.id()}),
+                self.cancel.clone()).await.map_err(invalid)?
+                .ok_or_else(|| invalid("browser prepare capability unavailable"))?;
+            if let Some(code) = prepared["error"].as_str() {
+                return Err(invalid(format!(
+                    "browser prepare {code}; dispatch is not_sent"
+                )));
+            }
+            if prepared["preparedActionId"]
+                .as_str()
+                .is_none_or(str::is_empty)
+                || prepared["pageId"] != arguments["parameters"]["pageId"]
+                || prepared["operation"] != arguments["operation"]
+                || prepared["origin"].as_str().is_none()
+                || prepared["fingerprint"].as_str().is_none()
+            {
+                return Err(invalid("browser host returned an invalid plan"));
+            }
+            self.edit(|execution, _| {
+                // 审批计划留在审计记录，模型回放只使用经 hooks 校验的规范参数。
+                execution.model_arguments = Some(arguments.clone());
+                execution.effective_arguments = Some(json!({"arguments":arguments,"plan":prepared}))
+            })
+            .await?;
+            Some(prepared)
+        } else {
+            None
+        };
+        let approval_arguments = browser_plan
+            .as_ref()
+            .map(|plan| json!({"arguments":arguments,"plan":plan}));
         self.engine
             .approval(
                 self.cell,
                 &self.call.id,
                 &self.call.name,
-                &arguments,
+                approval_arguments.as_ref().unwrap_or(&arguments),
                 self.cancel,
             )
             .await?;
+        if browser_plan.is_some() {
+            let current = self.cell.bindings.read().await.host.clone();
+            if self
+                .host
+                .as_ref()
+                .zip(current.as_ref())
+                .is_none_or(|(prepared, active)| prepared.id() != active.id() || active.is_closed())
+            {
+                return Err(invalid(
+                    "browser host changed after approval; prepare again",
+                ));
+            }
+        }
         let result = if matches!(self.entry.backend, Backend::Mcp(_) | Backend::Plugin(_)) {
             // These backends own cancellation and cleanup; do not drop their futures first.
-            self.invoke(&arguments).await
+            self.invoke(&arguments, browser_plan.as_ref()).await
         } else {
             tokio::select! {
                 biased;
                 _ = self.cancel.cancelled() => Err(unknown("interrupted tool invocation; outcome is UNKNOWN")),
-                result = self.invoke(&arguments) => result,
+                result = self.invoke(&arguments, browser_plan.as_ref()) => result,
             }
         };
         if result.as_ref().is_err_and(uncertain) {
@@ -233,7 +329,11 @@ impl Invocation<'_> {
             .filter(|h| h.event == event && (h.matcher == "*" || h.matcher == self.call.name))
             .collect()
     }
-    async fn invoke(&self, args: &Value) -> rt::Result<(bool, Value)> {
+    async fn invoke(
+        &self,
+        args: &Value,
+        browser_plan: Option<&Value>,
+    ) -> rt::Result<(bool, Value)> {
         trajectory::record_json(
             &tracing::Span::current(),
             "areal.tool.call.effective_arguments",
@@ -248,10 +348,22 @@ impl Invocation<'_> {
             Backend::Core => {
                 return self
                     .engine
-                    .core_tool(self.cell, &self.call.id, &self.call.name, args, self.cancel)
+                    .core_tool(
+                        self.cell,
+                        self.turn_id,
+                        &self.call.id,
+                        &self.call.name,
+                        args,
+                        self.cancel,
+                    )
                     .await
                     .map(|value| (true, value))
                     .map_err(|error| {
+                        if self.call.name == "development_service_start"
+                            && matches!(error, Error::Storage(_))
+                        {
+                            return unknown(error);
+                        }
                         let mut result = invalid(&error);
                         if let Error::Invalid(message) = &error
                             && let Some(details) = message.strip_prefix("GOAL_COMPLETION_PENDING: ")
@@ -319,7 +431,9 @@ impl Invocation<'_> {
                     name: self.call.name.clone(),
                     arguments: effective.to_string(),
                 };
-                if matches!(call.name.as_str(), "read_file" | "search_files") {
+                if call.name == "read_file"
+                    || call.name == "search_files" && !state.thread.is_side()
+                {
                     drop(state);
                     return navigation::invoke(
                         runtime,
@@ -481,9 +595,25 @@ impl Invocation<'_> {
                     .host
                     .as_ref()
                     .ok_or_else(|| unknown("dynamic tool client is unavailable"))?;
-                host.call(json!({"threadId":self.thread_id,"turnId":self.turn_id,"callId":self.call.id,"tool":self.call.name,"arguments":args,"hostGeneration":host.id()}), self.cancel.clone()).await.map_err(unknown)?
+                let mut request = json!({"threadId":self.thread_id,"turnId":self.turn_id,"callId":self.call.id,"tool":self.call.name,"arguments":args,"hostGeneration":host.id()});
+                if let Some(plan) = browser_plan {
+                    request["browserApproval"] = json!({"plan":plan});
+                }
+                host.call(request, self.cancel.clone())
+                    .await
+                    .map_err(unknown)?
             }
         };
+        if self.call.name == "browser_v1"
+            && response.structured_content.as_ref().is_some_and(|content| {
+                content["code"] == "outcome_unknown" && content["dispatch"] == "unknown"
+            })
+        {
+            let mut error =
+                unknown("browser batch step outcome is UNKNOWN; inspect the confirmed prefix");
+            error.details = response.structured_content;
+            return Err(error);
+        }
         self.engine
             .materialize_tool_media(self.cell, &mut response.content_items)
             .await

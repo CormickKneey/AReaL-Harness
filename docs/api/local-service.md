@@ -21,6 +21,8 @@ target/debug/areal web --workspace /absolute/workspace --json
 
 `ensure`、`restart` 和 `web` 接受同一组本地参数：`--config`、`--workspace`、`--data-dir`、`--allow-write`、`--allow-network`、`--allow-concurrent-writes`、`--workgroup-policy`、`--workgroup-toolchain`、`--command-timeout-ms`、`--desktop-process-timeout-ms`、`--command-output-bytes`、`--runtime-max-processes`、`--model-endpoint`、`--model-protocol`、`--model`、`--model-provider`、`--api-key-env`、`--desktop-config`。`--agent id@revision` 是 TUI/headless/exec 创建 Thread 时的客户端选择项，也可与远程 `--endpoint` 同用，不改变本地服务身份。默认工作区是当前目录；服务监听随机 loopback 端口。未配置模型时可启动管理服务，运行模型任务仍需有效配置。
 
+启动 GUI 前可显式设置 `AREAL_CORE_SANDBOX_PROFILE=native`，或在 `areal service ensure/restart` 使用 `--sandbox-profile native`，请求原生 Runtime 沙箱。默认仍为 `full-access`。此选择纳入部署兼容性；切换时需先停止活动任务并显式重启服务。只有 Core 验证原生隔离能力后，Side 对话才提供只读访问当前工作区文件的选项。原生隔离不可用时启动失败，不降级为 full-access。
+
 `--desktop-process-timeout-ms` 设置桌面 PTY 的超时（1..86400000 毫秒），与普通命令超时独立。该值纳入服务身份，配置变化需要安全重启；GUI 使用 24 小时上限。
 
 `--runtime-max-processes` 设置此服务所有祖先/子 Scope 共享的 Runtime 活跃进程上限，默认 `4`，接受 `1..4294967295` 的整数。该值纳入服务配置身份；修改后 `ensure` 不会静默复用旧容量的服务，应在任务停稳后安全重启。它独立于 Core 的 `max_active_turns`，不增加 Goal 时间或用量预算。
@@ -67,6 +69,14 @@ target/debug/areal service bind --workspace /absolute/workspace \
 首次绑定会持有 Core 数据锁并检查历史 Thread 的 cwd 都位于该工作区，再写入 `service-workspace` 绑定文件；不复制历史。工作区默认映射保存在 home 的 `workspaces/`。已绑定的数据不能换工作区；混合历史需先单独整理。数据和服务登记须位于工作区外，写模式的可信二进制也须在工作区外。
 
 兼容性将部署身份与默认模型版本分开。模型热更新完整校验 TOML，失败时保留旧配置。限额、权限、运行时预算、部署清单/工具扩展/Workgroup policy 和二进制内容仍保留重启边界。模型凭据值不写入摘要或登记；服务继承首次启动的环境。模型版本在等待热更新 3 秒后仍不一致时，客户端尝试安全重启；普通加载错误直接返回具体原因。旧服务缺失新凭据时会标记 `restartRequired=true`，客户端配置解析已校验当前环境的凭据后，可通过空闲重启继承它。忙碌服务保留原 generation 和任务，待结算后重试；不会自动取消。仅轮换同名凭据值或修改其他环境仍需显式重启。运行中的 Provider/Thread 配置仍由 Core 管理，不属于客户端窗口状态。
+
+### 派生会话与数据兼容性
+
+`areal/capabilities.features.conversationDerivationV1` 默认返回 `preview:false`、实际方法集合、Fork 边界、`sharedCurrent`、可用的 Side `workspaceAccess` 和有效限额，无需开发环境开关。客户端按当前连接的公开能力启用创建入口。
+
+该 feature 的 `historyBytes` 是 Engine 的派生快照上限（配置 `max_history_bytes` 与 64 MiB 的较小值，配置为 0 时使用 64 MiB）。`limits` 返回 `maxThreads`、`maxActiveTurns`、`maxSideTurnsPerSource`、`maxSideTurnsPerDeployment`、`maxSideModelRounds`、`maxSideToolCalls`、`maxSideTurnSeconds`；值来自此服务实际 Engine 配置，Side 工具上限还取非零全局工具预算的较小值。它们是部署上限而非当前可用余量，单轮配置仍可进一步收窄；共享 Core 对全部窗口统一准入。`readOnly` 仅在当前 Runtime 满足原生只读边界时公布，客户端不得静默替换为 `none`。完整方法及恢复契约见[桌面 API](desktop.md#side-chat)。
+
+Store 当前写入版本、`areal/server/status.stateVersion` 与发行 `manifest.json.stateVersion` 均为 14；API 仍为 `areal.core.v1`，服务发现协议仍为 1。无派生元数据的旧记录可读取并在下一次写入升级；Fork/Side 记录必须具有受支持的会话版本和版本 14 的权限语义，不能仅降低记录版本来交给旧二进制。服务重启不重放创建或首问，结果不确定时先查 `areal/request/read`。能力声明不替代各平台原生权限验证、安装包或真实供应商的独立验收。
 
 ## 生命周期与恢复
 

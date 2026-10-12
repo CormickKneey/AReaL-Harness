@@ -185,6 +185,9 @@ impl Engine {
             let _gate = engine.desktop.lifecycle.gate.lock().await;
             let cell = engine.cell(&request.thread_id).await?;
             let mut state = cell.state.lock().await;
+            if state.thread.is_side() {
+                return Err(Error::Invalid("SIDE_POLICY_VIOLATION".into()));
+            }
             let hash = desktop::digest(&request)?;
             let mut candidate = state.thread.clone();
             let data = candidate.desktop.get_or_insert_with(Default::default);
@@ -356,6 +359,9 @@ impl Engine {
             }
             let cell = engine.cell(&request.thread_id).await?;
             let mut state = cell.state.lock().await;
+            if state.thread.is_side() {
+                return Err(Error::Invalid("SIDE_POLICY_VIOLATION".into()));
+            }
             let method = format!("areal/goal/{action}");
             let hash = desktop::digest(&(&request, &update))?;
             let mut candidate = state.thread.clone();
