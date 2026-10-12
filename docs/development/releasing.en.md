@@ -39,6 +39,12 @@ python3 -m unittest discover -s scripts/tests -p test_release.py
 
 The formula installs `bin`, `libexec`, LICENSE and the manifest, preserving Core's relative helper discovery. Linux installs versions into separate directories and atomically switches only the entry symlink. Configuration and history remain outside installer ownership. Validation failure must not switch the entry point.
 
+## Optional platform adapter package
+
+[Optional EnvArena adapter](../../.github/workflows/arena-package.yml) runs only through manual `workflow_dispatch`. It produces a Linux musl zipapp for the platform runner and verification artifacts; it does not publish to an Arena Registry or upload trajectories, and is not a prerequisite for standalone bundles or the installer above. Regular pull requests do not run it. Adapter scripts moved from `scripts/` to `integrations/envarena/`; see the [benchmark adapter guide](../benchmarks/README.en.md#arena-lazy-public-inputs) for commands and native Linux validation.
+
+Do not require the optional adapter job in regular pull-request branch protection. Remove any existing required `Arena package` check in repository settings separately; workflow files do not change that setting.
+
 ## GUI releases
 
 For local validation without new signatures, use `AREAL_GUI_UNSIGNED_LOCAL=1 AREAL_GUI_PACKAGE_DIR=/absolute/new-directory pnpm --dir clients/gui package`, or `python3 scripts/package.py --unsigned-local --profile debug --output /absolute/new-directory` for a CLI bundle. This explicit mode skips signing Core copies and the app while builder retains `identity: null`. It preserves input bytes and existing signatures, records actual bundle signature verification, and neither removes signatures nor changes system policy. It is incompatible with `AREAL_GUI_RELEASE=1`; the default flow still creates local ad-hoc signatures. A generated ZIP does not prove launchability: extract into a new isolated directory and validate, preserving the first system rejection and stopping that launch path if denied.

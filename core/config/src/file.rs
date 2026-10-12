@@ -246,6 +246,7 @@ fn walk(
             | ["tools"]
             | ["goals"]
             | ["permissions"]
+            | ["trajectory"]
     );
     if table {
         let values = item
@@ -300,6 +301,18 @@ fn walk(
         names.as_slice(),
         ["schema_version"]
             | [
+                "trajectory",
+                "max_disk_bytes"
+                    | "max_memory_bytes"
+                    | "max_batch_bytes"
+                    | "max_records"
+                    | "max_retries"
+                    | "retry_initial_seconds"
+                    | "retry_max_seconds"
+                    | "request_timeout_seconds"
+                    | "upload_interval_ms"
+            ]
+            | [
                 "goals",
                 "max_turns" | "max_active_seconds" | "max_unreported_turns" | "turn_model_rounds"
             ]
@@ -345,6 +358,10 @@ fn walk(
         names.as_slice(),
         ["server", "listen" | "data_dir"]
             | [
+                "trajectory",
+                "endpoint" | "spool_dir" | "headers_env" | "headers_file"
+            ]
+            | [
                 "model",
                 "provider"
                     | "name"
@@ -373,6 +390,7 @@ fn walk(
     let boolean = matches!(
         names.as_slice(),
         ["limits", "watchdog_disable" | "context_compaction_enabled"]
+            | ["trajectory", "enabled"]
             | ["model", "responses_websocket"]
     );
     if !numeric && !string && !decimal && !boolean {

@@ -6,6 +6,11 @@
 /** @typedef {{projectId:string,threadId:string,expectedRevision?:number,model?:{providerId:string,modelId:string}|null,profile?:ResourceRef,options?:Record<string,unknown>,parameters?:Record<string,unknown>,selectedSkills?:ResourceRef[]}} ConfigureRequest */
 /** @typedef {{projectId:string,operation:'start'|'recover'|'send'|'context'|'list',sourceThreadId?:string,threadId?:string,requestId?:string,text?:string,cursor?:string,evidenceRef?:string,includeArchived?:boolean,model?:{providerId:string,modelId:string},parameters?:Record<string,unknown>}} SideRequest */
 
+/** @typedef {{operation:'status'|'retry'}} TrajectoryRequest */
+/** @typedef {{id:string,status:'pending'|'uploading'|'failed'|'uploaded'|'evicted',created_at:number,uploaded_at:number|null,attempts:number,next_attempt_at:number|null,bytes:number,error:string|null,turn_id?:string|null,event_name?:string|null,model_name?:string|null,harness_version?:string|null,execution_duration_ms?:number|null,model_call_duration_ms?:number|null,occurred_at?:number|null}} TrajectoryRecord */
+/** @typedef {{scope:'recent_records',record_limit:100,records_considered:number,model_calls:number,total_duration_ms:number|null,mean_duration_ms:number|null,max_duration_ms:number|null}} TrajectoryModelCallSummary */
+/** @typedef {{enabled:boolean,state:'disabled'|'ready'|'degraded'|'invalid',endpoint:string,configPath:string|null,spool_dir:string,worker_running:boolean,queue:{pending:number,uploading:number,failed:number,uploaded:number,evicted:number,bytes:number,max_bytes:number,dropped_memory:number,dropped_oversize:number},last_error:string|null,last_success_at:number|null,records:TrajectoryRecord[],model_call_summary?:TrajectoryModelCallSummary,limits:{max_retries:number,upload_interval_ms:number,max_memory_bytes:number}}} TrajectoryStatus */
+
 // 名称、作用域和执行层只维护一份；Main 专属能力不能从后台服务入口调用。
 const commandDefinitions = Object.freeze({
   connect: ['service', 'project'], list: ['service', 'project'], open: ['service', 'thread'],
@@ -16,12 +21,12 @@ const commandDefinitions = Object.freeze({
   manage: ['service', 'project'], workspace: ['service', 'project'], media: ['service', 'thread'],
   steer: ['service', 'thread'], dismissRecovery: ['service', 'project'], providers: ['service', 'app'],
   chatgpt: ['service', 'app'], analytics: ['service', 'app'], resources: ['service', 'app'],
-  projectless: ['service', 'app'], tasks: ['service', 'app'],
+  projectless: ['service', 'app'], tasks: ['service', 'app'], trajectory: ['service', 'app'],
   serviceStatus: ['main', 'app'], stopService: ['main', 'app'], recoverResources: ['main', 'app'],
   connectService: ['main', 'app'], export: ['main', 'thread'], remoteControl: ['main', 'app'],
 });
 /** @typedef {keyof typeof commandDefinitions} CommandName */
-/** @template {CommandName} N @typedef {N extends 'configure' ? ConfigureRequest : N extends 'side' ? SideRequest : Record<string,unknown>} CommandParams */
+/** @template {CommandName} N @typedef {N extends 'configure' ? ConfigureRequest : N extends 'side' ? SideRequest : N extends 'trajectory' ? TrajectoryRequest : Record<string,unknown>} CommandParams */
 /** @typedef {'show'|'navigate'|'back'|'forward'|'reload'|'stop'|'state'|'external'|'devtools'|'openLink'|'release'|'claim'|'takeover'|'captureRegion'|'captureElement'|'selectElement'|'cancelElementSelection'|'checkElement'|'endRegion'|'beginStyleTrial'|'applyStyleTrial'|'undoStyleTrial'|'redoStyleTrial'|'styleTrialState'|'captureStyleTrialAfter'|'clearStyleTrial'|'newPage'|'selectPage'|'subscribe'|'unsubscribe'|'allowNextDownload'|'cancelFileHandoff'|'cancelDownload'|'authorizeFrameOrigin'|'reloadFrameOrigin'|'revokeFrameOrigin'} OwnedPreviewOperation */
 /** @typedef {{operation:'hide',projectId?:string,threadId?:string,pageId?:string,captureId?:string}|{operation:OwnedPreviewOperation,projectId:string,threadId:string,pageId?:string,captureId?:string,x?:number,y?:number,elementId?:string,trialId?:string,property?:string,value?:string,downloadId?:string,url?:string,userIntent?:boolean,visible?:boolean,bounds?:{x:number,y:number,width:number,height:number}}} PreviewRequest */
 /** @param {unknown} value @returns {value is Record<string,unknown>} */
@@ -53,6 +58,9 @@ function validateCommand(name, params, { serviceOnly = false } = {}) {
   if (name === 'attachBrowser' && (typeof params.expectedToolsetRevision !== 'number'
     || !Number.isSafeInteger(params.expectedToolsetRevision)
     || params.expectedToolsetRevision < 0)) invalid();
+
+  // 导出目标与配置路径只由可信启动配置选择，Renderer 不能扩展 CLI 参数。
+  if (name === 'trajectory' && (!['status', 'retry'].includes(String(params.operation)) || Object.keys(params).some(key => key !== 'operation'))) invalid();
   if (['manage', 'workspace', 'media', 'queueEdit', 'library', 'providers', 'chatgpt', 'analytics', 'resources', 'projectless', 'tasks', 'remoteControl'].includes(name)
     && !identifier(params.operation)) invalid();
   if (name !== 'configure') return;

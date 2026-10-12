@@ -241,6 +241,10 @@ endpoint = "http://127.0.0.1:{model.server_port}"
         assert len(snapshot["thread"]["turns"]) == 2
         assert snapshot["thread"]["turns"][-1]["status"] == "completed"
         assert any(m["role"] == "tool" for m in requests[-1]["messages"])
+        # 仅修改隔离配置；无效地址应只停用导出，不得阻止 owned TUI 和 Runtime。
+        with config.open("a") as file:
+            file.write('\n[trajectory]\nenabled = true\nendpoint = "invalid"\n')
+        env["AREAL_PTY_EXPECT_TRAJECTORY"] = "1"
         pty = run(
             [
                 sys.executable,
@@ -252,6 +256,11 @@ endpoint = "http://127.0.0.1:{model.server_port}"
             ]
         )
         print(pty.stdout.strip())
+        trajectory = json.loads(
+            run([args[0], "trajectory", "status", "--config", str(config)]).stdout
+        )
+        assert trajectory["enabled"] and trajectory["state"] == "invalid", trajectory
+        assert not trajectory["worker_running"], trajectory
         # Every local launch must use its actual bound endpoint and close it on exit.
         for log in data.glob("launch-*.log"):
             match = re.search(r"listening on ws://127.0.0.1:(\d+)", log.read_text())
@@ -263,7 +272,7 @@ endpoint = "http://127.0.0.1:{model.server_port}"
                 )
         assert not errors, errors
         print(
-            "PASS owned local TUI: TOML-only model/data, real Runtime fs_read, persistent resume, ephemeral listener, PTY and owned Core cleanup"
+            "PASS owned local TUI: TOML-only model/data, real Runtime fs_read, persistent resume, isolated invalid trajectory warning without an uploader, ephemeral listener, PTY and owned Core cleanup"
         )
 finally:
     model.shutdown()

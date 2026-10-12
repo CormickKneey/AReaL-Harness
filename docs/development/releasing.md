@@ -39,6 +39,12 @@ python3 -m unittest discover -s scripts/tests -p test_release.py
 
 Homebrew formula 安装 `bin`、`libexec`、LICENSE 和 manifest，避免改变 Core 查找 helper 的相对路径。Linux 安装器将不同版本放在不同目录，只原子替换入口符号链接；用户配置与历史不由安装器维护。校验失败不得切换入口。
 
+## 可选平台适配包
+
+[Optional EnvArena adapter](../../.github/workflows/arena-package.yml) 仅由 `workflow_dispatch` 手动触发，生成平台 runner 的 Linux musl zipapp 和验收 artifact；不发布 Arena Registry、不上传轨迹，也不是上述独立发行包或安装器的前置条件。普通 PR 不运行此工作流。专用脚本已从 `scripts/` 移至 `integrations/envarena/`，命令和原生 Linux 验收见[评测适配指南](../benchmarks/README.md#arena-按需公开输入)。
+
+维护仓库保护规则时，不要将可选适配器 job 设为普通 PR 的必需检查；若已有旧 `Arena package` 必需规则，需在仓库设置中移除。该设置独立于工作流文件。
+
 ## GUI 发布
 
 本机无需新增签名时可使用 `AREAL_GUI_UNSIGNED_LOCAL=1 AREAL_GUI_PACKAGE_DIR=/绝对路径/新目录 pnpm --dir clients/gui package`，CLI bundle 对应 `python3 scripts/package.py --unsigned-local --profile debug --output /绝对路径/新目录`。该显式模式跳过 Core 副本和整个 app 的签名，builder 继续使用 `identity: null`；保留输入字节及已有签名，记录真实 bundle 签名核验结果，不移除签名或改变系统策略。它与 `AREAL_GUI_RELEASE=1` 互斥；默认流程仍创建本机 ad-hoc 签名。已生成 ZIP 不证明能启动，须从 ZIP 复制到新隔离目录验收，系统拒绝时保留首次失败并停止该启动路径。

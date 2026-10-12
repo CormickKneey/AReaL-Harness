@@ -1,9 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { waitForServiceState } from "./local-service-wait.mjs";
+import { waitForFaultStatus } from "./local-service-wait.mjs";
+
+const waitForServiceState = (query, state, timeoutMs) =>
+  waitForFaultStatus(query, state, { timeoutMs });
 
 const refused = () =>
   Object.assign(new Error("status failed"), {
+    code: 1,
+    stdout: "",
+    signal: null,
+    killed: false,
     stderr: JSON.stringify({
       error: {
         code: "localServiceError",
@@ -64,10 +71,10 @@ test("persistent probe refusal and wrong terminal states retain a deadline", asy
       20,
       5,
     ),
-    /before deadline.*Connection refused/,
+    /within 20 ms/,
   );
   await assert.rejects(
     waitForServiceState(async () => ({ state: "unavailable" }), "stopped", 20, 5),
-    /before deadline.*unavailable/,
+    /within 20 ms/,
   );
 });

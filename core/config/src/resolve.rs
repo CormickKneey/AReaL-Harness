@@ -238,6 +238,9 @@ fn path_text(value: &Path, field: &str, source: &ConfigSource) -> Result<String>
 }
 
 pub(crate) fn valid(field: &str, entry: &Entry) -> Result<()> {
+    if field.starts_with("trajectory.") {
+        return crate::trajectory::validate(field, entry);
+    }
     let value = &entry.value;
     let reject = |message| error(ConfigErrorKind::InvalidValue, field, &entry.source, message);
     if value.trim().is_empty() || value.chars().any(char::is_control) {
@@ -492,7 +495,13 @@ fn insert(
     cwd: &Path,
 ) -> Result<()> {
     valid(field, &entry)?;
-    if matches!(field, "server.data_dir" | "tools.extensions_file") {
+    if matches!(
+        field,
+        "server.data_dir"
+            | "tools.extensions_file"
+            | "trajectory.spool_dir"
+            | "trajectory.headers_file"
+    ) {
         let base = match &entry.source {
             ConfigSource::File { path, .. } => path.parent().unwrap(),
             _ => cwd,
@@ -558,6 +567,14 @@ pub(crate) fn load_mode(
         Some(file) => file,
         None => file::read(&selected, explicit)?,
     };
+    let (trajectory_source_id, trajectory_spool, trajectory_source_file) =
+        crate::trajectory::location(&home, &selected);
+    let trajectory_source_revision = if file.loaded {
+        use sha2::{Digest, Sha256};
+        format!("{:x}", Sha256::digest(file.text.as_bytes()))
+    } else {
+        "missing".to_owned()
+    };
     let catalog = file.catalog.clone();
     let catalog_managed = file.values.contains_key("model.catalog_version");
     let mut values = BTreeMap::new();
@@ -619,6 +636,26 @@ pub(crate) fn load_mode(
         "server.data_dir",
         Entry {
             value: path_text(&home.join("state"), "server.data_dir", &home_source)?,
+            source: default.clone(),
+        },
+        &inputs.cwd,
+    )?;
+    for (field, value) in crate::trajectory::DEFAULTS {
+        insert(
+            &mut values,
+            field,
+            Entry {
+                value: (*value).into(),
+                source: default.clone(),
+            },
+            &inputs.cwd,
+        )?;
+    }
+    insert(
+        &mut values,
+        "trajectory.spool_dir",
+        Entry {
+            value: path_text(&trajectory_spool, "trajectory.spool_dir", &home_source)?,
             source: default.clone(),
         },
         &inputs.cwd,
@@ -828,6 +865,12 @@ pub(crate) fn load_mode(
     sources.insert("home".into(), home_source);
     sources.insert("config_file".into(), selected_source);
     let result = ResolvedCoreConfig {
+        trajectory: TrajectoryConfig::resolve(
+            &values,
+            trajectory_source_id,
+            trajectory_source_file,
+            trajectory_source_revision,
+        )?,
         model_catalog: catalog,
         model_catalog_managed: catalog_managed,
         permissions: PermissionConfig {

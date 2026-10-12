@@ -334,6 +334,11 @@ impl Invocation<'_> {
         args: &Value,
         browser_plan: Option<&Value>,
     ) -> rt::Result<(bool, Value)> {
+        trajectory::record_json(
+            &tracing::Span::current(),
+            "areal.tool.call.effective_arguments",
+            args,
+        );
         let mut response = match &self.entry.backend {
             Backend::Agent => {
                 return super::agents::invoke(self.engine, self.cell, &self.call.name, args)

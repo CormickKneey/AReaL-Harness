@@ -15,7 +15,7 @@ def main():
     args = parser.parse_args()
     if args.output.exists():
         parser.error("output must not exist")
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[2]
     cases = json.loads((root / "tests/fixtures/arena-inputs.json").read_text())
     known = {}
     for case in cases:

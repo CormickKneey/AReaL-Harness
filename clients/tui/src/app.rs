@@ -106,6 +106,7 @@ pub struct App {
     pub monitor_configuration: bool,
     pub restart_ready: bool,
     pub configuration_notice: Option<String>,
+    pub trajectory_notice: Option<String>,
     configuration: Value,
     pub threads: BTreeMap<String, Thread>,
     pub selected: Option<String>,
@@ -172,6 +173,7 @@ impl App {
             monitor_configuration: false,
             restart_ready: false,
             configuration_notice: None,
+            trajectory_notice: None,
             configuration: Value::Null,
             threads: BTreeMap::new(),
             selected: None,
@@ -556,6 +558,17 @@ impl App {
         }
         Ok(())
     }
+    pub fn set_trajectory_notice(&mut self, notice: String) {
+        if self.trajectory_notice.is_none() {
+            self.trajectory_notice = Some(safe_text(&notice));
+            self.dirty = true;
+        }
+    }
+
+    pub fn status_notice(&self) -> &str {
+        self.configuration_notice.as_deref().unwrap_or(&self.status)
+    }
+
     fn configuration_changed(&mut self, configuration: &Value) -> Result<()> {
         if configuration.is_null() || self.configuration == *configuration {
             return Ok(());
@@ -2573,6 +2586,36 @@ pub(crate) mod tests {
     pub fn blocked_goal() -> areal_protocol::goals::Goal {
         serde_json::from_value(json!({"id":"goal","threadId":"root","objective":"inspect","status":"blocked","reason":"usageUnknown","tokenBudget":null,"maxTurns":10,"maxActiveSeconds":100,"usage":{"inputTokens":0,"cachedInputTokens":0,"outputTokens":0,"tokensUsed":0,"reservedTokens":500,"unknownRequests":1,"timeUsedSeconds":1.0,"turnsStarted":1,"accountingComplete":false},"activeTurnId":null,"settling":false,"waitingForInput":false,"waitingForCapacity":false,"report":null,"reportTurnId":null,"unreportedTurns":0})).unwrap()
     }
+    #[test]
+    fn trajectory_notice_is_once_and_never_replaces_configuration_or_history() {
+        let mut app = App::new(Preferences::default());
+        app.status = "Connected".into();
+        app.configuration_notice = Some("Model configuration failed".into());
+        app.set_trajectory_notice("Trajectory needs attention".into());
+        app.set_trajectory_notice("Duplicate".into());
+        assert_eq!(app.status_notice(), "Model configuration failed");
+        assert_eq!(
+            app.trajectory_notice.as_deref(),
+            Some("Trajectory needs attention")
+        );
+        assert!(app.histories.is_empty());
+        assert_eq!(app.status, "Connected");
+        app.configuration_notice = None;
+        assert_eq!(app.status_notice(), "Connected");
+        app.status = "areal/model/list: permission denied".into();
+        assert_eq!(app.status_notice(), "areal/model/list: permission denied");
+        app.configuration_changed(&json!({"error":"new model configuration failure"}))
+            .unwrap();
+        assert!(
+            app.status_notice()
+                .contains("new model configuration failure")
+        );
+        assert_eq!(
+            app.trajectory_notice.as_deref(),
+            Some("Trajectory needs attention")
+        );
+    }
+
     #[test]
     fn approvals_preserve_digest_default_to_deny_and_follow_resolution() {
         let mut app = App::new(Preferences::default());

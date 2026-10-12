@@ -89,6 +89,13 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         .style(palette.surface),
         header,
     );
+    // 复用页眉第二行，避免长期提醒覆盖请求错误或挤占会话区域。
+    if let Some(notice) = &app.trajectory_notice {
+        frame.render_widget(
+            Paragraph::new(safe_text(notice)).style(palette.style(Role::Warning)),
+            Rect::new(header.x, header.y + 1, header.width, 1),
+        );
+    }
     let (conversation, sidebar) = if workspace.width >= 80 {
         let [left, right] = Layout::horizontal([
             Constraint::Min(48),
@@ -147,10 +154,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     );
     input_view(frame, input, app, palette);
     frame.render_widget(
-        Paragraph::new(safe_text(
-            app.configuration_notice.as_deref().unwrap_or(&app.status),
-        ))
-        .style(palette.style(if app.connected {
+        Paragraph::new(safe_text(app.status_notice())).style(palette.style(if app.connected {
             Role::Muted
         } else {
             Role::Warning
@@ -1087,11 +1091,9 @@ Idle Turns only · configured models; availability is not a connection probe",
     };
     frame.render_widget(Paragraph::new(note_text).style(p.style(Role::Muted)), note);
     frame.render_widget(
-        Paragraph::new(safe_text(
-            app.configuration_notice.as_deref().unwrap_or(&app.status),
-        ))
-        .wrap(Wrap { trim: false })
-        .style(p.style(Role::Warning)),
+        Paragraph::new(safe_text(app.status_notice()))
+            .wrap(Wrap { trim: false })
+            .style(p.style(Role::Warning)),
         status,
     );
 }
@@ -1159,6 +1161,63 @@ mod tests {
     use super::*;
     use crate::{app::tests::thread, theme::Preferences};
     use ratatui::{Terminal, backend::TestBackend};
+    #[test]
+    fn trajectory_notice_uses_header_without_hiding_rpc_or_disconnect_status() {
+        let mut app = App::new(Preferences::default());
+        let mut terminal = Terminal::new(TestBackend::new(120, 36)).unwrap();
+        app.connected = true;
+        app.status = "areal/model/list: permission denied".into();
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        let before = screen(&terminal);
+        let notice = "Trajectory needs attention; check settings";
+        app.set_trajectory_notice(notice.into());
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        let after = screen(&terminal);
+        let rows: Vec<_> = after.lines().collect();
+        assert_eq!(rows.len(), 36);
+        assert_eq!(rows[1].trim(), notice);
+        assert!(rows[34].contains("areal/model/list: permission denied"));
+        // 提醒只能改变原有空白行；其余布局、聊天和状态内容保持原样。
+        for (row, (before, after)) in before.lines().zip(&rows).enumerate() {
+            if row != 1 {
+                assert_eq!(before, *after, "row {row}");
+            }
+        }
+        assert!(app.histories.is_empty());
+        app.disconnect("fixture transport reset");
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        let text = screen(&terminal);
+        assert_eq!(text.lines().nth(1).unwrap().trim(), notice);
+        assert!(
+            text.lines()
+                .nth(34)
+                .unwrap()
+                .contains("Disconnected · fixture transport reset")
+        );
+        assert!(text.contains("RECONNECTING · stale data"));
+        app.configuration_notice = Some("Model configuration failed".into());
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        let text = screen(&terminal);
+        assert_eq!(text.lines().nth(1).unwrap().trim(), notice);
+        assert!(
+            text.lines()
+                .nth(34)
+                .unwrap()
+                .contains("Model configuration failed")
+        );
+        assert!(!text.contains("fixture transport reset"));
+        app.configuration_notice = None;
+        app.status = "areal/model/list: permission denied".into();
+        app.picker = Some(crate::commands::Picker::new(PickerKind::Models));
+        terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+        let text = screen(&terminal);
+        assert_eq!(text.lines().nth(1).unwrap().trim(), notice);
+        assert_eq!(
+            text.matches("areal/model/list: permission denied").count(),
+            2
+        );
+    }
+
     #[test]
     fn input_window_tracks_cursor_and_keeps_wide_graphemes_visible() {
         for (text, cursor, width, visible, column) in [

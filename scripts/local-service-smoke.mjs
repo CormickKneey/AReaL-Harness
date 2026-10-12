@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, writeFile, realpath, rm, symlink } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { connect } from "../examples/desktop-api/client.mjs";
-import { waitForServiceState } from "./local-service-wait.mjs";
+import { waitForFaultStatus } from "./local-service-wait.mjs";
 const exec = promisify(execFile);
 const root = await realpath(await mkdtemp("/tmp/as-"));
 const workspace = join(root, "workspace"),
@@ -20,7 +20,14 @@ const evidence = resolve(
   process.env.AREAL_TEST_EVIDENCE ?? `/tmp/areal-local-service-${Date.now()}.json`,
 );
 const lifecycleChecks = [];
-let phase = "startup";
+const faultStatusWaits = [];
+let phase;
+const smokeStartedAt = Date.now();
+function setPhase(value) {
+  phase = value;
+  console.log(`Phase: ${JSON.stringify({ phase, elapsedMs: Date.now() - smokeStartedAt })}`);
+}
+setPhase("startup");
 let passed = false;
 const env = {
   ...Object.fromEntries(
@@ -63,8 +70,8 @@ const model = createServer(async (req, res) => {
 });
 model.listen(0, "127.0.0.1");
 await once(model, "listening");
-async function cli(args) {
-  const { stdout } = await exec(bin, args, { env, timeout: 80000, maxBuffer: 1024 * 1024 });
+async function cli(args, { timeout = 80000 } = {}) {
+  const { stdout } = await exec(bin, args, { env, timeout, maxBuffer: 1024 * 1024 });
   return JSON.parse(stdout);
 }
 const local = ["--workspace", workspace, "--config", config];
@@ -90,6 +97,21 @@ async function until(fn, timeoutMs = 20000) {
     await new Promise((r) => setTimeout(r, 50));
   }
   throw Error("condition timed out");
+}
+async function faultStatus(service, expectedState) {
+  const check = { phase, expectedState, refusedConnections: 0, settled: false };
+  faultStatusWaits.push(check);
+  const result = await waitForFaultStatus(
+    (timeout) => cli(["service", "status", "--instance", service.serviceId], { timeout }),
+    expectedState,
+    { onRefused: () => check.refusedConnections++ },
+  );
+  assert.equal(
+    result.generation,
+    service.generation,
+    "fault recovery must observe the same generation",
+  );
+  check.settled = true;
 }
 async function rejected(fn, pattern) {
   await assert.rejects(fn, (e) => pattern.test(e.stderr ?? e.message));
@@ -174,6 +196,7 @@ try {
   );
   const services = await Promise.all(Array.from({ length: 4 }, () => ensure()));
   current = services[0];
+  setPhase("discovery-and-ownership");
   assert(
     services.every(
       (s) =>
@@ -231,6 +254,7 @@ try {
   );
   const first = await client(current),
     second = await client(current);
+  setPhase("busy-service-and-shared-windows");
   const { thread } = await first.call("areal/thread/start", {
     requestId: crypto.randomUUID(),
     cwd: workspace,
@@ -256,6 +280,7 @@ try {
     current.generation,
   );
   const ws2 = join(root, "other");
+  setPhase("workspace-isolation");
   await mkdir(ws2);
   const other = await ensure(["--workspace", ws2]);
   assert.notEqual(other.serviceId, current.serviceId);
@@ -269,6 +294,7 @@ try {
   await writeFile(empty, "schema_version = 1\n");
   const unconfigured = await ensure(["--workspace", ws2, "--config", empty]);
   await stop(unconfigured);
+  setPhase("cancel-stop-and-history-recovery");
   await second.call("areal/turn/start", {
     requestId: crypto.randomUUID(),
     threadId: thread.id,
@@ -287,8 +313,7 @@ try {
   await resumed.close();
   // 强杀启动器和宿主均须关闭旧 Core/Runtime，然后才能产生下一代实例。
   for (const victim of ["launcher", "host"]) {
-    phase = `${victim}-killed`;
-    console.log(`Lifecycle: ${phase}`);
+    setPhase(`${victim}-killed`);
     const { launcher, runtime, processes } = await serviceProcesses(current);
     if (victim === "host") {
       // 让 Runtime 清理停在可观测窗口：Core 锁已释放，launcher 仍须阻止替代实例。
@@ -307,27 +332,20 @@ try {
     }
     for (const pid of processes) await dead(pid);
     lifecycleChecks.push({ fault: `${victim}-killed`, descendantsExited: processes });
-    await waitForServiceState(
-      () => cli(["service", "status", "--instance", current.serviceId]),
-      "stopped",
-    );
+    await faultStatus(current, "stopped");
     const previous = current;
     current = await ensure();
     assert.notEqual(current.generation, previous.generation);
   }
   if (process.platform === "darwin") {
-    phase = "launcher-bridge-killed";
-    console.log(`Lifecycle: ${phase}`);
+    setPhase("launcher-bridge-killed");
     // 强杀桥没有真实 wait/reap 回执，必须保留 unavailable，不能冒充干净停止。
     const topology = await serviceProcesses(current);
     assert.notEqual(topology.launcherBridge, current.hostPid);
     process.kill(topology.launcherBridge, "SIGKILL");
     await dead(topology.launcherBridge);
     for (const pid of [topology.launcher, ...topology.processes]) await dead(pid);
-    await waitForServiceState(
-      () => cli(["service", "status", "--instance", current.serviceId]),
-      "unavailable",
-    );
+    await faultStatus(current, "unavailable");
     lifecycleChecks.push({
       fault: "launcher-bridge-killed",
       state: "unavailable",
@@ -336,8 +354,7 @@ try {
     const previousBridgeGeneration = current.generation;
     current = await ensure();
     assert.notEqual(current.generation, previousBridgeGeneration);
-    phase = "runtime-stalled";
-    console.log(`Lifecycle: ${phase}`);
+    setPhase("runtime-stalled");
     const { launcher, runtimeOwner, runtime, processes } = await serviceProcesses(current);
     assert.notEqual(
       runtimeOwner,
@@ -364,7 +381,7 @@ try {
     current = await ensure();
     assert.notEqual(current.generation, previous.generation);
   }
-  phase = "pty-and-model-reload";
+  setPhase("explicit-stop-with-open-window");
   await exec("python3", ["-I", "-S", resolve("scripts/local-service-pty.py"), bin, ...local], {
     env: { ...env, TEST_EXPLICIT_STOP: "1" },
     timeout: 45000,
@@ -381,6 +398,7 @@ try {
     ),
   );
   held.splice(0);
+  setPhase("model-hot-reload");
   current = await ensure();
   const hot = await client(current);
   const hotConfig = (name, extra = "") =>
@@ -439,6 +457,7 @@ try {
   await writeFile(config, hotConfig("fixture-new"));
   await until(async () => !(await hot.call("areal/server/status", {})).configuration.error);
   // 暂停队列跨重启恢复，仍使用提交时的默认模型版本。
+  setPhase("queue-restart");
   const q = await hot.call("areal/queue/list", { threadId: hotThread.id });
   await hot.call("areal/queue/pause", { threadId: hotThread.id, expectedRevision: q.revision });
   await hot.call("areal/turn/enqueue", {
@@ -464,6 +483,7 @@ try {
   assert.equal(requests.find((r) => r.text === "queued-across-restart").model, "fixture-new");
   await until(async () => (await restored.call("areal/server/status", {})).restartSafe);
   // 新凭据仅存在于客户端环境时，先保留忙碌服务，空闲后由 ensure 自动继承。
+  setPhase("credential-restart");
   await restored.call("areal/turn/start", {
     requestId: crypto.randomUUID(),
     threadId: hotThread.id,
@@ -507,6 +527,7 @@ try {
   await until(async () => (await refreshed.call("areal/server/status", {})).restartSafe);
   assert.equal((await ensure()).generation, current.generation);
   // 不可热更新的限额由 ensure 在空闲时自动重启，保留会话。
+  setPhase("limit-restart-and-open-window");
   await writeFile(config, hotConfig("fixture-third", "[limits]\nmax_threads = 1234\n"));
   const previousGeneration = current.generation;
   current = await ensure();
@@ -521,6 +542,7 @@ try {
     timeout: 60000,
   });
   await cli(["service", "stop", "--workspace", workspace]);
+  setPhase("complete");
   passed = true;
   console.log(
     "PASS shared local service: concurrent ensure, TUI windows, Web discovery, auth, busy/cancel stop, workspace isolation, history and crash recovery",
@@ -536,13 +558,15 @@ try {
     JSON.stringify(
       {
         passed,
-        phase,
         platform: process.platform,
         binary: bin,
         binarySha256: createHash("sha256")
           .update(await readFile(bin))
           .digest("hex"),
         lifecycleChecks,
+        phase,
+        faultStatusWaits,
+        service: current ? { serviceId: current.serviceId, generation: current.generation } : null,
       },
       null,
       2,

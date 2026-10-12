@@ -119,29 +119,60 @@ impl TelemetryConfig {
 pub struct TelemetryGuard {
     provider: Option<opentelemetry_sdk::trace::SdkTracerProvider>,
     logger_provider: Option<opentelemetry_sdk::logs::SdkLoggerProvider>,
+    durable_provider: Option<opentelemetry_sdk::logs::SdkLoggerProvider>,
 }
 
 impl TelemetryGuard {
-    pub fn init(config: TelemetryConfig, filter: &str) -> Result<Self> {
+    pub fn init(
+        config: TelemetryConfig,
+        filter: &str,
+        trajectory: &areal_config::TrajectoryConfig,
+    ) -> Result<Self> {
         global::set_text_map_propagator(TraceContextPropagator::new());
         let log_filter = EnvFilter::try_new(filter).context("invalid log filter")?;
         let resource = Resource::builder()
             .with_service_name(config.service_name)
             .with_attribute(KeyValue::new("service.version", env!("CARGO_PKG_VERSION")))
             .build();
-        let logger_provider = config.logs.map(|signal| -> Result<_> {
-            let exporter = opentelemetry_otlp::LogExporter::builder()
-                .with_http()
-                .with_protocol(Protocol::HttpBinary)
-                .with_endpoint(signal.endpoint)
-                .with_timeout(signal.timeout)
+        let durable = if trajectory.enabled {
+            // 用户提示统一由客户端状态入口负责，Core 不重复向继承终端输出。
+            crate::trajectory::Processor::new(trajectory).ok()
+        } else {
+            let control = trajectory.clone();
+            let _ = std::thread::Builder::new()
+                .name("areal-trajectory-disable".into())
+                .spawn(move || {
+                    // 停用失败仅影响可选采集，由状态命令报告，不改变主服务启动结果。
+                    let _ = crate::trajectory::configure_on_startup(&control);
+                });
+            None
+        };
+        let durable_enabled = durable.is_some();
+        let durable_drops = durable
+            .as_ref()
+            .map(crate::trajectory::Processor::drop_counter);
+        if durable_enabled {
+            areal_engine::configure_trajectory_capture_budget(trajectory.max_memory_bytes / 4);
+        }
+        let durable_provider = durable.map(|processor| {
+            opentelemetry_sdk::logs::SdkLoggerProvider::builder()
+                .with_log_processor(processor)
                 .build()
-                .map_err(|_| anyhow::anyhow!("cannot build OTLP log exporter; check standard OTEL_* transport settings"))?;
-            Ok(opentelemetry_sdk::logs::SdkLoggerProvider::builder()
-                .with_resource(resource.clone())
-                .with_batch_exporter(exporter)
-                .build())
-        }).transpose()?;
+        });
+        let logger_provider = if config.logs.is_some() {
+            let mut builder = opentelemetry_sdk::logs::SdkLoggerProvider::builder()
+                .with_resource(resource.clone());
+            if let Some(signal) = config.logs {
+                let exporter = opentelemetry_otlp::LogExporter::builder()
+                    .with_http().with_protocol(Protocol::HttpBinary).with_endpoint(signal.endpoint)
+                    .with_timeout(signal.timeout).build()
+                    .map_err(|_| anyhow::anyhow!("cannot build OTLP log exporter; check standard OTEL_* transport settings"))?;
+                builder = builder.with_batch_exporter(exporter);
+            }
+            Some(builder.build())
+        } else {
+            None
+        };
         // 仅配置 Logs 时仍需本地 Span ID，关联不能依赖远端是否启用 Traces。
         let provider = if config.traces.is_some() || logger_provider.is_some() {
             let mut builder =
@@ -170,7 +201,7 @@ impl TelemetryGuard {
         });
         let logs_enabled = logger_provider.is_some();
         // Option<Layer> 不转发 on_register_dispatch，桥接层始终安装并用信号开关过滤。
-        let events = events::EventLayer::new(
+        let events = events::EventLayer::<0>::new(
             logger_provider
                 .as_ref()
                 .map(|provider| provider.logger("areal-core")),
@@ -178,23 +209,39 @@ impl TelemetryGuard {
         .with_filter(filter_fn(move |metadata| {
             logs_enabled && metadata.target() == "areal::trajectory"
         }));
+        let durable_events =
+            events::EventLayer::<1>::new(durable_provider.as_ref().map(|p| p.logger("areal-core")))
+                .with_capture_limit(Some(trajectory.max_memory_bytes / 4))
+                .with_drop_counter(durable_drops)
+                .with_filter(filter_fn(move |m| {
+                    durable_enabled && m.target() == "areal::trajectory"
+                }));
         tracing_subscriber::registry()
             .with(
                 tracing_subscriber::fmt::layer()
                     .with_writer(std::io::stderr)
-                    .with_filter(log_filter),
+                    .with_filter(log_filter)
+                    // 原始轨迹只进入明确启用的遥测通道，不因 RUST_LOG=info 启动内容采集。
+                    .with_filter(filter_fn(|metadata| {
+                        metadata.target() != "areal::trajectory"
+                    })),
             )
             .with(trace_layer)
             .with(events)
+            .with(durable_events)
             .try_init()
             .context("install OpenTelemetry tracing subscriber")?;
         Ok(Self {
             provider,
             logger_provider,
+            durable_provider,
         })
     }
 
     pub fn shutdown(mut self) {
+        if let Some(provider) = self.durable_provider.take() {
+            let _ = provider.shutdown();
+        }
         if let Some(provider) = self.logger_provider.take()
             && let Err(error) = provider.shutdown()
         {
@@ -210,6 +257,9 @@ impl TelemetryGuard {
 
 impl Drop for TelemetryGuard {
     fn drop(&mut self) {
+        if let Some(provider) = self.durable_provider.take() {
+            let _ = provider.shutdown();
+        }
         if let Some(provider) = self.logger_provider.take()
             && let Err(error) = provider.shutdown()
         {

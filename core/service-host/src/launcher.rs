@@ -60,6 +60,9 @@ struct Args {
     permissions: Option<String>,
     #[arg(long)]
     config: Option<PathBuf>,
+    // 从同一次 Core preflight 的有效配置中取得，不重新猜测配置文件身份。
+    #[arg(skip)]
+    trajectory_config: Option<PathBuf>,
     #[arg(long)]
     data_dir: Option<PathBuf>,
     #[arg(long)]
@@ -387,7 +390,20 @@ impl Drop for Terminal {
     }
 }
 
-async fn preflight(args: &Args) -> Result<(PathBuf, PathBuf, PathBuf)> {
+// 普通 --endpoint 不走这个本地 launcher 接线；只有最终 owned 子 TUI 读状态。
+fn tui_trajectory_args(args: &Args) -> Vec<OsString> {
+    if !args.tui {
+        return Vec::new();
+    }
+    let mut out = vec![OsString::from("--local-trajectory-monitor")];
+    if let Some(path) = &args.trajectory_config {
+        out.push(OsString::from("--local-trajectory-config"));
+        out.push(path.as_os_str().to_owned());
+    }
+    out
+}
+
+async fn preflight(args: &mut Args) -> Result<(PathBuf, PathBuf, PathBuf)> {
     let binary = binary(args)?;
     let workspace = args
         .workspace
@@ -412,6 +428,9 @@ async fn preflight(args: &Args) -> Result<(PathBuf, PathBuf, PathBuf)> {
         }
     );
     let config: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    if args.tui {
+        args.trajectory_config = config["config_file"].as_str().map(PathBuf::from);
+    }
     let data = config["server"]["data_dir"]
         .as_str()
         .context("missing Core data directory")?;
@@ -434,7 +453,7 @@ pub async fn run(args: Vec<OsString>) -> Result<()> {
             "invalid service lease fd"
         );
     }
-    let (binary, workspace, data) = preflight(&args).await?;
+    let (binary, workspace, data) = preflight(&mut args).await?;
     let mut log_lease = None;
     let log = if args.tui || args.desktop {
         fs::create_dir_all(&data)?;
@@ -789,6 +808,7 @@ async fn supervise(
     let mut tui = if args.tui {
         let meta: serde_json::Value = serde_json::from_slice(&fs::read(metadata)?)?;
         let mut command = tokio::process::Command::new(binary);
+        command.args(tui_trajectory_args(args));
         command
             .arg("--endpoint")
             .arg(fs::read_to_string(ready)?)
@@ -874,6 +894,29 @@ fn owner_alive(pid: Option<u32>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn owned_tui_uses_resolved_local_trajectory_identity_only() {
+        let mut args =
+            Args::try_parse_from(["launcher", "--tui", "--config", "relative.toml"]).unwrap();
+        args.trajectory_config = Some(PathBuf::from("/resolved/chosen.toml"));
+        assert_eq!(
+            tui_trajectory_args(&args),
+            [
+                "--local-trajectory-monitor",
+                "--local-trajectory-config",
+                "/resolved/chosen.toml"
+            ]
+            .map(OsString::from)
+        );
+        args.trajectory_config = None;
+        assert_eq!(
+            tui_trajectory_args(&args),
+            [OsString::from("--local-trajectory-monitor")]
+        );
+        args.tui = false;
+        assert!(tui_trajectory_args(&args).is_empty());
+    }
 
     #[test]
     fn explicit_overrides_are_forwarded_without_promoting_defaults() {

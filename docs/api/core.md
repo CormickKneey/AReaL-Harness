@@ -319,7 +319,36 @@ Task Mode 在 Goal 之上提供 foreground/scheduled/background 任务、TaskRun
 
 模型请求将固定指令与历史放在前缀，将轮次、Goal/Task 当前状态、子任务结果和预算提示作为 system 消息放在完整历史之后，保持工具调用与结果相邻。动态提示在请求前以 `modelContext.value.type=areal_request_context` 持久化，按原顺序保留在对应输出之前；最新快照替代旧快照的状态含义，但不删除旧输入。最后一轮禁用工具或上下文压缩仍可能改变缓存前缀。缓存命中还取决于供应商与路由，不能由消息顺序保证。
 
-`thread/read {threadId,includeTurns:true}` 返回持久化 Turn/Item 历史；`areal/thread/inspect` 返回执行配置与工具视图；`areal/context/read {threadId,offset,limit}` 返回分页历史投影（limit 为 1–32）与指令快照，并省略不透明 provider context。该投影包含持久化的请求状态快照；旧版本未保存的提示无法恢复。它仍不是过去某次 HTTP 请求的精确重放。每次模型调用的实际 Engine 消息通过 `areal::trajectory` 的 `gen_ai.input.messages` 记录；查询已导出的轨迹需使用部署的遥测后端。
+`thread/read {threadId,includeTurns:true}` 返回持久化 Turn/Item 历史；`areal/thread/inspect` 返回执行配置与工具视图；`areal/context/read {threadId,offset,limit}` 返回分页历史投影（limit 为 1–32）与指令快照，并省略不透明 provider context。该投影包含持久化的请求状态快照；旧版本未保存的提示无法恢复。它仍不是过去某次 HTTP 请求的精确重放。每次模型调用在预算预检和摘要裁剪后提交的 Engine 消息通过 `areal::trajectory` 的 `gen_ai.input.messages` 记录；查询已导出的轨迹需使用部署的遥测后端。该字段是协议适配前的逻辑消息；完整适配后的请求使用以下独立字段，不能把两者混用。
+
+### 持久轨迹协议
+
+传输使用标准 OTLP HTTP/protobuf 的 `ExportLogsServiceRequest`，不是 Arena 私有请求。`areal.trajectory/v1` 是本项目公开的、带版本的 Agent 轨迹语义约定，`areal.*` 是自定义 OTLP 属性，不是 OpenTelemetry 标准属性。任意标准 Collector 可以接收并转发这些日志；独立接收端和其它生产者可依据本节实现轨迹解析，不需要安装 Harness 或 Arena 的包。普通日志缺少 Turn 身份或终态时，不能推断为完整 Agent 轨迹。
+
+Harness 使用 `service.name=areal-core` 标明自身，并通过 `service.instance.id`、`areal.thread.id` 和 `areal.turn.id` 标识安装实例、会话与轮次；该服务名不是接收端必须绑定的产品身份。接收端认证决定数据归属，日志中的属性不能替代认证账号。Collector 分发时应保留事件身份、原始请求字符串、版本、时间和清单，不能通过重写属性或丢弃事件后继续宣称原轨迹完整。多个接收端的配置与故障边界见[多接收端分发](../guides/configuration.md#持久轨迹导出)。
+
+持久 OTLP Logs 通道在每个 Turn 的事件中附加 `areal.trajectory.schema_version=areal.trajectory/v1`、`areal.event.id`（UUID）和从 1 开始的 `areal.event.sequence`。`areal.turn.completed` 附带 `areal.turn.event_count`（含终态）与 `areal.turn.events_sha256`：按序号把 UTF-8 `sequence:event_id\n` 拼接后计算 SHA-256。序号在尝试排队前分配，因此内存拒收、磁盘淘汰、传输缺失会留下缺口。接收端只有在清单、连续序号、唯一身份全部匹配，且无采集截断时才能确认送达完整；终态缺失、旧协议或协议字段缺失须保留未知，不能从 DONE 推导完整。正常执行结果与送达完整性独立。
+
+| 属性                                                                 | 契约                                                                                                                                                           |
+| -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `service.version` / `service.build.revision` / `service.build.dirty` | 资源中的包版本、构建提交和构建时是否有本地修改；缺少 Git 构建信息时为 `unknown`。源码包构建可显式注入 `AREAL_BUILD_REVISION` / `AREAL_BUILD_DIRTY`             |
+| `areal.model.request.id`                                             | 每次 Engine 模型请求的 UUID；同一请求在收到流之前的 HTTP 重试共用身份                                                                                          |
+| `areal.model.adapter.version`                                        | `areal.model/v1`                                                                                                                                               |
+| `areal.model.request.protocol` / `.transport` / `.purpose`           | `chat-completions` 或 `responses`；`http` 或 `websocket`；`solve` 或 `summary`                                                                                 |
+| `areal.model.request.body` / `.sha256`                               | 协议适配、媒体解析、工具 schema 和采样配置应用后的完整请求 JSON **字符串**及其原始 UTF-8 SHA-256；不含认证头。字符串不转成 OTLP 嵌套对象，避免重序列化改变摘要 |
+| `areal.model.request.wire`                                           | Responses WebSocket 实际发送的 JSON 字符串，可能使用 `previous_response_id` 和增量 input；`.body` 仍保存完整有效输入                                           |
+| `gen_ai.response.id` / `.model` / `.finish_reasons`                  | 供应商实际返回的响应 ID、模型名称与结束原因；未返回则缺省，不根据请求别名推断 checkpoint                                                                       |
+| `areal.model.response.accepted`                                      | 响应在 Engine 请求结算时被接受；失败、取消、被 steering 丢弃的响应为 false。它不是任务正确性或训练质量的证明                                                   |
+| `areal.model.response.status` / `.incomplete_details` | Responses 返回的状态与不完整原因；`finish_reasons` 优先保存实际 `reason`，否则保留终态 status |
+| `areal.model.response.usage_details`                                 | 已收到的细分 token 用量；未知值保持未知。取消排空期收到的用量同时记到请求和 Turn                                                                               |
+| `gen_ai.tool.call.arguments`                                         | 模型原始工具意图                                                                                                                                               |
+| `areal.tool.call.effective_arguments`                                | hooks 与运行时句柄解析之后真正提交给执行器的参数                                                                                                               |
+| `gen_ai.tool.call.result` / `areal.tool.result.projected`            | 执行结果与 Core 处理后的结果投影；后续模型真正收到的观察以该次 `.request.body` 为准                                                                            |
+| `areal.tool.outcome`                                                 | `succeeded`、`failed`、`cancelled`、`unknown` 等执行结论，不能仅凭没有异常推断成功                                                                             |
+
+`areal.duration_ms` 按事件类型解释：模型事件记录从客户端准备请求到响应消费结束的逻辑调用耗时，包含网络、服务端排队和内部重试；工具事件记录工具执行耗时；Turn 终态记录完整 Agent 执行耗时。它们都不包含后台上传等待，且模型调用耗时不等于纯服务端推理时间。客户端状态中的模型耗时汇总范围见[配置指南](../guides/configuration.md#持久轨迹导出)。
+
+采集内容受共享预算约束，丢失时标记 `areal.capture.truncated`；完整 JSON 未展开只标记 `areal.capture.json_fallback`。接收端可保留不完整轨迹用于排障；文本 SFT 转换还需校验完整性、成功且被接受的请求、工具链、不可变来源摘要与独立质量验收。多模态外部 URI/本地文件不保证可重取，协议不包含 token logits，不能宣称支持精确多模态重放、soft-logit 蒸馏或 RL rollout。具体配置见[持久轨迹导出](../guides/configuration.md#持久轨迹导出)。
 
 工具执行记录新增可选 `originalArguments`，旧记录可继续读取。参数语义未被 hook 改写时，历史保留原始 JSON 字节。Responses `function_call` 原始 item 作为 `modelContext` 保存，匹配未改写调用时保留其 item ID 与原始字段；Chat 投影不发送 Responses 元数据。上下文压缩将请求快照和关联输出作为同一保留单元，压缩后重新建立缓存前缀。
 
