@@ -7,6 +7,7 @@ import test from "node:test";
 
 const require = createRequire(new URL("../app/package.json", import.meta.url));
 const { TrajectoryExport, publicStatus } = require("../app/src/core/trajectory.cjs");
+const { CoreBackend } = require("../app/src/core/backend.cjs");
 const { validateCommand } = require("@areal/workbench/desktop-contract");
 const status = {
   enabled: true,
@@ -79,6 +80,208 @@ process.stdout.write(value);
   });
   return { exporter, response, calls, directory };
 }
+
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+  return { promise, resolve, reject };
+}
+
+function backendFixture() {
+  const backend = new CoreBackend({ binary: process.execPath, home: tmpdir() });
+  backend.saved = [];
+  return backend;
+}
+
+test(
+  "pending background status does not block a real provider apply or count as work",
+  { timeout: 5000 },
+  async (t) => {
+    const backend = backendFixture();
+    const pendingStatus = deferred(),
+      drainEntered = deferred(),
+      releaseDrain = deferred();
+    t.after(() => {
+      pendingStatus.resolve(status);
+      releaseDrain.resolve();
+    });
+    let reads = 0,
+      statusSettled = false;
+    backend.trajectory.command = (request) => {
+      validateCommand("trajectory", request);
+      assert.equal(request.operation, "status");
+      return ++reads === 1 ? pendingStatus.promise : Promise.resolve(status);
+    };
+    const stages = [];
+    const project = {
+      id: "project",
+      root: join(tmpdir(), "trajectory-admission-project"),
+      pending: [],
+      model: { state: { threads: {}, queues: {} } },
+      service: {},
+      providerRevision: "previous",
+      client: {
+        ready: true,
+        request: async (method, params) => {
+          stages.push(method);
+          if (method === "areal/server/drain") {
+            assert.deepEqual(params, { strategy: "ifIdle", timeoutMs: 30000 });
+            drainEntered.resolve();
+            await releaseDrain.promise;
+          } else assert.equal(method, "areal/server/status");
+          return { restartSafe: true };
+        },
+      },
+    };
+    backend.projects.set(project.id, project);
+    // 只替换 Core I/O，配置读取、准入、排空、应用结果投影仍走真实实现。
+    backend.providers.config.execute = async (operation) => {
+      assert.equal(operation, "read");
+      return {
+        path: join(tmpdir(), "trajectory-admission.toml"),
+        revision: "current",
+        data: [],
+        defaultModel: null,
+      };
+    };
+    backend.restartProject = async (value) => {
+      assert.equal(value, project);
+      stages.push("restart");
+      project.providerRevision = "current";
+    };
+    const reading = backend.command("trajectory", { operation: "status" }).then((value) => {
+      statusSettled = true;
+      return value;
+    });
+    assert.equal(backend.activeCommands, 0);
+    const applying = backend.command("providers", {
+      operation: "apply",
+      expectedRevision: "current",
+    });
+    await Promise.race([
+      drainEntered.promise,
+      applying.then(() => {
+        throw new Error("apply completed before drain");
+      }),
+    ]);
+    assert.equal(backend.providerUpdating, true);
+    assert.equal(statusSettled, false);
+    assert.deepEqual(await backend.command("trajectory", { operation: "status" }), status);
+    for (const [name, request] of [
+      ["trajectory", { operation: "retry" }],
+      ["send", { projectId: project.id, threadId: "thread", text: "fixture" }],
+    ]) {
+      await assert.rejects(backend.command(name, request), /配置正在应用/);
+    }
+    assert.equal(backend.activeCommands, 0);
+    releaseDrain.resolve();
+    const applied = await applying;
+    assert.deepEqual(stages, ["areal/server/status", "areal/server/drain", "restart"]);
+    assert.equal(applied.pendingApply, false);
+    assert.equal(applied.projects[0].applied, true);
+    assert.equal(backend.providerUpdating, false);
+    assert.equal(statusSettled, false);
+    pendingStatus.resolve(status);
+    assert.deepEqual(await reading, status);
+    assert.equal(backend.activeCommands, 0);
+  },
+);
+
+test("read-only status keeps real validation and closing checks while retry keeps configuration gates", async (t) => {
+  const { exporter } = await fixture(t);
+  const backend = backendFixture();
+  backend.trajectory = exporter;
+  for (const gate of ["providerUpdating", "resourcesUpdating"]) {
+    backend[gate] = true;
+    assert.deepEqual(await backend.command("trajectory", { operation: "status" }), status);
+    await assert.rejects(
+      backend.command("trajectory", { operation: "status", config: "/other.toml" }),
+      { code: "INVALID_DESKTOP_REQUEST" },
+    );
+    for (const operation of ["retry", "unknown"]) {
+      await assert.rejects(backend.command("trajectory", { operation }), /配置正在应用/);
+    }
+    await assert.rejects(backend.command("send", {}), /配置正在应用/);
+    assert.equal(backend.activeCommands, 0);
+    backend[gate] = false;
+  }
+  await assert.rejects(backend.command("trajectory", { operation: "unknown" }), {
+    code: "INVALID_DESKTOP_REQUEST",
+  });
+  assert.equal(backend.activeCommands, 0);
+  backend.closing = true;
+  for (const [name, request] of [
+    ["trajectory", { operation: "status" }],
+    ["trajectory", { operation: "retry" }],
+    ["send", {}],
+  ]) {
+    await assert.rejects(backend.command(name, request), /应用正在退出/);
+  }
+  assert.equal(backend.activeCommands, 0);
+});
+
+test("explicit retry and ordinary send still count as work and release admission on completion or failure", async (t) => {
+  const backend = backendFixture();
+  const retry = deferred(),
+    submitted = deferred(),
+    releaseSend = deferred();
+  t.after(() => {
+    retry.resolve(status);
+    releaseSend.resolve();
+  });
+  backend.trajectory.command = (request) => {
+    validateCommand("trajectory", request);
+    return request.operation === "retry" ? retry.promise : Promise.resolve(status);
+  };
+  const retrying = backend.command("trajectory", { operation: "retry" });
+  assert.equal(backend.activeCommands, 1);
+  await assert.rejects(
+    backend.command("providers", { operation: "apply" }),
+    /请等待任务和操作完成/,
+  );
+  assert.deepEqual(await backend.command("trajectory", { operation: "status" }), status);
+  assert.equal(backend.activeCommands, 1);
+  const retryFailure = new Error("fixture retry failed");
+  const rejected = assert.rejects(retrying, (error) => error === retryFailure);
+  retry.reject(retryFailure);
+  await rejected;
+  assert.equal(backend.activeCommands, 0);
+
+  const project = { model: { state: { threads: {} } } };
+  backend.start = async (id) => {
+    assert.equal(id, "project");
+    return project;
+  };
+  backend.submit = async (value, method, params) => {
+    assert.equal(value, project);
+    assert.equal(method, "areal/turn/start");
+    assert.deepEqual(params, { threadId: "thread", input: [{ type: "text", text: "fixture" }] });
+    submitted.resolve();
+    await releaseSend.promise;
+  };
+  const sending = backend.command("send", {
+    projectId: "project",
+    threadId: "thread",
+    text: "fixture",
+  });
+  await Promise.race([
+    submitted.promise,
+    sending.then(() => {
+      throw new Error("send completed before submit");
+    }),
+  ]);
+  assert.equal(backend.activeCommands, 1);
+  await assert.rejects(
+    backend.command("providers", { operation: "apply" }),
+    /请等待任务和操作完成/,
+  );
+  releaseSend.resolve();
+  await sending;
+  assert.equal(backend.activeCommands, 0);
+});
 
 test("desktop trajectory capability rejects configuration and destination overrides", () => {
   for (const operation of ["status", "retry"])

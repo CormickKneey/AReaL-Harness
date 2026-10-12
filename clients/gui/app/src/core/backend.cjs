@@ -829,6 +829,8 @@ class CoreBackend {
   async command(name, request) {
     if (this.closing) throw new Error('应用正在退出');
     if (name === 'analytics') return this.analytics.command(request);
+    // 后台只读状态不占任务或配置准入；参数仍由轨迹能力校验。
+    if (name === 'trajectory' && request?.operation === 'status') return this.trajectory.command(request);
     if (name === 'chatgpt') return this.providers.chatgpt(request);
     if (name === 'providers') return this.providers.command(request);
     if (name === 'resources') return this.resources.command(request);
