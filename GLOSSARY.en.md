@@ -6,6 +6,14 @@ This glossary defines the shared language for AReaL Harness user interfaces. It 
 
 ## Language
 
+**Schedule**:
+An arrangement made by the user to initiate specified work at specified times, once or repeatedly.
+_Avoid_: foreground or background execution mode; an execution that has already started; the conversation itself
+
+**Scheduled Run**:
+One execution of work initiated by a Schedule, together with its result. Each execution of the same Schedule can be inspected separately.
+_Avoid_: the Schedule itself; one model call
+
 **AReaL client (Client)**:
 A user entry point to AReaL Harness sessions and execution capabilities; desktop, mobile, TUI and CLI are peers.
 _Avoid_: Equating a client with the execution engine, or treating mobile as a subordinate desktop product

@@ -44,6 +44,8 @@ Goal 模式由 `core/engine/src/goals` 管理持久目标、请求账本与跨 T
 
 Task Mode 由 `core/engine/src/task_mode` 管理 Task/TaskRun、定时触发、独立 Channel 和 worker。它复用 Goal 账本与 Thread 准入，通信状态由 Core 持有；Inbox 是授权问题的查询投影。TaskRun worker 可跨协调 Turn，在独立 Session 中执行，仍由 Core 负责取消和结算。接口见 [Task 契约](../api/tasks.md)。
 
+GUI 定时安排的每次新会话执行与桌面 Host 依赖正在设计，产品方向和未决边界见[设计草案](../adr/0013-desktop-scheduled-runs.md)，不表示当前 Task 契约已经改变。
+
 ![Task Mode](diagrams/task-mode-mailbox-architecture.svg)
 
 [draw.io 源文件](diagrams/task-mode-mailbox-architecture.drawio) · [异步交互流程](diagrams/task-mode-mailbox-flow.svg) · [流程源文件](diagrams/task-mode-mailbox-flow.drawio)

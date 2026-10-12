@@ -44,6 +44,8 @@ Interactive TUI and Web launchers attach to one service per deployment. The host
 
 `core/engine/src/task_mode` owns Tasks/TaskRuns, time triggers, independent Channels and workers. It reuses Goal ledgers and Thread admission; communication state belongs to Core. Inbox projects authorized questions. TaskRun workers survive coordinator Turns in independent Sessions while Core owns cancellation and settlement. See the [Task contract](../api/tasks.en.md).
 
+New conversations per GUI scheduled run and dependency on the desktop Host are under design. See the [design proposal](../adr/0013-desktop-scheduled-runs.en.md) for product direction and open boundaries; the current Task contract has not changed.
+
 ![Task Mode](diagrams/task-mode-mailbox-architecture.svg)
 
 [draw.io source](diagrams/task-mode-mailbox-architecture.drawio) · [Asynchronous interaction flow](diagrams/task-mode-mailbox-flow.svg) · [Flow source](diagrams/task-mode-mailbox-flow.drawio)
