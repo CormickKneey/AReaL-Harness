@@ -70,6 +70,69 @@ for (const fields of cases) {
 }
 """)
 
+    def test_exact_loopback_probe_refusal_reaches_expected_state(self):
+        self.run_node("""
+for (const url of [
+  'http://127.0.0.1:49412/areal/service',
+  'http://[::1]:1/areal/service',
+  'http://127.0.0.1:65535/areal/service',
+]) {
+  for (const errno of [61, 111]) {
+    let calls = 0, refusals = 0;
+    const error = refused(errno);
+    error.stderr = JSON.stringify({error: {code: 'localServiceError',
+      message: `error sending request for url (${url}): client error (Connect): tcp connect error: Connection refused (os error ${errno})`}});
+    const result = await waitForFaultStatus(async () => {
+      if (++calls === 1) throw error;
+      return {state: 'stopped'};
+    }, 'stopped', {onRefused: () => refusals++});
+    assert.equal(result.state, 'stopped');
+    assert.equal(calls, 2);
+    assert.equal(refusals, 1);
+  }
+}
+""")
+
+    def test_probe_wrapper_rejects_other_urls_errors_and_suffixes(self):
+        self.run_node("""
+const wrap = (url) => `error sending request for url (${url}): client error (Connect): tcp connect error: Connection refused (os error 61)`;
+const valid = wrap('http://127.0.0.1:49412/areal/service');
+const messages = [
+  ...[
+    'http://example.invalid:49412/areal/service',
+    'http://127.0.0.1.example.invalid:49412/areal/service',
+    'http://127.0.0.2:49412/areal/service',
+    'http://localhost:49412/areal/service',
+    'https://127.0.0.1:49412/areal/service',
+    'http://127.0.0.1:49412/areal/auth/bootstrap',
+    'http://127.0.0.1:49412/areal/service/extra',
+    'http://127.0.0.1:49412/areal/service?token=fixture',
+    'http://127.0.0.1:49412/areal/service#fragment',
+    'http://fixture@127.0.0.1:49412/areal/service',
+    'http://127.0.0.1:0/areal/service',
+    'http://127.0.0.1:65536/areal/service',
+    'http://127.0.0.1:049412/areal/service',
+    'http://127.0.0.1/areal/service',
+    'http://127.0.0.1:49412/areal/service\\n',
+  ].map(wrap),
+  valid + ': unrelated error', valid + '\\n',
+  valid.replace('(Connect)', '(Request)'),
+  valid.replace('Connection refused (os error 61)', 'operation timed out'),
+  valid.replace('os error 61', 'os error 13'),
+  'HTTP status client error (401 Unauthorized) for url (http://127.0.0.1:49412/areal/service)',
+  'Connection refused (os error 61)\\n',
+];
+for (const message of messages) {
+  const error = refused();
+  error.stderr = JSON.stringify({error: {code: 'localServiceError', message}});
+  let calls = 0;
+  await assert.rejects(waitForFaultStatus(async () => {
+    calls++; throw error;
+  }, 'stopped'), (actual) => actual === error);
+  assert.equal(calls, 1);
+}
+""")
+
     def test_permanent_refusal_wrong_state_and_late_success_fail(self):
         self.run_node("""
 for (const query of [
