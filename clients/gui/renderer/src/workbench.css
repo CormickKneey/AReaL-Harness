@@ -626,13 +626,15 @@ button.composer-project:hover > svg,
 .messages {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable both-edges;
   scrollbar-width: thin;
 }
 .message-column {
   --message-reading-inset: 32px;
+  width: 100%;
   max-width: var(--reading-width, 768px);
   margin: 0 auto;
   padding: var(--message-reading-inset) 16px;
@@ -666,7 +668,7 @@ button.composer-project:hover > svg,
   margin-block: 0 0.571429em;
 }
 .conversation-markdown:not(.user-message-body) > p + p { margin-block-start: 0; }
-.conversation-markdown { line-height: 1.7; }
+.conversation-markdown { min-width: 0; overflow-wrap: anywhere; line-height: 1.7; }
 
 .user-message-body { white-space: normal; letter-spacing: normal; }
 .user-message-body > * { margin-block: 0; }
