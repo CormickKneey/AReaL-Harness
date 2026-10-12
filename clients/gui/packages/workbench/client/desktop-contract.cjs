@@ -22,8 +22,8 @@ const commandDefinitions = Object.freeze({
 });
 /** @typedef {keyof typeof commandDefinitions} CommandName */
 /** @template {CommandName} N @typedef {N extends 'configure' ? ConfigureRequest : N extends 'side' ? SideRequest : Record<string,unknown>} CommandParams */
-/** @typedef {'show'|'navigate'|'back'|'forward'|'reload'|'stop'|'state'|'external'|'devtools'|'openLink'|'release'|'claim'|'takeover'|'captureRegion'|'captureElement'|'cancelElementSelection'|'checkElement'|'endRegion'|'beginStyleTrial'|'applyStyleTrial'|'undoStyleTrial'|'redoStyleTrial'|'styleTrialState'|'captureStyleTrialAfter'|'clearStyleTrial'|'newPage'|'selectPage'|'subscribe'|'unsubscribe'|'allowNextDownload'|'cancelFileHandoff'|'cancelDownload'} OwnedPreviewOperation */
-/** @typedef {{operation:'hide',projectId?:string,threadId?:string,pageId?:string}|{operation:OwnedPreviewOperation,projectId:string,threadId:string,pageId?:string,captureId?:string,elementId?:string,trialId?:string,property?:string,value?:string,downloadId?:string,url?:string,userIntent?:boolean,visible?:boolean,bounds?:{x:number,y:number,width:number,height:number}}} PreviewRequest */
+/** @typedef {'show'|'navigate'|'back'|'forward'|'reload'|'stop'|'state'|'external'|'devtools'|'openLink'|'release'|'claim'|'takeover'|'captureRegion'|'captureElement'|'selectElement'|'cancelElementSelection'|'checkElement'|'endRegion'|'beginStyleTrial'|'applyStyleTrial'|'undoStyleTrial'|'redoStyleTrial'|'styleTrialState'|'captureStyleTrialAfter'|'clearStyleTrial'|'newPage'|'selectPage'|'subscribe'|'unsubscribe'|'allowNextDownload'|'cancelFileHandoff'|'cancelDownload'|'authorizeFrameOrigin'|'reloadFrameOrigin'|'revokeFrameOrigin'} OwnedPreviewOperation */
+/** @typedef {{operation:'hide',projectId?:string,threadId?:string,pageId?:string,captureId?:string}|{operation:OwnedPreviewOperation,projectId:string,threadId:string,pageId?:string,captureId?:string,x?:number,y?:number,elementId?:string,trialId?:string,property?:string,value?:string,downloadId?:string,url?:string,userIntent?:boolean,visible?:boolean,bounds?:{x:number,y:number,width:number,height:number}}} PreviewRequest */
 /** @param {unknown} value @returns {value is Record<string,unknown>} */
 function record(value) { return !!value && typeof value === 'object' && !Array.isArray(value); }
 /** @param {unknown} value @returns {value is string} */
@@ -67,9 +67,16 @@ function validateCommand(name, params, { serviceOnly = false } = {}) {
 /** @param {unknown} request */
 function validatePreview(request) {
   if (!record(request)) invalid();
-  if (request.operation === 'hide') return;
-  if (!['show', 'navigate', 'back', 'forward', 'reload', 'stop', 'state', 'external', 'devtools', 'openLink', 'release', 'claim', 'takeover', 'captureRegion', 'captureElement', 'cancelElementSelection', 'checkElement', 'endRegion', 'beginStyleTrial', 'applyStyleTrial', 'undoStyleTrial', 'redoStyleTrial', 'styleTrialState', 'captureStyleTrialAfter', 'clearStyleTrial', 'newPage', 'selectPage', 'subscribe', 'unsubscribe', 'allowNextDownload', 'cancelFileHandoff', 'cancelDownload'].includes(String(request.operation))
+  if (request.operation === 'hide') {
+    if (request.captureId !== undefined && (!identifier(request.captureId) || !identifier(request.projectId)
+      || !identifier(request.threadId) || !identifier(request.pageId))) invalid();
+    return;
+  }
+  if (!['show', 'navigate', 'back', 'forward', 'reload', 'stop', 'state', 'external', 'devtools', 'openLink', 'release', 'claim', 'takeover', 'captureRegion', 'captureElement', 'selectElement', 'cancelElementSelection', 'checkElement', 'endRegion', 'beginStyleTrial', 'applyStyleTrial', 'undoStyleTrial', 'redoStyleTrial', 'styleTrialState', 'captureStyleTrialAfter', 'clearStyleTrial', 'newPage', 'selectPage', 'subscribe', 'unsubscribe', 'allowNextDownload', 'cancelFileHandoff', 'cancelDownload', 'authorizeFrameOrigin', 'reloadFrameOrigin', 'revokeFrameOrigin'].includes(String(request.operation))
     || !identifier(request.projectId) || !identifier(request.threadId)) invalid();
+  if (['authorizeFrameOrigin', 'reloadFrameOrigin', 'revokeFrameOrigin'].includes(String(request.operation))
+    && (!identifier(request.pageId) || request.userIntent !== true || Object.keys(request).some(key =>
+      !['operation', 'projectId', 'threadId', 'pageId', 'userIntent'].includes(key)))) invalid();
   if (request.url !== undefined && typeof request.url !== 'string') invalid();
   if (request.pageId !== undefined && !identifier(request.pageId)) invalid();
   if (request.captureId !== undefined && !identifier(request.captureId)) invalid();
@@ -82,6 +89,8 @@ function validatePreview(request) {
   if (request.operation === 'endRegion' && (!identifier(request.pageId) || !identifier(request.captureId))) invalid();
   if (request.operation === 'checkElement' && (!identifier(request.pageId) || !identifier(request.captureId))) invalid();
   if (request.operation === 'checkElement' && !identifier(request.elementId)) invalid();
+  if (request.operation === 'selectElement' && (!identifier(request.pageId) || !identifier(request.captureId)
+    || ![request.x, request.y].every(value => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0))) invalid();
   if (request.operation === 'beginStyleTrial' && (!identifier(request.pageId) || !identifier(request.captureId) || !identifier(request.elementId))) invalid();
   if (['applyStyleTrial', 'undoStyleTrial', 'redoStyleTrial', 'styleTrialState', 'captureStyleTrialAfter', 'clearStyleTrial'].includes(String(request.operation))
     && (!identifier(request.pageId) || !identifier(request.trialId))) invalid();

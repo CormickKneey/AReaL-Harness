@@ -43,6 +43,7 @@ import { ProjectlessDraft } from "./ProjectlessDraft.js";
 import { WorktreeStarter } from "./WorktreeStarter.js";
 import { ComposerWorkspaceContext } from "./ComposerWorkspaceContext.js";
 import { Queue } from "./Queue.js";
+import { browserAnnotationTitle } from "./browserAnnotations.js";
 import { Preview } from "./Preview.js";
 import { TerminalPane } from "./terminal/TerminalPane.js";
 import { addTerminal, closeTerminal, ensureTerminal, isTerminalTab, selectTerminal, terminalOwner, terminalTitle, useTerminalWorkspace } from "./terminal/terminalWorkspace.js";
@@ -363,6 +364,12 @@ function AppContent({ services }: { services: PlatformServices }) {
   }, [project?.id, threadId, noProject]);
   const previewOwner = React.useRef("");
   previewOwner.current = `${project?.id ?? ""}:${threadId}`;
+  useEffect(() => services.onPreviewEvent?.(event => {
+    // 仅呈现当前聊天已由 Core 批准的页面，不切换后台聊天或重放导航。
+    if (event.kind !== 'reveal' || previewOwner.current !== `${event.projectId}:${event.threadId}`) return;
+    setWorkspaceView('split');
+    setPanel('预览');
+  }), [services]);
   const terminalState = useTerminalWorkspace(terminalOwner(project?.id ?? "", threadId));
   const panelOwner = `${project?.id ?? ""}:${threadId}`;
   React.useLayoutEffect(() => {
@@ -716,13 +723,13 @@ function AppContent({ services }: { services: PlatformServices }) {
   }, [project?.id, settingsOpen, threadId, terminalLocation]);
   const title = (owner: Data, summary: Data) =>
     library.threads?.[`${owner.id}:${summary.id}`]?.title ||
-    owner.state?.threads[summary.id]?.turns
+    browserAnnotationTitle(owner.state?.threads[summary.id]?.turns
       ?.flatMap((t: Data) => t.items ?? [])
       .find((i: Data) => i.type === "userMessage")
       ?.content?.find((p: Data) => p.type === "text")?.text ||
     summary.preview ||
     summary.name ||
-    "新对话";
+    "新对话");
   const summaries = projects.flatMap((owner) => {
     const scheduledThreads = new Set((Object.values(owner.state?.tasks ?? {}) as Data[]).filter(task => task.mode === "scheduled")
       .flatMap(task => [task.threadId, ...task.runs.map((run: Data) => run.threadId)].filter(Boolean)));
@@ -1055,9 +1062,6 @@ function AppContent({ services }: { services: PlatformServices }) {
           initialUrl={previewSource === `${project.id}:${threadId}` ? previewUrl : ""}
           initialRequest={previewRequest}
           fullAddress={library.settings?.browserFullAddress === true}
-          browserEnabled={thread?.dynamicTools?.some((tool: Data) => tool.name === 'browser_v1') === true}
-          browserAvailable={project.core?.features?.browserToolAttachment === true && thread?.status?.type === 'idle' && !thread?.desktop?.archived}
-          toolsetRevision={thread?.toolsetRevision ?? 0}
           thread={thread}
           action={resourceAction}
           onReview={turnId => { setReviewRequest({ owner: panelOwner, turnId }); setPanel("改动"); }}

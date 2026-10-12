@@ -27,6 +27,8 @@ Release tag 与公开、tap 创建/更新是外部发布操作，应在产物审
 
 ## 本地命令
 
+bundle manifest 的 `apiVersion` 来自已生成的 `schemas/areal-core-v1.json`，`stateVersion` 来自 Core Store 的版本常量；缺失或不明确时在复制和签名前拒绝打包。复用已构建二进制时仍须核对其实际协议/状态版本与该源码一致，清单不代替二进制验收。
+
 ```sh
 make release
 python3 scripts/package.py --profile release --output target/release-bundle/areal
@@ -38,6 +40,8 @@ python3 -m unittest discover -s scripts/tests -p test_release.py
 Homebrew formula 安装 `bin`、`libexec`、LICENSE 和 manifest，避免改变 Core 查找 helper 的相对路径。Linux 安装器将不同版本放在不同目录，只原子替换入口符号链接；用户配置与历史不由安装器维护。校验失败不得切换入口。
 
 ## GUI 发布
+
+本机无需新增签名时可使用 `AREAL_GUI_UNSIGNED_LOCAL=1 AREAL_GUI_PACKAGE_DIR=/绝对路径/新目录 pnpm --dir clients/gui package`，CLI bundle 对应 `python3 scripts/package.py --unsigned-local --profile debug --output /绝对路径/新目录`。该显式模式跳过 Core 副本和整个 app 的签名，builder 继续使用 `identity: null`；保留输入字节及已有签名，记录真实 bundle 签名核验结果，不移除签名或改变系统策略。它与 `AREAL_GUI_RELEASE=1` 互斥；默认流程仍创建本机 ad-hoc 签名。已生成 ZIP 不证明能启动，须从 ZIP 复制到新隔离目录验收，系统拒绝时保留首次失败并停止该启动路径。
 
 GUI 版本由 `clients/gui/package.json` 和 `clients/gui/app/package.json` 共同声明，与 Cargo/CLI 版本独立。发布地址统一为 `areal-project/AReaL-Harness`；版本 Release 使用 `gui-v<版本>` 标签，CLI 继续使用 `v<版本>`。GUI Release 不设为 GitHub Latest，避免改变 CLI 安装器的 Latest 语义。
 

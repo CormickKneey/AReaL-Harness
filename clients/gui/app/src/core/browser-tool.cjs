@@ -14,6 +14,23 @@ const definition = Object.freeze({
   },
 });
 
+function validWait(parameters) {
+  if (!Number.isSafeInteger(parameters.timeoutMs) || parameters.timeoutMs < 1 || parameters.timeoutMs > 30000) return false;
+  const condition = parameters.condition;
+  if (condition === undefined) return true;
+  if (!condition || typeof condition !== 'object' || Array.isArray(condition)) return false;
+  if (condition.kind === 'documentReady') return Object.keys(condition).every(key => ['kind', 'state'].includes(key))
+    && ['interactive', 'complete'].includes(condition.state);
+  return condition.kind === 'accessibleName'
+    && Object.keys(condition).every(key => ['kind', 'ref', 'name'].includes(key))
+    && typeof condition.ref === 'string' && /^r[1-9]\d*$/.test(condition.ref)
+    && typeof condition.name === 'string' && condition.name.length >= 1 && condition.name.length <= 256;
+}
+function waitAction(parameters) {
+  return { kind: 'wait', timeoutMs: parameters.timeoutMs,
+    ...(parameters.condition === undefined ? {} : { condition: parameters.condition }) };
+}
+
 function validToolInput(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || Object.keys(value).some(key => !['operation', 'parameters'].includes(key))
@@ -37,8 +54,8 @@ function validToolInput(value) {
     if (value.parameters.steps.reduce((total, step) => total + (step?.operation === 'wait' ? step.timeoutMs : 0), 0) > 29000) return false;
     return value.parameters.steps.every((step, index) => {
       if (!step || typeof step !== 'object' || Array.isArray(step)) return false;
-      if (step.operation === 'wait') return Object.keys(step).every(key => ['operation', 'timeoutMs'].includes(key))
-        && Number.isSafeInteger(step.timeoutMs) && step.timeoutMs >= 1 && step.timeoutMs <= 30000;
+      if (step.operation === 'wait') return Object.keys(step).every(key => ['operation', 'timeoutMs', 'condition'].includes(key))
+        && validWait(step);
       if (step.operation !== 'act' || Object.keys(step).some(key => !['operation', 'snapshotId', 'action'].includes(key))
         || step.snapshotId !== value.parameters.snapshotId
         || (index > 0 && ['clickAt', 'drag', 'pressAt'].includes(step.action?.kind))) return false;
@@ -55,8 +72,8 @@ function validToolInput(value) {
       && value.parameters.limit >= 1 && value.parameters.limit <= 200));
   if (!['observe', 'capture', 'act', 'wait'].includes(value.operation)
     || typeof value.parameters.pageId !== 'string' || !/^[0-9a-f-]{36}$/.test(value.parameters.pageId)) return false;
-  if (value.operation === 'wait') return keys.every(key => ['pageId', 'timeoutMs'].includes(key))
-    && Number.isSafeInteger(value.parameters.timeoutMs) && value.parameters.timeoutMs >= 1 && value.parameters.timeoutMs <= 30000;
+  if (value.operation === 'wait') return keys.every(key => ['pageId', 'timeoutMs', 'condition'].includes(key))
+    && validWait(value.parameters);
   if (value.operation === 'act') {
     if (!keys.every(key => ['pageId', 'snapshotId', 'action'].includes(key))
       || typeof value.parameters.snapshotId !== 'string' || !/^[0-9a-f-]{36}$/.test(value.parameters.snapshotId)) return false;
@@ -101,4 +118,4 @@ function success(value) {
   return { success: true, contentItems: [{ type: 'inputText', text: JSON.stringify(value) }] };
 }
 
-module.exports = { definition, validToolInput, failure, success };
+module.exports = { definition, validToolInput, waitAction, failure, success };

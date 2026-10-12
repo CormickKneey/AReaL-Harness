@@ -209,9 +209,14 @@ impl Engine {
             let tool_definitions = self
                 .visible_tools(cell, &configuration, desktop_enabled)
                 .await;
+            // 使用现有请求上下文提供指引，保持持久工具定义及模型收到的声明不变。
+            let browser_instructions = tool_definitions.iter()
+                .any(|tool| tool["function"]["name"] == "browser_v1")
+                .then_some("Built-in Browser guidance: Use browser_v1 for visible web requests. Start with describe and empty parameters even when no page exists or Human previously took control; Core approval can create or reclaim the current page after a new user request. For an existing page, obtain a fresh observe before navigate; only a newly created about:blank page can navigate without an observation. Then navigate using pageId, observe again for current refs, fill the search field and press Enter to perform an approved public search. Do not ask the user to enable Browser manually or use development_service_inspect to create a Browser page. Reads and actions require Core approval. Respect denied, stale and UNKNOWN results without replay.");
             let goal_instructions = self.goal_instructions(cell).await?;
             let task_instructions = self.task_context(cell).await;
             let overhead = context::text_tokens(&serde_json::to_string(&tool_definitions)?)
+                + browser_instructions.map_or(0, context::text_tokens)
                 + task_instructions
                     .as_ref()
                     .map_or(0, |s| context::text_tokens(s))
@@ -232,6 +237,9 @@ impl Engine {
                 // 每次请求的动态提示必须与其输出一起保留，后续只追加。
                 // 删除旧提示会破坏 encrypted reasoning 所对应的原始上下文。
                 let mut live_context = Vec::new();
+                if let Some(browser) = browser_instructions {
+                    live_context.push(Message::text("system", browser));
+                }
                 // 整个已结算尾轮被摘要吸收时，补充恢复边界，避免 Chat 模型把摘要当作本轮最终答复。
                 let checkpoint_covers_tail =
                     state
@@ -339,6 +347,8 @@ impl Engine {
                     let text = message.text_content();
                     let kind = if text.contains("Current authoritative goal: ") {
                         Some("Current authoritative goal: ")
+                    } else if text.starts_with("Built-in Browser guidance: ") {
+                        Some("Built-in Browser guidance: ")
                     } else if text.starts_with("This execution is headless.") {
                         Some("This execution is headless.")
                     } else {

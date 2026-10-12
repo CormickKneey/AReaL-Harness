@@ -18,13 +18,14 @@ const workspace = join(scratch, 'workspace'), userHome = join(scratch, 'user');
 await mkdir(workspace); await mkdir(join(userHome, '.areal'), { recursive: true });
 execFileSync('git', ['init', '-b', 'main'], { cwd: workspace, stdio: 'ignore' });
 const sentinel = 'SAME_NATIVE_PAGE_SENTINEL_02';
-const siteFacts = { gets: 0, posts: [] };
+const siteFacts = { gets: 0, getRequests: [], posts: [] };
 const site = createServer(async (request, response) => {
   if (request.method === 'POST') {
     let body = ''; for await (const chunk of request) body += chunk;
     siteFacts.posts.push({ url: request.url, body }); response.end('ok'); return;
   }
   siteFacts.gets++;
+  siteFacts.getRequests.push({ url: request.url, destination: request.headers['sec-fetch-dest'] ?? null, at: Date.now() });
   response.setHeader('Content-Type', 'text/html; charset=utf-8');
   response.end(`<!doctype html><title>Shared Browser Read Fixture</title>
     <main><h1>Same page read</h1><p id="sentinel" style="position:fixed;top:80px;left:30px;background:#fff">${sentinel}</p>
@@ -111,10 +112,30 @@ try {
   page.on('pageerror', error => errors.push(error.message));
   await page.getByTestId('areal-workbench').waitFor({ timeout: 120000 });
   await until(async () => (await state()).connection?.state === 'ready', 'desktop ready');
-  await app.evaluate(({ dialog, BrowserWindow }, path) => {
+  await app.evaluate(({ app, dialog, BrowserWindow }, { path, origin }) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] });
+    globalThis.__readLoadTrace = [];
+    app.on('web-contents-created', (_event, contents) => {
+      const load = contents.loadURL.bind(contents);
+      contents.loadURL = (url, ...args) => {
+        const entry = { id: contents.id, url, currentUrl: contents.getURL(), loading: contents.isLoadingMainFrame(), caller: new Error().stack.split('\n').slice(2, 5), at: Date.now() };
+        globalThis.__readLoadTrace.push(entry);
+        return load(url, ...args).then(value => { entry.settled = 'loaded'; return value; }, error => {
+          entry.settled = 'rejected'; entry.error = { errno: error.errno, code: error.code, url: error.url }; throw error;
+        });
+      };
+    });
+    const original = dialog.showMessageBox;
+    dialog.showMessageBox = async (...args) => {
+      const options = args.at(-1);
+      if (options?.title === '允许本地开发站点' && options.message === `允许此浏览工作区访问 ${origin}？`) {
+        globalThis.__m1OriginPrompt = { origin, title: options.title, count: (globalThis.__m1OriginPrompt?.count ?? 0) + 1 };
+        return { response: 1, checkboxChecked: false };
+      }
+      return original(...args);
+    };
     BrowserWindow.getAllWindows()[0].setSize(1440, 960);
-  }, workspace);
+  }, { path: workspace, origin: new URL(siteUrl).origin });
   await page.evaluate(() => window.arealDesktop.chooseProject());
   await page.getByTestId('chat-input').waitFor();
   const project = await until(async () => (await state()).projects.find(item => item.root === workspace), 'project ready');
@@ -124,7 +145,12 @@ try {
   await selectConversation(page, threadId);
   await page.keyboard.press('Meta+t');
   await page.locator('.preview-panel').waitFor();
+  await app.evaluate(({ app, BrowserWindow }) => { app.focus({ steal: true }); BrowserWindow.getAllWindows()[0].focus(); });
+  await until(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isFocused()), 'focused Main Origin prompt');
   await page.evaluate(({ projectId, threadId, siteUrl }) => window.arealDesktop.preview({ operation: 'navigate', projectId, threadId, url: siteUrl }), { projectId, threadId, siteUrl });
+  events.developmentOriginPrompt = await app.evaluate(() => globalThis.__m1OriginPrompt);
+  assert.equal(events.developmentOriginPrompt?.count, 1, 'exact-Origin Main prompt occurred once');
+  events.developmentOriginPrompt.response = 'fixture-stub-allow-exact-origin';
   await until(nativeState, 'native page loaded');
   await app.evaluate(({ webContents }, url) => {
     const c = webContents.getAllWebContents().find(item => item.getURL() === url);
@@ -132,6 +158,7 @@ try {
   }, siteUrl);
   const before = await nativeState();
   assert.ok(before?.id && before.state.sentinel && before.state.scrollY > 0);
+  events.normalBeforeClaim = { before, siteFacts: structuredClone(siteFacts) };
   await page.getByRole('button', { name: '让 Agent 检查当前页' }).click();
   const claimed = await until(async () => {
     const value = await page.evaluate(({ projectId, threadId }) => window.arealDesktop.preview({ operation: 'state', projectId, threadId }), { projectId, threadId });
@@ -148,6 +175,8 @@ try {
   assert.match(history, /describe-02|observe-02/);
   assert.ok(!history.includes('SYNTHETIC_SECRET_QUERY'), 'Core history must not contain URL query values');
   const after = await nativeState();
+  events.normalAfterObservation = { after, siteFacts: structuredClone(siteFacts) };
+  events.nativeLoadTrace = await app.evaluate(() => globalThis.__readLoadTrace);
   assert.equal(after.id, before.id);
   assert.deepEqual(after.state, before.state);
   assert.equal(siteFacts.gets, 1, 'claim and read must not navigate a second page');
@@ -172,6 +201,10 @@ try {
   scenario = 'cross';
   const second = await command('create', { projectId, browserEnabled: true, profile: { id: 'fixture', revision: 'v1' } });
   await selectConversation(page, second.threadId);
+  await page.keyboard.press('Meta+t');
+  await page.locator('.preview-panel').waitFor();
+  await app.evaluate(({ app, BrowserWindow }) => { app.focus({ steal: true }); BrowserWindow.getAllWindows()[0].focus(); });
+  await until(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isFocused()), 'second Thread Origin prompt focus');
   await page.evaluate(({ projectId, threadId, siteUrl }) => window.arealDesktop.preview({ operation: 'navigate', projectId, threadId, url: siteUrl }), { projectId, threadId: second.threadId, siteUrl });
   await until(async () => app.evaluate(({ webContents }, expected) => webContents.getAllWebContents().some(c => c.id !== expected.firstId && c.getURL() === expected.url), { firstId: after.id, url: siteUrl }), 'second native page');
   const secondClaim = await page.evaluate(({ projectId, threadId }) => window.arealDesktop.preview({ operation: 'claim', projectId, threadId }), { projectId, threadId: second.threadId });
@@ -193,6 +226,7 @@ try {
     await rogue.request('hello', { protocol: metadata.protocol, identity: metadata.identity });
     await assert.rejects(() => rogue.request('browserClaim', { projectId, threadId: second.threadId,
       protocol: 'areal.browser.host.v1', operations: ['describe', 'observe', 'capture', 'act', 'wait', 'navigate', 'newPage', 'diagnostics', 'runBatch'], available: true,
+      coreInstanceId: secondClaim.workspace.pages.find(item => item.pageId === secondPageId).coreInstanceId,
       pageId: secondPageId, browserHostId: 'forged-host', hostGeneration: 999,
       pageGeneration: 1, controlEpoch: 1 }, true), /已由其他桌面窗口认领/);
     scenario = 'forge';

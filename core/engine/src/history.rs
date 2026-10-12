@@ -649,6 +649,20 @@ pub(super) fn history(thread: &Thread, store: &store::Store) -> anyhow::Result<V
                 let effective = execution
                     .model_arguments
                     .as_ref()
+                    .or_else(|| {
+                        // 兼容旧 Browser 审计包装，仅调整投影；非法模型参数和权威原文不解包。
+                        if tool == "browser_v1" && execution.backend.as_deref() == Some("client") {
+                            execution
+                                .effective_arguments
+                                .as_ref()
+                                .filter(|value| value["plan"].is_object())
+                                .and_then(|value| {
+                                    value.get("arguments").filter(|value| value.is_object())
+                                })
+                        } else {
+                            None
+                        }
+                    })
                     .or(execution.effective_arguments.as_ref())
                     .unwrap_or(arguments);
                 // Wire adapters may require object-valued arguments even for

@@ -1,5 +1,6 @@
 // Copied from ZCode EmbeddedBrowserPaneParts (872ad960), Core state and labels adapted; telemetry and unsupported element picking omitted.
-import type { FormEvent, ReactNode } from "react";
+import { useRef, type FormEvent, type ReactNode, type Ref } from "react";
+import { flushSync } from "react-dom";
 import {
   Bug,
   ChevronLeft,
@@ -9,6 +10,7 @@ import {
   Globe,
   LoaderIcon,
   MonitorSmartphone,
+  SquareDashedMousePointer,
   RefreshCw,
   X,
   TriangleAlertIcon,
@@ -45,7 +47,9 @@ export function BrowserToolbar({
   onReload,
   onToggleResponsiveMode,
   onSubmit,
+  onToggleDetails,
   isResponsiveMode,
+  annotationControl, annotationDisabled, annotating, onAnnotation,
 }: {
   addressValue: string;
   browserState: BrowserState;
@@ -61,8 +65,14 @@ export function BrowserToolbar({
   onReload: () => void;
   onToggleResponsiveMode: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onToggleDetails?: () => void;
   isResponsiveMode: boolean;
+  annotationControl: Ref<HTMLButtonElement>;
+  annotationDisabled: boolean;
+  annotating: boolean;
+  onAnnotation: () => void;
 }) {
+  const selectOnPointerUp = useRef(false);
   return (
     <form onSubmit={onSubmit} className="panel-toolbar browser-toolbar">
       <div className="browser-navigation-controls">
@@ -88,6 +98,10 @@ export function BrowserToolbar({
           onClick={onReload}
         />
       </div>
+      <Button ref={annotationControl} type="button" size="sm" variant="ghost" className="browser-annotation-trigger"
+        data-testid="browser-annotation-button" aria-label="批注" aria-pressed={annotating} disabled={annotationDisabled} onClick={onAnnotation}>
+        <SquareDashedMousePointer className="size-4" /><span>批注</span>
+      </Button>
       <Input
         type="text"
         value={addressValue}
@@ -97,8 +111,21 @@ export function BrowserToolbar({
         onChange={(event) => onAddressChange(event.target.value)}
         placeholder={formatMessage({ id: "browser.addressPlaceholder" })}
         aria-label="预览地址"
-        onFocus={onAddressFocus}
-        onBlur={onAddressBlur}
+        onMouseDown={(event) => {
+          selectOnPointerUp.current = event.currentTarget !== document.activeElement;
+        }}
+        onFocus={(event) => {
+          // 先显示完整地址再选中，避免域名展开时把新输入追加到旧 URL。
+          flushSync(onAddressFocus);
+          event.currentTarget.select();
+        }}
+        onMouseUp={(event) => {
+          if (!selectOnPointerUp.current) return;
+          selectOnPointerUp.current = false;
+          event.preventDefault();
+          event.currentTarget.select();
+        }}
+        onBlur={() => { selectOnPointerUp.current = false; onAddressBlur(); }}
         onKeyDown={(event) => {
           if (event.key === "Escape") {
             onAddressEscape();
@@ -126,6 +153,7 @@ export function BrowserToolbar({
         formatMessage={formatMessage}
         onOpenExternal={onOpenExternal}
         onOpenDevTools={onOpenDevTools}
+        onToggleDetails={onToggleDetails}
       />
     </form>
   );
@@ -137,12 +165,14 @@ function BrowserToolbarMoreMenu({
   formatMessage,
   onOpenDevTools,
   onOpenExternal,
+  onToggleDetails,
 }: {
   canOpenDevTools: boolean;
   canOpenExternal: boolean;
   formatMessage: (descriptor: { id: string }) => string;
   onOpenDevTools: () => void;
   onOpenExternal: () => void;
+  onToggleDetails?: () => void;
 }) {
   const moreLabel = formatMessage({ id: "browser.more" });
   return (
@@ -179,6 +209,10 @@ function BrowserToolbarMoreMenu({
           <Bug className="size-4" />
           <span>{formatMessage({ id: "browser.devtools" })}</span>
         </DropdownMenuItem>
+        {onToggleDetails && <DropdownMenuItem onClick={onToggleDetails}>
+          <Globe className="size-4" />
+          <span>{formatMessage({ id: "browser.details" })}</span>
+        </DropdownMenuItem>}
       </DropdownMenuContent>
     </DropdownMenu>
   );

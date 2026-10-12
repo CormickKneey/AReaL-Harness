@@ -1065,6 +1065,7 @@ button.composer-project:hover > svg,
   min-height: 0;
 }
 .preview-panel {
+  position: relative;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -1828,6 +1829,8 @@ button.composer-project:hover > svg,
 .preview-toolbar { height: 48px; flex: none; padding: 0 12px; gap: 6px; }
 .preview-toolbar input { height: 28px; padding: 0 8px; border-radius: 8px; }
 .preview-toolbar button { flex-shrink: 0; }
+.browser-details { max-height: 40%; flex-shrink: 0; overflow: auto; }
+.browser-details .preview-viewport-toolbar { flex-wrap: wrap; gap: 8px; }
 .preview-stage { flex: 1; min-height: 0; position: relative; display: flex; justify-content: center; overflow: hidden; }
 .preview-stage .preview-webview { height: 100%; margin: 0; }
 .preview-placeholder { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; text-align: center; color: var(--color-foreground-subtle); }
@@ -2569,3 +2572,25 @@ body { font-family: var(--font-sans); }
 .side-chat-feedback:empty { display:none; }
 .side-bring-action { font-size:11px; color:var(--color-foreground-subtle); }
 .message-actions > .turn-fork-trigger, .message-actions > .side-bring-action { width:auto; padding-inline:6px; white-space:nowrap; }
+
+/* 批注与导航同组，地址栏保留可用宽度。 */
+.browser-navigation-controls {
+  border-radius: 9999px;
+  padding: 1px 3px;
+  background: var(--color-surface);
+}
+.browser-annotation-trigger {
+  flex-shrink: 0;
+  height: 28px;
+  border-radius: 9999px;
+  padding: 0 9px;
+  gap: 5px;
+  background: var(--color-surface);
+  font-size: var(--text-ui-caption);
+}
+.browser-annotation-trigger[aria-pressed="true"] {
+  color: #91c5ff;
+  background: #4795ff26;
+}
+
+.browser-transfer-status { position: absolute; bottom: 12px; left: 12px; right: 12px; z-index: 5; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 8px; }

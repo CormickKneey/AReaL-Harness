@@ -10,7 +10,10 @@ const gui = fileURLToPath(new URL("..", import.meta.url));
 const root = resolve(gui, "../..");
 const require = createRequire(join(gui, "app/package.json"));
 if (process.platform !== "darwin" || process.arch !== "arm64")
-  throw new Error("GUI package staging currently targets macOS arm64");
+  throw new Error("Local package acceptance currently targets macOS arm64");
+const release = process.env.AREAL_GUI_RELEASE === "1";
+const unsignedLocal = process.env.AREAL_GUI_UNSIGNED_LOCAL === "1";
+assert.ok(!(release && unsignedLocal), "Unsigned local packaging cannot enable release mode");
 const output = resolve(
   process.env.AREAL_GUI_PACKAGE_DIR || join(gui, "dist", `local-${Date.now()}`),
 );
@@ -19,7 +22,6 @@ const staged = await mkdtemp("/private/tmp/areal-stage-");
 // stageCoreApp 要求新目录；使用临时目录的子目录隔离包管理器发现。
 const appStage = join(staged, "app");
 const dependencies = await stageCoreApp({ root: gui, destination: appStage });
-const release = process.env.AREAL_GUI_RELEASE === "1";
 const { githubFeedUrl } = require(join(gui, "app/src/update/config.cjs"));
 const updateConfig = join(staged, "areal-update.json");
 const nativeUpdateConfig = join(staged, "app-update.yml");
@@ -43,7 +45,7 @@ if (process.env.AREAL_GUI_CORE_BUNDLE) {
 } else {
   execFileSync(
     "python3",
-    [join(root, "scripts/package.py"), "--profile", process.env.AREAL_CORE_PROFILE || (release ? "release" : "debug"), "--output", bundle],
+    [join(root, "scripts/package.py"), "--profile", process.env.AREAL_CORE_PROFILE || (release ? "release" : "debug"), "--output", bundle, ...(unsignedLocal ? ["--unsigned-local"] : [])],
     { cwd: root, stdio: "inherit" },
   );
 }
@@ -104,9 +106,21 @@ if (release) {
   assert.equal(native.url, githubFeedUrl);
   assert.ok(typeof native.updaterCacheDirName === "string" && native.updaterCacheDirName.length > 0);
 }
-// Apple Silicon 需要有效的本地代码签名；'-' 只做 ad-hoc，不查找证书。
-execFileSync("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", app], { stdio: "inherit" });
-execFileSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", app]);
+// 本机无新增签名模式保留输入签名；不能把拼装后的 bundle 宣称为签名有效。
+let signatureVerification;
+if (!unsignedLocal) {
+  execFileSync("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", app], { stdio: "inherit" });
+  execFileSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", app]);
+  signatureVerification = { valid: true };
+} else {
+  try {
+    execFileSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", app], { stdio: "pipe" });
+    signatureVerification = { valid: true };
+  } catch (error) {
+    signatureVerification = { valid: false, exitCode: error.status,
+      detail: String(error.stderr ?? error.message).trim() };
+  }
+}
 verifyCoreBundle(join(app, "Contents/Resources"), { hashes: true });
 const archive = join(output, "AReaL-Harness-GUI-mac-arm64.zip");
 execFileSync("/usr/bin/ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", app, archive]);
@@ -123,7 +137,10 @@ await writeFile(
         sha256: createHash("sha256").update(await readFile(process.execPath)).digest("hex"),
       },
       core: JSON.parse(await readFile(join(bundle, "manifest.json"), "utf8")),
-      signing: "Ad-hoc staging only; run sign:mac for Developer ID signing and app/DMG notarization before installation acceptance",
+      signing: unsignedLocal
+        ? "No new signatures; input signatures preserved; local validation only; launch and bundle trust not established"
+        : "Ad-hoc staging only; run sign:mac for Developer ID signing and app/DMG notarization before installation acceptance",
+      signatureVerification,
     },
     null,
     2,

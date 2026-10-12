@@ -38,9 +38,25 @@ export function ApprovalRequest({ item, projectId, action }: { item: Data; proje
     {browserPlan ? <div>
       <p>页面：{browserPlan.url}（{browserPlan.origin}）</p>
       <p>操作：{browserPlan.action?.kind ?? browserPlan.operation}{browserPlan.target ? ` · ${browserPlan.target.role} ${browserPlan.target.name} [${browserPlan.target.ref}]` : ""}</p>
+      {Array.isArray(browserPlan.steps) && <ol aria-label="本次批准的浏览步骤" className="list-decimal pl-5">
+        {browserPlan.steps.map((step: Data, index: number) => <li key={index}>
+          {step.action?.kind ?? step.operation}
+          {step.target?.ref ? ` · ${step.target.role} ${step.target.name} [${step.target.ref}]` : ""}
+          {step.action?.kind === "wait" ? ` · ${step.action.timeoutMs} 毫秒 · ${step.action.condition ? JSON.stringify(step.action.condition) : "固定延时"}` : ""}
+          {step.action?.kind === "fill" ? ` · 填写：${step.action.value}` : ""}
+          {["press", "pressAt"].includes(step.action?.kind) ? ` · 按键：${step.action.key}` : ""}
+          {["clickAt", "pressAt"].includes(step.action?.kind) ? ` · 截图坐标：${step.action.x}, ${step.action.y}` : ""}
+          {step.action?.kind === "drag" ? ` · 截图拖动：${step.action.fromX}, ${step.action.fromY} → ${step.action.toX}, ${step.action.toY}` : ""}
+        </li>)}
+      </ol>}
       {browserPlan.targetUrl && <p>目标地址：{browserPlan.targetUrl}（{browserPlan.targetOrigin}）</p>}
+      {browserPlan.action?.kind === "wait" && <p>等待：{browserPlan.action.timeoutMs} 毫秒 · {browserPlan.action.condition ? JSON.stringify(browserPlan.action.condition) : "固定延时"}</p>}
       {browserPlan.action?.kind === "fill" && <p>填写：{browserPlan.action.value}</p>}
       {browserPlan.action?.kind === "press" && <p>按键：{browserPlan.action.key}</p>}
+      {browserPlan.target?.semantics?.kind === "public_search" && <div>
+        <p>搜索内容：{browserPlan.target.semantics.query}</p>
+        <details><summary>本次提交的表单字段</summary><pre>{JSON.stringify(browserPlan.target.semantics.submittedFields, null, 2)}</pre></details>
+      </div>}
       <p>目标页面或控件变化后，本次批准会失效。</p>
     </div> : <pre>{JSON.stringify(item.effectiveArguments, null, 2)}</pre>}
     <Feedback error={error} message={submitted ? "已提交，等待执行状态更新。" : undefined} />
@@ -53,8 +69,8 @@ export function ApprovalRequest({ item, projectId, action }: { item: Data; proje
     </div>
     {canRemember && <p className="mt-2 text-ui-caption text-foreground-subtle">{browserPlan
       ? browserPlan.targetOrigin
-        ? "记住的授权仅适用于当前页面、来源与目标 Origin 和操作类型；目标变化仍须重新准备。"
-        : "记住的授权仅适用于当前页面、精确 Origin 和操作类型；目标变化仍须重新准备。"
+        ? "记住的授权绑定当前页面、控制代次、目标和具体内容；人工接管或内容变化后重新审批。"
+        : "记住的授权绑定当前页面、控制代次和具体操作；人工接管后重新审批。"
       : "记住的授权只适用于相同参数及权限条件，可在任务菜单的“已保存授权”中撤销。"}</p>}
   </section>;
 }

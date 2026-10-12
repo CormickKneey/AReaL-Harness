@@ -38,7 +38,7 @@ export function BrowserVerificationCard({ thread, projectId, action, onReview, o
     && commandResult(entry.item)?.verification?.schema === "areal.verification.v1");
   const check = checks.at(-1);
   const services = entries.filter(entry => ["development_service_start", "development_service_inspect"].includes(entry.item.tool));
-  if (!latest && !latestDiagnostics) return null;
+  // 首次回执之前保留折叠摘要的位置，避免展示观察结果时改变刚采集的原生视口。
   const observation = latest ? recordedResult(latest.item) : null;
   const capture = (latestCapture?.item.contentItems ?? []).find((part: Data) => part.type === "arealMedia" && part.modality === "image" && typeof part.media?.uri === "string");
   const checkResult = check ? commandResult(check.item) : null;

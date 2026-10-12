@@ -646,7 +646,7 @@ async function removeArchivedSession(id) {
   $("threads-empty").hidden = $("threads").children.length > 0 || Boolean(listCursor);
 }
 async function select(id) {
-  const result = await call("thread/resume", { threadId: id });
+  const result = await call("areal/thread/observe", { threadId: id });
   thread = result.thread;
   ++groupObservation;
   renderPermissions(result);
@@ -666,7 +666,7 @@ async function reload() {
   const id = thread.id;
   render();
   try {
-    const result = await call("thread/resume", { threadId: id });
+    const result = await call("areal/thread/observe", { threadId: id });
     if (thread?.id === id) {
       thread = result.thread;
       renderPermissions(result);

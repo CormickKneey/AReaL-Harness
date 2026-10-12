@@ -26,9 +26,18 @@ impl Model for ModelFixture {
         unreachable!()
     }
     async fn chat(&self, messages: Vec<Message>, tools: Vec<Value>) -> anyhow::Result<AgentStream> {
-        let has_browser = tools
-            .iter()
-            .any(|tool| tool["function"]["name"] == "browser_v1");
+        let has_browser = tools.iter().any(|tool| tool["function"]["name"] == "browser_v1");
+        if let Some(tool) = tools.iter().find(|tool| tool["function"]["name"] == "browser_v1") {
+            let registered = areal_protocol::desktop::browser_v1_tool();
+            assert_eq!(tool, &json!({"type":"function","function":{
+                "name":registered.name,"description":registered.description,"parameters":registered.input_schema
+            }}), "actual model tool definition must preserve the deployed Browser identity");
+        }
+
+        let guidance = messages.iter().any(|message| message.role == "areal_context"
+            && message.text_content().starts_with("Built-in Browser guidance: ")
+            && message.text_content().contains("fresh observe before navigate"));
+        assert_eq!(guidance, has_browser, "Browser guidance belongs to context only when its tool is visible");
         let event = if has_browser && messages.last().is_some_and(|m| m.role != "tool") {
             ModelEvent::ToolCall(ToolCall {
                 id: "browser-call-1".into(),
@@ -143,18 +152,8 @@ async fn observer_subscribes_without_taking_the_browser_callback() {
     )
     .await;
     assert!(sent["result"]["turn"]["id"].is_string(), "{sent}");
-    let pending = loop {
-        let message = next(&mut owner).await;
-        if message["method"] == "item/tool/call" {
-            break message;
-        }
-    };
-    let observed = loop {
-        let message = next(&mut observer).await;
-        if message["method"] == "turn/started" {
-            break message;
-        }
-    };
+    let pending = approved_browser_call(&mut owner).await;
+    let observed = loop { let message = next(&mut observer).await; if message["method"] == "turn/started" { break message; } };
     assert_eq!(observed["params"]["threadId"], id);
     second_host.send(Wire::Text(json!({"id":pending["id"],"result":{"success":true,"contentItems":[{"type":"inputText","text":"forged"}]}}).to_string().into())).await.unwrap();
     assert!(call(&mut second_host, "model/list", json!({})).await["result"].is_object());
@@ -173,11 +172,17 @@ async fn observer_subscribes_without_taking_the_browser_callback() {
     };
     assert_eq!(observed_done["params"]["threadId"], id);
     owner.close(None).await.unwrap();
-    second_host.close(None).await.unwrap();
-    observer.close(None).await.unwrap();
-    engine.shutdown().await;
-    stop.cancel();
-    task.await.unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(3), owner.next()).await.unwrap();
+    let rejected = call(&mut second_host, "turn/start", json!({"threadId":id,"input":[{"type":"text","text":"inspect again"}]})).await;
+    assert_eq!(rejected["error"]["code"], -32602, "{rejected}");
+    assert!(rejected["error"]["message"].as_str().unwrap().contains("connected owner"));
+    let history = engine.read(id, true).await.unwrap();
+    assert_eq!(history.turns.len(), 1, "rejected submission must not create a Turn");
+    assert!(history.turns.iter().flat_map(|turn| &turn.items).all(|item| !matches!(item,
+        areal_protocol::Item::DynamicToolCall { execution, .. }
+        if execution.outcome == areal_protocol::ToolOutcome::Unknown)));
+    second_host.close(None).await.unwrap(); observer.close(None).await.unwrap();
+    engine.shutdown().await; stop.cancel(); task.await.unwrap().unwrap();
 }
 async fn connected(url: &str) -> Socket {
     connected_with(url, "desktop-owner-test-token-1234567890").await
@@ -292,21 +297,8 @@ async fn busy_other_host_schema_conflict_and_untrusted_client_cannot_attach() {
         -32009
     );
     engine.start(id, vec![Input::text("read")]).await.unwrap();
-    let pending = loop {
-        let message = next(&mut owner).await;
-        if message["method"] == "item/tool/call" {
-            break message;
-        }
-    };
-    assert_eq!(
-        call(
-            &mut owner,
-            "areal/thread/tools/attach",
-            attach(id, "busy", 1)
-        )
-        .await["error"]["code"],
-        -32009
-    );
+    let pending = approved_browser_call(&mut owner).await;
+    assert_eq!(call(&mut owner, "areal/thread/tools/attach", attach(id, "busy", 1)).await["error"]["code"], -32009);
     owner.send(Wire::Text(json!({"id":pending["id"],"result":{"success":true,"contentItems":[{"type":"inputText","text":"ok"}]}}).to_string().into())).await.unwrap();
     engine.wait(id).await.unwrap();
 
@@ -368,6 +360,29 @@ async fn busy_other_host_schema_conflict_and_untrusted_client_cannot_attach() {
     stop.cancel();
     task.await.unwrap().unwrap();
 }
+async fn approved_browser_call(socket: &mut Socket) -> Value {
+    let mut approved = false;
+    loop {
+        let message = next(socket).await;
+        if message["method"] == "areal/interaction/requested" {
+            let interaction = &message["params"]["interaction"];
+            assert_eq!(interaction["kind"], "approval");
+            assert_eq!(interaction["effectivePermissions"]["rememberAllowed"], false);
+            socket.send(Wire::Text(json!({"id":700,"method":"areal/interaction/respond","params":{
+                "threadId":interaction["threadId"],"turnId":interaction["turnId"],
+                "requestId":interaction["requestId"],"argumentsDigest":interaction["argumentsDigest"],
+                "decision":"allowOnce"
+            }}).to_string().into())).await.unwrap();
+            approved = true;
+        }
+        if message["id"] == 700 { assert!(message.get("result").is_some(), "{message}"); }
+        if message["method"] == "item/tool/call" {
+            assert!(approved, "Browser discovery dispatched before approval");
+            return message;
+        }
+    }
+}
+
 async fn next(socket: &mut Socket) -> Value {
     let wire = tokio::time::timeout(Duration::from_secs(10), socket.next())
         .await
@@ -460,16 +475,8 @@ async fn old_thread_keeps_history_and_tools_and_browser_attachment_survives_rest
     assert_eq!(after.dynamic_tools.len(), 2);
     assert_eq!(after.dynamic_tools[0].name, "old_tool");
     assert_eq!(after.dynamic_tools[1].name, "browser_v1");
-    engine
-        .start(id, vec![Input::text("inspect browser")])
-        .await
-        .unwrap();
-    let request = loop {
-        let message = next(&mut owner).await;
-        if message["method"] == "item/tool/call" {
-            break message;
-        }
-    };
+    engine.start(id, vec![Input::text("inspect browser")]).await.unwrap();
+    let request = approved_browser_call(&mut owner).await;
     assert_eq!(request["params"]["tool"], "browser_v1");
     owner.send(Wire::Text(json!({"id":request["id"],"result":{"success":true,"contentItems":[{"type":"inputText","text":"live page sentinel"}]}}).to_string().into())).await.unwrap();
     engine.wait(id).await.unwrap();
@@ -544,4 +551,36 @@ async fn older_snapshot_defaults_revision_and_future_snapshot_is_rejected() {
     snapshot["version"] = json!(future_version);
     std::fs::write(&file, serde_json::to_vec(&snapshot).unwrap()).unwrap();
     assert!(Engine::open(dir.path(), Arc::new(ModelFixture), Limits::default()).is_err());
+}
+
+#[tokio::test]
+async fn denied_browser_discovery_never_dispatches_to_the_client_host() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = Engine::open(dir.path(), Arc::new(ModelFixture), Limits::default()).unwrap();
+    let (url, stop, task) = server(engine.clone()).await;
+    let mut owner = connected(&url).await;
+    let tool = serde_json::to_value(areal_protocol::desktop::browser_v1_tool()).unwrap();
+    let created = call(&mut owner, "thread/start", json!({"cwd":"/workspace","dynamicTools":[tool]})).await;
+    let id = created["result"]["thread"]["id"].as_str().unwrap();
+    engine.start(id, vec![Input::text("open the browser")]).await.unwrap();
+    let interaction = loop {
+        let message = next(&mut owner).await;
+        assert_ne!(message["method"], "item/tool/call", "unapproved discovery reached the host");
+        if message["method"] == "areal/interaction/requested" { break message["params"]["interaction"].clone(); }
+    };
+    assert_eq!(interaction["effectivePermissions"]["rememberAllowed"], false);
+    owner.send(Wire::Text(json!({"id":700,"method":"areal/interaction/respond","params":{
+        "threadId":id,"turnId":interaction["turnId"],"requestId":interaction["requestId"],
+        "argumentsDigest":interaction["argumentsDigest"],"decision":"deny"
+    }}).to_string().into())).await.unwrap();
+    loop {
+        let message = next(&mut owner).await;
+        assert_ne!(message["method"], "item/tool/call", "denied discovery reached the host");
+        if message["id"] == 700 { assert!(message.get("result").is_some(), "{message}"); }
+        if message["method"] == "turn/completed" { break; }
+    }
+    let history = engine.read(id, true).await.unwrap();
+    assert!(serde_json::to_string(&history).unwrap().contains("tool approval denied"));
+    owner.close(None).await.unwrap();
+    engine.shutdown().await; stop.cancel(); task.await.unwrap().unwrap();
 }

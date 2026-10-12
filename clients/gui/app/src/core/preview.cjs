@@ -8,7 +8,8 @@ const { performance } = require('node:perf_hooks');
 const { isDeepStrictEqual } = require('node:util');
 const { basename } = require('node:path');
 const { validatePreview } = require('@areal/workbench/desktop-contract');
-const { WorkspaceNetworkPolicy, loopback } = require('./browser-network.cjs');
+const { WorkspaceNetworkPolicy } = require('./browser-network.cjs');
+const { waitAction } = require('./browser-tool.cjs');
 const { validateEdit, mutate: mutateStyleTrial } = require('./browser-style-trial.cjs');
 
 function webUrl(value) {
@@ -80,7 +81,10 @@ function bitmapPoint(capture, x, y) {
     throw new Error('target_unavailable');
   // CDP Input uses page CSS viewport coordinates; the actual bitmap dimensions
   // are the only safe conversion source across DPR and page/GUI zoom.
-  return { x: x * width / bitmapWidth, y: y * height / bitmapHeight };
+  // 使用可精确表示的 1/64 CSS 像素精度，避免 JSON 往返的浮点末位变化
+  // 使同一批准计划失配；计划与视口的完整校验仍保留。
+  return { x: Math.round(x * width / bitmapWidth * 64) / 64,
+    y: Math.round(y * height / bitmapHeight * 64) / 64 };
 }
 function coordinateTarget(capture, action) {
   if (action.kind === 'drag') return {
@@ -99,7 +103,7 @@ const MAX_FILE_BYTES = 64 * 1024 * 1024;
 const MAX_FILE_RECEIPTS = 8;
 const DOWNLOAD_INTENT_MS = 30000;
 const DOWNLOAD_TIMEOUT_MS = 120000;
-const sensitiveCaptureScript = `(() => {
+const sensitiveCaptureScript = (includeFrames = true) => `(() => {
   const selector = 'input[type="password"],input[name*="token" i],input[name*="secret" i],input[name*="key" i]';
   const sensitiveAutocomplete = new Set(['current-password', 'new-password', 'cc-number', 'cc-csc', 'one-time-code']);
   const scan = root => {
@@ -112,7 +116,7 @@ const sensitiveCaptureScript = `(() => {
       if (!['SCRIPT', 'STYLE', 'TEMPLATE', 'NOSCRIPT'].includes(element.tagName)
         && [...element.childNodes].some(child => child.nodeType === Node.TEXT_NODE && /password|passcode|secret|token|api.?key|credit.?card|cvv|authorization|one.?time.?code|\\botp\\b|credential/i.test(child.textContent))) return true;
     }
-    for (const frame of root.querySelectorAll('iframe,frame')) {
+    for (const frame of ${includeFrames ? "root.querySelectorAll('iframe,frame')" : '[]'}) {
       try { if (!frame.contentDocument || scan(frame.contentDocument)) return true; }
       catch { return true; }
     }
@@ -120,7 +124,7 @@ const sensitiveCaptureScript = `(() => {
   };
   return scan(document);
 })()`;
-const captureGuardStartScript = (token, sequence) => `(() => {
+const captureGuardStartScript = (token, sequence, includeFrames = true) => `(() => {
   if ((globalThis.__arealCaptureGuardSequence ?? 0) >= ${sequence}) return false;
   globalThis.__arealCaptureGuardSequence = ${sequence};
   const previous = globalThis.__arealCaptureGuard;
@@ -133,7 +137,7 @@ const captureGuardStartScript = (token, sequence) => `(() => {
     guard.observers.push(observer);
     for (const element of root.querySelectorAll('*')) {
       if (element.shadowRoot) watch(element.shadowRoot);
-      if (element.matches('iframe,frame')) {
+      if (${includeFrames} && element.matches('iframe,frame')) {
         if (!element.contentDocument) throw new Error('Frame unavailable');
         watch(element.contentDocument);
       }
@@ -151,11 +155,100 @@ const captureGuardStopScript = (token, sequence) => `(() => {
   delete globalThis.__arealCaptureGuard;
   return changed;
 })()`;
+// 人工冻结截图保留只读变化标记，直到选择/确认结束；不返回页面内容。
+const captureGuardChangedScript = token => `(() => {
+  const guard = globalThis.__arealCaptureGuard;
+  if (!guard || guard.token !== ${JSON.stringify(token)}) return true;
+  guard.changed ||= guard.observers.some(observer => observer.takeRecords().length > 0);
+  return guard.changed;
+})()`;
 const clearCaptureGuardScript = `(() => {
   for (const observer of globalThis.__arealCaptureGuard?.observers ?? []) observer.disconnect();
   delete globalThis.__arealCaptureGuard;
   return true;
 })()`;
+// 仅人工标注使用，所有返回像素对应的 Frame 都必须接受独立隐私检查。
+async function captureHumanFrames(c, grant, bounded, valid, token, sequence) {
+  if (c.debugger.isAttached()) throw new Error('页面调试器正在使用，无法检查嵌入站点');
+  const targets = new Map(), contexts = [];
+  let attached = false;
+  const current = () => valid() && grant.valid() && grant.status === 'active';
+  const command = async (method, params = {}, sessionId) => {
+    if (!current()) throw new Error('嵌入站点截图授权已失效');
+    const result = await bounded(c.debugger.sendCommand(method, params, sessionId));
+    if (!current()) throw new Error('嵌入站点截图授权已失效');
+    return result;
+  };
+  const onMessage = (_event, method, params) => {
+    if (method === 'Target.attachedToTarget' && params.targetInfo.type === 'iframe')
+      targets.set(params.targetInfo.targetId, params.sessionId);
+    if (method === 'Target.detachedFromTarget')
+      for (const [id, sid] of targets) if (sid === params.sessionId) targets.delete(id);
+  };
+  const snapshot = async () => {
+    const root = (await command('Page.getFrameTree')).frameTree, frames = [];
+    const walk = (node, parent, sid) => {
+      const frame = node.frame;
+      frames.push({ id: frame.id, loaderId: frame.loaderId, url: frame.url,
+        origin: frame.securityOrigin, parent: parent ?? frame.parentId ?? null, sid });
+      for (const child of node.childFrames ?? []) walk(child, frame.id, sid);
+    };
+    walk(root, null);
+    for (const [id, sid] of targets) {
+      const child = (await command('Page.getFrameTree', {}, sid)).frameTree;
+      if (child.frame.id !== id || child.frame.parentId !== root.frame.id)
+        throw new Error('嵌入站点 Frame 归属无法确认');
+      walk(child, null, sid);
+    }
+    const parentOrigin = new URL(grant.parentURL).origin;
+    if (frames.length !== c.mainFrame.framesInSubtree.length
+      || new Set(frames.map(frame => frame.id)).size !== frames.length || frames.length > 32
+      || frames[0].url !== grant.parentURL
+      || frames.some(frame => frame.origin !== parentOrigin
+        && (frame.origin !== grant.origin || frame.parent !== root.frame.id)))
+      throw new Error('嵌入站点 Frame 隐私覆盖不完整');
+    return frames.sort((a, b) => a.id.localeCompare(b.id));
+  };
+  try {
+    c.debugger.attach('1.3'); attached = true;
+    c.debugger.on('message', onMessage);
+    await command('Page.enable');
+    await command('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false,
+      flatten: true, filter: [{ type: 'iframe', exclude: false }, { exclude: true }] });
+    const before = await snapshot();
+    for (const frame of before) {
+      const world = await command('Page.createIsolatedWorld', {
+        frameId: frame.id, worldName: `areal-human-capture-${token}` }, frame.sid);
+      const context = { id: world.executionContextId, sid: frame.sid };
+      contexts.push(context);
+      const run = expression => command('Runtime.evaluate', { expression, contextId: context.id,
+        returnByValue: true }, context.sid);
+      if ((await run(captureGuardStartScript(token, sequence, false))).result?.value !== true
+        || (await run(sensitiveCaptureScript(false))).result?.value !== false)
+        throw new Error('嵌入站点包含敏感内容或截图保护不可用，未生成图片');
+    }
+    const image = await bounded(c.capturePage());
+    if (!current()) throw new Error('嵌入站点截图授权已失效');
+    for (const context of contexts) {
+      const run = expression => command('Runtime.evaluate', { expression, contextId: context.id,
+        returnByValue: true }, context.sid);
+      if ((await run(sensitiveCaptureScript(false))).result?.value !== false
+        || (await run(captureGuardStopScript(token, sequence))).result?.value !== false)
+        throw new Error('嵌入站点在截图期间发生变化，未生成图片');
+    }
+    if (!isDeepStrictEqual(before, await snapshot())) throw new Error('嵌入站点 Frame 已变化，未生成图片');
+    return { image, frames: before.map(({ id, loaderId, origin }) => ({ id, loaderId, origin })) };
+  } finally {
+    // 清理即使授权已失效也要执行；仅清理本次固定上下文，不重放截图或页面动作。
+    const cleanupDeadline = performance.now() + 500;
+    await Promise.allSettled(contexts.map(context => !c.isDestroyed() && c.debugger.isAttached()
+      ? nativeWithin(c.debugger.sendCommand('Runtime.evaluate', {
+        expression: captureGuardStopScript(token, sequence), contextId: context.id, returnByValue: true,
+      }, context.sid), cleanupDeadline) : Promise.resolve()));
+    c.debugger.removeListener('message', onMessage);
+    if (attached && !c.isDestroyed() && c.debugger.isAttached()) c.debugger.detach();
+  }
+}
 function safeText(value, limit = 500) {
   const text = String(value ?? '').slice(0, limit);
   return sensitive.test(text) ? '[redacted]' : text;
@@ -220,6 +313,37 @@ class CorePreview {
     // A call identity is retained for this host lifetime. Losing a transport
     // reply must never turn a repeated call into permission to replay a prefix.
     this.batchCalls = new Map();
+    window.on('blur', () => this.cancelHumanGesture(this.humanMouseGesture?.page));
+    // 人工输入来源只在 Main 记录；Renderer 没有通用 sendInputEvent 能力。
+    window.webContents.on('before-mouse-event', (event, mouse) => {
+      const page = this.pages.get(this.owner);
+      if (!page?.view || !window.isFocused()) return;
+      const bounds = page.view.getBounds();
+      const x = Math.round(mouse.x - bounds.x), y = Math.round(mouse.y - bounds.y);
+      const inside = x >= 0 && y >= 0 && x < bounds.width && y < bounds.height;
+      const gesture = this.humanMouseGesture;
+      const continuation = gesture?.page === page && !gesture.cancelled
+        && gesture.generation === page.pageGeneration && gesture.document === page.documentGeneration
+        && ['mouseUp', 'mouseMove'].includes(mouse.type)
+        && (mouse.type !== 'mouseUp' || mouse.button === gesture.button);
+      if (['mouseUp', 'mouseMove'].includes(mouse.type) && !continuation) {
+        if (mouse.type === 'mouseUp' && gesture?.page === page && mouse.button === gesture.button) this.cancelHumanGesture(page);
+        return;
+      }
+      if (mouse.type === 'mouseDown' && !inside) this.nativeInputOwner = null;
+      if ((!inside && !continuation) || (!continuation && page.view.getVisible()) || !page.requestedVisible
+        || (!continuation && !['agent', 'transferring'].includes(page.control))
+        || !['mouseDown', 'mouseUp', 'mouseWheel', 'mouseMove'].includes(mouse.type)) return;
+      event.preventDefault(); this.nativeInputOwner = page.id;
+      void this.humanInput(page.projectId, page.threadId, page.id, { ...mouse, x, y }).catch(() => {});
+    });
+    window.webContents.on('before-input-event', (event, input) => {
+      const page = this.pages.get(this.owner);
+      if (!page?.view || page.id !== this.nativeInputOwner || page.view.getVisible()
+        || !page.requestedVisible || !window.isFocused() || !['agent', 'transferring'].includes(page.control)) return;
+      event.preventDefault();
+      void this.humanKey(page, input).catch(() => {});
+    });
   }
   workspacePages(projectId, threadId) {
     return [...this.pages.values()].filter(page => page.coreInstanceId === this.coreIdentity(projectId)
@@ -348,7 +472,10 @@ class CorePreview {
       return existing.policy;
     }
     if (page.session.storagePath !== null) throw new Error('浏览工作区需要临时 Session');
-    const policy = new WorkspaceNetworkPolicy(this.controlEndpoints);
+    const policy = new WorkspaceNetworkPolicy(this.controlEndpoints, webContentsId =>
+      Number.isSafeInteger(webContentsId) && [...this.pages.values()].some(candidate =>
+        candidate.partition === page.partition && this.pageStillOwned(candidate)
+        && (candidate.view?.webContents.devToolsWebContents ?? candidate.openingDevTools)?.id === webContentsId));
     policy.install(page.session);
     this.contexts.set(page.partition, { workspace: key, session: page.session, policy });
     return policy;
@@ -358,10 +485,15 @@ class CorePreview {
       || page.coreInstanceId !== this.coreIdentity(page.projectId)) this.release(key);
   }
   closeNative(page) {
+    this.cancelHumanGesture(page);
     if (!page.view) return;
     page.styleTrial = null;
     const c = page.view.webContents;
+    page.networkPolicy?.revokeFrameGrant(c.id);
+    page.frameGrant = null;
     this.cancelFileOperations(page, 'page_closed_after_dispatch');
+    if (page.openingDevTools && !page.openingDevTools.isDestroyed()) page.openingDevTools.close();
+    page.openingDevTools = null;
     if (page.onDownload) c.session.removeListener('will-download', page.onDownload);
     page.diagnosticsReady = false; page.diagnosticRequests?.clear();
     page.claiming?.cancel();
@@ -425,6 +557,7 @@ class CorePreview {
       canGoForward: c?.navigationHistory.canGoForward() ?? false,
       error: page?.error ?? '',
       browser: page ? { pageId: page.id, control: page.control,
+        frameOriginGrant: page.frameGrant ? { origin: page.frameGrant.origin, status: page.frameGrant.status } : null,
         trialActive: !!page.styleTrial, trialStale: !!page.styleTrial?.stale,
         transferError: page.transferError ?? null, resource: page.view ? page.crashed ? 'crashed' : 'ready' : 'suspended',
         stateLoss: page.stateLoss ?? null,
@@ -436,6 +569,7 @@ class CorePreview {
     if (page.control !== 'agent') return;
     // This local fence runs before any Core request and before awaiting native input.
     page.control = 'transferring'; page.controlEpoch++; page.refs.clear(); page.plans.clear();
+    page.approvedActionNavigation = null;
     this.clearDiagnostics(page, 'control_changed');
     page.lastObservation = null; page.lastCapture = null; page.needsObservation = true;
     page.view?.setVisible(false);
@@ -504,6 +638,7 @@ class CorePreview {
           page.control = 'human'; page.transferError = null;
           page.view?.setVisible(this.pageStillOwned(page) && this.owner === pageKey(page.coreInstanceId, page.projectId, page.threadId, page.id)
             && page.requestedVisible === true);
+          this.changed(page, 'controlChanged');
         }
       } catch (error) {
         page.transferError = error.message;
@@ -518,12 +653,108 @@ class CorePreview {
     return page.converging;
   }
   revokeAll() { for (const page of this.pages.values()) this.revoke(page); }
+  async ensureAgentPage(projectId, threadId) {
+    // 仅供已通过 Core 权限的工具回调调用；展示页面不会隐式认领。
+    if (!this.owns(projectId, threadId) || !this.coreIdentity(projectId)) throw new Error('Browser thread unavailable');
+    let page = this.page(projectId, threadId);
+    if (!page) {
+      const id = randomUUID();
+      page = this.create(pageKey(this.coreIdentity(projectId), projectId, threadId, id), projectId, threadId, { id });
+    }
+    if (!page.view || page.crashed || page.view.webContents.isDestroyed()) throw new Error('Browser page unavailable');
+    const c = page.view.webContents;
+    const humanRevision = page.humanRevision ?? 0;
+    if (!c.getURL()) await c.loadURL('about:blank');
+    if (!this.pageStillOwned(page)) throw new Error('Browser page unavailable');
+    if (page.control === 'transferring') await this.convergeInput(page);
+    if ((page.humanRevision ?? 0) !== humanRevision) throw new Error('Browser authorization was revoked');
+    if (page.control === 'agent') return { protocol: 'areal.browser.host.v1',
+      operations: ['describe', 'observe', 'capture', 'act', 'wait', 'navigate', 'newPage', 'diagnostics', 'runBatch'], available: true,
+      coreInstanceId: page.coreInstanceId, projectId, threadId, pageId: page.id, browserHostId: this.browserHostId,
+      hostGeneration: this.hostGeneration, pageGeneration: page.pageGeneration, controlEpoch: page.controlEpoch };
+    return this.claim(projectId, threadId, page.id);
+  }
+  noteHumanInput(page) {
+    page.humanRevision = (page.humanRevision ?? 0) + 1;
+    page.claiming?.cancel();
+    // Human 阶段也撤销等待 Core 审批的潜在认领，防止审批迟到重新观察人工内容。
+    if (page.control === 'human') this.onRevoke?.({ projectId: page.projectId, threadId: page.threadId, pageId: page.id });
+    this.revoke(page);
+  }
+  async humanKey(page, input) {
+    const modifiers = ['shift', 'control', 'alt', 'meta'].filter(name => input[name]);
+    const keyCode = input.key === ' ' ? 'Space' : input.key;
+    const pending = [this.humanInput(page.projectId, page.threadId, page.id, { type: input.type, keyCode, modifiers })];
+    if (input.type === 'keyDown' && input.key.length === 1 && !input.control && !input.meta && !input.isComposing)
+      pending.push(this.humanInput(page.projectId, page.threadId, page.id, { type: 'char', keyCode: input.key, modifiers }));
+    await Promise.all(pending);
+  }
+  cancelHumanGesture(page) {
+    const gesture = this.humanMouseGesture;
+    if (!gesture || gesture.page !== page) return;
+    this.humanMouseGesture = null; gesture.cancelled = true;
+    const c = page.view?.webContents;
+    if (gesture.delivered && c && !c.isDestroyed() && page.pageGeneration === gesture.generation
+      && page.documentGeneration === gesture.document)
+      c.sendInputEvent({ type: 'mouseUp', button: gesture.button, x: -1, y: -1 });
+  }
+  async humanInput(projectId, threadId, pageId, input) {
+    const page = this.page(projectId, threadId, pageId);
+    const c = page?.view?.webContents;
+    const current = () => !!c && !c.isDestroyed() && this.pageStillOwned(page)
+      && this.owner === pageKey(page.coreInstanceId, projectId, threadId, pageId)
+      && this.selected.get(workspaceKey(page.coreInstanceId, projectId, threadId)) === pageId
+      && page.requestedVisible && !page.annotationCaptureId
+      && this.window.isVisible() && !this.window.isMinimized() && this.window.isFocused();
+    const rejectInput = message => {
+      if (input.type === 'mouseUp' && this.humanMouseGesture && this.humanMouseGesture.page === page
+        && input.button === this.humanMouseGesture.button) this.cancelHumanGesture(page);
+      throw new Error(message);
+    };
+    if (!current()) rejectInput('人工输入页面已变化');
+    const bounds = page.view.getBounds();
+    const gesture = this.humanMouseGesture;
+    const continuation = gesture?.page === page && gesture.generation === page.pageGeneration
+      && gesture.document === page.documentGeneration && ['mouseUp', 'mouseMove'].includes(input.type)
+      && (input.type !== 'mouseUp' || input.button === gesture.button);
+    if (['mouseUp', 'mouseMove'].includes(input.type) && !continuation) rejectInput('人工输入手势已变化');
+    if (input.type.startsWith('mouse') && (!Number.isSafeInteger(input.x) || !Number.isSafeInteger(input.y)
+      || (!continuation && (input.x < 0 || input.y < 0 || input.x >= bounds.width || input.y >= bounds.height))))
+      rejectInput('人工输入坐标已变化');
+    // fence 必须在首个 await 之前完成，后续输入按同一代次串行交付。
+    // 隐藏 View 仍可能保留焦点；先迁到 Main，让 drain 期间的真实 up/char 继续进入 Main 队列。
+    if (c.isFocused?.()) { this.nativeInputOwner = page.id; this.window.webContents.focus(); }
+    this.noteHumanInput(page);
+    const epoch = page.controlEpoch, generation = page.pageGeneration, document = page.documentGeneration;
+    if (input.type === 'mouseDown') this.humanMouseGesture = { page, generation, document, button: input.button };
+    const ownedGesture = this.humanMouseGesture;
+    const deliver = async () => {
+      if (page.control === 'transferring') await this.convergeInput(page);
+      if (!current() || ownedGesture?.cancelled || page.control !== 'human' || page.controlEpoch !== epoch
+        || page.pageGeneration !== generation || page.documentGeneration !== document)
+        throw new Error('人工输入页面已变化');
+      c.focus();
+      c.sendInputEvent(input);
+      if (input.type === 'mouseDown' && ownedGesture) ownedGesture.delivered = true;
+      if (input.type === 'mouseUp' && this.humanMouseGesture === ownedGesture) this.humanMouseGesture = null;
+      return this.state(page);
+    };
+    const pending = (page.humanInputPending ?? Promise.resolve()).then(deliver);
+    page.humanInputPending = pending;
+    try { return await pending; }
+    catch (error) {
+      if (this.humanMouseGesture === ownedGesture && ['mouseDown', 'mouseUp'].includes(input.type))
+        this.cancelHumanGesture(page);
+      throw error;
+    } finally { if (page.humanInputPending === pending) page.humanInputPending = null; }
+  }
   async claim(projectId, threadId, pageId) {
     const page = this.page(projectId, threadId, pageId);
     if (!page?.view || page.crashed || page.view.webContents.isDestroyed() || page.view.webContents.isDevToolsOpened()
       || !page.view.webContents.getURL()
       || !this.owns(projectId, threadId)) throw new Error('当前聊天没有可认领的页面');
-    if (page.control !== 'human' || page.claiming || page.activeSelection || page.annotationCaptureId
+    if (page.frameGrant) throw new Error('请先撤销嵌入站点授权并关闭页面，再交还 Agent');
+    if (page.control !== 'human' || this.humanMouseGesture?.page === page || page.claiming || page.activeSelection || page.annotationCaptureId
       || page.activeRead || page.activePrepare || page.activeAction || page.fileHandoff || page.downloads.size)
       throw new Error('浏览页面当前不可认领');
     if (page.styleTrial && !(await this.clearStyleTrial(page)).cleared)
@@ -556,6 +787,7 @@ class CorePreview {
       await Promise.race([c.debugger.sendCommand('Network.enable', { maxPostDataSize: 0 }), cancelled]);
       // An indirect Agent click may open an <input type=file> chooser. Keep
       // Chromium's chooser suppressed for the entire Agent control epoch.
+      await Promise.race([c.debugger.sendCommand('Page.enable'), cancelled]);
       await Promise.race([c.debugger.sendCommand('Page.setInterceptFileChooserDialog', { enabled: true }), cancelled]);
       page.fileChooserIntercepted = true;
       if (!this.pageStillOwned(page) || page.claiming !== claim || page.control !== 'agent'
@@ -585,6 +817,10 @@ class CorePreview {
   async captureElement(projectId, threadId, pageId) {
     const page = this.page(projectId, threadId, pageId);
     if (page?.control === 'transferring') await this.convergeInput(page);
+    if (page?.frameGrant?.status === 'active') return {
+      capture: await this.captureRegion(projectId, threadId, pageId),
+      element: { available: false, reason: 'iframe 内容无法可靠识别，请使用区域标注；未生成选择器' },
+    };
     const c = page?.view?.webContents;
     const key = page && pageKey(page.coreInstanceId, projectId, threadId, pageId);
     if (!page || page.id !== pageId || !c || !this.pageStillOwned(page) || !this.owns(projectId, threadId)
@@ -664,13 +900,11 @@ class CorePreview {
         ? { available: false, reason: '此元素没有可核查的页面边界，请改用区域标注' }
         : await this.selectElement(projectId, threadId, pageId, capture.captureId, x, y, backendNodeId); }
       catch (error) {
-        if (page.annotationCaptureId === capture.captureId) {
-          page.annotationCaptureId = null; page.annotationCapture = null; page.annotationElement = null;
-        }
+        await this.discardAnnotationCapture(page, capture.captureId);
         throw error;
       }
       if (!valid() || page.annotationCaptureId !== capture.captureId) {
-        page.annotationCaptureId = null; page.annotationCapture = null; page.annotationElement = null;
+        await this.discardAnnotationCapture(page, capture.captureId);
         throw new Error('元素选择已过期');
       }
       return { capture, element };
@@ -715,7 +949,7 @@ class CorePreview {
       && !c.isDestroyed() && c.getURL() === sourceUrl && page.view?.getVisible()
       && this.owner === pageKey(page.coreInstanceId, projectId, threadId, pageId)
       && page.activeRead === read && this.window.isVisible() && !this.window.isMinimized();
-    let changed = true;
+    let changed = true, frameEvidence;
     try {
       const viewport = await bounded(readIsolated(c, viewportScript));
       if (!valid() || ![viewport.width, viewport.height, viewport.scrollX, viewport.scrollY, viewport.deviceScaleFactor]
@@ -724,13 +958,19 @@ class CorePreview {
       const facts = viewportFacts(this.window, page, viewport);
       const viewportKey = facts.key;
       if (page.viewportKey !== viewportKey) { page.viewportKey = viewportKey; page.viewportRevision++; }
-      if (await bounded(readIsolated(c, captureGuardStartScript(guardToken, guardSequence))) !== true)
-        throw new Error('页面截图保护不可用');
-      if (await bounded(readIsolated(c, sensitiveCaptureScript)) !== false) throw new Error('页面包含敏感输入框，无法截图标注');
-      const image = await bounded(c.capturePage());
-      if (!valid() || await bounded(readIsolated(c, sensitiveCaptureScript)) !== false)
-        throw new Error('页面截图条件已变化');
-      changed = await bounded(readIsolated(c, captureGuardStopScript(guardToken, guardSequence)));
+      let image;
+      if (page.frameGrant?.status === 'active') {
+        const captured = await captureHumanFrames(c, page.frameGrant, bounded, valid, guardToken, guardSequence);
+        image = captured.image; frameEvidence = captured.frames; changed = false;
+      } else {
+        if (await bounded(readIsolated(c, captureGuardStartScript(guardToken, guardSequence))) !== true)
+          throw new Error('页面截图保护不可用');
+        if (await bounded(readIsolated(c, sensitiveCaptureScript())) !== false) throw new Error('页面包含敏感输入框，无法截图标注');
+        image = await bounded(c.capturePage());
+        if (!valid() || await bounded(readIsolated(c, sensitiveCaptureScript())) !== false)
+          throw new Error('页面截图条件已变化');
+        changed = await bounded(readIsolated(c, captureGuardChangedScript(guardToken)));
+      }
       if (changed !== false || !valid()
         || viewportFacts(this.window, page, await bounded(readIsolated(c, viewportScript))).key !== viewportKey)
         throw new Error('页面在截图期间发生变化，请重试');
@@ -743,6 +983,7 @@ class CorePreview {
       const captureId = randomUUID();
       page.annotationCaptureId = captureId;
       page.annotationCapture = { documentEpoch, controlEpoch: epoch, pageGeneration: page.pageGeneration,
+        guardToken: frameEvidence ? null : guardToken, guardSequence,
         nativeWebContentsId: c.id,
         sourceUrl, viewport, zoom: facts.pageZoom, guiZoom: facts.guiZoom,
         nativeBounds: facts.nativeBounds, viewportKey, viewportRevision: page.viewportRevision,
@@ -754,12 +995,23 @@ class CorePreview {
         url: observationUrl(c.getURL()), capturedAt: new Date().toISOString(),
         viewport: { ...viewport, pageZoom: facts.pageZoom, guiZoom: facts.guiZoom,
           nativeBounds: facts.nativeBounds, bitmapWidth: size.width, bitmapHeight: size.height },
+        ...(frameEvidence ? { frameEvidence, unavailableReason: 'iframe 内容无法可靠识别，请使用区域标注；未生成选择器' } : {}),
         mimeType: 'image/png', imageBase64: png.toString('base64') };
     } finally {
       clearTimeout(timer);
-      if (changed !== false && valid()) await nativeWithin(readIsolated(c, clearCaptureGuardScript), performance.now() + 1000).catch(() => {});
+      if (page.annotationCapture?.guardToken !== guardToken && !c.isDestroyed())
+        await nativeWithin(readIsolated(c, captureGuardStopScript(guardToken, guardSequence)), performance.now() + 1000).catch(() => {});
       if (page.activeRead === read) page.activeRead = null;
     }
+  }
+  async discardAnnotationCapture(page, captureId) {
+    // 迟到的结束/失败只清理自身截图，不能移除新截图的变化保护。
+    if (page.annotationCaptureId !== captureId) return;
+    const frozen = page.annotationCapture, contents = page.view?.webContents;
+    page.annotationCaptureId = null; page.annotationCapture = null; page.annotationElement = null;
+    if (frozen?.guardToken && contents && !contents.isDestroyed())
+      await nativeWithin(readIsolated(contents, captureGuardStopScript(frozen.guardToken, frozen.guardSequence)),
+        performance.now() + 1000).catch(() => {});
   }
   // Human-only inspection of a point on the frozen native bitmap. The returned
   // evidence Ref deliberately never enters page.refs, which is Agent-owned.
@@ -771,7 +1023,11 @@ class CorePreview {
       || !this.pageStillOwned(page) || !this.owns(projectId, threadId)) throw new Error('标注页面已变化');
     if (page.claiming || page.activeRead || page.activeAction || page.activePrepare || page.control !== 'human'
       || c.isDestroyed() || c.isDevToolsOpened() || c.debugger.isAttached()) throw new Error('元素选择当前不可用，请使用区域标注');
-    if (x >= frozen.bitmapWidth || y >= frozen.bitmapHeight) throw new Error('选择位置超出截图');
+    if (page.frameGrant?.status === 'active') return {
+      available: false, reason: 'iframe 内容无法可靠识别，请使用区域标注；未生成选择器',
+    };
+    if (![x, y].every(value => Number.isSafeInteger(value) && value >= 0)
+      || x >= frozen.bitmapWidth || y >= frozen.bitmapHeight) throw new Error('选择位置超出截图');
     const same = () => page.annotationCaptureId === captureId && page.annotationCapture === frozen
       && this.pageStillOwned(page) && this.owns(projectId, threadId)
       && page.control === 'human' && page.controlEpoch === frozen.controlEpoch
@@ -796,6 +1052,8 @@ class CorePreview {
       if (!same() || !isDeepStrictEqual(currentViewport, frozen.viewport)
         || viewportFacts(this.window, page, currentViewport).key !== frozen.viewportKey)
         throw new Error('元素选择已过期，请重新截图');
+      if (!frozen.guardToken || await bounded(readIsolated(c, captureGuardChangedScript(frozen.guardToken))) !== false)
+        return unavailable('页面在截图后发生变化，请重新截图或使用区域标注');
       c.debugger.attach('1.3'); attached = true;
       const command = (method, parameters = {}) => bounded(c.debugger.sendCommand(method, parameters));
       const cssX = Math.floor(x * frozen.viewport.width / frozen.bitmapWidth);
@@ -837,6 +1095,9 @@ class CorePreview {
         bounds: { x: left, y: top, width: right - left, height: bottom - top },
         pageGeneration: frozen.pageGeneration, documentEpoch: frozen.documentEpoch,
         controlEpoch: frozen.controlEpoch, frameId: hit.frameId ?? frames.frameTree?.frame?.id ?? 'main', sourceMapping: 'unavailable' };
+      if (await bounded(readIsolated(c, captureGuardChangedScript(frozen.guardToken))) !== false)
+        return unavailable('页面在截图后发生变化，请重新截图或使用区域标注');
+      if (!same()) throw new Error('元素选择已过期，请重新截图');
       page.annotationElement = { elementId, captureId, backendNodeId: hit.backendNodeId, result };
       return result;
     } catch (error) {
@@ -875,6 +1136,7 @@ class CorePreview {
       const viewport = await bounded(readIsolated(c, viewportScript));
       if (!isDeepStrictEqual(viewport, frozen.viewport)
         || viewportFacts(this.window, page, viewport).key !== frozen.viewportKey) return { stale: true };
+      if (!frozen.guardToken || await bounded(readIsolated(c, captureGuardChangedScript(frozen.guardToken))) !== false) return { stale: true };
       c.debugger.attach('1.3'); attached = true;
       const box = await bounded(c.debugger.sendCommand('DOM.getBoxModel', { backendNodeId: selected.backendNodeId }));
       const quad = box.model?.border;
@@ -892,7 +1154,8 @@ class CorePreview {
         bottom: Math.min(frozen.bitmapHeight, Math.ceil(Math.max(...ys) * frozen.bitmapHeight / frozen.viewport.height)),
       } : null;
       const original = selected.result.bounds;
-      return { stale: page.annotationElement !== selected || page.annotationCapture !== frozen
+      return { stale: await bounded(readIsolated(c, captureGuardChangedScript(frozen.guardToken))) !== false
+        || page.annotationElement !== selected || page.annotationCapture !== frozen
         || page.control !== 'human' || page.controlEpoch !== frozen.controlEpoch
         || page.documentGeneration !== frozen.documentEpoch || page.viewportRevision !== frozen.viewportRevision
         || !this.pageStillOwned(page)
@@ -919,6 +1182,9 @@ class CorePreview {
       || page.styleTrial || page.control !== 'human' || page.claiming) throw new Error('请重新选择当前页面元素');
     if ((await this.checkElement(projectId, threadId, pageId, captureId, elementId)).stale
       || page.annotationElement !== selected || page.annotationCapture !== frozen) throw new Error('选择的元素已变化');
+    if (!frozen.guardToken || await nativeWithin(readIsolated(page.view.webContents,
+      captureGuardStopScript(frozen.guardToken, frozen.guardSequence)), performance.now() + 1000) !== false
+      || page.annotationCapture !== frozen) throw new Error('选择的元素已变化');
     const trialId = randomUUID();
     page.styleTrial = { trialId, backendNodeId: selected.backendNodeId,
       pageGeneration: frozen.pageGeneration, documentEpoch: frozen.documentEpoch,
@@ -1045,9 +1311,7 @@ class CorePreview {
         throw new Error('试改目标在截图时已变化，请撤销或刷新');
       return { capture, element, trial: this.styleTrialState(trial) };
     } catch (error) {
-      if (page.annotationCaptureId === capture.captureId) {
-        page.annotationCaptureId = null; page.annotationCapture = null; page.annotationElement = null;
-      }
+      await this.discardAnnotationCapture(page, capture.captureId);
       throw error;
     }
   }
@@ -1158,12 +1422,16 @@ class CorePreview {
     if (page.crashed || c.isDestroyed() || c.isDevToolsOpened()) throw new Error('plan_stale');
     return { page, c };
   }
-  async actionTarget(page, c, ref) {
+  refNode(page, ref) {
     const identity = [...page.refs].find(([, value]) => value === ref)?.[0];
     if (!identity) throw new Error('stale_ref');
     const [generation, documentEpoch, controlEpoch, frameId, backendNodeId] = JSON.parse(identity);
     if (generation !== page.pageGeneration || documentEpoch !== page.documentGeneration
       || controlEpoch !== page.controlEpoch || frameId !== 'main') throw new Error('stale_ref');
+    return { identity, backendNodeId };
+  }
+  async actionTarget(page, c, ref) {
+    const { identity, backendNodeId } = this.refNode(page, ref);
     const ax = await c.debugger.sendCommand('Accessibility.getPartialAXTree', { backendNodeId });
     const dom = await c.debugger.sendCommand('DOM.describeNode', { backendNodeId, depth: 2 });
     const isFileInput = value => value?.nodeName?.toUpperCase() === 'INPUT'
@@ -1187,8 +1455,117 @@ class CorePreview {
     return { identity, backendNodeId, x, y, viewport,
       role: safeText(node.role?.value, 80), name: safeText(node.name?.value, 256) };
   }
+  async publicActionSemantics(page, c, target, action, requireQueryField = false) {
+    const frames = await c.debugger.sendCommand('Page.getFrameTree');
+    const world = await c.debugger.sendCommand('Page.createIsolatedWorld', { frameId: frames.frameTree.frame.id,
+      worldName: 'areal-browser-action-semantics' });
+    const resolved = await c.debugger.sendCommand('DOM.resolveNode', { backendNodeId: target.backendNodeId,
+      executionContextId: world.executionContextId });
+    const objectId = resolved.object?.objectId;
+    if (!objectId) throw new Error('target_unavailable');
+    let facts;
+    try {
+      const result = await c.debugger.sendCommand('Runtime.callFunctionOn', { objectId, returnByValue: true,
+        arguments: [{ value: action.kind }, { value: action.key ?? null }],
+        functionDeclaration: `function (kind, key) {
+          const el = this, form = el.form || el.closest('form');
+          const field = /^(INPUT|TEXTAREA)$/.test(el.tagName);
+          const tokens = [el.type, el.name, el.id, el.autocomplete, el.getAttribute('aria-label')].join(' ');
+          const sensitive = /password|passcode|secret|token|api.?key|credit.?card|cc-|cvv|authorization|one.?time.?code|credential|file/i;
+          const search = !!form && (form.getAttribute('role') === 'search' || el.type === 'search'
+            || Array.from(form.elements).some(item => /^(q|query|search|search_query)$/i.test(item.name)));
+          const controls = form ? Array.from(form.elements) : [];
+          // 空的无名文件辅助控件不参与表单提交；按钮文案不能把相邻搜索字段变成文件操作。
+          const privateForm = sensitive.test(tokens) || controls.some(item => item.type !== 'button'
+            && !(item.type === 'file' && !item.name && item.files?.length === 0)
+            && sensitive.test([item.type, item.name, item.id, item.autocomplete, item.getAttribute('aria-label')].join(' ')));
+          const submits = kind === 'click' && /^(submit|image)$/.test(el.type) || kind === 'press' && key === 'Enter' && field;
+          const submitter = kind === 'click' ? el : controls.find(item => /^(submit|image)$/.test(item.type));
+          let submittedFields = null, query = null, queryName = null, isQueryField = false;
+          if (search && submits && !privateForm && controls.length <= 128) {
+            const fields = [];
+            const target = submitter?.getAttribute('formtarget') || form.target;
+            const charset = (form.acceptCharset || document.characterSet).toLowerCase().replace(/-/g, '');
+            let valid = (!target || target === '_self') && charset === 'utf8'
+              && (!submitter || (submitter.type !== 'image' && !submitter.matches(':disabled')));
+            // 不构造 FormData(form)：该 API 会触发网页 formdata 事件，审批读取不能改变页面。
+            for (const item of controls) {
+              if (!/^(INPUT|TEXTAREA|SELECT|BUTTON|FIELDSET|OUTPUT)$/.test(item.tagName)) { valid = false; break; }
+              if (!item.name || item.matches(':disabled') || /^(FIELDSET|OUTPUT)$/.test(item.tagName)) continue;
+              if (item.hasAttribute('dirname')) { valid = false; break; }
+              if (/^(button|reset)$/.test(item.type) || /^(submit|image)$/.test(item.type) && item !== submitter) continue;
+              if (/^(checkbox|radio)$/.test(item.type) && !item.checked) continue;
+              if (item.type === 'image' || item.type === 'file') { valid = false; break; }
+              const values = item.tagName === 'SELECT'
+                ? Array.from(item.selectedOptions).filter(option => !option.disabled && !option.closest('optgroup[disabled]')).map(option => option.value)
+                : [item.name === '_charset_' && item.type === 'hidden' ? 'UTF-8' : item.value];
+              for (const value of values) {
+                if (typeof value !== 'string' || item.name.length > 128 || value.length > 4096 || fields.length >= 64) { valid = false; break; }
+                fields.push([item.name.replace(/\\r?\\n|\\r/g, '\\r\\n'), value.replace(/\\r?\\n|\\r/g, '\\r\\n')]);
+              }
+              if (!valid) break;
+            }
+            const queryControls = controls.filter(item => /^(INPUT|TEXTAREA)$/.test(item.tagName)
+              && /^(text|search|textarea)$/.test(item.type)
+              && (/^(q|query|search|search_query)$/i.test(item.name) || item.type === 'search'));
+            const queryControl = queryControls.includes(el) ? el : queryControls.length === 1 ? queryControls[0] : null;
+            queryName = queryControl?.name ?? null;
+            isQueryField = queryControl === el;
+            const queryField = fields.find(entry => entry[0] === queryName);
+            if (valid && queryField && new TextEncoder().encode(JSON.stringify(fields)).length <= 8192) {
+              submittedFields = fields; query = queryField[1];
+            }
+          }
+          return { field, sensitive: privateForm, submittedFields, query, queryName, queryField: isQueryField,
+            search, method: form ? (submits && submitter?.getAttribute('formmethod') || form.method || 'get').toLowerCase() : null,
+            destination: el.closest('a[href]')?.href || (form ? submits && submitter?.hasAttribute('formaction') ? submitter.formAction : form.action : null),
+            link: !!el.closest('a[href]'), download: !!el.closest('a[download]'),
+            submit: !!form && /^(submit|image)$/.test(el.type),
+            type: el.type || '', role: el.getAttribute('role') || '' };
+        }` });
+      facts = result.result?.value;
+    } finally { await c.debugger.sendCommand('Runtime.releaseObject', { objectId }).catch(() => {}); }
+    if (!facts || facts.sensitive || (requireQueryField && !facts.queryField)) throw new Error('human_takeover_required');
+    if (action.kind === 'fill' && facts.field && /^(text|search|textarea)$/.test(facts.type))
+      return { kind: 'edit_field' };
+    if (action.kind === 'press' && action.key !== 'Enter' && facts.field) return { kind: 'field_key' };
+    const searchSubmit = facts.search && facts.method === 'get'
+      && ((action.kind === 'press' && action.key === 'Enter' && facts.field) || (action.kind === 'click' && facts.submit));
+    if (searchSubmit && (!Array.isArray(facts.submittedFields) || typeof facts.query !== 'string' || typeof facts.queryName !== 'string'))
+      throw new Error('human_takeover_required');
+    if (searchSubmit || (action.kind === 'click' && facts.link && !facts.download)) {
+      let destination;
+      try { destination = new URL(webUrl(facts.destination)); } catch { throw new Error('human_takeover_required'); }
+      if (!page.networkPolicy.canAuthorize(destination.href)) throw new Error('human_takeover_required');
+      return { kind: searchSubmit ? 'public_search' : 'link_navigation', method: 'GET',
+        targetOrigin: destination.origin, targetPath: destination.pathname,
+        ...(searchSubmit ? { query: facts.query, queryName: facts.queryName, submittedFields: facts.submittedFields,
+          encodedQuery: new URLSearchParams(facts.submittedFields).toString() } : { targetUrl: destination.href }) };
+    }
+    if (action.kind === 'click' && facts.field) return { kind: 'focus_field' };
+    throw new Error('human_takeover_required');
+  }
+  acceptActionNavigation(page, url) {
+    const intent = page.approvedActionNavigation;
+    page.approvedActionNavigation = null;
+    if (!intent || page.control !== 'agent' || intent.controlEpoch !== page.controlEpoch) return false;
+    try {
+      const destination = new URL(webUrl(url));
+      if (destination.origin !== intent.targetOrigin || destination.pathname !== intent.targetPath) return false;
+      if (intent.kind !== 'public_search') return intent.targetUrl === destination.href;
+      if (intent.pageGeneration !== page.pageGeneration || intent.expiresAt < Date.now()) return false;
+      if (typeof intent.queryName !== 'string' || !intent.queryName) return false;
+      const values = new URLSearchParams(intent.submittedFields).getAll(intent.queryName);
+      // 网站脚本可改写辅助参数；延续权限仅绑定已批准查询的完整值与重数。
+      if (!values.length || !isDeepStrictEqual(destination.searchParams.getAll(intent.queryName), values)) return false;
+      // 保留一次搜索的短时跳转链；导航不续期，人工撤权或下一次动作会清除此意图。
+      page.approvedActionNavigation = intent;
+      return true;
+    } catch { return false; }
+  }
   async prepareNavigation(request) {
     const { page, c } = this.actionPage(request);
+    if (page.needsObservation && c.getURL() !== 'about:blank') throw new Error('stale_ref');
     if (page.activeRead || page.activePrepare || page.activeAction
       || this.workspaceOutstanding(page.projectId, page.threadId) >= 16)
       throw new Error('not_sent');
@@ -1218,7 +1595,8 @@ class CorePreview {
   batchStep(request, step) {
     return { ...request, operation: step.operation, parameters: step.operation === 'act'
       ? { pageId: request.pageId, snapshotId: step.snapshotId, action: step.action }
-      : { pageId: request.pageId, timeoutMs: step.timeoutMs } };
+      : { pageId: request.pageId, timeoutMs: step.timeoutMs,
+        ...(step.condition === undefined ? {} : { condition: step.condition }) } };
   }
   async prepareBatch(request) {
     const key = this.batchIdentity(request);
@@ -1244,6 +1622,8 @@ class CorePreview {
           if (performance.now() >= deadline || page.view?.webContents !== c || page.controlEpoch !== request.controlEpoch)
             throw new Error('plan_stale');
         }
+        // 批量外层计划也占用同一工作区预算；失败时沿现有路径清除子计划。
+        if (this.workspaceOutstanding(page.projectId, page.threadId) >= 16) throw new Error('not_sent');
         const plan = { preparedActionId: randomUUID(), operation: 'runBatch', pageId: page.id,
           origin: new URL(c.getURL()).origin, url: observationUrl(c.getURL()),
           snapshotId: request.parameters.snapshotId, steps: stepPlans,
@@ -1374,6 +1754,7 @@ class CorePreview {
     let child;
     const deadline = setTimeout(() => action.cancel(), 12000);
     try {
+      page.approvedActionNavigation = null;
       if (request.operation === 'navigate') {
         page.approvedNavigation = target; page.url = target; page.error = '';
         action.dispatched = true;
@@ -1382,7 +1763,6 @@ class CorePreview {
         const id = randomUUID();
         child = this.create(pageKey(page.coreInstanceId, page.projectId, page.threadId, id), page.projectId, page.threadId,
           { id, openerId: page.id, origin: 'agent' });
-        child.control = 'agent'; child.controlEpoch = page.controlEpoch;
         child.approvedNavigation = target; child.url = target;
         action.dispatched = true;
         await Promise.race([child.view.webContents.loadURL(target), stopped]);
@@ -1390,6 +1770,13 @@ class CorePreview {
       if (action.cancelled || !this.pageStillOwned(page) || !this.owns(page.projectId, page.threadId)
         || page.controlEpoch !== approved.controlEpoch || (child && !this.pageStillOwned(child)))
         throw new Error('outcome_unknown');
+      if (child) {
+        const claimed = await Promise.race([this.claim(page.projectId, page.threadId, child.id), stopped]);
+        if (action.cancelled || !this.pageStillOwned(page) || !this.owns(page.projectId, page.threadId)
+          || page.controlEpoch !== approved.controlEpoch || !this.pageStillOwned(child)
+          || child.control !== 'agent' || child.controlEpoch !== claimed.controlEpoch)
+          throw new Error('outcome_unknown');
+      }
       this.changed(child ?? page);
       return { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration,
         projectId: request.projectId, threadId: request.threadId, turnId: request.turnId,
@@ -1400,7 +1787,11 @@ class CorePreview {
         url: target, dispatch: 'confirmed' };
     } catch (error) {
       page.approvedNavigation = null;
-      if (child) child.approvedNavigation = null;
+      if (child) {
+        child.approvedNavigation = null;
+        child.claiming?.cancel();
+        if (child.control === 'agent') this.revoke(child);
+      }
       if (action.dispatched) throw new Error('outcome_unknown');
       throw error;
     } finally {
@@ -1408,8 +1799,40 @@ class CorePreview {
       if (page.activeAction === action) page.activeAction = null;
     }
   }
+  prepareRead(request) {
+    const { page, c } = this.actionPage(request);
+    for (const [id, record] of page.plans) if (record.plan.expiresAt < Date.now()) page.plans.delete(id);
+    if (page.activeRead || page.activePrepare || page.activeAction
+      || this.workspaceOutstanding(page.projectId, page.threadId) >= 16) throw new Error('not_sent');
+    const plan = { preparedActionId: randomUUID(), operation: request.operation, pageId: page.id,
+      origin: new URL(c.getURL()).origin, url: observationUrl(c.getURL()), parameters: request.parameters,
+      pageGeneration: page.pageGeneration, documentEpoch: page.documentGeneration, controlEpoch: page.controlEpoch,
+      browserHostId: this.browserHostId, hostGeneration: this.hostGeneration,
+      threadId: request.threadId, turnId: request.turnId, callId: request.callId, expiresAt: Date.now() + 300000 };
+    plan.fingerprint = createHash('sha256').update(JSON.stringify(plan)).digest('hex');
+    page.plans.set(plan.preparedActionId, { plan, pageUrl: c.getURL() });
+    return { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration,
+      projectId: request.projectId, threadId: request.threadId, turnId: request.turnId, callId: request.callId,
+      pageId: page.id, browserHostId: this.browserHostId, hostGeneration: this.hostGeneration,
+      pageGeneration: page.pageGeneration, controlEpoch: page.controlEpoch, plan };
+  }
+  async executeRead(request) {
+    const { page, c } = this.actionPage(request);
+    const approved = request.browserApproval?.plan;
+    const saved = approved && page.plans.get(approved.preparedActionId);
+    if (!saved || !isDeepStrictEqual(saved.plan, approved) || saved.pageUrl !== c.getURL()
+      || approved.operation !== request.operation || approved.threadId !== request.threadId
+      || approved.turnId !== request.turnId || approved.callId !== request.callId || approved.expiresAt < Date.now()
+      || approved.pageGeneration !== page.pageGeneration || approved.documentEpoch !== page.documentGeneration
+      || approved.controlEpoch !== page.controlEpoch || !isDeepStrictEqual(approved.parameters, request.parameters))
+      throw new Error('plan_stale');
+    page.plans.delete(approved.preparedActionId);
+    return request.operation === 'diagnostics' ? this.diagnostics(request) : this.observe(request);
+  }
   async prepare(request) {
-    if (request.phase !== 'prepare' || !['act', 'wait', 'navigate', 'newPage', 'runBatch'].includes(request.operation)) throw new Error('not_sent');
+    if (request.phase !== 'prepare') throw new Error('not_sent');
+    if (['observe', 'capture', 'diagnostics'].includes(request.operation)) return this.prepareRead(request);
+    if (!['act', 'wait', 'navigate', 'newPage', 'runBatch'].includes(request.operation)) throw new Error('not_sent');
     if (request.operation === 'runBatch') return this.prepareBatch(request);
     if (['navigate', 'newPage'].includes(request.operation)) return this.prepareNavigation(request);
     const { page, c } = this.actionPage(request);
@@ -1419,8 +1842,8 @@ class CorePreview {
       || page.activeBatch
       || this.workspaceOutstanding(page.projectId, page.threadId) >= 16) throw new Error('not_sent');
     const url = new URL(c.getURL());
-    const local = url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
-    if (!local) throw new Error('human_takeover_required'); // Unknown/external effects require human takeover.
+    const local = ['http:', 'https:'].includes(url.protocol) && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+    if (!local && !['http:', 'https:'].includes(url.protocol)) throw new Error('human_takeover_required');
     if (page.needsObservation || (request.operation === 'act' && request.parameters.snapshotId !== page.lastObservation)) throw new Error('stale_ref');
     const coordinate = request.operation === 'act' && coordinateKinds.has(request.parameters.action.kind);
     const capture = coordinate ? page.lastCapture : null;
@@ -1431,6 +1854,7 @@ class CorePreview {
     page.activePrepare = true;
     try {
       if (!c.debugger.isAttached()) c.debugger.attach('1.3');
+      if (coordinate && !local) throw new Error('human_takeover_required');
       if (coordinate) target = coordinateTarget(capture, request.parameters.action);
       else if (request.operation === 'act') target = await (request.batchDeadline
         ? batchWithin(this.actionTarget(page, c, request.parameters.action.ref), request.batchDeadline)
@@ -1438,6 +1862,7 @@ class CorePreview {
       if (request.parameters.action?.kind === 'fill'
         && !/^(textField|textbox|searchbox|comboBox|spinbutton)$/i.test(target.role))
         throw new Error('target_unavailable');
+      const semantics = !local && target ? await this.publicActionSemantics(page, c, target, request.parameters.action) : null;
       const viewport = await (request.batchDeadline
         ? batchWithin(readIsolated(c, viewportScript), request.batchDeadline)
         : readIsolated(c, viewportScript));
@@ -1453,15 +1878,17 @@ class CorePreview {
         snapshotId: request.operation === 'act' ? request.parameters.snapshotId : null,
         target: target ? coordinate ? { ...target, captureId: capture.observationId,
           bitmapWidth: capture.bitmapWidth, bitmapHeight: capture.bitmapHeight }
-          : { ref: request.parameters.action.ref, role: target.role, name: target.name, x: target.x, y: target.y } : null,
-        action: request.operation === 'act' ? request.parameters.action : { kind: 'wait', timeoutMs: request.parameters.timeoutMs },
+          : { ref: request.parameters.action.ref, role: target.role, name: target.name, x: target.x, y: target.y, ...(semantics ? { semantics } : {}) } : null,
+        action: request.operation === 'act' ? request.parameters.action : waitAction(request.parameters),
         pageGeneration: page.pageGeneration, documentEpoch: page.documentGeneration,
         controlEpoch: page.controlEpoch, viewportRevision: page.viewportRevision, viewportKey,
         browserHostId: this.browserHostId, hostGeneration: this.hostGeneration,
         threadId: request.threadId, turnId: request.turnId, callId: request.callId,
         expiresAt: Date.now() + 300000 };
       plan.fingerprint = createHash('sha256').update(JSON.stringify({ plan, targetIdentity: target?.identity })).digest('hex');
-      page.plans.set(plan.preparedActionId, { plan, targetIdentity: target?.identity, pageUrl: url.href });
+      page.plans.set(plan.preparedActionId, { plan, targetIdentity: target?.identity, pageUrl: url.href,
+        waitIdentity: request.parameters.condition?.kind === 'accessibleName'
+          ? this.refNode(page, request.parameters.condition.ref).identity : null });
       return { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration,
         projectId: request.projectId, threadId: request.threadId, turnId: request.turnId, callId: request.callId,
         pageId: page.id, browserHostId: this.browserHostId, hostGeneration: this.hostGeneration,
@@ -1474,7 +1901,9 @@ class CorePreview {
     }
   }
   async execute(request) {
-    if (request.phase !== 'execute' || !['act', 'wait', 'navigate', 'newPage', 'runBatch'].includes(request.operation)) throw new Error('not_sent');
+    if (request.phase !== 'execute') throw new Error('not_sent');
+    if (['observe', 'capture', 'diagnostics'].includes(request.operation)) return this.executeRead(request);
+    if (!['act', 'wait', 'navigate', 'newPage', 'runBatch'].includes(request.operation)) throw new Error('not_sent');
     if (request.operation === 'runBatch') return this.executeBatch(request);
     if (['navigate', 'newPage'].includes(request.operation)) return this.executeNavigation(request);
     const { page, c } = this.actionPage(request);
@@ -1497,7 +1926,7 @@ class CorePreview {
         && page.lastCapture?.observationId !== saved.plan.target?.captureId)
       || saved.plan.snapshotId !== (request.operation === 'act' ? request.parameters.snapshotId : null)
       || !isDeepStrictEqual(saved.plan.action, request.operation === 'act'
-        ? request.parameters.action : { kind: 'wait', timeoutMs: request.parameters.timeoutMs })) throw new Error('plan_stale');
+        ? request.parameters.action : waitAction(request.parameters))) throw new Error('plan_stale');
     page.plans.delete(approved.preparedActionId);
     if (page.activeRead || page.activePrepare || page.activeAction || (page.activeBatch && !request.batchGuard)) throw new Error('not_sent');
     let cancelled;
@@ -1508,17 +1937,61 @@ class CorePreview {
     if (request.operation === 'act') {
       // A hidden View can retain keyboard focus. Move focus only if this page
       // owns the foreground window's native focus; never raise a background app.
-      if (this.window.isFocused() && c.isFocused()) this.window.webContents.focus();
+      if (this.window.isFocused() && c.isFocused()) { this.nativeInputOwner = page.id; this.window.webContents.focus(); }
       page.view.setVisible(false);
     }
     const stepTimeout = request.operation === 'wait'
       ? Math.min(30000, request.parameters.timeoutMs + 1000)
       : request.parameters.action.kind === 'drag' ? 12000 : 5000;
+    let waitResult;
     const deadline = setTimeout(() => action.cancel(), request.batchDeadline
       ? Math.max(1, Math.min(stepTimeout, request.batchDeadline - performance.now())) : stepTimeout);
     try {
       if (request.operation === 'wait') {
-        await Promise.race([new Promise(resolve => setTimeout(resolve, request.parameters.timeoutMs)), stop]);
+        const started = performance.now(), expires = started + request.parameters.timeoutMs;
+        const condition = request.parameters.condition;
+        if (!condition) {
+          await Promise.race([new Promise(resolve => setTimeout(resolve, request.parameters.timeoutMs)), stop]);
+        } else {
+          if (!c.debugger.isAttached()) c.debugger.attach('1.3');
+          const current = () => {
+            this.actionPage(request);
+            if (action.cancelled || request.batchGuard?.() || c.getURL() !== saved.pageUrl
+              || page.documentGeneration !== saved.plan.documentEpoch) throw new Error('plan_stale');
+          };
+          const read = async promise => {
+            try { return await Promise.race([nativeWithin(promise, expires), stop]); }
+            catch (error) {
+              current();
+              if (performance.now() >= expires) throw new Error('condition_timeout');
+              throw error;
+            }
+          };
+          for (;;) {
+            current();
+            let matched;
+            if (condition.kind === 'documentReady') {
+              const state = await read(readIsolated(c, 'document.readyState'));
+              matched = state === condition.state || (condition.state === 'interactive' && state === 'complete');
+            } else {
+              const node = this.refNode(page, condition.ref);
+              if (node.identity !== saved.waitIdentity) throw new Error('stale_ref');
+              const ax = await read(c.debugger.sendCommand('Accessibility.getPartialAXTree',
+                { backendNodeId: node.backendNodeId, fetchRelatives: false }));
+              const value = ax.nodes?.find(value => value.backendDOMNodeId === node.backendNodeId && !value.ignored);
+              if (!value) throw new Error('stale_ref');
+              matched = value.name?.value === condition.name;
+            }
+            current();
+            if (matched) break;
+            const remaining = expires - performance.now();
+            if (remaining <= 0) throw new Error('condition_timeout');
+            await Promise.race([new Promise(resolve => setTimeout(resolve, Math.min(100, remaining))), stop]);
+            if (performance.now() >= expires) throw new Error('condition_timeout');
+          }
+        }
+        waitResult = { condition: condition ?? null, satisfied: true,
+          elapsedMs: Math.round(performance.now() - started) };
       } else {
         if (!c.debugger.isAttached()) c.debugger.attach('1.3');
         const coordinate = coordinateKinds.has(request.parameters.action.kind);
@@ -1535,21 +2008,39 @@ class CorePreview {
           || viewportFacts(this.window, page, currentViewport).key !== saved.plan.viewportKey
           || c.getURL() !== saved.pageUrl || page.controlEpoch !== saved.plan.controlEpoch)
           throw new Error('plan_stale');
+        let navigationIntent = null;
+        if (saved.plan.target?.semantics) {
+          const semantics = await this.publicActionSemantics(page, c, target, request.parameters.action);
+          if (!isDeepStrictEqual(semantics, saved.plan.target.semantics)) throw new Error('plan_stale');
+          if (['public_search', 'link_navigation'].includes(semantics.kind)) navigationIntent = semantics;
+        }
         // If the native page still owns local keyboard focus, do not dispatch.
         // before-input-event cannot distinguish a physical key from CDP echo.
         if (this.window.isFocused() && c.isFocused()) throw new Error('not_sent');
-        const live = () => {
+        const live = (releaseFrame = null) => {
+          // Ref press 仅接受主文档；已确认 keyDown 的单次释放可跨子 Frame 失效，不能继续旧 Ref 动作。
+          const releaseCurrent = releaseFrame !== null && (page.frameDocumentGeneration ?? 0) === releaseFrame
+            && page.view?.webContents === c && page.pageGeneration === saved.plan.pageGeneration
+            && this.browserHostId === request.browserHostId && this.hostGeneration === request.hostGeneration
+            && page.coreInstanceId === request.coreInstanceId;
           if (action.cancelled || request.batchGuard?.() || !this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== saved.plan.controlEpoch
-            || page.documentGeneration !== saved.plan.documentEpoch || page.viewportRevision !== saved.plan.viewportRevision
+            || (page.documentGeneration !== saved.plan.documentEpoch && page.documentGeneration !== action.navigationDocument && !releaseCurrent)
+            || page.viewportRevision !== saved.plan.viewportRevision
             || c.isDestroyed()) throw new Error(action.dispatched ? 'outcome_unknown' : 'plan_stale');
         };
         const input = params => { live(); action.dispatched = true; return this.dispatchInput(page, 'Input.dispatchMouseEvent', params); };
-        const keyboard = params => { live(); action.dispatched = true; return this.dispatchInput(page, 'Input.dispatchKeyEvent', params); };
+        const keyboard = (params, releaseFrame = null) => {
+          live(params.type === 'keyUp' && page.heldKeys.has(params.key) ? releaseFrame : null);
+          action.dispatched = true; return this.dispatchInput(page, 'Input.dispatchKeyEvent', params);
+        };
         const click = async point => {
           await input({ type: 'mousePressed', x: point.x, y: point.y, button: 'left', clickCount: 1 });
           await input({ type: 'mouseReleased', x: point.x, y: point.y, button: 'left', clickCount: 1 });
         };
         await Promise.race([(async () => {
+          live();
+          page.approvedActionNavigation = navigationIntent ? { ...navigationIntent,
+            controlEpoch: page.controlEpoch, pageGeneration: page.pageGeneration, expiresAt: Date.now() + 30000 } : null;
           if (request.parameters.action.kind === 'drag') {
             const { from, to, steps } = target;
             await input({ type: 'mouseMoved', x: from.x, y: from.y, button: 'none' });
@@ -1558,10 +2049,15 @@ class CorePreview {
               x: from.x + (to.x - from.x) * step / steps, y: from.y + (to.y - from.y) * step / steps,
               button: 'left', buttons: 1 });
             await input({ type: 'mouseReleased', x: to.x, y: to.y, button: 'left', clickCount: 1 });
+          } else if (request.parameters.action.kind === 'press') {
+            live(); action.dispatched = true;
+            await this.dispatchInput(page, 'DOM.focus', { backendNodeId: target.backendNodeId });
           } else await click(coordinate ? target.point : target);
           if (request.parameters.action.kind === 'fill') {
-            const modifier = process.platform === 'darwin' ? 8 : 2;
-            await keyboard({ type: 'keyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: modifier });
+            const modifier = process.platform === 'darwin' ? 4 : 2;
+            // macOS 的 CDP 输入还需显式编辑命令，单独的 Command+A 不会执行全选。
+            await keyboard({ type: 'keyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: modifier,
+              ...(process.platform === 'darwin' ? { commands: ['selectAll'] } : {}) });
             await keyboard({ type: 'keyUp', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: modifier });
             live(); action.dispatched = true;
             await this.dispatchInput(page, 'Input.insertText', { text: request.parameters.action.value });
@@ -1570,9 +2066,11 @@ class CorePreview {
             const code = { Enter: 13, Tab: 9, Escape: 27, Backspace: 8,
               ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40 }[key];
             const text = key === 'Enter' ? '\r' : undefined;
+            const releaseFrame = request.parameters.action.kind === 'press' ? page.frameDocumentGeneration ?? 0 : null;
             await keyboard({ type: 'keyDown', key, code: key, windowsVirtualKeyCode: code,
               ...(text ? { text, unmodifiedText: text } : {}) });
-            await keyboard({ type: 'keyUp', key, code: key, windowsVirtualKeyCode: code });
+            // 仅成功 await 原生 keyDown ACK 后授予该 keyUp 释放资格；丢失 ACK 仍由撤权清理收敛。
+            await keyboard({ type: 'keyUp', key, code: key, windowsVirtualKeyCode: code }, releaseFrame);
           }
         })(), stop]);
       }
@@ -1583,9 +2081,10 @@ class CorePreview {
         pageId: page.id, browserHostId: this.browserHostId, hostGeneration: this.hostGeneration,
         pageGeneration: page.pageGeneration, controlEpoch: page.controlEpoch,
         dispatch: action.dispatched ? 'confirmed' : 'not_sent', inputConfirmed: action.dispatched,
-        verification: 'not_checked',
+        verification: 'not_checked', ...(waitResult ? { wait: waitResult } : {}),
         preparedActionId: saved.plan.preparedActionId };
     } catch (error) {
+      if (action.dispatched || action.cancelled) page.approvedActionNavigation = null;
       if (action.dispatched) throw new Error('outcome_unknown');
       throw error;
     } finally {
@@ -1664,14 +2163,14 @@ class CorePreview {
         try {
           const watching = await Promise.race([readIsolated(c, captureGuardStartScript(guardToken, guardSequence)), cancelled]);
           if (watching !== true) throw new Error('Browser capture guard unavailable');
-          const hasSensitive = await Promise.race([readIsolated(c, sensitiveCaptureScript), cancelled]);
+          const hasSensitive = await Promise.race([readIsolated(c, sensitiveCaptureScript()), cancelled]);
           if (typeof hasSensitive !== 'boolean') throw new Error('Browser sensitive-field check unavailable');
           if (hasSensitive) throw new Error('Sensitive field prevents automatic screenshot');
           image = await Promise.race([c.capturePage(), cancelled]);
           if (!this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== epoch
             || page.documentGeneration !== documentGeneration)
             throw new Error('Browser observation was revoked');
-          postSensitive = await Promise.race([readIsolated(c, sensitiveCaptureScript), cancelled]);
+          postSensitive = await Promise.race([readIsolated(c, sensitiveCaptureScript()), cancelled]);
         } finally {
           if (page.control === 'agent' && page.controlEpoch === epoch) changed = await Promise.race([
             readIsolated(c, captureGuardStopScript(guardToken, guardSequence)).catch(() => true),
@@ -1698,7 +2197,23 @@ class CorePreview {
         page.needsObservation = false;
         return { ...base, capturedAt: new Date().toISOString(), viewport: { ...base.viewport, bitmapWidth: size.width, bitmapHeight: size.height }, mimeType: 'image/png', imageBase64: png.toString('base64'), byteLength: png.length };
       }
-      const lines = [], entries = [], nodes = tree.nodes ?? [];
+      const lines = [], entries = [], nodes = [], rawNodes = tree.nodes ?? [];
+      const nodesById = new Map(rawNodes.map(node => [node.nodeId, node])), visitedNodes = new Set();
+      // 原生数组可按增量分配次序返回；预算按 AX 父子阅读顺序裁剪，避免顶部控件被尾部索引遗漏。
+      const appendTree = root => {
+        const pending = [root];
+        while (pending.length) {
+          const node = pending.pop();
+          if (visitedNodes.has(node.nodeId)) continue;
+          visitedNodes.add(node.nodeId); nodes.push(node);
+          for (const id of [...(node.childIds ?? [])].reverse()) {
+            const child = nodesById.get(id);
+            if (child) pending.push(child);
+          }
+        }
+      };
+      for (const node of rawNodes) if (!node.parentId || !nodesById.has(node.parentId)) appendTree(node);
+      for (const node of rawNodes) appendTree(node);
       const liveIdentities = new Set(nodes.filter(node => node.backendDOMNodeId).map(node =>
         JSON.stringify([page.pageGeneration, documentGeneration, epoch, node.frameId ?? 'main', node.backendDOMNodeId])));
       const requestedIdentity = parameters.rootRef && [...page.refs].find(([, ref]) => ref === parameters.rootRef)?.[0];
@@ -1715,11 +2230,36 @@ class CorePreview {
         .map(node => node.nodeId));
       const fieldNodes = new Set(nodes.filter(node => /^(textField|passwordField|textbox|searchbox|comboBox)$/i
         .test(String(node.role?.value ?? ''))).map(node => node.nodeId));
-      const fieldValues = [...new Set(nodes.filter(node => fieldNodes.has(node.nodeId))
-        .map(node => String(node.value?.value ?? '')).filter(Boolean))];
-      const fieldEcho = text => fieldValues.some(value => text === value || (value.length >= 3 && text.includes(value)));
       const sensitiveChild = node => { for (let id = node.parentId; id; id = parent.get(id)) if (sensitiveNodes.has(id)) return true; return false; };
       const fieldChild = node => { for (let id = node.parentId; id; id = parent.get(id)) if (fieldNodes.has(id)) return true; return false; };
+      const searchIntent = page.approvedActionNavigation, publicSearchFields = new Set();
+      // 只豁免已批准且实际到达当前结果页的搜索字段；字段值及其子树仍不向模型投影。
+      // 重用隔离世界的 GET/敏感表单判据，未知字段或同值私密字段继续污染回显集合。
+      if (searchIntent?.kind === 'public_search' && searchIntent.controlEpoch === epoch
+        && searchIntent.pageGeneration === page.pageGeneration && searchIntent.expiresAt >= Date.now()) {
+        const destination = new URL(c.getURL());
+        const queries = new URLSearchParams(searchIntent.submittedFields).getAll(searchIntent.queryName);
+        if (destination.origin === searchIntent.targetOrigin && destination.pathname === searchIntent.targetPath
+          && queries.length && isDeepStrictEqual(destination.searchParams.getAll(searchIntent.queryName), queries)) {
+          for (const node of nodes) {
+            if (!fieldNodes.has(node.nodeId) || sensitiveNodes.has(node.nodeId) || sensitiveChild(node)
+              || !node.backendDOMNodeId || String(node.value?.value ?? '') !== searchIntent.query) continue;
+            const semantics = await Promise.race([this.publicActionSemantics(page, c,
+              { backendNodeId: node.backendDOMNodeId }, { kind: 'press', key: 'Enter' }, true).catch(() => null), cancelled]);
+            if (semantics?.kind === 'public_search' && semantics.method === 'GET'
+              && semantics.query === searchIntent.query && semantics.queryName === searchIntent.queryName
+              && semantics.targetOrigin === searchIntent.targetOrigin && semantics.targetPath === searchIntent.targetPath
+              && isDeepStrictEqual(new URLSearchParams(semantics.submittedFields).getAll(semantics.queryName), queries))
+              publicSearchFields.add(node.nodeId);
+          }
+        }
+        if (page.approvedActionNavigation !== searchIntent || searchIntent.expiresAt < Date.now()) publicSearchFields.clear();
+      }
+      if (!this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== epoch
+        || page.documentGeneration !== documentGeneration || c.isDestroyed()) throw new Error('Browser observation was revoked');
+      const fieldValues = [...new Set(nodes.filter(node => fieldNodes.has(node.nodeId) && !publicSearchFields.has(node.nodeId))
+        .map(node => String(node.value?.value ?? '')).filter(Boolean))];
+      const fieldEcho = text => fieldValues.some(value => text === value || (value.length >= 3 && text.includes(value)));
       const limitNodes = parameters.budget?.nodes ?? 200;
       const limitBytes = parameters.budget?.textBytes ?? 32 * 1024;
       const nextRefs = new Map();
@@ -1732,6 +2272,15 @@ class CorePreview {
         const propertySensitive = (node.properties ?? []).some(property => sensitive.test(String(property.name)) || sensitive.test(String(property.value?.value)));
         const sensitiveNode = sensitiveNodes.has(node.nodeId) || sensitiveChild(node) || propertySensitive;
         const concealed = sensitiveNode || fieldChild(node) || fieldEcho(rawName);
+        // 隐私集合已覆盖完整 AX 树；只在最终投影省略无信息结构和逐字重复的行内文本。
+        // 带名称、状态、值、描述或 Frame 身份的节点保留，父关联仍指向最近已输出祖先。
+        const metadata = node.frameId || String(node.value?.value ?? '')
+          || String(node.description?.value ?? '') || (node.properties ?? []).length;
+        const nativeParent = nodesById.get(node.parentId);
+        if (!concealed && !metadata && (role === 'generic' && !rawName
+          || role === 'InlineTextBox' && String(nativeParent?.role?.value ?? '') === 'StaticText'
+            && rawName === String(nativeParent.name?.value ?? '')
+            && node.frameId === nativeParent.frameId)) continue;
         const name = concealed ? '[redacted]' : safeText(rawName);
         const value = concealed || /textField|passwordField|textbox|searchbox|comboBox/i.test(role)
           || sensitive.test(rawName) || propertySensitive || fieldEcho(String(node.value?.value ?? ''))
@@ -1818,7 +2367,7 @@ class CorePreview {
     });
     const page = { id: options.id ?? randomUUID(), pageGeneration: options.pageGeneration ?? 1, view, partition,
       session: view.webContents.session, coreInstanceId: this.coreIdentity(projectId), projectId, threadId,
-      openerId: options.openerId ?? null, origin: options.origin ?? 'human', title: '', error: '', url: '', crashed: false,
+      openerId: options.openerId ?? null, origin: options.origin ?? 'human', title: '', error: '', url: '', committedUrl: '', crashed: false,
       control: 'human', controlEpoch: 0, documentGeneration: 0, viewportRevision: 0, refs: new Map(),
       plans: new Map(), lastObservation: null, needsObservation: true, nextRef: 0,
       heldButtons: new Map(), heldKeys: new Map(), inputPending: new Set(), requestedVisible: false,
@@ -1830,7 +2379,7 @@ class CorePreview {
       c = view.webContents;
     try { page.networkPolicy = this.ensureWorkspaceContext(page); }
     catch (error) { if (!c.isDestroyed()) c.close(); throw error; }
-    c.on('console-message', (_event, details) => {
+    c.on('console-message', details => {
       if (page.control !== 'agent' || !page.diagnosticsReady) return;
       const value = details && typeof details === 'object' ? details : {};
       this.addDiagnostic(page, { kind: 'console', level: ['error', 'warning', 'info', 'debug'].includes(value.level) ? value.level : 'log',
@@ -1887,10 +2436,10 @@ class CorePreview {
       this.clearDiagnostics(page, 'debugger_detached');
       if (page.control === 'agent') this.revoke(page);
     });
-    c.on('devtools-opened', () => { if (page.styleTrial) page.styleTrial.stale = true; this.revoke(page); });
+    c.on('devtools-opened', () => { page.openingDevTools = null; if (page.styleTrial) page.styleTrial.stale = true; this.revoke(page); });
     c.on('devtools-closed', () => {
       if (!this.pageStillOwned(page)) return;
-      page.pageGeneration++; page.documentGeneration++; page.refs.clear(); page.plans.clear();
+      page.pageGeneration++; page.documentGeneration++; this.cancelHumanGesture(page); page.refs.clear(); page.plans.clear();
       page.needsObservation = true; this.clearDiagnostics(page, 'devtools_closed'); this.changed(page);
     });
     page.onDownload = (event, item, source) => {
@@ -2005,7 +2554,7 @@ class CorePreview {
         this.selected.set(workspaceKey(page.coreInstanceId, projectId, threadId), child.id);
       child.url = url;
       void child.view.webContents.loadURL(url).catch(error => {
-        if (this.pageStillOwned(child) && error.code !== 'ERR_ABORTED') child.error = error.message;
+        if (this.pageStillOwned(child) && error.code !== 'ERR_ABORTED' && error.errno !== -3) child.error = error.message;
       });
       this.changed(child);
       return { action: 'deny' };
@@ -2017,7 +2566,7 @@ class CorePreview {
     const navigate = (event, url) => {
       try {
         webUrl(url);
-        if (!page.networkPolicy.permits({ url, resourceType: 'mainFrame' })) event.preventDefault();
+        if (page.frameGrant || !page.networkPolicy.permits({ url, resourceType: 'mainFrame' })) event.preventDefault();
       } catch {
         event.preventDefault();
       }
@@ -2027,7 +2576,8 @@ class CorePreview {
     c.on("will-frame-navigate", (event) => {
       try {
         webUrl(event.url);
-        if (!page.networkPolicy.permits({ url: event.url, resourceType: 'subFrame' })) event.preventDefault();
+        if (!page.networkPolicy.permits({ url: event.url, resourceType: event.isMainFrame ? 'mainFrame' : 'subFrame',
+          webContentsId: c.id, frame: event.frame })) event.preventDefault();
       } catch {
         event.preventDefault();
       }
@@ -2037,6 +2587,16 @@ class CorePreview {
       page.dialogPending = false;
       page.activeSelection?.cancel();
       if (main) {
+        page.frameDocumentGeneration = (page.frameDocumentGeneration ?? 0) + 1;
+        if (page.frameGrant) {
+          const grant = page.frameGrant;
+          if (grant.status === 'reloading' && !grant.navigationStarted && !inPlace && url === grant.parentURL) {
+            grant.navigationStarted = true; grant.documentGeneration = page.frameDocumentGeneration;
+          } else {
+            page.activeRead?.cancel(); this.closeNative(page);
+            page.stateLoss = '嵌入授权因文档变化已撤销，页面已关闭'; this.changed(page); return;
+          }
+        }
         // A new document discards its inline trial values. A same-document
         // navigation may retain them, so fence the trial until an explicit
         // refresh; never auto-reload and discard an unsaved form.
@@ -2045,29 +2605,50 @@ class CorePreview {
           else page.styleTrial = null;
         }
         page.activeRead?.cancel();
-        if (page.approvedNavigation === url) page.approvedNavigation = null;
-        else this.revoke(page);
+        // 同文档且完整 URL 未变的 history 更新不产生新导航权限；旧观察仍在下方失效。
+        const unchangedDocument = inPlace === true && !!page.committedUrl && url === page.committedUrl;
+        const approvedAction = !unchangedDocument && this.acceptActionNavigation(page, url);
+        if (!unchangedDocument) {
+          if (page.approvedNavigation === url) page.approvedNavigation = null;
+          else if (!approvedAction) this.revoke(page);
+        }
         page.documentGeneration++;
-        page.refs.clear();
+        this.cancelHumanGesture(page);
+        if ((approvedAction || (unchangedDocument && page.control === 'agent')) && page.activeAction) page.activeAction.navigationDocument = page.documentGeneration;
+        page.needsObservation = true;
+        page.refs.clear(); page.plans.clear();
         page.url = url;
         page.error = "";
       } else {
         page.documentGeneration++;
-        page.refs.clear();
+        this.cancelHumanGesture(page);
+        // 按键释放可完成，但后续动作仍须重新观察，不能沿用子 Frame 变化前的计划。
+        page.needsObservation = true;
+        page.refs.clear(); page.plans.clear();
         page.activeRead?.cancel();
       }
       if (this.pageStillOwned(page)) this.changed(page);
     });
-    const clearCommittedFileHandoff = () => {
-      if (!this.pageStillOwned(page) || !page.fileHandoff) return;
-      clearTimeout(page.fileHandoff.timer);
-      page.fileHandoff = null;
+    const commitNavigation = url => {
+      if (!this.pageStillOwned(page)) return;
+      if (page.frameGrant && url !== page.frameGrant.parentURL) {
+        page.activeRead?.cancel(); this.closeNative(page);
+        page.stateLoss = '嵌入授权因文档变化已撤销，页面已关闭'; this.changed(page); return;
+      }
+      if (page.frameGrant?.status === 'reloading' && page.frameGrant.navigationStarted
+        && page.frameGrant.valid() && url === page.frameGrant.parentURL) page.frameGrant.status = 'active';
+      page.committedUrl = url;
+      page.url = url;
+      if (page.fileHandoff) {
+        clearTimeout(page.fileHandoff.timer);
+        page.fileHandoff = null;
+      }
       this.changed(page);
     };
     // A download link can start navigation without committing a document.
     // Keep the arm through that start, but never carry it into a new Page URL.
-    c.on('did-navigate', clearCommittedFileHandoff);
-    c.on('did-navigate-in-page', clearCommittedFileHandoff);
+    c.on('did-navigate', (_event, url) => commitNavigation(url));
+    c.on('did-navigate-in-page', (_event, url, main) => { if (main) commitNavigation(url); });
     c.on("did-fail-load", (_event, code, message, url, main) => {
       if (!this.pageStillOwned(page)) return;
       page.dialogPending = false;
@@ -2088,6 +2669,9 @@ class CorePreview {
     c.on('render-process-gone', () => {
       if (this.pages.get(owner) !== page) return;
       page.title = c.isDestroyed() ? page.title : c.getTitle() || page.title;
+      // A started download navigation has no committed document. Restoring its
+      // provisional URL would repeat an UNKNOWN transfer after a renderer crash.
+      page.url = page.committedUrl;
       this.revoke(page);
       this.cancelFileOperations(page, 'native_crash_after_dispatch');
       page.crashed = true;
@@ -2096,23 +2680,39 @@ class CorePreview {
     });
     c.on('before-input-event', (event, input) => {
       if (!this.pageStillOwned(page)) { event.preventDefault(); return; }
+      // 仅当前台窗口中当前可见页面由人工控制时，才允许将焦点移回应用。
+      if (input.type === 'keyDown' && input.key === 'F6' && !input.isAutoRepeat
+        && page.control === 'human' && this.owns(projectId, threadId)
+        && this.owner === pageKey(page.coreInstanceId, projectId, threadId, page.id)
+        && page.view.getVisible() && this.window.isFocused() && c.isFocused()) {
+        event.preventDefault(); this.nativeInputOwner = null; this.window.webContents.focus(); return;
+      }
       if (page.control === 'human' && c.isFocused() && input.type === 'keyDown'
         && ['Enter', 'Space'].includes(input.key)) page.userPopupIntentUntil = Date.now() + 1000;
       // CDP keys may echo while the native view is hidden. Only an action on a
       // page without native focus may pass here; a focused page is local input.
       if (page.control === 'agent' && (!page.activeAction?.syntheticInput || page.view.getVisible()
         || (this.window.isFocused() && c.isFocused()))) {
-        event.preventDefault(); this.revoke(page);
+        event.preventDefault();
+        void this.humanKey(page, input).catch(() => {});
       } else if (page.control === 'transferring') event.preventDefault();
+      else if (page.control === 'human') this.noteHumanInput(page);
     });
     c.on('before-mouse-event', (event, mouse) => {
       if (!this.pageStillOwned(page)) { event.preventDefault(); return; }
+      if (page.control === 'human' && mouse.type === 'mouseUp' && this.humanMouseGesture?.page === page)
+        this.humanMouseGesture = null;
       if (page.control === 'human' && mouse.type === 'mouseDown' && c.isFocused())
         page.userPopupIntentUntil = Date.now() + 1000;
-      if (page.control === 'agent' && page.view.getVisible() && mouse.type === 'mouseDown') {
-        event.preventDefault(); this.revoke(page);
+      if (page.control === 'agent' && page.view.getVisible() && ['mouseDown', 'mouseWheel'].includes(mouse.type)) {
+        event.preventDefault(); this.nativeInputOwner = page.id;
+        void this.humanInput(projectId, threadId, page.id, mouse).catch(() => {});
       } else if (page.control === 'transferring') event.preventDefault();
+      else if (page.control === 'human' && ['mouseDown', 'mouseWheel'].includes(mouse.type)) {
+        this.noteHumanInput(page);
+      }
     });
+    c.on('focus', () => { if (this.pageStillOwned(page) && this.window.isFocused()) this.nativeInputOwner = page.id; });
     this.window.contentView.addChildView(view);
     view.setVisible(false);
     this.pages.set(owner, page);
@@ -2120,6 +2720,51 @@ class CorePreview {
     if (!this.selected.has(workspace)) this.selected.set(workspace, page.id);
     this.changed(page, 'pageAdded');
     return page;
+  }
+  async frameOriginCommand(page, operation) {
+    const c = page?.view?.webContents;
+    const fence = page && this.developmentPromptFence(page);
+    const valid = () => !!c && !c.isDestroyed() && this.currentDevelopmentPrompt(page, fence)
+      && this.window.isVisible() && !this.window.isMinimized() && this.window.isFocused()
+      && page.view.getVisible() && !c.isDevToolsOpened() && !page.activeRead && !page.activeSelection
+      && !page.activeAction && !page.activePrepare && !page.claiming && !page.styleTrial
+      && !page.fileHandoff && !page.downloads.size && !page.dialogPending;
+    if (operation === 'revokeFrameOrigin') {
+      if (!page || !this.pageStillOwned(page) || page.control !== 'human') throw new Error('页面归属已变化');
+      if (!page.frameGrant) throw new Error('嵌入站点授权已失效');
+      this.release(pageKey(page.coreInstanceId, page.projectId, page.threadId, page.id));
+      return this.state(this.page(page.projectId, page.threadId));
+    }
+    if (!valid()) throw new Error('请先接管并显示当前页面，再授权嵌入站点');
+    if (operation === 'reloadFrameOrigin') {
+      const grant = page.frameGrant;
+      if (!grant || grant.status !== 'pending' || Date.now() > grant.expiresAt
+        || !this.currentDevelopmentPrompt(page, grant.fence) || c.getURL() !== grant.parentURL)
+        throw new Error('嵌入站点授权已失效，请重新授权');
+      grant.status = 'reloading'; grant.navigationStarted = false;
+      page.networkPolicy.bindFrameGrant(grant);
+      c.reload(); this.changed(page); return this.state(page);
+    }
+    if (page.frameGrant || page.pendingDevelopmentPrompt) throw new Error('已有嵌入站点授权或确认正在进行');
+    const source = c.getURL(), parentOrigin = new URL(source).origin;
+    const origins = await nativeWithin(readIsolated(c, `(() => [...new Set([...document.querySelectorAll('iframe,frame')].map(frame => {
+      try { const url = new URL(frame.getAttribute('src'), document.baseURI); return ['http:', 'https:'].includes(url.protocol)
+        && !url.username && !url.password && url.origin !== location.origin ? url.origin : null; } catch { return null; }
+    }).filter(Boolean))])()`), performance.now() + 5000);
+    if (!valid() || c.getURL() !== source || !Array.isArray(origins) || origins.length !== 1
+      || origins[0] === parentOrigin || !page.networkPolicy.canAuthorize(origins[0]))
+      throw new Error('当前页面需要恰好一个可授权的独立嵌入站点');
+    const prompt = page.pendingDevelopmentPrompt = randomUUID();
+    let confirmed;
+    try { confirmed = await this.confirmDevelopmentOrigin({ kind: 'frame', origin: origins[0], page, fence }); }
+    finally { if (page.pendingDevelopmentPrompt === prompt) page.pendingDevelopmentPrompt = null; }
+    if (!confirmed || !valid() || c.getURL() !== source) throw new Error('嵌入站点授权已取消或失效');
+    const grant = { origin: origins[0], parentURL: source, contents: c, fence, status: 'pending',
+      expiresAt: Date.now() + 60000, documentGeneration: page.frameDocumentGeneration ?? 0 };
+    grant.valid = () => page.frameGrant === grant && this.pageStillOwned(page) && page.view?.webContents === c
+      && !c.isDestroyed() && page.control === 'human' && page.pageGeneration === fence.pageGeneration
+      && page.controlEpoch === fence.controlEpoch && (page.frameDocumentGeneration ?? 0) === grant.documentGeneration;
+    page.frameGrant = grant; this.changed(page); return this.state(page);
   }
   async command(request) {
     validatePreview(request);
@@ -2135,6 +2780,10 @@ class CorePreview {
     // A read must not touch LRU order or publish another metadata event.
     if (request.operation === 'state') return page ? this.state(page)
       : { ...this.state(null), workspace: this.snapshot(request.projectId, request.threadId) };
+    if (['authorizeFrameOrigin', 'reloadFrameOrigin', 'revokeFrameOrigin'].includes(request.operation))
+      return this.frameOriginCommand(page, request.operation);
+    if (page?.frameGrant && ['navigate', 'back', 'forward', 'reload', 'devtools'].includes(request.operation))
+      throw new Error('请先撤销嵌入站点授权并关闭页面，再导航或打开开发者工具');
     if (request.operation === 'release') {
       if (!page) return this.state(null);
       if (page.origin !== 'agent' && request.userIntent !== true) throw new Error('关闭人工页面需要明确用户操作');
@@ -2188,6 +2837,8 @@ class CorePreview {
       page?.activeSelection?.cancel();
       return this.state(page);
     }
+    if (request.operation === 'selectElement')
+      return this.selectElement(request.projectId, request.threadId, request.pageId, request.captureId, request.x, request.y);
     if (request.operation === 'checkElement')
       return this.checkElement(request.projectId, request.threadId, request.pageId, request.captureId, request.elementId);
     if (request.operation === 'beginStyleTrial')
@@ -2211,11 +2862,18 @@ class CorePreview {
       if (!this.owns(request.projectId, request.threadId) || page.annotationCaptureId !== request.captureId)
         throw new Error('标注页面已变化');
       if (page.control === 'human') page.activeRead?.cancel();
-      page.annotationCaptureId = null;
-      page.annotationCapture = null; page.annotationElement = null;
+      await this.discardAnnotationCapture(page, request.captureId);
       return this.state(page);
     }
     if (request.operation === 'hide') {
+      this.cancelHumanGesture(page ?? this.pages.get(this.owner));
+      const hidden = page ?? (!request.projectId ? this.pages.get(this.owner) : null);
+      const frozen = hidden?.annotationCapture;
+      // 只有本页当前截图凭据允许标注临时隐藏；卸载和普通隐藏必须销毁授权文档。
+      const annotationHide = !!request.captureId && !!hidden && this.pageStillOwned(hidden)
+        && request.captureId === hidden.annotationCaptureId && hidden.control === 'human'
+        && frozen?.nativeWebContentsId === hidden.view?.webContents.id
+        && frozen?.pageGeneration === hidden.pageGeneration && frozen?.controlEpoch === hidden.controlEpoch;
       if (page) {
         page.requestedVisible = false; page.activeSelection?.cancel();
         if (page.fileHandoff?.timer) clearTimeout(page.fileHandoff.timer);
@@ -2226,6 +2884,10 @@ class CorePreview {
         if (!page) { const displayed = this.pages.get(this.owner); if (displayed) displayed.requestedVisible = false; }
         this.view?.setVisible(false);
         this.owner = null; this.view = null;
+      }
+      if (hidden?.frameGrant && !annotationHide) {
+        hidden.activeRead?.cancel(); this.closeNative(hidden);
+        hidden.stateLoss = '嵌入授权因关闭预览已撤销，页面已关闭'; this.changed(hidden);
       }
       return this.state(page);
     }
@@ -2273,12 +2935,13 @@ class CorePreview {
       key = pageKey(this.coreIdentity(request.projectId), request.projectId, request.threadId, id);
       page = this.create(key, request.projectId, request.threadId, { id });
     }
-    if (page && ['show', 'navigate', 'reload'].includes(request.operation) && !page.view.webContents.getURL()) {
+    if (page && ['show', 'navigate', 'reload'].includes(request.operation)
+      && !page.view.webContents.getURL() && !page.view.webContents.isLoadingMainFrame()) {
       const restored = request.operation !== 'navigate' && restoreUrl ? webUrl(restoreUrl) : null;
       if (restored) {
         page.url = restored;
         void page.view.webContents.loadURL(restored).catch(error => {
-          if (this.pageStillOwned(page) && error.code !== 'ERR_ABORTED') page.error = error.message;
+          if (this.pageStillOwned(page) && error.code !== 'ERR_ABORTED' && error.errno !== -3) page.error = error.message;
         });
       }
     }
@@ -2295,23 +2958,7 @@ class CorePreview {
     const c = view.webContents;
     if (target) {
       if (!page.networkPolicy.canAuthorize(target)) throw new Error('浏览安全策略拒绝该地址');
-      const origin = new URL(target).origin;
-      const alreadyAllowed = page.networkPolicy.permits({ url: target, resourceType: 'mainFrame' });
-      const local = loopback(new URL(target).hostname);
-      if (!alreadyAllowed && local) {
-        const fence = this.developmentPromptFence(page);
-        if (page.pendingDevelopmentPrompt || !this.currentDevelopmentPrompt(page, fence))
-          throw new Error('开发站点授权需要当前页面由用户控制');
-        const prompt = page.pendingDevelopmentPrompt = randomUUID();
-        let confirmed;
-        try { confirmed = await this.confirmDevelopmentOrigin({ origin,
-          page, fence }); }
-        finally { if (page.pendingDevelopmentPrompt === prompt) page.pendingDevelopmentPrompt = null; }
-        if (!confirmed || !this.currentDevelopmentPrompt(page, fence)
-          || page.pendingDevelopmentPrompt) throw new Error('尚未授权此开发站点');
-      }
-      if (!alreadyAllowed && !page.networkPolicy.allowHumanNavigation(target, local))
-        throw new Error('浏览安全策略拒绝该地址');
+      if (!page.networkPolicy.allowHumanNavigation(target)) throw new Error('浏览安全策略拒绝该地址');
     }
     if (['navigate', 'back', 'forward', 'reload', 'devtools'].includes(request.operation) && page.styleTrial) {
       const cleared = await this.clearStyleTrial(page);
@@ -2360,9 +3007,21 @@ class CorePreview {
         this.changed(page);
         break;
       case 'show':
+        // 标注 hide 会保留冻结草稿；真正切换 Page/Thread 时仍撤销其他页面的临时授权。
+        for (const other of this.pages.values()) if (other !== page && other.frameGrant) {
+          other.activeRead?.cancel(); this.closeNative(other);
+          other.stateLoss = '嵌入授权因切换页面已撤销，页面已关闭'; this.changed(other);
+        }
         if (this.owner !== key) {
           const outgoing = this.pages.get(this.owner);
-          if (outgoing) outgoing.requestedVisible = false;
+          if (outgoing) {
+            this.cancelHumanGesture(outgoing);
+            outgoing.requestedVisible = false;
+            if (outgoing.frameGrant) {
+              outgoing.activeRead?.cancel(); this.closeNative(outgoing);
+              outgoing.stateLoss = '嵌入授权因切换页面已撤销，页面已关闭'; this.changed(outgoing);
+            }
+          }
           this.view?.setVisible(false);
         }
         this.owner = key; this.view = page.view;
@@ -2372,7 +3031,7 @@ class CorePreview {
       case 'navigate':
         page.url = target; page.error = '';
         void c.loadURL(target).catch(error => {
-          if (this.pageStillOwned(page) && error.code !== 'ERR_ABORTED' && page.url === target) page.error = error.message;
+          if (this.pageStillOwned(page) && error.code !== 'ERR_ABORTED' && error.errno !== -3 && page.url === target) page.error = error.message;
         });
         break;
       case 'back': if (c.navigationHistory.canGoBack()) c.navigationHistory.goBack(); break;
@@ -2381,7 +3040,7 @@ class CorePreview {
         page.error = '';
         if (c.getURL()) c.reload();
         else if (page.url) void c.loadURL(page.url).catch(error => {
-          if (this.pageStillOwned(page) && error.code !== 'ERR_ABORTED') page.error = error.message;
+          if (this.pageStillOwned(page) && error.code !== 'ERR_ABORTED' && error.errno !== -3) page.error = error.message;
         });
         break;
       case 'stop': c.stop(); break;
@@ -2390,7 +3049,18 @@ class CorePreview {
         this.revoke(page);
         await this.convergeInput(page);
         if (page.control !== 'human') throw new Error('原生输入尚未收敛，请停止或关闭页面');
-        c.openDevTools({ mode: 'detach' });
+        // Electron 在首个文档加载后才公开 devToolsWebContents；
+        // 在这次可信调用期间绑定其内部创建的前端。
+        {
+          const { app } = require('electron');
+          const created = (_event, contents) => {
+            if (contents.getType() === 'remote' && contents.session === c.session)
+              page.openingDevTools = contents;
+          };
+          app.on('web-contents-created', created);
+          try { c.openDevTools({ mode: 'detach' }); }
+          finally { app.removeListener('web-contents-created', created); }
+        }
         break;
     }
     if (['navigate', 'reload', 'stop'].includes(request.operation)) this.changed(page);

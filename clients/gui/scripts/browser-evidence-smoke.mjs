@@ -19,9 +19,10 @@ const workspace = join(scratch, 'workspace'), userHome = join(scratch, 'user');
 await mkdir(workspace); await mkdir(join(userHome, '.areal'), { recursive: true });
 execFileSync('git', ['init', '-b', 'main'], { cwd: workspace, stdio: 'ignore' });
 const sentinel = 'EVIDENCE_PAGE_03';
-const siteFacts = { gets: 0, posts: 0, childGets: 0 };
-const sibling = createServer((_request, response) => {
+const siteFacts = { gets: 0, posts: 0, childGets: 0, childRequests: [] };
+const sibling = createServer((request, response) => {
   siteFacts.childGets++;
+  siteFacts.childRequests.push({ url: request.url, destination: request.headers['sec-fetch-dest'] ?? null });
   response.setHeader('Content-Type', 'text/html'); response.end('<button>Cross origin child</button>');
 });
 await new Promise(resolve => sibling.listen(0, '127.0.0.1', resolve));
@@ -149,6 +150,9 @@ try {
   await page.evaluate(({ projectId, threadId, url }) => window.arealDesktop.preview({ operation: 'navigate', projectId, threadId, url }),
     { projectId: project.id, threadId: first.threadId, url: childUrl });
   await until(() => app.evaluate(({ webContents }, url) => webContents.getAllWebContents().some(c => c.getURL() === url), childUrl), 'child Origin granted');
+  const childGrantGets = siteFacts.childGets;
+  events.childOriginGrant = { childGrantGets, requests: structuredClone(siteFacts.childRequests) };
+  assert.equal(childGrantGets, 1, 'one explicit child-Origin document navigation');
   const childPageId = (await page.evaluate(({ projectId, threadId }) =>
     window.arealDesktop.preview({ operation: 'state', projectId, threadId }),
     { projectId: project.id, threadId: first.threadId })).browser.pageId;
@@ -163,7 +167,8 @@ try {
     [new URL(childUrl).origin, new URL(siteUrl).origin], 'two exact synthetic-Origin Main prompts occurred');
   events.developmentOriginPromptResponse = 'fixture-stub-allow-two-exact-origins';
   const nativeId = await until(() => app.evaluate(({ webContents }, url) => webContents.getAllWebContents().find(c => c.getURL() === url)?.id, siteUrl), 'native page');
-  await until(() => siteFacts.childGets >= 2, 'embedded child Origin response');
+  await until(() => app.evaluate(({ webContents }, id) => webContents.fromId(id).executeJavaScript(
+    `document.readyState === 'complete'`), nativeId), 'main document and iframe loads settled');
   await app.evaluate(({ webContents }, id) => {
     const contents = webContents.fromId(id), trace = { capturePage: 0, fullAXTree: 0 };
     const capture = contents.capturePage.bind(contents), send = contents.debugger.sendCommand.bind(contents.debugger);
@@ -201,12 +206,18 @@ try {
   const blockedCrossOriginFrame = observation.frameCoverage.childFrames.find(frame => frame.url === 'chrome-error://chromewebdata/');
   assert.ok(crossOriginFrame || blockedCrossOriginFrame,
     `cross-Origin child has explicit coverage or policy failure: ${JSON.stringify(events.crossFrameDiagnostic)}`);
-  assert.ok(siteFacts.childGets >= 2, 'child served both its human grant and embedded navigation');
+  if (crossOriginFrame) {
+    assert.equal(siteFacts.childGets, childGrantGets + 1, 'child served its grant and one embedded navigation');
+    assert.equal(siteFacts.childRequests.at(-1).destination, 'iframe');
+  } else {
+    assert.equal(blockedCrossOriginFrame.coverage, 'unavailable', 'blocked Frame is explicitly unavailable');
+    assert.equal(siteFacts.childGets, childGrantGets, 'CSP-blocked Frame sends no embedded request');
+  }
   assert.equal(await app.evaluate(({ webContents }, id) => webContents.fromId(id).executeJavaScript(
     `document.querySelector('#cross').contentDocument === null`), nativeId), true,
   'embedded child is actually cross-Origin');
   events.crossOriginFrame = { frame: crossOriginFrame ?? blockedCrossOriginFrame,
-    loaded: !!crossOriginFrame, childGets: siteFacts.childGets,
+    loaded: !!crossOriginFrame, childGets: siteFacts.childGets, childRequests: structuredClone(siteFacts.childRequests),
     limitation: crossOriginFrame ? null : "Native Session injects frame-src 'self' CSP" };
   assert.equal(observation.shadowCoverage, 'not-distinguished-by-accessibility-tree');
   assert.ok(observation.text.includes(sentinel));

@@ -5,18 +5,35 @@ import argparse
 import hashlib
 import json
 import platform
+import re
 import shutil
 import subprocess
 from pathlib import Path
+
+
+def bundle_info(root):
+    # 复用生成协议与 Store 版本常量，不能让包清单独立漂移。
+    schema = json.loads((root / "schemas/areal-core-v1.json").read_text())
+    versions = re.findall(
+        r"^pub\(crate\) const STATE_VERSION: u32 = (\d+);$",
+        (root / "core/engine/src/store.rs").read_text(),
+        re.MULTILINE,
+    )
+    if len(versions) != 1 or not isinstance(schema.get("apiVersion"), str):
+        raise ValueError("Core package metadata source is missing or ambiguous")
+    return {"apiVersion": schema["apiVersion"], "stateVersion": int(versions[0])}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=("debug", "release"), default="release")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--unsigned-local", action="store_true",
+                        help="preserve input bytes without creating signatures; local validation only")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     destination = args.output.resolve()
+    metadata = bundle_info(root)
     if destination.exists():
         parser.error("output must not exist")
     targets = {("Darwin", "arm64"): "darwin/arm64", ("Linux", "x86_64"): "linux/x86_64"}
@@ -39,7 +56,7 @@ def main():
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source / name, target)
-        if platform.system() == "Darwin":
+        if platform.system() == "Darwin" and not args.unsigned_local:
             # 保留构建产物的有效签名和字节，不能隐式改变已验收二进制的代码身份。
             # 缺失或损坏的签名必须由构建流程修复，打包阶段不能掩盖它们。
             subprocess.run(
@@ -48,6 +65,8 @@ def main():
                 capture_output=True,
             )
         files[str(relative)] = hashlib.sha256(target.read_bytes()).hexdigest()
+        if args.unsigned_local and files[str(relative)] != hashlib.sha256((source / name).read_bytes()).hexdigest():
+            raise ValueError(f"unsigned local copy changed input bytes: {name}")
     version = subprocess.check_output([str(source / "areal"), "--version"], text=True).strip()
     manifest = {
         "manifestVersion": 1,
@@ -57,8 +76,7 @@ def main():
         ).strip(),
         "workingTree": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=root)),
         "profile": args.profile,
-        "apiVersion": "areal.core.v1",
-        "stateVersion": 14,
+        **metadata,
         "platform": target_platform,
         "files": files,
         "prerequisites": [
@@ -81,7 +99,8 @@ def main():
             ),
         ],
         "optionalRuntimes": "Node/Python for configured tool hosts; explicitly supplied by deployment",
-        "signing": "ad-hoc; no Developer ID or notarization"
+        "signing": "no new signatures; input signatures preserved; local validation only"
+        if args.unsigned_local else "input signatures preserved and verified; distribution signing and notarization handled separately"
         if platform.system() == "Darwin"
         else "unsigned; verify release SHA256SUMS",
     }

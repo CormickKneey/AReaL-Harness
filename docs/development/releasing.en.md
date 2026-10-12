@@ -27,6 +27,8 @@ Tagging, publishing and tap creation/updates are external publication operations
 
 ## Local commands
 
+The bundle manifest takes `apiVersion` from generated `schemas/areal-core-v1.json` and `stateVersion` from the Core Store version constant. Missing or ambiguous metadata refuses packaging before copying or signing. When reusing built binaries, verify their actual protocol/state versions against that source; the manifest does not replace binary acceptance.
+
 ```sh
 make release
 python3 scripts/package.py --profile release --output target/release-bundle/areal
@@ -38,6 +40,8 @@ python3 -m unittest discover -s scripts/tests -p test_release.py
 The formula installs `bin`, `libexec`, LICENSE and the manifest, preserving Core's relative helper discovery. Linux installs versions into separate directories and atomically switches only the entry symlink. Configuration and history remain outside installer ownership. Validation failure must not switch the entry point.
 
 ## GUI releases
+
+For local validation without new signatures, use `AREAL_GUI_UNSIGNED_LOCAL=1 AREAL_GUI_PACKAGE_DIR=/absolute/new-directory pnpm --dir clients/gui package`, or `python3 scripts/package.py --unsigned-local --profile debug --output /absolute/new-directory` for a CLI bundle. This explicit mode skips signing Core copies and the app while builder retains `identity: null`. It preserves input bytes and existing signatures, records actual bundle signature verification, and neither removes signatures nor changes system policy. It is incompatible with `AREAL_GUI_RELEASE=1`; the default flow still creates local ad-hoc signatures. A generated ZIP does not prove launchability: extract into a new isolated directory and validate, preserving the first system rejection and stopping that launch path if denied.
 
 GUI versions are declared by `clients/gui/package.json` and `clients/gui/app/package.json`, independently of Cargo/CLI. Publish to `areal-project/AReaL-Harness` using `gui-v<version>` tags; CLI tags remain `v<version>`. GUI releases are not GitHub Latest, preserving the CLI installer's Latest semantics.
 

@@ -167,10 +167,8 @@ impl Invocation<'_> {
         }
         let browser_plan = if self.call.name == "browser_v1"
             && matches!(self.entry.backend, Backend::Client)
-            && matches!(
-                arguments["operation"].as_str(),
-                Some("act" | "wait" | "navigate" | "newPage" | "runBatch")
-            ) {
+            && matches!(arguments["operation"].as_str(), Some("act" | "wait" | "navigate" | "newPage" | "runBatch" | "observe" | "capture" | "diagnostics"))
+        {
             let host = self
                 .host
                 .as_ref()
@@ -195,6 +193,8 @@ impl Invocation<'_> {
                 return Err(invalid("browser host returned an invalid plan"));
             }
             self.edit(|execution, _| {
+                // 审批计划留在审计记录，模型回放只使用经 hooks 校验的规范参数。
+                execution.model_arguments = Some(arguments.clone());
                 execution.effective_arguments = Some(json!({"arguments":arguments,"plan":prepared}))
             })
             .await?;

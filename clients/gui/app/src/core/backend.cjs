@@ -274,15 +274,19 @@ class CoreBackend {
       headers: { Authorization: `Bearer ${project.token}` }, followRedirects: false, maxPayload: 4 * 1024 * 1024,
     }), onServerRequest: async (method, params, context) => {
       if (!['item/tool/call', 'areal/browser/prepare'].includes(method) || params?.tool !== 'browser_v1') throw new Error('Unsupported client tool');
-      if (!this.currentConnection(project, client)) return browserFailure('host_unavailable', 'Desktop connection changed');
+      const connected = this.currentConnection(project, client);
       // Core invokes only tools bound to this connection. The local Thread
       // projection can lag the committed attachment until its event arrives.
-      return this.browserRead?.({ projectId: project.id, threadId: params.threadId,
+      const result = connected ? (await this.browserRead?.({ projectId: project.id, threadId: params.threadId,
         turnId: params.turnId, callId: params.callId, toolHostGeneration: params.hostGeneration, arguments: params.arguments,
         phase: method === 'areal/browser/prepare' ? 'prepare' : 'execute', browserApproval: params.browserApproval,
         coreInstanceId: project.service?.serviceId, coreGeneration: project.service?.generation,
-        signal: context.signal })
-        ?? browserFailure('host_unavailable', 'Desktop browser is unavailable');
+        signal: context.signal })) ?? browserFailure('host_unavailable', 'Desktop browser is unavailable')
+        : browserFailure('host_unavailable', 'Desktop connection changed');
+      if (method === 'areal/browser/prepare' && result?.success === false
+        && typeof result.structuredContent?.code === 'string' && result.structuredContent.dispatch === 'not_sent')
+        return { error: result.structuredContent.code, dispatch: 'not_sent' };
+      return result;
     } });
     project.client = client;
     project.connectionGeneration = (project.connectionGeneration ?? 0) + 1;
@@ -412,6 +416,33 @@ class CoreBackend {
       this.refreshConfiguration(project, threadId),
       this.refreshQueue(project, threadId),
     ]);
+  }
+
+  supportsBrowser(project) {
+    const capabilities = project.client?.capabilities;
+    return capabilities?.methods?.includes('areal/thread/observe')
+      && capabilities?.methods?.includes('areal/thread/tools/attach')
+      && capabilities?.features?.browserToolAttachment === true
+      && capabilities?.browserToolBundles?.some(bundle => bundle.bundleId === 'areal.browser.v1');
+  }
+
+  async ensureBrowserTools(project, threadId) {
+    if (!this.supportsBrowser(project)) return;
+    const client = project.client;
+    const { thread } = await client.request('areal/thread/observe', { threadId }, {
+      onResult: result => { if (this.currentConnection(project, client)) project.model.replace(result.thread); },
+    });
+    this.requireConnection(project, client);
+    if (thread.desktop?.archived || thread.parentThreadId || thread.conversation?.kind === 'side' || thread.status?.type !== 'idle') return;
+    // 固定工具包追加也安全重连原空闲 ToolHost；
+    // Core 拒绝不同的在线所有者，并保留全部既有工具定义。
+    await this.submit(project, 'areal/thread/tools/attach', {
+      threadId, expectedToolsetRevision: thread.toolsetRevision ?? 0, bundleId: 'areal.browser.v1',
+    });
+    await client.request('areal/thread/observe', { threadId }, {
+      onResult: result => { if (this.currentConnection(project, client)) project.model.replace(result.thread); },
+    });
+    this.requireConnection(project, client);
   }
 
   async bindBrowserHostForClaim(project, threadId) {
@@ -906,7 +937,7 @@ class CoreBackend {
     }
   }
 
-  async command(name, request) {
+  async command(name, request, context = {}) {
     if (this.closing) throw new Error('应用正在退出');
     if (name === 'analytics') return this.analytics.command(request);
     if (name === 'chatgpt') return this.providers.chatgpt(request);
@@ -914,11 +945,11 @@ class CoreBackend {
     if (name === 'resources') return this.resources.command(request);
     if (this.providerUpdating || this.resourcesUpdating) throw new Error('配置正在应用，请稍后重试');
     this.activeCommands++;
-    try { return await this.executeCommand(name, request); }
+    try { return await this.executeCommand(name, request, context); }
     finally { this.activeCommands--; }
   }
 
-  async executeCommand(name, request) {
+  async executeCommand(name, request, context = {}) {
     if (this.closing) throw new Error('应用正在退出');
     if (name === 'tasks') return taskCatalog(this, request);
     if (name === 'projectless') return this.projectless.command(request);
@@ -967,9 +998,13 @@ class CoreBackend {
       }
       case 'queueEdit': return this.editQueue(project, request);
       case 'create': {
+        if (request.browserEnabled === true
+          && projectCoreCapabilities(this.binary, project.client?.capabilities).features?.browserToolAttachment !== true) {
+          throw new Error('当前 Core 不支持新聊天启用浏览器');
+        }
         await this.resources.beforeCreate(project);
         const { thread } = await this.submit(project, 'areal/thread/start', { cwd: project.root,
-          ...(request.browserEnabled === true ? { dynamicTools: [browserTool] } : {}),
+          ...(this.supportsBrowser(project) ? { dynamicTools: [browserTool] } : {}),
           ...(request.parameters ? { parameters: request.parameters } : {}),
           ...(request.model ? { model: request.model } : {}),
           ...((request.profile ?? project.resourceProfile ?? this.defaultProfile) ? { agentProfile: request.profile ?? project.resourceProfile ?? this.defaultProfile } : {}),
@@ -1037,11 +1072,14 @@ class CoreBackend {
         return { threadId: result.thread.id, turnId: result.turn?.id, requestId: result.requestId };
       }
       case 'send': {
+        await this.ensureBrowserTools(project, threadId);
         const input = messageInput(this, request);
         // Queue state survives completed/interrupted turns. Only current execution
         // determines admission; the renderer's enqueue hint may already be stale.
         const enqueue = project.model.state.threads[threadId]?.turns?.some(turn => turn.status === 'inProgress');
-        await this.submit(project, enqueue ? 'areal/turn/enqueue' : 'areal/turn/start', { threadId, input });
+        const submitted = await this.submit(project, enqueue ? 'areal/turn/enqueue' : 'areal/turn/start', { threadId, input });
+        if (enqueue) context.onBrowserTurnQueued?.(submitted.queueItemId);
+        else context.onBrowserTurnStarted?.(submitted.turn?.id);
         break;
       }
       case 'steer': {

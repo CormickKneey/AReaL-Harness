@@ -35,6 +35,7 @@ class DesktopService {
     this.pendingNotificationTarget = null;
     this.token = randomBytes(32).toString('hex'); this.clients = new Set();
     this.browserClaims = new Map(); this.browserClaimAttempts = new Map();
+    this.browserEntrypoints = new Map();
     this.browserPending = new Map(); this.nextBrowserId = 0;
     this.browserTestTrace = process.env.AREAL_BROWSER_READ_TEST_TRACE;
     backend.browserRead = request => this.browserRead(request);
@@ -107,6 +108,8 @@ class DesktopService {
       socket.on('message', bytes => { void this.receive(socket, bytes); });
       socket.on('close', () => {
         for (const [key, claim] of this.browserClaims) if (claim.socket === socket) this.browserClaims.delete(key);
+        for (const [key, entries] of this.browserEntrypoints) for (const entry of entries)
+          if (entry.socket === socket) this.forgetBrowserEntrypoint(key, entry);
         for (const [key, attempt] of this.browserClaimAttempts) if (attempt.socket === socket) {
           attempt.cancelled = true; this.browserClaimAttempts.delete(key);
         }
@@ -191,7 +194,12 @@ class DesktopService {
         this.browserClaimAttempts.set(key, attempt);
         const coreClient = project.client;
         try {
-          await this.backend.bindBrowserHostForClaim(project, threadId);
+          const bootstrap = params.bootstrapRequestId === undefined ? null : this.browserPending.get(params.bootstrapRequestId);
+          if (params.bootstrapRequestId !== undefined) {
+            if (!bootstrap?.bootstrap || bootstrap.socket !== socket || bootstrap.key !== key
+              || bootstrap.coreInstanceId !== coreInstanceId || bootstrap.coreGeneration !== coreGeneration)
+              throw new Error('Browser entry authorization expired');
+          } else await this.backend.bindBrowserHostForClaim(project, threadId);
           if (attempt.cancelled || this.browserClaimAttempts.get(key) !== attempt
             || this.browserClaims.get(key) !== previous || !this.clients.has(socket) || this.closed
             || this.backend.projects.get(projectId) !== project || !this.backend.currentConnection(project, coreClient)
@@ -214,6 +222,9 @@ class DesktopService {
       }
       if (method === 'browserRevoke') {
         const key = browserKey(params?.projectId, params?.threadId);
+        for (const entry of this.browserEntrypoints.get(key) ?? []) this.forgetBrowserEntrypoint(key, entry);
+        for (const pending of this.browserPending.values()) if (pending.bootstrap && pending.key === key && pending.socket === socket)
+          pending.reject(new Error('Browser entry revoked by human input'));
         const attempt = this.browserClaimAttempts.get(key);
         if (attempt?.socket === socket && (typeof params?.pageId !== 'string' || attempt.pageId === params.pageId)) {
           attempt.cancelled = true; this.browserClaimAttempts.delete(key);
@@ -271,7 +282,28 @@ class DesktopService {
       else if (typeof params?.path !== 'string') throw new Error('无效工作区路径');
       this.inflight++; this.schedule();
       try {
-        let result = method === 'command' ? await this.backend.command(params.name, params.name === 'media' ? decodeMedia(params.request) : params.request) : await this.backend.addProject(params.path);
+        const entryKey = method === 'command' && params.name === 'send'
+          ? browserKey(params.request.projectId, params.request.threadId) : null;
+        const entryProject = entryKey && this.backend.projects.get(params.request.projectId);
+        const entry = entryProject?.model.state.threads[params.request.threadId]
+          ? { socket, project: entryProject, client: entryProject.client } : null;
+        if (entry) {
+          const entries = this.browserEntrypoints.get(entryKey) ?? new Set();
+          const activeTurns = new Set(entryProject.model.state.threads[params.request.threadId].turns
+            ?.filter(turn => turn.status === 'inProgress').map(turn => turn.id) ?? []);
+          for (const previous of entries) if (previous.accepted?.turnId && !activeTurns.has(previous.accepted.turnId))
+            this.forgetBrowserEntrypoint(entryKey, previous);
+          // Core 最多受理 128 个排队项，另保留本聊天的活动轮次。
+          if (entries.size >= 129) throw new Error('Browser entry capacity reached');
+          entry.ready = new Promise(resolve => { entry.resolve = value => { entry.accepted ??= value; resolve(value); }; });
+          entries.add(entry); this.browserEntrypoints.set(entryKey, entries);
+        }
+        let result;
+        try { result = method === 'command' ? await this.backend.command(params.name, params.name === 'media' ? decodeMedia(params.request) : params.request,
+          { onBrowserTurnStarted: turnId => entry?.resolve({ turnId }),
+            onBrowserTurnQueued: queueItemId => entry?.resolve({ queueItemId }) }) : await this.backend.addProject(params.path); }
+        catch (error) { if (entry) this.forgetBrowserEntrypoint(entryKey, entry); throw error; }
+        finally { entry?.resolve(null); }
         if (method === 'command' && params.name === 'media') result = encodeMedia(result);
         this.publish(); this.send(socket, { id, result });
       } finally { this.inflight--; this.schedule(); }
@@ -287,7 +319,8 @@ class DesktopService {
     for (const attempt of this.browserClaimAttempts.values()) attempt.cancelled = true;
     this.browserClaimAttempts.clear();
     for (const pending of this.browserPending.values()) { clearTimeout(pending.timer); pending.reject(new Error('Browser service closed after dispatch')); }
-    this.browserPending.clear(); this.browserClaims.clear();
+    for (const entries of this.browserEntrypoints.values()) for (const entry of entries) entry.resolve(null);
+    this.browserPending.clear(); this.browserClaims.clear(); this.browserEntrypoints.clear();
     this.remote?.close();
     this.power?.close();
     this.backgroundNotifications?.close(); this.pendingNotificationTarget = null;
@@ -301,6 +334,64 @@ class DesktopService {
     try { return await this.backend.command(name, request); }
     finally { this.inflight--; this.schedule(); }
   }
+  forgetBrowserEntrypoint(key, entry) {
+    entry.resolve(null);
+    const entries = this.browserEntrypoints.get(key);
+    entries?.delete(entry);
+    if (entries?.size === 0) this.browserEntrypoints.delete(key);
+  }
+  async browserEntrypoint(request, key) {
+    // 每条已受理消息独立持有入口；队列查询只读，
+    // 事件顺序或对下一轮次的猜测均不能授权回调。
+    let queue;
+    for (const entry of [...this.browserEntrypoints.get(key) ?? []]) {
+      const accepted = await entry.ready;
+      const current = () => this.browserEntrypoints.get(key)?.has(entry) && entry.socket.readyState === 1
+        && this.backend.projects.get(request.projectId) === entry.project
+        && this.backend.currentConnection(entry.project, entry.client)
+        && entry.project.service?.serviceId === request.coreInstanceId
+        && entry.project.service?.generation === request.coreGeneration;
+      const forget = () => this.forgetBrowserEntrypoint(key, entry);
+      if (!accepted || !current()) { forget(); continue; }
+      let turnId = accepted.turnId;
+      if (typeof accepted.queueItemId === 'string') {
+        try { queue ??= await entry.client.request('areal/queue/list', { threadId: request.threadId }); }
+        catch { forget(); continue; }
+        if (!current()) { forget(); continue; }
+        const item = queue.items?.find(item => item.id === accepted.queueItemId);
+        if (!item || !['pending', 'running'].includes(item.status)) { forget(); continue; }
+        if (item.status === 'pending') continue;
+        turnId = item.turnId;
+      }
+      if (turnId === request.turnId) return entry;
+    }
+    return null;
+  }
+  async bootstrapBrowser(request, key) {
+    const entry = await this.browserEntrypoint(request, key);
+    if (!entry || !this.browserEntrypoints.get(key)?.has(entry)) return;
+    this.forgetBrowserEntrypoint(key, entry); // 仅消费这条已受理消息的入口，不重放。
+    if (request.signal?.aborted || this.browserPending.size >= 8) return;
+    const requestId = ++this.nextBrowserId;
+    await new Promise((resolve, reject) => {
+      const finish = (fn, value) => {
+        clearTimeout(timer); request.signal?.removeEventListener('abort', abort);
+        this.browserPending.delete(requestId); fn(value);
+      };
+      const abort = () => finish(reject, new Error('Browser entry cancelled'));
+      const timer = setTimeout(() => finish(reject, new Error('Browser entry outcome unknown')), 15000);
+      this.browserPending.set(requestId, { socket: entry.socket, key, bootstrap: true,
+        coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration,
+        resolve: value => finish(resolve, value), reject: error => finish(reject, error), timer });
+      request.signal?.addEventListener('abort', abort, { once: true });
+      this.send(entry.socket, { method: 'browserRequest', params: {
+        requestId, operation: 'describe', phase: 'execute', projectId: request.projectId,
+        threadId: request.threadId, turnId: request.turnId, callId: request.callId,
+        coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration,
+      } });
+    });
+  }
+
   async browserRead(request) {
     const { projectId, threadId, turnId, callId, toolHostGeneration, coreInstanceId, coreGeneration, signal, arguments: input,
       phase = 'execute', browserApproval } = request ?? {};
@@ -308,22 +399,44 @@ class DesktopService {
       || typeof callId !== 'string' || typeof coreInstanceId !== 'string' || !validToolInput(input))
       return browserFailure('invalid_arguments', 'Unsupported browser operation or parameters');
     const action = ['act', 'wait', 'navigate', 'newPage', 'runBatch'].includes(input.operation);
-    if (action && phase === 'execute' && (!browserApproval?.plan || typeof browserApproval.plan.preparedActionId !== 'string'))
-      return browserFailure('approval_required', 'Core approval metadata is required');
-    if (phase === 'prepare' && !action) throw new Error('Browser prepare is only for actions');
+    const scoped = input.operation !== 'describe';
+    if (phase === 'prepare' && !scoped) throw new Error('Browser discovery cannot prepare a page plan');
     const key = browserKey(projectId, threadId);
-    const claim = this.browserClaims.get(key);
-    if (!claim || claim.socket.readyState !== 1) return browserFailure('host_unavailable', 'No authorized live desktop page');
+    let claim = this.browserClaims.get(key);
+    if (input.operation === 'describe' && phase === 'execute' && !claim) {
+      await this.bootstrapBrowser(request, key);
+      claim = this.browserClaims.get(key);
+    }
+    // 已批准计划在派发前失去授权时，必须重新授权和观察；普通读取仍报告宿主不可用。
+    if (!claim || claim.socket.readyState !== 1) return action && phase === 'execute'
+      ? browserFailure('plan_stale', 'Approved page authorization changed; authorize the page and observe again before a new action')
+      : browserFailure('host_unavailable', 'No authorized live desktop page');
     if (claim.coreInstanceId !== coreInstanceId || claim.coreGeneration !== coreGeneration) {
       this.browserClaims.delete(key);
       return browserFailure('host_unavailable', 'Core deployment changed; authorize the page again');
     }
+    if (scoped && phase === 'execute' && (!browserApproval?.plan || typeof browserApproval.plan.preparedActionId !== 'string'))
+      return browserFailure('approval_required', 'Core approval metadata is required');
     if (input.operation === 'describe') return browserSuccess({ protocol: 'areal.browser.host.v1',
       browserHostId: claim.browserHostId, hostGeneration: claim.hostGeneration, available: true,
       operations: ['describe', 'observe', 'capture', 'act', 'wait', 'navigate', 'newPage', 'diagnostics', 'runBatch'],
+      instructions: 'Use navigate with a listed pageId and a URL to open a site, then observe to obtain current refs. Fill the search field and press Enter to submit an approved public search. describe creates or reuses the visible page after Core approval; no development service is needed. Human input revokes access; only a new explicit chat request can authorize re-entry.',
+      parameterGuide: 'Replace pageId with an ID from pages, snapshotId with the latest observe.observationId, and ref with a ref from that observation. act takes one nested action object. Observe again after fill before submitting with press Enter.',
+      examples: [
+        { operation: 'observe', parameters: { pageId: '<pageId>' } },
+        { operation: 'act', parameters: { pageId: '<pageId>', snapshotId: '<observe.observationId>',
+          action: { kind: 'fill', ref: '<ref>', value: '<search query>' } } },
+        { operation: 'act', parameters: { pageId: '<pageId>', snapshotId: '<observe.observationId>',
+          action: { kind: 'press', ref: '<ref>', key: 'Enter' } } },
+        { operation: 'diagnostics', parameters: { pageId: '<pageId>', kind: 'network', limit: 20 } },
+      ],
       actions: { ref: ['click', 'fill', 'press'], screenshot: ['clickAt', 'drag', 'pressAt'],
         screenshotCoordinates: 'bitmap pixels from the latest viewport capture; capture observationId is snapshotId',
         keyboard: ['Enter', 'Tab', 'Escape', 'Backspace', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'] },
+      waits: { timeoutMs: [1, 30000], conditions: ['documentReady', 'accessibleName'],
+        documentReady: '{kind:documentReady,state:interactive|complete}',
+        accessibleName: '{kind:accessibleName,ref,name}; exact current AX name; stale Ref refused',
+        withoutCondition: 'bounded delay only; not page readiness' },
       pages: [...claim.pages.keys()] });
     const pageClaim = claim.pages.get(input.parameters.pageId);
     if (!pageClaim) return browserFailure('wrong_page', 'Page does not belong to this thread');
@@ -347,7 +460,7 @@ class DesktopService {
         projectId, threadId, turnId, callId, pageId: pageClaim.pageId, browserHostId: claim.browserHostId,
         hostGeneration: claim.hostGeneration, pageGeneration: pageClaim.pageGeneration,
         controlEpoch: pageClaim.controlEpoch, operation: input.operation, parameters: input.parameters,
-        phase, ...(action && phase === 'execute' ? { browserApproval } : {}) } });
+        phase, ...(scoped && phase === 'execute' ? { browserApproval } : {}) } });
     });
     if (!result || typeof result !== 'object' || result.pageId !== pageClaim.pageId || result.callId !== callId
       || result.turnId !== turnId || result.threadId !== threadId || result.projectId !== projectId
@@ -380,7 +493,8 @@ class DesktopService {
       if (phase === 'prepare') return { error: result.error, dispatch: 'not_sent' };
       const hint = { human_control: 'Human controls this page', plan_stale: 'Page or target changed; observe again before a new action',
         stale_ref: 'Target changed; observe again', human_takeover_required: 'Use human takeover for this page',
-        not_sent: 'Target unavailable before input; observe again' }[result.error] ?? 'Page unavailable';
+        not_sent: 'Target unavailable before input; observe again',
+        condition_timeout: 'The requested page condition was not observed before timeout' }[result.error] ?? 'Page unavailable';
       if (input.operation === 'runBatch') return { ...browserFailure(result.error, hint),
         structuredContent: { code: result.error, dispatch: 'not_sent', receipts: result.receipts ?? [],
           failedStep: result.failedStep, remaining: 'not_sent', remainingSteps: result.remainingSteps } };

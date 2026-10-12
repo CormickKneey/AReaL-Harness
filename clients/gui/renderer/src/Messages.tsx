@@ -15,6 +15,8 @@ import { TimelineBottomButton } from "./TimelineBottomButton.js";
 import { MessageResponse } from "./components/ai-elements/message.js";
 import { SentAttachment } from "./MessageAttachment.js";
 import { sentReviewFeedback } from "./reviewComments.js";
+import { SentBrowserAnnotations } from "./BrowserAnnotationAttachments.js";
+import { sentBrowserAnnotations } from "./browserAnnotations.js";
 import { SentReviewComments } from "./ReviewCommentViews.js";
 import { TurnFileSummary } from "./TurnFileSummary.js";
 import type { Data, Action } from "./services.js";
@@ -375,16 +377,19 @@ export function Messages({
                 const text = content.filter((part: Data) => part.type === "text").map((part: Data) => part.text ?? "").join("\n");
                 const feedback = sentReviewFeedback(text);
                 const attachments = content.filter((part: Data) => part.type !== "text");
+                const browserFeedback = sentBrowserAnnotations(feedback.text, attachments);
+                const ordinaryAttachments = attachments.filter((part: Data) => !browserFeedback.notes.some(note => note.imageUri === (part.url ?? part.uri)));
                 return (
                   <div className="user-message" data-side-item-id={item.id} key={item.id}>
                     <div className="user-message-content">
                       <SentReviewComments comments={feedback.comments} />
-                      {attachments.length > 0 ? <div className="user-attachments" data-testid="user-attachments">
-                        {attachments.map((part: Data, i: number) => <SentAttachment key={part.url ?? part.uri ?? i}
+                      <SentBrowserAnnotations notes={browserFeedback.notes} attachments={attachments} projectId={project.id} threadId={thread.id} action={action} />
+                      {ordinaryAttachments.length > 0 ? <div className="user-attachments" data-testid="user-attachments">
+                        {ordinaryAttachments.map((part: Data, i: number) => <SentAttachment key={part.url ?? part.uri ?? i}
                           part={part} projectId={project.id} threadId={thread.id} action={action} />)}
                       </div> : null}
-                      {feedback.text.trim() ? <div className="user-bubble">
-                        <MessageResponse className="conversation-markdown user-message-body" preserveLineBreaks theme={dark ? "dark" : "light"} onOpenExternalUrl={onLink} onOpenFileLink={onFile}>{feedback.text}</MessageResponse>
+                      {browserFeedback.text.trim() ? <div className="user-bubble">
+                        <MessageResponse className="conversation-markdown user-message-body" preserveLineBreaks theme={dark ? "dark" : "light"} onOpenExternalUrl={onLink} onOpenFileLink={onFile}>{browserFeedback.text}</MessageResponse>
                       </div> : null}
                       {text.trim() && <MessageActions text={text} />}
                     </div>

@@ -546,7 +546,7 @@ impl App {
                 && !reserved.contains(&id)
                 && !self.releasing.contains(&id)
             {
-                self.queue("thread/resume", json!({"threadId":id}), Purpose::Resume(id))?;
+                self.queue("areal/thread/observe", json!({"threadId":id}), Purpose::Resume(id))?;
                 occupied += 1;
             }
         }
@@ -622,10 +622,10 @@ impl App {
             let id = thread.id.clone();
             let fingerprint = (turn.id.clone(), thread.goals.event_sequence);
             if self.resynced.get(&id) != Some(&fingerprint)
-                && !self.in_flight("thread/resume", "threadId", &id)
+                && !self.in_flight("areal/thread/observe", "threadId", &id)
             {
                 self.queue(
-                    "thread/resume",
+                    "areal/thread/observe",
                     json!({"threadId":id}),
                     Purpose::Resume(id.clone()),
                 )?;
@@ -1896,7 +1896,7 @@ impl App {
                 if let Purpose::Configure(id) = &request.purpose {
                     // revision 冲突后重新读取权威配置，保留选择器供用户重试。
                     self.queue(
-                        "thread/resume",
+                        "areal/thread/observe",
                         json!({"threadId":id}),
                         Purpose::Resume(id.clone()),
                     )?;
@@ -1938,7 +1938,7 @@ impl App {
                     }
                 }
                 Purpose::Interaction(id) => {
-                    self.queue("thread/resume", json!({"threadId":id}), Purpose::Resume(id))?;
+                    self.queue("areal/thread/observe", json!({"threadId":id}), Purpose::Resume(id))?;
                 }
                 Purpose::Configuration => {
                     self.restart_ready = result["configuration"]["restartRequired"] == true
@@ -2942,7 +2942,7 @@ pub(crate) mod tests {
         assert_eq!(
             app.outbox
                 .iter()
-                .filter(|r| r.method == "thread/resume")
+                .filter(|r| r.method == "areal/thread/observe")
                 .count(),
             1
         );
@@ -2955,7 +2955,7 @@ pub(crate) mod tests {
         app.outbox.clear();
         app.snapshot(t);
         app.refresh().unwrap();
-        assert!(app.outbox.iter().all(|r| r.method != "thread/resume"));
+        assert!(app.outbox.iter().all(|r| r.method != "areal/thread/observe"));
         let goal = app
             .threads
             .get_mut("root")
@@ -2967,7 +2967,7 @@ pub(crate) mod tests {
         goal.active_turn_id = Some("turn".into());
         app.resynced.clear();
         app.refresh().unwrap();
-        assert!(app.outbox.iter().all(|r| r.method != "thread/resume"));
+        assert!(app.outbox.iter().all(|r| r.method != "areal/thread/observe"));
     }
     #[test]
     fn details_toggle_preserves_input_and_does_not_submit() {
@@ -3145,7 +3145,7 @@ pub(crate) mod tests {
         app.receive(json!({"id":1,"error":{"message":"conflict"}}))
             .unwrap();
         assert!(app.picker.is_some());
-        assert_eq!(app.outbox[0].method, "thread/resume");
+        assert_eq!(app.outbox[0].method, "areal/thread/observe");
         assert!(app.status.contains("conflict"));
     }
     #[test]
@@ -3199,7 +3199,7 @@ pub(crate) mod tests {
             1,
             Request {
                 submitted_input: None,
-                method: "thread/resume".into(),
+                method: "areal/thread/observe".into(),
                 params: json!({}),
                 purpose: Purpose::Resume("child".into()),
             },
