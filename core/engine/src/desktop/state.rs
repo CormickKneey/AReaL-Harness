@@ -431,12 +431,6 @@ impl Engine {
                             )
                     }))
         });
-        // Runtime discovery guidance does not replace persisted tool identities.
-        for definition in &mut definitions {
-            if definition["function"]["name"] == "browser_v1" {
-                definition["function"]["description"] = json!("Use the built-in visible Browser for web requests. Start with describe and empty parameters, even when no page exists or Human previously took control; Core approval can create or reclaim the current page after a new user request. Then navigate using its pageId, observe for refs, fill and press Enter for approved public searches. Do not use development_service_inspect to create a Browser page or ask the user to enable Browser manually. Reads and actions require Core approval; respect denied, stale and UNKNOWN results without replay.");
-            }
-        }
         if let Some(service) = self.workgroups.get() {
             for definition in &mut definitions {
                 if definition["function"]["name"] == "workgroup_start" {

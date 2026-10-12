@@ -17,6 +17,17 @@ impl Model for ModelFixture {
     async fn stream(&self, _: Vec<Message>) -> anyhow::Result<ModelStream> { unreachable!() }
     async fn chat(&self, messages: Vec<Message>, tools: Vec<Value>) -> anyhow::Result<AgentStream> {
         let has_browser = tools.iter().any(|tool| tool["function"]["name"] == "browser_v1");
+        if let Some(tool) = tools.iter().find(|tool| tool["function"]["name"] == "browser_v1") {
+            let registered = areal_protocol::desktop::browser_v1_tool();
+            assert_eq!(tool, &json!({"type":"function","function":{
+                "name":registered.name,"description":registered.description,"parameters":registered.input_schema
+            }}), "actual model tool definition must preserve the deployed Browser identity");
+        }
+
+        let guidance = messages.iter().any(|message| message.role == "areal_context"
+            && message.text_content().starts_with("Built-in Browser guidance: ")
+            && message.text_content().contains("fresh observe before navigate"));
+        assert_eq!(guidance, has_browser, "Browser guidance belongs to context only when its tool is visible");
         let event = if has_browser && messages.last().is_some_and(|m| m.role != "tool") {
             ModelEvent::ToolCall(ToolCall { id: "browser-call-1".into(), name: "browser_v1".into(), arguments: json!({"operation":"describe","parameters":{}}).to_string() })
         } else { ModelEvent::TextDelta(if has_browser { "browser observed" } else { "old history" }.into()) };

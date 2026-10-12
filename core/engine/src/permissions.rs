@@ -45,9 +45,8 @@ impl Engine {
         generation: Option<&str>,
         restrictions: &Value,
     ) -> anyhow::Result<PermissionGrant> {
-        // Browser grants cannot survive human takeover or page replacement. Public
-        // actions retain their concrete target and payload, so a local development
-        // grant (or another public form) cannot silently authorize a search submit.
+        // Browser 许可不得跨越人工接管或页面替换。公网操作保留具体目标和负载，
+        // 避免本地开发站点或另一表单的许可被静默复用于搜索提交。
         let grant_arguments = if tool == "browser_v1" && arguments["plan"].is_object() {
             let plan = &arguments["plan"];
             json!({"origin":plan["origin"],"targetOrigin":plan["targetOrigin"],
