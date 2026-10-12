@@ -8,7 +8,7 @@ const { performance } = require('node:perf_hooks');
 const { isDeepStrictEqual } = require('node:util');
 const { basename } = require('node:path');
 const { validatePreview } = require('@areal/workbench/desktop-contract');
-const { WorkspaceNetworkPolicy, loopback } = require('./browser-network.cjs');
+const { WorkspaceNetworkPolicy } = require('./browser-network.cjs');
 const { waitAction } = require('./browser-tool.cjs');
 const { validateEdit, mutate: mutateStyleTrial } = require('./browser-style-trial.cjs');
 
@@ -306,6 +306,27 @@ class CorePreview {
     // A call identity is retained for this host lifetime. Losing a transport
     // reply must never turn a repeated call into permission to replay a prefix.
     this.batchCalls = new Map();
+    // 人工输入来源只在 Main 记录；Renderer 没有通用 sendInputEvent 能力。
+    window.webContents.on('before-mouse-event', (event, mouse) => {
+      const page = this.pages.get(this.owner);
+      if (!page?.view || !window.isFocused()) return;
+      const bounds = page.view.getBounds();
+      const x = Math.round(mouse.x - bounds.x), y = Math.round(mouse.y - bounds.y);
+      const inside = x >= 0 && y >= 0 && x < bounds.width && y < bounds.height;
+      if (mouse.type === 'mouseDown' && !inside) this.nativeInputOwner = null;
+      if (!inside || page.view.getVisible() || !page.requestedVisible
+        || !['agent', 'transferring'].includes(page.control)
+        || !['mouseDown', 'mouseUp', 'mouseWheel'].includes(mouse.type)) return;
+      event.preventDefault(); this.nativeInputOwner = page.id;
+      void this.humanInput(page.projectId, page.threadId, page.id, { ...mouse, x, y }).catch(() => {});
+    });
+    window.webContents.on('before-input-event', (event, input) => {
+      const page = this.pages.get(this.owner);
+      if (!page?.view || page.id !== this.nativeInputOwner || page.view.getVisible()
+        || !page.requestedVisible || !window.isFocused() || !['agent', 'transferring'].includes(page.control)) return;
+      event.preventDefault();
+      void this.humanKey(page, input).catch(() => {});
+    });
   }
   workspacePages(projectId, threadId) {
     return [...this.pages.values()].filter(page => page.coreInstanceId === this.coreIdentity(projectId)
@@ -530,6 +551,7 @@ class CorePreview {
     if (page.control !== 'agent') return;
     // This local fence runs before any Core request and before awaiting native input.
     page.control = 'transferring'; page.controlEpoch++; page.refs.clear(); page.plans.clear();
+    page.approvedActionNavigation = null;
     this.clearDiagnostics(page, 'control_changed');
     page.lastObservation = null; page.lastCapture = null; page.needsObservation = true;
     page.view?.setVisible(false);
@@ -598,6 +620,7 @@ class CorePreview {
           page.control = 'human'; page.transferError = null;
           page.view?.setVisible(this.pageStillOwned(page) && this.owner === pageKey(page.coreInstanceId, page.projectId, page.threadId, page.id)
             && page.requestedVisible === true);
+          this.changed(page, 'controlChanged');
         }
       } catch (error) {
         page.transferError = error.message;
@@ -612,6 +635,66 @@ class CorePreview {
     return page.converging;
   }
   revokeAll() { for (const page of this.pages.values()) this.revoke(page); }
+  async ensureAgentPage(projectId, threadId) {
+    // 仅供已通过 Core 权限的工具回调调用；展示页面不会隐式认领。
+    if (!this.owns(projectId, threadId) || !this.coreIdentity(projectId)) throw new Error('Browser thread unavailable');
+    let page = this.page(projectId, threadId);
+    if (!page) {
+      const id = randomUUID();
+      page = this.create(pageKey(this.coreIdentity(projectId), projectId, threadId, id), projectId, threadId, { id });
+    }
+    if (!page.view || page.crashed || page.view.webContents.isDestroyed()) throw new Error('Browser page unavailable');
+    const c = page.view.webContents;
+    const humanRevision = page.humanRevision ?? 0;
+    if (!c.getURL()) await c.loadURL('about:blank');
+    if (!this.pageStillOwned(page)) throw new Error('Browser page unavailable');
+    if (page.control === 'transferring') await this.convergeInput(page);
+    if ((page.humanRevision ?? 0) !== humanRevision) throw new Error('Browser authorization was revoked');
+    if (page.control === 'agent') return { protocol: 'areal.browser.host.v1',
+      operations: ['describe', 'observe', 'capture', 'act', 'wait', 'navigate', 'newPage', 'diagnostics', 'runBatch'], available: true,
+      coreInstanceId: page.coreInstanceId, projectId, threadId, pageId: page.id, browserHostId: this.browserHostId,
+      hostGeneration: this.hostGeneration, pageGeneration: page.pageGeneration, controlEpoch: page.controlEpoch };
+    return this.claim(projectId, threadId, page.id);
+  }
+  async humanKey(page, input) {
+    const modifiers = ['shift', 'control', 'alt', 'meta'].filter(name => input[name]);
+    const keyCode = input.key === ' ' ? 'Space' : input.key;
+    await this.humanInput(page.projectId, page.threadId, page.id, { type: input.type, keyCode, modifiers });
+    if (input.type === 'keyDown' && input.key.length === 1 && !input.control && !input.meta && !input.isComposing)
+      await this.humanInput(page.projectId, page.threadId, page.id, { type: 'char', keyCode: input.key, modifiers });
+  }
+  async humanInput(projectId, threadId, pageId, input) {
+    const page = this.page(projectId, threadId, pageId);
+    const c = page?.view?.webContents;
+    const current = () => !!c && !c.isDestroyed() && this.pageStillOwned(page)
+      && this.owner === pageKey(page.coreInstanceId, projectId, threadId, pageId)
+      && this.selected.get(workspaceKey(page.coreInstanceId, projectId, threadId)) === pageId
+      && page.requestedVisible && !page.annotationCaptureId
+      && this.window.isVisible() && !this.window.isMinimized() && this.window.isFocused();
+    if (!current()) throw new Error('人工输入页面已变化');
+    const bounds = page.view.getBounds();
+    if (input.type.startsWith('mouse') && (!Number.isSafeInteger(input.x) || !Number.isSafeInteger(input.y)
+      || input.x < 0 || input.y < 0 || input.x >= bounds.width || input.y >= bounds.height))
+      throw new Error('人工输入坐标已变化');
+    // fence 必须在首个 await 之前完成，后续输入按同一代次串行交付。
+    page.humanRevision = (page.humanRevision ?? 0) + 1;
+    page.claiming?.cancel();
+    this.revoke(page);
+    const epoch = page.controlEpoch, generation = page.pageGeneration, document = page.documentGeneration;
+    const deliver = async () => {
+      if (page.control === 'transferring') await this.convergeInput(page);
+      if (!current() || page.control !== 'human' || page.controlEpoch !== epoch
+        || page.pageGeneration !== generation || page.documentGeneration !== document)
+        throw new Error('人工输入页面已变化');
+      c.focus();
+      c.sendInputEvent(input);
+      return this.state(page);
+    };
+    const pending = (page.humanInputPending ?? Promise.resolve()).then(deliver);
+    page.humanInputPending = pending;
+    try { return await pending; }
+    finally { if (page.humanInputPending === pending) page.humanInputPending = null; }
+  }
   async claim(projectId, threadId, pageId) {
     const page = this.page(projectId, threadId, pageId);
     if (!page?.view || page.crashed || page.view.webContents.isDestroyed() || page.view.webContents.isDevToolsOpened()
@@ -1302,9 +1385,49 @@ class CorePreview {
     return { identity, backendNodeId, x, y, viewport,
       role: safeText(node.role?.value, 80), name: safeText(node.name?.value, 256) };
   }
+  async publicActionSemantics(page, c, target, action) {
+    const resolved = await c.debugger.sendCommand('DOM.resolveNode', { backendNodeId: target.backendNodeId });
+    const objectId = resolved.object?.objectId;
+    if (!objectId) throw new Error('target_unavailable');
+    let facts;
+    try {
+      const result = await c.debugger.sendCommand('Runtime.callFunctionOn', { objectId, returnByValue: true,
+        functionDeclaration: `function () {
+          const el = this, form = el.form || el.closest('form');
+          const field = /^(INPUT|TEXTAREA)$/.test(el.tagName);
+          const tokens = [el.type, el.name, el.id, el.autocomplete, el.getAttribute('aria-label')].join(' ');
+          const sensitive = /password|passcode|secret|token|api.?key|credit.?card|cc-|cvv|authorization|one.?time.?code|credential|file/i;
+          const search = !!form && (form.getAttribute('role') === 'search' || el.type === 'search'
+            || Array.from(form.elements).some(item => /^(q|query|search|search_query)$/i.test(item.name)));
+          return { field, sensitive: sensitive.test(tokens) || !!form && Array.from(form.elements).some(item => sensitive.test([item.type, item.name, item.autocomplete].join(' '))),
+            search, method: form ? (el.getAttribute('formmethod') || form.method || 'get').toLowerCase() : null,
+            destination: el.closest('a[href]')?.href || (form ? el.getAttribute('formaction') || form.action : null),
+            link: !!el.closest('a[href]'), download: !!el.closest('a[download]'),
+            submit: !!form && /^(submit|image)$/.test(el.type),
+            type: el.type || '', role: el.getAttribute('role') || '' };
+        }` });
+      facts = result.result?.value;
+    } finally { await c.debugger.sendCommand('Runtime.releaseObject', { objectId }).catch(() => {}); }
+    if (!facts || facts.sensitive) throw new Error('human_takeover_required');
+    if (action.kind === 'fill' && facts.field && /^(text|search|textarea)$/.test(facts.type))
+      return { kind: 'edit_field' };
+    if (action.kind === 'press' && action.key !== 'Enter' && facts.field) return { kind: 'field_key' };
+    const searchSubmit = facts.search && facts.method === 'get'
+      && ((action.kind === 'press' && action.key === 'Enter' && facts.field) || (action.kind === 'click' && facts.submit));
+    if (searchSubmit || (action.kind === 'click' && facts.link && !facts.download)) {
+      let destination;
+      try { destination = new URL(webUrl(facts.destination)); } catch { throw new Error('human_takeover_required'); }
+      if (!page.networkPolicy.canAuthorize(destination.href)) throw new Error('human_takeover_required');
+      return { kind: searchSubmit ? 'public_search' : 'link_navigation', method: 'GET',
+        targetOrigin: destination.origin, targetPath: destination.pathname,
+        ...(searchSubmit ? {} : { targetUrl: destination.href }) };
+    }
+    if (action.kind === 'click' && facts.field) return { kind: 'focus_field' };
+    throw new Error('human_takeover_required');
+  }
   async prepareNavigation(request) {
     const { page, c } = this.actionPage(request);
-    if (page.needsObservation) throw new Error('stale_ref');
+    if (page.needsObservation && c.getURL() !== 'about:blank') throw new Error('stale_ref');
     if (page.activeRead || page.activePrepare || page.activeAction
       || this.workspaceOutstanding(page.projectId, page.threadId) >= 16)
       throw new Error('not_sent');
@@ -1537,8 +1660,40 @@ class CorePreview {
       if (page.activeAction === action) page.activeAction = null;
     }
   }
+  prepareRead(request) {
+    const { page, c } = this.actionPage(request);
+    for (const [id, record] of page.plans) if (record.plan.expiresAt < Date.now()) page.plans.delete(id);
+    if (page.activeRead || page.activePrepare || page.activeAction
+      || this.workspaceOutstanding(page.projectId, page.threadId) >= 16) throw new Error('not_sent');
+    const plan = { preparedActionId: randomUUID(), operation: request.operation, pageId: page.id,
+      origin: new URL(c.getURL()).origin, url: observationUrl(c.getURL()), parameters: request.parameters,
+      pageGeneration: page.pageGeneration, documentEpoch: page.documentGeneration, controlEpoch: page.controlEpoch,
+      browserHostId: this.browserHostId, hostGeneration: this.hostGeneration,
+      threadId: request.threadId, turnId: request.turnId, callId: request.callId, expiresAt: Date.now() + 300000 };
+    plan.fingerprint = createHash('sha256').update(JSON.stringify(plan)).digest('hex');
+    page.plans.set(plan.preparedActionId, { plan, pageUrl: c.getURL() });
+    return { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration,
+      projectId: request.projectId, threadId: request.threadId, turnId: request.turnId, callId: request.callId,
+      pageId: page.id, browserHostId: this.browserHostId, hostGeneration: this.hostGeneration,
+      pageGeneration: page.pageGeneration, controlEpoch: page.controlEpoch, plan };
+  }
+  async executeRead(request) {
+    const { page, c } = this.actionPage(request);
+    const approved = request.browserApproval?.plan;
+    const saved = approved && page.plans.get(approved.preparedActionId);
+    if (!saved || !isDeepStrictEqual(saved.plan, approved) || saved.pageUrl !== c.getURL()
+      || approved.operation !== request.operation || approved.threadId !== request.threadId
+      || approved.turnId !== request.turnId || approved.callId !== request.callId || approved.expiresAt < Date.now()
+      || approved.pageGeneration !== page.pageGeneration || approved.documentEpoch !== page.documentGeneration
+      || approved.controlEpoch !== page.controlEpoch || !isDeepStrictEqual(approved.parameters, request.parameters))
+      throw new Error('plan_stale');
+    page.plans.delete(approved.preparedActionId);
+    return request.operation === 'diagnostics' ? this.diagnostics(request) : this.observe(request);
+  }
   async prepare(request) {
-    if (request.phase !== 'prepare' || !['act', 'wait', 'navigate', 'newPage', 'runBatch'].includes(request.operation)) throw new Error('not_sent');
+    if (request.phase !== 'prepare') throw new Error('not_sent');
+    if (['observe', 'capture', 'diagnostics'].includes(request.operation)) return this.prepareRead(request);
+    if (!['act', 'wait', 'navigate', 'newPage', 'runBatch'].includes(request.operation)) throw new Error('not_sent');
     if (request.operation === 'runBatch') return this.prepareBatch(request);
     if (['navigate', 'newPage'].includes(request.operation)) return this.prepareNavigation(request);
     const { page, c } = this.actionPage(request);
@@ -1548,8 +1703,8 @@ class CorePreview {
       || page.activeBatch
       || this.workspaceOutstanding(page.projectId, page.threadId) >= 16) throw new Error('not_sent');
     const url = new URL(c.getURL());
-    const local = url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
-    if (!local) throw new Error('human_takeover_required'); // Unknown/external effects require human takeover.
+    const local = ['http:', 'https:'].includes(url.protocol) && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+    if (!local && !['http:', 'https:'].includes(url.protocol)) throw new Error('human_takeover_required');
     if (page.needsObservation || (request.operation === 'act' && request.parameters.snapshotId !== page.lastObservation)) throw new Error('stale_ref');
     const coordinate = request.operation === 'act' && coordinateKinds.has(request.parameters.action.kind);
     const capture = coordinate ? page.lastCapture : null;
@@ -1560,6 +1715,7 @@ class CorePreview {
     page.activePrepare = true;
     try {
       if (!c.debugger.isAttached()) c.debugger.attach('1.3');
+      if (coordinate && !local) throw new Error('human_takeover_required');
       if (coordinate) target = coordinateTarget(capture, request.parameters.action);
       else if (request.operation === 'act') target = await (request.batchDeadline
         ? batchWithin(this.actionTarget(page, c, request.parameters.action.ref), request.batchDeadline)
@@ -1567,6 +1723,7 @@ class CorePreview {
       if (request.parameters.action?.kind === 'fill'
         && !/^(textField|textbox|searchbox|comboBox|spinbutton)$/i.test(target.role))
         throw new Error('target_unavailable');
+      const semantics = !local && target ? await this.publicActionSemantics(page, c, target, request.parameters.action) : null;
       const viewport = await (request.batchDeadline
         ? batchWithin(readIsolated(c, viewportScript), request.batchDeadline)
         : readIsolated(c, viewportScript));
@@ -1582,7 +1739,7 @@ class CorePreview {
         snapshotId: request.operation === 'act' ? request.parameters.snapshotId : null,
         target: target ? coordinate ? { ...target, captureId: capture.observationId,
           bitmapWidth: capture.bitmapWidth, bitmapHeight: capture.bitmapHeight }
-          : { ref: request.parameters.action.ref, role: target.role, name: target.name, x: target.x, y: target.y } : null,
+          : { ref: request.parameters.action.ref, role: target.role, name: target.name, x: target.x, y: target.y, ...(semantics ? { semantics } : {}) } : null,
         action: request.operation === 'act' ? request.parameters.action : waitAction(request.parameters),
         pageGeneration: page.pageGeneration, documentEpoch: page.documentGeneration,
         controlEpoch: page.controlEpoch, viewportRevision: page.viewportRevision, viewportKey,
@@ -1605,7 +1762,9 @@ class CorePreview {
     }
   }
   async execute(request) {
-    if (request.phase !== 'execute' || !['act', 'wait', 'navigate', 'newPage', 'runBatch'].includes(request.operation)) throw new Error('not_sent');
+    if (request.phase !== 'execute') throw new Error('not_sent');
+    if (['observe', 'capture', 'diagnostics'].includes(request.operation)) return this.executeRead(request);
+    if (!['act', 'wait', 'navigate', 'newPage', 'runBatch'].includes(request.operation)) throw new Error('not_sent');
     if (request.operation === 'runBatch') return this.executeBatch(request);
     if (['navigate', 'newPage'].includes(request.operation)) return this.executeNavigation(request);
     const { page, c } = this.actionPage(request);
@@ -1639,7 +1798,7 @@ class CorePreview {
     if (request.operation === 'act') {
       // A hidden View can retain keyboard focus. Move focus only if this page
       // owns the foreground window's native focus; never raise a background app.
-      if (this.window.isFocused() && c.isFocused()) this.window.webContents.focus();
+      if (this.window.isFocused() && c.isFocused()) { this.nativeInputOwner = page.id; this.window.webContents.focus(); }
       page.view.setVisible(false);
     }
     const stepTimeout = request.operation === 'wait'
@@ -1710,12 +1869,19 @@ class CorePreview {
           || viewportFacts(this.window, page, currentViewport).key !== saved.plan.viewportKey
           || c.getURL() !== saved.pageUrl || page.controlEpoch !== saved.plan.controlEpoch)
           throw new Error('plan_stale');
+        if (saved.plan.target?.semantics) {
+          const semantics = await this.publicActionSemantics(page, c, target, request.parameters.action);
+          if (!isDeepStrictEqual(semantics, saved.plan.target.semantics)) throw new Error('plan_stale');
+          if (['public_search', 'link_navigation'].includes(semantics.kind))
+            page.approvedActionNavigation = { ...semantics, controlEpoch: page.controlEpoch };
+        }
         // If the native page still owns local keyboard focus, do not dispatch.
         // before-input-event cannot distinguish a physical key from CDP echo.
         if (this.window.isFocused() && c.isFocused()) throw new Error('not_sent');
         const live = () => {
           if (action.cancelled || request.batchGuard?.() || !this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== saved.plan.controlEpoch
-            || page.documentGeneration !== saved.plan.documentEpoch || page.viewportRevision !== saved.plan.viewportRevision
+            || (page.documentGeneration !== saved.plan.documentEpoch && page.documentGeneration !== action.navigationDocument)
+            || page.viewportRevision !== saved.plan.viewportRevision
             || c.isDestroyed()) throw new Error(action.dispatched ? 'outcome_unknown' : 'plan_stale');
         };
         const input = params => { live(); action.dispatched = true; return this.dispatchInput(page, 'Input.dispatchMouseEvent', params); };
@@ -1769,6 +1935,7 @@ class CorePreview {
     } finally {
       clearTimeout(deadline);
       if (page.activeAction === action) page.activeAction = null;
+      if (!action.dispatched) page.approvedActionNavigation = null;
       if (request.operation === 'act') page.lastCapture = null;
       if (page.control === 'agent' && page.controlEpoch === saved.plan.controlEpoch
         && page.inputPending.size === 0
@@ -2234,9 +2401,20 @@ class CorePreview {
           else page.styleTrial = null;
         }
         page.activeRead?.cancel();
+        const intent = page.approvedActionNavigation;
+        let approvedAction = false;
+        try {
+          const destination = new URL(url);
+          approvedAction = intent?.controlEpoch === page.controlEpoch
+            && destination.origin === intent.targetOrigin && destination.pathname === intent.targetPath
+            && (!intent.targetUrl || intent.targetUrl === destination.href);
+        } catch { /* 非网页导航不继承 Agent 权限。 */ }
+        page.approvedActionNavigation = null;
         if (page.approvedNavigation === url) page.approvedNavigation = null;
-        else this.revoke(page);
+        else if (!approvedAction) this.revoke(page);
         page.documentGeneration++;
+        if (approvedAction && page.activeAction) page.activeAction.navigationDocument = page.documentGeneration;
+        page.needsObservation = true;
         page.refs.clear();
         page.url = url;
         page.error = "";
@@ -2303,7 +2481,7 @@ class CorePreview {
         && page.control === 'human' && this.owns(projectId, threadId)
         && this.owner === pageKey(page.coreInstanceId, projectId, threadId, page.id)
         && page.view.getVisible() && this.window.isFocused() && c.isFocused()) {
-        event.preventDefault(); this.window.webContents.focus(); return;
+        event.preventDefault(); this.nativeInputOwner = null; this.window.webContents.focus(); return;
       }
       if (page.control === 'human' && c.isFocused() && input.type === 'keyDown'
         && ['Enter', 'Space'].includes(input.key)) page.userPopupIntentUntil = Date.now() + 1000;
@@ -2311,17 +2489,24 @@ class CorePreview {
       // page without native focus may pass here; a focused page is local input.
       if (page.control === 'agent' && (!page.activeAction?.syntheticInput || page.view.getVisible()
         || (this.window.isFocused() && c.isFocused()))) {
-        event.preventDefault(); this.revoke(page);
+        event.preventDefault();
+        void this.humanKey(page, input).catch(() => {});
       } else if (page.control === 'transferring') event.preventDefault();
+      else if (page.control === 'human') { page.humanRevision = (page.humanRevision ?? 0) + 1; page.claiming?.cancel(); }
     });
     c.on('before-mouse-event', (event, mouse) => {
       if (!this.pageStillOwned(page)) { event.preventDefault(); return; }
       if (page.control === 'human' && mouse.type === 'mouseDown' && c.isFocused())
         page.userPopupIntentUntil = Date.now() + 1000;
-      if (page.control === 'agent' && page.view.getVisible() && mouse.type === 'mouseDown') {
-        event.preventDefault(); this.revoke(page);
+      if (page.control === 'agent' && page.view.getVisible() && ['mouseDown', 'mouseWheel'].includes(mouse.type)) {
+        event.preventDefault(); this.nativeInputOwner = page.id;
+        void this.humanInput(projectId, threadId, page.id, mouse).catch(() => {});
       } else if (page.control === 'transferring') event.preventDefault();
+      else if (page.control === 'human' && ['mouseDown', 'mouseWheel'].includes(mouse.type)) {
+        page.humanRevision = (page.humanRevision ?? 0) + 1; page.claiming?.cancel();
+      }
     });
+    c.on('focus', () => { if (this.pageStillOwned(page) && this.window.isFocused()) this.nativeInputOwner = page.id; });
     this.window.contentView.addChildView(view);
     view.setVisible(false);
     this.pages.set(owner, page);
@@ -2567,23 +2752,7 @@ class CorePreview {
     const c = view.webContents;
     if (target) {
       if (!page.networkPolicy.canAuthorize(target)) throw new Error('浏览安全策略拒绝该地址');
-      const origin = new URL(target).origin;
-      const alreadyAllowed = page.networkPolicy.permits({ url: target, resourceType: 'mainFrame' });
-      const local = loopback(new URL(target).hostname);
-      if (!alreadyAllowed && local) {
-        const fence = this.developmentPromptFence(page);
-        if (page.pendingDevelopmentPrompt || !this.currentDevelopmentPrompt(page, fence))
-          throw new Error('开发站点授权需要当前页面由用户控制');
-        const prompt = page.pendingDevelopmentPrompt = randomUUID();
-        let confirmed;
-        try { confirmed = await this.confirmDevelopmentOrigin({ origin,
-          page, fence }); }
-        finally { if (page.pendingDevelopmentPrompt === prompt) page.pendingDevelopmentPrompt = null; }
-        if (!confirmed || !this.currentDevelopmentPrompt(page, fence)
-          || page.pendingDevelopmentPrompt) throw new Error('尚未授权此开发站点');
-      }
-      if (!alreadyAllowed && !page.networkPolicy.allowHumanNavigation(target, local))
-        throw new Error('浏览安全策略拒绝该地址');
+      if (!page.networkPolicy.allowHumanNavigation(target)) throw new Error('浏览安全策略拒绝该地址');
     }
     if (['navigate', 'back', 'forward', 'reload', 'devtools'].includes(request.operation) && page.styleTrial) {
       const cleared = await this.clearStyleTrial(page);

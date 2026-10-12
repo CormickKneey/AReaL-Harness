@@ -2,7 +2,7 @@
 
 const definition = Object.freeze({
   name: 'browser_v1',
-  description: 'Inspect and navigate authorized pages in this desktop thread. Call describe first; page changes require Core approval.',
+  description: 'Use the built-in browser in this desktop thread. Call describe first to open or reuse its current page. Then navigate, observe, and use exact observed refs to fill search fields and press Enter to submit a public search. Reads and actions require Core approval. Human input pauses this tool until a new explicit user instruction.',
   inputSchema: {
     type: 'object',
     properties: {
