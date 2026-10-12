@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { ArrowRight, Check, ChevronLeft, ChevronRight, Pencil } from "lucide-react";
-import { StopIcon } from "./interfaceIcons.js";
+import { Check, ChevronLeft, ChevronRight, MessageCircleQuestion, Pencil, X } from "lucide-react";
+import { DecisionCard } from "./DecisionCard.js";
+import { useApplicationPreferences } from "./settings/applicationPreferences.js";
 import { Button } from "./components/ui/button.js";
 import { Textarea } from "./components/ui/textarea.js";
 import type { Action, Data } from "./services.js";
@@ -16,22 +17,16 @@ export function AskUserQuestion({
   item,
   projectId,
   action,
-  onStop,
-  stopDisabled = false,
 }: {
   item: Data;
   projectId: string;
   action: Action;
-  onStop?: () => void;
-  stopDisabled?: boolean;
 }) {
+  const prefs = useApplicationPreferences();
+  const [collapsed, setCollapsed] = useState(false);
   const questions = item.questions as Data[];
   const [index, setIndex] = useState(0);
-  const [drafts, setDrafts] = useState<Record<string, Draft>>(() =>
-    questions.length === 1 && questions[0].options?.length
-      ? { [questions[0].id]: { ...empty, option: questions[0].options[0] } }
-      : {},
-  );
+  const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [submitted, setSubmitted] = useState(false);
@@ -41,8 +36,8 @@ export function AskUserQuestion({
   const id = useId();
   const question = questions[index];
   useEffect(() => {
-    title.current?.focus({ preventScroll: true });
-  }, [index]);
+    if (!collapsed) title.current?.focus({ preventScroll: true });
+  }, [index, collapsed]);
   if (!question) return null;
   const options: string[] = question.options ?? [];
   const draft = drafts[question.id] ?? {
@@ -93,25 +88,28 @@ export function AskUserQuestion({
   // Retain the ZCode elicitation state mechanism with Codex bottom-dock layout.
   // Core receives the original option string or explicit custom text, never a skip.
   return (
-    <section
-      className="ask-user-card"
-      data-interaction={item.kind}
-      aria-label="需要你的回答"
-      aria-busy={busy}
+    <>
+      {collapsed && <Button type="button" className="decision-deferred" variant="outline" aria-label="展开待回答问题" onClick={() => setCollapsed(false)}><MessageCircleQuestion />问题等待回答<span>展开</span></Button>}
+    <form hidden={collapsed} className="ask-user-form"
+      onKeyDown={(e) => {
+        if (locked || e.nativeEvent.isComposing || !/^[1-9]$/.test(e.key) || (e.target as HTMLElement).closest("input, textarea, button")) return;
+        const option = options[Number(e.key) - 1];
+        if (!option) return;
+        e.preventDefault();
+        const next = { ...drafts, [question.id]: { ...draft, mode: "option" as const, option } };
+        setDrafts(next);
+        if (single) void submit(next);
+      }}
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (locked || !answer(draft)) return;
+        if (index < questions.length - 1) setIndex(index + 1);
+        else void submit();
+      }}
     >
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (locked || !answer(draft)) return;
-          if (index < questions.length - 1) setIndex(index + 1);
-          else void submit();
-        }}
-      >
-        <header className="ask-user-header">
-          <h3 ref={title} tabIndex={-1} id={`${id}-title`}>
-            {question.title}
-          </h3>
-          <div className="ask-user-header-actions">
+      <DecisionCard kind={item.kind} label="问题" icon={<MessageCircleQuestion />} busy={busy}
+        className="ask-user-card" error={error} message={submitted ? "回答已提交，等待执行状态更新。" : undefined}
+        headerActions={<>
             {questions.length > 1 && <nav className="ask-user-navigation" aria-label="问题导航">
               <Button
                 type="button"
@@ -137,12 +135,33 @@ export function AskUserQuestion({
                 <ChevronRight />
               </Button>
             </nav>}
-            {onStop && <Button type="button" variant="ghost" size="icon-xs"
-              aria-label="停止任务" title="停止当前任务" disabled={locked || stopDisabled} onClick={onStop}>
-              <StopIcon />
-            </Button>}
-          </div>
-        </header>
+          <Button type="button" variant="ghost" size="icon-xs" aria-label="收起问题" disabled={busy || submitted} onClick={() => setCollapsed(true)}><X /></Button>
+        </>}
+        footer={<>
+          {(!options.length || question.allowFreeText) && <div className="ask-user-custom" data-selected={custom}>
+            <Pencil size={14} aria-hidden="true" />
+            <Textarea aria-label={`自定义回答：${question.title}`} placeholder={options.length ? "或自行撰写回复" : "输入你的回答…"}
+              rows={1} disabled={locked} value={draft.text}
+              onFocus={() => { if (!locked) update({ mode: "custom" }); }}
+              onChange={(e) => update({ mode: "custom", text: e.target.value })}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                if (e.key === "Enter" && !e.shiftKey && (prefs.sendShortcut === "enter" || e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  e.currentTarget.form?.requestSubmit();
+                }
+              }} />
+          </div>}
+          {!single && <span className="ask-user-progress" role="status">已回答 {answered} / {questions.length}</span>}
+          {unknown ? <Button type="button" className="decision-button" variant="outline" disabled={busy} onClick={() => void refresh()}>核对待回答状态</Button> : <>
+            <Button type="button" className="decision-button ask-user-defer" variant="outline" disabled={busy || submitted} onClick={() => setCollapsed(true)}>跳过</Button>
+            <Button type="submit" className="decision-button decision-primary" disabled={locked || !answer(draft) || (index === questions.length - 1 && !complete)}>
+              {busy ? "提交中…" : submitted ? "已提交" : index < questions.length - 1 ? "下一题" : "发送"}
+            </Button>
+          </>}
+        </>}>
+        <h3 className="decision-card-title" ref={title} tabIndex={-1} id={`${id}-title`}>{question.title}</h3>
         <div className="ask-user-body">
           <fieldset
             disabled={locked}
@@ -173,81 +192,14 @@ export function AskUserQuestion({
                 </span>
                 <span>{option}</span>
                 {!custom && draft.option === option && (
-                  questions.length === 1
-                    ? <ArrowRight size={16} className="ask-user-check" aria-hidden="true" />
-                    : <Check size={16} className="ask-user-check" aria-hidden="true" />
+                  <Check size={16} className="ask-user-check" aria-hidden="true" />
                 )}
               </label>
             ))}
           </fieldset>
         </div>
-        {(!options.length || question.allowFreeText) && (
-          <div className="ask-user-custom" data-selected={custom}>
-            <span className="ask-user-number" aria-hidden="true"><Pencil size={14} /></span>
-            <Textarea
-              aria-label={`自定义回答：${question.title}`}
-              placeholder="输入你的回答…"
-              rows={1}
-              disabled={locked}
-              value={draft.text}
-              onFocus={() => { if (!locked) update({ mode: "custom" }); }}
-              onChange={(e) =>
-                update({ mode: "custom", text: e.target.value })
-              }
-              onKeyDown={(e) => {
-                e.stopPropagation();
-                if (e.nativeEvent.isComposing) return;
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                  e.preventDefault();
-                  e.currentTarget.form?.requestSubmit();
-                }
-              }}
-            />
-            {single && <Button
-              type="submit"
-              variant="secondary"
-              size="icon-xs"
-              aria-label={busy ? "提交中…" : submitted ? "已提交" : "提交回答"}
-              disabled={locked || !custom || !answer(draft)}
-            >
-              <ArrowRight aria-hidden="true" />
-            </Button>}
-          </div>
-        )}
-        {error && (
-          <p className="ask-user-error" role="alert">
-            {error}
-          </p>
-        )}
-        {unknown && <Button type="button" variant="outline" disabled={busy} onClick={() => void refresh()}>核对待回答状态</Button>}
-        {single ? <span className="sr-only" role="status">
-          {busy ? "提交中…" : submitted ? "回答已提交" : "等待确认"}
-        </span> : <footer>
-          <span className="ask-user-progress" role="status">
-            {submitted
-              ? "回答已提交"
-              : `已回答 ${answered} / ${questions.length}`}
-          </span>
-          <Button
-            type="submit"
-            variant="secondary"
-            disabled={
-              locked ||
-              !answer(draft) ||
-              (index === questions.length - 1 && !complete)
-            }
-          >
-            {busy
-              ? "提交中…"
-              : submitted
-                ? "已提交"
-                : index < questions.length - 1
-                  ? "下一题"
-                  : "提交回答"}
-            {index < questions.length - 1 && <ChevronRight size={14} />}
-          </Button>
-        </footer>}
-      </form>
-    </section>
+      </DecisionCard>
+    </form>
+    </>
   );
 }

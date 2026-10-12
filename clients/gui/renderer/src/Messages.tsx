@@ -344,7 +344,7 @@ export function Messages({
           // User follow-ups, media and the retained reply remain in original order.
           const groups: { id: string; progress: boolean; entries: { item: Data; index: number }[] }[] = [];
           segments.forEach((item: Data, index: number) => {
-            const progress = item.type !== "userMessage" && item.type !== "agentMedia" && (item.type !== "agentMessage" || item.phase === "commentary" || (!!legacyReply && item.id !== legacyReply.id));
+            const progress = item.type !== "questionAnswer" && item.type !== "userMessage" && item.type !== "agentMedia" && (item.type !== "agentMessage" || item.phase === "commentary" || (!!legacyReply && item.id !== legacyReply.id));
             const previous = groups.at(-1);
             if (progress && previous?.progress) previous.entries.push({ item, index });
             else groups.push({ id: item.id, progress, entries: [{ item, index }] });
@@ -368,6 +368,14 @@ export function Messages({
             {groups.map((group, groupIndex) => {
             const outcome = executionOutcome(group.entries.flatMap(({ item }) => item.items ?? []));
             const contents = group.entries.map(({ item, index }) => {
+              if (item.type === "questionAnswer") return <div className="user-message" data-question-answer={item.id} key={item.id}>
+                <div className="user-message-content"><div className="user-bubble question-answer-bubble">
+                  {item.questions.map((question: Data) => <div key={question.id}>
+                    <p className="question-answer-title">{question.title}</p>
+                    <p>{item.answers[question.id]}</p>
+                  </div>)}
+                </div></div>
+              </div>;
               if (item.type === "userMessage") {
                 const continuation = goalContinuationLabel(turn);
                 if (continuation && item.id === turn.items?.find((entry: Data) => entry.type === "userMessage")?.id) {

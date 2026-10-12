@@ -218,6 +218,19 @@ export function executionSegments(items: Data[], turnStatus: string): Data[] {
     }
     if (!group) { group = { id: `execution:${item.id}`, type: "executionGroup", items: [] }; result.push(group); }
     group.items.push(item);
+    // This is a reading projection of Core's persisted tool result, never a new history item.
+    if (item.type === "dynamicToolCall" && item.tool === "ask_user_question" && item.status === "completed" && item.success === true) {
+      for (const part of item.contentItems ?? []) {
+        let value;
+        try { value = JSON.parse(part.text); } catch { continue; }
+        const questions: Data[] = item.arguments?.questions ?? [];
+        if (!questions.length || !questions.every(q => typeof value?.answers?.[q.id] === "string")) continue;
+        result.push({ id: `question-answer:${item.id}`, type: "questionAnswer", questions,
+          answers: value.answers });
+        group = undefined;
+        break;
+      }
+    }
   }
   return result;
 }

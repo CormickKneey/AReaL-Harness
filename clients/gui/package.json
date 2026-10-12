@@ -14,6 +14,7 @@
     "package": "node scripts/package.mjs",
     "verify": "node scripts/verify-public.mjs",
     "test:queue": "node scripts/queue-smoke.mjs",
+    "test:interactions": "node scripts/interaction-smoke.mjs",
     "test:composer": "node scripts/composer-smoke.mjs",
     "test:model-selection": "node scripts/model-selection-smoke.mjs",
     "test:connection": "node scripts/connection-smoke.mjs",

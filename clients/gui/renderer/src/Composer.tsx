@@ -106,6 +106,8 @@ export function Composer({
   const archived = thread.desktop?.archived;
   const questions = (project.state?.interactions?.[thread.id]?.data ?? [])
     .filter((item: Data) => item.status === "pending" && item.kind !== "approval" && !archived);
+  const approvals = (project.state?.interactions?.[thread.id]?.data ?? [])
+    .filter((item: Data) => item.status === "pending" && item.kind === "approval" && !archived);
   const hadQuestion = useRef(false);
   useEffect(() => {
     if (hadQuestion.current && !questions.length) api.current?.focus();
@@ -301,11 +303,8 @@ export function Composer({
         onEdit={item => void queueEditor.begin(item)}
       />
       {/* Pending decisions stay reachable outside the scrolling transcript. */}
-      {(project.state?.interactions?.[thread.id]?.data ?? [])
-        .filter((item: Data) => item.status === "pending" && item.kind === "approval" && !archived)
-        .map((item: Data) => <ApprovalRequest key={item.requestId} item={item} projectId={project.id} action={action} />)}
-      {questions.map((item: Data) => <AskUserQuestion key={item.requestId} item={item} projectId={project.id} action={action}
-        onStop={running ? stop : undefined} stopDisabled={!project.state?.connected || pending} />)}
+      {approvals.map((item: Data) => <ApprovalRequest key={item.requestId} item={item} projectId={project.id} action={action} />)}
+      {questions.map((item: Data) => <AskUserQuestion key={item.requestId} item={item} projectId={project.id} action={action} />)}
       {goalError && <p role="alert" className="notice text-destructive">{goalError}</p>}
       {admissionError && <p role="alert" className="notice text-destructive">{admissionError}</p>}
       {reviewDraft.error && <p role="alert" className="notice">{reviewDraft.error}</p>}
@@ -324,7 +323,7 @@ export function Composer({
         onConfigureModel={values => { void configure(values); }}
         onModelSettings={() => onPanel("设置")}
         triggerPanelContainer={menuAnchor}
-        className={questions.length && !queueEditor.edit ? "hidden" : undefined}
+        className={!queueEditor.edit ? approvals.length ? "hidden" : questions.length ? "interaction-composer-compact" : undefined : undefined}
         shellClassName="@container/composer"
         workspacePath={project.root}
         taskId={thread.id}
