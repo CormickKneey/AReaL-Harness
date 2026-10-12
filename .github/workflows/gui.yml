@@ -71,6 +71,8 @@ jobs:
           pnpm --dir clients/gui run verify 2>&1 | tee target/ci/gui/public.log
       - name: Verify native Core process lifecycle
         run: pnpm --dir clients/gui run test:core-process 2>&1 | tee target/ci/gui/core-process.log
+      - name: Check Browser contracts and evidence
+        run: pnpm --dir clients/gui run test:browser-contracts 2>&1 | tee target/ci/gui/browser-contracts.log
       - name: Build Core and GUI
         run: |
           make build 2>&1 | tee target/ci/gui/core-build.log
@@ -103,4 +105,6 @@ jobs:
             /private/tmp/areal-gui-*/
             /private/tmp/ams-*/
             /private/tmp/areal-core-process-*/
+            /private/tmp/areal-browser-*/
+            /private/tmp/shared-browser-06-evidence-*/
           retention-days: 7

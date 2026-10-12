@@ -25,7 +25,8 @@
     "test:core-process": "node scripts/core-process-smoke.mjs",
     "test:browser-feasibility": "node scripts/browser-feasibility.mjs",
     "test:browser-attach": "node scripts/browser-attach-smoke.mjs",
-    "test:browser-annotations": "node scripts/browser-annotation-smoke.mjs"
+    "test:browser-annotations": "node scripts/browser-annotation-smoke.mjs",
+    "test:browser-contracts": "node --test scripts/browser-read-contract.test.mjs scripts/browser-network-policy.test.mjs scripts/browser-diagnostics-contract.test.cjs scripts/browser-evidence-contract.test.mjs scripts/browser-startup-contract.test.mjs"
   },
   "devDependencies": {
     "prettier": "3.9.8"

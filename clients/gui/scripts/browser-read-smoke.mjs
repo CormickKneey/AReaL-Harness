@@ -7,6 +7,8 @@ import { createServer } from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { selectConversation, captureSmokeFailure } from './smoke-navigation.mjs';
+import { createBrowserEvidence } from './browser-evidence.mjs';
+import { checkBrowserStartup } from './browser-startup.mjs';
 
 // Real Electron, independent desktop service, Core and Runtime. Only model/site are local fixtures.
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -80,8 +82,19 @@ const env = { ...process.env, AREAL_GUI_USER_DATA: join(scratch, 'electron'), AR
   AREAL_BROWSER_READ_TEST_TRACE: traceFile,
   AREAL_CORE_DESKTOP_CONFIG: deployment, AREAL_CORE_BIN: process.env.AREAL_CORE_BIN || resolve(root, 'target/debug/areal') };
 for (const key of ['AREAL_CORE_WORKSPACE', 'AREAL_CORE_CONFIG', 'AREAL_HARNESS_HOME', 'AREAL_HARNESS_CONFIG']) delete env[key];
-let app, page, passed = false;
+let app, page, executionStatus = 'failed';
 const checks = [], errors = [], events = {};
+const evidence = createBrowserEvidence({ runKind: 'acceptance', cases: [
+  { id: 'B-04.same-page', requirement: 'B-04' },
+  { id: 'B-05.cross-thread', requirement: 'B-05' },
+  { id: 'B-05.forged-receipt', requirement: 'B-05' },
+  { id: 'B-05.human-control', requirement: 'B-05' },
+  { id: 'B-06.host-exit', requirement: 'B-06' },
+] });
+function record(id, assertion, observations) {
+  evidence.recordPass(id, { assertions: [assertion], observations });
+  checks.push(assertion);
+}
 async function until(predicate, label, timeout = 40000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
@@ -108,6 +121,7 @@ async function coreThread(id) {
 }
 try {
   app = await electron.launch({ executablePath: require('electron'), args: [join(gui, 'app')], env, timeout: 120000 });
+  events.startup = await checkBrowserStartup(app, { binary: env.AREAL_CORE_BIN, userHome, scratch });
   page = await app.firstWindow(); page.setDefaultTimeout(15000);
   page.on('pageerror', error => errors.push(error.message));
   await page.getByTestId('areal-workbench').waitFor({ timeout: 120000 });
@@ -195,7 +209,7 @@ try {
     execFileSync('/usr/sbin/screencapture', ['-x', '-l', windowId, join(scratch, 'desktop-window.png')]);
     events.normal.desktopWindowId = Number(windowId);
   }
-  checks.push('B-04: one native WebContents and JS/form/scroll sentinel survive Core tool observation; GUI and Core history correlate');
+  record('B-04.same-page', 'B-04: one native WebContents and JS/form/scroll sentinel survive Core tool observation; GUI and Core history correlate', events.normal);
 
   // A different Browser-enabled Thread cannot read the first page by guessing its pageId.
   scenario = 'cross';
@@ -216,7 +230,7 @@ try {
   }, 'cross-thread rejection');
   assert.match(JSON.stringify(cross), /wrong_page/);
   events.cross = { threadId: second.threadId, history: cross };
-  checks.push('B-05: guessed pageId from a second claimed Thread is rejected in Core history');
+  record('B-05.cross-thread', 'B-05: guessed pageId from a second claimed Thread is rejected in Core history', events.cross);
 
   const { ServiceConnection } = require('../app/src/core/service-client.cjs');
   const metadata = JSON.parse(await readFile(join(scratch, 'core', 'service.json'), 'utf8'));
@@ -253,7 +267,7 @@ try {
     assert.ok(!forgedTurn.includes('FORGED_SOCKET_RESULT'));
     events.forge = { threadId: second.threadId, attemptedRequestId: dispatched.requestId,
       dispatch: dispatched, history: forged.turns.at(-1) };
-    checks.push('B-05: second authenticated socket cannot replace an in-flight result or claim with fake host generation');
+    record('B-05.forged-receipt', 'B-05: second authenticated socket cannot replace an in-flight result or claim with fake host generation', events.forge);
   } finally { rogue.close(); }
 
   // Local takeover immediately blocks further observation, even if service routing lags.
@@ -269,7 +283,7 @@ try {
   assert.match(JSON.stringify(human.turns.at(-1)), /host_unavailable|human_control/);
   assert.ok(!JSON.stringify(human.turns.at(-1)).includes(sentinel));
   events.human = { threadId: second.threadId, history: human.turns.at(-1) };
-  checks.push('human takeover locally revokes Agent observation, confirmed through a subsequent Core callback');
+  record('B-05.human-control', 'human takeover locally revokes Agent observation, confirmed through a subsequent Core callback', events.human);
 
   // The adapter stays alive after the GUI exits, but must not manufacture another browser.
   await page.evaluate(({ projectId, threadId }) => window.arealDesktop.preview({ operation: 'claim', projectId, threadId }), { projectId, threadId: second.threadId });
@@ -289,11 +303,12 @@ try {
     assert.match(JSON.stringify(missing.turns.at(-1)), /host_unavailable/);
     assert.equal(siteFacts.gets, 2, 'missing host must not open another page');
     events.missing = { threadId: second.threadId, history: missing.turns.at(-1) };
-    checks.push('B-06: independent adapter reports host_unavailable after GUI exit without opening a replacement browser');
+    record('B-06.host-exit', 'B-06: independent adapter reports host_unavailable after GUI exit without opening a replacement browser', events.missing);
   } finally { connection.close(); }
   assert.deepEqual(errors, []);
-  passed = true;
+  executionStatus = 'completed';
 } catch (error) {
+  if (error.code === 'BROWSER_STARTUP_BLOCKED') executionStatus = 'blocked';
   errors.push(error.stack ?? String(error));
   if (page) await captureSmokeFailure(page, scratch, error);
   throw error;
@@ -303,13 +318,19 @@ try {
   await Promise.all([new Promise(resolve => site.close(resolve)), new Promise(resolve => model.close(resolve))]);
   const files = ['app/src/core/browser-tool.cjs', 'app/src/core/backend.cjs', 'app/src/core/service-client.cjs',
     'app/src/core/service-protocol.cjs', 'app/src/core/preview.cjs', 'app/src/core/main.cjs',
-    'packages/runtime-client/core.js', 'renderer/src/Preview.tsx', 'scripts/browser-read-smoke.mjs'];
+    'packages/runtime-client/core.js', 'renderer/src/Preview.tsx', 'scripts/browser-read-smoke.mjs',
+    'scripts/browser-evidence.mjs', 'scripts/browser-startup.mjs'];
   const hashes = Object.fromEntries(await Promise.all(files.map(async file => [file,
     createHash('sha256').update(await readFile(join(gui, file))).digest('hex')])));
-  await writeFile(join(scratch, 'manifest.json'), JSON.stringify({ passed, checks, errors, events, modelCalls,
-    source: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
+  const result = evidence.finish({ executionStatus, provenance: {
+    sourceHead: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
     diffSHA256: createHash('sha256').update(execFileSync('git', ['diff', 'HEAD'], { cwd: root })).digest('hex'),
+    scriptSHA256: hashes['scripts/browser-read-smoke.mjs'],
+    coreBinarySHA256: createHash('sha256').update(await readFile(env.AREAL_CORE_BIN)).digest('hex'),
+  } });
+  await writeFile(join(scratch, 'manifest.json'), JSON.stringify({ ...result, checks, errors, events, modelCalls,
+    source: result.provenance.sourceHead, diffSHA256: result.provenance.diffSHA256,
     hashes, coreBinary: env.AREAL_CORE_BIN, siteUrl: siteUrl.replace(/\?.*/, ''),
     scope: 'source Electron + independent desktop service + Core/Runtime + deterministic local model + synthetic site' }, null, 2));
-  console.log(JSON.stringify({ passed, evidence: scratch, checks, errors }));
+  console.log(JSON.stringify({ executionStatus, acceptanceStatus: result.acceptanceStatus, evidence: scratch, checks, errors }));
 }

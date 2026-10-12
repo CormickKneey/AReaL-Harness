@@ -100,7 +100,36 @@ Fixture 至少含：不同端口的A/B站点、HTTPOnly Cookie登录模拟、跨
 
 每次运行保存 run-manifest.json：git SHA、包版本、OS/arch、Electron/驱动版本、fixture版本、测试入口、场景ID、开始结束时间、检查结果、未测项；附Core call/Item关联、合成站点副作用计数、去敏感日志与截图。UNKNOWN用其真实值，不用0/失败代替。截图只作观察证据；业务成功要由明确断言或人工评审给出。
 
+同页读取、观察/媒体和旧 Thread 追加脚本使用 [`browser-evidence.mjs`](../../clients/gui/scripts/browser-evidence.mjs) 生成版本 1 清单：
+
+- `runKind` 显式区分 `acceptance` 与 `diagnostic`；`executionStatus` 为 `completed`、`failed` 或 `blocked`，表示运行状态。
+- `cases` 预先列出稳定案例 ID 和关联需求；断言完成后记录 `passed`、断言说明与当场复制的观察值，未执行的案例保留 `not_run`。`B-05.forged-receipt` 等子案例不能代表整个需求矩阵。
+- `provenance` 绑定源码提交、工作树 diff、脚本与 Core 二进制 SHA-256；原有 `hashes` 包含被读取的实现与公共 fixture helper。
+- `acceptanceStatus` 由运行类别、状态和全部计划案例推导。诊断始终为 `not_applicable`；部分运行不得写成完整通过。`checks` 仅是说明，不能单独用于计分。
+
+按明确的案例清单汇总同一候选的证据，例如：
+
+```sh
+node clients/gui/scripts/browser-evidence.mjs B-04.same-page,B-05.forged-receipt /path/to/manifest.json
+```
+
+完整包含这些案例时退出 0，缺项或格式不合格退出 1。多个清单会显示 `mode: composite` 并保留各次运行状态，不能显示为 `cleanRun`；源码/diff/Core 身份不同的清单不能自动拼接。历史 `passed: true` 清单必须人工核对，不由汇总器升级。诊断运行不增加通过数；出现失败时保留原始文件与修复后的定向结果。此汇总只覆盖命令指定的案例，不声称整个 milestone 或发布门通过。
+
+评审反例时检查它是否能区分目标错误：例如伪回执必须引用真实在途请求 ID；任意不存在的 ID 被拒绝不能证明同号跨 socket 隔离。
+
+## 固定候选的启动检查
+
+上述三个脚本在业务场景前，通过 [`browser-startup.mjs`](../../clients/gui/scripts/browser-startup.mjs) 从实际 Electron Main 运行隔离 home 中的 `config models read`，一次运行只做一次探测，替代无关的多次 `--version` 对照。`startup.json` 保存父/子 PID、argv、二进制哈希、退出码、信号、超时与有限 stderr；不保存配置正文。启动失败记为 `blocked`，业务案例保持未执行。
+
+显示器和可见窗口数量不能证明桌面已解锁，记录中的 `desktop.unlocked` 保持 `unverified`。统一原生验收的唯一执行者先确认桌面会话可用；锁屏或明确启动策略拒绝时保留候选和证据，等待相关环境条件变化后再恢复。旧二进制的版本探测不能替代当前候选的实际启动路径。该检查不修改签名或系统策略。
+
+## 工具结果回读
+
+截图通过 Core 媒体/Blob 通道验证模型输入与 GUI 展示；截断的大工具结果使用 `read_tool_result(resultId, after)`，沿 `nextCursor` 分页，并按所属 Thread 的原始 Item 授权。其实现归 [`core/engine/src/tools/results.rs`](../../core/engine/src/tools/results.rs)，契约见 [Core API](../api/core.md)。内部结果快照不能当作媒体附件读取。改用较小的内联结果可验证缓存等独立断言，但不能据此宣称大结果分页已通过。
+
 ## 现有命令与新增命令
+
+`pnpm --dir clients/gui run test:browser-contracts` 执行现有读取、网络与诊断契约检查，以及证据分类和启动探针检查；已接入 GUI CI，无需启动桌面窗口。这不替代 milestone 收尾时在冻结候选上的真实 Core/Native/GUI 验收。开发期间运行必要局部检查，因果修复只重跑受影响场景并保留先前失败。
 
 现有可用入口包括 `make gui-smoke`、`pnpm --dir clients/gui run test:connection`、`pnpm --dir clients/gui run test:architecture`、`pnpm --dir clients/gui run test:composer`、GUI typecheck与verify；详见GUI指南。Browser 专用脚本见本页所列入口；不得假设存在未公布的 `test:browser` 命令。
 
