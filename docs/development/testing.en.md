@@ -7,7 +7,7 @@ Install dependencies using the [development guide](README.en.md). Regular tests 
 | Entry point | Coverage |
 |---|---|
 | `make verify` | Cordis pin, formatting, static checks, Rust workspace, both SDKs, Python, documentation, TUI and unified delegation smoke |
-| `make script-test` | Launcher, Web reasoning/wait/cancel projections, benchmark statistics/evidence and documentation links/language pairs |
+| `make script-test` | Launcher, Web reasoning/wait/cancel projections, benchmark statistics/evidence, adapter dependency boundaries and documentation links/language pairs |
 | `make test-core` / `make test-protocol` | Engine / app-server |
 | `make test-concurrency` | Concurrency primitives |
 | `make verify-runtime` | Runtime unit tests and real file, process, permission and shutdown smoke |
@@ -32,6 +32,8 @@ Linux host checks use `make verify CARGO_TEST_ARGS='--exclude areal-runtime-exec
 [GUI CI](../../.github/workflows/gui.yml) runs on GUI, Core, Runtime, schema and related build configuration changes. It installs frozen dependencies, checks GUI types and public boundaries, builds Core/GUI, checks routes, and runs the existing `make gui-smoke`, `test:composer` and `test:queue`. The three smoke scripts run sequentially with isolated directories and deterministic local models. Logs, screenshots and source manifests are uploaded as CI artifacts; they do not establish real-provider or packaged-app acceptance.
 
 Composer and queue smoke share navigation and narrow-window steps in `clients/gui/scripts/smoke-navigation.mjs`: hover the project before creating a conversation, return through a stable task ID, and collapse the sidebar before resizing and waiting for the editor. Failures retain a full-window `failure-window.png` and `failure-state.json` with the original error, viewport, selected project/Thread and visible text. Unavailable pages or screenshots are recorded as capture errors without replacing the original test failure.
+
+In the model-selection smoke, only settings-operation settlement after applying model configuration uses a 180-second deadline, covering the existing 150-second apply IPC, subsequent configuration reads and UI settlement. Other page actions retain the default 15 seconds. The test submits apply once, waits for navigation to become available, then checks the actual Core model catalog and requests; it does not hide failures with fixed sleeps or replayed applications.
 
 ## Python and scratch
 
@@ -58,7 +60,7 @@ python3 scripts/native-agents-smoke.py --bin-dir target/debug --sandbox-profile 
 
 Native tools/agent smoke tests use a local fixed-response HTTP model, the standard launcher and temporary workspaces without external model services. They cover file CAS, search, verification receipts, images, no delegation, a single Worker, synchronous waits, budget failures, parent cancellation and default asynchronous dispatch. The asynchronous case requires parent progress before three Worker requests finish and checks parent/child sampling parameters. Stream tests cover same-frame/tail length usage, EOF/cancellation, no UNKNOWN replay, post-compaction handles and cross-Turn boundaries.
 
-`make harness-smoke` also runs `python3 scripts/arena-input-smoke.py --bin-dir target/debug`. The real launcher, CLI, Core and Runtime verify that a task larger than 2 MiB starts through a short bootstrap; task text, manifest, PNG and selected GIF frames are read on demand; images reach the local model request; public inputs reject writes and retain their integrity. Directly oversized CLI input produces a structured error before any model request. This does not evaluate a real model. Engine unit tests separately cover serialized byte boundaries and successful WebSocket deltas whose full replay would exceed the wire budget.
+Optional `make envarena-smoke` runs `python3 integrations/envarena/arena-input-smoke.py --bin-dir target/debug`. The real launcher, CLI, Core and Runtime verify that a task larger than 2 MiB starts through a short bootstrap; task text, manifest, PNG and selected GIF frames are read on demand; images reach the local model request; public inputs reject writes and retain their integrity. Directly oversized CLI input produces a structured error before any model request. This does not evaluate a real model. Engine unit tests separately cover serialized byte boundaries and successful WebSocket deltas whose full replay would exceed the wire budget.
 
 Request-budget tests cover `MAX_MODEL_ROUNDS` classification when Chat Completions or Responses returns tools in the final round, with no tool execution or retries and the original budget audit preserved. Ordinary tool-call budget exhaustion and invalid indices must retain their own classifications. Desktop CLI acceptance also checks the corresponding `error_max_turns` result. Goal HTTP regressions verify that output-token caps and tool count/buffer budgets survive shared pools, while unknown usage from failed requests prevents retries and tool execution.
 
@@ -89,9 +91,22 @@ Outer-container relaxations apply only to the explicitly selected controlled pro
 
 `make capacity` runs these sequentially; regular verification excludes them. Report hardware, build mode, storage and model fixtures. These figures do not measure real LLM throughput.
 
+## Optional platform adapters
+
+The EnvArena adapter and its dedicated scripts live in `integrations/envarena/`. Former `scripts/package-arena.py`, `scripts/arena-input-smoke.py`, `scripts/fetch-arena-fixtures.py` and `scripts/tests/test_package_arena.py` moved there. Regular `make fmt`, `make lint`, `make script-test`, `make verify` and `make harness-smoke` do not load the adapter. Its tests remain available through explicit commands:
+
+```sh
+make envarena-check  # Adapter Ruff formatting/static checks and all offline unit tests
+make envarena-smoke  # Build the standalone product, then run real local input smoke
+```
+
+`make integration-boundaries` is a development check requiring a Git checkout. Included in `make script-test`, it checks product sources/dependency manifests, release/install entry points, the default Make graph and workflows. Regressions cover reintroduced platform paths, indirect recursive Make calls and automatic workflow triggers. The generic Rust `id-arena` allocator is not a platform dependency. Runtime, Engine and native tool tests continue to cover generic files/images, read-only directories and request budgets.
+
+[Optional EnvArena adapter](../../.github/workflows/arena-package.yml) runs only through manual `workflow_dispatch` to build the Linux musl zipapp, validate the final archive and hash-pinned public inputs, and preserve candidate artifacts. Regular PR checks, standard OTLP export and standalone releases do not depend on it. It neither contacts Arena services nor publishes Registry versions. Full archive acceptance requires native Linux container capabilities; local unit tests do not replace it.
+
 ## CI and contracts
 
-macOS and Linux host checks share one matrix definition. `fail-fast: false` ensures a failure on one platform does not cancel coverage on the other. macOS uses `make setup-node` for native smoke and SDK Node dependencies; Linux `make setup` continues to install all locked formatting tools. Native validation runs Runtime, Harness, desktop API and Workgroup smoke in one child Make invocation, sharing one workspace build. Docker copies only the required CLI/TUI/Web clients and excludes GUI from its build context. All existing checks and tests remain.
+macOS and Linux host checks share one matrix definition. `fail-fast: false` ensures a failure on one platform does not cancel coverage on the other. macOS uses `make setup-node` for native smoke and SDK Node dependencies; Linux `make setup` continues to install all locked formatting tools. Native validation runs Runtime, Harness, desktop API and Workgroup smoke in one child Make invocation, sharing one workspace build. Docker copies only the required CLI/TUI/Web clients and excludes GUI from its build context. Native Runtime and Harness coverage is retained; EnvArena-specific checks run through the explicit entry points above.
 
 `harness-smoke.mjs` checks root/nested `AGENTS.md` ordering, unrelated-directory isolation, missing files, per-Turn refresh, the 32 KiB boundary, UTF-8 and symlink rejection through real Core/Runtime model requests.
 
@@ -126,6 +141,8 @@ Proxy fixtures use dynamic loopback ports and isolated subprocess environments. 
 ## Shared local services
 
 `make local-service-smoke` uses temporary directories, real Core/Runtime, two PTYs and an HTTP model fixture. It verifies concurrent ensure, workspace/symlink identity, configuration conflicts, authentication, Web discovery, window exit, busy/cancel stop, persistent history, launcher/host SIGKILL cleanup and reattachment. It is included in `make harness-smoke`. `make desktop-schemas` also exports `schemas/local-service-v1.json`.
+
+During fault cleanup, the control socket or the local Core HTTP endpoint may close while a cleanup process still owns the instance lock. Fault-state polling only tolerates an explicit connection-refused transition and must still observe the expected `stopped` or `unavailable` state within the original deadline. Other errors fail immediately, and normal status queries remain strict. `AREAL_TEST_EVIDENCE` selects a JSON receipt path containing the phase and state polling observations; CI saves it to `target/ci/local-service.json` and uploads it alongside logs on failure.
 
 `cargo test --locked -p areal-app-server --test browser_auth` verifies automatic login from the trusted client through real HTTP/WebSocket endpoints, concurrent single-use exchange, Origin validation, instance isolation, inherited permissions, manual login and connection closure at session expiry. Unit tests in that crate use virtual time for code/session expiry and capacity limits. `node --test scripts/web-progress.test.mjs` checks fragment removal before exchange, connection after success, manual fallback on failure and ordinary reloads.
 

@@ -51,7 +51,8 @@ async function saveProvider() {
 async function applyProvider() {
   await button("应用模型配置").click();
   // Core 目录事件可能早于 apply 回执；等待整个设置操作恢复准入再发下一条命令。
-  await button("返回应用").click({ trial: true });
+  // 对齐 apply IPC 的 150 秒预算，另留配置刷新（15 秒）及 UI 结算余量；不重发 apply。
+  await button("返回应用").click({ trial: true, timeout: 180_000 });
 }
 const state = () => page.evaluate(() => window.arealDesktop.snapshot());
 async function call(name, params) {

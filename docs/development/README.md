@@ -44,12 +44,21 @@ make build
 | 原生集成 | `make verify-harness`，包含常规回归 |
 | 统一委派集成 | `make unified-execution-smoke`：真实 Runtime 的并行候选组合、交付回执、父任务权限、取消与恢复；已包含在 `make harness-smoke` / `make verify-native`；Linux CI 在允许 Bubblewrap user namespaces 的受控容器中执行，`make verify` 保持跨平台常规回归 |
 | CI 原生增量 | `make verify-native`，仅运行原生后端与 Harness 集成 smoke |
+| 可选 EnvArena 适配器 | `make envarena-check` / `make envarena-smoke`；不属于默认检查 |
 | 容量 | `make capacity`，独立运行 |
 | 仅文档 | `python3 scripts/check-docs.py`，同时核对命令与实现 |
 
 统一委派冒烟默认使用 `target/debug`；可用 `AREAL_UNIFIED_BIN_DIR` 指定完整安装包的 `bin` 目录，用 `AREAL_UNIFIED_EVIDENCE_DIR` 保存完整 Core/Runtime stderr。独立 worker 始终使用 native 沙箱；Linux 需要可运行的 Bubblewrap 与 user/mount/PID namespaces，不继承父启动器的 full-access 模式。
 
+`make integration-boundaries` 检查产品、发行入口和默认 Make 依赖图不加载可选平台适配器；它也随 `make script-test` 执行。适配器 Python 源码的格式、静态检查和单元测试由 `make envarena-check` 单独维护。
+
 测试范围见[测试指南](testing.md)。附加参数使用 `make tui ARGS='--prompt hello'`。`make release` 输出至 `target/release`，`make docs` 生成 Rust API 文档。
+
+`make smoke` 还验证可选轨迹导出：本地接收端返回 503 时 Agent 正常返回，Core 退出后独立上传器继续补传，并验证关闭开关。测试还覆盖 401 失败记录在停用后 5 秒自动节流窗口内重新启用、worker 被强杀后的首次显式重试，以及并发重试保持单一 worker、串行发送和无重复接收。可单独运行 `node scripts/trajectory-smoke.mjs`；设置 `AREAL_TRAJECTORY_FIXTURE_OUTPUT` 可保存真实 OTLP protobuf 供接收端互通测试，内容仅为本地测试数据。设置 `AREAL_TRAJECTORY_SMOKE_OUTPUT` 可保存 JSON 验收记录，包含真实启动时间、重试时距和并发观察。
+
+`node scripts/trajectory-semantics-smoke.mjs` 使用真实 owned Core/Runtime 与本地模型、接收端，覆盖多轮工具、子 Agent、同线程换模型、失败和流式取消。`make smoke` 包含此检查；HTTP 模型输入与 OTLP protobuf 默认保存到 `out/trajectory-semantics/`，可用 `AREAL_TRAJECTORY_SEMANTICS_OUTPUT` 改写目录，供接收端逐条核对。脚本使用独立临时 home、状态和工作区，不读取用户配置。
+
+`python3 scripts/tui-local-smoke.py` 在真实 owned TUI/Runtime 中注入隔离的无效轨迹接收地址，验证异常提醒不遮住请求状态，并继续执行多轮、工具、取消和恢复；导出 worker 不启动。该检查属于 `make harness-smoke`。GUI 的状态轮询、协议投影与真实界面检查见 [GUI 验证入口](../../clients/gui/README.md#生命周期)。
 
 项目使用 [Apache-2.0](../../LICENSE)。Cargo workspace 和 npm 包声明同一许可证；两套 SDK 携带 LICENSE，`scripts/package.py` 将许可证复制到桌面包并记录校验和。第三方材料保留原有许可与版权说明。
 

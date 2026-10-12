@@ -44,14 +44,23 @@ Binary-only changes automatically restart an idle shared service, so manual rest
 | Native integration | `make verify-harness`, including regular regression |
 | Unified delegation integration | `make unified-execution-smoke`: real Runtime candidate composition, delivery receipts, parent ownership, cancellation, and recovery; included in `make harness-smoke` / `make verify-native`; Linux CI runs it in the supported container with Bubblewrap user namespaces, while `make verify` remains portable |
 | CI native delta | `make verify-native`, native backend and Harness integration smoke only |
+| Optional EnvArena adapter | `make envarena-check` / `make envarena-smoke`; excluded from default checks |
 | Capacity | `make capacity`, run separately |
 | Documentation only | `python3 scripts/check-docs.py`; also compare commands with implementation |
 
 The unified delegation smoke defaults to `target/debug`; set `AREAL_UNIFIED_BIN_DIR` to the complete installed bundle’s `bin` directory and `AREAL_UNIFIED_EVIDENCE_DIR` to retain full Core/Runtime stderr. Independent workers always use the native sandbox. Linux requires working Bubblewrap user/mount/PID namespaces; workers do not inherit the parent launcher’s full-access mode.
 
+`make integration-boundaries` checks that the product, release entry points and default Make dependency graph do not load optional platform adapters; `make script-test` includes it. `make envarena-check` separately maintains formatting, static checks and unit tests for adapter Python sources.
+
 See [testing](testing.en.md) for coverage. Pass arguments with `make tui ARGS='--prompt hello'`. `make release` writes to `target/release`; `make docs` generates Rust API documentation.
 
+`python3 scripts/tui-local-smoke.py` injects an invalid trajectory destination in an isolated real owned TUI/Runtime. It verifies that the warning does not hide request status while multi-turn, tool, cancellation, and recovery interactions continue; no export worker starts. This check is included in `make harness-smoke`. See [GUI validation](../../clients/gui/README.en.md#lifecycle) for polling, protocol projection, and actual interface checks.
+
 The project uses [Apache-2.0](../../LICENSE). Cargo workspace and npm packages declare the same license. Both SDKs include LICENSE; `scripts/package.py` copies it into desktop bundles and records its checksum. Third-party materials retain their original licenses and copyright notices.
+
+`make smoke` also verifies optional trajectory export: the Agent returns while the local receiver responds with 503, the independent worker drains the queue after Core exits, and disabling export stops the worker. It also covers re-enabling failed 401 records within the five-second automatic spawn throttle, the first explicit retry after killing the worker, and concurrent retries preserving one worker, serialized sends, and no duplicate acceptance. Run `node scripts/trajectory-smoke.mjs` separately; `AREAL_TRAJECTORY_FIXTURE_OUTPUT` saves real OTLP protobuf for receiver interoperability tests, containing only local fixture data. Set `AREAL_TRAJECTORY_SMOKE_OUTPUT` to save a JSON acceptance record with actual spawn timestamps, retry timing, and concurrency observations.
+
+`node scripts/trajectory-semantics-smoke.mjs` uses a real owned Core/Runtime with local model and receiver fixtures, covering multi-round tools, child Agents, a model change between Turns in the same thread, failures, and streaming cancellation. `make smoke` includes this check. Actual HTTP model inputs and OTLP protobuf are saved to `out/trajectory-semantics/` by default; `AREAL_TRAJECTORY_SEMANTICS_OUTPUT` overrides the directory for receiver interoperability checks. The script uses isolated temporary home, state, and workspace directories without reading user configuration.
 
 ## Dependencies and style
 

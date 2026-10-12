@@ -3,6 +3,7 @@ mod local;
 mod rpc;
 mod run;
 mod service;
+mod trajectory;
 mod upgrade;
 use anyhow::{Result, ensure};
 use clap::{CommandFactory, Parser, Subcommand};
@@ -57,6 +58,14 @@ enum Command {
     AppServer(Box<areal_server::Args>),
     /// 校验或查看脱敏后的有效配置。
     Config(Box<areal_server::ConfigCli>),
+    /// 查看轨迹导出状态或重新排队失败记录。
+    Trajectory(trajectory::Options),
+    /// 轨迹导出内部 worker；共享持久队列，不拥有 Agent 会话。
+    #[command(hide = true)]
+    TrajectoryWorker {
+        #[arg(long)]
+        spool_dir: PathBuf,
+    },
     /// 运行或检查隔离的 Workgroup。
     Workgroup {
         #[command(subcommand)]
@@ -187,7 +196,18 @@ async fn main() {
             return;
         }
         Some(Command::Upgrade { check }) => upgrade::run(check).await,
-        None => areal_tui::run(args.interactive).await,
+        None => {
+            let mut monitor = args
+                .interactive
+                .trajectory_monitor_config()
+                .and_then(trajectory::Monitor::start);
+            let notice = monitor.as_mut().and_then(trajectory::Monitor::take_notice);
+            if args.interactive.is_headless() {
+                trajectory::with_stderr_notice(notice, areal_tui::run(args.interactive)).await
+            } else {
+                areal_tui::run_with_trajectory_notice(args.interactive, notice).await
+            }
+        }
         Some(Command::Exec(cli)) => {
             execute(*cli).await;
             return;
@@ -203,6 +223,10 @@ async fn main() {
         Some(Command::Serve { args }) => areal_service_host::launcher::run(args).await,
         Some(Command::AppServer(args)) => areal_server::run(*args).await,
         Some(Command::Config(args)) => areal_server::diagnose(*args).await,
+        Some(Command::Trajectory(options)) => trajectory::run(options),
+        Some(Command::TrajectoryWorker { spool_dir }) => {
+            areal_server::trajectory::run_worker(spool_dir).await
+        }
         Some(Command::Workgroup { command }) => {
             let executable = std::env::current_exe()
                 .expect("executable path")
@@ -228,8 +252,15 @@ fn is_subcommand(arg: &std::ffi::OsStr) -> bool {
 }
 
 async fn execute(args: Cli) {
+    let mut monitor = args
+        .endpoint
+        .is_none()
+        .then(|| args.config.clone())
+        .and_then(trajectory::Monitor::start);
+    let notice = monitor.as_mut().and_then(trajectory::Monitor::take_notice);
     let started = std::time::Instant::now();
-    let result = run::execute(&args).await;
+    let result = trajectory::with_stderr_notice(notice, run::execute(&args)).await;
+    drop(monitor);
     let code = match result {
         Ok(code) => code,
         Err(error) => {
@@ -268,6 +299,9 @@ mod tests {
             vec!["upgrade"],
             vec!["config"],
             vec!["config", "show"],
+            vec!["trajectory"],
+            vec!["trajectory", "status"],
+            vec!["trajectory", "retry"],
             vec!["app-server"],
             vec!["service"],
             vec!["web"],

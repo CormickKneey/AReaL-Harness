@@ -7,7 +7,7 @@
 | 入口 | 范围 |
 |---|---|
 | `make verify` | Cordis pin、格式、静态检查、Rust workspace、两套 SDK、Python、文档、TUI 与统一委派 smoke |
-| `make script-test` | 启动器、Web 思考/等待/取消投影、perf 统计/证据与文档链接/语言配对 |
+| `make script-test` | 启动器、Web 思考/等待/取消投影、perf 统计/证据、适配器依赖边界与文档链接/语言配对 |
 | `make test-core` / `make test-protocol` | Engine / app-server |
 | `make test-concurrency` | 并发原语 |
 | `make verify-runtime` | Runtime 单元测试与真实文件、进程、权限和关闭 smoke |
@@ -32,6 +32,8 @@ Linux 宿主常规检查使用 `make verify CARGO_TEST_ARGS='--exclude areal-run
 [GUI CI](../../.github/workflows/gui.yml) 在 GUI、Core、Runtime、schema 与相关构建配置变更时运行冻结依赖安装、GUI 类型检查、公开边界、Core/GUI 构建、路由检查，以及现有 `make gui-smoke`、`test:composer`、`test:queue`。三个 smoke 顺序运行，使用独立目录和确定性本地模型；日志、截图与源码 manifest 上传为 CI artifact，不替代真实供应商或安装包验收。
 
 Composer 和队列 smoke 共用 `clients/gui/scripts/smoke-navigation.mjs` 的导航与窄窗步骤：悬停项目后新建对话，通过稳定 task ID 切回对话，窄窗先收起侧栏再等待编辑器可见。失败保留 `failure-window.png` 整窗截图和 `failure-state.json` 的原错误、视口、当前项目/Thread 与可见文本；截图或页面已不可用时记录采集失败，不替换原测试错误。
+
+模型选择 smoke 中，只有“应用模型配置”后的设置操作结算检查使用 180 秒期限，覆盖现有 150 秒应用 IPC、后续配置读取和界面结算。其它页面动作仍使用默认 15 秒。测试只提交一次应用，等待返回入口恢复后继续核对实际 Core 模型目录和请求，不用固定 sleep 或重放应用掩盖失败。
 
 ## Python 与 scratch
 
@@ -58,7 +60,7 @@ python3 scripts/native-agents-smoke.py --bin-dir target/debug --sandbox-profile 
 
 原生工具/Agent smoke 使用本地固定响应 HTTP 模型、统一 launcher 与临时工作区，无需外部模型。覆盖文件 CAS、搜索、验证 receipt、图像，以及不委派、单 Worker、同步等待、预算失败、父取消和默认异步；异步用例要求三个 Worker 请求结束前父任务继续推进，并检查主/子采样参数。流测试覆盖 length 同帧/尾帧 usage、EOF/取消、不重放 UNKNOWN、压缩后句柄与跨 Turn 边界。
 
-`make harness-smoke` 还运行 `python3 scripts/arena-input-smoke.py --bin-dir target/debug`：通过真实 launcher、CLI、Core 和 Runtime 验证超过 2 MiB 的原始题面使用短启动输入，按需读取任务、清单、PNG 与 GIF 指定帧，图片实际进入本地模型请求，公开输入不可写且结束后完整性一致；直接超限的 CLI 输入在请求模型前产生结构化错误。此测试不使用真实模型评分。Engine 单元测试另行覆盖请求序列化字节边界，以及 WebSocket 增量可发送但完整回放超限时的拒绝。
+可选 `make envarena-smoke` 运行 `python3 integrations/envarena/arena-input-smoke.py --bin-dir target/debug`：通过真实 launcher、CLI、Core 和 Runtime 验证超过 2 MiB 的原始题面使用短启动输入，按需读取任务、清单、PNG 与 GIF 指定帧，图片实际进入本地模型请求，公开输入不可写且结束后完整性一致；直接超限的 CLI 输入在请求模型前产生结构化错误。此测试不使用真实模型评分。Engine 单元测试另行覆盖请求序列化字节边界，以及 WebSocket 增量可发送但完整回放超限时的拒绝。
 
 请求预算测试覆盖 Chat Completions 与 Responses 在最后一轮返回工具时的 `MAX_MODEL_ROUNDS` 分类，并检查零工具执行、无重试和原始预算审计；普通工具调用预算耗尽及非法 `index` 不应被误分类。桌面 CLI 验收同时检查对应的 `error_max_turns` 结果。Goal HTTP 回归同时验证输出 token 上限与工具数量/缓冲预算经过共享池后仍生效，失败请求的未知消费阻止后续重试和工具执行。
 
@@ -89,9 +91,22 @@ done
 
 `make capacity` 顺序执行，默认 verify 不包含容量测试。结果须注明硬件、构建模式、存储和模型替身，不能当作真实 LLM 吞吐。
 
+## 可选平台适配器
+
+EnvArena 适配器与专用脚本位于 `integrations/envarena/`；原 `scripts/package-arena.py`、`scripts/arena-input-smoke.py`、`scripts/fetch-arena-fixtures.py` 和 `scripts/tests/test_package_arena.py` 已移至该目录。普通 `make fmt`、`make lint`、`make script-test`、`make verify` 和 `make harness-smoke` 不加载适配器；它的测试没有删除，须显式执行：
+
+```sh
+make envarena-check  # 适配器 Ruff 格式/静态检查及全部离线单测
+make envarena-smoke  # 先构建独立产品，再运行真实本地输入 smoke
+```
+
+`make integration-boundaries` 是需要 Git checkout 的开发检查，随 `make script-test` 检查产品源码/依赖清单、发行与安装入口、默认 Make 依赖图和工作流；回归覆盖平台路径回流、递归 Make 间接调用及自动触发重新加入。通用 `id-arena` Rust 分配器不属于平台依赖。通用文件/图像、只读目录和请求预算仍由 Runtime、Engine 与原生工具测试覆盖。
+
+[Optional EnvArena adapter](../../.github/workflows/arena-package.yml) 仅支持 `workflow_dispatch` 手动构建 Linux musl zipapp、核验最终包与哈希固定的公开输入，再保存候选 artifact。它不是普通 PR 门禁、标准 OTLP 上报或独立发行包的依赖，也不访问 Arena 服务或发布 Registry。该完整包验收要求原生 Linux 容器能力，不能用本地单测代替。
+
 ## CI 与契约
 
-macOS 与 Linux 宿主检查使用同一矩阵定义，`fail-fast: false` 保证任一平台失败不取消另一平台的覆盖。macOS 使用 `make setup-node`，仅安装原生 smoke 和 SDK 所需的 Node 依赖；Linux `make setup` 继续安装全部锁定格式工具。原生验收在同一次子 Make 调用中运行 Runtime、Harness、桌面 API 和 Workgroup smoke，共用一次 workspace build。Docker 只复制所需 CLI/TUI/Web 客户端，GUI 不进入构建上下文。所有原有检查与测试保留。
+macOS 与 Linux 宿主检查使用同一矩阵定义，`fail-fast: false` 保证任一平台失败不取消另一平台的覆盖。macOS 使用 `make setup-node`，仅安装原生 smoke 和 SDK 所需的 Node 依赖；Linux `make setup` 继续安装全部锁定格式工具。原生验收在同一次子 Make 调用中运行 Runtime、Harness、桌面 API 和 Workgroup smoke，共用一次 workspace build。Docker 只复制所需 CLI/TUI/Web 客户端，GUI 不进入构建上下文。原生 Runtime 和 Harness 覆盖保持不变；EnvArena 专用检查通过上述显式入口运行。
 
 `harness-smoke.mjs` 通过真实 Core/Runtime 和模型请求检查根/嵌套 `AGENTS.md` 的顺序、无关目录隔离、缺失文件、跨 Turn 刷新、32 KiB 边界、UTF-8 和符号链接拒绝。
 
@@ -126,6 +141,8 @@ cargo test --locked -p areal-engine --lib plugin_host_inherits_proxies_without_o
 ## 共享本地服务
 
 `make local-service-smoke` 使用临时目录、真实 Core/Runtime、两个 PTY 和 HTTP 模型 fixture，验证并发 ensure、工作区/符号链接身份、配置冲突、认证、Web 发现、窗口退出、忙碌拒绝停止/显式取消、历史保留、launcher/host 强杀清理与重新连接。已纳入 `make harness-smoke`。`make desktop-schemas` 同时导出 `schemas/local-service-v1.json`。
+
+故障清理时，控制 socket 或 Core 的本机 HTTP 端点可先关闭而实例锁仍由清理进程持有；故障状态轮询只等待明确的连接拒绝过渡，仍须在原有期限内读到预期的 `stopped` 或 `unavailable`。其它错误立即失败，正常状态查询不放宽。`AREAL_TEST_EVIDENCE` 可指定 JSON 回执位置，记录阶段和状态轮询；CI 将其保存在 `target/ci/local-service.json`，失败时与日志一起上传。
 
 `cargo test --locked -p areal-app-server --test browser_auth` 验证可信客户端到真实 HTTP/WebSocket 的自动登录、并发单次兑换、Origin 校验、实例隔离、权限继承、手动登录与会话到期断连；该 crate 单元测试使用虚拟时间检查登录码/会话过期和容量上限。`node --test scripts/web-progress.test.mjs` 检查兑换前清除 URL 片段、成功后连接、失败时手动登录兜底和普通刷新。
 

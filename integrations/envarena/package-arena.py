@@ -22,7 +22,7 @@ def main():
         required=True,
     )
     args = parser.parse_args()
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[2]
     if subprocess.check_output(["git", "status", "--porcelain"], cwd=root):
         parser.error("commit the verified source before packaging")
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()

@@ -228,6 +228,8 @@ impl Engine {
             areal.thread.id = %thread_id,
             areal.parent_thread.id = %parent_thread_id,
             areal.turn.id = %turn.id,
+            gen_ai.request.model = %state.active.as_ref().unwrap().model.name(),
+            gen_ai.provider.name = %state.active.as_ref().unwrap().model.provider(),
             areal.turn.status = tracing::field::Empty,
         );
         self.tasks
@@ -448,33 +450,25 @@ impl Engine {
         cancel: CancellationToken,
         mut steer: mpsc::Receiver<bool>,
     ) {
+        let prompt_span = info_span!(target: trajectory::TARGET, "areal.user_prompt",
+            gen_ai.input.messages = tracing::field::Empty,
+            areal.capture.truncated = tracing::field::Empty);
         let input = {
             let state = cell.state.lock().await;
-            state
-                .thread
-                .turns
-                .last()
-                .map(|turn| {
-                    turn.items
-                        .iter()
-                        .filter_map(|item| {
-                            if let Item::UserMessage { content, .. } = item {
-                                let mut message = model::Message::text("user", "");
-                                message.content =
-                                    content.iter().map(model::content_from_input).collect();
-                                Some(message)
-                            } else {
-                                None
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default()
+            trajectory::capture_prompt(
+                &prompt_span,
+                state
+                    .thread
+                    .turns
+                    .last()
+                    .map_or(&[], |turn| turn.items.as_slice()),
+            )
         };
-        tracing::event!(target: trajectory::TARGET, tracing::Level::INFO, {
-            "event.name" = "areal.user_prompt",
-            gen_ai.input.messages = %trajectory::messages(&input)
+        input.record(&prompt_span, "gen_ai.input.messages");
+        prompt_span.in_scope(|| {
+            tracing::event!(target: trajectory::TARGET, tracing::Level::INFO, { "event.name" = "areal.user_prompt" });
         });
+        drop(prompt_span);
         // 普通 Turn 没有组合时限；仅保留显式研究 worker 和 Goal 预算。
         let worker_deadline = self
             .extensions
@@ -786,6 +780,24 @@ impl Engine {
         }
         // 副作用与清理均已结束；必须先释放写租约，再发布资源已结算的观察结果。
         drop(workspace_guard);
+        // 轨迹发送仅观察最终结算，不参与请求成败；时间来自执行记录而非上传时钟。
+        if let Some(turn) = state.thread.turns.last() {
+            let status = match turn.status {
+                TurnStatus::Completed => "completed",
+                TurnStatus::Interrupted => "interrupted",
+                TurnStatus::Failed => "failed",
+                TurnStatus::InProgress => "in_progress",
+            };
+            tracing::event!(target: trajectory::TARGET, tracing::Level::INFO, {
+                "event.name" = "areal.turn.completed",
+                areal.turn.status = status,
+                areal.turn.started_at_ms = turn.started_at.map(|t| t.saturating_mul(1000)),
+                areal.turn.completed_at_ms = turn.completed_at.map(|t| t.saturating_mul(1000)),
+                areal.duration_ms = turn.duration_ms,
+                gen_ai.usage.input_tokens = turn.usage.as_ref().map(|u|u.input_tokens),
+                gen_ai.usage.output_tokens = turn.usage.as_ref().map(|u|u.output_tokens),
+            });
+        }
         let active = state.active.take().unwrap();
         if state.poisoned {
             state.quarantined_admission = Some(active._admission);
