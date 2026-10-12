@@ -155,6 +155,13 @@ const captureGuardStopScript = (token, sequence) => `(() => {
   delete globalThis.__arealCaptureGuard;
   return changed;
 })()`;
+// 人工冻结截图保留只读变化标记，直到选择/确认结束；不返回页面内容。
+const captureGuardChangedScript = token => `(() => {
+  const guard = globalThis.__arealCaptureGuard;
+  if (!guard || guard.token !== ${JSON.stringify(token)}) return true;
+  guard.changed ||= guard.observers.some(observer => observer.takeRecords().length > 0);
+  return guard.changed;
+})()`;
 const clearCaptureGuardScript = `(() => {
   for (const observer of globalThis.__arealCaptureGuard?.observers ?? []) observer.disconnect();
   delete globalThis.__arealCaptureGuard;
@@ -893,13 +900,11 @@ class CorePreview {
         ? { available: false, reason: '此元素没有可核查的页面边界，请改用区域标注' }
         : await this.selectElement(projectId, threadId, pageId, capture.captureId, x, y, backendNodeId); }
       catch (error) {
-        if (page.annotationCaptureId === capture.captureId) {
-          page.annotationCaptureId = null; page.annotationCapture = null; page.annotationElement = null;
-        }
+        await this.discardAnnotationCapture(page, capture.captureId);
         throw error;
       }
       if (!valid() || page.annotationCaptureId !== capture.captureId) {
-        page.annotationCaptureId = null; page.annotationCapture = null; page.annotationElement = null;
+        await this.discardAnnotationCapture(page, capture.captureId);
         throw new Error('元素选择已过期');
       }
       return { capture, element };
@@ -964,7 +969,7 @@ class CorePreview {
         image = await bounded(c.capturePage());
         if (!valid() || await bounded(readIsolated(c, sensitiveCaptureScript())) !== false)
           throw new Error('页面截图条件已变化');
-        changed = await bounded(readIsolated(c, captureGuardStopScript(guardToken, guardSequence)));
+        changed = await bounded(readIsolated(c, captureGuardChangedScript(guardToken)));
       }
       if (changed !== false || !valid()
         || viewportFacts(this.window, page, await bounded(readIsolated(c, viewportScript))).key !== viewportKey)
@@ -978,6 +983,7 @@ class CorePreview {
       const captureId = randomUUID();
       page.annotationCaptureId = captureId;
       page.annotationCapture = { documentEpoch, controlEpoch: epoch, pageGeneration: page.pageGeneration,
+        guardToken: frameEvidence ? null : guardToken, guardSequence,
         nativeWebContentsId: c.id,
         sourceUrl, viewport, zoom: facts.pageZoom, guiZoom: facts.guiZoom,
         nativeBounds: facts.nativeBounds, viewportKey, viewportRevision: page.viewportRevision,
@@ -993,9 +999,19 @@ class CorePreview {
         mimeType: 'image/png', imageBase64: png.toString('base64') };
     } finally {
       clearTimeout(timer);
-      if (changed !== false && valid()) await nativeWithin(readIsolated(c, clearCaptureGuardScript), performance.now() + 1000).catch(() => {});
+      if (page.annotationCapture?.guardToken !== guardToken && !c.isDestroyed())
+        await nativeWithin(readIsolated(c, captureGuardStopScript(guardToken, guardSequence)), performance.now() + 1000).catch(() => {});
       if (page.activeRead === read) page.activeRead = null;
     }
+  }
+  async discardAnnotationCapture(page, captureId) {
+    // 迟到的结束/失败只清理自身截图，不能移除新截图的变化保护。
+    if (page.annotationCaptureId !== captureId) return;
+    const frozen = page.annotationCapture, contents = page.view?.webContents;
+    page.annotationCaptureId = null; page.annotationCapture = null; page.annotationElement = null;
+    if (frozen?.guardToken && contents && !contents.isDestroyed())
+      await nativeWithin(readIsolated(contents, captureGuardStopScript(frozen.guardToken, frozen.guardSequence)),
+        performance.now() + 1000).catch(() => {});
   }
   // Human-only inspection of a point on the frozen native bitmap. The returned
   // evidence Ref deliberately never enters page.refs, which is Agent-owned.
@@ -1036,6 +1052,8 @@ class CorePreview {
       if (!same() || !isDeepStrictEqual(currentViewport, frozen.viewport)
         || viewportFacts(this.window, page, currentViewport).key !== frozen.viewportKey)
         throw new Error('元素选择已过期，请重新截图');
+      if (!frozen.guardToken || await bounded(readIsolated(c, captureGuardChangedScript(frozen.guardToken))) !== false)
+        return unavailable('页面在截图后发生变化，请重新截图或使用区域标注');
       c.debugger.attach('1.3'); attached = true;
       const command = (method, parameters = {}) => bounded(c.debugger.sendCommand(method, parameters));
       const cssX = Math.floor(x * frozen.viewport.width / frozen.bitmapWidth);
@@ -1077,6 +1095,9 @@ class CorePreview {
         bounds: { x: left, y: top, width: right - left, height: bottom - top },
         pageGeneration: frozen.pageGeneration, documentEpoch: frozen.documentEpoch,
         controlEpoch: frozen.controlEpoch, frameId: hit.frameId ?? frames.frameTree?.frame?.id ?? 'main', sourceMapping: 'unavailable' };
+      if (await bounded(readIsolated(c, captureGuardChangedScript(frozen.guardToken))) !== false)
+        return unavailable('页面在截图后发生变化，请重新截图或使用区域标注');
+      if (!same()) throw new Error('元素选择已过期，请重新截图');
       page.annotationElement = { elementId, captureId, backendNodeId: hit.backendNodeId, result };
       return result;
     } catch (error) {
@@ -1115,6 +1136,7 @@ class CorePreview {
       const viewport = await bounded(readIsolated(c, viewportScript));
       if (!isDeepStrictEqual(viewport, frozen.viewport)
         || viewportFacts(this.window, page, viewport).key !== frozen.viewportKey) return { stale: true };
+      if (!frozen.guardToken || await bounded(readIsolated(c, captureGuardChangedScript(frozen.guardToken))) !== false) return { stale: true };
       c.debugger.attach('1.3'); attached = true;
       const box = await bounded(c.debugger.sendCommand('DOM.getBoxModel', { backendNodeId: selected.backendNodeId }));
       const quad = box.model?.border;
@@ -1132,7 +1154,8 @@ class CorePreview {
         bottom: Math.min(frozen.bitmapHeight, Math.ceil(Math.max(...ys) * frozen.bitmapHeight / frozen.viewport.height)),
       } : null;
       const original = selected.result.bounds;
-      return { stale: page.annotationElement !== selected || page.annotationCapture !== frozen
+      return { stale: await bounded(readIsolated(c, captureGuardChangedScript(frozen.guardToken))) !== false
+        || page.annotationElement !== selected || page.annotationCapture !== frozen
         || page.control !== 'human' || page.controlEpoch !== frozen.controlEpoch
         || page.documentGeneration !== frozen.documentEpoch || page.viewportRevision !== frozen.viewportRevision
         || !this.pageStillOwned(page)
@@ -1159,6 +1182,9 @@ class CorePreview {
       || page.styleTrial || page.control !== 'human' || page.claiming) throw new Error('请重新选择当前页面元素');
     if ((await this.checkElement(projectId, threadId, pageId, captureId, elementId)).stale
       || page.annotationElement !== selected || page.annotationCapture !== frozen) throw new Error('选择的元素已变化');
+    if (!frozen.guardToken || await nativeWithin(readIsolated(page.view.webContents,
+      captureGuardStopScript(frozen.guardToken, frozen.guardSequence)), performance.now() + 1000) !== false
+      || page.annotationCapture !== frozen) throw new Error('选择的元素已变化');
     const trialId = randomUUID();
     page.styleTrial = { trialId, backendNodeId: selected.backendNodeId,
       pageGeneration: frozen.pageGeneration, documentEpoch: frozen.documentEpoch,
@@ -1285,9 +1311,7 @@ class CorePreview {
         throw new Error('试改目标在截图时已变化，请撤销或刷新');
       return { capture, element, trial: this.styleTrialState(trial) };
     } catch (error) {
-      if (page.annotationCaptureId === capture.captureId) {
-        page.annotationCaptureId = null; page.annotationCapture = null; page.annotationElement = null;
-      }
+      await this.discardAnnotationCapture(page, capture.captureId);
       throw error;
     }
   }
@@ -2838,8 +2862,7 @@ class CorePreview {
       if (!this.owns(request.projectId, request.threadId) || page.annotationCaptureId !== request.captureId)
         throw new Error('标注页面已变化');
       if (page.control === 'human') page.activeRead?.cancel();
-      page.annotationCaptureId = null;
-      page.annotationCapture = null; page.annotationElement = null;
+      await this.discardAnnotationCapture(page, request.captureId);
       return this.state(page);
     }
     if (request.operation === 'hide') {

@@ -72,9 +72,9 @@ await writeFile(join(userHome, '.areal', 'config.toml'), `schema_version=1\n[mod
 const deployment = join(scratch, 'desktop.json');
 await writeFile(deployment, JSON.stringify({ profiles: [{ id: 'fixture', revision: 'v1', displayName: 'Fixture', instructions: 'Use requested tools.' }] }));
 const env = { ...process.env, AREAL_GUI_USER_DATA: join(scratch, 'electron'), AREAL_CORE_HOME: join(scratch, 'core'),
-  AREAL_CORE_USER_HOME: userHome, AREAL_HARNESS_SERVICE_HOME: join(scratch, 'registry'),
+  AREAL_CORE_USER_HOME: userHome, AREAL_CORE_CONFIG: join(userHome, '.areal/config.toml'), AREAL_HARNESS_SERVICE_HOME: join(scratch, 'registry'),
   AREAL_CORE_DESKTOP_CONFIG: deployment, AREAL_CORE_BIN: process.env.AREAL_CORE_BIN || resolve(root, 'target/debug/areal') };
-for (const key of ['AREAL_CORE_WORKSPACE', 'AREAL_CORE_CONFIG', 'AREAL_HARNESS_HOME', 'AREAL_HARNESS_CONFIG']) delete env[key];
+for (const key of ['AREAL_CORE_WORKSPACE', 'AREAL_HARNESS_HOME', 'AREAL_HARNESS_CONFIG']) delete env[key];
 let app, page, passed = false;
 const checks = [], errors = [], events = {};
 async function until(predicate, label, timeout = 60000) {
@@ -170,21 +170,21 @@ try {
   await childScript("document.body.insertAdjacentHTML('beforeend','<input type=password value=synthetic>')");
   const beforeImages=modelCalls.filter(c=>c.hadImage).length;
   await assert.rejects(()=>preview('captureRegion'),/敏感|保护/);
-  assert.equal(await page.getByTestId('composer-attachment').count(),0);
+  assert.equal(await page.locator('[data-testid="composer-attachment"], [data-testid="browser-annotation-attachments"]').count(),0);
   await childScript("document.querySelector('input').remove()");
   await app.evaluate(({webContents},id)=>{const c=webContents.fromId(id),orig=c.capturePage.bind(c);c.__frameCaptureOriginal=orig;c.capturePage=async(...args)=>{const f=c.mainFrame.frames[0];await f.executeJavaScript("document.body.insertAdjacentHTML('beforeend','<input type=password id=during value=synthetic>')");const image=await orig(...args);await f.executeJavaScript("document.querySelector('#during').remove()");c.__frameCaptureFact={capturedBytes:image.toPNG().length,sensitiveDuringCapture:true};return image;};},nativeId);
   await assert.rejects(()=>preview('captureRegion'),/变化|敏感/);
   events.duringCapture=await app.evaluate(({webContents},id)=>{const c=webContents.fromId(id);c.capturePage=c.__frameCaptureOriginal;return c.__frameCaptureFact;},nativeId);
   assert.ok(events.duringCapture.capturedBytes>0);assert.equal(modelCalls.filter(c=>c.hadImage).length,beforeImages);
-  assert.equal(await page.getByTestId('composer-attachment').count(),0);
+  assert.equal(await page.locator('[data-testid="composer-attachment"], [data-testid="browser-annotation-attachments"]').count(),0);
   checks.push('Sensitive child and transient secret during actual capture refuse all Renderer images and Composer attachments');
   await app.evaluate(({webContents},id)=>{const c=webContents.fromId(id),send=c.debugger.sendCommand.bind(c.debugger);c.__frameSend=send;c.debugger.sendCommand=(method,...args)=>method==='Page.createIsolatedWorld'?Promise.reject(new Error('fixture isolated Frame context unavailable')):send(method,...args);},nativeId);
   await assert.rejects(()=>preview('captureRegion'),/isolated Frame context unavailable/);
   await app.evaluate(({webContents},id)=>{const c=webContents.fromId(id);c.debugger.sendCommand=c.__frameSend;},nativeId);
-  assert.equal(await page.getByTestId('composer-attachment').count(),0);
+  assert.equal(await page.locator('[data-testid="composer-attachment"], [data-testid="browser-annotation-attachments"]').count(),0);
   events.isolatedContextFailure={injected:true,returnedImage:false,attachments:0};
   await page.evaluate(()=>{const original=URL.createObjectURL.bind(URL);globalThis.__frameBlobs=new Map();URL.createObjectURL=blob=>{const url=original(blob);globalThis.__frameBlobs.set(url,blob);return url;};});
-  await page.getByRole('button',{name:'选择元素并标注',exact:true}).click();
+  await page.getByRole('button',{name:'批注',exact:true}).click();
   const region=page.getByRole('region',{name:'冻结截图区域标注'});await region.waitFor();
   assert.equal(await app.evaluate(({webContents},id)=>!!webContents.fromId(id),nativeId),true,'annotation hide retains same Native');
   events.annotationHide={nativeId,retained:true};
@@ -194,11 +194,14 @@ try {
   const frameRect=await app.evaluate(({webContents},id)=>webContents.fromId(id).executeJavaScriptInIsolatedWorld(1001,[{code:`(()=>{const r=document.querySelector('iframe').getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,viewportWidth:innerWidth,viewportHeight:innerHeight};})()`}]),nativeId);
   const crop=[Math.round((frameRect.x+8)*frozen.width/frameRect.viewportWidth),Math.round((frameRect.y+8)*frozen.height/frameRect.viewportHeight),Math.round(200*frozen.width/frameRect.viewportWidth),Math.round(90*frozen.height/frameRect.viewportHeight)];
   assert.ok(crop[0]+crop[2]<=frozen.width&&crop[1]+crop[3]<=frozen.height,'visible child crop inside captured pixels');
+  await region.getByRole('button',{name:'坐标',exact:true}).click();
   const fields=region.locator('input[type=number]');for(const [i,v] of crop.entries())await fields.nth(i).fill(String(v));
   await region.getByRole('textbox',{name:'标注意见'}).fill('FRAME_ORIGIN_REGION_REVIEW');
   await page.screenshot({path:join(scratch,'gui-region.png')});
-  await region.getByRole('button',{name:'加入聊天草稿'}).click();await region.waitFor({state:'detached'});
-  const attachment=page.getByTestId('composer-attachment');await attachment.waitFor();
+  await region.getByRole('button',{name:'加入聊天草稿'}).click();
+  await region.getByRole('button',{name:'完成',exact:true}).click();await region.waitFor({state:'detached'});
+  await page.getByRole('button',{name:'1 条标注',exact:true}).click();
+  const attachment=page.locator('.browser-annotation-attachment-card [data-message-attachment="image"]');await attachment.waitFor();
   const blob=await attachment.locator('img').evaluate(async img=>{await img.decode();const file=globalThis.__frameBlobs.get(img.src);if(!(file instanceof Blob))throw Error('actual crop blob absent');const hash=await crypto.subtle.digest('SHA-256',await file.arrayBuffer());return {sha256:[...new Uint8Array(hash)].map(x=>x.toString(16).padStart(2,'0')).join(''),width:img.naturalWidth,height:img.naturalHeight};});
   assert.deepEqual([blob.width,blob.height],crop.slice(2));
   scenario='annotation';issuedToolForScenario=false;const previous=(await thread(first.threadId)).turns.length;
@@ -267,7 +270,7 @@ try {
     const originalPageId=pageId, originalThread=identity.threadId;
     const other=await command('create',{projectId:project.id,browserEnabled:true,profile:{id:'fixture',revision:'v1'}});
     await assert.rejects(()=>page.evaluate(q=>window.arealDesktop.preview(q),{operation:'captureRegion',projectId:project.id,threadId:other.threadId,pageId:originalPageId}),/页面/);
-    await page.getByRole('button',{name:'选择元素并标注',exact:true}).click();
+    await page.getByRole('button',{name:'批注',exact:true}).click();
     await page.getByRole('region',{name:'冻结截图区域标注'}).waitFor();
     assert.equal(await app.evaluate(({webContents},id)=>!!webContents.fromId(id),boundaryId),true);
     if(await page.getByRole('button',{name:'进入分屏视图',exact:true}).count()) await page.getByRole('button',{name:'进入分屏视图',exact:true}).click();

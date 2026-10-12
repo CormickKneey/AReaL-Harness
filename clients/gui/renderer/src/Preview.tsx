@@ -6,11 +6,10 @@ import {
 // Core owns isolated native pages; the copied ZCode parts own the presentation.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Button } from "./components/ui/button.js";
-import { Crop, MousePointer2 } from "lucide-react";
-import { ControlHintTooltip } from "./ControlHintTooltip.js";
 import type { PlatformServices, Data } from "./services.js";
 import { BrowserRegionAnnotation, type RegionDraft } from "./BrowserRegionAnnotation.js";
 import { attachmentDrafts, sending, stageThreadDraft } from "./Composer.js";
+import { attachBrowserAnnotation, browserAnnotation, setBrowserAnnotationEditing } from "./browserAnnotations.js";
 import { BrowserVerificationCard } from "./BrowserVerificationCard.js";
 import "./BrowserFileHandoff.css";
 import { BrowserStyleTrial, type StyleTrialDraft } from './BrowserStyleTrial.js';
@@ -45,6 +44,8 @@ export function Preview({
   onError: (s: string) => void;
 }) {
   const owner = `${projectId}:${threadId}`;
+  const draftKey = `areal-gui:draft:${projectId}:${threadId}`;
+  const stagedAnnotations = (attachmentDrafts.get(draftKey) ?? []).flatMap(file => { const note = browserAnnotation(file); return note ? [note] : []; });
   const [url, setUrl] = useState(locations.get(owner)?.url ?? initialUrl);
   const [state, setState] = useState<Data>({});
   const [error, setError] = useState("");
@@ -56,6 +57,10 @@ export function Preview({
   const annotating = annotationState.owner === owner ? annotationState.draft : regionDrafts.get(owner) ?? null;
   const [annotationBusyOwner, setAnnotationBusyOwner] = useState<string | null>(null);
   const annotationBusy = annotationBusyOwner === owner;
+  useEffect(() => {
+    setBrowserAnnotationEditing(draftKey, !!annotating?.region);
+    return () => setBrowserAnnotationEditing(draftKey, false);
+  }, [draftKey, !!annotating?.region]);
   const annotationControl = useRef<HTMLButtonElement>(null);
   const annotationFocusOwner = useRef<string | null>(null);
   useLayoutEffect(() => {
@@ -103,6 +108,11 @@ export function Preview({
   const refreshSubscription = useRef<() => void>(() => {});
   const request = async (operation: OwnedPreviewOperation, extra: Data = {}) => {
     if (["navigate", "back", "forward", "reload", "selectPage", "newPage", "release"].includes(operation)) editing.current = false;
+    if (["navigate", "back", "forward", "reload", "devtools"].includes(operation) && annotatingRef.current) {
+      if (annotationBusy) return;
+      await cancelAnnotation();
+      if (annotatingRef.current) return;
+    }
     const seq = ++sequence.current;
     try {
       const value = await services.preview({
@@ -164,7 +174,7 @@ export function Preview({
     let lastDisplay = "";
     const update = () => {
       if (!active || !box.current) return;
-      if (keyboardCaptureRef.current) { lastDisplay = ''; return; }
+      if (keyboardCaptureRef.current || annotatingRef.current) { lastDisplay = ''; return; }
       const r = box.current.getBoundingClientRect();
       // Native pages sit above the renderer, so keep them hidden through popup exit animations.
       const overlay = document.querySelector(
@@ -223,6 +233,7 @@ export function Preview({
     return () => {
       active = false;
       mounted.current = false;
+      setBrowserAnnotationEditing(draftKey, false);
       subscriptionRequest.current++;
       sequence.current++;
       clearInterval(timer);
@@ -240,6 +251,7 @@ export function Preview({
   }, [services, projectId, threadId]);
   const updateAnnotation = (draft: RegionDraft | null) => {
     annotatingRef.current = draft;
+    setBrowserAnnotationEditing(draftKey, !!draft?.region);
     if (draft) regionDrafts.set(owner, draft);
     else regionDrafts.delete(owner);
     setAnnotationState({ owner, draft });
@@ -436,85 +448,213 @@ export function Preview({
     } catch (e) { if (mounted.current && current.current === owner) setError(e instanceof Error ? e.message : String(e)); }
     finally { setAnnotationBusyOwner(value => value === owner ? null : value); }
   };
-  const startAnnotation = async (mode: 'region' | 'element' = 'region') => {
-    if (annotationBusy || annotating) return;
-    setAnnotationBusyOwner(owner); setError("");
-    let captured: RegionDraft['capture'] | null = null;
-    try {
-      const pageId = stateRef.current.browser?.pageId;
-      if (!pageId) throw new Error("请选择当前页面");
-      if (stateRef.current.browser?.control === 'agent') {
-        await services.preview({ operation: 'takeover', projectId, threadId, pageId });
-      }
-      const selected = mode === 'element'
-        ? await services.preview({ operation: 'captureElement', projectId, threadId, pageId }) : null;
-      const capture = selected ? selected.capture : await services.preview({ operation: 'captureRegion', projectId, threadId, pageId });
-      if (capture.projectId !== projectId || capture.threadId !== threadId || capture.pageId !== pageId
-        || typeof capture.imageBase64 !== 'string' || !Number.isInteger(capture.viewportRevision)
-        || !Number.isFinite(capture.viewport?.bitmapWidth)
-        || !Number.isFinite(capture.viewport?.bitmapHeight)) throw new Error('截图所属页面已变化');
-      captured = capture as RegionDraft['capture'];
-      if (!mounted.current || current.current !== owner) {
-        await services.preview({ operation: 'endRegion', projectId, threadId, pageId, captureId: captured.captureId });
-        return;
-      }
-      await services.preview({ operation: 'hide', projectId, threadId, pageId, captureId: captured.captureId });
-      if (!mounted.current || current.current !== owner) {
-        await services.preview({ operation: 'endRegion', projectId, threadId, pageId, captureId: captured.captureId });
-        return;
-      }
-      const element = selected?.element?.available === true ? selected.element as RegionDraft['element'] : undefined;
-      updateAnnotation({ capture: captured, comment: '', region: element?.bounds ?? null,
-        mode: element ? 'element' : 'region', element,
-        unavailableReason: selected?.element?.available === false ? String(selected.element.reason)
-          : typeof capture.unavailableReason === 'string' ? capture.unavailableReason : undefined });
-    } catch (e) {
-      if (captured) void services.preview({ operation: 'endRegion', projectId, threadId,
-        pageId: captured.pageId, captureId: captured.captureId }).catch(() => {});
-      if (mounted.current && current.current === owner) setError(e instanceof Error ? e.message : String(e));
-    } finally { setAnnotationBusyOwner(value => value === owner ? null : value); }
-  };
+  const startAnnotation = async () => {
+        if (annotationBusy || annotating) return;
+        setAnnotationBusyOwner(owner);
+        setError("");
+        let captured: RegionDraft["capture"] | null = null;
+        try {
+            const pageId = stateRef.current.browser?.pageId;
+            if (!pageId) throw new Error("请选择当前页面");
+            if (stateRef.current.browser?.control === "agent") {
+                await services.preview({ operation: "takeover", projectId, threadId, pageId });
+            }
+            const capture = await services.preview({
+                operation: "captureRegion",
+                projectId,
+                threadId,
+                pageId,
+            });
+            if (
+                capture.projectId !== projectId ||
+                capture.threadId !== threadId ||
+                capture.pageId !== pageId ||
+                typeof capture.imageBase64 !== "string" ||
+                !Number.isInteger(capture.viewportRevision) ||
+                !Number.isFinite(capture.viewport?.bitmapWidth) ||
+                !Number.isFinite(capture.viewport?.bitmapHeight)
+            )
+                throw new Error("截图所属页面已变化");
+            captured = capture as RegionDraft["capture"];
+            if (!mounted.current || current.current !== owner) {
+                await services.preview({
+                    operation: "endRegion",
+                    projectId,
+                    threadId,
+                    pageId,
+                    captureId: captured.captureId,
+                });
+                return;
+            }
+            await services.preview({
+                operation: "hide",
+                projectId,
+                threadId,
+                pageId,
+                captureId: captured.captureId,
+            });
+            if (!mounted.current || current.current !== owner) {
+                await services.preview({
+                    operation: "endRegion",
+                    projectId,
+                    threadId,
+                    pageId,
+                    captureId: captured.captureId,
+                });
+                return;
+            }
+            updateAnnotation({
+                capture: captured,
+                comment: "",
+                region: null,
+                mode: capture.frameEvidence ? "region" : "element",
+                unavailableReason:
+                    typeof capture.unavailableReason === "string"
+                        ? capture.unavailableReason
+                        : undefined,
+            });
+        } catch (e) {
+            if (captured)
+                void services
+                    .preview({
+                        operation: "endRegion",
+                        projectId,
+                        threadId,
+                        pageId: captured.pageId,
+                        captureId: captured.captureId,
+                    })
+                    .catch(() => {});
+            if (mounted.current && current.current === owner)
+                setError(e instanceof Error ? e.message : String(e));
+        } finally {
+            setAnnotationBusyOwner((value) => (value === owner ? null : value));
+        }
+    };
+  const selectAnnotationElement = async (point: { x: number; y: number }) => {
+        const draft = annotatingRef.current;
+        if (!draft || annotationBusy) return;
+        setAnnotationBusyOwner(owner);
+        setBrowserAnnotationEditing(draftKey, true);
+        setError("");
+        try {
+            const element = await services.preview({
+                operation: "selectElement",
+                projectId,
+                threadId,
+                pageId: draft.capture.pageId,
+                captureId: draft.capture.captureId,
+                ...point,
+            });
+            if (!mounted.current || current.current !== owner || annotatingRef.current !== draft)
+                return;
+            updateAnnotation({
+                ...draft,
+                point,
+                region: element.available ? element.bounds : null,
+                element: element.available ? (element as RegionDraft["element"]) : undefined,
+                mode: element.available ? "element" : "region",
+                unavailableReason: element.available ? undefined : element.reason,
+            });
+        } catch (cause) {
+            if (mounted.current && current.current === owner) setError((cause as Error).message);
+        } finally {
+            if (current.current === owner)
+                setBrowserAnnotationEditing(draftKey, !!annotatingRef.current?.region);
+            setAnnotationBusyOwner((value) => (value === owner ? null : value));
+        }
+    };
   const stageAnnotation = async (draft: RegionDraft) => {
-    if (annotationBusy) return;
-    setAnnotationBusyOwner(owner); setError("");
-    try {
-      const image = new Image();
-      image.src = `data:image/png;base64,${draft.capture.imageBase64}`;
-      await image.decode();
-      const { x, y, width, height } = draft.region!;
-      const canvas = document.createElement('canvas');
-      canvas.width = width; canvas.height = height;
-      const context = canvas.getContext('2d');
-      if (!context) throw new Error('无法生成标注缩略图');
-      context.drawImage(image, x, y, width, height, 0, 0, width, height);
-      const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error('无法生成标注缩略图')), 'image/png'));
-      const capture = draft.capture;
-      const scaleX = capture.viewport.width / capture.viewport.bitmapWidth;
-      const scaleY = capture.viewport.height / capture.viewport.bitmapHeight;
-      const elementCheck = draft.element && draft.mode === 'element'
-        ? await services.preview({ operation: 'checkElement', projectId, threadId, pageId: capture.pageId,
-          captureId: capture.captureId, elementId: draft.element.elementId }).catch(() => ({ stale: true })) : null;
-      if (!mounted.current || current.current !== owner || annotatingRef.current !== draft)
-        throw new Error('标注所属聊天已变化');
-      const elementDescription = draft.element && draft.mode === 'element'
-        ? `\n选择时元素: role=${JSON.stringify(draft.element.role)}; name=${JSON.stringify(draft.element.name)}; bounds bitmap(px)=${x},${y},${width},${height}; frame=${draft.element.frameId}; historicalRef=${draft.element.evidenceRef}; sourceMapping=${draft.element.sourceMapping}; ${elementCheck?.stale ? 'stale: 页面元素已变化，保留原证据。' : '发送时仍命中同一节点；页面之后仍可能变化。'} Agent 必须重新 observe 并取得新 Ref，禁止用 historicalRef 动作。React 源码位置未知。` : '';
-      const frameDescription = capture.frameEvidence ? `\n嵌入站点截图检查: ${JSON.stringify(capture.frameEvidence)}；仅区域证据，无选择器或 Agent 跨源授权。` : '';
-      const description = `页面${draft.element && draft.mode === 'element' ? '元素' : '区域'}标注（冻结截图，页面之后可能变化；仅分享选中区域）\nURL: ${capture.url}\n截图时间: ${capture.capturedAt}\nCore: ${capture.coreInstanceId}; Page: ${capture.pageId}; pageGeneration: ${capture.pageGeneration}; documentEpoch: ${capture.documentEpoch}; controlEpoch: ${capture.controlEpoch}; viewportRevision: ${capture.viewportRevision}; captureId: ${capture.captureId}\n原截图 bitmap(px): ${capture.viewport.bitmapWidth}×${capture.viewport.bitmapHeight}; CSS viewport(px): ${capture.viewport.width}×${capture.viewport.height}; scroll(px): ${capture.viewport.scrollX},${capture.viewport.scrollY}; pageZoom: ${capture.viewport.pageZoom}; GUI zoom: ${capture.viewport.guiZoom}; DPR: ${capture.viewport.deviceScaleFactor}; native DIP bounds: ${JSON.stringify(capture.viewport.nativeBounds)}\n选区 bitmap(px): ${x},${y},${width},${height}; viewport CSS(px): ${(x * scaleX).toFixed(1)},${(y * scaleY).toFixed(1)},${(width * scaleX).toFixed(1)},${(height * scaleY).toFixed(1)}${elementDescription}${frameDescription}\n裁图: browser-region-${capture.captureId}.png\n意见: ${draft.comment.trim()}`;
-      const draftKey = `areal-gui:draft:${projectId}:${threadId}`;
-      if (sending.has(draftKey) || localStorage.getItem(`${draftKey}:pending`))
-        throw new Error('当前聊天有结果待核对的发送；请先确认结果，再加入标注草稿');
-      // No await between reading the target draft and staging it. A chat switch
-      // or concurrent Composer edit cannot make an earlier snapshot overwrite it.
-      const existing = localStorage.getItem(draftKey) ?? '';
-      const files = [...(attachmentDrafts.get(draftKey) ?? []), new File([blob], `browser-region-${capture.captureId}.png`, { type: 'image/png' })];
-      const key = stageThreadDraft(projectId, threadId, [existing, description].filter(Boolean).join('\n\n'), files);
-      window.dispatchEvent(new CustomEvent('areal-draft-change', { detail: key }));
-      updateAnnotation(null);
-      await services.preview({ operation: 'endRegion', projectId, threadId,
-        pageId: capture.pageId, captureId: capture.captureId });
-    } catch (e) { if (mounted.current && current.current === owner) setError(e instanceof Error ? e.message : String(e)); }
-    finally { setAnnotationBusyOwner(value => value === owner ? null : value); }
-  };
+        if (annotationBusy || !draft.region?.width || !draft.region.height || !draft.comment.trim())
+            return;
+        setAnnotationBusyOwner(owner);
+        setError("");
+        try {
+            const image = new Image();
+            image.src = `data:image/png;base64,${draft.capture.imageBase64}`;
+            await image.decode();
+            const { x, y, width, height } = draft.region!;
+            const canvas = document.createElement("canvas");
+            canvas.width = width;
+            canvas.height = height;
+            const context = canvas.getContext("2d");
+            if (!context) throw new Error("无法生成标注缩略图");
+            context.drawImage(image, x, y, width, height, 0, 0, width, height);
+            const blob = await new Promise<Blob>((resolve, reject) =>
+                canvas.toBlob(
+                    (value) => (value ? resolve(value) : reject(new Error("无法生成标注缩略图"))),
+                    "image/png",
+                ),
+            );
+            const capture = draft.capture;
+            const scaleX = capture.viewport.width / capture.viewport.bitmapWidth;
+            const scaleY = capture.viewport.height / capture.viewport.bitmapHeight;
+            const elementCheck =
+                draft.element && draft.mode === "element"
+                    ? await services
+                          .preview({
+                              operation: "checkElement",
+                              projectId,
+                              threadId,
+                              pageId: capture.pageId,
+                              captureId: capture.captureId,
+                              elementId: draft.element.elementId,
+                          })
+                          .catch(() => ({ stale: true }))
+                    : null;
+            if (!mounted.current || current.current !== owner || annotatingRef.current !== draft)
+                throw new Error("标注所属聊天已变化");
+            const elementDescription =
+                draft.element && draft.mode === "element"
+                    ? `\n选择时元素: role=${JSON.stringify(draft.element.role)}; name=${JSON.stringify(draft.element.name)}; bounds bitmap(px)=${x},${y},${width},${height}; frame=${draft.element.frameId}; historicalRef=${draft.element.evidenceRef}; sourceMapping=${draft.element.sourceMapping}; ${elementCheck?.stale ? 'stale: 页面元素已变化，保留原证据。' : "确认时仍命中同一节点；页面之后仍可能变化。"} Agent 必须重新 observe 并取得新 Ref，禁止用 historicalRef 动作。React 源码位置未知。`
+                    : "";
+            const frameDescription = capture.frameEvidence
+                ? `\n嵌入站点截图检查: ${JSON.stringify(capture.frameEvidence)}；仅区域证据，无选择器或 Agent 跨源授权。`
+                : "";
+            const description = `页面${draft.element && draft.mode === 'element' ? '元素' : '区域'}标注（冻结截图，页面之后可能变化；仅分享选中区域）\nURL: ${capture.url}\n截图时间: ${capture.capturedAt}\nCore: ${capture.coreInstanceId}; Page: ${capture.pageId}; pageGeneration: ${capture.pageGeneration}; documentEpoch: ${capture.documentEpoch}; controlEpoch: ${capture.controlEpoch}; viewportRevision: ${capture.viewportRevision}; captureId: ${capture.captureId}\n原截图 bitmap(px): ${capture.viewport.bitmapWidth}×${capture.viewport.bitmapHeight}; CSS viewport(px): ${capture.viewport.width}×${capture.viewport.height}; scroll(px): ${capture.viewport.scrollX},${capture.viewport.scrollY}; pageZoom: ${capture.viewport.pageZoom}; GUI zoom: ${capture.viewport.guiZoom}; DPR: ${capture.viewport.deviceScaleFactor}; native DIP bounds: ${JSON.stringify(capture.viewport.nativeBounds)}\n选区 bitmap(px): ${x},${y},${width},${height}; viewport CSS(px): ${(x * scaleX).toFixed(1)},${(y * scaleY).toFixed(1)},${(width * scaleX).toFixed(1)},${(height * scaleY).toFixed(1)}${elementDescription}${frameDescription}\n裁图: browser-region-${capture.captureId}.png`;
+            if (localStorage.getItem(`${draftKey}:queue-edit`))
+                throw new Error("请先结束排队消息编辑，再加入标注");
+            if (sending.has(draftKey) || localStorage.getItem(`${draftKey}:pending`))
+                throw new Error("当前聊天有结果待核对的发送；请先确认结果，再加入标注草稿");
+            // 附件及其说明在同一同步段加入所属草稿；不覆盖用户正在编辑的正文。
+            const existingFiles = attachmentDrafts.get(draftKey) ?? [];
+            if (existingFiles.length >= 16)
+                throw new Error("每条消息最多 16 个附件，请先发送已有标注");
+            const id = crypto.randomUUID();
+            const file = new File([blob], `browser-region-${id}.png`, { type: "image/png" });
+            attachBrowserAnnotation(file, {
+                id,
+                comment: draft.comment.trim(),
+                label:
+                    draft.element?.name ||
+                    (draft.mode === "element" ? draft.element?.role || "页面元素" : "区域标注"),
+                url: capture.url,
+                capturedAt: capture.capturedAt,
+                captureId: capture.captureId,
+                region: draft.region!,
+                point: draft.point,
+                evidence: description.replace(`browser-region-${capture.captureId}.png`, file.name),
+            });
+            const key = stageThreadDraft(
+                projectId,
+                threadId,
+                localStorage.getItem(draftKey) ?? "",
+                [...existingFiles, file],
+            );
+            window.dispatchEvent(new CustomEvent("areal-draft-change", { detail: key }));
+            updateAnnotation({
+                ...draft,
+                comment: "",
+                region: null,
+                element: undefined,
+                point: undefined,
+            });
+        } catch (e) {
+            if (mounted.current && current.current === owner)
+                setError(e instanceof Error ? e.message : String(e));
+        } finally {
+            setAnnotationBusyOwner((value) => (value === owner ? null : value));
+        }
+    };
   useEffect(() => {
     const link = `${initialRequest}:${initialUrl}`;
     if (initialUrl && locations.get(owner)?.link !== link) {
@@ -560,18 +700,6 @@ export function Preview({
         }}
         formatMessage={browserLabel}
         onToggleDetails={() => setDetailsOpen(value => !value)}
-        annotationActions={state.url ? <>
-          <ControlHintTooltip title="截取区域并标注">
-            <Button ref={annotationControl} type="button" size="icon-md" variant="ghost" aria-label="截取区域并标注"
-              disabled={annotationBusy || styleBusy || !!keyboardCapture || !!styleTrial || !!annotating || state.browser?.control === 'transferring'}
-              onClick={() => void startAnnotation()}><Crop className="size-4" /></Button>
-          </ControlHintTooltip>
-          <ControlHintTooltip title="选择元素并标注">
-            <Button type="button" size="icon-md" variant="ghost" aria-label="选择元素并标注"
-              disabled={annotationBusy || styleBusy || !!keyboardCapture || !!styleTrial || !!annotating || state.browser?.control === 'transferring'}
-              onClick={() => void startAnnotation('element')}><MousePointer2 className="size-4" /></Button>
-          </ControlHintTooltip>
-        </> : undefined}
         onAddressChange={(value) => {
           editing.current = true;
           setUrl(value);
@@ -592,6 +720,10 @@ export function Preview({
         onReload={() => void request(state.loading ? "stop" : "reload")}
         onToggleResponsiveMode={() => setResponsive(!responsive)}
         isResponsiveMode={responsive}
+        annotationControl={annotationControl}
+        annotationDisabled={!state.url || !!state.error || annotationBusy || styleBusy || !!keyboardCapture || !!styleTrial || state.browser?.control === 'transferring'}
+        annotating={!!annotating}
+        onAnnotation={() => void (annotating ? cancelAnnotation() : startAnnotation())}
         onSubmit={(event) => {
           event.preventDefault();
           editing.current = false;
@@ -647,11 +779,15 @@ export function Preview({
           </> : <Button type="button" size="sm" disabled={!!annotating || !!styleTrial || annotationBusy}
             onClick={() => void request('authorizeFrameOrigin', { userIntent: true })}>授权当前页面的嵌入站点</Button>}
         </div>}
-        {state.url && <div className="preview-viewport-toolbar">
-          <Button ref={styleControl} type="button" size="sm" disabled={annotationBusy || styleBusy || !!keyboardCapture || !!styleTrial || !!annotating || state.browser?.control === 'transferring'}
-            onClick={event => void startStyleTrial(event.detail === 0)}>选择元素并试改</Button>
-          <span>F6 返回应用；键盘选择使用截图坐标。</span>
-        </div>}
+      {state.url && <div className="preview-viewport-toolbar" role="group" aria-label="页面标注">
+        <Button ref={styleControl} type="button" size="sm" disabled={annotationBusy || styleBusy || !!keyboardCapture || !!styleTrial || !!annotating || state.browser?.control === 'transferring'}
+          onClick={event => void startStyleTrial(event.detail === 0)}>选择元素并试改</Button>
+        <span>F6 返回应用；键盘选择使用截图坐标。</span>
+        <span role="status" aria-hidden={!annotationBusy || !!annotating}
+          style={{ visibility: annotationBusy && !annotating ? 'visible' : 'hidden' }}>
+          在页面中点击要标注的元素；按 Esc 取消。
+        </span>
+      </div>}
         {thread && <BrowserVerificationCard thread={thread} projectId={projectId} action={action} onReview={onReview} onTool={onTool}
           trialActive={!!styleTrial && !styleTrial.cleared || !!state.browser?.trialActive} />}
       </div>}
@@ -692,8 +828,8 @@ export function Preview({
           <BrowserKeyboardElementPicker key={keyboardCapture.captureId} capture={keyboardCapture} busy={styleBusy}
             onSelect={(x, y) => void finishKeyboardSelection({ x, y })}
             onCancel={() => void finishKeyboardSelection()} />}
-        {annotating && <BrowserRegionAnnotation draft={annotating} busy={annotationBusy}
-          onChange={updateAnnotation} onCancel={() => void cancelAnnotation()} onStage={draft => void stageAnnotation(draft)} />}
+        {annotating && <BrowserRegionAnnotation draft={annotating} busy={annotationBusy} notes={stagedAnnotations} nextNumber={stagedAnnotations.length + 1}
+          onSelectElement={point => void selectAnnotationElement(point)} onChange={updateAnnotation} onCancel={() => void cancelAnnotation()} onStage={draft => void stageAnnotation(draft)} />}
         {failure ? (
           <BrowserLoadErrorState
               errorMessage={failure}

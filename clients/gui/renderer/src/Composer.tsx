@@ -23,6 +23,8 @@ import { ComposerMcpIcon } from "./ComposerIcons.js";
 import { ComposerMcp } from "./ComposerMcp.js";
 import { AttachmentIcon } from "./interfaceIcons.js";
 import type { ComposerCatalogEntry } from "./prompt-editor/ComposerCatalog.js";
+import { BrowserAnnotationAttachments } from "./BrowserAnnotationAttachments.js";
+import { browserAnnotation, browserAnnotationText, useBrowserAnnotationEditing } from "./browserAnnotations.js";
 import { ReviewCommentAttachment } from "./ReviewCommentViews.js";
 import { attachedReviewComments, consumeReviewComments, detachReviewComments, recordUnknownReviewSubmission, reconcileReviewSubmission, readReviewComments, reviewCommentKey, reviewCommentText, useReviewComments } from "./reviewComments.js";
 import type { LexicalChatInputHandle } from "./LexicalChatInput.js";
@@ -81,6 +83,8 @@ export function Composer({
   };
   const busy = useSyncExternalStore(subscribeSending, () => sending.has(key));
   const [files, setFiles] = useState<File[]>(() => attachmentDrafts.get(key) ?? []);
+  const annotationEditing = useBrowserAnnotationEditing(key);
+  const invalidAnnotation = files.some(file => browserAnnotation(file)?.comment.trim() === "");
   const [admissionError, setAdmissionError] = useState(() => attachmentErrors.get(key) ?? "");
   useEffect(() => {
     attachmentDrafts.set(key, files);
@@ -166,7 +170,7 @@ export function Composer({
   }, [thread.goals?.goal?.id]);
   const submit = async (value: string, invert = false, approvePlan = false) => {
     if (queueEditor.edit) { await queueEditor.save(); return; }
-    if (disabled || sending.has(key) || (!value.trim() && !files.length && !comments.length && !skills.selected.length)) return;
+    if (disabled || annotationEditing || invalidAnnotation || sending.has(key) || (!value.trim() && !files.length && !comments.length && !skills.selected.length)) return;
     if (approvePlan && (!planReady || text.trim() || files.length || comments.length)) return;
     if (creatingGoal && (running || thread.parentThreadId || !value.trim())) return;
     setAdmissionError("");
@@ -311,7 +315,7 @@ export function Composer({
         submitTestId="chat-send-button"
         placeholder={archived ? "已归档任务只读" : creatingGoal ? "描述目标，明确可衡量的结果" : planActive ? "描述任务，生成计划…" : "随心输入"}
         disabled={disabled}
-        submitDisabled={disabled || (queueEditor.edit ? queueEditor.saveDisabled || (!text.trim() && !files.length && !queueEditor.edit.attachments.length) : creatingGoal ? !text.trim() || !!running : !text.trim() && !files.length && !comments.length && !skills.selected.length)}
+        submitDisabled={disabled || annotationEditing || invalidAnnotation || (queueEditor.edit ? queueEditor.saveDisabled || (!text.trim() && !files.length && !queueEditor.edit.attachments.length) : creatingGoal ? !text.trim() || !!running : !text.trim() && !files.length && !comments.length && !skills.selected.length)}
         submitting={busy}
         submitLabel={queueEditor.edit ? "保存排队消息" : creatingGoal ? "开始目标" : "发送"}
         enterSubmits={prefs.sendShortcut === "enter"}
@@ -343,10 +347,11 @@ export function Composer({
             {queueEditor.edit.attachments.map((part, index) => <ComposerQueueAttachment key={`${index}:${part.url}`} part={part} projectId={project.id} threadId={thread.id} action={readAction} disabled={disabled}
               onRemove={() => queueEditor.removeAttachment(index)} />)}
           </div>}
-          {files.length ? (
+          <BrowserAnnotationAttachments files={files} disabled={disabled} onChange={setFiles} />
+          {files.some(file => !browserAnnotation(file)) ? (
             <div className="composer-attachments" data-testid="composer-attachments">
-              {files.map((file, i) => <ComposerAttachment disabled={disabled} key={`${file.name}-${file.lastModified}-${i}`} file={file}
-                onRemove={() => setFiles((current) => current.filter((_, at) => at !== i))}
+              {files.filter(file => !browserAnnotation(file)).map((file, i) => <ComposerAttachment disabled={disabled} key={`${file.name}-${file.lastModified}-${i}`} file={file}
+                onRemove={() => setFiles((current) => current.filter(item => item !== file))}
                 onExpand={content => { api.current?.appendText(`${text.trim() ? "\n\n" : ""}${content}`); setFiles(current => current.filter(item => item !== file)); }} />)}
             </div>
           ) : null}</>
@@ -435,8 +440,12 @@ export async function submitMessage(
   const reviewKey = reviewCommentKey(projectId, threadId);
   const comments = attachedReviewComments(readReviewComments(reviewKey));
   const skillContent = await composerSkillContent(options.skillAction ?? action, projectId, threadId, readComposerSkills(`areal-gui:draft:${projectId}:${threadId}`));
-  const feedback = [comments.map(reviewCommentText).join("\n\n"), skillContent].filter(Boolean).join("\n\n");
   const attachments = await uploadComposerFiles(action, projectId, threadId, files);
+  const annotationFeedback = files.flatMap((file, index) => {
+    const note = browserAnnotation(file);
+    return note ? [browserAnnotationText(note, attachments[index].url)] : [];
+  }).join("\n\n");
+  const feedback = [annotationFeedback, comments.map(reviewCommentText).join("\n\n"), skillContent].filter(Boolean).join("\n\n");
   try {
     await action(options.steer ? "steer" : "send", {
         projectId,

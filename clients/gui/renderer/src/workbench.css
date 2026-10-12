@@ -2531,4 +2531,24 @@ body { font-family: var(--font-sans); }
 .composer-skill-preview { width: min(480px, calc(100vw - 24px)); max-height: min(420px, 60dvh); }
 .composer-skill-preview pre { font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 
+/* 批注与导航同组，地址栏保留可用宽度。 */
+.browser-navigation-controls {
+  border-radius: 9999px;
+  padding: 1px 3px;
+  background: var(--color-surface);
+}
+.browser-annotation-trigger {
+  flex-shrink: 0;
+  height: 28px;
+  border-radius: 9999px;
+  padding: 0 9px;
+  gap: 5px;
+  background: var(--color-surface);
+  font-size: var(--text-ui-caption);
+}
+.browser-annotation-trigger[aria-pressed="true"] {
+  color: #91c5ff;
+  background: #4795ff26;
+}
+
 .browser-transfer-status { position: absolute; bottom: 12px; left: 12px; right: 12px; z-index: 5; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 8px; }

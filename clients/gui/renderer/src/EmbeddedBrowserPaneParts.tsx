@@ -1,5 +1,5 @@
 // Copied from ZCode EmbeddedBrowserPaneParts (872ad960), Core state and labels adapted; telemetry and unsupported element picking omitted.
-import { useRef, type FormEvent, type ReactNode } from "react";
+import { useRef, type FormEvent, type ReactNode, type Ref } from "react";
 import { flushSync } from "react-dom";
 import {
   Bug,
@@ -10,6 +10,7 @@ import {
   Globe,
   LoaderIcon,
   MonitorSmartphone,
+  SquareDashedMousePointer,
   RefreshCw,
   X,
   TriangleAlertIcon,
@@ -46,9 +47,9 @@ export function BrowserToolbar({
   onReload,
   onToggleResponsiveMode,
   onSubmit,
-  annotationActions,
   onToggleDetails,
   isResponsiveMode,
+  annotationControl, annotationDisabled, annotating, onAnnotation,
 }: {
   addressValue: string;
   browserState: BrowserState;
@@ -64,9 +65,12 @@ export function BrowserToolbar({
   onReload: () => void;
   onToggleResponsiveMode: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-  annotationActions?: ReactNode;
   onToggleDetails?: () => void;
   isResponsiveMode: boolean;
+  annotationControl: Ref<HTMLButtonElement>;
+  annotationDisabled: boolean;
+  annotating: boolean;
+  onAnnotation: () => void;
 }) {
   const selectOnPointerUp = useRef(false);
   return (
@@ -94,6 +98,10 @@ export function BrowserToolbar({
           onClick={onReload}
         />
       </div>
+      <Button ref={annotationControl} type="button" size="sm" variant="ghost" className="browser-annotation-trigger"
+        data-testid="browser-annotation-button" aria-label="批注" aria-pressed={annotating} disabled={annotationDisabled} onClick={onAnnotation}>
+        <SquareDashedMousePointer className="size-4" /><span>批注</span>
+      </Button>
       <Input
         type="text"
         value={addressValue}
@@ -137,7 +145,6 @@ export function BrowserToolbar({
         active={isResponsiveMode}
         pressed={isResponsiveMode}
       />
-      {annotationActions}
       <BrowserToolbarMoreMenu
         canOpenExternal={
           browserState.isReady && isDefaultBrowserOpenableUrl(browserState.currentUrl)
