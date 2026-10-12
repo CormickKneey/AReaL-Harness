@@ -938,6 +938,7 @@ try {
   await shot("09-restarted-identities.png");
   checks.push("AC47: Electron restart restored the same sent Side and source Turn IDs without another model request");
   const unknownDraft = "保持草稿，先检查来源未知结果";
+  await showMainConversation();
   await page.getByTestId("chat-input").fill(unknownDraft);
   await page.locator(`[data-turn-id="${activeTurnId}"]`).getByRole("button", { name: /^轮次操作 / }).click();
   assert.ok(await page.getByRole("menuitem", { name: "在此轮之后分支", exact: true }).isDisabled());
