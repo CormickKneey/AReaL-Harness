@@ -23,12 +23,15 @@ test("Settings renders the Serve/organization consent and explicit unknown phone
       React.createElement(MobileSettings, { action: async () => ({}), projects: [] }),
     );
     assert.match(html, /Tailscale Serve/);
-    assert.match(html, /可选 Funnel · 公网入口/);
+    assert.match(html, /Tailscale Funnel · 公网/);
+    assert.match(html, /aria-label="手机访问方式"/);
+    assert.match(html, /连接详情与诊断/);
+    assert.match(html, /手机连接待验证/);
     assert.match(html, /默认保持私人入口/);
     assert.match(html, /公网能力未认证/);
     assert.match(html, /disabled=""[^>]*>生成公网 Funnel 方案/);
     assert.match(html, /disabled=""[^>]*>生成恢复私人入口方案/);
-    assert.match(html, /自托管 Relay/);
+    assert.match(html, /通过中继服务连接/);
     assert.match(html, /管理员一次性登记码/);
     assert.match(html, /type="password"/);
     assert.match(html, /disabled=""[^>]*>登记或启用 Relay/);
@@ -40,7 +43,7 @@ test("Settings renders the Serve/organization consent and explicit unknown phone
     assert.match(html, /组织 HTTPS/);
     assert.match(html, /手机.*tailnet/);
     assert.match(html, /策略.*未验证/);
-    assert.match(html, /明确确认.*网络配置/);
+    assert.match(html, /生成方案后，确认再应用/);
     assert.match(html, /配对.*过期/);
     assert.match(html, /Host.*离线/);
   } finally {

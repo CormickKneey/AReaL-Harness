@@ -262,7 +262,7 @@ async function run() {
     });
     remote = await browser.newPage();
     await remote.goto(invite);
-    await remote.getByRole("button", { name: "连接 Host", exact: true }).click();
+    await remote.getByRole("button", { name: "连接电脑", exact: true }).click();
     await remote
       .getByRole("status")
       .getByText(/等待桌面确认/)

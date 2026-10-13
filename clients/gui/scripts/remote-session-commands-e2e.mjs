@@ -2539,7 +2539,7 @@ if (process.argv[2] === "--host-worker") {
       });
       const invite = await control("control", { operation: "pair" });
       await browserPage.goto(invite.payload);
-      await browserPage.getByRole("button", { name: "连接 Host", exact: true }).click();
+      await browserPage.getByRole("button", { name: "连接电脑", exact: true }).click();
       await browserPage
         .getByRole("status")
         .getByText(/等待桌面确认/)

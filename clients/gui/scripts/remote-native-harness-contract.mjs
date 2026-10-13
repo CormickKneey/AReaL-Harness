@@ -2194,7 +2194,7 @@ console.log(
     };
     const desktop = {
       getByRole(role, { name }) {
-        if (role === "button" && name === "配对新手机")
+        if (role === "button" && name === "生成配对链接")
           return {
             async click() {
               release();
@@ -2280,7 +2280,7 @@ console.log(
   const domFixture = slice(lifecycle, "function events() {", "function inbox() {");
   const handler = 'connect.addEventListener("click", () => connectHost());';
   assert.ok(main.includes(handler));
-  assert.match(html, /<button id="connect" type="button" disabled>/);
+  assert.match(html, /<button\b(?=[^>]*\bid="connect")(?=[^>]*\btype="button")(?=[^>]*\bdisabled)[^>]*>/);
   const consumer = fixed
     .replace(' && !document.getElementById("connect").disabled', "")
     .replace("production Remote connect ready", "production Remote page loaded")
@@ -2446,7 +2446,7 @@ console.log(
   const initial = slice(
     harness,
     "  assertPublicDirectUrl(page.url()",
-    "  await page.getByRole('button', { name: '连接 Host' }).click();",
+    "  await page.getByRole('button', { name: '连接电脑' }).click();",
   );
   const open = slice(harness, "  const openInvite = async link =>", "  const pinInvite =");
   const wrongPin = slice(harness, "  const pinInvite =", "  await wrong.locator('#status')");
@@ -2497,7 +2497,7 @@ console.log(
         },
         getByRole(role, { name }) {
           assert.equal(role, "button");
-          assert.equal(name, "连接 Host");
+          assert.equal(name, "连接电脑");
           return {
             async click() {
               clicks++;
@@ -2689,7 +2689,7 @@ console.log(
   }
   // 当前页面隐藏区均为不嵌套的 section；只从这些实际源码范围判断初始可见性。
   const hiddenSections = [...html.matchAll(/<section\b[^>]*\bhidden[^>]*>([\s\S]*?)<\/section>/g)];
-  assert.equal(hiddenSections.length, 4);
+  assert.equal(hiddenSections.length, 6);
   for (const section of hiddenSections) assert.ok(!section[1].includes("<section"));
   const elements = [...html.matchAll(/<p id="([^"]+)" role="status">/g)].map((match) => ({
     id: match[1],
@@ -2697,13 +2697,13 @@ console.log(
       (section) => match.index > section.index && match.index < section.index + section[0].length,
     ),
   }));
-  assert.equal(elements.length, 9);
+  assert.equal(elements.length, 11);
   assert.deepEqual(
     elements.filter((element) => !element.hidden).map((element) => element.id),
-    ["status", "device-storage", "update-status", "create-command-state"],
+    ["status", "device-storage", "update-status"],
   );
   assert.ok(main.includes('const status = document.getElementById("status");'));
-  assert.ok(harness.includes(".selectOption('Operator')"));
+  assert.ok(harness.includes("getByRole('radio', { name: '可操作', exact: true }).check()"));
 
   const presetSource = slice(hostSource, "const PRESETS =", "const pairingError");
   const control = slice(hostSource, "    async controlOnce(request) {", "    async enableRelay(");
@@ -2809,9 +2809,7 @@ console.log(
   const expected = ["observe", "review", "submit", "interrupt", "answer", "pauseTask"];
   assert.deepEqual(Array.from(ready.capabilities), expected);
   assert.equal(ready.limits.applicationMessageBytes, 262144);
-  const render = main
-    .split("\n")
-    .find((line) => line.includes("status.textContent = `已连接；能力："));
+  const render = slice(main, '    document.getElementById("connection-protocol").textContent =', '    connectionPhase("connected");');
   assert.ok(render);
   function renderStatus(
     capabilities,
@@ -2819,13 +2817,13 @@ console.log(
   ) {
     const status = {};
     runInNewContext(render, {
-      status,
+      document: { getElementById(id) { assert.equal(id, "connection-protocol"); return status; } },
       connected: { ...ready, capabilities, limits: { applicationMessageBytes } },
     });
     return status.textContent;
   }
   const expectedConnected =
-    "已连接；能力：observe、review、submit、interrupt、answer、pauseTask；消息上限：262144 字节";
+    "能力：observe、review、submit、interrupt、answer、pauseTask；消息上限：262144 字节";
   assert.equal(renderStatus(ready.capabilities), expectedConnected);
 
   class Locator {
@@ -2866,13 +2864,14 @@ console.log(
   const consumers = harness.split("\n").filter((line) => line.includes("locator('#status')"));
   assert.equal(consumers.length, 15);
   assert.ok(!harness.includes("getByRole('status')"));
-  const capabilityCheck = consumers.find((line) => line.includes("消息上限：262144 字节"));
+  const capabilityCheck = harness.split("\n").find((line) => line.includes("locator('#connection-protocol')") && line.includes("消息上限：262144 字节"));
+  const protocolPage = (value) => ({ locator(selector) { assert.equal(selector, "#connection-protocol"); return new Locator([{ text: value }]); } });
   assert.ok(capabilityCheck);
   const states = [
     "等待桌面确认",
     "等待桌面确认",
     "已连接",
-    expectedConnected,
+    "已连接电脑 · 可操作",
     "已断开",
     "已连接",
     "已断开",
@@ -2892,7 +2891,7 @@ console.log(
     .replaceAll("locator('#status')", "getByRole('status')");
   await assert.rejects(
     run(oldWaiting, { page: page("等待桌面确认", "unrelated status") }),
-    /strict mode violation: status resolved to 4 elements/,
+    /strict mode violation: status resolved to 3 elements/,
   );
   const oldCapability =
     "  assert.match(await page.locator('#status').textContent(), /只读能力：observe/);";
@@ -2919,15 +2918,15 @@ console.log(
     expected.map((value) => (value === "answer" ? "answerOther" : value)),
   ]) {
     await assert.rejects(
-      run(capabilityCheck, { page: page(renderStatus(capabilities), expectedConnected) }),
+      run(capabilityCheck, { page: protocolPage(renderStatus(capabilities)) }),
       (error) => error.code === "ERR_ASSERTION",
     );
   }
   await assert.rejects(
-    run(capabilityCheck, { page: page(renderStatus(expected, 131072), expectedConnected) }),
+    run(capabilityCheck, { page: protocolPage(renderStatus(expected, 131072)) }),
     (error) => error.code === "ERR_ASSERTION",
   );
   console.log(
-    "Pairing connection status: four visible roles make original consumer RED; all 15 actual #status consumers GREEN and reject unrelated status text; actual save/approve/ready/render preserves exact Operator capabilities and budget, rejecting missing/extra/wrong capabilities",
+    "Pairing connection status: three visible roles make original consumer RED; all 15 actual #status consumers GREEN and reject unrelated status text; actual save/approve/ready/render preserves exact Operator capabilities and budget, rejecting missing/extra/wrong capabilities",
   );
 }

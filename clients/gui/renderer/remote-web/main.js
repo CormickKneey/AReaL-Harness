@@ -75,6 +75,42 @@ function text(tag, value) {
   element.textContent = value;
   return element;
 }
+// Presentation follows existing connection events; it never admits requests or restores work.
+function connectionPhase(phase) {
+  document.body.dataset.connection = phase;
+  const connected = phase === "connected";
+  const settings = document.getElementById("connection-details");
+  settings.open = !connected;
+  document.getElementById("project-section").hidden = !connected;
+  document.getElementById("work-overview").hidden = !connected;
+  document.getElementById("pairing-instructions").hidden = phase !== "pairing";
+  document.getElementById("connection-title").textContent =
+    phase === "pairing"
+      ? "请回到电脑确认"
+      : phase === "connecting"
+        ? "正在连接电脑"
+        : "连接到你的电脑";
+  document.getElementById("connection-help").textContent =
+    phase === "pairing"
+      ? "这台浏览器正在申请访问。邀请自生成起两分钟内有效，过期后请重新生成。"
+      : phase === "connecting"
+        ? "正在核对电脑身份，请稍候。"
+        : "在电脑的「设置 → 手机连接」生成配对链接，再在这里打开。";
+}
+const executionLabel = (value) =>
+  ({
+    completed: "已完成",
+    inProgress: "正在执行",
+    running: "正在执行",
+    active: "正在执行",
+    failed: "执行失败",
+    interrupted: "已中断",
+    cancelled: "已取消",
+    queued: "等待执行",
+    idle: "空闲",
+    paused: "已暂停",
+    unknown: "状态未知",
+  })[value] ?? value;
 function clearWork() {
   resultReview?.close();
   invalidateTaskPause();
@@ -98,17 +134,28 @@ function renderWork(complete) {
       const article = document.createElement("article");
       article.dataset.workId = row.kind === "taskRun" ? `${row.taskId}/${row.runId}` : row.threadId;
       article.append(text("h3", row.title || "未命名工作"));
-      article.append(
+      const summary = text(
+        "p",
+        `${executionLabel(row.execution.state)} · ${row.resultAvailable ? "有可查看的结果" : "暂无结果"}${row.attentionCount ? ` · ${row.attentionCount} 项待处理` : ""}`,
+      );
+      summary.className = "work-summary";
+      article.append(summary);
+      if (!row.attentionComplete || row.summaryTruncated)
+        article.append(text("p", "摘要未完整加载，请展开工作详情或在桌面查看。"));
+      const technical = document.createElement("details");
+      technical.className = "work-technical";
+      technical.append(text("summary", "工作详情"));
+      technical.append(
         text(
           "p",
           `${row.kind === "taskRun" ? "Task Run" : "会话"} · 执行：${row.execution.state} · ${row.resultAvailable ? "结果可读" : "暂无结果"}`,
         ),
       );
       if (row.execution.turnStatus && row.execution.runStatus)
-        article.append(
+        technical.append(
           text("p", `协调 Turn：${row.execution.turnStatus}；Task Run：${row.execution.runStatus}`),
         );
-      article.append(
+      technical.append(
         text(
           "p",
           `待处理 ${row.attentionCount} 项${row.attentionComplete ? "" : "（摘要未完整加载）"}`,
@@ -118,7 +165,7 @@ function renderWork(complete) {
       for (const item of row.attentionRefs) attention.append(attentionSummary(item));
       article.append(attention);
       if (row.workerCount) {
-        article.append(
+        technical.append(
           text(
             "p",
             `此 Task Run 的 worker：${row.workerCount}${row.workersComplete ? "" : "（列表未完整加载）"}`,
@@ -132,21 +179,21 @@ function renderWork(complete) {
               `${worker.threadId} · ${worker.status} · ${worker.settled ? "已结算" : "未结算"}`,
             ),
           );
-        article.append(workers);
+        technical.append(workers);
       }
-      if (row.parentThreadId) article.append(text("p", `父会话：${row.parentThreadId}`));
+      if (row.parentThreadId) technical.append(text("p", `父会话：${row.parentThreadId}`));
       if (row.queue.pendingCount || row.queue.paused)
-        article.append(
+        technical.append(
           text("p", `队列：${row.queue.pendingCount} 待执行${row.queue.paused ? " · 已暂停" : ""}`),
         );
-      article.append(
+      technical.append(
         text(
           "p",
           `来源更新时间：${row.sourceUpdatedAt == null ? "未知" : new Date(row.sourceUpdatedAt * 1000).toLocaleString()}`,
         ),
       );
-      if (row.summaryTruncated) article.append(text("p", "摘要已截断；完整内容请在桌面查看。"));
-      article.append(
+      if (row.summaryTruncated) technical.append(text("p", "摘要已截断；完整内容请在桌面查看。"));
+      technical.append(
         text(
           "small",
           row.kind === "taskRun"
@@ -154,6 +201,7 @@ function renderWork(complete) {
             : `Thread ${row.threadId}`,
         ),
       );
+      article.append(technical);
       if (row.kind === "taskRun") {
         const pause = text("button", "审阅暂停 Task");
         pause.type = "button";
@@ -273,9 +321,13 @@ async function loadProjects(call) {
       const row = document.createElement("li");
       const button = text("button", `${project.name}（${project.connectionState}）`);
       button.type = "button";
+      button.dataset.projectId = project.projectId;
+      button.setAttribute("aria-pressed", String(project.projectId === selectedProject));
       button.addEventListener("click", () => {
         closeSession();
         selectedProject = project.projectId;
+        for (const item of projects.querySelectorAll("button"))
+          item.setAttribute("aria-pressed", String(item.dataset.projectId === selectedProject));
         clearWork();
         void refreshWork();
       });
@@ -285,6 +337,8 @@ async function loadProjects(call) {
   );
   selectedProject =
     all.find((value) => value.projectId === selectedProject)?.projectId ?? all[0]?.projectId;
+  for (const item of projects.querySelectorAll("button"))
+    item.setAttribute("aria-pressed", String(item.dataset.projectId === selectedProject));
   clearWork();
   await refreshWork();
   polling();
@@ -329,7 +383,8 @@ function renderDeviceStorage() {
     (!token && rememberChoice.checked);
   rememberChoice.disabled = !browserLoaded || connecting || Boolean(token);
   draftChoice.disabled = token?.mode !== "remembered";
-  device.textContent = token ? `此浏览器身份：${token.peerId}` : "";
+  device.textContent = token?.peerId ?? "";
+  document.getElementById("device-verification").hidden = !token;
   storageStatus.textContent =
     token?.mode === "remembered"
       ? "已记住此设备，仅当前站点可恢复。清除站点数据后需要重新配对。"
@@ -379,6 +434,8 @@ function stopConnection(message, retry = false) {
   host.textContent = "";
   projects.replaceChildren();
   status.textContent = message;
+  document.getElementById("connection-protocol").textContent = "";
+  connectionPhase("disconnected");
   connect.disabled = !browserLoaded || pinConflict;
   renderDeviceStorage();
   if (retry) scheduleReconnect();
@@ -478,6 +535,7 @@ async function connectHost(automatic = false) {
   reconnectEnabled = true;
   stopConnection("正在重连，旧基线已清除");
   connecting = true;
+  connectionPhase("connecting");
   connect.disabled = true;
   rememberChoice.disabled = true;
   const attempt = connectionAttempt;
@@ -553,6 +611,7 @@ async function connectHost(automatic = false) {
       // 人工确认由 Host 的邀请期限约束，不沿用传输握手期限。
       clearTimeout(deadline);
       status.textContent = "等待桌面确认；请核对设备指纹并选择项目";
+      connectionPhase("pairing");
       first = await messages.next();
       check();
     }
@@ -572,7 +631,10 @@ async function connectHost(automatic = false) {
     connectionIdentity = first.value;
     const connected = connectionIdentity;
     host.textContent = connected.hostId;
-    status.textContent = `已连接；能力：${connected.capabilities.join("、")}；消息上限：${connected.limits.applicationMessageBytes} 字节`;
+    status.textContent = `已连接电脑 · ${connected.capabilities.includes("submit") ? "可操作" : "仅查看"}`;
+    document.getElementById("connection-protocol").textContent =
+      `能力：${connected.capabilities.join("、")}；消息上限：${connected.limits.applicationMessageBytes} 字节`;
+    connectionPhase("connected");
     connecting = false;
     reconnectAttempt = 0;
     renderDeviceStorage();
@@ -683,6 +745,8 @@ function invalidateDetail(message = "") {
     document.getElementById(id).textContent = "";
   sessionError.textContent = message;
   sessionPanel.hidden = !detailTarget;
+  document.body.dataset.detail = detailTarget ? "open" : "closed";
+  document.getElementById("session-summary").textContent = "";
   renderCommandControls();
 }
 function releaseSession(previous, call) {
@@ -703,6 +767,9 @@ function renderSession(turns = detail?.snapshot.turns ?? []) {
   renderCommandControls();
   const state = detail.snapshot;
   sessionPanel.hidden = false;
+  document.body.dataset.detail = "open";
+  document.getElementById("session-summary").textContent =
+    `${state.ownership.kind === "ordinary" ? "普通会话" : "任务管理的会话"} · ${executionLabel(state.status)}${state.queue.pendingCount ? ` · ${state.queue.pendingCount} 条等待执行` : ""}`;
   document.getElementById("session-title").textContent = state.title || "会话";
   document.getElementById("session-state").textContent =
     `Thread ${state.threadId} · ${state.status} · 配置 ${state.configRevision} · ${state.ownership.kind}${state.ownership.taskId ? " / Task " + state.ownership.taskId : ""}${state.ownership.runId ? " / Run " + state.ownership.runId : ""} · 队列 ${state.queue.pendingCount}${state.queue.paused ? "（暂停）" : ""}`;
@@ -713,7 +780,13 @@ function renderSession(turns = detail?.snapshot.turns ?? []) {
     ...turns.map((turn) => {
       const article = text("article", "");
       article.dataset.turnId = turn.id;
-      article.append(text("h3", `Turn ${turn.id} · ${turn.status}`));
+      article.append(text("h3", executionLabel(turn.status)));
+      const turnInfo = document.createElement("details");
+      turnInfo.className = "item-technical";
+      turnInfo.append(
+        text("summary", "轮次详情"),
+        text("small", `Turn ${turn.id} · ${turn.status}`),
+      );
       if (connectionIdentity?.capabilities?.includes("review")) {
         const review = text("button", "查看原轮次结果与变更");
         review.addEventListener("click", () => {
@@ -741,12 +814,22 @@ function renderSession(turns = detail?.snapshot.turns ?? []) {
           );
           void resultReview.load();
         });
-        article.append(review);
+        review.className = "turn-review";
+        turnInfo.append(review);
       }
       for (const item of turn.items) {
         const block = text("section", "");
         block.dataset.itemId = item.id;
-        block.append(
+        block.dataset.itemType = item.type;
+        const kind = text(
+          "small",
+          { userMessage: "你", agentMessage: "助手", toolCall: "工具调用", toolResult: "工具结果" }[
+            item.type
+          ] ?? item.type,
+        );
+        kind.className = "item-kind";
+        block.append(kind);
+        turnInfo.append(
           text(
             "small",
             `${item.type} · ${item.id}${item.phase ? " · " + item.phase : ""}${item.executionOutcome ? " · " + item.executionOutcome : ""}`,
@@ -759,13 +842,14 @@ function renderSession(turns = detail?.snapshot.turns ?? []) {
           block.append(text("p", "正文预览已受限，完整内容请在桌面查看。"));
         article.append(block);
       }
+      article.append(turnInfo);
       return article;
     }),
   );
   historyButton.hidden = !state.history.hasMore;
   document.getElementById("session-range").textContent = state.history.unavailable
     ? "部分上游历史不可用；此处只显示 Core 当前可读取范围。"
-    : "此处为有界历史窗口；实时更新会替换当前窗口。";
+    : "显示最近的会话记录；更早内容可继续加载。";
 }
 async function openSession(threadId) {
   if (!request || !selectedProject) return;
@@ -918,8 +1002,18 @@ function renderCommandControls() {
     !canSubmit || !selectedProject || !serviceGeneration || commandState.unresolved(create);
   createQuery.disabled = !request || !commandState.unresolved(create);
   createButton.textContent =
-    create?.admissionState === "rejected" ? "以新命令创建会话" : "创建普通会话";
+    create?.admissionState === "rejected" ? "以新命令创建会话" : "新建会话";
   document.getElementById("create-command-state").textContent = commandLabel(create);
+  const createSummary = document.getElementById("create-summary");
+  const createMessages = {
+    pending: "正在创建会话…",
+    accepted: "会话已创建。",
+    rejected: `创建失败：${create?.error?.message ?? "命令未受理，请核对详情后重试。"}`,
+    unknown: "创建结果未确认，请展开下方「创建结果与核对」查询；不会自动重试。",
+    notFound: "暂未找到创建结果，请继续核对；不能据此认定未创建。",
+  };
+  createSummary.textContent = create ? createMessages[create.admissionState] ?? "" : "";
+  createSummary.dataset.state = create?.admissionState ?? "";
   const state = detail?.snapshot;
   const key = state && commandKey(state.threadId);
   const stop = lastStop();
@@ -953,6 +1047,17 @@ function renderCommandControls() {
     !draftInput.value.trim();
   sendButton.textContent = send?.admissionState === "rejected" ? "以新命令发送草稿" : "发送新消息";
   sendQuery.disabled = !request || !commandState.unresolved(send);
+  document.getElementById("send-summary").textContent = send
+    ? ({
+        pending: "正在提交，请勿重复发送。",
+        accepted: "消息已受理；完成状态见上方会话。",
+        rejected: "消息未受理，草稿已保留。",
+        unknown: "是否受理尚不确定，请展开操作详情核对；不会自动重发。",
+        notFound: "暂未找到回执，请核对原操作；不能认定未执行。",
+      }[send.admissionState] ?? "")
+    : state?.ownership.kind !== "ordinary" && state
+      ? "此会话由任务管理，请在待处理入口操作。"
+      : "";
   document.getElementById("send-command-state").textContent =
     commandLabel(send) ||
     (state && state.ownership.kind !== "ordinary"

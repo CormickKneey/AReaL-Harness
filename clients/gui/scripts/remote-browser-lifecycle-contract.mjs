@@ -46,7 +46,9 @@ class Element {
   disabled = false;
   hidden = false;
   #text = "";
-  constructor() {
+  constructor(tag) {
+    this.tag = tag;
+    this.attributes = new Map();
     Object.assign(this, events());
   }
   set textContent(value) {
@@ -61,6 +63,15 @@ class Element {
   }
   replaceChildren(...values) {
     this.children = values;
+  }
+  setAttribute(name, value) {
+    this.attributes.set(name, value);
+  }
+  querySelectorAll(tag) {
+    return this.children.flatMap((child) => [
+      ...(child.tag === tag ? [child] : []),
+      ...child.querySelectorAll(tag),
+    ]);
   }
   click() {
     if (!this.disabled) this.dispatchEvent({ type: "click" });
@@ -116,8 +127,9 @@ function page({
   const document = {
     ...events(),
     hidden: false,
+    body: new Element("body"),
     getElementById: element,
-    createElement: () => new Element(),
+    createElement: (tag) => new Element(tag),
   };
   const location = {
     hash,

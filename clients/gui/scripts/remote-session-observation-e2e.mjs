@@ -544,7 +544,7 @@ async function pairBrowser() {
   target.setDefaultTimeout(15000);
   target.on("pageerror", (error) => errors.push(error.message));
   await target.goto(invite.payload);
-  await target.getByRole("button", { name: "连接 Host" }).click();
+  await target.getByRole("button", { name: "连接电脑" }).click();
   await target
     .getByRole("status")
     .getByText(/等待桌面确认/)
@@ -913,7 +913,7 @@ try {
       .getByText(/已断开/)
       .waitFor();
     assert.equal(await page.locator("[data-item-id]").count(), 0);
-    await page.getByRole("button", { name: "连接 Host" }).click();
+    await page.getByRole("button", { name: "连接电脑" }).click();
     await until(() => recordedBaseline.connectionId !== oldConnection, "fresh connection baseline");
     secureOutputs.get(paired.peer).send(oldEvent);
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -932,7 +932,7 @@ try {
     );
     const peerTwo = await pairBrowser();
     await openDetail(peerTwo.page, gapId);
-    await page.getByRole("button", { name: "关闭详情", exact: true }).click();
+    await page.getByRole("button", { name: "返回工作列表", exact: true }).click();
     const queueAfter = await writer.request("areal/queue/list", { threadId: gapId });
     await writer.request("areal/queue/remove", {
       requestId: randomUUID(),
@@ -1336,7 +1336,7 @@ try {
       pageClaim: structuredClone(originalPageClaim),
     };
     assert.ok(pending && pending.socket === heldObserve.socket);
-    await page.getByRole("button", { name: "关闭详情", exact: true }).click();
+    await page.getByRole("button", { name: "返回工作列表", exact: true }).click();
     await page.locator("#session").waitFor({ state: "hidden" });
     await until(
       () => nativeFacts.closeOverlap.closeResponse,

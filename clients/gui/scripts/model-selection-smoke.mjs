@@ -45,8 +45,8 @@ const checks = [], errors = [];
 const button = name => page.getByRole("button", { name, exact: true });
 async function saveProvider() {
   await button("保存").click();
-  await page.getByText("已保存", { exact: true }).waitFor({ timeout: 180_000 });
   await button("返回应用").click({ trial: true, timeout: 180_000 });
+  assert.equal(await button("保存").isDisabled(), true, "save settles with a clean draft without a persistent saved banner");
   assert.equal(await button("应用模型配置").count(), 0);
 }
 const state = () => page.evaluate(() => window.arealDesktop.snapshot());
@@ -93,7 +93,10 @@ try {
   assert.match(await providerStatus.innerText(), /缺少凭据/);
 
 
-  assert.match(await page.getByRole("status", { name: "模型 theta-model 状态", exact: true }).innerText(), /缺少凭据/);
+  assert.equal(await page.getByRole("status", { name: "模型 theta-model 状态", exact: true }).count(), 0, "compact model rows show the name only");
+  assert.equal(await page.getByText("帮助", { exact: true }).count(), 0);
+  assert.equal(await page.getByText("凭据来源", { exact: true }).count(), 0);
+  assert.equal(await page.getByTestId("provider-base-url").isVisible(), true, "endpoint is visible without expanding advanced settings");
   await page.getByRole("textbox", { name: "API Key", exact: true }).fill("fixture-key");
   assert.match(await providerStatus.innerText(), /缺少凭据/, "unsaved credentials cannot claim readiness");
   await saveProvider();
@@ -235,7 +238,7 @@ try {
   await page.locator(".provider-catalog-row").filter({ hasText: "theta" }).click();
   await page.getByRole("switch", { name: "启用模型 theta-model", exact: true }).click();
   await saveProvider();
-  assert.match(await page.getByRole("status", { name: "模型 theta-model 状态", exact: true }).innerText(), /已停用/);
+  assert.equal(await page.getByRole("switch", { name: "启用模型 theta-model", exact: true }).isChecked(), false);
 
   await until(s => s.projects[0].models.length === 0, "disabled model absent from executable Core catalog");
   checks.push("Core credential states and saved enablement remain separate from drafts and pending apply; Composer explicitly selects and executes another available model");

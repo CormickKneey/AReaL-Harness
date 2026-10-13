@@ -199,7 +199,7 @@ try {
   browser = await chromium.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
   const page = await browser.newPage(); let frames = 0; page.on('websocket', ws => ws.on('framesent', () => frames++));
   const browserInvite = await remote.control({ operation: 'pair' });
-  await page.goto(browserInvite.payload); await page.getByRole('button', { name: '连接 Host' }).click();
+  await page.goto(browserInvite.payload); await page.getByRole('button', { name: '连接电脑' }).click();
   await page.getByRole('status').getByText(/等待桌面确认/).waitFor({ timeout: 10000 });
   const pending = (await remote.control({ operation: 'status' })).pending[0];
   await remote.control({ operation: 'approve', id: pending.id, projects: [projectId], preset: 'Observer' });
@@ -264,7 +264,7 @@ try {
   assert.equal(await readFile(unknownMarker, 'utf8'), 'x', 'overview did not replay or acknowledge the unknown tool');
   browser = await chromium.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
   const unknownPage = await browser.newPage(); const unknownInvite = await remote.control({ operation: 'pair' });
-  await unknownPage.goto(unknownInvite.payload); await unknownPage.getByRole('button', { name: '连接 Host' }).click();
+  await unknownPage.goto(unknownInvite.payload); await unknownPage.getByRole('button', { name: '连接电脑' }).click();
   await unknownPage.getByRole('status').getByText(/等待桌面确认/).waitFor({ timeout: 10000 });
   const unknownPending = (await remote.control({ operation: 'status' })).pending[0];
   await remote.control({ operation: 'approve', id: unknownPending.id, projects: [projectId], preset: 'Observer' });

@@ -85,15 +85,15 @@ try {
     args: ['--no-first-run', '--no-default-browser-check'] });
   const page = await browser.newPage();
   await page.goto(`${address.origin}/#host=${hostId}`);
-  await page.getByRole('button', { name: '连接 Host' }).click();
+  await page.getByRole('button', { name: '连接电脑' }).click();
   const device = page.locator('#device');
   await device.waitFor();
-  const peer = (await device.textContent()).split('：')[1];
+  const peer = (await device.textContent()).trim();
   assert.ok(peer?.startsWith('12D3Koo'));
   // 夹具在桌面侧预置当前设备授权；浏览器仍需通过 Noise 身份证明。
   remote.config.deviceGrants = [{ devicePeerId: peer, displayName: 'E2E browser', projectIds: [projectId],
     capabilities: ['observe'], revision: 1, status: 'active' }];
-  await page.getByRole('button', { name: '连接 Host' }).click();
+  await page.getByRole('button', { name: '连接电脑' }).click();
   await page.getByRole('status').getByText(/已连接/).waitFor({ timeout: 15000 });
   assert.equal(await page.locator('#host').textContent(), hostId);
   assert.match(await page.locator('#projects').textContent(), /workspace.*online/);
@@ -106,7 +106,7 @@ try {
   assert.equal(blocked.status(), 404);
   const wrong = await browser.newPage();
   await wrong.goto(`${address.origin}/#host=${identityId(await createIdentity())}`);
-  await wrong.getByRole('button', { name: '连接 Host' }).click();
+  await wrong.getByRole('button', { name: '连接电脑' }).click();
   await wrong.getByRole('status').getByText(/不匹配|连接失败|remote peer|expected/i).waitFor({ timeout: 15000 });
   checks.push('wrong Host pin rejected');
   await wrong.close();
@@ -122,19 +122,19 @@ try {
     return target;
   };
   const unsupported = await hostilePage('apiVersion:"areal.remote.v2"', 'apiVersion:"areal.remote.v9"');
-  await unsupported.getByRole('button', { name: '连接 Host' }).click();
+  await unsupported.getByRole('button', { name: '连接电脑' }).click();
   await unsupported.getByRole('status').getByText(/更新远程客户端/).waitFor({ timeout: 15000 });
   checks.push('host rejected unsupported browser protocol');
   await unsupported.close();
   const crossing = await hostilePage('method:"project.list",params:{}',
     'method:"project.list",context:{projectId:"forbidden-project"},params:{}');
   const authorizeHostile = async target => {
-    await target.getByRole('button', { name: '连接 Host' }).click();
+    await target.getByRole('button', { name: '连接电脑' }).click();
     await target.locator('#device').waitFor();
-    const hostilePeer = (await target.locator('#device').textContent()).split('：')[1];
+    const hostilePeer = (await target.locator('#device').textContent()).trim();
     remote.config.deviceGrants.push({ devicePeerId: hostilePeer, displayName: 'Adversarial browser',
       projectIds: [projectId], capabilities: ['observe'], revision: 1, status: 'active' });
-    await target.getByRole('button', { name: '连接 Host' }).click();
+    await target.getByRole('button', { name: '连接电脑' }).click();
   };
   await authorizeHostile(crossing);
   await crossing.getByRole('status').getByText(/未获授权/).waitFor({ timeout: 15000 });
@@ -163,7 +163,7 @@ try {
   await foreignOrigin.close();
   await remote.control({ operation: 'disableDirect' });
   await page.getByRole('status').getByText(/已断开/).waitFor({ timeout: 15000 });
-  assert.equal(await page.getByRole('button', { name: '连接 Host' }).isEnabled(), true);
+  assert.equal(await page.getByRole('button', { name: '连接电脑' }).isEnabled(), true);
   const localCore = await backend.command('providers', { operation: 'list' });
   assert.ok(localCore.data.some(value => value.id === 'fixture'));
   checks.push('Host disconnect clears stale browser state while local Core remains available');
