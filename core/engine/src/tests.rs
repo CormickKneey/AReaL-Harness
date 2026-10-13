@@ -1097,3 +1097,106 @@ async fn side_committed_store_fault_recovers_one_unexecuted_interrupted_turn() {
     assert_eq!(calls.load(Ordering::SeqCst), 0);
     restored.shutdown().await;
 }
+
+#[tokio::test]
+#[ignore = "measures full snapshot read/hash/parse and same-executor control latency"]
+async fn history_page_cost_and_control_latency_benchmark() {
+    let root = tempfile::tempdir().unwrap();
+    let engine = Engine::open(root.path(), Arc::new(PendingModel), Limits::default()).unwrap();
+    let mut source = engine.create("/fixture".into()).await.unwrap();
+    let items: Vec<Value> = (0..1024)
+        .map(|i| json!({"type":"agentMessage","id":format!("item-{i}"),"text":"x".repeat(8192)}))
+        .collect();
+    source.turns.push(serde_json::from_value(json!({"id":"history-anchor","status":"completed","items":items,"error":null,"usage":null})).unwrap());
+    engine.persist(&source).await.unwrap();
+    engine
+        .raw_cell(&source.id)
+        .await
+        .unwrap()
+        .state
+        .lock()
+        .await
+        .thread = source.clone();
+    let fork = engine
+        .fork_thread(
+            "history-cost".into(),
+            areal_protocol::desktop::ForkThread {
+                request_id: "history-cost".into(),
+                source_thread_id: source.id.clone(),
+                anchor: areal_protocol::desktop::ForkAnchor {
+                    turn_id: "history-anchor".into(),
+                    boundary: "after".into(),
+                },
+                workspace_mode: "sharedCurrent".into(),
+                target: None,
+            },
+        )
+        .await
+        .unwrap();
+    let snapshot = match &fork.conversation {
+        Some(areal_protocol::Conversation::Fork { history_seed, .. }) => history_seed,
+        _ => panic!("fork expected"),
+    };
+    let mut cursor = None;
+    let mut pages = Vec::new();
+    for _ in 0..8 {
+        let started = std::time::Instant::now();
+        let control_engine = engine.clone();
+        let source_id = source.id.clone();
+        let control = tokio::spawn(async move {
+            control_engine.read(&source_id, false).await.unwrap();
+            started.elapsed().as_micros()
+        });
+        let page = engine
+            .conversation_history(&fork.id, "inherited", cursor, Some(4096))
+            .await
+            .unwrap();
+        let page_us = started.elapsed().as_micros();
+        let control_us = control.await.unwrap();
+        let read_started = std::time::Instant::now();
+        engine
+            .store
+            .read_fork_snapshot_with_sources(&snapshot.snapshot_id)
+            .unwrap();
+        pages.push(json!({"pageMicros":page_us,"controlMicros":control_us,"snapshotReadHashParseMicros":read_started.elapsed().as_micros(),"responseBytes":page.to_string().len()}));
+        cursor = page["nextCursor"].as_str().map(str::to_owned);
+    }
+    println!(
+        "{}",
+        json!({"snapshotBytes":snapshot.logical_bytes,"items":1024,"pages":pages,"cache":"no index/cache; filesystem state uncontrolled"})
+    );
+    engine.shutdown().await;
+}
+
+#[tokio::test]
+async fn side_capacity_recheck_does_not_invert_parent_state_and_creation_locks() {
+    let root = tempfile::tempdir().unwrap();
+    let engine = Engine::open(root.path(), Arc::new(PendingModel), Limits::default()).unwrap();
+    let parent = engine.create("/fixture".into()).await.unwrap();
+    let source = engine.create("/fixture".into()).await.unwrap();
+    let cell = engine.raw_cell(&parent.id).await.unwrap();
+    let state = cell.state.lock().await;
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let owner = engine.clone();
+    let id = source.id.clone();
+    let notify = entered.clone();
+    let side = tokio::spawn(async move {
+        notify.notify_one();
+        let _gate = owner.reserve_side_creation(&id).await.unwrap();
+    });
+    entered.notified().await;
+    // 现有 TaskRun/agent 路径持 parent.state 调用 create_inner；Side 不能反向等待它。
+    let owner = engine.clone();
+    let mut creator = tokio::spawn(async move { owner.create("/fixture".into()).await });
+    let observed = tokio::time::timeout(std::time::Duration::from_millis(300), &mut creator).await;
+    drop(state);
+    side.await.unwrap();
+    if observed.is_err() {
+        creator.await.unwrap().unwrap();
+    }
+    engine.shutdown().await;
+    assert!(
+        observed.is_ok_and(|result| result.is_ok_and(|created| created.is_ok())),
+        "Side capacity inspection inverted parent-state/create admission lock order"
+    );
+}
