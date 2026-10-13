@@ -271,11 +271,13 @@ impl Engine {
                     host: None,
                 },
             );
-            // 容量锁跨越持久提交；read/list 只会看见已经同步完成的目标。
-            let mut threads = engine.threads.write().await;
-            if threads.len() >= engine.limits.max_threads {
+            // 创建准入保护未发布目标的容量；目录锁不跨磁盘等待，现有控制仍可查找会话。
+            let _creation = engine.thread_creation.lock().await;
+            if engine.threads.read().await.len() >= engine.limits.max_threads {
                 return Err(Error::Exhausted("thread capacity reached".into()));
             }
+            #[cfg(feature = "test-support")]
+            engine.test_fork_commit_barrier().await;
             if let Err(error) = engine.persist(&thread).await {
                 // rename 已完成而目录同步失败时，磁盘可能已有目标。先注册可核对的
                 // 完整记录，避免同进程的同键请求再创建第二个目标；原错误仍保持 UNKNOWN。
@@ -288,7 +290,7 @@ impl Engine {
                     })
                 {
                     cell.state.lock().await.poisoned = true;
-                    threads.insert(thread_id, cell);
+                    engine.threads.write().await.insert(thread_id, cell);
                 }
                 return Err(error);
             }
@@ -296,7 +298,7 @@ impl Engine {
             engine
                 .store
                 .check_fork_fault(crate::store::ForkFault::AfterTarget)?;
-            threads.insert(thread_id, cell);
+            engine.threads.write().await.insert(thread_id, cell);
             Ok(thread)
         })
         .await
@@ -364,21 +366,15 @@ impl Engine {
             }
             None => (0, 0),
         };
-        let mut entries = Vec::new();
-        let (turns, source_ids) = self
-            .store
-            .read_fork_snapshot_with_sources(&history_seed.snapshot_id)
-            .map_err(|e| Error::Storage(e.to_string()))?;
-        for (turn, source_thread_id) in turns.into_iter().zip(source_ids) {
-            let presentation = json!({"id":turn.id,"status":turn.status,"error":turn.error,
-                "startedAt":turn.started_at,"completedAt":turn.completed_at,
-                "durationMs":turn.duration_ms,"goal":turn.goal});
-            for item in turn.items {
-                entries.push(json!({"sourceThreadId":source_thread_id,
-                    "sourceTurnId":turn.id,"sourceItemId":item.id(),"sourceTurnStatus":turn.status,"turn":presentation,"item":item}));
-            }
-        }
-        if index > entries.len() || index == entries.len() && offset != 0 {
+        self.store.fork_snapshot_page(history_seed.snapshot_id.clone(), move |turns, source_ids| {
+        let item_count = turns.iter().map(|turn| turn.items.len()).sum::<usize>();
+        // 只为当前页和一个有界前瞻条目构造 JSON 投影；整段解析仍由 Store 校验。
+        let entries = turns.into_iter().zip(source_ids).flat_map(|(mut turn, source_thread_id)| {
+            let items = std::mem::take(&mut turn.items);
+            let turn = Arc::new(turn);
+            items.into_iter().map(move |item| (turn.clone(), source_thread_id.clone(), item))
+        });
+        if index > item_count || index == item_count && offset != 0 {
             return Err(invalid("invalid history cursor"));
         }
         let page_for = |data: Vec<Value>, next: Option<String>| {
@@ -387,10 +383,15 @@ impl Engine {
             })
         };
         let mut data = Vec::new();
-        for (position, entry) in entries.iter().enumerate().skip(index) {
-            let serialized = serde_json::to_string(entry).map_err(invalid)?;
+        for (position, (turn, source_thread_id, item)) in entries.enumerate().skip(index) {
+            let presentation = json!({"id":turn.id,"status":turn.status,"error":turn.error,
+                "startedAt":turn.started_at,"completedAt":turn.completed_at,
+                "durationMs":turn.duration_ms,"goal":turn.goal});
+            let entry = json!({"sourceThreadId":source_thread_id,
+                "sourceTurnId":turn.id,"sourceItemId":item.id(),"sourceTurnStatus":turn.status,"turn":presentation,"item":item});
+            let serialized = serde_json::to_string(&entry).map_err(invalid)?;
             let next =
-                (position + 1 < entries.len()).then(|| format!("{}:{}:0", scope, position + 1));
+                (position + 1 < item_count).then(|| format!("{}:{}:0", scope, position + 1));
             if position == index && offset > 0
                 || page_for(vec![entry.clone()], next.clone())
                     .to_string()
@@ -406,7 +407,7 @@ impl Engine {
                     let next_offset = offset + part.len();
                     let next = if next_offset < serialized.len() {
                         Some(format!("{}:{}:{}", scope, position, next_offset))
-                    } else if position + 1 < entries.len() {
+                    } else if position + 1 < item_count {
                         Some(format!("{}:{}:0", scope, position + 1))
                     } else {
                         None
@@ -456,12 +457,13 @@ impl Engine {
             data.push(entry.clone());
         }
         let next = index + data.len();
-        let cursor = (next < entries.len()).then(|| format!("{}:{}:0", scope, next));
+        let cursor = (next < item_count).then(|| format!("{}:{}:0", scope, next));
         let page = page_for(data, cursor);
         if page.to_string().len() > max_bytes {
             return Err(invalid("history page budget too small"));
         }
         Ok(page)
+        }).await
     }
     /// 空闲旧会话只追加部署固定 Browser 包，受理回执与工具表同一快照提交。
     pub async fn attach_browser_tools(

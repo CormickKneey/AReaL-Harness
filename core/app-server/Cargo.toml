@@ -23,6 +23,7 @@ tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+areal-engine = { path = "../engine", features = ["test-support"] }
 areal-local-service.workspace = true
 areal-runtime = { path = "../../runtime/daemon" }
 areal-runtime-client.workspace = true

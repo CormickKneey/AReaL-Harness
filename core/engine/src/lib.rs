@@ -229,6 +229,8 @@ impl Cell {
     }
 }
 
+#[cfg(feature = "test-support")]
+type ForkCommitBarrier = (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>);
 pub struct Engine {
     permissions: permissions::Permissions,
     default_models: std::sync::RwLock<default_model::DefaultModels>,
@@ -236,6 +238,9 @@ pub struct Engine {
     goals: goals::Goals,
     task_modes: task_mode::Tasks,
     threads: RwLock<BTreeMap<String, Arc<Cell>>>,
+    thread_creation: Mutex<()>,
+    #[cfg(feature = "test-support")]
+    fork_commit_barrier: std::sync::Mutex<Option<ForkCommitBarrier>>,
     store: store::Store,
     model: Arc<dyn Model>,
     limits: Limits,
@@ -526,6 +531,9 @@ impl Engine {
             task_modes,
             desktop,
             threads: RwLock::new(threads),
+            thread_creation: Mutex::new(()),
+            #[cfg(feature = "test-support")]
+            fork_commit_barrier: Default::default(),
             store,
             model,
             permits: Arc::new(Semaphore::new(limits.model_concurrency)),
@@ -612,6 +620,36 @@ impl Engine {
                 .runtime
                 .as_ref()
                 .is_some_and(|runtime| runtime.client.is_closed())
+    }
+    /// 仅测试 feature 启用；在真实 Fork 持久提交窗口暂停，不替代 Core 锁。
+    #[cfg(feature = "test-support")]
+    pub fn test_pause_fork_commit(
+        &self,
+        entered: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+    ) {
+        *self.fork_commit_barrier.lock().unwrap() = Some((entered, release));
+    }
+    #[cfg(feature = "test-support")]
+    async fn test_fork_commit_barrier(&self) {
+        let barrier = self.fork_commit_barrier.lock().unwrap().take();
+        if let Some((entered, release)) = barrier {
+            entered.notify_one();
+            release.notified().await;
+        }
+    }
+    /// 仅测试 feature 启用；模拟配置持久化持有真实目标状态锁。
+    #[cfg(feature = "test-support")]
+    pub async fn test_hold_thread_state(
+        &self,
+        id: &str,
+        entered: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+    ) {
+        let cell = self.raw_cell(id).await.unwrap();
+        let _state = cell.state.lock().await;
+        entered.notify_one();
+        release.notified().await;
     }
     async fn raw_cell(&self, thread_id: &str) -> Result<Arc<Cell>> {
         self.threads
