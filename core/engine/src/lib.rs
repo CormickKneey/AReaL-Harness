@@ -714,3 +714,8 @@ use anyhow::Context;
 
 #[cfg(test)]
 mod tests;
+
+/// 持久格式兼容版本供可信打包身份查询使用。
+pub fn state_version() -> u32 {
+    store::STATE_VERSION
+}

@@ -221,6 +221,9 @@ impl Engine {
         self.mutate(move |engine| async move {
             let _serial = engine.desktop.creation.lock().await;
             let _admission_gate = engine.desktop.lifecycle.gate.lock().await;
+            if request.reset_model && request.model.is_some() {
+                return Err(invalid("resetModel and model cannot be combined"));
+            }
             let hash = digest(&request)?;
             let method = "areal/side/start";
             if !valid_id(&request.request_id) {
@@ -345,7 +348,11 @@ impl Engine {
             }
             let mut config = engine.resolve_config(
                 None,
-                request.model.or(config.model),
+                if request.reset_model {
+                    None
+                } else {
+                    request.model.or(config.model)
+                },
                 request.parameters.unwrap_or(config.parameters),
                 config.revision,
             )?;

@@ -168,6 +168,16 @@ class ReleaseTests(unittest.TestCase):
             (source / name).write_bytes(b"signed build artifact: " + name.encode())
 
         def metadata(command, **kwargs):
+            if command[-1] == "build-info":
+                return json.dumps(
+                    {
+                        "sourceRevision": "fixture-revision",
+                        "workingTree": "false",
+                        "inputHash": hashlib.sha256(b"").hexdigest(),
+                        "apiVersion": "fixture-api-v1",
+                        "stateVersion": 42,
+                    }
+                )
             if command[-1] == "--version":
                 return "areal 0.1.3\n"
             result = "fixture-revision\n" if command[1] == "rev-parse" else ""
@@ -260,3 +270,25 @@ class ReleaseTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BuildIdentityTests(unittest.TestCase):
+    def test_binary_a_cannot_be_relabelled_as_source_b(self):
+        info = {
+            "sourceRevision": "A",
+            "inputHash": "a",
+            "workingTree": "false",
+            "apiVersion": "core.v1",
+            "stateVersion": 1,
+        }
+        for revision, fingerprint in [("B", "a"), ("A", "b")]:
+            with self.assertRaises(ValueError):
+                package.validate_build_info(
+                    info, revision, fingerprint, {"apiVersion": "core.v1", "stateVersion": 1}
+                )
+        self.assertEqual(
+            package.validate_build_info(
+                info, "A", "a", {"apiVersion": "core.v1", "stateVersion": 1}
+            ),
+            info,
+        )

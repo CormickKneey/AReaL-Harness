@@ -10,6 +10,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "./components/ui/popover
 import { RelatedSideChats } from "./RelatedSideChats.js";
 import { SideDraftWorkspace } from "./side-draft-owner.js";
 import { insertSideAnswer, makeBringBackPreview, sideSourceAdvanced } from "./side-bring-back.js";
+import { createSideRestore, type SideRestoreState } from "./side-restore.js";
 import type { Action, Data } from "./services.js";
 
 // 编辑器按服务、来源和具体草稿或 Side 隔离；切换目标会卸载旧编辑器。
@@ -83,7 +84,10 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
   const [pendingId, setPendingId] = useState(() => localStorage.getItem(pendingKey) ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(() => localStorage.getItem(`${owner}:error`) ?? "");
-  const [loading, setLoading] = useState(false);
+  const [restoreState, setRestoreState] = useState<SideRestoreState>("idle");
+  const restore = useMemo(() => createSideRestore(), [owner, generation]);
+  const loading = restoreState === "loading";
+  useEffect(() => () => restore.dispose(), [restore]);
   const [selection, setSelection] = useState<Data | null>(() => { try { return JSON.parse(localStorage.getItem(selectionKey) ?? "null"); } catch { return null; } });
   const [anchor, setAnchor] = useState<Data | null>(() => { try { return JSON.parse(localStorage.getItem(anchorKey) ?? "null"); } catch { return null; } });
   const [selectionPreview, setSelectionPreview] = useState(() => localStorage.getItem(previewKey) ?? "");
@@ -166,12 +170,13 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
     finally { if (mounted.current) setEvidenceBusy(false); }
   };
   useEffect(() => {
-    if (!sideId || validSide || side || loading || !project.state?.connected) return;
-    setLoading(true);
-    void action("open", { projectId: project.id, threadId: sideId })
-      .catch((cause: Error) => { if (mounted.current) setError(cause.message); })
-      .finally(() => { if (mounted.current) setLoading(false); });
-  }, [sideId, validSide, side, loading, project.id, project.state?.connected, action]);
+    if (!sideId || validSide || side || restoreState !== "idle" || !project.state?.connected) return;
+    void restore.load(() => action("open", { projectId: project.id, threadId: sideId }), (state, message) => {
+      if (!mounted.current) return;
+      setRestoreState(state);
+      if (message) setError(message);
+    });
+  }, [sideId, validSide, side, restoreState, restore, project.id, project.state?.connected, action]);
   const recover = useCallback(async () => {
     if (!pendingId || busy) return;
     const token = workspace.capture(generation);
@@ -199,7 +204,7 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
       } else {
         const requestId = crypto.randomUUID();
         localStorage.setItem(pendingKey, requestId); setPendingId(requestId);
-        const result = await action("side", { projectId: project.id, operation: "start", sourceThreadId: source.id, workspaceAccess, text: question, requestId, selection, anchor, ...(config?.model ? { model: config.model } : {}), ...(config?.parameters ? { parameters: config.parameters } : {}) });
+        const result = await action("side", { projectId: project.id, operation: "start", sourceThreadId: source.id, workspaceAccess, text: question, requestId, selection, anchor, ...(draftConfig?.model === null ? { resetModel: true } : config?.model ? { model: config.model } : {}), ...(config?.parameters ? { parameters: config.parameters } : {}) });
         if (!mounted.current || !workspace.isCurrent(token, generation)) return;
         workspace.acceptCreated(token, result.threadId, generation);
         localStorage.removeItem(workspaceAccessKey); localStorage.removeItem(configKey);
@@ -287,6 +292,7 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
       </section>}
       {bringResult && <p role="status">{bringResult}</p>}
       {error && <p role="alert">{error}</p>}
+      {restoreState === "error" && <button type="button" disabled={!project.state?.connected} onClick={() => { if (restore.retry()) { setError(""); setRestoreState("idle"); } }}>重试恢复旁路</button>}
       {unsettled && !active && <p role="status">提交结果尚未确认；不会自动重发。<button type="button" onClick={() => { void action("reconcile", { projectId: project.id }).catch((cause: Error) => setError(cause.message)); }}>核对受理状态</button></p>}
       {pendingId && <button type="button" onClick={() => void recover()} disabled={busy}>核对首问结果</button>}
     </div>

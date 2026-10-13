@@ -192,6 +192,15 @@ fn convert_result(value: Value) -> Result<DynamicToolResponse> {
     })
 }
 
+#[derive(Debug)]
+pub struct CleanupUnconfirmed;
+impl std::fmt::Display for CleanupUnconfirmed {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("MCP shutdown could not be confirmed")
+    }
+}
+impl std::error::Error for CleanupUnconfirmed {}
+
 /// Owns live connections. Startup failures roll back all earlier connections.
 pub struct Connections {
     services: Vec<RunningService<RoleClient, Handler>>,
@@ -261,7 +270,9 @@ impl Connections {
             );
         }
         self.services.clear();
-        ensure!(!failed, "MCP shutdown could not be confirmed");
+        if failed {
+            return Err(CleanupUnconfirmed.into());
+        }
         Ok(())
     }
 }

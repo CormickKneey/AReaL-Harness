@@ -29,6 +29,8 @@ struct MultitoolCli {
 enum Command {
     /// 显示当前版本；等价于 --version。
     Version,
+    /// 查询可信 Core 二进制内嵌构建身份，不启动服务。
+    BuildInfo,
     /// 检查或安装最新已发布版本；按 Homebrew/独立安装来源升级。
     Upgrade {
         #[arg(long)]
@@ -193,6 +195,10 @@ async fn main() {
     let result = match args.command {
         Some(Command::Version) => {
             println!("areal {}", env!("CARGO_PKG_VERSION"));
+            return;
+        }
+        Some(Command::BuildInfo) => {
+            println!("{}", areal_server::build_info());
             return;
         }
         Some(Command::Upgrade { check }) => upgrade::run(check).await,

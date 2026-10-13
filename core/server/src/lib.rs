@@ -775,3 +775,8 @@ fn configured_models(
     }
     Ok(result)
 }
+
+/// 返回输入二进制内嵌的构建身份，打包不能用当前 checkout 冒充。
+pub fn build_info() -> serde_json::Value {
+    serde_json::json!({"sourceRevision":env!("AREAL_BUILD_REVISION"),"workingTree":env!("AREAL_BUILD_DIRTY"),"inputHash":env!("AREAL_BUILD_INPUT_HASH"),"apiVersion":areal_protocol::desktop::API_VERSION,"stateVersion":areal_engine::state_version()})
+}

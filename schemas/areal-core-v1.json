@@ -15416,6 +15416,9 @@
         "requestId": {
           "type": "string"
         },
+        "resetModel": {
+          "type": "boolean"
+        },
         "selection": {
           "anyOf": [
             {

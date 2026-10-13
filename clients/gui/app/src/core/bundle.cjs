@@ -28,12 +28,18 @@ function verifyCoreBundle(resourcesPath, { platform = process.platform, arch = p
   let manifest;
   try { manifest = JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf8')); }
   catch (error) { throw new Error(`安装包缺少有效的 AReaL Core manifest：${error.message}`); }
-  if (manifest.manifestVersion !== 1 || manifest.apiVersion !== 'areal.core.v1'
+  if (![1, 2].includes(manifest.manifestVersion) || manifest.apiVersion !== 'areal.core.v1'
     || manifest.platform !== `${platform}/${arch}` || typeof manifest.files !== 'object') {
     throw new Error('安装包内 AReaL Core 与当前平台或协议不匹配');
   }
   if (!Number.isInteger(manifest.stateVersion) || manifest.stateVersion < 12) {
     throw new Error('安装包内 AReaL Core 版本无法读取现有桌面会话');
+  }
+  if (manifest.manifestVersion === 2 && (!manifest.coreBuild
+    || manifest.coreBuild.apiVersion !== manifest.apiVersion || manifest.coreBuild.stateVersion !== manifest.stateVersion
+    || manifest.coreBuild.sourceRevision !== manifest.sourceRevision
+    || !/^[a-f0-9]{64}$/.test(manifest.coreBuild.inputHash ?? ''))) {
+    throw new Error('安装包 Core 构建身份与契约不匹配');
   }
   const paths = {};
   for (const name of executables) {
