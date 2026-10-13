@@ -155,6 +155,18 @@ await check("same-key-concurrent-scoped-and-conflict", async (f) => {
   const project = await f.run({ ...req, context: { ...req.context, projectId: "q" } });
   assert.notEqual(project.operationId, a.operationId);
 });
+await check("create-missing-configuration-is-actionable-and-durable", async (f) => {
+  f.client.request = async () => {
+    throw Object.assign(new Error("PRIVATE_PROVIDER_OR_PROFILE"), { code: -32004 });
+  };
+  const request = f.request();
+  const result = await f.run(request);
+  assert.equal(result.admissionState, "rejected");
+  assert.equal(result.error.code, "CONFIGURATION_UNAVAILABLE");
+  assert.match(result.error.message, /桌面.*默认模型/);
+  assert.ok(!JSON.stringify(result).includes("PRIVATE_PROVIDER_OR_PROFILE"));
+  assert.deepEqual((await f.read(request.commandId)).error, result.error);
+});
 await check("pending-write-failure-no-dispatch", async (f) => {
   const save = f.backend.save.bind(f.backend);
   f.backend.save = (name, value) =>

@@ -120,7 +120,13 @@ function authorize(remote, connection, projectId, capability = "submit") {
         throw failure("FORBIDDEN", "此命令未获授权");
     return grant;
 }
-function nativeError(error) {
+function nativeError(error, method) {
+    if (method === "areal/thread/start" && error.code === -32004)
+        return {
+            code: "CONFIGURATION_UNAVAILABLE",
+            coreCode: -32004,
+            message: "会话配置不可用，请在桌面检查默认模型与技能配置，再新建会话。",
+        };
     const code =
         typeof error.code === "string"
             ? error.code
@@ -156,7 +162,7 @@ function view(backend, record, commandId) {
         ...(record.threadId ? { threadId: record.threadId } : {}),
         ...(record.turnId ? { turnId: record.turnId } : {}),
         ...(record.receipt ? { receipt: record.receipt } : {}),
-        ...(record.error ? { error: nativeError(record.error) } : {}),
+        ...(record.error ? { error: nativeError(record.error, record.method) } : {}),
     };
 }
 async function sessionCommand(
