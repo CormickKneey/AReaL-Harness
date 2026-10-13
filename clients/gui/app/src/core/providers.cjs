@@ -3,6 +3,7 @@ const { readFile, appendFile } = require('node:fs/promises');
 const { join } = require('node:path');
 const { randomUUID, randomBytes } = require('node:crypto');
 const { SubscriptionStore } = require('./subscription.cjs');
+const { definitions, connectionMetadata } = require('@areal/provider-config');
 const { ModelConfiguration, protocolToCore, baseUrl: endpointBase } = require('./model-config.cjs');
 
 function connection(baseUrl, protocol) {
@@ -48,11 +49,24 @@ class AppProviders {
   async openai() {
     if (!this.openaiPromise) this.openaiPromise = import('@areal/chatgpt-provider/core').then(({ CoreSubscription }) => {
       this.openaiStore = new SubscriptionStore(this.backend, this.encryption);
-      const onRequest = process.env.AREAL_CORE_PROVIDER_AUDIT === '1' ? async ({ providerId, protocol, model, startedAt, completedAt, upstreamHttpStatus, upstreamContentType, localHttpStatus, outcome, failureKind, streamFailureReason, code, state, phase, httpStatus, requestId }) => {
+      const onRequest = process.env.AREAL_CORE_PROVIDER_AUDIT === '1' ? async ({ providerId, protocol, model, startedAt, completedAt, upstreamHttpStatus, upstreamContentType, localHttpStatus, outcome, failureKind, streamFailureReason, code, state, phase, httpStatus, requestId, adjustments }) => {
         await appendFile(join(this.backend.home, 'provider-requests.jsonl'), JSON.stringify({ providerId, protocol, model, startedAt, completedAt,
-          upstreamHttpStatus, upstreamContentType, localHttpStatus, outcome, failureKind, streamFailureReason, code, state, phase, httpStatus, requestId }) + '\n', { mode: 0o600 });
+          upstreamHttpStatus, upstreamContentType, localHttpStatus, outcome, failureKind, streamFailureReason, code, state, phase, httpStatus, requestId, adjustments }) + '\n', { mode: 0o600 });
       } : undefined;
-      return new CoreSubscription({ store: this.openaiStore, token: this.openaiToken, port: this.transport.port, onListen: async port => { this.transport.port = port; await this.backend.save('subscription-transport.json', this.transport); }, kind: 'openai', onRequest });
+      const service = new CoreSubscription({ store: this.openaiStore, token: this.openaiToken, port: this.transport.port, onListen: async port => { this.transport.port = port; await this.backend.save('subscription-transport.json', this.transport); }, kind: 'openai', onRequest });
+      service.account.activateAuthorized = async id => {
+        if (this.backend.hasWork() || this.backend.activeCommands || this.backend.providerUpdating || this.backend.resourcesUpdating || this.backend.starting.size) return false;
+        this.backend.providerUpdating = true;
+        try {
+          for (const project of this.backend.projects.values()) {
+            if (project.service && !project.client?.ready) return false;
+            if (project.client?.ready && !(await project.client.request('areal/server/status')).restartSafe) return false;
+          }
+          await service.account.directory.activate(id);
+          return true;
+        } finally { this.backend.providerUpdating = false; }
+      };
+      return service;
     }).catch(error => { this.openaiPromise = null; throw error; });
     return this.openaiPromise;
   }
@@ -69,8 +83,9 @@ class AppProviders {
     // Unrelated tasks, terminals and unresolved resources must not block it.
     if (op === 'login') {
       this.openaiStore.check();
-      if (await service.account.read()) throw new Error('请先退出当前 ChatGPT 账号');
-      const login = await service.account.begin();
+      if (!request.newAccount && !request.accountId && await service.account.read()) throw new Error('请先退出当前 ChatGPT 账号');
+      if ((request.newAccount || request.accountId) && (this.backend.hasWork() || this.backend.activeCommands || this.backend.starting.size)) throw new Error('请等待任务和操作完成后再切换 ChatGPT 账号');
+      const login = await service.account.begin({ newAccount: request.newAccount === true, accountId: request.accountId });
       const completion = service.account.attempt?.done;
       if (completion && this.loginAttempt !== completion) {
         this.loginAttempt = completion;
@@ -87,7 +102,7 @@ class AppProviders {
       return login;
     }
     if (op === 'forget') await service.account.forget();
-    else if (op === 'logout') {
+    else if (op === 'logout' || op === 'selectAccount') {
       if (this.backend.hasWork() || this.backend.activeCommands || this.backend.providerUpdating || this.backend.resourcesUpdating || this.backend.starting.size) throw new Error('请等待任务与操作完成后再切换 ChatGPT 账号');
       this.backend.providerUpdating = true;
       try {
@@ -95,7 +110,8 @@ class AppProviders {
           if (project.service && !project.client?.ready) throw new Error('请先重新连接项目，再切换 ChatGPT 账号');
           if (project.client?.ready && !(await project.client.request('areal/server/status')).restartSafe) throw new Error('请先停止正在运行的任务或终端，再切换 ChatGPT 账号');
         }
-        await service.account.logout();
+        if (op === 'selectAccount') await service.account.selectAccount(request.accountId);
+        else await service.account.logout();
       } finally { this.backend.providerUpdating = false; }
     } else if (op === 'cancel') await service.account.cancel();
     else if (op === 'probe') return service.probe(request.model);
@@ -109,7 +125,7 @@ class AppProviders {
       project.models = (await project.client.request('areal/model/list')).data ?? [];
     }
     this.backend.onChange();
-    return status;
+    return { ...status, billing: 'subscription', catalog: service.catalog?.metadata() ?? null };
   }
   syncSubscription(project, service) {
     const task = (this.subscriptionSync ?? Promise.resolve()).catch(() => {}).then(() => this.applySubscription(project, service));
@@ -145,7 +161,7 @@ class AppProviders {
     });
   }
   async close() { if (this.openaiPromise) await (await this.openaiPromise).close(); }
-  public() { return this.config.public(); }
+  public() { const value = this.config.public(); return { ...value, definitions, data: value.data.map(item => ({ ...item, connection: connectionMetadata(item, value.credentialSources) })) }; }
   model(ref, project) { return (project?.providerSnapshot ?? this.value).data.find(p => p.id === ref?.providerId)?.models.find(m => m.id === ref.modelId); }
   catalog(models, project) { return models.map(m => ({ ...m, displayName: this.model(m, project)?.displayName || m.displayName || m.modelId })); }
   key(item) { return this.config.key(item); }

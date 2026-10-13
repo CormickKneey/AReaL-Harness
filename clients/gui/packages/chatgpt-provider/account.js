@@ -49,6 +49,7 @@ export class ChatGPTAccount extends EventEmitter {
     if (this.attempt) return this.attempt.ready
     if (this.busy) throw new Error('账号操作进行中，请稍后重试。')
     this.error = null
+    const loginStore = this.loginStore ?? this.store
     const controller = new AbortController()
     const signal = AbortSignal.any([controller.signal, this.lifetime.signal])
     const attempt = { controller, loginId: randomUUID() }
@@ -61,21 +62,19 @@ export class ChatGPTAccount extends EventEmitter {
     attempt.timer.unref?.()
     attempt.done = this.track((async () => {
       try {
-        const value = await this.oauth('login', { signal, onAuth: url => {
+        const value = await this.oauth('login', { signal, store: loginStore, onAuth: url => {
           signal.throwIfAborted()
           this.login = { loginId: attempt.loginId, authUrl: loginUrl(url) }
           attempt.resolve(this.login)
         } })
         signal.throwIfAborted()
         credential({ kind: 'grant', payload: value })
-        await this.store.modifyRecord(ACCOUNT_KEY, async () => {
+        await loginStore.modifyRecord(ACCOUNT_KEY, async () => {
           signal.throwIfAborted()
           return { kind: 'grant', payload: value }
         })
-        this.failure = null
-        this.pendingRotation = null
-        this.terminalFailure = null
-        this.changed()
+        const activated = await this.onAuthorized?.()
+        if (activated !== false) { this.failure = null; this.pendingRotation = null; this.terminalFailure = null; this.changed() }
       } catch {
         if (!signal.aborted) this.error = 'ChatGPT 授权未完成或已失败，请重试。'
         attempt.reject(new Error(this.error || 'ChatGPT 登录已取消。'))

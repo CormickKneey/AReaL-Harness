@@ -5,10 +5,13 @@ import { Readable } from 'node:stream'
 import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex'
 import { ChatGPTAccount } from './account.js'
 import { OpenAIAccount } from './openai.js'
-import { providerError, responseError, safeRefresh } from './errors.js'
+import { providerError, responseError } from './errors.js'
 import { probeResponse } from './probe.js'
 export { probeResponse } from './probe.js'
 import { subscriptionNetwork } from './network.js'
+import { ModelCatalog } from './catalog.js'
+import { protocolAdapters } from './adapters.js'
+export { subscriptionRequest } from './adapters.js'
 
 export const CORE_PROVIDER_ID = 'areal_chatgpt'
 const ENDPOINT = 'https://chatgpt.com/backend-api/codex/responses'
@@ -72,39 +75,6 @@ async function responseStream(response, signal) {
   }
 }
 
-// Only provider transport: no conversation store, tool execution or Agent loop.
-export function subscriptionRequest(body) {
-  if (!body || typeof body.model !== 'string' || !Array.isArray(body.input) || body.stream !== true)
-    throw new Error('需要流式 Responses 请求')
-  const instructions = [], input = []
-  for (const item of body.input) {
-    if (item.role === 'system') {
-      const parts = typeof item.content === 'string' ? [{ text: item.content }] : item.content
-      if (!Array.isArray(parts) || parts.some(p => typeof p.text !== 'string')) throw new Error('系统指令必须为文本')
-      instructions.push(parts.map(p => p.text).join('\n'))
-    } else input.push(item)
-  }
-  // Codex subscription does not accept the Platform token limit controls.
-  // Core still owns turn deadlines, cancellation and token accounting.
-  return { model: body.model, input, instructions: [body.instructions, ...instructions].filter(Boolean).join('\n\n') || 'You are a helpful assistant.',
-    stream: true, store: false, include: ['reasoning.encrypted_content'],
-    ...(body.tools ? { tools: body.tools } : {}),
-    ...(body.tool_choice ? { tool_choice: body.tool_choice } : {}),
-    ...(body.reasoning ? { reasoning: body.reasoning } : {}) }
-}
-
-// SIWC permits user tools in namespaces; Core keeps plain tool names and call IDs.
-function openaiRequest(body) {
-  const value = subscriptionRequest(body)
-  if (value.tools?.length) {
-    if (value.tools.some(t => t.type !== 'function')) throw new Error('Unsupported OpenAI tool')
-    value.tools = [{ type: 'namespace', name: 'areal', description: 'AReaL Runtime tools', tools: value.tools }]
-  }
-  value.input = value.input.map(item => item.type === 'function_call' ? { ...item, namespace: 'areal' } : item)
-  if (value.tool_choice?.type === 'function') value.tool_choice = { ...value.tool_choice, namespace: 'areal' }
-  return value
-}
-
 export class CoreSubscription {
   constructor({ store, token, oauth, fetch: customFetch, models, kind = 'codex', onRequest, port = 0, onListen } = {}) {
     this.token = token
@@ -117,38 +87,13 @@ export class CoreSubscription {
     this.network = customFetch ? { fetch: customFetch, close() {} } : subscriptionNetwork()
     this.models = models ?? openaiCodexProvider().getModels().filter(m => m.input.includes('text')).map(m => ({ id: m.id, name: m.name }))
     this.account = kind === 'openai' ? new OpenAIAccount(store, { fetch: (...args) => this.network.fetch(...args) }) : new ChatGPTAccount(store, { oauth })
+    if (kind === 'openai') this.catalog = new ModelCatalog(this.account, (...args) => this.network.fetch(...args))
     this.account.models = async () => kind === 'openai' ? this.discover() : this.models
-    if (kind === 'openai') this.account.on('changed', () => { this.models = []; this.catalogExpires = 0 })
-    if (kind === 'openai') this.models = []
+    if (kind === 'openai') { this.models = []; this.account.on('changed', () => { this.models = [] }) }
   }
-  async discover() {
-    // Catalogs are scoped to this signed-in session; never retain a failed/old account list.
-    if (this.catalogRevision === this.account.revision && this.catalogExpires > Date.now()) return this.models
-    if (this.catalogLoading) return this.catalogLoading
-    const revision = this.account.revision
-    this.catalogLoading = this.loadCatalog(revision).catch(error => { this.models = []; this.catalogExpires = 0; throw this.account.fail(error, error?.phase ?? 'catalog') }).finally(() => { this.catalogLoading = null })
-    return this.catalogLoading
-  }
-  async loadCatalog(revision) {
-    let access = await this.account.accessToken()
-    const send = token => this.network.fetch('https://api.openai.com/v1/models', { headers: { Authorization: `Bearer ${token}` }, redirect: 'error', signal: AbortSignal.any([this.account.lifetime.signal, AbortSignal.timeout(30_000)]) })
-    let response = await send(access)
-    if (response.status === 401) {
-      const failure = await responseError(response, 'catalog', [access])
-      if (!safeRefresh(failure)) throw this.account.fail(failure, 'catalog')
-      access = await this.account.accessToken(undefined, { force: true, rejectedToken: access })
-      response = await send(access)
-    }
-    if (!response.ok) { this.models = []; this.catalogExpires = 0; throw this.account.fail(await responseError(response, 'catalog', [access]), 'catalog') }
-    let bytes = 0, chunks = []
-    for await (const chunk of response.body) { bytes += chunk.length; if (bytes > 1024 * 1024) throw new Error('OpenAI model catalog too large'); chunks.push(chunk) }
-    const data = JSON.parse(Buffer.concat(chunks).toString('utf8'))
-    if (!Array.isArray(data.models)) throw new Error('Invalid OpenAI model catalog')
-    if (revision !== this.account.revision || this.account.busy) throw new Error('OpenAI account changed')
-    this.models = data.models.filter(m => m.visibility === 'list' && typeof m.slug === 'string' && m.slug && m.slug.length <= 256).slice(0, 256).map(m => ({ id: m.slug, name: typeof m.display_name === 'string' ? m.display_name : m.slug }))
-    this.catalogRevision = revision; this.catalogExpires = Date.now() + 30_000
-    return this.models
-  }
+  get models() { return this.catalog ? this.catalog.models : this.legacyModels }
+  set models(value) { this.legacyModels = value }
+  async discover(options) { return this.catalog.discover(options) }
   async ready() {
     if (!this.starting) this.starting = (async () => {
       this.server = createServer((req, res) => { void this.handle(req, res) })
@@ -170,11 +115,11 @@ export class CoreSubscription {
     try {
       let size = 0; const chunks = []
       for await (const chunk of req) { size += chunk.length; if (size > 16 * 1024 * 1024) { deny(413, 'Request too large'); return } chunks.push(chunk) }
-      let body
-      try { body = (this.kind === 'openai' ? openaiRequest : subscriptionRequest)(JSON.parse(Buffer.concat(chunks))) } catch { deny(400, 'Invalid subscription request'); return }
+      let body, adjustments
+      try { const raw = JSON.parse(Buffer.concat(chunks)); body = protocolAdapters[this.kind].encode(raw); adjustments = protocolAdapters[this.kind].adjustments?.(raw) ?? [] } catch { deny(400, 'Invalid subscription request'); return }
       if (!this.models.some(m => m.id === body.model)) { deny(400, 'Unknown subscription model'); return }
       if (this.onRequest) audit = { providerId: this.id, protocol: 'responses', model: body.model, startedAt: new Date().toISOString(), completedAt: null,
-        upstreamHttpStatus: null, upstreamContentType: null, localHttpStatus: null, outcome: 'failed', failureKind: 'request', streamFailureReason: null }
+        upstreamHttpStatus: null, upstreamContentType: null, localHttpStatus: null, outcome: 'failed', failureKind: 'request', streamFailureReason: null, adjustments }
       let token, accountId
       try {
         token = await this.account.accessToken(controller.signal)
@@ -205,7 +150,7 @@ export class CoreSubscription {
       this.account.failure = null
       const stream = await responseStream(response, controller.signal)
       if (audit) audit.localHttpStatus = 200
-      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' })
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', ...(adjustments.length ? { 'X-Areal-Provider-Adjustments': adjustments.join(',') } : {}) })
       await pipeline(stream, res, { signal: controller.signal })
       if (audit) { audit.outcome = 'forwarded'; audit.failureKind = null }
     } catch (error) {
