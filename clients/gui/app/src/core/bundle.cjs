@@ -38,6 +38,9 @@ function verifyCoreBundle(resourcesPath, { platform = process.platform, arch = p
   if (manifest.manifestVersion === 2 && (!manifest.coreBuild
     || manifest.coreBuild.apiVersion !== manifest.apiVersion || manifest.coreBuild.stateVersion !== manifest.stateVersion
     || manifest.coreBuild.sourceRevision !== manifest.sourceRevision
+    || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(manifest.sourceRevision ?? '')
+    || !['true', 'false'].includes(manifest.coreBuild.workingTree)
+    || (manifest.coreBuild.workingTree === 'true') !== manifest.workingTree
     || !/^[a-f0-9]{64}$/.test(manifest.coreBuild.inputHash ?? ''))) {
     throw new Error('安装包 Core 构建身份与契约不匹配');
   }

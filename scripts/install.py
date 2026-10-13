@@ -73,11 +73,24 @@ def extract_bundle(archive, destination):
 def verify_bundle(bundle, version, target_platform):
     manifest = json.loads((bundle / "manifest.json").read_text())
     if (
-        manifest.get("manifestVersion") != 1
+        manifest.get("manifestVersion") not in (1, 2)
         or manifest.get("productVersion") != "areal " + version
         or manifest.get("platform") != target_platform
     ):
         raise ValueError("manifest version or platform mismatch")
+    if manifest.get("manifestVersion") == 2:
+        identity = manifest.get("coreBuild")
+        if (
+            not isinstance(identity, dict)
+            or not re.fullmatch(r"[a-f0-9]{64}", str(identity.get("inputHash", "")))
+            or any(
+                identity.get(key) != manifest.get(key)
+                for key in ("sourceRevision", "apiVersion", "stateVersion")
+            )
+            or identity.get("workingTree") not in ("true", "false")
+            or (identity["workingTree"] == "true") != manifest.get("workingTree")
+        ):
+            raise ValueError("Core build identity does not match manifest")
     expected = manifest.get("files", {})
     required = {
         "bin/areal",

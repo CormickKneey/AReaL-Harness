@@ -7,16 +7,30 @@ struct Record {
     revision: u64,
     directory_revision: u64,
     config: areal_mcp::ServerConfig,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     cleanup_unconfirmed: bool,
     #[serde(skip)]
     status: String,
     #[serde(skip)]
     error: Option<String>,
 }
+enum ManagedConnection {
+    Live(areal_mcp::Connections),
+    #[cfg(test)]
+    CleanupFailureFixture,
+}
+impl ManagedConnection {
+    async fn shutdown(&mut self) -> anyhow::Result<()> {
+        match self {
+            Self::Live(connection) => connection.shutdown().await,
+            #[cfg(test)]
+            Self::CleanupFailureFixture => Err(areal_mcp::CleanupUnconfirmed.into()),
+        }
+    }
+}
 pub(crate) struct Manager {
     records: std::sync::RwLock<BTreeMap<String, Record>>,
-    connections: Mutex<BTreeMap<String, areal_mcp::Connections>>,
+    connections: Mutex<BTreeMap<String, ManagedConnection>>,
     tools: std::sync::RwLock<BTreeMap<String, Vec<areal_mcp::McpTool>>>,
 }
 impl Manager {
@@ -54,14 +68,30 @@ impl Manager {
             .cloned()
             .collect()
     }
-    pub async fn shutdown(&self) -> Result<()> {
+    pub async fn shutdown(&self, store: &crate::store::Store) -> Result<()> {
         let mut connections = self.connections.lock().await;
         let mut failed = false;
-        for connection in connections.values_mut() {
-            failed |= connection.shutdown().await.is_err();
+        for (id, connection) in connections.iter_mut() {
+            let cleanup_failed = connection.shutdown().await.is_err();
+            failed |= cleanup_failed;
+            if let Some(record) = self.records.write().unwrap().get_mut(id) {
+                record.cleanup_unconfirmed = cleanup_failed;
+                record.status = if cleanup_failed {
+                    "cleanupFailed"
+                } else {
+                    "disconnected"
+                }
+                .into();
+                record.error = cleanup_failed.then(|| "MCP cleanup unconfirmed".into());
+            }
         }
         connections.clear();
         self.tools.write().unwrap().clear();
+        let snapshot = self.records.read().unwrap().clone();
+        store
+            .save_metadata("mcp", &snapshot)
+            .await
+            .map_err(invalid)?;
         if failed {
             Err(invalid("MCP cleanup unconfirmed"))
         } else {
@@ -235,7 +265,7 @@ impl Engine {
                             .write()
                             .unwrap()
                             .insert(id.clone(), tools);
-                        connections.insert(id.clone(), connection);
+                        connections.insert(id.clone(), ManagedConnection::Live(connection));
                         let mut records = engine.desktop.mcp.records.write().unwrap();
                         let r = records.get_mut(&id).unwrap();
                         r.status = "connected".into();
@@ -337,5 +367,49 @@ mod cleanup_tests {
             assert_eq!(engine.mcp_list()["data"][0]["state"], "cleanupFailed");
         }
         engine.shutdown().await;
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+    struct Pending;
+    #[async_trait::async_trait]
+    impl crate::model::Model for Pending {
+        fn name(&self) -> &str {
+            "cleanup-shutdown-fixture"
+        }
+        async fn stream(
+            &self,
+            _: Vec<crate::model::Message>,
+        ) -> anyhow::Result<crate::model::ModelStream> {
+            std::future::pending().await
+        }
+    }
+    #[tokio::test]
+    async fn shutdown_cleanup_failure_survives_store_reopen() {
+        let root = tempfile::tempdir().unwrap();
+        let engine = Engine::open(root.path(), Arc::new(Pending), Limits::default()).unwrap();
+        let config = serde_json::from_value(json!({"transport":{"type":"stdio","command":"/fixture/never-start","args":[],"cwd":null,"envVars":[]}})).unwrap();
+        engine
+            .mcp_configure("shutdown-failure".into(), 0, config)
+            .await
+            .unwrap();
+        engine.desktop.mcp.connections.lock().await.insert(
+            "shutdown-failure".into(),
+            ManagedConnection::CleanupFailureFixture,
+        );
+        engine.shutdown().await;
+        assert_eq!(engine.mcp_list()["data"][0]["state"], "cleanupFailed");
+        drop(engine);
+        let reopened = Engine::open(root.path(), Arc::new(Pending), Limits::default()).unwrap();
+        assert_eq!(reopened.mcp_list()["data"][0]["state"], "cleanupFailed");
+        assert!(
+            reopened
+                .mcp_connection("shutdown-failure".into(), 1, true)
+                .await
+                .is_err()
+        );
+        reopened.shutdown().await;
     }
 }

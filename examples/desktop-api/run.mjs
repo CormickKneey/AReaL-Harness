@@ -548,6 +548,22 @@ try {
         model: { providerId: "side-choice", modelId: "A" },
       });
       await done(c, source);
+      const historicalAnchor = source.turnId;
+      const sourceView = await c.call("thread/read", {
+        threadId: source.threadId,
+        includeTurns: true,
+      });
+      await c.call("areal/thread/configure", {
+        threadId: source.threadId,
+        expectedRevision: sourceView.thread.desktop.configuration.revision,
+        model: { providerId: "side-choice", modelId: "C" },
+      });
+      const advanced = await c.call("areal/turn/start", {
+        requestId: crypto.randomUUID(),
+        threadId: source.threadId,
+        input: [{ type: "text", text: "current source uses C" }],
+      });
+      await done(c, { threadId: source.threadId, turnId: advanced.turn.id });
       const settle = async (threadId, turnId) => {
         for (let i = 0; i < 200; i++) {
           const { thread } = await c.call("thread/read", { threadId, includeTurns: true });
@@ -569,6 +585,7 @@ try {
         const created = await c.call("areal/side/start", {
           requestId: crypto.randomUUID(),
           sourceThreadId: source.threadId,
+          anchor: { kind: "turn", turnId: historicalAnchor, boundary: "after" },
           workspaceAccess: "none",
           input: [{ type: "text", text: "first side question" }],
           ...selection,

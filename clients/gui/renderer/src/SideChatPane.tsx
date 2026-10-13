@@ -10,6 +10,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "./components/ui/popover
 import { RelatedSideChats } from "./RelatedSideChats.js";
 import { SideDraftWorkspace } from "./side-draft-owner.js";
 import { insertSideAnswer, makeBringBackPreview, sideSourceAdvanced } from "./side-bring-back.js";
+import { sideStartConfiguration } from "./side-model-intent.js";
 import { createSideRestore, type SideRestoreState } from "./side-restore.js";
 import type { Action, Data } from "./services.js";
 
@@ -106,7 +107,7 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
   const validSide = side?.conversation?.kind === "side" && side.conversation.origin?.sourceThreadId === source.id;
   const active = validSide && side.turns?.some((turn: Data) => turn.status === "inProgress");
   const unsettled = !!sideId && project.pending?.some((request: Data) => request.params?.threadId === sideId);
-  const config = validSide ? project.configurations?.[sideId] : draftConfig ?? project.configurations?.[source.id];
+  const config = validSide ? project.configurations?.[sideId] : draftConfig ?? {};
   const sourceStatus = !project.state?.connected || !validSide ? "来源当前状态未知" :
     sideSourceAdvanced(source, side) ? "来源已推进；此讨论仍依据创建时快照" :
     !Number.isFinite(source.updatedAt) || !Number.isFinite(side.createdAt) ? "来源当前状态未知" : "依据创建时快照";
@@ -204,7 +205,7 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
       } else {
         const requestId = crypto.randomUUID();
         localStorage.setItem(pendingKey, requestId); setPendingId(requestId);
-        const result = await action("side", { projectId: project.id, operation: "start", sourceThreadId: source.id, workspaceAccess, text: question, requestId, selection, anchor, ...(draftConfig?.model === null ? { resetModel: true } : config?.model ? { model: config.model } : {}), ...(config?.parameters ? { parameters: config.parameters } : {}) });
+        const result = await action("side", { projectId: project.id, operation: "start", sourceThreadId: source.id, workspaceAccess, text: question, requestId, selection, anchor, ...sideStartConfiguration(draftConfig) });
         if (!mounted.current || !workspace.isCurrent(token, generation)) return;
         workspace.acceptCreated(token, result.threadId, generation);
         localStorage.removeItem(workspaceAccessKey); localStorage.removeItem(configKey);
@@ -223,7 +224,7 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
   const configure = async (values: Data) => {
     if (busy || pendingId || unsettled || active || !project.state?.connected || sideId && (!validSide || side.desktop?.archived)) return;
     if (!sideId) {
-      const next = { model: config?.model, parameters: values.model !== undefined ? {} : config?.parameters, ...values };
+      const next = { ...draftConfig, parameters: Object.hasOwn(values, "model") ? values.model === undefined ? undefined : {} : draftConfig?.parameters, ...values };
       localStorage.setItem(configKey, JSON.stringify(next)); setDraftConfig(next); return;
     }
     const token = workspace.capture(generation);
@@ -298,7 +299,7 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
     </div>
     <div className="composer-dock side-chat-composer" data-side-owner={owner}>
       <div ref={setMenuAnchor} className="composer-menu-anchor" />
-      <ConversationComposer project={project} modelConfig={config} modelDisabled={disabled || !!active || !!sideId && !config}
+      <ConversationComposer project={project} modelConfig={config} allowModelInheritance={!sideId} modelDisabled={disabled || !!active || !!sideId && !config}
         onConfigureModel={values => { void configure(values); }} onModelSettings={() => onPanel("设置")}
         workspacePath={project.root} taskId={sideId || null} triggerPanelContainer={menuAnchor}
         inputApiRef={api} inputTestId="side-chat-input" submitTestId="side-chat-send" initialValue={text}

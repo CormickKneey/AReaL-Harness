@@ -18,6 +18,22 @@ def normalized(value):
     return json.dumps(json.loads(value), sort_keys=True, separators=(",", ":"))
 
 
+def artifact_executable(output, example):
+    paths = set()
+    for line in output.splitlines():
+        message = json.loads(line)
+        if (
+            message.get("reason") == "compiler-artifact"
+            and message.get("target", {}).get("name") == example
+            and "example" in message.get("target", {}).get("kind", [])
+            and message.get("executable")
+        ):
+            paths.add(Path(message["executable"]))
+    if len(paths) != 1:
+        raise ValueError(f"expected one freshly built executable for {example}, got {paths}")
+    return paths.pop()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write", action="store_true")
@@ -25,15 +41,24 @@ def main():
     with tempfile.TemporaryDirectory(prefix="areal-schema-") as temporary:
         prepared = []
         for package, example, arguments, name in GENERATORS:
-            subprocess.run(
-                ["cargo", "build", "--locked", "-q", "-p", package, "--example", example],
+            artifacts = subprocess.check_output(
+                [
+                    "cargo",
+                    "build",
+                    "--locked",
+                    "-q",
+                    "--message-format=json",
+                    "-p",
+                    package,
+                    "--example",
+                    example,
+                ],
                 cwd=ROOT,
-                check=True,
+                text=True,
             )
-            # 此脚本由 Python 持有原生子进程，与本机既有启动入口一致。
-            value = subprocess.check_output(
-                [str(ROOT / "target/debug/examples" / example), *arguments], cwd=ROOT
-            )
+            executable = artifact_executable(artifacts, example)
+            # 只执行本次构建返回的路径，兼容 CARGO_TARGET_DIR 与配置 target-dir。
+            value = subprocess.check_output([str(executable), *arguments], cwd=ROOT)
             normalized(value)
             generated = Path(temporary) / name
             generated.write_bytes(value)

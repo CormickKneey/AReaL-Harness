@@ -35,7 +35,7 @@ class ReleaseTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
 
-    def bundle(self, version="0.1.0", target="linux/x86_64"):
+    def bundle(self, version="0.1.0", target="linux/x86_64", manifest_version=1):
         bundle = self.root / (version + target.replace("/", "-"))
         bundle.mkdir()
         files = {}
@@ -54,7 +54,7 @@ class ReleaseTests(unittest.TestCase):
         (bundle / "manifest.json").write_text(
             json.dumps(
                 {
-                    "manifestVersion": 1,
+                    "manifestVersion": manifest_version,
                     "productVersion": "areal " + version,
                     "platform": target,
                     "files": files,
@@ -64,6 +64,20 @@ class ReleaseTests(unittest.TestCase):
                 }
             )
         )
+        if manifest_version == 2:
+            path = bundle / "manifest.json"
+            manifest = json.loads(path.read_text())
+            manifest.update(
+                {"sourceRevision": "a" * 40, "apiVersion": "areal.core.v1", "stateVersion": 14}
+            )
+            manifest["coreBuild"] = {
+                "sourceRevision": "a" * 40,
+                "inputHash": "b" * 64,
+                "apiVersion": "areal.core.v1",
+                "stateVersion": 14,
+                "workingTree": "false",
+            }
+            path.write_text(json.dumps(manifest))
         return bundle
 
     def test_archive_roundtrip_and_tampered_checksum(self):
@@ -149,6 +163,34 @@ class ReleaseTests(unittest.TestCase):
         with patch.object(installer.urllib.request, "urlopen", return_value=Invalid()):
             with self.assertRaises(ValueError):
                 installer.latest_version()
+
+    def test_standalone_installer_rejects_v2_identity_mismatch(self):
+        target = "darwin/arm64" if platform.system() == "Darwin" else "linux/x86_64"
+        bundle = self.bundle("0.1.2", target, manifest_version=2)
+        path = bundle / "manifest.json"
+        manifest = json.loads(path.read_text())
+        manifest["coreBuild"]["sourceRevision"] = "c" * 40
+        path.write_text(json.dumps(manifest))
+        archive = release.archive(bundle, self.root / "bad-assets")
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts/install.py"),
+                "--version",
+                "0.1.2",
+                "--prefix",
+                str(self.root / "rejected-prefix"),
+                "--archive",
+                str(archive),
+                "--checksums",
+                str(archive.with_name(archive.name + ".sha256")),
+            ],
+            text=True,
+            capture_output=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Core build identity does not match", result.stderr)
+        self.assertFalse((self.root / "rejected-prefix/bin/areal").exists())
 
     def test_macos_package_preserves_valid_build_signatures_and_rejects_invalid_ones(self):
         repository = self.root / "repository"
@@ -241,7 +283,10 @@ class ReleaseTests(unittest.TestCase):
         target = "darwin/arm64" if platform.system() == "Darwin" else "linux/x86_64"
         directory = "macos-arm64" if platform.system() == "Darwin" else "linux-x86_64"
         for version in ["0.1.0", "0.1.1"]:
-            archive = release.archive(self.bundle(version, target), self.root / "assets")
+            archive = release.archive(
+                self.bundle(version, target, manifest_version=1 if version == "0.1.0" else 2),
+                self.root / "assets",
+            )
             command = [
                 sys.executable,
                 str(ROOT / "scripts/install.py"),

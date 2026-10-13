@@ -698,7 +698,7 @@ impl Engine {
         }
         self.tasks.close();
         self.tasks.wait().await;
-        if let Err(error) = self.desktop.mcp.shutdown().await {
+        if let Err(error) = self.desktop.mcp.shutdown(&self.store).await {
             tracing::error!(%error, "managed MCP cleanup failed");
         }
         let cells: Vec<_> = self.threads.read().await.values().cloned().collect();
