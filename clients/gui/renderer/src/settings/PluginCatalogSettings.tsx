@@ -32,6 +32,11 @@ type PluginDetail = {
   enabled: boolean;
   source: string;
   sourceDigest: string;
+  catalogSource?: unknown;
+  sourceKind?: string;
+  resolvedCommit?: string;
+  packageVersion?: string;
+  integrity?: string;
   components: string[];
   diagnostics: string[];
   skills: PluginSkill[];
@@ -48,7 +53,14 @@ type PluginMutation =
   | "pluginInstall"
   | "pluginConfigure"
   | "pluginUninstall"
-  | "pluginSetup";
+  | "pluginSetup"
+  | "pluginResolve"
+  | "marketplaceAddGit"
+  | "marketplaceRemove"
+  | "marketplaceUpdate"
+  | "pluginConnection"
+  | "pluginAuth"
+  | "connectorConfigure";
 type PluginSubmission = { mutation: PluginMutation; requestId: string };
 type PluginReceipt =
   | { confirmed: false; state: string }
@@ -69,6 +81,13 @@ const pluginMethods: Record<string, PluginMutation> = {
   "areal/plugin/configure": "pluginConfigure",
   "areal/plugin/uninstall": "pluginUninstall",
   "areal/plugin/setup": "pluginSetup",
+  "areal/plugin/resolve": "pluginResolve",
+  "areal/marketplace/addGit": "marketplaceAddGit",
+  "areal/marketplace/remove": "marketplaceRemove",
+  "areal/marketplace/update": "marketplaceUpdate",
+  "areal/plugin/connection": "pluginConnection",
+  "areal/plugin/auth": "pluginAuth",
+  "areal/plugin/connector/configure": "connectorConfigure",
 };
 type PluginFailure = {
   message: string;
@@ -122,6 +141,17 @@ export function PluginCatalogSettings({
   const [scope, setScope] = useState("user");
   const [adding, setAdding] = useState(false);
   const [root, setRoot] = useState("");
+  const [addKind, setAddKind] = useState("local");
+  const [gitRef, setGitRef] = useState("");
+  const [preview, setPreview] = useState<PluginDetail | null>(null);
+  const [reviewed, setReviewed] = useState(false);
+  const [connectionTrust, setConnectionTrust] = useState(false);
+  const [connections, setConnections] = useState<Data[]>([]);
+  const [connectionError, setConnectionError] = useState("");
+  const [connectorId, setConnectorId] = useState("");
+  const [connectorToken, setConnectorToken] = useState("");
+  const [credentialRef, setCredentialRef] = useState("");
+  const [credentialBusy, setCredentialBusy] = useState(false);
   const [detail, setDetail] = useState<PluginDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
@@ -195,6 +225,47 @@ export function PluginCatalogSettings({
   useEffect(() => {
     if (selected) void readDetail(selected);
   }, [selected, readDetail]);
+  useEffect(() => {
+    setPreview(null);
+    setReviewed(false);
+    setConnectionTrust(false);
+    setConnections([]);
+    setConnectorToken("");
+    setCredentialRef("");
+  }, [selected]);
+  useEffect(() => {
+    setConnectionTrust(false);
+  }, [detail?.installedDigest]);
+  useEffect(() => {
+    if (!detail?.installed) {
+      setConnections([]);
+      return;
+    }
+    let current = true;
+    setConnectionError("");
+    void api("pluginMcp")
+      .then((result) => {
+        if (current)
+          setConnections(
+            (Array.isArray(result.data) ? result.data : []).filter(
+              (row: Data) => row.pluginId === detail.id,
+            ).flatMap((row:Data) => Array.isArray(row.servers) && row.servers.length ? row.servers.map((server:Data) => ({...server,pluginId:row.pluginId,state:server.state ?? row.state,authenticationTiming:row.authenticationTiming})) : [row]),
+          );
+      })
+      .catch((cause) => {
+        if (current) setConnectionError(failure(cause).message);
+      });
+    return () => {
+      current = false;
+    };
+  }, [
+    detail?.id,
+    detail?.installedDigest,
+    detail?.installed,
+    api,
+    catalog?.revision,
+    busy,
+  ]);
   const pending = !!project?.pending?.length;
   const disabled =
     busy ||
@@ -213,33 +284,38 @@ export function PluginCatalogSettings({
     try {
       const result = await api(operation, { ...values, requestId });
       if (!mounted.current) return;
+      if (operation === "pluginResolve") {
+        setPreview(result as PluginDetail);
+        setReviewed(false);
+      }
+      window.dispatchEvent(new Event("areal-plugins-changed"));
       if (operation === "pluginSetup" && result.thread?.id)
         setSetupThreadId(result.thread.id);
-      if (operation === "marketplaceAdd") {
+      if (operation === "marketplaceAdd" || operation === "marketplaceAddGit") {
         setAdding(false);
         setRoot("");
       }
       setMessage(
-        operation === "pluginSetup"
+        operation === "pluginAuth" ? `认证状态：${result?.status ?? "尚未发起"}` : operation === "pluginSetup"
           ? `设置技能已提交到对话 ${result.thread?.id ?? thread?.id ?? ""}。请回到对话查看执行与审批。`
           : "操作已完成。",
       );
     } catch (cause) {
       if (mounted.current) {
         const error = failure(cause);
-        if (error.submissionUnknown)
+        if (error.submissionUnknown && operation !== "pluginAuth")
           setSubmission({
             mutation: operation,
             requestId: error.requestId ?? requestId,
           });
         setError(
-          error.submissionUnknown
+          error.submissionUnknown && operation !== "pluginAuth"
             ? {
                 ...error,
                 message: error.message,
                 requestId: error.requestId ?? requestId,
               }
-            : error,
+            : operation === "pluginAuth" ? {...error,submissionUnknown:false} : error,
         );
       }
     } finally {
@@ -299,7 +375,10 @@ export function PluginCatalogSettings({
       setError(null);
       if (recoverable.mutation === "pluginSetup" && receipt.result?.thread?.id)
         setSetupThreadId(receipt.result.thread.id);
-      if (recoverable.mutation === "marketplaceAdd") {
+      if (
+        recoverable.mutation === "marketplaceAdd" ||
+        recoverable.mutation === "marketplaceAddGit"
+      ) {
         setAdding(false);
         setRoot("");
       }
@@ -333,6 +412,63 @@ export function PluginCatalogSettings({
       核对插件提交
     </Button>
   );
+  const previewCurrent =
+    !!detail &&
+    !!preview &&
+    preview.id === detail.id &&
+    preview.source === detail.source &&
+    preview.sourceDigest === detail.sourceDigest &&
+    preview.revision === catalog?.revision;
+  const install = () => {
+    if (!previewCurrent || !reviewed || !preview) return;
+    void mutate("pluginInstall", {
+      id: preview.id,
+      source: preview.source,
+      expectedDigest: preview.sourceDigest,
+      scope,
+      expectedRevision: preview.revision,
+    });
+  };
+  const saveConnectorCredential = async () => {
+    if (
+      !detail?.installedDigest ||
+      !connectorId.trim() ||
+      !connectorToken ||
+      credentialBusy
+    )
+      return;
+    const requestId = crypto.randomUUID();
+    const secret = connectorToken;
+    setConnectorToken("");
+    setCredentialBusy(true);
+    setError(null);
+    try {
+      const saved = await api("connectorCredential", {
+        id: detail.id,
+        connectorId: connectorId.trim(),
+        provider: "github",
+        expectedDigest: detail.installedDigest,
+        secret,
+        requestId,
+      });
+      if (typeof saved.credentialRef !== "string" || !saved.credentialRef)
+        throw new Error("凭据保存未返回受保护引用。");
+      setCredentialRef(saved.credentialRef);
+      setMessage("GitHub Connector 配置已保存，请明确连接该插件。");
+      window.dispatchEvent(new Event("areal-plugins-changed"));
+      await refresh();
+    } catch (cause) {
+      const error = failure(cause);
+      if (error.submissionUnknown)
+        setSubmission({
+          mutation: "connectorConfigure",
+          requestId: error.requestId ?? requestId,
+        });
+      setError(error);
+    } finally {
+      setCredentialBusy(false);
+    }
+  };
   const closeDetail = () => {
     detailGeneration.current++;
     setSelected(null);
@@ -383,12 +519,12 @@ export function PluginCatalogSettings({
           {loading ? "刷新中…" : "刷新目录"}
         </Button>
         <Button disabled={disabled} onClick={() => setAdding(true)}>
-          添加本地目录
+          添加来源
         </Button>
       </div>
       <p className="text-foreground-subtle text-ui-sm">
-        安装原包中的 Skills。MCP、Hooks 与 Apps
-        的执行能力尚未接入，具体限制见插件详情。
+        先解析并核对来源，再安装不可变快照。安装不会启动服务器；连接 MCP
+        和运行设置均需明确操作。
       </p>
       {supported === false && (
         <Feedback error="当前 Core 不支持插件目录。请升级到支持插件包的 Core 后重新连接项目。" />
@@ -413,15 +549,38 @@ export function PluginCatalogSettings({
       )}
       {!!catalog?.marketplaces.length && (
         <details>
-          <summary>本地目录（{catalog.marketplaces.length}）</summary>
+          <summary>插件来源（{catalog.marketplaces.length}）</summary>
           <ul>
             {catalog.marketplaces.map((item) => (
               <li key={item.root}>
                 <strong>{item.name}</strong>
                 <p className="break-all text-foreground-subtle">{item.root}</p>
+                <Button
+                  variant="outline"
+                  disabled={disabled}
+                  onClick={() =>
+                    void mutate("marketplaceRemove", {
+                      root: item.root,
+                      expectedRevision: catalog.revision,
+                    })
+                  }
+                >
+                  移除来源
+                </Button>
               </li>
             ))}
           </ul>
+          <Button
+            variant="outline"
+            disabled={disabled}
+            onClick={() =>
+              void mutate("marketplaceUpdate", {
+                expectedRevision: catalog.revision,
+              })
+            }
+          >
+            刷新 Git 来源快照
+          </Button>
         </details>
       )}
       <div className="settings-resource-list">
@@ -467,8 +626,8 @@ export function PluginCatalogSettings({
       )}
       {adding && (
         <SettingsDialog
-          title="添加本地插件目录"
-          description="输入 marketplace 根目录的完整本地路径。只登记和读取目录，不运行安装脚本。"
+          title="添加插件来源"
+          description="选择本地目录或 Git marketplace。读取来源不会安装插件或启动服务器。"
           busy={busy}
           onClose={() => setAdding(false)}
         >
@@ -476,23 +635,56 @@ export function PluginCatalogSettings({
             className="settings-form"
             onSubmit={(event) => {
               event.preventDefault();
-              void mutate("marketplaceAdd", {
-                root: root.trim(),
-                expectedRevision: catalog?.revision,
-              });
+              void mutate(
+                addKind === "git" ? "marketplaceAddGit" : "marketplaceAdd",
+                {
+                  ...(addKind === "git"
+                    ? {
+                        url: root.trim(),
+                        ...(gitRef.trim() ? { refName: gitRef.trim() } : {}),
+                      }
+                    : { root: root.trim() }),
+                  expectedRevision: catalog?.revision,
+                },
+              );
             }}
           >
             <label>
-              Marketplace 根目录
+              来源类型
+              <select
+                value={addKind}
+                onChange={(event) => {
+                  setAddKind(event.target.value);
+                  setRoot("");
+                }}
+              >
+                <option value="local">本地目录</option>
+                <option value="git">Git 仓库</option>
+              </select>
+              {addKind === "git" ? "Git URL" : "Marketplace 根目录"}
               <Input
                 autoFocus
                 required
                 value={root}
                 disabled={busy}
-                placeholder="/path/to/marketplace"
+                placeholder={
+                  addKind === "git"
+                    ? "https://github.com/owner/marketplace.git"
+                    : "/path/to/marketplace"
+                }
                 onChange={(event) => setRoot(event.target.value)}
               />
             </label>
+            {addKind === "git" && (
+              <label>
+                分支、标签或提交（可选）
+                <Input
+                  value={gitRef}
+                  onChange={(event) => setGitRef(event.target.value)}
+                  disabled={busy}
+                />
+              </label>
+            )}
             <Feedback error={failureText(error)} />
             {recoveryButton}
             <div className="settings-form-actions">
@@ -547,7 +739,7 @@ export function PluginCatalogSettings({
                     ? detail.installedVersion || "未声明"
                     : "未安装"}
                 </dd>
-                <dt>本地来源</dt>
+                <dt>当前来源快照</dt>
                 <dd className="break-all">{detail.source}</dd>
                 <dt>目录包组件</dt>
                 <dd>{detail.components.join("、") || "无"}</dd>
@@ -596,6 +788,55 @@ export function PluginCatalogSettings({
                   </ul>
                 </section>
               ))}
+              <section aria-label="来源解析与预览">
+                <h3>来源预览</h3>
+                {detail.catalogSource !== undefined && (
+                  <pre className="whitespace-pre-wrap break-all">
+                    {JSON.stringify(detail.catalogSource, null, 2)}
+                  </pre>
+                )}
+                <Button
+                  variant="outline"
+                  disabled={disabled || detailLoading}
+                  onClick={() =>
+                    void mutate("pluginResolve", {
+                      id: detail.id,
+                      expectedRevision: catalog?.revision,
+                    })
+                  }
+                >
+                  解析并预览来源
+                </Button>
+                {preview?.id === detail.id && (
+                  <dl>
+                    <dt>内容摘要</dt>
+                    <dd className="break-all">{preview.sourceDigest}</dd>
+                    <dt>固定提交</dt>
+                    <dd>{preview.resolvedCommit ?? "本地内容快照"}</dd>
+                    <dt>包版本</dt>
+                    <dd>
+                      {preview.packageVersion ?? preview.version ?? "未声明"}
+                    </dd>
+                    <dt>完整性</dt>
+                    <dd className="break-all">
+                      {preview.integrity ?? "Core 内容摘要"}
+                    </dd>
+                  </dl>
+                )}
+                {previewCurrent && (
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={reviewed}
+                      onChange={(event) => setReviewed(event.target.checked)}
+                    />
+                    我已核对以上来源、版本和内容摘要
+                  </label>
+                )}
+                {preview && !previewCurrent && (
+                  <p role="status">目录已变化，请重新解析来源后安装。</p>
+                )}
+              </section>
               <ResourceScope
                 value={scope}
                 onChange={setScope}
@@ -654,19 +895,179 @@ export function PluginCatalogSettings({
                 </>
               ) : (
                 <Button
-                  disabled={disabled || detailLoading}
-                  onClick={() =>
-                    void mutate("pluginInstall", {
-                      id: detail.id,
-                      source: detail.source,
-                      expectedDigest: detail.sourceDigest,
-                      scope,
-                      expectedRevision: catalog?.revision,
-                    })
+                  disabled={
+                    disabled || detailLoading || !previewCurrent || !reviewed
                   }
+                  onClick={install}
                 >
                   安装到{scope === "user" ? "用户" : "当前项目"}
                 </Button>
+              )}
+              {detail.installed && (
+                <section aria-label="插件连接与认证">
+                  <h3>MCP 连接</h3>
+                  <p className="break-all">
+                    已安装摘要：{detail.installedDigest}
+                  </p>
+                  <Feedback error={connectionError} />
+                  {connections.length ? (
+                    connections.map((row, index) => (
+                      <div key={String(row.id ?? row.serverId ?? index)}>
+                        <strong>{row.id ?? row.serverId}</strong>
+                        <span>
+                          {" "}
+                          · {String(row.state ?? row.status ?? "未连接")}
+                        </span>
+                        {row.message && <p>{String(row.message)}</p>}
+                        {(row.authentication === "required" ||
+                          /auth|认证/i.test(
+                            String(row.state ?? row.status),
+                          )) && (
+                          <div>
+                            <Button
+                              disabled={disabled}
+                              onClick={() =>
+                                void mutate("pluginAuth", {
+                                  id: detail.id,
+                                  server: row.id ?? row.serverId,
+                                  authOperation: "start",
+                                  expectedDigest: detail.installedDigest,
+                                })
+                              }
+                            >
+                              在浏览器中认证
+                            </Button>
+                            <Button
+                              variant="outline"
+                              disabled={disabled}
+                              onClick={() =>
+                                void mutate("pluginAuth", {
+                                  id: detail.id,
+                                  server: row.id ?? row.serverId,
+                                  authOperation: "status",
+                                  expectedDigest: detail.installedDigest,
+                                })
+                              }
+                            >
+                              核对认证状态
+                            </Button>
+                            <Button
+                              variant="outline"
+                              disabled={disabled}
+                              onClick={() =>
+                                void mutate("pluginAuth", {
+                                  id: detail.id,
+                                  server: row.id ?? row.serverId,
+                                  authOperation: "cancel",
+                                  expectedDigest: detail.installedDigest,
+                                })
+                              }
+                            >
+                              取消认证
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  ) : (
+                    <p>
+                      没有已连接的插件服务器。连接失败、认证待完成和清理待完成会在此分别显示。
+                    </p>
+                  )}
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={connectionTrust}
+                      onChange={(event) =>
+                        setConnectionTrust(event.target.checked)
+                      }
+                    />
+                    我信任此已安装快照并允许启动其 MCP 服务器
+                  </label>
+                  <div className="settings-form-actions">
+                    <Button
+                      disabled={
+                        disabled ||
+                        !detail.enabled ||
+                        !detail.installedDigest ||
+                        !connectionTrust
+                      }
+                      onClick={() =>
+                        void mutate("pluginConnection", {
+                          connect: true,
+                          id: detail.id,
+                          expectedDigest: detail.installedDigest,
+                        })
+                      }
+                    >
+                      信任并连接
+                    </Button>
+                    <Button
+                      variant="outline"
+                      disabled={disabled || !detail.installedDigest}
+                      onClick={() =>
+                        void mutate("pluginConnection", {
+                          connect: false,
+                          id: detail.id,
+                          expectedDigest: detail.installedDigest,
+                        })
+                      }
+                    >
+                      断开连接
+                    </Button>
+                  </div>
+                  {detail.installedDigest !== detail.sourceDigest && (
+                    <Button
+                      disabled={disabled || !previewCurrent || !reviewed}
+                      onClick={install}
+                    >
+                      安装已核对的新快照
+                    </Button>
+                  )}
+                  <details>
+                    <summary>GitHub Connector 配置</summary>
+                    <p>
+                      保留插件声明的原始 Connector
+                      ID。凭据保存在受保护的桌面凭据存储中。
+                    </p>
+                    <label>
+                      原始 Connector ID
+                      <Input
+                        value={connectorId}
+                        onChange={(event) => {
+                          setConnectorId(event.target.value);
+                          setCredentialRef("");
+                        }}
+                        disabled={busy || credentialBusy}
+                      />
+                    </label>
+                    <label>
+                      GitHub 访问令牌
+                      <Input
+                        type="password"
+                        autoComplete="new-password"
+                        value={connectorToken}
+                        onChange={(event) =>
+                          setConnectorToken(event.target.value)
+                        }
+                        disabled={busy || credentialBusy}
+                      />
+                    </label>
+                    <Button
+                      variant="outline"
+                      disabled={
+                        disabled ||
+                        credentialBusy ||
+                        !connectorId.trim() ||
+                        !connectorToken
+                      }
+                      onClick={() => void saveConnectorCredential()}
+                    >
+                      安全保存并配置 GitHub
+                    </Button>
+                    {credentialRef && <p role="status">受保护凭据已配置</p>}
+                  </details>
+                </section>
               )}
               {detail.installed && detail.installedOnboardingSkill && (
                 <section>

@@ -3,7 +3,7 @@ const { manageTask, taskOperations } = require('./tasks.cjs');
 const { workgroupArtifactFile } = require('./workgroup-artifacts.cjs');
 
 const mutations = {
-  marketplaceAdd: 'areal/marketplace/add', pluginInstall: 'areal/plugin/install',
+  marketplaceAdd: 'areal/marketplace/add', marketplaceAddGit: 'areal/marketplace/addGit', marketplaceRemove: 'areal/marketplace/remove', marketplaceUpdate: 'areal/marketplace/update', pluginResolve: 'areal/plugin/resolve', pluginConnection: 'areal/plugin/connection', connectorConfigure: 'areal/plugin/connector/configure', pluginInstall: 'areal/plugin/install',
   pluginConfigure: 'areal/plugin/configure', pluginUninstall: 'areal/plugin/uninstall', pluginSetup: 'areal/plugin/setup',
   providerSave: 'areal/provider/upsert', providerRemove: 'areal/provider/remove',
   mcpSave: 'areal/mcp/configure', mcpConnect: 'areal/mcp/connect', mcpDisconnect: 'areal/mcp/disconnect',
@@ -15,7 +15,7 @@ const mutations = {
 const threadMutationMethods = new Set([...Object.values(mutations).filter(method => method.startsWith('areal/goal/')), 'areal/queue/steer']);
 const managementMethods = new Set(['areal/blob/release', ...Object.values(mutations).filter(method => !method.startsWith('areal/process/') && !threadMutationMethods.has(method)), ...['update', 'remove', 'reorder', 'pause', 'resume'].map(name => `areal/queue/${name}`)]);
 const fields = {
-  marketplaceAdd: ['root', 'expectedRevision'], pluginInstall: ['id', 'scope', 'expectedRevision', 'source', 'expectedDigest'],
+  marketplaceAdd: ['root', 'expectedRevision'], marketplaceAddGit: ['url', 'refName', 'expectedRevision'], marketplaceRemove: ['root', 'expectedRevision'], marketplaceUpdate: ['expectedRevision'], pluginResolve: ['id', 'expectedRevision'], pluginConnection: ['id', 'expectedDigest', 'connect'], connectorConfigure: ['id', 'connectorId', 'provider', 'credentialRef', 'expectedDigest'], pluginInstall: ['id', 'scope', 'expectedRevision', 'source', 'expectedDigest'],
   pluginConfigure: ['id', 'scope', 'enabled', 'expectedRevision'], pluginUninstall: ['id', 'expectedRevision'],
   pluginSetup: ['id', 'threadId'],
   providerSave: ['provider', 'expectedRevision'], providerRemove: ['id', 'expectedRevision'],
@@ -28,7 +28,7 @@ const fields = {
   goalPause: ['threadId', 'expectedRevision', 'goalId'], goalResume: ['threadId', 'expectedRevision', 'goalId'], goalClear: ['threadId', 'expectedRevision', 'goalId'],
 };
 const reads = {
-  plugins: ['areal/plugin/list', []], plugin: ['areal/plugin/read', ['id']],
+  pluginMcp: ['areal/plugin/mcp/list', []], mcpApps: ['areal/mcp/apps/list', ['threadId']], mcpForms: ['areal/mcp/forms/list', ['threadId']], mcpToolResult:['areal/mcp/tool/result',['threadId','callId']], plugins: ['areal/plugin/list', []], plugin: ['areal/plugin/read', ['id']],
   providers: ['areal/provider/list', []], mcp: ['areal/mcp/list', []],
   profile: ['areal/profile/read', ['id', 'revision']], skills: ['areal/skill/list', ['threadId', 'agentProfile']],
   skill: ['areal/skill/read', ['threadId', 'agentProfile', 'skill', 'resource', 'offset', 'maxBytes']],
@@ -58,7 +58,7 @@ async function manage(backend, project, request) {
   const { operation } = request;
   if (operation === 'pluginSubmission') {
     const method = mutations[request.mutation];
-    if (!['marketplaceAdd', 'pluginInstall', 'pluginConfigure', 'pluginUninstall', 'pluginSetup'].includes(request.mutation)
+    if (!['marketplaceAdd', 'marketplaceAddGit', 'marketplaceRemove', 'marketplaceUpdate', 'pluginResolve', 'pluginConnection', 'connectorConfigure', 'pluginInstall', 'pluginConfigure', 'pluginUninstall', 'pluginSetup'].includes(request.mutation)
       || typeof request.requestId !== 'string' || !request.requestId.trim()) throw new Error('缺少原插件提交标识');
     const entry = project.pending.find(item => item.method === method && item.params.requestId === request.requestId);
     if (entry && backend.awaitingResponses.has(entry)) return { confirmed: false, state: 'accepted' };
@@ -80,6 +80,36 @@ async function manage(backend, project, request) {
     }
     backend.onChange();
     return { confirmed: true, accepted: !error, result, ...(warning ? { warning } : {}), ...(error ? { error } : {}) };
+  }
+  if (operation === 'connectorCredential') {
+    if (request.provider !== 'github' || typeof request.secret !== 'string' || !request.secret.trim() || typeof request.requestId !== 'string' || !request.requestId) throw new Error('请填写 GitHub 凭据和提交标识');
+    if (backend.providerUpdating || backend.resourcesUpdating || backend.starting.size || backend.hasWork()) throw new Error('请等待任务和操作完成后保存凭据');
+    backend.providerUpdating = true;
+    try {
+      // Reuse the encrypted credential owner. Core receives secrets only through trusted launch inputs.
+      const reference = await backend.providers.config.credential(request.secret);
+      const drained = await project.client.request('areal/server/drain', {strategy:'ifIdle', timeoutMs:30000}, {timeoutMs:35000});
+      if (!drained.restartSafe) throw new Error('后台仍有未结算任务，请等待后重试');
+      await backend.restartProject(project);
+      const credentialRef = reference.replace(/^AREAL_CREDENTIAL_/, '');
+      const result = await backend.submit(project, 'areal/plugin/connector/configure', {...pick(request,['id','connectorId','provider','expectedDigest']),credentialRef}, {requestId:request.requestId});
+      return {...result, credentialRef};
+    } finally { backend.providerUpdating = false; }
+  }
+  if (operation === 'pluginAuth' || ['mcpAppOpen','mcpAppRequest','mcpAppClose','mcpExtensionCall','mcpFormRespond','mcpFormPreview'].includes(operation)) {
+    const [method, keys] = {
+      pluginAuth:['areal/plugin/auth',['id','server','operation']],
+      mcpAppOpen:['areal/mcp/app/open',['threadId','serverId','expectedGeneration','toolName','arguments','requestId','fileResource','deepLink']],
+      mcpAppRequest:['areal/mcp/app/request',['threadId','instanceId','generation','request','requestId']],
+      mcpAppClose:['areal/mcp/app/close',['threadId','instanceId','generation']],
+      mcpExtensionCall:['areal/mcp/extension/call',['threadId','serverId','expectedGeneration','kind','arguments','requestId']],
+      mcpFormRespond:['areal/mcp/form/respond',['threadId','requestId','response']],
+      mcpFormPreview:['areal/mcp/form/preview',['threadId','requestId','target']],
+    }[operation];
+    const params=pick(request,keys);
+    if (operation === 'pluginAuth') params.operation=request.authOperation;
+    try { return await project.client.request(method,params,{timeoutMs:120000}); }
+    catch (error) { if (typeof error.code !== 'number' || error.code === -32603) {error.submissionUnknown=true;error.message=`操作结果待核对，不会自动重发。${error.message}`;} throw error; }
   }
   if (operation === 'pluginCapabilities') return { enabled: project.client.capabilities?.methods?.includes('areal/plugin/list') === true };
   if (operation === 'executionCancel') return project.client.request('areal/execution/cancel', pick(request, ['parentThreadId', 'executionId', 'mode']));
@@ -222,7 +252,7 @@ async function manage(backend, project, request) {
   let result;
   try {
     if (operation === 'goalCreate' || operation === 'goalResume') await backend.providers.refreshGoalTransport(project, request.threadId);
-    result = await backend.submit(project, method, pick(request, fields[operation]), operation === 'processStart' || operation.startsWith('plugin') || operation === 'marketplaceAdd' ? { requestId: request.requestId } : {});
+    result = await backend.submit(project, method, pick(request, fields[operation]), operation === 'processStart' || operation.startsWith('plugin') || operation.startsWith('marketplace') || operation === 'connectorConfigure' ? { requestId: request.requestId } : {});
   }
   catch (error) {
     if (threadMutationMethods.has(method)) {

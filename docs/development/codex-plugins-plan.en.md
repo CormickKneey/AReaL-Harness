@@ -2,7 +2,7 @@
 
 # Codex plugin implementation and acceptance
 
-This plan implements the approved design in ordered vertical slices. P0 is the current batch; P1–P3 remain required for the final compatibility claim. A phase passes only with its own evidence.
+This plan implements the approved design in vertical slices. P0 has its own accepted local evidence. The current batch combines P1 and P3, with GitHub as the first real service. P2 hook execution is excluded from this batch and remains a separate requirement for the final compatibility claim. A phase passes only with its own evidence.
 
 ## Baseline and controls
 
@@ -24,6 +24,12 @@ Do not execute package code during discovery/install, overwrite explicit Profile
 | P0-08 | app-server, CLI plugins, GUI PluginsSettings | Core/CLI/GUI management acceptance | Shared installation authority; real desktop journey; auth/restart evidence |
 
 P0 dependencies: freeze the baseline in 01; establish package/catalog boundaries in 02/03; finish installation transactions in 04; integrate Skills and lifecycle in 05/06; complete setup, clients and combined acceptance in 07/08. P1 reuses P0 immutable packages and state ownership; P2 integrates existing Engine/Runtime permissions and events; P3 adds desktop and hosted-service support after MCP, authentication and lifecycle are ready.
+
+## Current P1/P3 batch
+
+Deliver source acquisition, package-bound MCP connections, authentication, metadata/resources and desktop Apps through the existing Core owners. GitHub is the first real remote-service acceptance target; token-based GitHub acceptance does not prove DCR or OpenAI private-service access. Public desktop extensions remain a capability-by-capability obligation. P2 is not implicitly implemented by adding form or App handlers.
+
+The [P1/P3 acceptance ledger](codex-plugins-p1-p3-acceptance.en.md) separates source, integration, service, native and distribution evidence. The first GitHub delivery has integrated and native evidence; complete phase acceptance remains open.
 
 ## P1 · Sources, MCP and connection lifecycle
 
@@ -64,6 +70,8 @@ P0 dependencies: freeze the baseline in 01; establish package/catalog boundaries
 
 Before implementation, define failure assertions at the actual boundary. Prefer integration/E2E evidence; source checks, a local deterministic model, real providers, native desktop and packaged distribution are separate claims. Run only affected checks during development and relevant end-to-end acceptance at closure.
 
-Current status: P0 source implementation and local combined acceptance pass; P1–P3 have not started. All 48 package/Engine integration checks, actual Core/CLI authorization and lost-response recovery, GUI types/public contracts/build, real Electron installation/setup/disable/uninstall and explicit receipt recovery pass. Independent review is SHIP. See the [P0 acceptance record](codex-plugins-p0-acceptance.en.md) for evidence and exclusions. This does not claim compatibility with the complete Codex plugin protocol.
+Prior accepted status: P0 source implementation and local combined acceptance pass. All 48 package/Engine integration checks, actual Core/CLI authorization and lost-response recovery, GUI types/public contracts/build, real Electron installation/setup/disable/uninstall and explicit receipt recovery pass. Independent review is SHIP. See the [P0 acceptance record](codex-plugins-p0-acceptance.en.md) for evidence and exclusions. This does not claim compatibility with the complete Codex plugin protocol.
+
+Current status: first GitHub delivery has evidence. Sources27/MCP24 unaffected checks, CLI8/wire6/GitHub5, native Apps8/extensions5 and independent source review passed. Primary Engine24 passed with a SIGKILL restart gap; OAuth cross-process/proxy and existing library-test gaps remain. P1/P3 and full compatibility remain open; see the acceptance record for exact boundaries.
 
 Before P3 acceptance, name the required desktop extension set, services/Connectors and supported platforms. Format parsing does not grant access to hosted services. Every unresolved requirement remains open in the final matrix.

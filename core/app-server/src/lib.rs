@@ -1,8 +1,10 @@
 pub mod auth;
 mod browser_auth;
+mod codex_plugins;
 mod delegations;
 mod desktop;
 mod dynamic_tools;
+mod plugin_runtime;
 mod processes;
 mod workgroups;
 use areal_engine::{Engine, Error};
@@ -273,6 +275,7 @@ struct Connection {
     principal: Arc<auth::Principal>,
     tool_host: Arc<dynamic_tools::ToolHost>,
     initialized: bool,
+    experimental_api: bool,
     ready: bool,
     subscriptions: HashMap<String, CancellationToken>,
     suppressed: HashSet<String>,
@@ -329,6 +332,7 @@ async fn connection(
         ),
         principal,
         initialized: false,
+        experimental_api: false,
         ready: false,
         subscriptions: HashMap::new(),
         suppressed: HashSet::new(),
@@ -409,11 +413,29 @@ async fn connection(
             conn.send(response(id.unwrap(),Err(RpcError::invalid("authenticated clients must upload media; host filesystem paths are not accepted"))));
             continue;
         }
+        if !conn.principal.token.is_empty()
+            && conn.principal.id != "desktop-owner"
+            && ((method == "areal/mcp/app/open" && params["fileResource"].is_object())
+                || (method == "areal/mcp/app/request"
+                    && params["request"]["method"] == "ui/host-file"))
+        {
+            conn.send(response(
+                id.unwrap(),
+                Err(RpcError {
+                    code: -32003,
+                    message: "trusted desktop file host required".into(),
+                    data: None,
+                }),
+            ));
+            continue;
+        }
         let project_permission = (method == "areal/interaction/respond"
             && params["decision"] == "allowProject")
             || method.starts_with("areal/permissions/")
             || method.starts_with("areal/plugin/")
-            || method.starts_with("areal/marketplace/");
+            || method.starts_with("areal/marketplace/")
+            || codex_plugins::METHODS.contains(&method)
+            || plugin_runtime::METHODS.contains(&method);
         if (project_permission
             && (!conn.principal.allows(auth::Permission::Manage)
                 || conn.principal.thread_ids.is_some()))
@@ -432,6 +454,17 @@ async fn connection(
                 Err(RpcError {
                     code: -32003,
                     message: "permission denied".into(),
+                    data: None,
+                }),
+            ));
+            continue;
+        }
+        if method == "plugin/search" && !conn.experimental_api {
+            conn.send(response(
+                id.unwrap(),
+                Err(RpcError {
+                    code: -32600,
+                    message: "plugin/search requires experimentalApi capability".into(),
                     data: None,
                 }),
             ));
@@ -500,6 +533,8 @@ async fn connection(
                 || processes::METHODS.contains(&method)
                 || method == "areal/provider/probe"
                 || method.starts_with("areal/workflow/")
+                || codex_plugins::METHODS.contains(&method)
+                || plugin_runtime::METHODS.contains(&method)
                 || method.starts_with("areal/plugin/")
                 || method.starts_with("areal/marketplace/")
                 || method.starts_with("areal/mcp/")
@@ -546,7 +581,7 @@ async fn connection(
             conn.tasks.spawn(async move {
                 let _permit = permit;
                 let result = tokio::select! { biased; _=stop.cancelled()=>return,
-                value=async { if delegations::METHODS.contains(&method.as_str()) { delegations::dispatch(&engine,&method,params).await } else if processes::METHODS.contains(&method.as_str()) { processes::dispatch(&engine,&identity,&method,params).await } else if desktop::METHODS.contains(&method.as_str()) { desktop::dispatch(&engine,&identity,&method,params).await } else { workgroups::dispatch(engine,&identity,&method,params).await } }=>value };
+                value=async { if plugin_runtime::METHODS.contains(&method.as_str()) { plugin_runtime::dispatch(&engine,&identity,&method,params).await } else if codex_plugins::METHODS.contains(&method.as_str()) { codex_plugins::dispatch(&engine,&identity,&method,params).await } else if delegations::METHODS.contains(&method.as_str()) { delegations::dispatch(&engine,&method,params).await } else if processes::METHODS.contains(&method.as_str()) { processes::dispatch(&engine,&identity,&method,params).await } else if desktop::METHODS.contains(&method.as_str()) { desktop::dispatch(&engine,&identity,&method,params).await } else { workgroups::dispatch(engine,&identity,&method,params).await } }=>value };
                 if tx.try_send(response(id, result)).is_err() {
                     stop.cancel();
                 }
@@ -752,6 +787,7 @@ impl Connection {
                 return Err(RpcError::invalid("client name and version required"));
             }
             if let Some(c) = p.capabilities {
+                self.experimental_api = c.experimental_api;
                 self.suppressed = c
                     .opt_out_notification_methods
                     .unwrap_or_default()
@@ -799,6 +835,12 @@ impl Connection {
         }
         if method == "areal/conversation/list" {
             return self.conversation_list(engine, params).await;
+        }
+        if plugin_runtime::METHODS.contains(&method) {
+            return plugin_runtime::dispatch(engine, &self.principal.id, method, params).await;
+        }
+        if codex_plugins::METHODS.contains(&method) {
+            return codex_plugins::dispatch(engine, &self.principal.id, method, params).await;
         }
         if desktop::METHODS.contains(&method) && method != "areal/thread/start" {
             if matches!(method, "areal/turn/start" | "areal/turn/enqueue") {
@@ -890,6 +932,8 @@ impl Connection {
                     methods.retain(|method| *method != "areal/thread/tools/attach");
                 }
                 methods.extend_from_slice(desktop::METHODS);
+                methods.extend_from_slice(codex_plugins::METHODS);
+                methods.extend_from_slice(plugin_runtime::METHODS);
                 methods.extend_from_slice(task_mode::METHODS);
                 methods.push("areal/work/overview");
                 if !engine.runtime_capabilities().is_null() {
@@ -1136,7 +1180,7 @@ struct ClientInfo {
 struct Capabilities {
     opt_out_notification_methods: Option<Vec<String>>,
     #[serde(default, rename = "experimentalApi")]
-    _experimental_api: bool,
+    experimental_api: bool,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1221,6 +1265,7 @@ mod tests {
             principal: auth::Principal::embedded(),
             tool_host: dynamic_tools::ToolHost::new(tx.clone(), stop.clone()),
             initialized: true,
+            experimental_api: false,
             ready: true,
             subscriptions: HashMap::new(),
             suppressed: HashSet::new(),
@@ -1256,6 +1301,7 @@ mod tests {
             principal: auth::Principal::embedded(),
             tool_host: dynamic_tools::ToolHost::new(tx.clone(), stop.clone()),
             initialized: true,
+            experimental_api: false,
             ready: true,
             subscriptions: HashMap::new(),
             suppressed: HashSet::new(),
@@ -1294,6 +1340,7 @@ mod tests {
             principal: auth::Principal::embedded(),
             tool_host: dynamic_tools::ToolHost::new(tx.clone(), stop.clone()),
             initialized: true,
+            experimental_api: false,
             ready: true,
             subscriptions: (0..128)
                 .map(|n| (n.to_string(), CancellationToken::new()))

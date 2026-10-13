@@ -147,6 +147,9 @@ pub enum ThreadOwnership {
     },
 }
 pub const NOTIFICATIONS: &[&str] = &[
+    "areal/mcp/app/notification",
+    "areal/mcp/tool/result",
+    "areal/mcp/form/requested",
     "areal/goal/updated",
     "areal/goal/cleared",
     "thread/started",

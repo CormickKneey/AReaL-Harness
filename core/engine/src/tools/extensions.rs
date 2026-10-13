@@ -585,10 +585,88 @@ impl Invocation<'_> {
                     .await?;
                 serde_json::from_value::<DynamicToolResponse>(value).map_err(unknown)?
             }
-            Backend::Mcp(tool) => tool
-                .call(args.clone(), self.cancel.clone())
-                .await
-                .map_err(unknown)?,
+            Backend::Mcp(tool) => {
+                self.engine
+                    .check_plugin_mcp(tool)
+                    .await
+                    .map_err(|e| rt::Error::new(rt::ErrorCode::PermissionDenied, e.to_string()))?;
+                let owner = self
+                    .engine
+                    .mcp_call_owner(self.cell, self.call)
+                    .await
+                    .map_err(invalid)?;
+                let key = (tool.server_name().to_owned(), tool.generation());
+                {
+                    let mut calls = self.engine.desktop.mcp_apps.calls.lock().await;
+                    if calls.contains_key(&key) {
+                        return Err(rt::Error::new(
+                            rt::ErrorCode::PermissionDenied,
+                            "MCP server has an active caller; refusing ambiguous form ownership",
+                        ));
+                    }
+                    calls.insert(key.clone(), owner);
+                }
+                let meta = self
+                    .cell
+                    .state
+                    .lock()
+                    .await
+                    .active
+                    .as_ref()
+                    .and_then(|a| a.tool_meta.clone());
+                let raw = tool
+                    .call_raw_with_meta(args.clone(), meta, self.cancel.clone())
+                    .await;
+                self.engine.desktop.mcp_apps.calls.lock().await.remove(&key);
+                let raw = raw.map_err(|e| {
+                    if e.is::<areal_mcp::AuthenticationFailed>() {
+                        rt::Error::new(
+                            rt::ErrorCode::PermissionDenied,
+                            "MCP authentication required",
+                        )
+                    } else {
+                        unknown(e)
+                    }
+                })?;
+                let mut response = areal_mcp::project_result(&raw).map_err(unknown)?;
+                self.engine
+                    .materialize_tool_media(self.cell, &mut response.content_items)
+                    .await
+                    .map_err(unknown)?;
+                if let Some(limit) = self.engine.mcp_output_limit(tool).await {
+                    let text = serde_json::to_string(&response).map_err(unknown)?;
+                    if text.len() > limit {
+                        let text = text
+                            .chars()
+                            .scan(0usize, |used, c| {
+                                *used += c.len_utf8();
+                                Some((*used, c))
+                            })
+                            .take_while(|(used, _)| *used <= limit)
+                            .map(|(_, c)| c)
+                            .collect::<String>();
+                        response.content_items =
+                            vec![areal_protocol::ToolContent::InputText { text }];
+                        response.structured_content = None;
+                    }
+                }
+                let mut value = serde_json::to_value(&response).map_err(unknown)?;
+                value["mcpResult"] = serde_json::to_value(&raw).map_err(unknown)?;
+                value["mcpServer"] = json!({"serverId":tool.server_name(),"generation":tool.generation(),"toolMetadata":tool.metadata()});
+                if serde_json::to_vec(&value).map_err(unknown)?.len()
+                    > areal_protocol::MAX_TOOL_RESULT_BYTES
+                {
+                    return Err(unknown(
+                        "MCP result exceeds durable receive budget; inspect before retry",
+                    ));
+                }
+                if response.success {
+                    self.entry
+                        .validate_output(raw.structured_content.as_ref().unwrap_or(&Value::Null))
+                        .map_err(unknown)?;
+                }
+                return Ok((response.success, value));
+            }
             Backend::Plugin(tool) => self.plugin(tool, args).await?,
             Backend::Client => {
                 let host = self

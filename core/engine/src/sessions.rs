@@ -122,9 +122,21 @@ impl Engine {
         } else {
             desktop
         };
+        let parent_registry = if let Some(parent) = parent {
+            let cell = self.threads.read().await.get(&parent.id).cloned();
+            if let Some(cell) = cell {
+                Some(cell.bindings.read().await.registry.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         let bindings = tools::Bindings {
             registry: if research {
                 self.registry.clone().research_only()
+            } else if let Some(registry) = parent_registry {
+                registry
             } else {
                 self.registry
                     .with_dynamic(&dynamic_tools)

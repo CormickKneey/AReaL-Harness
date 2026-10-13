@@ -923,7 +923,12 @@ impl Engine {
         let mut selected = self.effective_skill_refs(config, true);
         let mut attached = false;
         for item in input {
-            let Input::Text { text, .. } = item else {
+            let Input::Text {
+                text,
+                mcp_content: None,
+                ..
+            } = item
+            else {
                 continue;
             };
             let mut remaining = text.as_str();

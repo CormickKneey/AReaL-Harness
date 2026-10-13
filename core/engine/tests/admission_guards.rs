@@ -374,6 +374,7 @@ async fn observe_reports_goal_and_child_ownership_and_masks_hidden_task_identifi
             vec![areal_protocol::Input::Text {
                 text: "child".into(),
                 text_elements: vec![],
+                mcp_content: None,
             }],
         )
         .await

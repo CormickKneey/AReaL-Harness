@@ -1375,6 +1375,9 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "mcpContent": {
+                            "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                          },
                           "text": {
                             "type": "string"
                           },
@@ -2667,6 +2670,9 @@
                         {
                           "additionalProperties": false,
                           "properties": {
+                            "mcpContent": {
+                              "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                            },
                             "text": {
                               "type": "string"
                             },
@@ -3899,6 +3905,9 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "mcpContent": {
+                            "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                          },
                           "text": {
                             "type": "string"
                           },
@@ -4536,6 +4545,9 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "mcpContent": {
+                            "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                          },
                           "text": {
                             "type": "string"
                           },
@@ -5136,6 +5148,9 @@
                                 {
                                   "additionalProperties": false,
                                   "properties": {
+                                    "mcpContent": {
+                                      "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                    },
                                     "text": {
                                       "type": "string"
                                     },
@@ -7014,6 +7029,9 @@
                                     {
                                       "additionalProperties": false,
                                       "properties": {
+                                        "mcpContent": {
+                                          "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                        },
                                         "text": {
                                           "type": "string"
                                         },
@@ -8314,6 +8332,9 @@
                                   {
                                     "additionalProperties": false,
                                     "properties": {
+                                      "mcpContent": {
+                                        "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                      },
                                       "text": {
                                         "type": "string"
                                       },
@@ -9526,6 +9547,9 @@
                             {
                               "additionalProperties": false,
                               "properties": {
+                                "mcpContent": {
+                                  "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                },
                                 "text": {
                                   "type": "string"
                                 },
@@ -10716,6 +10740,9 @@
                             {
                               "additionalProperties": false,
                               "properties": {
+                                "mcpContent": {
+                                  "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                },
                                 "text": {
                                   "type": "string"
                                 },
@@ -12136,6 +12163,9 @@
                   {
                     "additionalProperties": false,
                     "properties": {
+                      "mcpContent": {
+                        "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                      },
                       "text": {
                         "type": "string"
                       },
@@ -12384,6 +12414,9 @@
               {
                 "additionalProperties": false,
                 "properties": {
+                  "mcpContent": {
+                    "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                  },
                   "text": {
                     "type": "string"
                   },
@@ -12700,6 +12733,9 @@
               {
                 "additionalProperties": false,
                 "properties": {
+                  "mcpContent": {
+                    "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                  },
                   "text": {
                     "type": "string"
                   },
@@ -13613,6 +13649,174 @@
       ],
       "type": "object"
     },
+    "areal/marketplace/addGit": {
+      "additionalProperties": false,
+      "properties": {
+        "expectedRevision": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "refName": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "url",
+        "expectedRevision",
+        "requestId"
+      ],
+      "type": "object"
+    },
+    "areal/marketplace/remove": {
+      "additionalProperties": false,
+      "properties": {
+        "expectedRevision": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "root": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "expectedRevision",
+        "requestId"
+      ],
+      "type": "object"
+    },
+    "areal/marketplace/update": {
+      "additionalProperties": false,
+      "properties": {
+        "expectedRevision": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "requestId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "expectedRevision",
+        "requestId"
+      ],
+      "type": "object"
+    },
+    "areal/mcp/app/close": {
+      "additionalProperties": false,
+      "properties": {
+        "generation": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "instanceId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "instanceId",
+        "generation"
+      ],
+      "title": "Close",
+      "type": "object"
+    },
+    "areal/mcp/app/open": {
+      "additionalProperties": false,
+      "properties": {
+        "arguments": true,
+        "deepLink": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "expectedGeneration": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "fileResource": true,
+        "requestId": {
+          "type": "string"
+        },
+        "serverId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "toolName": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "serverId",
+        "expectedGeneration",
+        "toolName",
+        "requestId"
+      ],
+      "title": "Open",
+      "type": "object"
+    },
+    "areal/mcp/app/request": {
+      "additionalProperties": false,
+      "properties": {
+        "generation": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "instanceId": {
+          "type": "string"
+        },
+        "request": true,
+        "requestId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "instanceId",
+        "generation",
+        "request"
+      ],
+      "title": "AppRequest",
+      "type": "object"
+    },
+    "areal/mcp/apps/list": {
+      "additionalProperties": false,
+      "properties": {
+        "threadId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "title": "Apps",
+      "type": "object"
+    },
     "areal/mcp/configure": {
       "additionalProperties": false,
       "properties": {
@@ -13783,6 +13987,90 @@
       ],
       "type": "object"
     },
+    "areal/mcp/extension/call": {
+      "additionalProperties": false,
+      "properties": {
+        "arguments": true,
+        "expectedGeneration": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "serverId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "serverId",
+        "expectedGeneration",
+        "kind",
+        "arguments",
+        "requestId"
+      ],
+      "title": "Extension",
+      "type": "object"
+    },
+    "areal/mcp/form/preview": {
+      "additionalProperties": false,
+      "properties": {
+        "requestId": {
+          "type": "string"
+        },
+        "target": true,
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "requestId",
+        "target"
+      ],
+      "title": "Preview",
+      "type": "object"
+    },
+    "areal/mcp/form/respond": {
+      "additionalProperties": false,
+      "properties": {
+        "requestId": {
+          "type": "string"
+        },
+        "response": true,
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "requestId",
+        "response"
+      ],
+      "title": "Respond",
+      "type": "object"
+    },
+    "areal/mcp/forms/list": {
+      "additionalProperties": false,
+      "properties": {
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "title": "Forms",
+      "type": "object"
+    },
     "areal/mcp/list": {
       "additionalProperties": false,
       "properties": {},
@@ -13798,6 +14086,23 @@
       "required": [
         "id"
       ],
+      "type": "object"
+    },
+    "areal/mcp/tool/result": {
+      "additionalProperties": false,
+      "properties": {
+        "callId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "callId"
+      ],
+      "title": "ToolResult",
       "type": "object"
     },
     "areal/model/list": {
@@ -13892,6 +14197,27 @@
       "title": "PlanUpdate",
       "type": "object"
     },
+    "areal/plugin/auth": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "server": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "server",
+        "operation"
+      ],
+      "title": "Auth",
+      "type": "object"
+    },
     "areal/plugin/configure": {
       "additionalProperties": false,
       "properties": {
@@ -13922,6 +14248,64 @@
         "expectedRevision",
         "requestId"
       ],
+      "type": "object"
+    },
+    "areal/plugin/connection": {
+      "additionalProperties": false,
+      "properties": {
+        "connect": {
+          "type": "boolean"
+        },
+        "expectedDigest": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "id",
+        "expectedDigest",
+        "connect"
+      ],
+      "title": "Connection",
+      "type": "object"
+    },
+    "areal/plugin/connector/configure": {
+      "additionalProperties": false,
+      "properties": {
+        "connectorId": {
+          "type": "string"
+        },
+        "credentialRef": {
+          "type": "string"
+        },
+        "expectedDigest": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "id",
+        "connectorId",
+        "provider",
+        "credentialRef",
+        "expectedDigest"
+      ],
+      "title": "Connector",
       "type": "object"
     },
     "areal/plugin/install": {
@@ -13966,6 +14350,11 @@
       "properties": {},
       "type": "object"
     },
+    "areal/plugin/mcp/list": {
+      "additionalProperties": false,
+      "title": "Empty",
+      "type": "object"
+    },
     "areal/plugin/read": {
       "additionalProperties": false,
       "properties": {
@@ -13975,6 +14364,27 @@
       },
       "required": [
         "id"
+      ],
+      "type": "object"
+    },
+    "areal/plugin/resolve": {
+      "additionalProperties": false,
+      "properties": {
+        "expectedRevision": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "expectedRevision",
+        "requestId"
       ],
       "type": "object"
     },
@@ -14482,6 +14892,9 @@
               {
                 "additionalProperties": false,
                 "properties": {
+                  "mcpContent": {
+                    "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                  },
                   "text": {
                     "type": "string"
                   },
@@ -14676,6 +15089,9 @@
               {
                 "additionalProperties": false,
                 "properties": {
+                  "mcpContent": {
+                    "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                  },
                   "text": {
                     "type": "string"
                   },
@@ -14871,6 +15287,9 @@
               {
                 "additionalProperties": false,
                 "properties": {
+                  "mcpContent": {
+                    "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                  },
                   "text": {
                     "type": "string"
                   },
@@ -15066,6 +15485,9 @@
               {
                 "additionalProperties": false,
                 "properties": {
+                  "mcpContent": {
+                    "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                  },
                   "text": {
                     "type": "string"
                   },
@@ -15292,6 +15714,9 @@
               {
                 "additionalProperties": false,
                 "properties": {
+                  "mcpContent": {
+                    "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                  },
                   "text": {
                     "type": "string"
                   },
@@ -15585,6 +16010,9 @@
               {
                 "additionalProperties": false,
                 "properties": {
+                  "mcpContent": {
+                    "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                  },
                   "text": {
                     "type": "string"
                   },
@@ -16926,6 +17354,9 @@
               {
                 "additionalProperties": false,
                 "properties": {
+                  "mcpContent": {
+                    "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                  },
                   "text": {
                     "type": "string"
                   },
@@ -17156,6 +17587,9 @@
               {
                 "additionalProperties": false,
                 "properties": {
+                  "mcpContent": {
+                    "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                  },
                   "text": {
                     "type": "string"
                   },
@@ -18142,6 +18576,9 @@
               {
                 "additionalProperties": false,
                 "properties": {
+                  "mcpContent": {
+                    "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                  },
                   "text": {
                     "type": "string"
                   },
@@ -18321,6 +18758,9 @@
               {
                 "additionalProperties": false,
                 "properties": {
+                  "mcpContent": {
+                    "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                  },
                   "text": {
                     "type": "string"
                   },
@@ -18738,6 +19178,9 @@
                                   {
                                     "additionalProperties": false,
                                     "properties": {
+                                      "mcpContent": {
+                                        "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                      },
                                       "text": {
                                         "type": "string"
                                       },
@@ -20616,6 +21059,9 @@
                                       {
                                         "additionalProperties": false,
                                         "properties": {
+                                          "mcpContent": {
+                                            "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                          },
                                           "text": {
                                             "type": "string"
                                           },
@@ -21916,6 +22362,9 @@
                                     {
                                       "additionalProperties": false,
                                       "properties": {
+                                        "mcpContent": {
+                                          "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                        },
                                         "text": {
                                           "type": "string"
                                         },
@@ -22616,6 +23065,9 @@
                                     {
                                       "additionalProperties": false,
                                       "properties": {
+                                        "mcpContent": {
+                                          "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                        },
                                         "text": {
                                           "type": "string"
                                         },
@@ -24494,6 +24946,9 @@
                                         {
                                           "additionalProperties": false,
                                           "properties": {
+                                            "mcpContent": {
+                                              "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                            },
                                             "text": {
                                               "type": "string"
                                             },
@@ -25794,6 +26249,9 @@
                                       {
                                         "additionalProperties": false,
                                         "properties": {
+                                          "mcpContent": {
+                                            "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                          },
                                           "text": {
                                             "type": "string"
                                           },
@@ -26997,6 +27455,9 @@
                                 {
                                   "additionalProperties": false,
                                   "properties": {
+                                    "mcpContent": {
+                                      "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                    },
                                     "text": {
                                       "type": "string"
                                     },
@@ -28159,6 +28620,9 @@
                             {
                               "additionalProperties": false,
                               "properties": {
+                                "mcpContent": {
+                                  "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                },
                                 "text": {
                                   "type": "string"
                                 },
@@ -28506,6 +28970,9 @@
                             {
                               "additionalProperties": false,
                               "properties": {
+                                "mcpContent": {
+                                  "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                },
                                 "text": {
                                   "type": "string"
                                 },
@@ -28846,6 +29313,9 @@
                                 {
                                   "additionalProperties": false,
                                   "properties": {
+                                    "mcpContent": {
+                                      "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                    },
                                     "text": {
                                       "type": "string"
                                     },
@@ -29554,6 +30024,9 @@
                                   {
                                     "additionalProperties": false,
                                     "properties": {
+                                      "mcpContent": {
+                                        "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                      },
                                       "text": {
                                         "type": "string"
                                       },
@@ -31432,6 +31905,9 @@
                                       {
                                         "additionalProperties": false,
                                         "properties": {
+                                          "mcpContent": {
+                                            "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                          },
                                           "text": {
                                             "type": "string"
                                           },
@@ -32732,6 +33208,9 @@
                                     {
                                       "additionalProperties": false,
                                       "properties": {
+                                        "mcpContent": {
+                                          "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                        },
                                         "text": {
                                           "type": "string"
                                         },
@@ -39374,6 +39853,9 @@
                     {
                       "additionalProperties": false,
                       "properties": {
+                        "mcpContent": {
+                          "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                        },
                         "text": {
                           "type": "string"
                         },
@@ -40031,6 +40513,9 @@
                     {
                       "additionalProperties": false,
                       "properties": {
+                        "mcpContent": {
+                          "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                        },
                         "text": {
                           "type": "string"
                         },
@@ -40688,6 +41173,9 @@
                     {
                       "additionalProperties": false,
                       "properties": {
+                        "mcpContent": {
+                          "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                        },
                         "text": {
                           "type": "string"
                         },
@@ -41345,6 +41833,9 @@
                     {
                       "additionalProperties": false,
                       "properties": {
+                        "mcpContent": {
+                          "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                        },
                         "text": {
                           "type": "string"
                         },
@@ -42002,6 +42493,9 @@
                     {
                       "additionalProperties": false,
                       "properties": {
+                        "mcpContent": {
+                          "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                        },
                         "text": {
                           "type": "string"
                         },
@@ -42684,6 +43178,9 @@
                     {
                       "additionalProperties": false,
                       "properties": {
+                        "mcpContent": {
+                          "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                        },
                         "text": {
                           "type": "string"
                         },
@@ -43682,6 +44179,9 @@
                                 {
                                   "additionalProperties": false,
                                   "properties": {
+                                    "mcpContent": {
+                                      "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                    },
                                     "text": {
                                       "type": "string"
                                     },
@@ -45560,6 +46060,9 @@
                                     {
                                       "additionalProperties": false,
                                       "properties": {
+                                        "mcpContent": {
+                                          "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                        },
                                         "text": {
                                           "type": "string"
                                         },
@@ -46860,6 +47363,9 @@
                                   {
                                     "additionalProperties": false,
                                     "properties": {
+                                      "mcpContent": {
+                                        "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                      },
                                       "text": {
                                         "type": "string"
                                       },
@@ -48060,6 +48566,9 @@
                             {
                               "additionalProperties": false,
                               "properties": {
+                                "mcpContent": {
+                                  "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                },
                                 "text": {
                                   "type": "string"
                                 },
@@ -52054,6 +52563,9 @@
                                 {
                                   "additionalProperties": false,
                                   "properties": {
+                                    "mcpContent": {
+                                      "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                    },
                                     "text": {
                                       "type": "string"
                                     },
@@ -53932,6 +54444,9 @@
                                     {
                                       "additionalProperties": false,
                                       "properties": {
+                                        "mcpContent": {
+                                          "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                        },
                                         "text": {
                                           "type": "string"
                                         },
@@ -55232,6 +55747,9 @@
                                   {
                                     "additionalProperties": false,
                                     "properties": {
+                                      "mcpContent": {
+                                        "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                      },
                                       "text": {
                                         "type": "string"
                                       },
@@ -56352,6 +56870,9 @@
                             {
                               "additionalProperties": false,
                               "properties": {
+                                "mcpContent": {
+                                  "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                },
                                 "text": {
                                   "type": "string"
                                 },
@@ -56778,6 +57299,9 @@
                                 {
                                   "additionalProperties": false,
                                   "properties": {
+                                    "mcpContent": {
+                                      "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                    },
                                     "text": {
                                       "type": "string"
                                     },
@@ -58656,6 +59180,9 @@
                                     {
                                       "additionalProperties": false,
                                       "properties": {
+                                        "mcpContent": {
+                                          "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                        },
                                         "text": {
                                           "type": "string"
                                         },
@@ -59956,6 +60483,9 @@
                                   {
                                     "additionalProperties": false,
                                     "properties": {
+                                      "mcpContent": {
+                                        "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                      },
                                       "text": {
                                         "type": "string"
                                       },
@@ -60639,6 +61169,9 @@
                                 {
                                   "additionalProperties": false,
                                   "properties": {
+                                    "mcpContent": {
+                                      "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                    },
                                     "text": {
                                       "type": "string"
                                     },
@@ -62517,6 +63050,9 @@
                                     {
                                       "additionalProperties": false,
                                       "properties": {
+                                        "mcpContent": {
+                                          "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                        },
                                         "text": {
                                           "type": "string"
                                         },
@@ -63817,6 +64353,9 @@
                                   {
                                     "additionalProperties": false,
                                     "properties": {
+                                      "mcpContent": {
+                                        "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                      },
                                       "text": {
                                         "type": "string"
                                       },
@@ -65075,6 +65614,9 @@
                             {
                               "additionalProperties": false,
                               "properties": {
+                                "mcpContent": {
+                                  "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                },
                                 "text": {
                                   "type": "string"
                                 },
@@ -70241,6 +70783,9 @@
                                   {
                                     "additionalProperties": false,
                                     "properties": {
+                                      "mcpContent": {
+                                        "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                      },
                                       "text": {
                                         "type": "string"
                                       },
@@ -72119,6 +72664,9 @@
                                       {
                                         "additionalProperties": false,
                                         "properties": {
+                                          "mcpContent": {
+                                            "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                          },
                                           "text": {
                                             "type": "string"
                                           },
@@ -73419,6 +73967,9 @@
                                     {
                                       "additionalProperties": false,
                                       "properties": {
+                                        "mcpContent": {
+                                          "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                        },
                                         "text": {
                                           "type": "string"
                                         },
@@ -74107,6 +74658,9 @@
                                 {
                                   "additionalProperties": false,
                                   "properties": {
+                                    "mcpContent": {
+                                      "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                    },
                                     "text": {
                                       "type": "string"
                                     },
@@ -75985,6 +76539,9 @@
                                     {
                                       "additionalProperties": false,
                                       "properties": {
+                                        "mcpContent": {
+                                          "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                        },
                                         "text": {
                                           "type": "string"
                                         },
@@ -77285,6 +77842,9 @@
                                   {
                                     "additionalProperties": false,
                                     "properties": {
+                                      "mcpContent": {
+                                        "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                      },
                                       "text": {
                                         "type": "string"
                                       },
@@ -77994,6 +78554,9 @@
                                 {
                                   "additionalProperties": false,
                                   "properties": {
+                                    "mcpContent": {
+                                      "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                    },
                                     "text": {
                                       "type": "string"
                                     },
@@ -79872,6 +80435,9 @@
                                     {
                                       "additionalProperties": false,
                                       "properties": {
+                                        "mcpContent": {
+                                          "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                        },
                                         "text": {
                                           "type": "string"
                                         },
@@ -81172,6 +81738,9 @@
                                   {
                                     "additionalProperties": false,
                                     "properties": {
+                                      "mcpContent": {
+                                        "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                      },
                                       "text": {
                                         "type": "string"
                                       },
@@ -81889,6 +82458,9 @@
                                 {
                                   "additionalProperties": false,
                                   "properties": {
+                                    "mcpContent": {
+                                      "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                    },
                                     "text": {
                                       "type": "string"
                                     },
@@ -83767,6 +84339,9 @@
                                     {
                                       "additionalProperties": false,
                                       "properties": {
+                                        "mcpContent": {
+                                          "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                        },
                                         "text": {
                                           "type": "string"
                                         },
@@ -85067,6 +85642,9 @@
                                   {
                                     "additionalProperties": false,
                                     "properties": {
+                                      "mcpContent": {
+                                        "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                      },
                                       "text": {
                                         "type": "string"
                                       },
@@ -86290,6 +86868,9 @@
                             {
                               "additionalProperties": false,
                               "properties": {
+                                "mcpContent": {
+                                  "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                },
                                 "text": {
                                   "type": "string"
                                 },
@@ -87116,6 +87697,9 @@
                           {
                             "additionalProperties": false,
                             "properties": {
+                              "mcpContent": {
+                                "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                              },
                               "text": {
                                 "type": "string"
                               },
@@ -88994,6 +89578,9 @@
                               {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "mcpContent": {
+                                    "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                  },
                                   "text": {
                                     "type": "string"
                                   },
@@ -90294,6 +90881,9 @@
                             {
                               "additionalProperties": false,
                               "properties": {
+                                "mcpContent": {
+                                  "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                                },
                                 "text": {
                                   "type": "string"
                                 },
@@ -91494,6 +92084,9 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "mcpContent": {
+                            "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                          },
                           "text": {
                             "type": "string"
                           },

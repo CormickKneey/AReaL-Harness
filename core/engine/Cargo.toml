@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+areal-runtime-fs = { path = "../../runtime/fs-helper" }
 areal-plugins.workspace = true
 areal-runtime-host-tools.workspace = true
 areal-config.workspace = true

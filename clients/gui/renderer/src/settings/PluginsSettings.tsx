@@ -3,15 +3,16 @@ import {
   PluginCatalogSettings,
   type PluginCatalogProps,
 } from "./PluginCatalogSettings.js";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { SettingsSegmentedTabs } from "./SettingsSegmentedTabs.js";
 import { McpSettings, SkillsSettings } from "./ResourceSettings.js";
 
 /** 插件包与手工资源共用设置入口，各自由原有状态所有者管理。 */
 export function PluginsSettings({
   initialTab = "catalog",
+  apps,
   ...props
-}: PluginCatalogProps & { initialTab?: string }) {
+}: PluginCatalogProps & { initialTab?: string; apps?: ReactNode }) {
   const navigate = useGuardedNavigation();
   const [tab, setTab] = useState(initialTab);
   const [scope, setScope] = useState("user");
@@ -27,6 +28,7 @@ export function PluginsSettings({
           items={[
             { label: "插件包", value: "catalog" },
             { label: "MCP", value: "mcp" },
+            ...(apps ? [{label:"应用",value:"apps"}] : []),
             { label: "Skills", value: "skills" },
           ]}
           value={tab}
@@ -38,7 +40,7 @@ export function PluginsSettings({
           key={`${props.project?.id}:${!!props.project?.state?.connected}`}
           {...props}
         />
-      ) : tab === "mcp" ? (
+      ) : tab === "apps" ? apps : tab === "mcp" ? (
         <McpSettings {...props} scope={scope} onScopeChange={setScope} />
       ) : (
         <SkillsSettings {...props} scope={scope} onScopeChange={setScope} />

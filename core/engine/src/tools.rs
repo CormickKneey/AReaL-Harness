@@ -1125,9 +1125,14 @@ impl Engine {
             "gen_ai.tool.call.result",
             &result,
         );
-        let mut custom_content = result
+        let mcp_event = result.get("mcpResult").map(|raw| json!({"threadId":thread_id,"turnId":turn_id,"callId":call.id,"itemId":item_id,"serverId":result["mcpServer"]["serverId"],"generation":result["mcpServer"]["generation"],"toolMetadata":result["mcpServer"]["toolMetadata"],"mcpResult":raw}));
+        let mut model_result = result.clone();
+        if result.get("mcpResult").is_some() {
+            crate::desktop::mcp_apps::strip_meta(&mut model_result);
+        }
+        let mut custom_content = model_result
             .get("contentItems")
-            .map(|_| extensions::content_items(&result));
+            .map(|_| extensions::content_items(&model_result));
         let prepared = self
             .prepare_tool_result(cell, &item_id, &call.name, &result, output_argv.as_deref())
             .await?;
@@ -1136,7 +1141,7 @@ impl Engine {
             "areal.tool.result.projected",
             &prepared.value,
         );
-        if prepared.value != result
+        if prepared.value != model_result
             && custom_content
                 .as_ref()
                 .is_some_and(|items| items.iter().all(|v| v["type"] == "inputText"))
@@ -1199,6 +1204,9 @@ impl Engine {
         }
         state.active.as_mut().unwrap().open_items.remove(&item_id);
         emit_item(cell, "item/completed", &thread_id, &turn_id, &item);
+        if let Some(result) = mcp_event {
+            cell.emit("areal/mcp/tool/result", result);
+        }
         anyhow::ensure!(
             !unknown,
             "tool outcome is UNKNOWN; inspect the workspace before continuing; automatic replay is disabled"

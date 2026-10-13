@@ -114,7 +114,7 @@ pub(crate) fn snapshot(root: &Path) -> Result<Files> {
                 .file_name()
                 .to_str()
                 .context("non-UTF8 package path")?;
-            if name == "." || name == ".." {
+            if name == "." || name == ".." || name == ".git" {
                 continue;
             }
             *entries += 1;
@@ -332,6 +332,13 @@ pub(crate) fn parse(files: &Files, id: &str, source: &Path, cache: &Path) -> Res
         enabled: false,
         source: source.into(),
         source_digest: digest(files),
+        catalog_source: serde_json::json!({"type":"local","path":source}),
+        policy: serde_json::json!({"installation":"AVAILABLE","authentication":"ON_INSTALL"}),
+        interface: crate::metadata::interface(overlay.get("interface"), Some(files), cache),
+        source_kind: None,
+        resolved_commit: None,
+        package_version: None,
+        integrity: None,
         components: vec![],
         diagnostics: vec![],
         skills: vec![],
@@ -513,7 +520,7 @@ pub(crate) fn parse(files: &Files, id: &str, source: &Path, cache: &Path) -> Res
     if mcp {
         d.components.push("mcp".into());
         d.diagnostics
-            .push("MCP declarations preserved; execution not yet supported (P1)".into());
+            .push("MCP declarations require explicit digest trust and connection".into());
     }
     for (key, default, label) in [
         ("hooks", "hooks/hooks.json", "hooks"),
@@ -527,9 +534,11 @@ pub(crate) fn parse(files: &Files, id: &str, source: &Path, cache: &Path) -> Res
         };
         if present {
             d.components.push(label.into());
-            d.diagnostics.push(format!(
-                "{label} declarations preserved; execution not yet supported"
-            ));
+            d.diagnostics.push(if label == "hooks" {
+                "hooks execution not yet supported (P2)".into()
+            } else {
+                "Connector IDs require explicit mapping and account authentication".into()
+            });
         }
     }
     if let Some(commands) = overlay.get("commands") {

@@ -63,8 +63,8 @@ function validateCommand(name, params, { serviceOnly = false } = {}) {
   if (name === 'trajectory' && (!['status', 'retry'].includes(String(params.operation)) || Object.keys(params).some(key => key !== 'operation'))) invalid();
   if (['manage', 'workspace', 'media', 'queueEdit', 'library', 'providers', 'chatgpt', 'analytics', 'resources', 'projectless', 'tasks', 'remoteControl'].includes(name)
     && !identifier(params.operation)) invalid();
-  if (name === 'manage' && ['plugin', 'pluginInstall', 'pluginConfigure', 'pluginUninstall', 'pluginSetup', 'marketplaceAdd'].includes(String(params.operation))) {
-    if (params.operation !== 'marketplaceAdd' && !identifier(params.id)) invalid();
+  if (name === 'manage' && ['plugin', 'pluginInstall', 'pluginConfigure', 'pluginUninstall', 'pluginSetup', 'pluginResolve', 'marketplaceAdd', 'marketplaceAddGit', 'marketplaceRemove', 'marketplaceUpdate'].includes(String(params.operation))) {
+    if (!String(params.operation).startsWith('marketplace') && !identifier(params.id)) invalid();
     if (params.operation === 'marketplaceAdd' && (typeof params.root !== 'string' || !params.root.trim() || params.root.length > 4096 || params.root.includes('\0'))) invalid();
     if (['pluginInstall', 'pluginConfigure'].includes(String(params.operation)) && !['user', 'project'].includes(String(params.scope))) invalid();
     if (params.operation === 'pluginInstall' && (typeof params.source !== 'string' || !params.source.trim() || params.source.length > 4096 || params.source.includes('\0') || !identifier(params.expectedDigest))) invalid();
@@ -74,7 +74,23 @@ function validateCommand(name, params, { serviceOnly = false } = {}) {
     if (params.requestId !== undefined && !identifier(params.requestId)) invalid();
   }
   if (name === 'manage' && params.operation === 'pluginSubmission'
-    && (!identifier(params.requestId) || !['marketplaceAdd', 'pluginInstall', 'pluginConfigure', 'pluginUninstall', 'pluginSetup'].includes(String(params.mutation)))) invalid();
+    && (!identifier(params.requestId) || !['marketplaceAdd', 'marketplaceAddGit', 'marketplaceRemove', 'marketplaceUpdate', 'pluginResolve', 'pluginConnection', 'connectorConfigure', 'pluginInstall', 'pluginConfigure', 'pluginUninstall', 'pluginSetup'].includes(String(params.mutation)))) invalid();
+  if (name === 'manage') {
+    // Main grants file paths; renderer requests cannot supply a saved grant.
+    if (params.operation === 'mcpAppOpen' && params.fileResource !== undefined) {
+      const grant = params.fileResource;
+      if (!serviceOnly || !record(grant) || !identifier(params.threadId)
+        || typeof grant.uri !== 'string' || !/^areal-file:\/\/[^\s/]+$/.test(grant.uri) || grant.uri.length > 512
+        || typeof grant.path !== 'string' || !grant.path.trim() || grant.path.length > 4096 || grant.path.includes('\0')
+        || Object.keys(grant).some(key => key !== 'uri' && key !== 'path')) invalid();
+    }
+    if (['pluginConnection','connectorConfigure','connectorCredential'].includes(String(params.operation)) && (!identifier(params.id) || typeof params.expectedDigest !== 'string' || !/^[a-f0-9]{64}$/.test(params.expectedDigest) || !identifier(params.requestId))) invalid();
+    if (params.operation === 'pluginConnection' && typeof params.connect !== 'boolean') invalid();
+    if (['connectorConfigure','connectorCredential'].includes(String(params.operation)) && (!identifier(params.connectorId) || params.provider !== 'github')) invalid();
+    if (params.operation === 'connectorCredential' && (typeof params.secret !== 'string' || !params.secret.trim() || params.secret.length > 16384 || /[\r\n]/.test(params.secret))) invalid();
+    if (params.operation === 'connectorConfigure' && !identifier(params.credentialRef)) invalid();
+    if (params.operation === 'pluginAuth' && (!identifier(params.id) || !identifier(params.server) || !['start','status','cancel'].includes(String(params.authOperation)))) invalid();
+  }
   if (name !== 'configure') return;
   if (params.expectedRevision !== undefined && (!Number.isSafeInteger(params.expectedRevision) || Number(params.expectedRevision) < 0)) invalid();
   if (params.model !== undefined && params.model !== null && (!record(params.model) || !identifier(params.model.providerId) || !identifier(params.model.modelId))) invalid();

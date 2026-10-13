@@ -72,6 +72,20 @@ function messageInput(backend, request) {
     if (!['image', 'audio', 'file'].includes(item.type) || !/^areal:\/\/blob\/[A-Za-z0-9_-]+$/.test(item.url)) throw new Error('无效附件');
     input.push(item.type === 'file' ? { type: 'file', url: item.url, name: String(item.name ?? '').slice(0, 255), mime_type: item.mimeType } : { type: item.type, url: item.url });
   }
+  if (request.mcpContent !== undefined && !Array.isArray(request.mcpContent)) throw new Error('MCP 内容必须为数组');
+  const blocks = [...(request.mcpContent ?? [])];
+  for (const item of media) if (item._meta !== undefined) blocks.push({type:'resource_link', uri:item.url, name:String(item.name ?? item.type).slice(0,255), ...(item.mimeType ? {mimeType:item.mimeType} : {}), _meta:item._meta});
+  if (!Array.isArray(blocks) || blocks.length > 32) throw new Error('MCP 内容最多32项');
+  const withoutMeta = value => Array.isArray(value) ? value.map(withoutMeta) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).filter(([key]) => key !== '_meta').sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, value]) => [key, withoutMeta(value)])) : value;
+  for (const block of blocks) {
+    if (!block || typeof block !== 'object' || Buffer.byteLength(JSON.stringify(block)) > 65536) throw new Error('MCP 内容无效或超过64KiB');
+    let text;
+    if (block.type === 'text' && typeof block.text === 'string' && block.text.length) text = block.text;
+    else if (block.type === 'resource_link' && typeof block.uri === 'string' && typeof block.name === 'string') text = JSON.stringify(withoutMeta(block));
+    else if (block.type === 'resource' && block.resource && typeof block.resource.uri === 'string' && (typeof block.resource.text === 'string' || typeof block.resource.blob === 'string')) text = JSON.stringify(withoutMeta(block));
+    else throw new Error('不支持的 MCP 消息内容');
+    input.push({ type: 'text', text, text_elements: [], mcpContent: block });
+  }
   if (!input.length) throw new Error('消息不能为空');
   return input;
 }

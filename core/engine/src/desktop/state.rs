@@ -710,9 +710,6 @@ impl Engine {
         self.mutate(move |engine| async move {
             let cell = engine.cell(&request.thread_id).await?;
             let is_side = cell.state.lock().await.thread.is_side();
-            if !is_side {
-                engine.refresh_managed_tools(&cell).await.map_err(invalid)?;
-            }
             let mut state = cell.state.lock().await;
             if state.active.is_some() || state.compacting {
                 return Err(Error::Conflict);
@@ -872,8 +869,12 @@ impl Engine {
                 .desktop
                 .get_or_insert_with(Default::default)
                 .configuration = configuration.clone();
+            let registry = engine
+                .managed_registry(&candidate, cell.research)
+                .map_err(invalid)?;
             engine.persist(&candidate).await?;
             state.thread = candidate;
+            cell.bindings.write().await.registry = registry;
             cell.emit(
                 "areal/thread/configured",
                 json!({"threadId":request.thread_id,"configuration":configuration}),

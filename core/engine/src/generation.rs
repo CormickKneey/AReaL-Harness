@@ -79,7 +79,6 @@ impl Engine {
         cancel: &CancellationToken,
         steer: &mut mpsc::Receiver<bool>,
     ) -> anyhow::Result<()> {
-        self.refresh_managed_tools(cell).await?;
         let model = cell
             .state
             .lock()

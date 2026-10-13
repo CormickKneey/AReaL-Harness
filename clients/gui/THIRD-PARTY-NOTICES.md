@@ -8,6 +8,7 @@ The GUI is distributed under the repository Apache-2.0 license, subject to the f
 - The Fork action glyph preserves the Codex App glyph from the user-supplied design reference as a bounded raster mask (`renderer/src/assets/codex-fork-mask.png`); no capture archive is included.
 - Interface glyphs, the file-tree sprite, provider logos and the application icon retain the source repository's assets and provenance comments. Other Lucide icons retain their dependency's ISC license. Appearance previews are original SVG illustrations.
 - Agent avatars use DiceBear Core and Bottts 9.4.2 locally with the authoritative Thread ID as seed. DiceBear code is MIT licensed (copyright Florian Körner); Bottts artwork is by Pablo Stanley and is free for personal and commercial use. See `licenses/dicebear-core-LICENSE` and `licenses/dicebear-bottts-LICENSE`, https://www.dicebear.com/styles/bottts/ and https://bottts.com/.
+- MCP Apps uses the official MIT-licensed `@modelcontextprotocol/ext-apps` 2.0.3 AppBridge and `@modelcontextprotocol/client/core` 2.0.0. Package versions are locked in `pnpm-lock.yaml`; licenses are retained in `licenses/mcp-ext-apps-LICENSE` and `licenses/mcp-sdk-LICENSE`.
 - Runtime dependencies retain their package licenses in the staged application. Core binaries, tools and their licenses come from the repository's Core bundle.
 
 Only the selected runtime icon assets are retained; reference capture archives, private development Skills, signing identities, notarization credentials, and source repository Git history are not part of this module.

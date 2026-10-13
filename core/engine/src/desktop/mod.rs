@@ -4,7 +4,9 @@ mod catalog;
 mod context;
 mod interactions;
 mod mcp;
+pub(crate) mod mcp_apps;
 mod media;
+mod plugin_mcp;
 mod plugins;
 mod processes;
 mod queue;
@@ -34,6 +36,8 @@ pub(crate) struct Desktop {
     submissions: submissions::Submissions,
     pub(crate) lifecycle: server::Lifecycle,
     pub(crate) mcp: mcp::Manager,
+    pub(crate) plugin_mcp: plugin_mcp::Manager,
+    pub(crate) mcp_apps: mcp_apps::Manager,
     catalog: std::sync::RwLock<catalog::Catalog>,
     catalog_write: Mutex<()>,
     creation: Mutex<()>,
@@ -49,6 +53,8 @@ impl Desktop {
             worker_model: std::sync::atomic::AtomicBool::new(false),
             submissions: submissions::Submissions::open(root)?,
             mcp: mcp::Manager::open(root)?,
+            plugin_mcp: plugin_mcp::Manager::open(root)?,
+            mcp_apps: mcp_apps::Manager::open(root)?,
             lifecycle: Default::default(),
             catalog: std::sync::RwLock::new(catalog::Catalog::load(root)?),
             catalog_write: Mutex::new(()),

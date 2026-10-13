@@ -357,6 +357,15 @@ impl Registry {
         }
         Ok(registry)
     }
+    pub(crate) fn mcp_generations(&self) -> Vec<u64> {
+        self.tools
+            .values()
+            .filter_map(|t| match &t.backend {
+                Backend::Mcp(mcp) => Some(mcp.generation()),
+                _ => None,
+            })
+            .collect()
+    }
     pub fn with_mcp(mut self, tools: Vec<areal_mcp::McpTool>) -> anyhow::Result<Self> {
         for tool in tools {
             self.insert(tool.definition.clone(), Backend::Mcp(tool))?;

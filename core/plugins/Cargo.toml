@@ -14,3 +14,9 @@ fs2.workspace = true
 rustix.workspace = true
 tempfile.workspace = true
 serde_yaml_ng = "0.10.0"
+reqwest = { workspace = true, features = ["blocking"] }
+base64.workspace = true
+tar = "0.4.46"
+flate2 = "1.1.10"
+node-semver = "2.2"
+libc.workspace = true

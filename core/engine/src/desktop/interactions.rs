@@ -292,6 +292,19 @@ impl Engine {
                 "tool denied by permissions.deny",
             ));
         }
+        let plugin_prompt = match &backend {
+            Some(Backend::Mcp(tool)) => match tool.approval_mode() {
+                Some(areal_mcp::ApprovalMode::Prompt | areal_mcp::ApprovalMode::Approve) => true,
+                Some(areal_mcp::ApprovalMode::Writes) => !tool
+                    .metadata()
+                    .annotations
+                    .as_ref()
+                    .and_then(|a| a.read_only_hint)
+                    .unwrap_or(false),
+                _ => false,
+            },
+            _ => false,
+        };
         let (forced, restrictions) = {
             let state = cell.state.lock().await;
             let config = state
@@ -328,6 +341,7 @@ impl Engine {
             .any(|p| crate::permissions::matches_tool(p, tool));
         let browser_action = tool == "browser_v1";
         if forced
+            || plugin_prompt
             || ((action == "ask" || browser_action)
                 && (explicit_ask || !can_remember || !(session_allowed || project_allowed)))
         {

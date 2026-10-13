@@ -4,7 +4,7 @@ use super::*;
 use std::{collections::BTreeSet, path::PathBuf};
 #[derive(Default)]
 pub(super) struct Manager {
-    store: Option<Arc<areal_plugins::Store>>,
+    pub(super) store: Option<Arc<areal_plugins::Store>>,
     pub(super) enabled: Vec<areal_plugins::InstalledSkill>,
     pub(super) enabled_plugin_ids: BTreeSet<String>,
 }
@@ -51,6 +51,7 @@ fn snapshot(store: &areal_plugins::Store) -> anyhow::Result<Snapshot> {
 impl Engine {
     /// Trusted synchronous startup only. Runtime filesystem work uses spawn_blocking.
     pub fn install_plugin_store(&self, store: Arc<areal_plugins::Store>) -> anyhow::Result<()> {
+        self.initialize_plugin_wire(&store)?;
         self.register_plugin_snapshot(snapshot(&store)?);
         self.desktop.plugins.write().unwrap().store = Some(store);
         Ok(())
@@ -67,7 +68,7 @@ impl Engine {
         manager.enabled = snapshot.enabled;
         manager.enabled_plugin_ids = snapshot.enabled_plugin_ids;
     }
-    fn plugin_store(&self) -> Result<Arc<areal_plugins::Store>> {
+    pub(super) fn plugin_store(&self) -> Result<Arc<areal_plugins::Store>> {
         self.desktop
             .plugins
             .read()
@@ -86,6 +87,7 @@ impl Engine {
             .map_err(invalid)?
             .map_err(store_error)?;
         self.register_plugin_snapshot(snapshot);
+        self.reconcile_plugin_connections().await?;
         Ok(())
     }
     pub(super) async fn check_plugin_skill(&self, skill: &Skill) -> Result<()> {
@@ -135,6 +137,7 @@ impl Engine {
             .map_err(invalid)?
             .map_err(store_error)?;
             engine.register_plugin_snapshot(snapshot);
+            engine.reconcile_plugin_connections().await?;
             Ok(result)
         })
         .await
@@ -159,6 +162,54 @@ impl Engine {
             Ok(serde_json::to_value(
                 s.install(&id, &scope, expected, &source, &digest)?,
             )?)
+        })
+        .await
+    }
+    pub async fn plugin_resolve(self: &Arc<Self>, id: String, expected: u64) -> Result<Value> {
+        self.plugin_change(move |s| Ok(serde_json::to_value(s.resolve_remote(&id, expected)?)?))
+            .await
+    }
+    pub async fn plugin_add_git_marketplace(
+        self: &Arc<Self>,
+        url: String,
+        reference: Option<String>,
+        expected: u64,
+    ) -> Result<Value> {
+        self.plugin_change(move |s| {
+            Ok(serde_json::to_value(s.add_git_marketplace(
+                &url,
+                reference.as_deref(),
+                expected,
+            )?)?)
+        })
+        .await
+    }
+    pub async fn plugin_remove_marketplace(
+        self: &Arc<Self>,
+        root: PathBuf,
+        expected: u64,
+    ) -> Result<Value> {
+        self.plugin_change(move |s| {
+            Ok(serde_json::to_value(
+                s.remove_marketplace(&root, expected)?,
+            )?)
+        })
+        .await
+    }
+    pub async fn plugin_update_marketplaces(self: &Arc<Self>, expected: u64) -> Result<Value> {
+        self.plugin_change(move |s| Ok(serde_json::to_value(s.update_marketplaces(expected)?)?))
+            .await
+    }
+    pub async fn plugin_update_selected_marketplaces(
+        self: &Arc<Self>,
+        name: Option<String>,
+        expected: u64,
+    ) -> Result<Value> {
+        self.plugin_change(move |s| {
+            Ok(serde_json::to_value(s.update_selected_marketplaces(
+                name.as_deref(),
+                expected,
+            )?)?)
         })
         .await
     }

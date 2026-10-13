@@ -149,7 +149,7 @@ GUI 可从 Side 的一条回复中选择文字，或显式选择整条回复，�
 Side 首问与追问共用活跃额度：默认每来源 2、每部署 8；超额分别报 `SIDE_SOURCE_CAPACITY_REACHED`、`SIDE_DEPLOYMENT_CAPACITY_REACHED`。每个 Side Turn 默认最多 8 次模型轮、16 次工具调用、300 秒；全局限额仍可进一步收紧。Side 不自动或手动调用模型压缩，避免额度外请求；上下文过大时明确失败。模型许可不足时 `areal/side/capacity` 推送 `waiting`/`available`，活跃 Side 的 `thread/read` 与 `areal/thread/observe` / `thread/resume` 订阅快照在 `desktop.sideCapacityStatus` 投影当前状态，停止后快照不保留等待状态；停止只取消对应 Side。Side 请求计入自己的 Session 与部署真实用量，不继承来源 Goal 预算。
 
 
-## 本地插件管理（P0）
+## 插件包管理
 
 以下部署级方法要求无限制的 `manage` 身份；限制到 Thread 的身份不能调用。Core 持有工作区、安装状态和范围选择，客户端不得自行改写安装文件。固定格式和阶段边界见[插件指南](../guides/plugins.md)与[实施计划](../development/codex-plugins-plan.md)。
 
@@ -165,4 +165,16 @@ Side 首问与追问共用活跃额度：默认每来源 2、每部署 8；超�
 
 目录条目的 `version/sourceDigest/skills/onboardingSkill` 描述当前候选；`installedVersion/installedDigest/installedSkills/installedOnboardingSkill` 描述持久安装副本。安装必须同时提交本次选中的 `source` 和 64 位十六进制 `expectedDigest`。范围变更采用目录 `revision` 的 CAS；冲突或来源变化后重新读取，不隐式重试写入。
 
-写操作复用现有部署管理提交账本。同身份、同 `requestId`、同方法和参数返回原结果，异参数拒绝；结果未知通过 `areal/request/read {requestId}` 查询对应 `method` 的 completed `response`，不带 `threadId`，不重放。setup 另通过普通 Turn 准入固定权威 Skill 引用；包正文不能制造其他显式 Skill 选择。未支持组件只报告能力诊断，安装不启动 MCP/hooks/apps。P0 使用 AReaL 方法名；实验 Codex 管理 wire adapter 属于 P3，不能将两者视为同一 wire 协议。
+写操作复用现有部署管理提交账本。同身份、同 `requestId`、同方法和参数返回原结果，异参数拒绝；结果未知通过 `areal/request/read {requestId}` 查询对应 `method` 的 completed `response`，不带 `threadId`，不重放。setup 另通过普通 Turn 准入固定权威 Skill 引用；包正文不能制造其他显式 Skill 选择。未支持组件只报告能力诊断，安装不启动 MCP/hooks/apps。AReaL 管理方法与已实现的实验 Codex 管理 wire adapter 共用 Store/Engine；两者保留各自的 wire 契约。
+
+## 插件来源、MCP 与桌面 Apps
+
+新增方法保留无限制 `manage` 授权要求，参数类型见生成 schema。来源变更使用目录 CAS 与管理回执：`areal/plugin/resolve {id,expectedRevision,requestId}`；`areal/marketplace/addGit {url,refName?,expectedRevision,requestId}`；`areal/marketplace/remove {root,expectedRevision,requestId}`；`areal/marketplace/update {expectedRevision,requestId}`。
+
+`areal/plugin/connection {id,expectedDigest,connect,requestId}` 明确信任/断开已安装版本；`areal/plugin/mcp/list` 区分连接、认证、可选失败与清理状态。`areal/plugin/auth {id,server,operation}` 的操作为 `start/status/cancel`，返回瞬时认证状态，不是管理回执。`areal/plugin/connector/configure {id,connectorId,provider,credentialRef,expectedDigest,requestId}` 仅支持显式 GitHub 映射；凭据值只由可信启动器注入。
+
+`areal/mcp/apps/list {threadId?}` 返回完整工具元信息。`areal/mcp/app/open/request/close` 绑定 `threadId/serverId/instanceId/generation`；工具请求还绑定 `requestId`。`areal/mcp/extension/call` 的 kind 为 `settingsRead/settingsUpdate/settingsAction/mentionsSearch`。`areal/mcp/forms/list`、`areal/mcp/form/respond/preview` 验证完整待回复请求与来源服务器。`areal/mcp/tool/result {threadId,callId}` 读取已持久保存的原始 MCP 结果，模型只用剔除 `_meta` 的投影。
+
+文件授权只来自可信 Main。已认证的非 `desktop-owner` 不能提交 `fileResource` 或私有 `ui/host-file`；App bridge 不暴露这个私有方法。实际写入回执的方法名为 `areal/mcp/app/file/write`，通过既有 `areal/request/read {requestId}` 查询。通知新增 `areal/mcp/app/notification`、`areal/mcp/tool/result`、`areal/mcp/form/requested`；桌面共享服务保留实例和连接版本，旧窗口不得接收其他实例事件。
+
+固定 Codex0.162.1 的 `plugin/list/installed/read/install/uninstall/reconcile/search` 与 `marketplace/add/remove/upgrade` 共享包所有者。只有 `plugin/search` 需要 initialize 的 `experimentalApi:true`。没有配置私有托管服务时，share/remote catalog 返回 `-32004` 与 capability；不返回伪空成功。当前不支持 sparse checkout 或完整 hooks/MRTR，详见[验收矩阵](../development/codex-plugins-p1-p3-acceptance.md)。

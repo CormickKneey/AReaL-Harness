@@ -124,6 +124,7 @@ pub(crate) fn permission(method: &str) -> Permission {
         || method.starts_with("areal/permissions/")
         || method.starts_with("areal/provider/")
         || method.starts_with("areal/account/")
+        || super::codex_plugins::METHODS.contains(&method)
         || method.starts_with("areal/plugin/")
         || method.starts_with("areal/marketplace/")
         || method.starts_with("areal/mcp/")

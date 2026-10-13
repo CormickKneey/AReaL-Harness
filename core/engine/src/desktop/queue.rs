@@ -27,6 +27,9 @@ impl Engine {
         skill: Option<VersionRef>,
     ) -> Result<Value> {
         self.refresh_plugins().await?;
+        if !enqueue {
+            self.connect_trusted_plugins(&request.thread_id).await?;
+        }
         self.mutate(move |engine| async move {
             let _gate = engine.desktop.lifecycle.gate.lock().await;
             if !engine.accepting_work() { return Err(Error::Closed); }

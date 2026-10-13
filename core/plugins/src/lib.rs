@@ -1,5 +1,9 @@
 //! Local-only Codex plugin packages. No package code, hooks or MCP is executed.
+mod components;
+mod metadata;
 mod package;
+mod remote;
+pub use components::{ComponentDocument, InstalledComponents};
 // Codex 0.162.1 marketplace discovery precedence.
 const CATALOG_PATHS: &[&str] = &[
     ".agents/plugins/marketplace.json",
@@ -53,6 +57,20 @@ pub struct PluginDetail {
     pub enabled: bool,
     pub source: PathBuf,
     pub source_digest: String,
+    #[serde(default)]
+    pub catalog_source: serde_json::Value,
+    #[serde(default)]
+    pub policy: serde_json::Value,
+    #[serde(default)]
+    pub interface: Option<serde_json::Value>,
+    #[serde(default)]
+    pub source_kind: Option<String>,
+    #[serde(default)]
+    pub resolved_commit: Option<String>,
+    #[serde(default)]
+    pub package_version: Option<String>,
+    #[serde(default)]
+    pub integrity: Option<String>,
     pub components: Vec<String>,
     pub diagnostics: Vec<String>,
     pub skills: Vec<InstalledSkill>,
@@ -63,6 +81,10 @@ pub struct PluginDetail {
 pub struct Marketplace {
     pub name: String,
     pub root: PathBuf,
+    #[serde(default)]
+    pub source_url: Option<String>,
+    #[serde(default)]
+    pub resolved_commit: Option<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -104,6 +126,12 @@ struct State {
     #[serde(default)]
     history: Vec<InstalledSkill>,
     #[serde(default)]
+    candidates: BTreeMap<String, remote::Candidate>,
+    #[serde(default)]
+    installed_policies: BTreeMap<String, serde_json::Value>,
+    #[serde(default)]
+    git_marketplaces: BTreeMap<PathBuf, remote::GitPin>,
+    #[serde(default)]
     user: BTreeMap<String, bool>,
     #[serde(default)]
     projects: BTreeMap<String, BTreeMap<String, bool>>,
@@ -112,6 +140,7 @@ pub struct Store {
     root: PathBuf,
     workspace: PathBuf,
     user_home: Option<PathBuf>,
+    discovery_workspaces: Option<Vec<PathBuf>>,
 }
 impl Store {
     pub fn open(root: PathBuf, workspace: PathBuf, user_home: Option<PathBuf>) -> Result<Self> {
@@ -125,6 +154,7 @@ impl Store {
             root,
             workspace,
             user_home,
+            discovery_workspaces: None,
         })
     }
     pub fn workspace(&self) -> &Path {
@@ -195,7 +225,11 @@ impl Store {
     }
     fn catalogs(&self, s: &State) -> (Vec<Marketplace>, Vec<PluginDetail>, Vec<String>) {
         let mut roots = s.marketplaces.clone();
-        roots.push(self.workspace.clone());
+        roots.extend(
+            self.discovery_workspaces
+                .clone()
+                .unwrap_or_else(|| vec![self.workspace.clone()]),
+        );
         if let Some(home) = &self.user_home {
             roots.push(home.clone());
         }
@@ -254,6 +288,8 @@ impl Store {
             markets.push(Marketplace {
                 name: name.clone(),
                 root: root.clone(),
+                source_url: s.git_marketplaces.get(&root).map(|pin| pin.url.clone()),
+                resolved_commit: s.git_marketplaces.get(&root).map(|pin| pin.commit.clone()),
             });
             let mut seen = std::collections::BTreeSet::new();
             for entry in entries {
@@ -268,6 +304,9 @@ impl Store {
                             != Some("NOT_AVAILABLE"),
                         "plugin {id} is NOT_AVAILABLE"
                     );
+                    if remote::is_remote(&entry["source"]) {
+                        return remote::preview(&entry, &id, &root, s.candidates.get(&id));
+                    }
                     let source = if let Some(p) = entry["source"].as_str() {
                         p
                     } else {
@@ -285,7 +324,11 @@ impl Store {
                     };
                     let files = package::snapshot(&source)?;
                     let cache = self.root.join("cache").join(package::digest(&files));
-                    let detail = package::parse(&files, &id, &source, &cache)?;
+                    let mut detail = package::parse(&files, &id, &source, &cache)?;
+                    detail.catalog_source = metadata::source(&entry, &root, Some(&source))?;
+                    detail.policy = metadata::policy(&entry)?;
+                    detail.interface = metadata::catalog_interface(detail.interface, &entry);
+                    detail.source_kind = Some("local".into());
                     ensure!(detail.name == n, "catalog/manifest plugin name mismatch");
                     Ok(detail)
                 })();
@@ -337,6 +380,29 @@ impl Store {
             errors,
         })
     }
+    /// Codex read-only discovery: omitted/empty cwds discover only registered and home catalogs.
+    pub fn list_for_workspaces(&self, cwds: &[PathBuf]) -> Result<PluginList> {
+        ensure!(cwds.len() <= 64, "too many discovery workspaces");
+        let workspaces = cwds
+            .iter()
+            .map(|p| {
+                ensure!(p.is_absolute(), "discovery cwd must be absolute");
+                let path = p.canonicalize()?;
+                ensure!(path.is_dir(), "discovery cwd must be a directory");
+                Ok(path)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let view = Self {
+            root: self.root.clone(),
+            workspace: workspaces
+                .first()
+                .cloned()
+                .unwrap_or_else(|| self.root.clone()),
+            user_home: self.user_home.clone(),
+            discovery_workspaces: Some(workspaces),
+        };
+        view.list()
+    }
     pub fn read(&self, id: &str) -> Result<PluginDetail> {
         self.list()?
             .data
@@ -375,7 +441,17 @@ impl Store {
         if candidate.source != expected_source || candidate.source_digest != expected_digest {
             return Err(StoreError::SourceChanged { id: id.into() }.into());
         }
-        let files = package::snapshot(&candidate.source)?;
+        let content_root = state
+            .candidates
+            .get(id)
+            .filter(|c| {
+                c.detail.source == candidate.source
+                    && c.detail.source_digest == candidate.source_digest
+            })
+            .map(|c| c.root.as_path())
+            .unwrap_or(&candidate.source);
+        let policy = self.catalog_policy(&state, id)?;
+        let files = package::snapshot(content_root)?;
         let digest = package::digest(&files);
         if digest != expected_digest {
             return Err(StoreError::SourceChanged { id: id.into() }.into());
@@ -399,8 +475,22 @@ impl Store {
                 0o444
             }))?;
         }
+        detail.catalog_source = candidate.catalog_source.clone();
+        detail.policy = candidate.policy.clone();
+        detail.interface = candidate.interface.clone();
+        detail.source_kind = candidate.source_kind.clone();
+        detail.resolved_commit = candidate.resolved_commit.clone();
+        detail.package_version = candidate.package_version.clone();
+        detail.integrity = candidate.integrity.clone();
         detail.installed = true;
         self.transact(expected_revision, |s| {
+            let (_, current, _) = self.catalogs(s);
+            ensure!(
+                current.iter().any(|d| d.id == id
+                    && d.source == candidate.source
+                    && d.source_digest == digest),
+                "plugin source changed during installation"
+            );
             if cache.exists() {
                 ensure!(
                     package::digest(&package::snapshot(&cache)?) == digest,
@@ -421,6 +511,7 @@ impl Store {
                 }
             }
             s.installed.insert(id.into(), detail.clone());
+            s.installed_policies.insert(id.into(), policy);
             self.choice(s, id, scope, true)?;
             Ok(())
         })?;
@@ -446,6 +537,7 @@ impl Store {
             if s.installed.remove(id).is_none() {
                 return Err(StoreError::NotFound(id.into()).into());
             }
+            s.installed_policies.remove(id);
             s.user.remove(id);
             for p in s.projects.values_mut() {
                 p.remove(id);

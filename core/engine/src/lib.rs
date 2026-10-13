@@ -148,6 +148,9 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 struct Active {
+    registry: std::result::Result<tools::Registry, String>,
+    direct_tool: Option<model::ToolCall>,
+    tool_meta: Option<serde_json::Map<String, Value>>,
     tool_calls: usize,
     waiting_for_model_capacity: bool,
     started: std::time::Instant,
@@ -179,6 +182,7 @@ struct State {
     quarantined_admission: Option<OwnedSemaphorePermit>,
 }
 struct Cell {
+    inherited_registry: Option<tools::Registry>,
     exclusive_writer: bool,
     // 工具投影可能已持有会话锁，原子角色避免为读取 Goal 可见性再次加锁。
     goal_role: AtomicUsize,
@@ -199,6 +203,10 @@ struct Cell {
 impl Cell {
     fn new(thread: Thread, depth: usize, bindings: tools::Bindings) -> Arc<Self> {
         Arc::new(Self {
+            inherited_registry: thread
+                .parent_thread_id
+                .as_ref()
+                .map(|_| bindings.registry.clone()),
             exclusive_writer: thread
                 .desktop
                 .as_ref()
@@ -698,6 +706,9 @@ impl Engine {
         }
         self.tasks.close();
         self.tasks.wait().await;
+        if let Err(error) = self.desktop.plugin_mcp.shutdown().await {
+            tracing::warn!(%error, "plugin MCP cleanup remains unconfirmed");
+        }
         if let Err(error) = self.desktop.mcp.shutdown().await {
             tracing::error!(%error, "managed MCP cleanup failed");
         }

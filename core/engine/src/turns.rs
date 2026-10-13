@@ -31,6 +31,7 @@ impl Engine {
         cancel: CancellationToken,
     ) -> Result<Turn> {
         self.refresh_plugins().await?;
+        self.connect_trusted_plugins(thread_id).await?;
         let _admission = self.tasks.token();
         let _gate = self.desktop.lifecycle.gate.lock().await;
         let cell = self.cell(thread_id).await?;
@@ -194,12 +195,28 @@ impl Engine {
         cancel: CancellationToken,
         admission: OwnedSemaphorePermit,
     ) {
+        self.activate_with_tool(cell, state, turn, cancel, admission, None, None);
+    }
+
+    pub(super) fn activate_with_tool(
+        self: &Arc<Self>,
+        cell: &Arc<Cell>,
+        state: &mut State,
+        turn: &Turn,
+        cancel: CancellationToken,
+        admission: OwnedSemaphorePermit,
+        direct_tool: Option<model::ToolCall>,
+        tool_meta: Option<serde_json::Map<String, Value>>,
+    ) {
         self.spawn_goal_scheduler();
         self.start_task_scheduler();
         let (tx, rx) = mpsc::channel(self.limits.mailbox_capacity);
-        let mut model = self
-            .configured_model(&turn.configuration.clone().unwrap_or_default())
-            .expect("configuration validated before admission");
+        let mut model = if direct_tool.is_some() {
+            self.model.clone()
+        } else {
+            self.configured_model(&turn.configuration.clone().unwrap_or_default())
+                .expect("configuration validated before admission")
+        };
         if turn.goal.is_some() || state.thread.goal_owner.is_some() {
             if let Some(budget) = self.goals.budget(&state.thread) {
                 if let Some(goal) = &state.thread.goals.goal {
@@ -218,6 +235,12 @@ impl Engine {
         }
         cell.cancel_grace_ms.store(1000, Ordering::Release);
         state.active = Some(Active {
+            registry: cell.inherited_registry.clone().map(Ok).unwrap_or_else(|| {
+                self.managed_registry(&state.thread, cell.research)
+                    .map_err(|e| e.to_string())
+            }),
+            direct_tool,
+            tool_meta,
             tool_calls: 0,
             waiting_for_model_capacity: false,
             started: std::time::Instant::now(),
@@ -588,7 +611,17 @@ impl Engine {
                     cell.state.lock().await.active.as_mut().unwrap().workspace_exclusive=true;
                     workspace_guard=Some(guard);
                 }
-                self.generate(&cell, &cancel, &mut steer).await
+                let (registry, direct) = {
+                    let state = cell.state.lock().await;
+                    let active = state.active.as_ref().unwrap();
+                    (active.registry.clone().map_err(anyhow::Error::msg)?, active.direct_tool.clone())
+                };
+                cell.bindings.write().await.registry = registry;
+                if let Some(call) = direct {
+                    self.tool(&cell, &cancel, call, usize::MAX).await.map(|_| ())
+                } else {
+                    self.generate(&cell, &cancel, &mut steer).await
+                }
             }).catch_unwind();
             tokio::pin!(generation);
             let result = tokio::select! {
