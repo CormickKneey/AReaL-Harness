@@ -1,5 +1,6 @@
 use super::*;
 use anyhow::{Context, bail};
+use areal_local_service::native_process::{TrustedChild, TrustedCommand};
 use fs2::FileExt;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -9,14 +10,13 @@ use std::{
     process::Stdio,
     time::Duration,
 };
-use tokio::process::Child;
 
 pub struct Local {
     pub endpoint: String,
     pub token: String,
     pub profile: Option<Value>,
     pub mcp: Vec<(String, Value)>,
-    child: Option<Child>,
+    child: Option<TrustedChild>,
     temporary: Option<tempfile::TempDir>,
     mapping: Option<PathBuf>,
     run_dir: Option<PathBuf>,
@@ -259,14 +259,16 @@ impl Local {
                 mcp.push((id.clone(), json!({"transport":transport})));
             }
         }
-        let mut command = tokio::process::Command::new(std::env::current_exe()?.canonicalize()?);
+        let binary = std::env::current_exe()?.canonicalize()?;
+        // exec 自派生的 launcher 也属于可信服务链，不能绕过已有 macOS 启动与回收适配。
+        let mut command = TrustedCommand::supervised(&binary, &[])?;
         command
             .arg("launcher")
             .arg("--bin-dir")
-            .arg(std::env::current_exe()?.canonicalize()?.parent().unwrap())
-            .arg("--desktop")
-            .arg("--parent-pid")
-            .arg(std::process::id().to_string())
+            .arg(binary.parent().unwrap())
+            .arg("--desktop");
+        command.parent_pid_arg();
+        command
             .arg("--workspace")
             .arg(&workspace)
             .arg("--data-dir")
@@ -310,17 +312,19 @@ impl Local {
                 command.arg(flag);
             }
         }
-        let child = command.spawn().context("launch Harness")?;
+        let profile = args
+            .agent
+            .as_deref()
+            .map(areal_local_service::parse_agent_profile)
+            .transpose()?
+            .map(|profile| json!(profile))
+            .or_else(|| Some(json!({"id":profile["id"],"revision":profile["revision"]})));
+        let child = command.spawn().await.context("launch Harness")?;
+        drop(command);
         let mut result = Self {
             endpoint: String::new(),
             token: String::new(),
-            profile: args
-                .agent
-                .as_deref()
-                .map(areal_local_service::parse_agent_profile)
-                .transpose()?
-                .map(|profile| json!(profile))
-                .or_else(|| Some(json!({"id":profile["id"],"revision":profile["revision"]}))),
+            profile,
             mcp,
             child: Some(child),
             temporary: Some(temporary),
@@ -328,26 +332,42 @@ impl Local {
             run_dir: Some(run_dir),
             _lock: Some(lock),
         };
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(40);
-        while !ready.exists() {
-            if result.child.as_mut().unwrap().try_wait()?.is_some() {
-                bail!("Harness startup failed");
-            }
-            if tokio::time::Instant::now() > deadline {
-                result.close().await?;
-                bail!("Harness startup timed out");
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-        let meta: Value = serde_json::from_slice(&std::fs::read(ready)?)?;
-        result.endpoint = meta["endpoint"]
-            .as_str()
-            .context("invalid ready endpoint")?
-            .into();
-        result.token = token(std::path::Path::new(
-            meta["authFile"].as_str().context("invalid authFile")?,
-        ))?;
+        result.wait_ready(&ready).await?;
         Ok(result)
+    }
+    async fn wait_ready(&mut self, ready: &std::path::Path) -> Result<()> {
+        let startup: Result<()> = async {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(40);
+            while !ready.exists() {
+                if let Some(status) = self.child.as_mut().unwrap().try_wait()? {
+                    bail!("Harness startup failed ({status})");
+                }
+                if tokio::time::Instant::now() > deadline {
+                    bail!("Harness startup timed out");
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            let meta: Value = serde_json::from_slice(&std::fs::read(ready)?)?;
+            self.endpoint = meta["endpoint"]
+                .as_str()
+                .context("invalid ready endpoint")?
+                .into();
+            self.token = token(std::path::Path::new(
+                meta["authFile"].as_str().context("invalid authFile")?,
+            ))?;
+            Ok(())
+        }
+        .await;
+        if let Err(error) = startup {
+            // 就绪文件损坏或认证解析失败也须等待 owned 服务回收，不能只丢弃句柄。
+            return match self.close().await {
+                Ok(()) => Err(error),
+                Err(cleanup) => Err(anyhow::anyhow!(
+                    "{error:#}; Harness cleanup failed: {cleanup:#}"
+                )),
+            };
+        }
+        Ok(())
     }
     pub fn record(&self, session: &str, workspace: &str) -> Result<()> {
         if let (Some(root), Some(run)) = (&self.mapping, &self.run_dir) {
@@ -364,21 +384,144 @@ impl Local {
         Ok(())
     }
     pub async fn close(&mut self) -> Result<()> {
-        if let Some(child) = &mut self.child
-            && child.try_wait()?.is_none()
-        {
-            if let Some(pid) = child.id() {
-                unsafe {
-                    libc::kill(pid as i32, libc::SIGTERM);
+        if let Some(child) = &mut self.child {
+            let status = if let Some(status) = child.try_wait()? {
+                status
+            } else {
+                if let Some(pid) = child.id() {
+                    unsafe {
+                        libc::kill(pid as i32, libc::SIGTERM);
+                    }
                 }
-            }
-            let status = tokio::time::timeout(Duration::from_secs(45), child.wait())
-                .await
-                .context("launcher cleanup unconfirmed")??;
+                tokio::time::timeout(Duration::from_secs(45), child.wait())
+                    .await
+                    .context("launcher cleanup unconfirmed")??
+            };
             ensure!(status.success(), "launcher reported cleanup failure");
         }
         self.child = None;
         self.temporary = None;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn fixture(directory: &std::path::Path, exit: &str) -> (Local, u32) {
+        let marker = directory.join("launcher-started.json");
+        let mut command =
+            TrustedCommand::supervised(std::path::Path::new("/usr/bin/python3"), &[]).unwrap();
+        command
+            .args([
+                "-I",
+                "-S",
+                "-c",
+                r#"import json,os,pathlib,signal,sys,time
+parent=int(sys.argv[sys.argv.index('--parent-pid')+1])
+assert os.getppid()==parent
+signal.signal(signal.SIGTERM,lambda s,f: sys.exit(0))
+marker=pathlib.Path(sys.argv[1]); temporary=marker.with_suffix('.tmp')
+temporary.write_text(json.dumps({'pid':os.getpid(),'parent':parent})); temporary.replace(marker)
+if sys.argv[2]!='wait': sys.exit(int(sys.argv[2]))
+while True: time.sleep(0.02)
+"#,
+            ])
+            .arg(&marker)
+            .arg(exit)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .kill_on_drop(false);
+        command.parent_pid_arg();
+        let mut child = command.spawn().await.unwrap();
+        drop(command);
+        let pid = child.id().unwrap();
+        let ready = tokio::time::timeout(Duration::from_secs(5), async {
+            while !marker.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        if ready.is_err() {
+            let _ = child.kill().await;
+            panic!("fixture launcher did not start");
+        }
+        let report: Value = serde_json::from_slice(&std::fs::read(marker).unwrap()).unwrap();
+        assert_eq!(report["pid"], pid);
+        (
+            Local {
+                endpoint: String::new(),
+                token: String::new(),
+                profile: None,
+                mcp: vec![],
+                child: Some(child),
+                temporary: None,
+                mapping: None,
+                run_dir: None,
+                _lock: None,
+            },
+            pid,
+        )
+    }
+
+    #[tokio::test]
+    async fn owned_launcher_term_waits_for_actual_process_and_close_is_idempotent() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut local, pid) = fixture(directory.path(), "wait").await;
+        local.close().await.unwrap();
+        assert!(local.child.is_none());
+        assert_ne!(unsafe { libc::kill(pid as i32, 0) }, 0);
+        local.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn already_failed_launcher_is_not_reported_as_successful_cleanup() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut local, _) = fixture(directory.path(), "7").await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while local.child.as_mut().unwrap().try_wait().unwrap().is_none() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            local
+                .close()
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("cleanup failure")
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_ready_or_auth_reaps_owned_launcher_before_returning_error() {
+        for metadata in ["not-json", "{}", r#"{"endpoint":"ws://127.0.0.1:1"}"#] {
+            let directory = tempfile::tempdir().unwrap();
+            let (mut local, pid) = fixture(directory.path(), "wait").await;
+            let ready = directory.path().join("ready.json");
+            std::fs::write(&ready, metadata).unwrap();
+            assert!(local.wait_ready(&ready).await.is_err());
+            assert!(local.child.is_none());
+            assert_ne!(unsafe { libc::kill(pid as i32, 0) }, 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn early_launcher_exit_preserves_its_actual_status() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut local, _) = fixture(directory.path(), "7").await;
+        let error = local
+            .wait_ready(&directory.path().join("missing-ready.json"))
+            .await
+            .unwrap_err();
+        let diagnostic = error.to_string();
+        assert!(
+            diagnostic.contains("Harness startup failed (exit status: 7)"),
+            "{diagnostic}"
+        );
     }
 }

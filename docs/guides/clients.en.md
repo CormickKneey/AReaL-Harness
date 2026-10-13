@@ -45,6 +45,8 @@ target/debug/areal service stop --json
 
 `areal exec 'prompt' --output-format stream-json --verbose` provides noninteractive CLI operation; `areal serve` starts a persistent service. See the [CLI contract](../api/claude-cli.en.md) for arguments, authentication, resume and exit codes. Web is served at `/ui`; `areal web` opens it and signs in automatically without copying a token. Direct visits without a valid session can use the local token from `security/auth.json` in the service data directory.
 
+Local `areal exec` owns Core/Runtime through a supervised launcher. macOS uses the existing trusted-service launch adapter and requires a working `/usr/bin/python3`; Linux launches directly. Normal CLI shutdown waits for the actual launcher's cleanup receipt. Early startup exits report their status, and invalid readiness or authentication files trigger cleanup of the owned services before returning an error. An explicit `--endpoint` connection does not own the remote service lifecycle.
+
 TUI `--input-file /absolute/input.json` is mutually exclusive with `--prompt` and accepts a Core Input array up to 2 MiB, for example `[{"type":"text","text":"Inspect the image"},{"type":"localImage","path":"/absolute/image.png"}]`. Both local and explicit-endpoint modes support it; the trusted launcher forwards `--tui --input-file`. Media paths and fields remain subject to [Core API](../api/core.en.md) validation.
 
 ## Web controls and appearance
