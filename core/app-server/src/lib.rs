@@ -501,7 +501,14 @@ async fn connection(
                 || method.starts_with("areal/mcp/")
                 || method.starts_with("areal/server/")
                 || method == "areal/agent/wait"
-                || method == "areal/context/compact")
+                || method == "areal/context/compact"
+                || matches!(
+                    method,
+                    "areal/thread/fork"
+                        | "areal/side/start"
+                        | "areal/conversation/history"
+                        | "areal/side/context/read"
+                ))
         {
             let control = matches!(
                 method,
@@ -516,6 +523,9 @@ async fn connection(
                     | "areal/process/get"
                     | "areal/process/list"
                     | "areal/server/status"
+                    | "areal/mcp/list"
+                    | "areal/mcp/read"
+                    | "areal/mcp/disconnect"
             );
             if !control && conn.rpc_permits.available_permits() <= 4 {
                 conn.send(response(
@@ -541,8 +551,25 @@ async fn connection(
             let id = id.unwrap();
             conn.tasks.spawn(async move {
                 let _permit = permit;
-                let result = tokio::select! { biased; _=stop.cancelled()=>return,
-                value=async { if delegations::METHODS.contains(&method.as_str()) { delegations::dispatch(&engine,&method,params).await } else if processes::METHODS.contains(&method.as_str()) { processes::dispatch(&engine,&identity,&method,params).await } else if desktop::METHODS.contains(&method.as_str()) { desktop::dispatch(&engine,&identity,&method,params).await } else { workgroups::dispatch(engine,&identity,&method,params).await } }=>value };
+                let durable_derivation =
+                    matches!(method.as_str(), "areal/thread/fork" | "areal/side/start");
+                let dispatch = async {
+                    if delegations::METHODS.contains(&method.as_str()) {
+                        delegations::dispatch(&engine, &method, params).await
+                    } else if processes::METHODS.contains(&method.as_str()) {
+                        processes::dispatch(&engine, &identity, &method, params).await
+                    } else if desktop::METHODS.contains(&method.as_str()) {
+                        desktop::dispatch(&engine, &identity, &method, params).await
+                    } else {
+                        workgroups::dispatch(engine, &identity, &method, params).await
+                    }
+                };
+                // 已通过容量检查的派生写入必须进入 Core 的持久受理门；响应丢失不撤销它。
+                let result = if durable_derivation {
+                    dispatch.await
+                } else {
+                    tokio::select! { biased; _=stop.cancelled()=>return, value=dispatch=>value }
+                };
                 if tx.try_send(response(id, result)).is_err() {
                     stop.cancel();
                 }
@@ -1305,3 +1332,6 @@ mod tests {
         engine.shutdown().await;
     }
 }
+
+#[cfg(test)]
+mod rpc_isolation_tests;

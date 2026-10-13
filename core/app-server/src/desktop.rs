@@ -117,6 +117,8 @@ pub(crate) async fn dispatch(
     method: &str,
     mut params: Value,
 ) -> Result<Value, RpcError> {
+    #[cfg(test)]
+    crate::rpc_isolation_tests::pause(&mut params).await;
     let mutation = matches!(
         method,
         "areal/thread/configure"

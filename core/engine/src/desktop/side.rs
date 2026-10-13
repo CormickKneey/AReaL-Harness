@@ -145,17 +145,15 @@ impl Engine {
         } else {
             (0, 0)
         };
-        let (turns, source_ids) = self
-            .store
-            .read_fork_snapshot_with_sources(&snapshot)
-            .map_err(|e| Error::Storage(e.to_string()))?;
-        let entries: Vec<Value> = turns.into_iter().zip(source_ids).flat_map(|(turn, source)| turn.items.into_iter().map(move |item| {
-            json!({"sourceThreadId":source,"sourceTurnId":turn.id,"sourceItemId":item.id(),"sourceTurnStatus":turn.status,"item":item})
-        })).collect();
-        if index > entries.len() || index == entries.len() && offset != 0 {
+        self.store.fork_snapshot_page(snapshot.clone(), move |turns, source_ids| {
+        let item_count = turns.iter().map(|turn| turn.items.len()).sum::<usize>();
+        let mut entries = turns.into_iter().zip(source_ids).flat_map(|(turn, source)| turn.items.into_iter().map(move |item| {
+            (source.clone(), turn.id.clone(), turn.status.clone(), item)
+        }));
+        if index > item_count || index == item_count && offset != 0 {
             return Err(invalid("invalid evidence cursor"));
         }
-        if index == entries.len() {
+        if index == item_count {
             let page =
                 json!({"snapshotId":snapshot,"evidence":[],"nextCursor":null,"complete":true});
             if serde_json::to_vec(&page).map_err(invalid)?.len() > max_bytes {
@@ -163,7 +161,8 @@ impl Engine {
             }
             return Ok(page);
         }
-        let entry = &entries[index];
+        let (source, turn_id, status, item) = entries.nth(index).ok_or_else(|| invalid("invalid evidence cursor"))?;
+        let entry = json!({"sourceThreadId":source,"sourceTurnId":turn_id,"sourceItemId":item.id(),"sourceTurnStatus":status,"item":item});
         let content = entry["item"].to_string();
         if offset > content.len() || !content.is_char_boundary(offset) {
             return Err(invalid("invalid evidence cursor"));
@@ -173,7 +172,7 @@ impl Engine {
             let next_offset = offset + part.len();
             let next_cursor = if next_offset < content.len() {
                 Some(format!("{}:{}:{}", snapshot, index, next_offset))
-            } else if index + 1 < entries.len() {
+            } else if index + 1 < item_count {
                 Some(format!("{}:{}:0", snapshot, index + 1))
             } else {
                 None
@@ -211,6 +210,7 @@ impl Engine {
             return Err(invalid("EVIDENCE_BUDGET_TOO_SMALL"));
         }
         Ok(page)
+        }).await
     }
     /// 首问与只读身份在同一持久记录中提交；提交之前不会激活模型。
     pub async fn side_start(
