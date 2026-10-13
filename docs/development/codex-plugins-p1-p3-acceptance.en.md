@@ -8,8 +8,8 @@ This pass implements public MRTR, file/directory selection, portable auth, authe
 
 - Codex0.162.1 revision092d3acd6bec3e3a14bdc7e7a2810ab628ab759d; Agent Plugins1.0.0; OpenAI extensions revision0d606217705e0e71eb21fff009619b67b80611dc. See [pins](../../upstream/pins.json).
 - rmcp3.3.0, modern MCP2026-07-28 and direct legacy2025-11-25; official Apps AppBridge.
-- Base commit5e7def7737f3aeeab93aa4652b0a28d3ab11a216, branch codex/codex-plugins-p1-p3. No push, PR or release.
-- Accepted Core SHA256: 2ee44d3fac1b82290263ff4fcd58452c297a6f28e30bb929cc403aae51f40b71. Ignored .scratch/codex-plugins/evidence/p1-p3-gap-final/manifest.json records file fingerprints, environments and raw outcomes without browser profiles or credential vaults.
+- Base commit5e7def7737f3aeeab93aa4652b0a28d3ab11a216, implementation commit961c5ce827463b26b1066bcf55aff00960acb555, branch codex/codex-plugins-p1-p3, followed by the scope-upgrade repair. No push, PR or release.
+- Initial native/service Core SHA256: 2ee44d3fac1b82290263ff4fcd58452c297a6f28e30bb929cc403aae51f40b71; final scope-repair Core SHA256: cf4acd0aba51cb8e3c15b54fdde0a842421daecf632e17272f3d38524038cba3. Final build/MCP/Engine and repeated native auth bind the latter. Ignored .scratch/codex-plugins/evidence/p1-p3-gap-final/manifest.json records file fingerprints, environments and raw outcomes without browser profiles or credential vaults.
 
 ## Implemented contracts
 
@@ -21,7 +21,7 @@ This pass implements public MRTR, file/directory selection, portable auth, authe
 | Lifetime/budgets | 16 MiB/file, 256 files/64 MiB/logical operation, depth16; cancel/close/revoke/settle cleanup; stage UUID/payload bound to existing receipts |
 | UNKNOWN | Query only original unknown stage; definite pre-dispatch rejection or another request conflict permits a fresh selection |
 | Configuration | Main vault for client secrets/PEM/API keys; Core refs/revisions only, disconnected current digest required; transient auth and durable configure are separate |
-| OAuth | Provided/public/confidential, DCR and CIMD preference, with DCR fallback absent trusted host metadata; declared endpoint/resource/OIDC/scopes and empty overrides persist through refresh |
+| OAuth | Provided/public/confidential, DCR and CIMD preference, with DCR fallback absent trusted host metadata; declared endpoint/resource/OIDC/scopes and empty overrides persist through refresh; challenge upgrades and cancelled retries retain proven grants in the same binding, never pending requested scopes |
 | Credentials | client_secret_basic/post, private_key_jwt (RS256/ES256), API-key bearer/basic/custom header; RSA fixtures are disposable public test keys, not provider credentials |
 | Challenges | HTTP401/403 and tool mcp/www_authenticate remain private; reject exact sent RequestId/token, preserve concurrent refresh, never replay POST |
 | Timing | ON_INSTALL pending auth and mixed gating; ON_USE requests auth when needed, allowing anonymous mixed public access; installation/listing never starts OAuth |
@@ -37,24 +37,24 @@ Same-host stdio can read accepted snapshots. No published HTTP upload channel is
 |---|---|
 | Workspace build | Pass |
 | Package/source | 28pass, including sparse/update/restart/filter/rejection |
-| MCP | 36pass/3fail/2explicit ignored; real GitHub accepted separately |
-| Engine | 31pass/1fail; three missing TaskControl test literals permanently repaired |
+| MCP | Final candidate40pass/0fail/2explicit ignored; real GitHub accepted separately |
+| Engine | Final candidate32pass/0fail; three missing TaskControl test literals permanently repaired |
 | Runtime import | 1pass across files/directories/links/budgets |
 | Core CLI / Codex wire | 8 / 7pass; real sparse snapshot and malformed input rejection |
 | Real GitHub | 5pass, single read-only get_me through ordinary Core journal; no writes |
-| Native Electron/Core | Apps8/extensions5/API-key6/legacy uploads8/modern MRTR uploads9 =36pass, one Core SHA |
+| Native Electron/Core | Initial Apps8/extensions5/API-key6/legacy uploads8/modern MRTR uploads9 =36pass; final Core passes the repeated6 auth checks after scope repair, with separate candidate hashes |
 | GUI/docs | Typecheck, public verify, renderer build and paired links pass |
-| Independent review | SHIP for full source risk review and scoped GUI recovery; not package/provider acceptance |
+| Independent review | SHIP for full source risk, GUI recovery and final scope-upgrade review; not package/provider acceptance |
 
 Chooser and directory-confirmation responses are scripted. Real Main/Core/Runtime, sandbox pages, system encryption and MCP reads execute; physical OS picker and signed-package acceptance do not. Modern uploads use two human form rounds, no snapshot read until final confirmation, fixed arguments and fresh request IDs.
 
-RED/GREEN preserves definite-rejection UNKNOWN, scope/challenge handoff, same-scope rejected-token recovery and GUI reconnect-owner failures. Two fixture contract errors are retained: internal stored nulls sent as desktop params and resource extensions sent as standard legacy schema. Fixtures were corrected without loosening production validation.
+RED/GREEN preserves definite-rejection UNKNOWN, scope/challenge handoff, same-scope rejected-token recovery, GUI reconnect-owner failures and lost grants after HTTP403. The last real HTTP fixture checks read → read write, cancelled retry, binding isolation and no POST replay; all8 portable-auth checks pass. Two fixture contract errors are retained: internal stored nulls sent as desktop params and resource extensions sent as standard legacy schema. Fixtures were corrected without loosening production validation.
 
-## Failed and unaccepted boundaries
+## Historical failures and unaccepted boundaries
 
-- Engine restart and OAuth subprocesses explicitly receive SIGKILL9 with empty output. Proxy fixtures only record failed children/empty output; their signal is unknown.
-- make desktop-schemas separately receives killed9/137. The same-source earlier Rust generator succeeded; its complete stdout restores the owning Core schema. Native-host types are unchanged. Make remains failed.
-- Current binaries verify signatures. OS scans/provenance show no attributable kill decision. Older passing binaries do not close current failures. Missing libLLVM.dylib explains separate rust-objcopy SIGABRT warnings, not SIGKILL. Cause UNKNOWN, with no proven EDR/Gatekeeper/memory/source attribution or security bypass.
+- Initial Engine restart and OAuth subprocesses explicitly received SIGKILL9 with empty output; proxy failures did not capture their signals. All four pass on the final candidate using the original build environment and standard tests. Historical failures remain recorded, with cause UNKNOWN; their recovery cannot be attributed to the scope repair.
+- make desktop-schemas remains failed. Its initial Core-generator command received killed9/137; final Core generation succeeds and matches the committed schema, but the local-service generator command receives killed9/137. Its truncated file is restored from the unchanged committed snapshot. Native-host generation exposes pre-existing search snapshot drift, retained only as evidence; this task did not change that contract. Partial generation does not pass Make.
+- Binaries inspected during failure diagnosis verify signatures. OS scans/provenance show no attributable kill decision. Final passing results bind new source/binaries and preserve earlier failures. Missing libLLVM.dylib explains separate rust-objcopy SIGABRT warnings, not SIGKILL. Cause UNKNOWN, with no proven EDR/Gatekeeper/memory/source attribution or security bypass.
 - Legacy SSE remains explicitly unsupported, matching pinned Codex; no complete Agent Plugins transport claim.
 - P2 hooks, private OpenAI catalog/sharing/registered services, cross-platform, real provider OAuth/models, physical picker, native writable-file/CAS races and signed/notarized distribution remain unaccepted. GitHub does not close them.
 
@@ -84,4 +84,4 @@ node clients/gui/scripts/plugin-p3-extensions-smoke.mjs
 python3 scripts/check-docs.py
 ```
 
-These include currently failed checks. Full compatibility requires closing remaining contracts and actual environment evidence.
+These include the still-failed schema Make check. Full compatibility requires closing remaining contracts and actual environment evidence.

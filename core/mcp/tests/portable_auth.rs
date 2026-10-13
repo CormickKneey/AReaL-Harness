@@ -94,6 +94,9 @@ async fn serve(
             let req: Value = serde_json::from_str(&body).unwrap();
             json!({"client_id":"fixture-registered","redirect_uris":req["redirect_uris"],"token_endpoint_auth_method":"none"})
         }
+        "/scope-token" => {
+            json!({"access_token":"fixture-read-token","refresh_token":"fixture-read-refresh","token_type":"Bearer","expires_in":3600,"scope":"read"})
+        }
         "/rotating-token" => {
             json!({"access_token":if body.contains("grant_type=refresh_token"){"fixture-new-token"}else{"fixture-old-token"},"refresh_token":"fixture-refresh","token_type":"Bearer","expires_in":3600})
         }
@@ -114,6 +117,12 @@ async fn serve(
                 }
                 "tools/list" => {
                     json!({"tools":[{"name":"read","inputSchema":{"type":"object"},"annotations":{"readOnlyHint":true}}]})
+                }
+                "tools/call" if v["params"]["arguments"]["upgrade"] == true => {
+                    return (
+                        axum::http::StatusCode::FORBIDDEN,
+                        [("www-authenticate", format!("Bearer resource_metadata=\"{b}/.well-known/oauth-protected-resource/mcp\", error=\"insufficient_scope\", scope=\"write\""))],
+                    ).into_response();
                 }
                 "tools/call" if v["params"]["arguments"]["reject"] == true => {
                     if v["params"]["arguments"]["hold"] == true {
@@ -816,5 +825,178 @@ async fn tool_marker_rejects_exact_sent_token_without_replaying() {
         connections.shutdown().await.unwrap();
         s.calls.lock().unwrap().clear();
     }
+    task.abort();
+}
+
+// Planned failure: authenticated 403 clears the rejected token and also loses proven
+// grants. Explicit empty defaults must not hide this through AS/OIDC fallback scopes.
+// Pending/cancelled consent must retain only provider-confirmed read, never requested write.
+#[tokio::test]
+async fn rejected_http_scope_upgrade_preserves_proven_grants_across_cancel_only_with_same_binding()
+{
+    let (s, task) = fixture().await;
+    let temp = tempfile::tempdir().unwrap();
+    let auth_root = temp.path().join("auth");
+    let manager = AuthManager::new(auth_root.clone(), "fixture").unwrap();
+    let cfg = config(
+        &s,
+        temp.path(),
+        json!({
+            "type":"oauth", "client":{"mode":"provided","clientId":"fixture-client"},
+            "tokenUrl":format!("{}/scope-token",s.base),
+            "oidcConfigurationUrl":format!("{}/oidc",s.base),
+            "defaultScopes":[], "oidcScopesSupported":[]
+        }),
+    );
+    let endpoint = format!("{}/mcp", s.base);
+    let policy = cfg.servers["server"].auth_policy().unwrap();
+    let initial = manager
+        .start("server", &endpoint, policy, None)
+        .await
+        .unwrap();
+    let initial = complete(&manager, "server", initial, &s.base).await;
+    assert!(
+        initial.get("scope").is_none(),
+        "explicit empty defaults remain empty; provider independently confirms read"
+    );
+    let store_path = std::fs::read_dir(&auth_root)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| p.extension().and_then(|e| e.to_str()) == Some("json"))
+        .unwrap();
+    let saved =
+        || -> Value { serde_json::from_slice(&std::fs::read(&store_path).unwrap()).unwrap() };
+    assert_eq!(saved()["granted_scopes"], json!(["read"]));
+    let mut connections = areal_mcp::Connections::connect_plugins_authorized(
+        &cfg.servers,
+        &[(
+            "server".into(),
+            manager.ready_credential("server").await.unwrap(),
+        )]
+        .into(),
+        &Default::default(),
+        temp.path(),
+        tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    let error = connections.tools()[0]
+        .call_raw(
+            json!({"upgrade":true}),
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.is::<areal_mcp::AuthenticationFailed>());
+    assert!(
+        manager.ready_credential("server").await.is_err(),
+        "rejected token cannot remain Ready"
+    );
+    assert!(matches!(
+        manager.status("server").await,
+        Some(AuthStatus::Failed)
+    ));
+    let challenge = connections.servers()[0].authentication_challenge().unwrap();
+    assert!(challenge.contains("insufficient_scope") && challenge.contains("write"));
+    let pending_scopes = |status: AuthStatus| -> String {
+        let AuthStatus::Pending { authorization_url } = status else {
+            panic!("explicit consent required; rejected token cannot be reused")
+        };
+        url::Url::parse(&authorization_url)
+            .unwrap()
+            .query_pairs()
+            .find(|(k, _)| k == "scope")
+            .unwrap()
+            .1
+            .into_owned()
+    };
+    for _ in 0..2 {
+        let pending = manager
+            .start("server", &endpoint, policy, Some(&challenge))
+            .await
+            .unwrap();
+        assert_eq!(
+            pending_scopes(pending),
+            "read write",
+            "scope upgrade must merge proven old grant after token invalidation"
+        );
+        assert_eq!(
+            saved()["granted_scopes"],
+            json!(["read"]),
+            "pending write consent is not a proven grant"
+        );
+        assert!(
+            saved()["token_response"].is_null(),
+            "pending consent must not revive rejected token"
+        );
+        manager.cancel("server").await;
+        assert!(manager.ready_credential("server").await.is_err());
+    }
+    // A different revision/identity name shares the manager and endpoint but not the binding.
+    let fresh = manager
+        .start(
+            "server:next-config-revision",
+            &endpoint,
+            policy,
+            Some(&challenge),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        pending_scopes(fresh),
+        "write",
+        "new binding must not inherit another binding's read grant"
+    );
+    manager.cancel("server:next-config-revision").await;
+    // Neither cancelled consent nor an unchallenged retry treats requested write as granted.
+    let unchallenged = manager
+        .start("server", &endpoint, policy, None)
+        .await
+        .unwrap();
+    let AuthStatus::Pending { authorization_url } = unchallenged else {
+        panic!("old token remains unusable")
+    };
+    assert!(
+        !url::Url::parse(&authorization_url)
+            .unwrap()
+            .query_pairs()
+            .any(|(k, _)| k == "scope")
+    );
+    assert_eq!(saved()["granted_scopes"], json!(["read"]));
+    manager.cancel("server").await;
+    let retry = manager
+        .start("server", &endpoint, policy, Some(&challenge))
+        .await
+        .unwrap();
+    assert_eq!(pending_scopes(retry), "read write");
+    manager.cancel("server").await;
+    let calls = s.calls.lock().unwrap();
+    let posts: Vec<_> = calls
+        .iter()
+        .filter(|(path, _, body)| {
+            path == "/mcp"
+                && serde_json::from_str::<Value>(body)
+                    .is_ok_and(|v| v["params"]["arguments"]["upgrade"] == true)
+        })
+        .collect();
+    assert_eq!(
+        posts.len(),
+        1,
+        "rejected HTTP POST must not replay during auth or retry"
+    );
+    assert_eq!(
+        posts[0].1.get("authorization").unwrap(),
+        "Bearer fixture-read-token"
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|(path, _, _)| path == "/scope-token")
+            .count(),
+        1,
+        "only initial authorization completed; no rejected token refresh"
+    );
+    drop(calls);
+    connections.shutdown().await.unwrap();
     task.abort();
 }

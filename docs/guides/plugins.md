@@ -72,7 +72,7 @@ areal plugin --workspace /absolute/workspace submission REQUEST_ID
 
 认证配置支持 provided、DCR、CIMD preference、声明的 endpoint/resource/OIDC/scopes，以及 API-key bearer/basic/custom header。没有宿主可信 metadata URL 的 CIMD preference 回退 DCR；不会借用 OpenAI 客户端身份。OAuth client secret 和签名私钥在详情中配置并由 Main 安全存储，Core 只持引用。`ON_INSTALL` 安装后显示待认证并门控声明认证的服务；`ON_USE` 在需要时提出需求，mixed 可先匿名使用公开能力。
 
-OAuth 使用私有存储和 loopback PKCE callback。scope override（包括空列表）在授权与刷新时保留；认证挑战只交给认证所有者。工具级拒绝绑定实际发送的 token，不误删并发刷新得到的新 token，也不自动重发 MCP 操作。实现与真实服务证据分开记录，见[验收矩阵](../development/codex-plugins-p1-p3-acceptance.md)。
+OAuth 使用私有存储和 loopback PKCE callback。scope override（包括空列表）在授权与刷新时保留；认证挑战只交给认证所有者。服务要求增加权限时，同一绑定的授权请求保留已授予权限；取消后重试也保留，待授权权限不会被当成已授予权限，新配置或账号不继承旧授权。工具级拒绝绑定实际发送的 token，不误删并发刷新得到的新 token，也不自动重发 MCP 操作。实现与真实服务证据分开记录，见[验收矩阵](../development/codex-plugins-p1-p3-acceptance.md)。
 
 Codex `marketplace/add` 接受顶层 `sparsePaths`：非空列表使用 Git cone 目录选择并在更新时保留；调用方须包含目录文件与所需插件路径，不自动扩大选择。省略或空列表保留完整 checkout；本地目录来源不接受非空 sparse 选择。
 

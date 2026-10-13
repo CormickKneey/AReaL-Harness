@@ -417,22 +417,28 @@ impl AuthManager {
                 store.invalidate().await?;
             }
         }
-        if let Some(saved) = store.load().await? {
-            if !scopes
-                .iter()
-                .all(|scope| saved.granted_scopes.contains(scope))
-                && saved.token_response.is_some()
-            {
-                if challenge.is_some() {
-                    scopes.extend(saved.granted_scopes);
-                    scopes.sort();
-                    scopes.dedup();
-                    if policy.portable_declaration.is_some() {
-                        refresh_scope_boundary.set(Some(scopes.clone()))?;
-                    }
-                }
-                store.invalidate().await?;
+        let saved = store.load().await?;
+        // Rejected tokens cannot be reused, but their provider-confirmed grants remain
+        // evidence for this exact binding. A challenge upgrades that known scope set.
+        let granted_scopes = saved
+            .as_ref()
+            .map(|saved| saved.granted_scopes.clone())
+            .unwrap_or_default();
+        if challenge.is_some() {
+            scopes.extend(granted_scopes.iter().cloned());
+            scopes.sort();
+            scopes.dedup();
+            if policy.portable_declaration.is_some() {
+                refresh_scope_boundary.set(Some(scopes.clone()))?;
             }
+        }
+        if saved.as_ref().is_some_and(|saved| {
+            saved.token_response.is_some()
+                && !scopes
+                    .iter()
+                    .all(|scope| saved.granted_scopes.contains(scope))
+        }) {
+            store.invalidate().await?;
         }
         let registered = store
             .load()
@@ -550,7 +556,7 @@ impl AuthManager {
             .map_err(|_| anyhow::anyhow!("OAuth authorization failed"))?;
         store
             .save(
-                StoredCredentials::new(registered_id, None, vec![], None)
+                StoredCredentials::new(registered_id, None, granted_scopes, None)
                     .with_issuer(metadata.issuer.clone()),
             )
             .await?;
@@ -750,7 +756,8 @@ impl FileStore {
     async fn invalidate(&self) -> std::result::Result<(), AuthError> {
         self.check_epoch()?;
         let registration = self.load().await?.map(|saved| {
-            StoredCredentials::new(saved.client_id, None, vec![], None).with_issuer(saved.issuer)
+            StoredCredentials::new(saved.client_id, None, saved.granted_scopes, None)
+                .with_issuer(saved.issuer)
         });
         // Clear first: a crash can require login, but can never revive a rejected token.
         self.clear().await?;
