@@ -7,11 +7,18 @@ impl Engine {
     ) -> Result<Option<EffectiveConfig>> {
         let Some(request) = request else {
             // Turn 级覆盖同样属于父任务边界；仅继承 Thread 默认配置会丢失只读和预算约束。
-            return Ok(parent
+            let mut config = parent
                 .turns
                 .last()
                 .and_then(|t| t.configuration.clone())
-                .or_else(|| parent.desktop.as_ref().map(|d| d.configuration.clone())));
+                .or_else(|| parent.desktop.as_ref().map(|d| d.configuration.clone()));
+            if let Some(config) = &mut config
+                && config.allow_plugin_skills
+            {
+                self.freeze_plugin_skills(config);
+                config.selected_skills = Some(self.effective_skill_refs(config, true));
+            }
+            return Ok(config);
         };
         if request
             .workspace_mode
@@ -91,21 +98,28 @@ impl Engine {
             }
             config.tool_allowlist = Some(names.clone());
         } else {
-            config.tool_allowlist = previous.tool_allowlist;
+            config.tool_allowlist = previous.tool_allowlist.clone();
         }
+        let parent_skills = self.effective_skill_refs(&previous, true);
+        config.allow_plugin_skills =
+            previous.allow_plugin_skills && request.agent_profile.is_none();
+        config.plugin_skills = previous.plugin_skills.clone();
         if let Some(skills) = &request.skills {
             // An explicit empty list means "use no additional skills". It is
             // valid for model-only child configurations that have no profile.
-            if !skills.is_empty() {
-                let profile = config
-                    .profile
-                    .as_mut()
-                    .ok_or_else(|| invalid("non-empty skills require a profile"))?;
-                if skills.iter().any(|s| !profile.skills.contains(s)) {
-                    return Err(invalid("child skills exceed selected profile"));
-                }
+            if skills.iter().any(|s| {
+                !parent_skills.contains(s) || !self.effective_skill_refs(&config, false).contains(s)
+            }) {
+                return Err(invalid("child skills exceed parent or selected profile"));
             }
             config.selected_skills = Some(skills.clone());
+        } else {
+            config.selected_skills = Some(
+                self.effective_skill_refs(&config, true)
+                    .into_iter()
+                    .filter(|s| parent_skills.contains(s))
+                    .collect(),
+            );
         }
         Ok(Some(config))
     }
@@ -256,12 +270,10 @@ impl Engine {
             configuration.options.max_model_rounds = Some(rounds);
         }
         if let Some(skills) = &task.skills {
-            if skills.iter().any(|s| {
-                !configuration
-                    .profile
-                    .as_ref()
-                    .is_some_and(|p| p.skills.contains(s))
-            }) {
+            if skills
+                .iter()
+                .any(|s| !self.effective_skill_refs(&configuration, false).contains(s))
+            {
                 return Err(invalid("worker skill outside profile"));
             }
             configuration.selected_skills = Some(skills.clone());

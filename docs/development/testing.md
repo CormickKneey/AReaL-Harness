@@ -175,3 +175,10 @@ TUI 与共享服务 PTY 检查共用终端画面解析器，处理增量重绘�
 搜索回归直接运行 Runtime 文件助手，覆盖无宿主 rg/Python 的搜索、工作区 ignore、glob、上下文、截断与符号链接拒绝。原生和发行 smoke 通过 Core 的 `search_files` 验证完整调用链，不依赖 shell 中存在 rg。
 
 桌面 soak 与 GUI 包校验接受不含独立 tools/rg 的内置搜索布局；soak 同时核对平台所需的 Runtime 组件及 manifest 文件摘要。
+
+
+## Codex 插件 P0
+
+从仓库根先执行 `make build` 与 `make gui-build`。`node scripts/plugin-p0-smoke.mjs` 使用真实共享 Core、CLI、认证 RPC 与本地确定性模型，验证原包发现/安装、摘要变化拒绝、共享资源边界、范围/撤权、setup 去重、丢失响应收据查询和服务重启。`pnpm --dir clients/gui test:plugins` 在隔离 Electron/Core 数据目录中完成目录→安装→setup→打开对话→停用/启用→卸载；setup 响应在 Main 到 Renderer 边界注入丢失，恢复通过真实 Core 收据，不能重放。制品目录由脚本输出，清单包含二进制和变更源码摘要。
+
+包与 Engine 集成：`cargo test --locked -p areal-plugins --test store -p areal-engine --test codex_plugins --test skills --test agents --test queue_transfer`。它们分别检查文件系统/安装事务与会话/Turn 权限和生命周期。上述检查不替代真实供应商、签名安装包、物理输入或跨平台验收，后续范围见[实施计划](codex-plugins-plan.md)。

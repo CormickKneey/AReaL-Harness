@@ -187,6 +187,7 @@ dependencies = [
  "anyhow",
  "areal-config",
  "areal-mcp",
+ "areal-plugins",
  "areal-protocol",
  "areal-runtime-client",
  "areal-runtime-host-tools",
@@ -258,6 +259,20 @@ dependencies = [
  "tokio-rustls",
  "tokio-util",
  "url",
+]
+
+[[package]]
+name = "areal-plugins"
+version = "0.1.4"
+dependencies = [
+ "anyhow",
+ "fs2",
+ "rustix",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "sha2",
+ "tempfile",
 ]
 
 [[package]]
@@ -377,6 +392,7 @@ dependencies = [
  "areal-config",
  "areal-engine",
  "areal-mcp",
+ "areal-plugins",
  "areal-protocol",
  "areal-runtime-client",
  "areal-runtime-protocol",

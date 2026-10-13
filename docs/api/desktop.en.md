@@ -149,3 +149,22 @@ On authenticated connections, observe permission alone cannot create a Side. A p
 
 An idle Side can be durably archived with `areal/thread/archive {threadId}`; an active turn rejects archive. `areal/conversation/unarchive {requestId,threadId}` idempotently restores an archived Side and its full history without starting a model turn. Replaying the original Side creation key returns its original first Turn from durable history, including after restart, without executing or restoring it. Reading or subscribing to an archived Side does not restore it, and sending while archived remains blocked. Stopping or archiving the source does not stop or delete the Side; closing the related-discussion pane only hides it. Core restores sent content after GUI or Core restart. Unsent drafts have no cross-process persistence guarantee.
 First questions and follow-ups share active Side capacity: two per source and eight per deployment by default. Exhaustion returns `SIDE_SOURCE_CAPACITY_REACHED` or `SIDE_DEPLOYMENT_CAPACITY_REACHED`. Each Side Turn defaults to at most eight model rounds, 16 tool calls and 300 seconds; global limits can tighten these. Side skips automatic and manual model compaction to avoid requests outside this allowance, and reports context overflow. When a model permit is unavailable, `areal/side/capacity` emits `waiting`/`available`; `thread/read` and subscription snapshots from `areal/thread/observe` / `thread/resume` project the current state as `desktop.sideCapacityStatus` for an active Side. Snapshots clear this waiting state after the Side stops. Stopping affects that Side only. Side requests count toward their own Session and real deployment usage, without inheriting the source Goal budget.
+
+
+## Local plugin management (P0)
+
+These deployment-level methods require unrestricted `manage` authority; Thread-scoped principals cannot call them. Core owns workspace paths, installation and scoped selection. Clients must not edit installation state directly. See the [plugin guide](../guides/plugins.en.md) and [implementation plan](../development/codex-plugins-plan.en.md) for pinned formats and stage boundaries.
+
+| Method | Parameters | Result/constraint |
+|---|---|---|
+| `areal/plugin/list` | `{}` | `revision/data/marketplaces/errors`; entry failures isolated |
+| `areal/plugin/read` | `id` | Package details; candidate and installed versions/digests/Skills separate |
+| `areal/marketplace/add` | `root, expectedRevision, requestId` | Add local catalog root and advance directory revision |
+| `areal/plugin/install` | `id, scope, expectedRevision, source, expectedDigest, requestId` | `scope=user/project`; digest binds the selected source snapshot |
+| `areal/plugin/configure` | `id, scope, enabled, expectedRevision, requestId` | Explicit project choice overrides user default; disabling revokes subsequent reads |
+| `areal/plugin/uninstall` | `id, expectedRevision, requestId` | Revoke access; retain historical cache |
+| `areal/plugin/setup` | `id, threadId?, requestId` | `{thread,turn,requestId}`; ordinary session only; explicitly select installed onboarding Skill |
+
+Entry `version/sourceDigest/skills/onboardingSkill` fields describe the current candidate. `installedVersion/installedDigest/installedSkills/installedOnboardingSkill` describe the persisted installed snapshot. Installation requires both selected `source` and its 64-character hexadecimal `expectedDigest`. Changes use directory `revision` for CAS. Re-read after conflicts or source drift; never retry writes implicitly.
+
+Writes reuse the deployment management submission ledger. The same identity, `requestId`, method and parameters return the original result; different parameters conflict. Query UNKNOWN through `areal/request/read {requestId}` and the matching method's completed `response`, without `threadId` or replay. Setup separately freezes the authoritative Skill reference through ordinary Turn admission; package text cannot manufacture other explicit Skill selections. Unsupported components produce diagnostics, and installation does not launch MCP/hooks/apps. P0 uses AReaL method names; the experimental Codex management wire adapter belongs to P3 and is a separate wire contract.

@@ -278,6 +278,12 @@ pub struct ClientOptions {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EffectiveConfig {
+    /// Core-owned scope marker; legacy snapshots conservatively keep explicit scope.
+    #[serde(default)]
+    pub allow_plugin_skills: bool,
+    /// None on live ordinary sessions; revisions are fixed at Turn/queue admission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_skills: Option<Vec<VersionRef>>,
     /// 服务默认模型在提交时固定；不包含端点或凭据。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model_revision: Option<String>,
@@ -301,6 +307,8 @@ pub struct EffectiveConfig {
 impl Default for EffectiveConfig {
     fn default() -> Self {
         Self {
+            allow_plugin_skills: false,
+            plugin_skills: None,
             default_model_revision: None,
             revision: 1,
             options: ClientOptions::default(),

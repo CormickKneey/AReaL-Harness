@@ -30,6 +30,7 @@ impl Engine {
         input: Vec<Input>,
         cancel: CancellationToken,
     ) -> Result<Turn> {
+        self.refresh_plugins().await?;
         let _admission = self.tasks.token();
         let _gate = self.desktop.lifecycle.gate.lock().await;
         let cell = self.cell(thread_id).await?;
@@ -84,14 +85,35 @@ impl Engine {
         thread: &Thread,
         input: Vec<Input>,
     ) -> Result<(Thread, Turn)> {
+        self.prepare_turn_with_skill(thread, input, None)
+    }
+
+    /// Setup's Core-selected skill is the complete selection. Package text is not
+    /// a user Composer attachment and must never be parsed for additional refs.
+    pub(super) fn prepare_turn_with_skill(
+        &self,
+        thread: &Thread,
+        input: Vec<Input>,
+        skill: Option<&areal_protocol::desktop::VersionRef>,
+    ) -> Result<(Thread, Turn)> {
         self.validate_uploads(thread, &input)?;
-        let configuration = self.freeze_configuration(
-            thread
-                .desktop
-                .as_ref()
-                .map(|d| d.configuration.clone())
-                .unwrap_or_default(),
-        );
+        let mut configuration = thread
+            .desktop
+            .as_ref()
+            .map(|d| d.configuration.clone())
+            .unwrap_or_default();
+        if let Some(skill) = skill {
+            configuration.selected_skills = Some(vec![skill.clone()]);
+        } else {
+            self.select_plugin_attachments(
+                &mut configuration,
+                &input,
+                !thread.is_side()
+                    && thread.parent_thread_id.is_none()
+                    && thread.source != "nativeTaskAgent",
+            )?;
+        }
+        let configuration = self.freeze_configuration(configuration);
         let model = self.configured_model(&configuration)?;
         self.validate_fork_model_compatibility(thread, model.as_ref())?;
         validate_input(&input, &model.capabilities())?;

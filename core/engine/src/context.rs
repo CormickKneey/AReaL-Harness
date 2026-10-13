@@ -296,16 +296,16 @@ impl Engine {
             if let Some(prompt) = &config.options.system_prompt {
                 instructions = prompt.clone();
             }
-            if let Some(profile) = config.profile {
+            if let Some(profile) = &config.profile {
                 instructions.push_str("\n\nProduct mode instructions (subject to user instructions and deployment permissions):\n");
                 instructions.push_str(&profile.instructions);
-                instructions.push_str(&format!(
-                    "\nAvailable skills (read using skill_read): {}",
-                    serde_json::to_string(&self.skill_summaries(
-                        config.selected_skills.as_ref().unwrap_or(&profile.skills)
-                    ))?
-                ));
             }
+            instructions.push_str(&format!(
+                "\nAvailable skills (read using skill_read): {}",
+                serde_json::to_string(
+                    &self.skill_summaries(&self.effective_skill_refs(&config, true))
+                )?
+            ));
             instructions.push_str(&config.instructions);
             instructions.push_str("\nClient appended instructions:\n");
             instructions.push_str(&config.options.append_instructions);

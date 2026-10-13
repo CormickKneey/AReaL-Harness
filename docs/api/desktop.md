@@ -147,3 +147,22 @@ GUI 可从 Side 的一条回复中选择文字，或显式选择整条回复，�
 
 空闲 Side 可用 `areal/thread/archive {threadId}` 持久归档；活动轮次归档会拒绝。`areal/conversation/unarchive {requestId,threadId}` 幂等恢复已归档 Side 和完整历史，不自动发问。重放 Side 原创建键从持久历史返回原始首轮，包括重启后，不重新执行或恢复归档。读取或订阅归档 Side 不会恢复它，归档期间发送仍被拒绝。来源 Stop 或归档不级联停止或删除 Side；关闭相关讨论面板只隐藏视图。已发送内容由 Core 在 GUI 或 Core 重启后恢复，未发送草稿不承诺跨进程保存。
 Side 首问与追问共用活跃额度：默认每来源 2、每部署 8；超额分别报 `SIDE_SOURCE_CAPACITY_REACHED`、`SIDE_DEPLOYMENT_CAPACITY_REACHED`。每个 Side Turn 默认最多 8 次模型轮、16 次工具调用、300 秒；全局限额仍可进一步收紧。Side 不自动或手动调用模型压缩，避免额度外请求；上下文过大时明确失败。模型许可不足时 `areal/side/capacity` 推送 `waiting`/`available`，活跃 Side 的 `thread/read` 与 `areal/thread/observe` / `thread/resume` 订阅快照在 `desktop.sideCapacityStatus` 投影当前状态，停止后快照不保留等待状态；停止只取消对应 Side。Side 请求计入自己的 Session 与部署真实用量，不继承来源 Goal 预算。
+
+
+## 本地插件管理（P0）
+
+以下部署级方法要求无限制的 `manage` 身份；限制到 Thread 的身份不能调用。Core 持有工作区、安装状态和范围选择，客户端不得自行改写安装文件。固定格式和阶段边界见[插件指南](../guides/plugins.md)与[实施计划](../development/codex-plugins-plan.md)。
+
+| 方法 | 参数 | 结果/约束 |
+|---|---|---|
+| `areal/plugin/list` | `{}` | `revision/data/marketplaces/errors`；条目错误隔离 |
+| `areal/plugin/read` | `id` | 包详情；候选版本/摘要与已安装版本/摘要/Skills 分开 |
+| `areal/marketplace/add` | `root, expectedRevision, requestId` | 添加本地目录，更新安装目录版本 |
+| `areal/plugin/install` | `id, scope, expectedRevision, source, expectedDigest, requestId` | `scope=user/project`；摘要必须匹配用户选中的来源快照 |
+| `areal/plugin/configure` | `id, scope, enabled, expectedRevision, requestId` | 项目明确选择覆盖用户默认；停用撤销后续读取 |
+| `areal/plugin/uninstall` | `id, expectedRevision, requestId` | 撤权；保留历史缓存 |
+| `areal/plugin/setup` | `id, threadId?, requestId` | `{thread,turn,requestId}`；仅普通会话；显式选择已安装 onboarding Skill |
+
+目录条目的 `version/sourceDigest/skills/onboardingSkill` 描述当前候选；`installedVersion/installedDigest/installedSkills/installedOnboardingSkill` 描述持久安装副本。安装必须同时提交本次选中的 `source` 和 64 位十六进制 `expectedDigest`。范围变更采用目录 `revision` 的 CAS；冲突或来源变化后重新读取，不隐式重试写入。
+
+写操作复用现有部署管理提交账本。同身份、同 `requestId`、同方法和参数返回原结果，异参数拒绝；结果未知通过 `areal/request/read {requestId}` 查询对应 `method` 的 completed `response`，不带 `threadId`，不重放。setup 另通过普通 Turn 准入固定权威 Skill 引用；包正文不能制造其他显式 Skill 选择。未支持组件只报告能力诊断，安装不启动 MCP/hooks/apps。P0 使用 AReaL 方法名；实验 Codex 管理 wire adapter 属于 P3，不能将两者视为同一 wire 协议。

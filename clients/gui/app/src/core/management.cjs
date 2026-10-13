@@ -3,6 +3,8 @@ const { manageTask, taskOperations } = require('./tasks.cjs');
 const { workgroupArtifactFile } = require('./workgroup-artifacts.cjs');
 
 const mutations = {
+  marketplaceAdd: 'areal/marketplace/add', pluginInstall: 'areal/plugin/install',
+  pluginConfigure: 'areal/plugin/configure', pluginUninstall: 'areal/plugin/uninstall', pluginSetup: 'areal/plugin/setup',
   providerSave: 'areal/provider/upsert', providerRemove: 'areal/provider/remove',
   mcpSave: 'areal/mcp/configure', mcpConnect: 'areal/mcp/connect', mcpDisconnect: 'areal/mcp/disconnect',
   archive: 'areal/thread/archive', unarchive: 'areal/conversation/unarchive',
@@ -13,6 +15,9 @@ const mutations = {
 const threadMutationMethods = new Set([...Object.values(mutations).filter(method => method.startsWith('areal/goal/')), 'areal/queue/steer']);
 const managementMethods = new Set(['areal/blob/release', ...Object.values(mutations).filter(method => !method.startsWith('areal/process/') && !threadMutationMethods.has(method)), ...['update', 'remove', 'reorder', 'pause', 'resume'].map(name => `areal/queue/${name}`)]);
 const fields = {
+  marketplaceAdd: ['root', 'expectedRevision'], pluginInstall: ['id', 'scope', 'expectedRevision', 'source', 'expectedDigest'],
+  pluginConfigure: ['id', 'scope', 'enabled', 'expectedRevision'], pluginUninstall: ['id', 'expectedRevision'],
+  pluginSetup: ['id', 'threadId'],
   providerSave: ['provider', 'expectedRevision'], providerRemove: ['id', 'expectedRevision'],
   mcpSave: ['id', 'expectedRevision', 'config'], mcpConnect: ['id', 'expectedRevision'], mcpDisconnect: ['id', 'expectedRevision'],
   archive: ['threadId'], unarchive: ['threadId'],
@@ -23,6 +28,7 @@ const fields = {
   goalPause: ['threadId', 'expectedRevision', 'goalId'], goalResume: ['threadId', 'expectedRevision', 'goalId'], goalClear: ['threadId', 'expectedRevision', 'goalId'],
 };
 const reads = {
+  plugins: ['areal/plugin/list', []], plugin: ['areal/plugin/read', ['id']],
   providers: ['areal/provider/list', []], mcp: ['areal/mcp/list', []],
   profile: ['areal/profile/read', ['id', 'revision']], skills: ['areal/skill/list', ['threadId', 'agentProfile']],
   skill: ['areal/skill/read', ['threadId', 'agentProfile', 'skill', 'resource', 'offset', 'maxBytes']],
@@ -50,6 +56,32 @@ const reads = {
 const pick = (value, keys) => Object.fromEntries(keys.filter(key => value[key] !== undefined).map(key => [key, value[key]]));
 async function manage(backend, project, request) {
   const { operation } = request;
+  if (operation === 'pluginSubmission') {
+    const method = mutations[request.mutation];
+    if (!['marketplaceAdd', 'pluginInstall', 'pluginConfigure', 'pluginUninstall', 'pluginSetup'].includes(request.mutation)
+      || typeof request.requestId !== 'string' || !request.requestId.trim()) throw new Error('缺少原插件提交标识');
+    const entry = project.pending.find(item => item.method === method && item.params.requestId === request.requestId);
+    if (entry && backend.awaitingResponses.has(entry)) return { confirmed: false, state: 'accepted' };
+    const client = project.client;
+    const records = await client.request('areal/request/read', { requestId: request.requestId });
+    backend.requireConnection(project, client);
+    const receipt = records.data.find(item => item.method === method && item.requestId === request.requestId);
+    if (receipt?.state !== 'completed' || !receipt.response
+      || (!receipt.response.error && receipt.response.result === undefined)) return { confirmed: false, state: receipt?.state ?? 'unknown' };
+    // 收据确认后仅清理原日志，不重新提交，也不核对其他领域的待定操作。
+    if (entry) await backend.changePending(project, pending => pending.filter(item => item !== entry));
+    const { result, error } = receipt.response;
+    let warning;
+    if (!error && request.mutation === 'pluginSetup' && result?.thread?.id) {
+      try {
+        await backend.openThread(project, result.thread.id);
+        await backend.listThreads(project);
+      } catch (cause) { warning = `设置已受理，刷新对话失败：${cause.message}`; }
+    }
+    backend.onChange();
+    return { confirmed: true, accepted: !error, result, ...(warning ? { warning } : {}), ...(error ? { error } : {}) };
+  }
+  if (operation === 'pluginCapabilities') return { enabled: project.client.capabilities?.methods?.includes('areal/plugin/list') === true };
   if (operation === 'executionCancel') return project.client.request('areal/execution/cancel', pick(request, ['parentThreadId', 'executionId', 'mode']));
   // Core 管理整组交付与未知结果恢复，客户端不会自动重放写入。
   if (operation === 'executionApply') return project.client.request('areal/execution/apply', pick(request, ['parentThreadId', 'executionId']));
@@ -190,7 +222,7 @@ async function manage(backend, project, request) {
   let result;
   try {
     if (operation === 'goalCreate' || operation === 'goalResume') await backend.providers.refreshGoalTransport(project, request.threadId);
-    result = await backend.submit(project, method, pick(request, fields[operation]), operation === 'processStart' ? { requestId: request.requestId } : {});
+    result = await backend.submit(project, method, pick(request, fields[operation]), operation === 'processStart' || operation.startsWith('plugin') || operation === 'marketplaceAdd' ? { requestId: request.requestId } : {});
   }
   catch (error) {
     if (threadMutationMethods.has(method)) {
@@ -202,6 +234,10 @@ async function manage(backend, project, request) {
   }
   if (threadMutationMethods.has(method)) project.model.setGoal(request.threadId, result);
   try {
+  if (operation === 'pluginSetup' && result.thread?.id) {
+    await backend.openThread(project, result.thread.id);
+    await backend.listThreads(project);
+  }
   if (operation.startsWith('provider')) {
     const models = await project.client.request('areal/model/list');
     project.models = models.data ?? [];

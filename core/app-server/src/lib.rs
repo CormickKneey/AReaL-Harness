@@ -411,7 +411,9 @@ async fn connection(
         }
         let project_permission = (method == "areal/interaction/respond"
             && params["decision"] == "allowProject")
-            || method.starts_with("areal/permissions/");
+            || method.starts_with("areal/permissions/")
+            || method.starts_with("areal/plugin/")
+            || method.starts_with("areal/marketplace/");
         if (project_permission
             && (!conn.principal.allows(auth::Permission::Manage)
                 || conn.principal.thread_ids.is_some()))
@@ -498,6 +500,8 @@ async fn connection(
                 || processes::METHODS.contains(&method)
                 || method == "areal/provider/probe"
                 || method.starts_with("areal/workflow/")
+                || method.starts_with("areal/plugin/")
+                || method.starts_with("areal/marketplace/")
                 || method.starts_with("areal/mcp/")
                 || method.starts_with("areal/server/")
                 || method == "areal/agent/wait"

@@ -49,7 +49,8 @@
     "test:remote-review": "node scripts/remote-review-contract.mjs && node scripts/remote-raster-contract.mjs && node scripts/remote-review-dom-contract.mjs && node scripts/remote-review-transport-contract.mjs",
     "test:remote-network": "node scripts/remote-network-smoke.mjs && node --test scripts/remote-network-host.test.mjs scripts/remote-network-settings.test.mjs",
     "export:remote": "node scripts/export-remote-assets.mjs renderer/dist",
-    "test:remote-relay": "node --test scripts/remote-relay-host.test.mjs scripts/remote-relay-transport-contract.mjs scripts/remote-relay-export.test.mjs scripts/remote-relay-wire.test.mjs"
+    "test:remote-relay": "node --test scripts/remote-relay-host.test.mjs scripts/remote-relay-transport-contract.mjs scripts/remote-relay-export.test.mjs scripts/remote-relay-wire.test.mjs",
+    "test:plugins": "node scripts/plugin-p0-smoke.mjs"
   },
   "devDependencies": {
     "fake-indexeddb": "6.2.4",

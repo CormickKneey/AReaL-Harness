@@ -7,6 +7,26 @@ impl Engine {
         request: TurnStart,
         enqueue: bool,
     ) -> Result<Value> {
+        self.start_durable_inner(identity, request, enqueue, None)
+            .await
+    }
+    pub(super) async fn start_durable_with_skill(
+        self: &Arc<Self>,
+        identity: String,
+        request: TurnStart,
+        skill: VersionRef,
+    ) -> Result<Value> {
+        self.start_durable_inner(identity, request, false, Some(skill))
+            .await
+    }
+    async fn start_durable_inner(
+        self: &Arc<Self>,
+        identity: String,
+        request: TurnStart,
+        enqueue: bool,
+        skill: Option<VersionRef>,
+    ) -> Result<Value> {
+        self.refresh_plugins().await?;
         self.mutate(move |engine| async move {
             let _gate = engine.desktop.lifecycle.gate.lock().await;
             if !engine.accepting_work() { return Err(Error::Closed); }
@@ -33,7 +53,18 @@ impl Engine {
                 Some(engine.ordinary_admission(&state.thread).await?)
             } else { None };
             engine.validate_uploads(&state.thread,&request.input)?;
-            let mut configuration = engine.freeze_configuration(data.configuration.clone());
+            let original_configuration = data.configuration.clone();
+            if let Some(skill) = &skill {
+                if state.thread.is_side() { return Err(invalid("setup requires an ordinary session")); }
+                let mut scope = data.configuration.clone(); scope.selected_skills = None;
+                if !engine.effective_skill_refs(&scope,false).contains(skill) { return Err(invalid("setup skill is outside the effective profile")); }
+                data.configuration.selected_skills = Some(vec![skill.clone()]);
+            }
+            let mut configuration = data.configuration.clone();
+            if skill.is_none() {
+                engine.select_plugin_attachments(&mut configuration, &request.input, !state.thread.is_side() && state.thread.parent_thread_id.is_none() && state.thread.source != "nativeTaskAgent")?;
+            }
+            let mut configuration = engine.freeze_configuration(configuration);
             if let Some(mode) = request.interaction_mode { configuration.options.interaction_mode = mode; }
             validate_input(&request.input,&engine.configured_model(&configuration)?.capabilities())?;
             if enqueue {
@@ -67,9 +98,10 @@ impl Engine {
                 let previous_mode = data.configuration.options.interaction_mode;
                 data.configuration.options.interaction_mode = configuration.options.interaction_mode;
                 let mut source=state.thread.clone();source.desktop=Some(data);
-                let (mut candidate,mut turn)=engine.prepare_turn(&source,request.input)?;
+                let (mut candidate,mut turn)=engine.prepare_turn_with_skill(&source,request.input,skill.as_ref())?;
                 if let Some(mode) = request.interaction_mode { turn.configuration.get_or_insert_with(Default::default).options.interaction_mode = mode; *candidate.turns.last_mut().unwrap() = turn.clone(); }
                 candidate.desktop.as_mut().unwrap().configuration.options.interaction_mode = previous_mode;
+                if skill.is_some() { candidate.desktop.as_mut().unwrap().configuration = original_configuration; }
                 let permit=engine.reserve_active_turn()?;
                 let result=json!({"turn":turn});
                 remember(candidate.desktop.as_mut().unwrap(),&identity,&request.request_id,method,hash,result.clone());
@@ -244,6 +276,7 @@ impl Engine {
         .await
     }
     pub(crate) async fn advance_thread(self: &Arc<Self>, cell: &Arc<Cell>) -> Result<()> {
+        self.refresh_plugins().await?;
         let _gate = self.desktop.lifecycle.gate.lock().await;
         let mut state = cell.state.lock().await;
         if state.active.is_some() || state.compacting || !self.accepting_work() || state.poisoned {

@@ -3,6 +3,11 @@
   "effectiveConfig": {
     "additionalProperties": false,
     "properties": {
+      "allowPluginSkills": {
+        "default": false,
+        "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+        "type": "boolean"
+      },
       "defaultModelRevision": {
         "description": "服务默认模型在提交时固定；不包含端点或凭据。",
         "type": [
@@ -136,6 +141,29 @@
           }
         },
         "type": "object"
+      },
+      "pluginSkills": {
+        "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "revision": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "revision"
+          ],
+          "type": "object"
+        },
+        "type": [
+          "array",
+          "null"
+        ]
       },
       "profile": {
         "anyOf": [
@@ -2195,6 +2223,11 @@
                   "configuration": {
                     "additionalProperties": false,
                     "properties": {
+                      "allowPluginSkills": {
+                        "default": false,
+                        "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                        "type": "boolean"
+                      },
                       "defaultModelRevision": {
                         "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                         "type": [
@@ -2328,6 +2361,29 @@
                           }
                         },
                         "type": "object"
+                      },
+                      "pluginSkills": {
+                        "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "revision": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "revision"
+                          ],
+                          "type": "object"
+                        },
+                        "type": [
+                          "array",
+                          "null"
+                        ]
                       },
                       "profile": {
                         "anyOf": [
@@ -3292,6 +3348,11 @@
         "configuration": {
           "additionalProperties": false,
           "properties": {
+            "allowPluginSkills": {
+              "default": false,
+              "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+              "type": "boolean"
+            },
             "defaultModelRevision": {
               "description": "服务默认模型在提交时固定；不包含端点或凭据。",
               "type": [
@@ -3425,6 +3486,29 @@
                 }
               },
               "type": "object"
+            },
+            "pluginSkills": {
+              "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "revision": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "revision"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
             },
             "profile": {
               "anyOf": [
@@ -5564,6 +5648,11 @@
                     "configuration": {
                       "additionalProperties": false,
                       "properties": {
+                        "allowPluginSkills": {
+                          "default": false,
+                          "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                          "type": "boolean"
+                        },
                         "defaultModelRevision": {
                           "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                           "type": [
@@ -5697,6 +5786,29 @@
                             }
                           },
                           "type": "object"
+                        },
+                        "pluginSkills": {
+                          "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "revision": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "revision"
+                            ],
+                            "type": "object"
+                          },
+                          "type": [
+                            "array",
+                            "null"
+                          ]
                         },
                         "profile": {
                           "anyOf": [
@@ -6458,6 +6570,11 @@
                               "configuration": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "allowPluginSkills": {
+                                    "default": false,
+                                    "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                                    "type": "boolean"
+                                  },
                                   "defaultModelRevision": {
                                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                                     "type": [
@@ -6591,6 +6708,29 @@
                                       }
                                     },
                                     "type": "object"
+                                  },
+                                  "pluginSkills": {
+                                    "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                                    "items": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "id": {
+                                          "type": "string"
+                                        },
+                                        "revision": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "revision"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "type": [
+                                      "array",
+                                      "null"
+                                    ]
                                   },
                                   "profile": {
                                     "anyOf": [
@@ -7624,6 +7764,11 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "default": false,
+                            "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                            "type": "boolean"
+                          },
                           "defaultModelRevision": {
                             "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                             "type": [
@@ -7757,6 +7902,29 @@
                               }
                             },
                             "type": "object"
+                          },
+                          "pluginSkills": {
+                            "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "revision": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "revision"
+                              ],
+                              "type": "object"
+                            },
+                            "type": [
+                              "array",
+                              "null"
+                            ]
                           },
                           "profile": {
                             "anyOf": [
@@ -8808,6 +8976,11 @@
                 {
                   "additionalProperties": false,
                   "properties": {
+                    "allowPluginSkills": {
+                      "default": false,
+                      "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                      "type": "boolean"
+                    },
                     "defaultModelRevision": {
                       "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                       "type": [
@@ -8941,6 +9114,29 @@
                         }
                       },
                       "type": "object"
+                    },
+                    "pluginSkills": {
+                      "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "revision": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "revision"
+                        ],
+                        "type": "object"
+                      },
+                      "type": [
+                        "array",
+                        "null"
+                      ]
                     },
                     "profile": {
                       "anyOf": [
@@ -9970,6 +10166,11 @@
                 {
                   "additionalProperties": false,
                   "properties": {
+                    "allowPluginSkills": {
+                      "default": false,
+                      "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                      "type": "boolean"
+                    },
                     "defaultModelRevision": {
                       "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                       "type": [
@@ -10103,6 +10304,29 @@
                         }
                       },
                       "type": "object"
+                    },
+                    "pluginSkills": {
+                      "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "revision": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "revision"
+                        ],
+                        "type": "object"
+                      },
+                      "type": [
+                        "array",
+                        "null"
+                      ]
                     },
                     "profile": {
                       "anyOf": [
@@ -11468,6 +11692,11 @@
             "configuration": {
               "additionalProperties": false,
               "properties": {
+                "allowPluginSkills": {
+                  "default": false,
+                  "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                  "type": "boolean"
+                },
                 "defaultModelRevision": {
                   "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                   "type": [
@@ -11601,6 +11830,29 @@
                     }
                   },
                   "type": "object"
+                },
+                "pluginSkills": {
+                  "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "revision": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "revision"
+                    ],
+                    "type": "object"
+                  },
+                  "type": [
+                    "array",
+                    "null"
+                  ]
                 },
                 "profile": {
                   "anyOf": [
@@ -13340,6 +13592,27 @@
       "title": "Respond",
       "type": "object"
     },
+    "areal/marketplace/add": {
+      "additionalProperties": false,
+      "properties": {
+        "expectedRevision": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "root": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "expectedRevision",
+        "requestId"
+      ],
+      "type": "object"
+    },
     "areal/mcp/configure": {
       "additionalProperties": false,
       "properties": {
@@ -13617,6 +13890,132 @@
         "steps"
       ],
       "title": "PlanUpdate",
+      "type": "object"
+    },
+    "areal/plugin/configure": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "expectedRevision": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "scope": {
+          "enum": [
+            "user",
+            "project"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "scope",
+        "enabled",
+        "expectedRevision",
+        "requestId"
+      ],
+      "type": "object"
+    },
+    "areal/plugin/install": {
+      "additionalProperties": false,
+      "properties": {
+        "expectedDigest": {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "expectedRevision": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "scope": {
+          "enum": [
+            "user",
+            "project"
+          ]
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "scope",
+        "expectedRevision",
+        "source",
+        "expectedDigest",
+        "requestId"
+      ],
+      "type": "object"
+    },
+    "areal/plugin/list": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "areal/plugin/read": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "areal/plugin/setup": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "requestId"
+      ],
+      "type": "object"
+    },
+    "areal/plugin/uninstall": {
+      "additionalProperties": false,
+      "properties": {
+        "expectedRevision": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "expectedRevision",
+        "requestId"
+      ],
       "type": "object"
     },
     "areal/process/acknowledgeCleanup": {
@@ -18851,6 +19250,11 @@
                       "configuration": {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "default": false,
+                            "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                            "type": "boolean"
+                          },
                           "defaultModelRevision": {
                             "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                             "type": [
@@ -18984,6 +19388,29 @@
                               }
                             },
                             "type": "object"
+                          },
+                          "pluginSkills": {
+                            "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "revision": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "revision"
+                              ],
+                              "type": "object"
+                            },
+                            "type": [
+                              "array",
+                              "null"
+                            ]
                           },
                           "profile": {
                             "anyOf": [
@@ -19745,6 +20172,11 @@
                                 "configuration": {
                                   "additionalProperties": false,
                                   "properties": {
+                                    "allowPluginSkills": {
+                                      "default": false,
+                                      "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                                      "type": "boolean"
+                                    },
                                     "defaultModelRevision": {
                                       "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                                       "type": [
@@ -19878,6 +20310,29 @@
                                         }
                                       },
                                       "type": "object"
+                                    },
+                                    "pluginSkills": {
+                                      "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                                      "items": {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "id": {
+                                            "type": "string"
+                                          },
+                                          "revision": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "id",
+                                          "revision"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      "type": [
+                                        "array",
+                                        "null"
+                                      ]
                                     },
                                     "profile": {
                                       "anyOf": [
@@ -20911,6 +21366,11 @@
                         {
                           "additionalProperties": false,
                           "properties": {
+                            "allowPluginSkills": {
+                              "default": false,
+                              "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                              "type": "boolean"
+                            },
                             "defaultModelRevision": {
                               "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                               "type": [
@@ -21044,6 +21504,29 @@
                                 }
                               },
                               "type": "object"
+                            },
+                            "pluginSkills": {
+                              "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "revision": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "revision"
+                                ],
+                                "type": "object"
+                              },
+                              "type": [
+                                "array",
+                                "null"
+                              ]
                             },
                             "profile": {
                               "anyOf": [
@@ -22645,6 +23128,11 @@
                         "configuration": {
                           "additionalProperties": false,
                           "properties": {
+                            "allowPluginSkills": {
+                              "default": false,
+                              "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                              "type": "boolean"
+                            },
                             "defaultModelRevision": {
                               "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                               "type": [
@@ -22778,6 +23266,29 @@
                                 }
                               },
                               "type": "object"
+                            },
+                            "pluginSkills": {
+                              "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "revision": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "revision"
+                                ],
+                                "type": "object"
+                              },
+                              "type": [
+                                "array",
+                                "null"
+                              ]
                             },
                             "profile": {
                               "anyOf": [
@@ -23539,6 +24050,11 @@
                                   "configuration": {
                                     "additionalProperties": false,
                                     "properties": {
+                                      "allowPluginSkills": {
+                                        "default": false,
+                                        "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                                        "type": "boolean"
+                                      },
                                       "defaultModelRevision": {
                                         "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                                         "type": [
@@ -23672,6 +24188,29 @@
                                           }
                                         },
                                         "type": "object"
+                                      },
+                                      "pluginSkills": {
+                                        "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                                        "items": {
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "id": {
+                                              "type": "string"
+                                            },
+                                            "revision": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "id",
+                                            "revision"
+                                          ],
+                                          "type": "object"
+                                        },
+                                        "type": [
+                                          "array",
+                                          "null"
+                                        ]
                                       },
                                       "profile": {
                                         "anyOf": [
@@ -24705,6 +25244,11 @@
                           {
                             "additionalProperties": false,
                             "properties": {
+                              "allowPluginSkills": {
+                                "default": false,
+                                "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                                "type": "boolean"
+                              },
                               "defaultModelRevision": {
                                 "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                                 "type": [
@@ -24838,6 +25382,29 @@
                                   }
                                 },
                                 "type": "object"
+                              },
+                              "pluginSkills": {
+                                "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                                "items": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "id": {
+                                      "type": "string"
+                                    },
+                                    "revision": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "id",
+                                    "revision"
+                                  ],
+                                  "type": "object"
+                                },
+                                "type": [
+                                  "array",
+                                  "null"
+                                ]
                               },
                               "profile": {
                                 "anyOf": [
@@ -25880,6 +26447,11 @@
                     {
                       "additionalProperties": false,
                       "properties": {
+                        "allowPluginSkills": {
+                          "default": false,
+                          "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                          "type": "boolean"
+                        },
                         "defaultModelRevision": {
                           "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                           "type": [
@@ -26013,6 +26585,29 @@
                             }
                           },
                           "type": "object"
+                        },
+                        "pluginSkills": {
+                          "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "revision": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "revision"
+                            ],
+                            "type": "object"
+                          },
+                          "type": [
+                            "array",
+                            "null"
+                          ]
                         },
                         "profile": {
                           "anyOf": [
@@ -29471,6 +30066,11 @@
                       "configuration": {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "default": false,
+                            "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                            "type": "boolean"
+                          },
                           "defaultModelRevision": {
                             "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                             "type": [
@@ -29604,6 +30204,29 @@
                               }
                             },
                             "type": "object"
+                          },
+                          "pluginSkills": {
+                            "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "revision": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "revision"
+                              ],
+                              "type": "object"
+                            },
+                            "type": [
+                              "array",
+                              "null"
+                            ]
                           },
                           "profile": {
                             "anyOf": [
@@ -30365,6 +30988,11 @@
                                 "configuration": {
                                   "additionalProperties": false,
                                   "properties": {
+                                    "allowPluginSkills": {
+                                      "default": false,
+                                      "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                                      "type": "boolean"
+                                    },
                                     "defaultModelRevision": {
                                       "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                                       "type": [
@@ -30498,6 +31126,29 @@
                                         }
                                       },
                                       "type": "object"
+                                    },
+                                    "pluginSkills": {
+                                      "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                                      "items": {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "id": {
+                                            "type": "string"
+                                          },
+                                          "revision": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "id",
+                                          "revision"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      "type": [
+                                        "array",
+                                        "null"
+                                      ]
                                     },
                                     "profile": {
                                       "anyOf": [
@@ -31531,6 +32182,11 @@
                         {
                           "additionalProperties": false,
                           "properties": {
+                            "allowPluginSkills": {
+                              "default": false,
+                              "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                              "type": "boolean"
+                            },
                             "defaultModelRevision": {
                               "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                               "type": [
@@ -31664,6 +32320,29 @@
                                 }
                               },
                               "type": "object"
+                            },
+                            "pluginSkills": {
+                              "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "revision": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "revision"
+                                ],
+                                "type": "object"
+                              },
+                              "type": [
+                                "array",
+                                "null"
+                              ]
                             },
                             "profile": {
                               "anyOf": [
@@ -38251,6 +38930,11 @@
               "configuration": {
                 "additionalProperties": false,
                 "properties": {
+                  "allowPluginSkills": {
+                    "default": false,
+                    "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                    "type": "boolean"
+                  },
                   "defaultModelRevision": {
                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                     "type": [
@@ -38384,6 +39068,29 @@
                       }
                     },
                     "type": "object"
+                  },
+                  "pluginSkills": {
+                    "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "revision": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "revision"
+                      ],
+                      "type": "object"
+                    },
+                    "type": [
+                      "array",
+                      "null"
+                    ]
                   },
                   "profile": {
                     "anyOf": [
@@ -38880,6 +39587,11 @@
               "configuration": {
                 "additionalProperties": false,
                 "properties": {
+                  "allowPluginSkills": {
+                    "default": false,
+                    "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                    "type": "boolean"
+                  },
                   "defaultModelRevision": {
                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                     "type": [
@@ -39013,6 +39725,29 @@
                       }
                     },
                     "type": "object"
+                  },
+                  "pluginSkills": {
+                    "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "revision": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "revision"
+                      ],
+                      "type": "object"
+                    },
+                    "type": [
+                      "array",
+                      "null"
+                    ]
                   },
                   "profile": {
                     "anyOf": [
@@ -39509,6 +40244,11 @@
               "configuration": {
                 "additionalProperties": false,
                 "properties": {
+                  "allowPluginSkills": {
+                    "default": false,
+                    "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                    "type": "boolean"
+                  },
                   "defaultModelRevision": {
                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                     "type": [
@@ -39642,6 +40382,29 @@
                       }
                     },
                     "type": "object"
+                  },
+                  "pluginSkills": {
+                    "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "revision": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "revision"
+                      ],
+                      "type": "object"
+                    },
+                    "type": [
+                      "array",
+                      "null"
+                    ]
                   },
                   "profile": {
                     "anyOf": [
@@ -40138,6 +40901,11 @@
               "configuration": {
                 "additionalProperties": false,
                 "properties": {
+                  "allowPluginSkills": {
+                    "default": false,
+                    "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                    "type": "boolean"
+                  },
                   "defaultModelRevision": {
                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                     "type": [
@@ -40271,6 +41039,29 @@
                       }
                     },
                     "type": "object"
+                  },
+                  "pluginSkills": {
+                    "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "revision": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "revision"
+                      ],
+                      "type": "object"
+                    },
+                    "type": [
+                      "array",
+                      "null"
+                    ]
                   },
                   "profile": {
                     "anyOf": [
@@ -40767,6 +41558,11 @@
               "configuration": {
                 "additionalProperties": false,
                 "properties": {
+                  "allowPluginSkills": {
+                    "default": false,
+                    "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                    "type": "boolean"
+                  },
                   "defaultModelRevision": {
                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                     "type": [
@@ -40900,6 +41696,29 @@
                       }
                     },
                     "type": "object"
+                  },
+                  "pluginSkills": {
+                    "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "revision": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "revision"
+                      ],
+                      "type": "object"
+                    },
+                    "type": [
+                      "array",
+                      "null"
+                    ]
                   },
                   "profile": {
                     "anyOf": [
@@ -41421,6 +42240,11 @@
               "configuration": {
                 "additionalProperties": false,
                 "properties": {
+                  "allowPluginSkills": {
+                    "default": false,
+                    "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                    "type": "boolean"
+                  },
                   "defaultModelRevision": {
                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                     "type": [
@@ -41554,6 +42378,29 @@
                       }
                     },
                     "type": "object"
+                  },
+                  "pluginSkills": {
+                    "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "revision": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "revision"
+                      ],
+                      "type": "object"
+                    },
+                    "type": [
+                      "array",
+                      "null"
+                    ]
                   },
                   "profile": {
                     "anyOf": [
@@ -43347,6 +44194,11 @@
                     "configuration": {
                       "additionalProperties": false,
                       "properties": {
+                        "allowPluginSkills": {
+                          "default": false,
+                          "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                          "type": "boolean"
+                        },
                         "defaultModelRevision": {
                           "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                           "type": [
@@ -43480,6 +44332,29 @@
                             }
                           },
                           "type": "object"
+                        },
+                        "pluginSkills": {
+                          "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "revision": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "revision"
+                            ],
+                            "type": "object"
+                          },
+                          "type": [
+                            "array",
+                            "null"
+                          ]
                         },
                         "profile": {
                           "anyOf": [
@@ -44241,6 +45116,11 @@
                               "configuration": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "allowPluginSkills": {
+                                    "default": false,
+                                    "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                                    "type": "boolean"
+                                  },
                                   "defaultModelRevision": {
                                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                                     "type": [
@@ -44374,6 +45254,29 @@
                                       }
                                     },
                                     "type": "object"
+                                  },
+                                  "pluginSkills": {
+                                    "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                                    "items": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "id": {
+                                          "type": "string"
+                                        },
+                                        "revision": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "revision"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "type": [
+                                      "array",
+                                      "null"
+                                    ]
                                   },
                                   "profile": {
                                     "anyOf": [
@@ -45407,6 +46310,11 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "default": false,
+                            "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                            "type": "boolean"
+                          },
                           "defaultModelRevision": {
                             "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                             "type": [
@@ -45540,6 +46448,29 @@
                               }
                             },
                             "type": "object"
+                          },
+                          "pluginSkills": {
+                            "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "revision": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "revision"
+                              ],
+                              "type": "object"
+                            },
+                            "type": [
+                              "array",
+                              "null"
+                            ]
                           },
                           "profile": {
                             "anyOf": [
@@ -46579,6 +47510,11 @@
                 {
                   "additionalProperties": false,
                   "properties": {
+                    "allowPluginSkills": {
+                      "default": false,
+                      "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                      "type": "boolean"
+                    },
                     "defaultModelRevision": {
                       "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                       "type": [
@@ -46712,6 +47648,29 @@
                         }
                       },
                       "type": "object"
+                    },
+                    "pluginSkills": {
+                      "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "revision": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "revision"
+                        ],
+                        "type": "object"
+                      },
+                      "type": [
+                        "array",
+                        "null"
+                      ]
                     },
                     "profile": {
                       "anyOf": [
@@ -50622,6 +51581,11 @@
     "areal/thread/configure": {
       "additionalProperties": false,
       "properties": {
+        "allowPluginSkills": {
+          "default": false,
+          "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+          "type": "boolean"
+        },
         "defaultModelRevision": {
           "description": "服务默认模型在提交时固定；不包含端点或凭据。",
           "type": [
@@ -50755,6 +51719,29 @@
             }
           },
           "type": "object"
+        },
+        "pluginSkills": {
+          "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "revision": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "revision"
+            ],
+            "type": "object"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
         },
         "profile": {
           "anyOf": [
@@ -51579,6 +52566,11 @@
                     "configuration": {
                       "additionalProperties": false,
                       "properties": {
+                        "allowPluginSkills": {
+                          "default": false,
+                          "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                          "type": "boolean"
+                        },
                         "defaultModelRevision": {
                           "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                           "type": [
@@ -51712,6 +52704,29 @@
                             }
                           },
                           "type": "object"
+                        },
+                        "pluginSkills": {
+                          "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "revision": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "revision"
+                            ],
+                            "type": "object"
+                          },
+                          "type": [
+                            "array",
+                            "null"
+                          ]
                         },
                         "profile": {
                           "anyOf": [
@@ -52473,6 +53488,11 @@
                               "configuration": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "allowPluginSkills": {
+                                    "default": false,
+                                    "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                                    "type": "boolean"
+                                  },
                                   "defaultModelRevision": {
                                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                                     "type": [
@@ -52606,6 +53626,29 @@
                                       }
                                     },
                                     "type": "object"
+                                  },
+                                  "pluginSkills": {
+                                    "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                                    "items": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "id": {
+                                          "type": "string"
+                                        },
+                                        "revision": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "revision"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "type": [
+                                      "array",
+                                      "null"
+                                    ]
                                   },
                                   "profile": {
                                     "anyOf": [
@@ -53639,6 +54682,11 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "default": false,
+                            "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                            "type": "boolean"
+                          },
                           "defaultModelRevision": {
                             "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                             "type": [
@@ -53772,6 +54820,29 @@
                               }
                             },
                             "type": "object"
+                          },
+                          "pluginSkills": {
+                            "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "revision": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "revision"
+                              ],
+                              "type": "object"
+                            },
+                            "type": [
+                              "array",
+                              "null"
+                            ]
                           },
                           "profile": {
                             "anyOf": [
@@ -54819,6 +55890,11 @@
         "configuration": {
           "additionalProperties": false,
           "properties": {
+            "allowPluginSkills": {
+              "default": false,
+              "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+              "type": "boolean"
+            },
             "defaultModelRevision": {
               "description": "服务默认模型在提交时固定；不包含端点或凭据。",
               "type": [
@@ -54952,6 +56028,29 @@
                 }
               },
               "type": "object"
+            },
+            "pluginSkills": {
+              "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "revision": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "revision"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "array",
+                "null"
+              ]
             },
             "profile": {
               "anyOf": [
@@ -56191,6 +57290,11 @@
                     "configuration": {
                       "additionalProperties": false,
                       "properties": {
+                        "allowPluginSkills": {
+                          "default": false,
+                          "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                          "type": "boolean"
+                        },
                         "defaultModelRevision": {
                           "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                           "type": [
@@ -56324,6 +57428,29 @@
                             }
                           },
                           "type": "object"
+                        },
+                        "pluginSkills": {
+                          "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "revision": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "revision"
+                            ],
+                            "type": "object"
+                          },
+                          "type": [
+                            "array",
+                            "null"
+                          ]
                         },
                         "profile": {
                           "anyOf": [
@@ -57085,6 +58212,11 @@
                               "configuration": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "allowPluginSkills": {
+                                    "default": false,
+                                    "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                                    "type": "boolean"
+                                  },
                                   "defaultModelRevision": {
                                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                                     "type": [
@@ -57218,6 +58350,29 @@
                                       }
                                     },
                                     "type": "object"
+                                  },
+                                  "pluginSkills": {
+                                    "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                                    "items": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "id": {
+                                          "type": "string"
+                                        },
+                                        "revision": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "revision"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "type": [
+                                      "array",
+                                      "null"
+                                    ]
                                   },
                                   "profile": {
                                     "anyOf": [
@@ -58251,6 +59406,11 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "default": false,
+                            "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                            "type": "boolean"
+                          },
                           "defaultModelRevision": {
                             "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                             "type": [
@@ -58384,6 +59544,29 @@
                               }
                             },
                             "type": "object"
+                          },
+                          "pluginSkills": {
+                            "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "revision": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "revision"
+                              ],
+                              "type": "object"
+                            },
+                            "type": [
+                              "array",
+                              "null"
+                            ]
                           },
                           "profile": {
                             "anyOf": [
@@ -59968,6 +61151,11 @@
                     "configuration": {
                       "additionalProperties": false,
                       "properties": {
+                        "allowPluginSkills": {
+                          "default": false,
+                          "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                          "type": "boolean"
+                        },
                         "defaultModelRevision": {
                           "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                           "type": [
@@ -60101,6 +61289,29 @@
                             }
                           },
                           "type": "object"
+                        },
+                        "pluginSkills": {
+                          "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "revision": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "revision"
+                            ],
+                            "type": "object"
+                          },
+                          "type": [
+                            "array",
+                            "null"
+                          ]
                         },
                         "profile": {
                           "anyOf": [
@@ -60862,6 +62073,11 @@
                               "configuration": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "allowPluginSkills": {
+                                    "default": false,
+                                    "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                                    "type": "boolean"
+                                  },
                                   "defaultModelRevision": {
                                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                                     "type": [
@@ -60995,6 +62211,29 @@
                                       }
                                     },
                                     "type": "object"
+                                  },
+                                  "pluginSkills": {
+                                    "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                                    "items": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "id": {
+                                          "type": "string"
+                                        },
+                                        "revision": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "revision"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "type": [
+                                      "array",
+                                      "null"
+                                    ]
                                   },
                                   "profile": {
                                     "anyOf": [
@@ -62028,6 +63267,11 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "default": false,
+                            "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                            "type": "boolean"
+                          },
                           "defaultModelRevision": {
                             "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                             "type": [
@@ -62161,6 +63405,29 @@
                               }
                             },
                             "type": "object"
+                          },
+                          "pluginSkills": {
+                            "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "revision": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "revision"
+                              ],
+                              "type": "object"
+                            },
+                            "type": [
+                              "array",
+                              "null"
+                            ]
                           },
                           "profile": {
                             "anyOf": [
@@ -63258,6 +64525,11 @@
                 {
                   "additionalProperties": false,
                   "properties": {
+                    "allowPluginSkills": {
+                      "default": false,
+                      "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                      "type": "boolean"
+                    },
                     "defaultModelRevision": {
                       "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                       "type": [
@@ -63391,6 +64663,29 @@
                         }
                       },
                       "type": "object"
+                    },
+                    "pluginSkills": {
+                      "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "revision": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "revision"
+                        ],
+                        "type": "object"
+                      },
+                      "type": [
+                        "array",
+                        "null"
+                      ]
                     },
                     "profile": {
                       "anyOf": [
@@ -69458,6 +70753,11 @@
                       "configuration": {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "default": false,
+                            "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                            "type": "boolean"
+                          },
                           "defaultModelRevision": {
                             "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                             "type": [
@@ -69591,6 +70891,29 @@
                               }
                             },
                             "type": "object"
+                          },
+                          "pluginSkills": {
+                            "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "revision": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "revision"
+                              ],
+                              "type": "object"
+                            },
+                            "type": [
+                              "array",
+                              "null"
+                            ]
                           },
                           "profile": {
                             "anyOf": [
@@ -70352,6 +71675,11 @@
                                 "configuration": {
                                   "additionalProperties": false,
                                   "properties": {
+                                    "allowPluginSkills": {
+                                      "default": false,
+                                      "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                                      "type": "boolean"
+                                    },
                                     "defaultModelRevision": {
                                       "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                                       "type": [
@@ -70485,6 +71813,29 @@
                                         }
                                       },
                                       "type": "object"
+                                    },
+                                    "pluginSkills": {
+                                      "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                                      "items": {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "id": {
+                                            "type": "string"
+                                          },
+                                          "revision": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "id",
+                                          "revision"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      "type": [
+                                        "array",
+                                        "null"
+                                      ]
                                     },
                                     "profile": {
                                       "anyOf": [
@@ -71518,6 +72869,11 @@
                         {
                           "additionalProperties": false,
                           "properties": {
+                            "allowPluginSkills": {
+                              "default": false,
+                              "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                              "type": "boolean"
+                            },
                             "defaultModelRevision": {
                               "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                               "type": [
@@ -71651,6 +73007,29 @@
                                 }
                               },
                               "type": "object"
+                            },
+                            "pluginSkills": {
+                              "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "revision": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "revision"
+                                ],
+                                "type": "object"
+                              },
+                              "type": [
+                                "array",
+                                "null"
+                              ]
                             },
                             "profile": {
                               "anyOf": [
@@ -73240,6 +74619,11 @@
                     "configuration": {
                       "additionalProperties": false,
                       "properties": {
+                        "allowPluginSkills": {
+                          "default": false,
+                          "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                          "type": "boolean"
+                        },
                         "defaultModelRevision": {
                           "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                           "type": [
@@ -73373,6 +74757,29 @@
                             }
                           },
                           "type": "object"
+                        },
+                        "pluginSkills": {
+                          "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "revision": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "revision"
+                            ],
+                            "type": "object"
+                          },
+                          "type": [
+                            "array",
+                            "null"
+                          ]
                         },
                         "profile": {
                           "anyOf": [
@@ -74134,6 +75541,11 @@
                               "configuration": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "allowPluginSkills": {
+                                    "default": false,
+                                    "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                                    "type": "boolean"
+                                  },
                                   "defaultModelRevision": {
                                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                                     "type": [
@@ -74267,6 +75679,29 @@
                                       }
                                     },
                                     "type": "object"
+                                  },
+                                  "pluginSkills": {
+                                    "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                                    "items": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "id": {
+                                          "type": "string"
+                                        },
+                                        "revision": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "revision"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "type": [
+                                      "array",
+                                      "null"
+                                    ]
                                   },
                                   "profile": {
                                     "anyOf": [
@@ -75300,6 +76735,11 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "default": false,
+                            "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                            "type": "boolean"
+                          },
                           "defaultModelRevision": {
                             "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                             "type": [
@@ -75433,6 +76873,29 @@
                               }
                             },
                             "type": "object"
+                          },
+                          "pluginSkills": {
+                            "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "revision": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "revision"
+                              ],
+                              "type": "object"
+                            },
+                            "type": [
+                              "array",
+                              "null"
+                            ]
                           },
                           "profile": {
                             "anyOf": [
@@ -77043,6 +78506,11 @@
                     "configuration": {
                       "additionalProperties": false,
                       "properties": {
+                        "allowPluginSkills": {
+                          "default": false,
+                          "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                          "type": "boolean"
+                        },
                         "defaultModelRevision": {
                           "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                           "type": [
@@ -77176,6 +78644,29 @@
                             }
                           },
                           "type": "object"
+                        },
+                        "pluginSkills": {
+                          "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "revision": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "revision"
+                            ],
+                            "type": "object"
+                          },
+                          "type": [
+                            "array",
+                            "null"
+                          ]
                         },
                         "profile": {
                           "anyOf": [
@@ -77937,6 +79428,11 @@
                               "configuration": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "allowPluginSkills": {
+                                    "default": false,
+                                    "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                                    "type": "boolean"
+                                  },
                                   "defaultModelRevision": {
                                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                                     "type": [
@@ -78070,6 +79566,29 @@
                                       }
                                     },
                                     "type": "object"
+                                  },
+                                  "pluginSkills": {
+                                    "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                                    "items": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "id": {
+                                          "type": "string"
+                                        },
+                                        "revision": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "revision"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "type": [
+                                      "array",
+                                      "null"
+                                    ]
                                   },
                                   "profile": {
                                     "anyOf": [
@@ -79103,6 +80622,11 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "default": false,
+                            "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                            "type": "boolean"
+                          },
                           "defaultModelRevision": {
                             "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                             "type": [
@@ -79236,6 +80760,29 @@
                               }
                             },
                             "type": "object"
+                          },
+                          "pluginSkills": {
+                            "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "revision": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "revision"
+                              ],
+                              "type": "object"
+                            },
+                            "type": [
+                              "array",
+                              "null"
+                            ]
                           },
                           "profile": {
                             "anyOf": [
@@ -80854,6 +82401,11 @@
                     "configuration": {
                       "additionalProperties": false,
                       "properties": {
+                        "allowPluginSkills": {
+                          "default": false,
+                          "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                          "type": "boolean"
+                        },
                         "defaultModelRevision": {
                           "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                           "type": [
@@ -80987,6 +82539,29 @@
                             }
                           },
                           "type": "object"
+                        },
+                        "pluginSkills": {
+                          "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "revision": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "revision"
+                            ],
+                            "type": "object"
+                          },
+                          "type": [
+                            "array",
+                            "null"
+                          ]
                         },
                         "profile": {
                           "anyOf": [
@@ -81748,6 +83323,11 @@
                               "configuration": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "allowPluginSkills": {
+                                    "default": false,
+                                    "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                                    "type": "boolean"
+                                  },
                                   "defaultModelRevision": {
                                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                                     "type": [
@@ -81881,6 +83461,29 @@
                                       }
                                     },
                                     "type": "object"
+                                  },
+                                  "pluginSkills": {
+                                    "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                                    "items": {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "id": {
+                                          "type": "string"
+                                        },
+                                        "revision": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "id",
+                                        "revision"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "type": [
+                                      "array",
+                                      "null"
+                                    ]
                                   },
                                   "profile": {
                                     "anyOf": [
@@ -82914,6 +84517,11 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "default": false,
+                            "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                            "type": "boolean"
+                          },
                           "defaultModelRevision": {
                             "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                             "type": [
@@ -83047,6 +84655,29 @@
                               }
                             },
                             "type": "object"
+                          },
+                          "pluginSkills": {
+                            "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "revision": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "revision"
+                              ],
+                              "type": "object"
+                            },
+                            "type": [
+                              "array",
+                              "null"
+                            ]
                           },
                           "profile": {
                             "anyOf": [
@@ -84109,6 +85740,11 @@
                 {
                   "additionalProperties": false,
                   "properties": {
+                    "allowPluginSkills": {
+                      "default": false,
+                      "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                      "type": "boolean"
+                    },
                     "defaultModelRevision": {
                       "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                       "type": [
@@ -84242,6 +85878,29 @@
                         }
                       },
                       "type": "object"
+                    },
+                    "pluginSkills": {
+                      "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "revision": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "revision"
+                        ],
+                        "type": "object"
+                      },
+                      "type": [
+                        "array",
+                        "null"
+                      ]
                     },
                     "profile": {
                       "anyOf": [
@@ -85969,6 +87628,11 @@
               "configuration": {
                 "additionalProperties": false,
                 "properties": {
+                  "allowPluginSkills": {
+                    "default": false,
+                    "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                    "type": "boolean"
+                  },
                   "defaultModelRevision": {
                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                     "type": [
@@ -86102,6 +87766,29 @@
                       }
                     },
                     "type": "object"
+                  },
+                  "pluginSkills": {
+                    "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "revision": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "revision"
+                      ],
+                      "type": "object"
+                    },
+                    "type": [
+                      "array",
+                      "null"
+                    ]
                   },
                   "profile": {
                     "anyOf": [
@@ -86863,6 +88550,11 @@
                         "configuration": {
                           "additionalProperties": false,
                           "properties": {
+                            "allowPluginSkills": {
+                              "default": false,
+                              "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                              "type": "boolean"
+                            },
                             "defaultModelRevision": {
                               "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                               "type": [
@@ -86996,6 +88688,29 @@
                                 }
                               },
                               "type": "object"
+                            },
+                            "pluginSkills": {
+                              "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "revision": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "revision"
+                                ],
+                                "type": "object"
+                              },
+                              "type": [
+                                "array",
+                                "null"
+                              ]
                             },
                             "profile": {
                               "anyOf": [
@@ -88029,6 +89744,11 @@
                 {
                   "additionalProperties": false,
                   "properties": {
+                    "allowPluginSkills": {
+                      "default": false,
+                      "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                      "type": "boolean"
+                    },
                     "defaultModelRevision": {
                       "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                       "type": [
@@ -88162,6 +89882,29 @@
                         }
                       },
                       "type": "object"
+                    },
+                    "pluginSkills": {
+                      "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "revision": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "revision"
+                        ],
+                        "type": "object"
+                      },
+                      "type": [
+                        "array",
+                        "null"
+                      ]
                     },
                     "profile": {
                       "anyOf": [
@@ -89201,6 +90944,11 @@
           {
             "additionalProperties": false,
             "properties": {
+              "allowPluginSkills": {
+                "default": false,
+                "description": "Core-owned scope marker; legacy snapshots conservatively keep explicit scope.",
+                "type": "boolean"
+              },
               "defaultModelRevision": {
                 "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                 "type": [
@@ -89334,6 +91082,29 @@
                   }
                 },
                 "type": "object"
+              },
+              "pluginSkills": {
+                "description": "None on live ordinary sessions; revisions are fixed at Turn/queue admission.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "revision": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "revision"
+                  ],
+                  "type": "object"
+                },
+                "type": [
+                  "array",
+                  "null"
+                ]
               },
               "profile": {
                 "anyOf": [

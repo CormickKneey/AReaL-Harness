@@ -109,9 +109,14 @@ impl Engine {
         }
         // 旧 thread/start 也使用同一默认 Skill 配置；子任务继续继承父任务的冻结配置。
         let default_profile = self.desktop.default_profile.read().unwrap().clone();
-        let desktop = if desktop.is_none() && parent.is_none() && default_profile.is_some() {
+        let desktop = if desktop.is_none() && parent.is_none() {
             Some(areal_protocol::desktop::DesktopState {
-                configuration: self.resolve_config(default_profile, None, Default::default(), 1)?,
+                configuration: {
+                    let mut c =
+                        self.resolve_config(default_profile, None, Default::default(), 1)?;
+                    c.allow_plugin_skills = true;
+                    c
+                },
                 ..Default::default()
             })
         } else {

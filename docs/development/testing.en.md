@@ -175,3 +175,10 @@ For slow tools, enable `areal::tool_timing=debug,areal::persistence=debug` in th
 Search regressions run the Runtime file helper directly, covering search without host rg/Python, workspace ignore rules, globs, context, truncation and symlink rejection. Native and release smoke tests exercise the complete Core `search_files` path without requiring rg in the shell.
 
 Desktop soak and GUI bundle validation accept the embedded-search layout without standalone tools/rg. Soak also verifies the platform-specific Runtime components and manifest file hashes.
+
+
+## Codex plugins P0
+
+Run `make build` and `make gui-build` from the repository root first. `node scripts/plugin-p0-smoke.mjs` uses real shared Core, CLI, authenticated RPC and deterministic local inference to verify original-package discovery/installation, source digest drift, contained shared resources, scope/revocation, deduplicated setup, lost-response receipt lookup and service restart. `pnpm --dir clients/gui test:plugins` uses isolated Electron/Core state for catalog→install→setup→open chat→disable/enable→uninstall. It injects setup response loss at the Main-to-renderer boundary and recovers through the real Core receipt without replay. Scripts print artifact directories and manifests with binary and modified source hashes.
+
+Package and Engine integration: `cargo test --locked -p areal-plugins --test store -p areal-engine --test codex_plugins --test skills --test agents --test queue_transfer`. These cover filesystem/installation transactions and session/Turn authority and lifecycle respectively. They do not establish real-provider, signed-package, physical-input or cross-platform acceptance; see the [implementation plan](codex-plugins-plan.en.md) for later scope.

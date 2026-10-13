@@ -498,6 +498,10 @@ async fn serve(
             id: s.id, revision: s.revision, root: s.root,
             metadata: Some(s.metadata),
         }).collect())?;
+        // Trusted launcher paths determine plugin discovery and shared installation state.
+        engine.install_plugin_store(Arc::new(areal_plugins::Store::open(
+            config.home.join("plugins"), args.workspace.clone().unwrap_or(workspace.clone()).canonicalize()?, homedir.clone(),
+        )?))?;
         for name in mcp_env.keys() {
             if let Some(name) = name.to_str()
                 && let Some(reference) = name.strip_prefix("AREAL_CREDENTIAL_")

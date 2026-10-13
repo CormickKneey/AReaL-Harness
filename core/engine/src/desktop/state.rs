@@ -578,6 +578,7 @@ impl Engine {
                     };
                 }
             }
+            let allow_plugin_skills = request.agent_profile.is_none();
             let mut data = DesktopState {
                 configuration: engine.resolve_config(
                     request
@@ -589,6 +590,7 @@ impl Engine {
                 )?,
                 ..Default::default()
             };
+            data.configuration.allow_plugin_skills = allow_plugin_skills;
             if let Some(guard) = &request.admission_guard {
                 if !guard.ordinary_session {
                     return Err(invalid("ordinarySession must be true"));
@@ -704,6 +706,7 @@ impl Engine {
         self: &Arc<Self>,
         request: ConfigureThread,
     ) -> Result<EffectiveConfig> {
+        self.refresh_plugins().await?;
         self.mutate(move |engine| async move {
             let cell = engine.cell(&request.thread_id).await?;
             let is_side = cell.state.lock().await.thread.is_side();
@@ -770,6 +773,8 @@ impl Engine {
             if request.reset_model && request.model.is_some() {
                 return Err(invalid("model and resetModel cannot be used together"));
             }
+            let allow_plugin_skills =
+                request.agent_profile.is_none() && previous.allow_plugin_skills;
             let mut configuration = engine.resolve_config(
                 request.agent_profile.or_else(|| {
                     previous.profile.as_ref().map(|p| VersionRef {
@@ -800,6 +805,7 @@ impl Engine {
                     "workflow-bound profiles can only be selected when creating a new thread",
                 ));
             }
+            configuration.allow_plugin_skills = allow_plugin_skills;
             configuration.options = request.options.unwrap_or(previous.options);
             let selected_skills = match request.selected_skills {
                 Some(skills) if skills.is_empty() => None,
@@ -823,9 +829,12 @@ impl Engine {
                         return Err(invalid("selected skill is unavailable"));
                     }
                 }
-                if let Some(profile) = &configuration.profile
-                    && !skills.iter().all(|skill| profile.skills.contains(skill))
-                {
+                drop(catalog);
+                if !skills.iter().all(|skill| {
+                    engine
+                        .effective_skill_refs(&configuration, false)
+                        .contains(skill)
+                }) {
                     return Err(invalid("selected skill is outside the effective profile"));
                 }
             }

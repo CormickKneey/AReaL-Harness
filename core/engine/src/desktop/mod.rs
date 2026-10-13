@@ -5,6 +5,7 @@ mod context;
 mod interactions;
 mod mcp;
 mod media;
+mod plugins;
 mod processes;
 mod queue;
 mod retention;
@@ -25,6 +26,8 @@ pub(crate) use tools::definitions;
 pub use workflows::Workflow;
 
 pub(crate) struct Desktop {
+    plugins: std::sync::RwLock<plugins::Manager>,
+    plugin_refresh: Mutex<()>,
     configured_models: std::sync::RwLock<ConfiguredModels>,
     pub(crate) default_profile: std::sync::RwLock<Option<VersionRef>>,
     worker_model: std::sync::atomic::AtomicBool,
@@ -39,6 +42,8 @@ pub(crate) struct Desktop {
 impl Desktop {
     pub fn open(root: &Path) -> anyhow::Result<Self> {
         Ok(Self {
+            plugins: Default::default(),
+            plugin_refresh: Mutex::new(()),
             configured_models: Default::default(),
             default_profile: Default::default(),
             worker_model: std::sync::atomic::AtomicBool::new(false),

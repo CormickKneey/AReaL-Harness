@@ -83,6 +83,7 @@ fn main() {
         "areal/server/status",
         "areal/server/gc",
         "areal/mcp/list",
+        "areal/plugin/list",
         "areal/workflow/list",
     ] {
         methods.insert(method.into(), empty.clone());
@@ -113,9 +114,25 @@ fn main() {
             vec!["threadId"],
         ),
     );
-    for method in ["areal/provider/read", "areal/mcp/read"] {
+    for method in ["areal/provider/read", "areal/mcp/read", "areal/plugin/read"] {
         methods.insert(method.into(), object(json!({"id":string}), vec!["id"]));
     }
+    let scope = json!({"enum":["user","project"]});
+    methods.insert("areal/marketplace/add".into(), object(
+        json!({"root":string,"expectedRevision":integer,"requestId":string}),
+        vec!["root","expectedRevision","requestId"]));
+    methods.insert("areal/plugin/install".into(), object(
+        json!({"id":string,"scope":scope,"expectedRevision":integer,"source":string,
+            "expectedDigest":{"type":"string","pattern":"^[0-9a-f]{64}$"},"requestId":string}),
+        vec!["id","scope","expectedRevision","source","expectedDigest","requestId"]));
+    methods.insert("areal/plugin/configure".into(), object(
+        json!({"id":string,"scope":scope,"enabled":{"type":"boolean"},"expectedRevision":integer,"requestId":string}),
+        vec!["id","scope","enabled","expectedRevision","requestId"]));
+    methods.insert("areal/plugin/uninstall".into(), object(
+        json!({"id":string,"expectedRevision":integer,"requestId":string}),
+        vec!["id","expectedRevision","requestId"]));
+    methods.insert("areal/plugin/setup".into(), object(
+        json!({"id":string,"threadId":string,"requestId":string}), vec!["id","requestId"]));
     for method in [
         "areal/provider/remove",
         "areal/mcp/connect",

@@ -2,6 +2,8 @@
 
 # Plugin boundaries
 
+Codex-compatible packages and Native Host are separate entry points with shared Core/Runtime ownership. See the [plugin guide](../guides/plugins.en.md) for P0 packages, Skills and local management, and the [implementation plan](../development/codex-plugins-plan.en.md) for staged full compatibility and acceptance. The following describes the existing Native Host tool adapter boundary.
+
 `@areal/plugins` adapts selected DSH tools and filesystem services in a separate trusted Node Host. Core retains the agent loop, sessions, history commits and cancellation tree. Runtime retains deployment grants and execution facts. Plugins cannot replace these responsibilities.
 
 ![Plugin boundaries](diagrams/plugin-boundaries.svg)

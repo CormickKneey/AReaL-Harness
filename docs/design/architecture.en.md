@@ -21,6 +21,7 @@ AReaL-Harness follows **Clients → Core → Runtime**. Core exclusively owns se
 | `core/local-service` | Shared discovery, configuration compatibility and control client; depends on config/protocol |
 | `core/service-host` | Rust trusted launcher and independent local service host; manages Core/Runtime lifecycles and private pipes |
 | `core/server` | Configuration, models, MCP, Hosts, Runtime and shutdown assembly |
+| `core/plugins` | Codex-compatible package parsing, local marketplaces, digest caches and installation/activation transactions; never executes package code |
 | `core/mcp` | Official rmcp client and result adaptation; no Turn ownership |
 | `core/sdk-typescript` | Selected DSH tools/filesystem adaptation and independent Node Host |
 | `runtime/protocol`, `runtime/client` | Independent execution contract and Rust private-pipe client |
@@ -41,6 +42,8 @@ Server injects a shared Engine capture budget when installing telemetry. Engine 
 Optional persistent trajectory export uses `[trajectory]` parsed by `core/config`. `core/server/trajectory` owns bounded memory buffering, the disk queue, and an independent upload process. Queues default to the user home and are isolated by configuration-file identity, with services and owned CLI runs sharing the queue of their configuration; network uploads are outside Turn settlement and Runtime lifecycles. CLI/TUI use a cancellable background check for a single warning; GUI polls according to visibility. Clients only inspect export status and request retries. Receivers accept standard OTLP Logs; platform analysis registration belongs to receiver integrations. See [persistent trajectory export](../guides/configuration.en.md#persistent-trajectory-export) for configuration, capacity, and failure boundaries.
 
 Skill discovery in `core/config` uses trusted launch parameters and returns metadata with individual warnings. Engine also reuses its stateless header parser for explicit deployment registration, without locating user configuration itself. `core/engine/src/desktop/skills.rs` retains registered directory descriptors and asynchronously reads bounded pages of current resources without Skill content snapshots. See the [Skill guide](../guides/skills.en.md) for configuration and read contracts.
+
+Codex-compatible packages use `core/plugins` for local installation and scoped selection. Engine registers immutable plugin Skill roots, freezes references when admitting a Turn, and checks current revocation on resource reads. Ordinary sessions discover new installations; explicit Profiles, Side sessions and isolated workers gain no automatic authority. Onboarding uses the existing ordinary Turn entry and clients recover UNKNOWN through existing management receipts. Standalone Skills retain their dynamic descriptor-based read contract. See the [plugin guide](../guides/plugins.en.md) for supported behavior and the [implementation plan](../development/codex-plugins-plan.en.md) for full compatibility.
 
 `core/engine/src/goals` owns persistent Goals, request ledgers and continuation across Turns. User queues and automatic continuation share one admission entry point. Clients maintain projections and Runtime retains its execution boundary. See the [Core API](../api/core.en.md#goals).
 

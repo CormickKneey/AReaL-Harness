@@ -39,5 +39,18 @@
     "sourceSha256": "7605249d3eb0d5f170e3414498e3344e26b1e7a147aec518b57090b80036a562",
     "features": [],
     "revision": "e89fff89ac9af12e8d4ce9d5fd07beb408ca730f"
+  },
+  "codexPlugins": {
+    "repository": "https://github.com/openai/codex",
+    "version": "0.162.1",
+    "revision": "092d3acd6bec3e3a14bdc7e7a2810ab628ab759d",
+    "agentPluginsSchemaVersion": "1.0.0",
+    "implementedCapabilities": [
+      "local-marketplaces",
+      "portable-and-legacy-packages",
+      "skills",
+      "onboarding"
+    ],
+    "openaiExtensionsRevision": "0d606217705e0e71eb21fff009619b67b80611dc"
   }
 }
