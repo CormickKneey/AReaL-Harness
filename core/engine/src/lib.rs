@@ -698,7 +698,7 @@ impl Engine {
         }
         self.tasks.close();
         self.tasks.wait().await;
-        if let Err(error) = self.desktop.mcp.shutdown().await {
+        if let Err(error) = self.desktop.mcp.shutdown(&self.store).await {
             tracing::error!(%error, "managed MCP cleanup failed");
         }
         let cells: Vec<_> = self.threads.read().await.values().cloned().collect();
@@ -714,3 +714,8 @@ use anyhow::Context;
 
 #[cfg(test)]
 mod tests;
+
+/// 持久格式兼容版本供可信打包身份查询使用。
+pub fn state_version() -> u32 {
+    store::STATE_VERSION
+}

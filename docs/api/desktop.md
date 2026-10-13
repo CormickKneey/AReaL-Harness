@@ -147,3 +147,11 @@ GUI 可从 Side 的一条回复中选择文字，或显式选择整条回复，�
 
 空闲 Side 可用 `areal/thread/archive {threadId}` 持久归档；活动轮次归档会拒绝。`areal/conversation/unarchive {requestId,threadId}` 幂等恢复已归档 Side 和完整历史，不自动发问。重放 Side 原创建键从持久历史返回原始首轮，包括重启后，不重新执行或恢复归档。读取或订阅归档 Side 不会恢复它，归档期间发送仍被拒绝。来源 Stop 或归档不级联停止或删除 Side；关闭相关讨论面板只隐藏视图。已发送内容由 Core 在 GUI 或 Core 重启后恢复，未发送草稿不承诺跨进程保存。
 Side 首问与追问共用活跃额度：默认每来源 2、每部署 8；超额分别报 `SIDE_SOURCE_CAPACITY_REACHED`、`SIDE_DEPLOYMENT_CAPACITY_REACHED`。每个 Side Turn 默认最多 8 次模型轮、16 次工具调用、300 秒；全局限额仍可进一步收紧。Side 不自动或手动调用模型压缩，避免额度外请求；上下文过大时明确失败。模型许可不足时 `areal/side/capacity` 推送 `waiting`/`available`，活跃 Side 的 `thread/read` 与 `areal/thread/observe` / `thread/resume` 订阅快照在 `desktop.sideCapacityStatus` 投影当前状态，停止后快照不保留等待状态；停止只取消对应 Side。Side 请求计入自己的 Session 与部署真实用量，不继承来源 Goal 预算。
+
+## Side 模型与清理恢复
+
+`areal/side/start` 省略 `model` 和 `resetModel` 保持锚点模型继承；`resetModel: true` 显式使用部署默认模型；`model` 指定模型。二者不能同时提供。旧客户端保持继承语义，旧 Core 不支持 resetModel 时应拒绝而不是静默继承。首问与后续轮次使用同一持久配置。
+
+旁路恢复按 owner/connectionGeneration 区分 idle/loading/ready/error。确定失败等待用户重试，切换目标或新连接可重新读取；旧结果不能更新新目标。未知提交仍只核对原回执，不自动重复首问。
+
+MCP 清理失败保持 cleanupFailed，并持久保存 cleanupUnconfirmed。无连接记录的重复 disconnect 不构成清理证据，不能解除状态或启动第二宿主；目录提交失败的回滚也传播清理未确认。重启不自动消除此标记。当前没有以远端 RPC 声明清理成功的恢复入口，需操作者先独立核验本任务宿主退出，再通过维护流程修复记录。此状态不证明进程泄漏。

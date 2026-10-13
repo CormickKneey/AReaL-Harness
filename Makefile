@@ -99,7 +99,7 @@ verify-runtime: ## 顺序运行 Runtime 行为测试和真实 sandbox 验收
 verify: ## 常规验收：格式、静态检查、Rust/SDK/Python 测试与 TUI 冒烟
 	$(MAKE) cordis-pin
 	$(MAKE) -j2 fmt-check sdk-test script-test
-	$(MAKE) lint
+	$(MAKE) lint desktop-schema-check
 	$(MAKE) test
 	$(MAKE) launcher-test smoke
 
@@ -208,7 +208,7 @@ capacity-workgroup: build ## 32 个真实 Runtime 的隔离写入与资源回收
 perf: ## 交互式运行 Docker E2E/perf 工作流
 	./scripts/perf interactive
 
-.PHONY: examples-desktop-api desktop-schemas package
+.PHONY: examples-desktop-api desktop-schemas desktop-schema-check package
 examples-desktop-api: build ## 真实 Core/Runtime 的桌面 API 与 CLI 确定性验收
 	node examples/desktop-api/run.mjs --all
 	node examples/desktop-api/task-controls.mjs
@@ -218,9 +218,10 @@ examples-desktop-api: build ## 真实 Core/Runtime 的桌面 API 与 CLI 确定�
 	node examples/desktop-api/packaged-workgroup.mjs
 
 desktop-schemas: ## 从 Rust 类型导出 AReaL 桌面契约
-	cargo run --locked -q -p areal-engine --example desktop-schema > schemas/areal-core-v1.json
-	cargo run --locked -q -p areal-engine --example desktop-schema -- --native-host > schemas/native-host-v2.json
-	cargo run --locked -q -p areal-protocol --example service-schema > schemas/local-service-v1.json
+	python3 scripts/desktop-schemas.py --write
+
+desktop-schema-check: ## 临时生成并规范化比较三份桌面 schema，不修改已提交文件
+	python3 scripts/desktop-schemas.py
 
 package: release ## 生成 macOS arm64 / Linux x86_64 发行产物及完整性清单；ARGS 指定 --output
 	python3 scripts/package.py $(ARGS)

@@ -21,6 +21,7 @@ const available = [
   "ask-user",
   "desktop-launcher",
   "model-switch",
+  "side-model-selection",
   "queue-and-reconnect",
   "approval-gate",
   "shared-terminal",
@@ -59,6 +60,7 @@ const exampleIds = {
   "ask-user": "EX-05",
   "desktop-launcher": "EX-06",
   "model-switch": "EX-07",
+  "side-model-selection": "SIDE-MODEL",
   "queue-and-reconnect": "EX-09",
   "approval-gate": "EX-10",
   "shared-terminal": "EX-11",
@@ -254,7 +256,7 @@ try {
       "-S",
       join(repo, "scripts/launch.py"),
       "--bin-dir",
-      join(repo, "target/debug"),
+      process.env.AREAL_TEST_BIN_DIR || join(repo, "target/debug"),
       "--desktop",
       "--auth-file",
       join(directory, "auth.json"),
@@ -529,6 +531,83 @@ try {
           requestId: request.requestId,
           ...target,
           answers: { platform: "桌面" },
+        }),
+      );
+    } else if (name === "side-model-selection") {
+      await c.call("areal/provider/upsert", {
+        expectedRevision: 0,
+        provider: {
+          id: "side-choice",
+          revision: 0,
+          endpoint: model.endpoint,
+          protocol: "chatCompletions",
+          models: ["A", "C"],
+        },
+      });
+      const source = await startThread(c, "source model A", {
+        model: { providerId: "side-choice", modelId: "A" },
+      });
+      await done(c, source);
+      const historicalAnchor = source.turnId;
+      const sourceView = await c.call("thread/read", {
+        threadId: source.threadId,
+        includeTurns: true,
+      });
+      await c.call("areal/thread/configure", {
+        threadId: source.threadId,
+        expectedRevision: sourceView.thread.desktop.configuration.revision,
+        model: { providerId: "side-choice", modelId: "C" },
+      });
+      const advanced = await c.call("areal/turn/start", {
+        requestId: crypto.randomUUID(),
+        threadId: source.threadId,
+        input: [{ type: "text", text: "current source uses C" }],
+      });
+      await done(c, { threadId: source.threadId, turnId: advanced.turn.id });
+      const settle = async (threadId, turnId) => {
+        for (let i = 0; i < 200; i++) {
+          const { thread } = await c.call("thread/read", { threadId, includeTurns: true });
+          const turn = thread.turns.find((turn) => turn.id === turnId);
+          if (turn?.status !== "inProgress") {
+            assert.equal(turn?.status, "completed", JSON.stringify(turn));
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        throw Error("Side model request did not settle");
+      };
+      for (const [selection, expected] of [
+        [{}, "A"],
+        [{ resetModel: true }, "fixture"],
+        [{ model: { providerId: "side-choice", modelId: "C" } }, "C"],
+      ]) {
+        const before = model.requests.length;
+        const created = await c.call("areal/side/start", {
+          requestId: crypto.randomUUID(),
+          sourceThreadId: source.threadId,
+          anchor: { kind: "turn", turnId: historicalAnchor, boundary: "after" },
+          workspaceAccess: "none",
+          input: [{ type: "text", text: "first side question" }],
+          ...selection,
+        });
+        await settle(created.thread.id, created.turn.id);
+        assert.equal(model.requests[before].model, expected);
+        const follow = await c.call("areal/turn/start", {
+          requestId: crypto.randomUUID(),
+          threadId: created.thread.id,
+          input: [{ type: "text", text: "follow-up" }],
+        });
+        await settle(created.thread.id, follow.turn.id);
+        assert.equal(model.requests.at(-1).model, expected);
+      }
+      await assert.rejects(
+        c.call("areal/side/start", {
+          requestId: crypto.randomUUID(),
+          sourceThreadId: source.threadId,
+          workspaceAccess: "none",
+          resetModel: true,
+          model: { providerId: "side-choice", modelId: "C" },
+          input: [{ type: "text", text: "invalid mixed mode" }],
         }),
       );
     } else if (name === "model-switch") {

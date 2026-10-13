@@ -7,14 +7,30 @@ struct Record {
     revision: u64,
     directory_revision: u64,
     config: areal_mcp::ServerConfig,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    cleanup_unconfirmed: bool,
     #[serde(skip)]
     status: String,
     #[serde(skip)]
     error: Option<String>,
 }
+enum ManagedConnection {
+    Live(areal_mcp::Connections),
+    #[cfg(test)]
+    CleanupFailureFixture,
+}
+impl ManagedConnection {
+    async fn shutdown(&mut self) -> anyhow::Result<()> {
+        match self {
+            Self::Live(connection) => connection.shutdown().await,
+            #[cfg(test)]
+            Self::CleanupFailureFixture => Err(areal_mcp::CleanupUnconfirmed.into()),
+        }
+    }
+}
 pub(crate) struct Manager {
     records: std::sync::RwLock<BTreeMap<String, Record>>,
-    connections: Mutex<BTreeMap<String, areal_mcp::Connections>>,
+    connections: Mutex<BTreeMap<String, ManagedConnection>>,
     tools: std::sync::RwLock<BTreeMap<String, Vec<areal_mcp::McpTool>>>,
 }
 impl Manager {
@@ -30,7 +46,12 @@ impl Manager {
             BTreeMap::new()
         };
         for record in records.values_mut() {
-            record.status = "disconnected".into();
+            record.status = if record.cleanup_unconfirmed {
+                "cleanupFailed"
+            } else {
+                "disconnected"
+            }
+            .into();
         }
         Ok(Self {
             records: std::sync::RwLock::new(records),
@@ -47,14 +68,30 @@ impl Manager {
             .cloned()
             .collect()
     }
-    pub async fn shutdown(&self) -> Result<()> {
+    pub async fn shutdown(&self, store: &crate::store::Store) -> Result<()> {
         let mut connections = self.connections.lock().await;
         let mut failed = false;
-        for connection in connections.values_mut() {
-            failed |= connection.shutdown().await.is_err();
+        for (id, connection) in connections.iter_mut() {
+            let cleanup_failed = connection.shutdown().await.is_err();
+            failed |= cleanup_failed;
+            if let Some(record) = self.records.write().unwrap().get_mut(id) {
+                record.cleanup_unconfirmed = cleanup_failed;
+                record.status = if cleanup_failed {
+                    "cleanupFailed"
+                } else {
+                    "disconnected"
+                }
+                .into();
+                record.error = cleanup_failed.then(|| "MCP cleanup unconfirmed".into());
+            }
         }
         connections.clear();
         self.tools.write().unwrap().clear();
+        let snapshot = self.records.read().unwrap().clone();
+        store
+            .save_metadata("mcp", &snapshot)
+            .await
+            .map_err(invalid)?;
         if failed {
             Err(invalid("MCP cleanup unconfirmed"))
         } else {
@@ -98,6 +135,7 @@ impl Engine {
                     revision: expected + 1,
                     directory_revision: records.get(&id).map_or(0, |r| r.directory_revision),
                     config,
+                    cleanup_unconfirmed: false,
                     status: "disconnected".into(),
                     error: None,
                 },
@@ -142,13 +180,27 @@ impl Engine {
             if record.revision != expected {
                 return Err(Error::Conflict);
             }
+            if record.cleanup_unconfirmed || record.status == "cleanupFailed" {
+                return Err(invalid(
+                    "MCP cleanup unconfirmed; automatic reconnect is blocked",
+                ));
+            }
             if let Some(mut connection) = connections.remove(&id) {
                 engine.desktop.mcp.tools.write().unwrap().remove(&id);
                 if connection.shutdown().await.is_err() {
-                    let mut records = engine.desktop.mcp.records.write().unwrap();
-                    let r = records.get_mut(&id).unwrap();
-                    r.status = "cleanupFailed".into();
-                    r.error = Some("MCP cleanup unconfirmed".into());
+                    let snapshot = {
+                        let mut records = engine.desktop.mcp.records.write().unwrap();
+                        let r = records.get_mut(&id).unwrap();
+                        r.status = "cleanupFailed".into();
+                        r.cleanup_unconfirmed = true;
+                        r.error = Some("MCP cleanup unconfirmed".into());
+                        records.clone()
+                    };
+                    engine
+                        .store
+                        .save_metadata("mcp", &snapshot)
+                        .await
+                        .map_err(invalid)?;
                     return Err(invalid("MCP cleanup unconfirmed"));
                 }
             }
@@ -179,15 +231,32 @@ impl Engine {
                         let mut combined = engine.desktop.mcp.tools();
                         combined.extend(tools.clone());
                         if engine.registry.clone().with_mcp(combined).is_err() {
-                            let _ = connection.shutdown().await;
-                            let mut records = engine.desktop.mcp.records.write().unwrap();
-                            let r = records.get_mut(&id).unwrap();
-                            r.status = "failed".into();
-                            r.error =
-                                Some("MCP directory conflicts or exceeds the tool budget".into());
-                            return Err(invalid(
-                                "MCP directory conflicts or exceeds the tool budget",
-                            ));
+                            let cleanup_failed = connection.shutdown().await.is_err();
+                            let snapshot = {
+                                let mut records = engine.desktop.mcp.records.write().unwrap();
+                                let r = records.get_mut(&id).unwrap();
+                                r.cleanup_unconfirmed = cleanup_failed;
+                                r.status = if cleanup_failed {
+                                    "cleanupFailed"
+                                } else {
+                                    "failed"
+                                }
+                                .into();
+                                r.error = Some(
+                                    "MCP directory conflicts or exceeds the tool budget".into(),
+                                );
+                                records.clone()
+                            };
+                            engine
+                                .store
+                                .save_metadata("mcp", &snapshot)
+                                .await
+                                .map_err(invalid)?;
+                            return Err(invalid(if cleanup_failed {
+                                "MCP directory rollback cleanup unconfirmed"
+                            } else {
+                                "MCP directory conflicts or exceeds the tool budget"
+                            }));
                         }
                         engine
                             .desktop
@@ -196,17 +265,32 @@ impl Engine {
                             .write()
                             .unwrap()
                             .insert(id.clone(), tools);
-                        connections.insert(id.clone(), connection);
+                        connections.insert(id.clone(), ManagedConnection::Live(connection));
                         let mut records = engine.desktop.mcp.records.write().unwrap();
                         let r = records.get_mut(&id).unwrap();
                         r.status = "connected".into();
                         r.directory_revision += 1;
                     }
-                    Err(_) => {
+                    Err(error) => {
                         let mut records = engine.desktop.mcp.records.write().unwrap();
                         let r = records.get_mut(&id).unwrap();
-                        r.status = "failed".into();
-                        r.error = Some("MCP connection or discovery failed".into());
+                        r.cleanup_unconfirmed = error
+                            .chain()
+                            .any(|cause| cause.is::<areal_mcp::CleanupUnconfirmed>());
+                        r.status = if r.cleanup_unconfirmed {
+                            "cleanupFailed"
+                        } else {
+                            "failed"
+                        }
+                        .into();
+                        r.error = Some(
+                            if r.cleanup_unconfirmed {
+                                "MCP connection rollback cleanup unconfirmed"
+                            } else {
+                                "MCP connection or discovery failed"
+                            }
+                            .into(),
+                        );
                     }
                 }
             }
@@ -239,5 +323,93 @@ impl Engine {
             registry
         };
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod cleanup_tests {
+    use super::*;
+    struct Pending;
+    #[async_trait::async_trait]
+    impl crate::model::Model for Pending {
+        fn name(&self) -> &str {
+            "mcp-cleanup-fixture"
+        }
+        async fn stream(
+            &self,
+            _: Vec<crate::model::Message>,
+        ) -> anyhow::Result<crate::model::ModelStream> {
+            std::future::pending().await
+        }
+    }
+    #[tokio::test]
+    async fn cleanup_failed_disconnect_cannot_claim_success_or_reconnect() {
+        let root = tempfile::tempdir().unwrap();
+        let engine = Engine::open(root.path(), Arc::new(Pending), Limits::default()).unwrap();
+        let config = serde_json::from_value(json!({"transport":{"type":"stdio","command":"/fixture/never-start","args":[],"cwd":null,"envVars":[]}})).unwrap();
+        engine
+            .mcp_configure("failed".into(), 0, config)
+            .await
+            .unwrap();
+        {
+            let mut records = engine.desktop.mcp.records.write().unwrap();
+            let record = records.get_mut("failed").unwrap();
+            record.status = "cleanupFailed".into();
+            record.error = Some("MCP cleanup unconfirmed".into());
+        }
+        for connect in [false, true] {
+            assert!(
+                engine
+                    .mcp_connection("failed".into(), 1, connect)
+                    .await
+                    .is_err()
+            );
+            assert_eq!(engine.mcp_list()["data"][0]["state"], "cleanupFailed");
+        }
+        engine.shutdown().await;
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+    struct Pending;
+    #[async_trait::async_trait]
+    impl crate::model::Model for Pending {
+        fn name(&self) -> &str {
+            "cleanup-shutdown-fixture"
+        }
+        async fn stream(
+            &self,
+            _: Vec<crate::model::Message>,
+        ) -> anyhow::Result<crate::model::ModelStream> {
+            std::future::pending().await
+        }
+    }
+    #[tokio::test]
+    async fn shutdown_cleanup_failure_survives_store_reopen() {
+        let root = tempfile::tempdir().unwrap();
+        let engine = Engine::open(root.path(), Arc::new(Pending), Limits::default()).unwrap();
+        let config = serde_json::from_value(json!({"transport":{"type":"stdio","command":"/fixture/never-start","args":[],"cwd":null,"envVars":[]}})).unwrap();
+        engine
+            .mcp_configure("shutdown-failure".into(), 0, config)
+            .await
+            .unwrap();
+        engine.desktop.mcp.connections.lock().await.insert(
+            "shutdown-failure".into(),
+            ManagedConnection::CleanupFailureFixture,
+        );
+        engine.shutdown().await;
+        assert_eq!(engine.mcp_list()["data"][0]["state"], "cleanupFailed");
+        drop(engine);
+        let reopened = Engine::open(root.path(), Arc::new(Pending), Limits::default()).unwrap();
+        assert_eq!(reopened.mcp_list()["data"][0]["state"], "cleanupFailed");
+        assert!(
+            reopened
+                .mcp_connection("shutdown-failure".into(), 1, true)
+                .await
+                .is_err()
+        );
+        reopened.shutdown().await;
     }
 }

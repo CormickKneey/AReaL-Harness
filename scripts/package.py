@@ -24,6 +24,44 @@ def bundle_info(root):
     return {"apiVersion": schema["apiVersion"], "stateVersion": int(versions[0])}
 
 
+def source_input_hash(root):
+    paths = subprocess.check_output(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard"], cwd=root, text=True
+    ).splitlines()
+    selected = sorted(
+        set(
+            path
+            for path in paths
+            if path.endswith((".rs", "Cargo.toml", "Cargo.lock"))
+            or path == "rust-toolchain.toml"
+            or path.startswith("schemas/")
+            and path.endswith(".json")
+        )
+    )
+    value = hashlib.sha256()
+    for path in selected:
+        value.update(path.encode())
+        value.update(b"\0")
+        value.update((root / path).read_bytes())
+        value.update(b"\0")
+    return value.hexdigest()
+
+
+def validate_build_info(info, revision, fingerprint, metadata):
+    if (
+        not isinstance(info, dict)
+        or info.get("sourceRevision") != revision
+        or info.get("inputHash") != fingerprint
+        or any(info.get(key) != value for key, value in metadata.items())
+    ):
+        raise ValueError(
+            "input Core binary does not match checkout inputs; rebuild before packaging"
+        )
+    if info.get("workingTree") not in ("true", "false"):
+        raise ValueError("input Core build identity is unknown")
+    return info
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=("debug", "release"), default="release")
@@ -50,6 +88,13 @@ def main():
     for name in names:
         if not (source / name).is_file():
             parser.error(f"missing {name}; build the selected Cargo profile first")
+    revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    identity = validate_build_info(
+        json.loads(subprocess.check_output([str(source / "areal"), "build-info"], text=True)),
+        revision,
+        source_input_hash(root),
+        metadata,
+    )
     files = {}
     (destination / "bin").mkdir(parents=True)
     shutil.copy2(root / "LICENSE", destination / "LICENSE")
@@ -75,12 +120,11 @@ def main():
             raise ValueError(f"unsigned local copy changed input bytes: {name}")
     version = subprocess.check_output([str(source / "areal"), "--version"], text=True).strip()
     manifest = {
-        "manifestVersion": 1,
+        "manifestVersion": 2,
         "productVersion": version,
-        "sourceRevision": subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], cwd=root, text=True
-        ).strip(),
-        "workingTree": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=root)),
+        "sourceRevision": identity["sourceRevision"],
+        "workingTree": identity["workingTree"] == "true",
+        "coreBuild": identity,
         "profile": args.profile,
         **metadata,
         "platform": target_platform,
