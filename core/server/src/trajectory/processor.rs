@@ -75,7 +75,25 @@ fn value_bytes(v: &AnyValue) -> usize {
     }
 }
 impl Processor {
+    #[cfg(test)]
     pub fn new(config: &TrajectoryConfig) -> Result<Self> {
+        Self::with_health(config, CaptureHealth::new(config))
+    }
+
+    pub(crate) fn with_health(config: &TrajectoryConfig, health: CaptureHealth) -> Result<Self> {
+        Self::start(config, health, |work| {
+            std::thread::Builder::new()
+                .name("areal-trajectory-spool".into())
+                .spawn(work)
+                .map(|_| ())
+        })
+    }
+
+    fn start(
+        config: &TrajectoryConfig,
+        health: CaptureHealth,
+        spawn: impl FnOnce(Box<dyn FnOnce() + Send>) -> std::io::Result<()>,
+    ) -> Result<Self> {
         let producer = format!(".producer-{}.lock", uuid::Uuid::new_v4());
         let (sender, receiver) = mpsc::sync_channel(config.max_records.min(256));
         let shared = Arc::new(Shared {
@@ -85,114 +103,120 @@ impl Processor {
         });
         let shared_worker = shared.clone();
         let config_worker = config.clone();
-        std::thread::Builder::new()
-            .name("areal-trajectory-spool".into())
-            .spawn(move || {
-                // 安装ID、历史清理和磁盘锁均在后台初始化，慢磁盘不阻塞 Core 启动。
-                let initialize = || -> Result<_> {
-                    configure_on_startup(&config_worker)?;
-                    endpoint(&config_worker)?;
-                    let installation = queue::installation(&config_worker.spool_dir)?;
-                    let _queue = queue::lock(&config_worker.spool_dir, ".queue.lock", true)?;
-                    let lease = queue::lock(&config_worker.spool_dir, &producer, false)?
-                        .context("producer lease unavailable")?;
-                    let resource = Resource::builder()
-                        .with_service_name("areal-core")
-                        .with_attribute(opentelemetry::KeyValue::new(
-                            "service.version",
-                            env!("CARGO_PKG_VERSION"),
-                        ))
-                        .with_attribute(opentelemetry::KeyValue::new(
-                            "service.build.revision",
-                            env!("AREAL_BUILD_REVISION"),
-                        ))
-                        .with_attribute(opentelemetry::KeyValue::new(
-                            "service.build.dirty",
-                            env!("AREAL_BUILD_DIRTY"),
-                        ))
-                        .with_attribute(opentelemetry::KeyValue::new(
-                            "service.instance.id",
-                            installation,
-                        ))
-                        .build();
-                    Ok((resource, lease))
-                };
-                let Ok((resource, _producer_lease)) = initialize() else {
-                    shared_worker.stopped.store(true, Ordering::Release);
-                    // 客户端统一显示一次提示，后台故障不向聊天/终端重复输出。
-                    return;
-                };
-                let resource: ResourceAttributesWithSchema = (&resource).into();
-                loop {
-                    let work = receiver.recv_timeout(Duration::from_secs(1));
-                    match work {
-                        Ok(Work::Record(item)) => {
-                            let mut request = ExportLogsServiceRequest {
-                                resource_logs: vec![ResourceLogs::from((
-                                    (&item.record, &item.scope),
-                                    &resource,
-                                ))],
-                            };
-                            // 结构化 JSON 展开属于采集后台，且从已预留的内存中扣除。
-                            super::json::project(&mut request, item.reserved / 4);
-                            let result = if request.encoded_len() <= config_worker.max_batch_bytes {
-                                queue::enqueue(
-                                    &config_worker,
-                                    &request.encode_to_vec(),
-                                    Some(producer.clone()),
-                                )
-                            } else {
-                                shared_worker.dropped.fetch_add(1, Ordering::Relaxed);
-                                Ok(())
-                            };
-                            shared_worker
-                                .used
-                                .fetch_sub(item.reserved, Ordering::Relaxed);
-                            if result.is_err() {
-                                shared_worker.dropped.fetch_add(1, Ordering::Relaxed);
-                            }
-                            if result.is_ok() {
-                                let _ = ensure_worker(&config_worker.spool_dir, false);
-                            }
+        let worker_health = health.clone();
+        let started = spawn(Box::new(move || {
+            // 安装ID、历史清理和磁盘锁均在后台初始化，慢磁盘不阻塞 Core 启动。
+            let initialize = || -> Result<_> {
+                configure_on_startup(&config_worker)?;
+                endpoint(&config_worker)?;
+                let installation = queue::installation(&config_worker.spool_dir)?;
+                let _queue = queue::lock(&config_worker.spool_dir, ".queue.lock", true)?;
+                let lease = queue::lock(&config_worker.spool_dir, &producer, false)?
+                    .context("producer lease unavailable")?;
+                let resource = Resource::builder()
+                    .with_service_name("areal-core")
+                    .with_attribute(opentelemetry::KeyValue::new(
+                        "service.version",
+                        env!("CARGO_PKG_VERSION"),
+                    ))
+                    .with_attribute(opentelemetry::KeyValue::new(
+                        "service.build.revision",
+                        env!("AREAL_BUILD_REVISION"),
+                    ))
+                    .with_attribute(opentelemetry::KeyValue::new(
+                        "service.build.dirty",
+                        env!("AREAL_BUILD_DIRTY"),
+                    ))
+                    .with_attribute(opentelemetry::KeyValue::new(
+                        "service.instance.id",
+                        installation,
+                    ))
+                    .build();
+                Ok((resource, lease))
+            };
+            let Ok((resource, _producer_lease)) = initialize() else {
+                shared_worker.stopped.store(true, Ordering::Release);
+                worker_health.initialization_failed();
+                worker_health.persist(&config_worker);
+                // 客户端统一显示一次提示，不导出底层错误，也不递归写遥测。
+                return;
+            };
+            worker_health.initialized();
+            worker_health.persist(&config_worker);
+            let resource: ResourceAttributesWithSchema = (&resource).into();
+            loop {
+                let work = receiver.recv_timeout(Duration::from_secs(1));
+                match work {
+                    Ok(Work::Record(item)) => {
+                        let mut request = ExportLogsServiceRequest {
+                            resource_logs: vec![ResourceLogs::from((
+                                (&item.record, &item.scope),
+                                &resource,
+                            ))],
+                        };
+                        // 结构化 JSON 展开属于采集后台，且从已预留的内存中扣除。
+                        super::json::project(&mut request, item.reserved / 4);
+                        let result = if request.encoded_len() <= config_worker.max_batch_bytes {
+                            queue::enqueue(
+                                &config_worker,
+                                &request.encode_to_vec(),
+                                Some(producer.clone()),
+                            )
+                        } else {
+                            shared_worker.dropped.fetch_add(1, Ordering::Relaxed);
+                            Ok(())
+                        };
+                        shared_worker
+                            .used
+                            .fetch_sub(item.reserved, Ordering::Relaxed);
+                        if result.is_err() {
+                            shared_worker.dropped.fetch_add(1, Ordering::Relaxed);
                         }
-                        Ok(Work::Flush(done)) => {
-                            persist_dropped(&config_worker.spool_dir, &shared_worker.dropped);
-                            let _ = done.send(());
-                            continue;
-                        }
-                        Ok(Work::Stop(done)) => {
-                            persist_dropped(&config_worker.spool_dir, &shared_worker.dropped);
-                            let _ = done.send(());
-                            break;
-                        }
-                        Err(mpsc::RecvTimeoutError::Disconnected) => {
-                            persist_dropped(&config_worker.spool_dir, &shared_worker.dropped);
-                            break;
-                        }
-                        Err(mpsc::RecvTimeoutError::Timeout) => {
-                            if shared_worker.stopped.load(Ordering::Acquire) {
-                                persist_dropped(&config_worker.spool_dir, &shared_worker.dropped);
-                                break;
-                            }
-                            // 启动瞬间的进程故障也需要恢复，不能只等下一次 Agent 请求。
-                            if !worker_running(&config_worker.spool_dir)
-                                && queue::records(
-                                    &config_worker.spool_dir,
-                                    config_worker.max_disk_bytes,
-                                )
-                                .is_ok_and(|rs| {
-                                    rs.iter().any(|r| {
-                                        matches!(r.status.as_str(), "pending" | "uploading")
-                                    })
-                                })
-                            {
-                                let _ = ensure_worker(&config_worker.spool_dir, false);
-                            }
+                        if result.is_ok() {
+                            let _ = ensure_worker(&config_worker.spool_dir, false);
                         }
                     }
-                    persist_dropped(&config_worker.spool_dir, &shared_worker.dropped);
+                    Ok(Work::Flush(done)) => {
+                        persist_dropped(&config_worker.spool_dir, &shared_worker.dropped);
+                        let _ = done.send(());
+                        continue;
+                    }
+                    Ok(Work::Stop(done)) => {
+                        persist_dropped(&config_worker.spool_dir, &shared_worker.dropped);
+                        let _ = done.send(());
+                        break;
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => {
+                        persist_dropped(&config_worker.spool_dir, &shared_worker.dropped);
+                        break;
+                    }
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        if shared_worker.stopped.load(Ordering::Acquire) {
+                            persist_dropped(&config_worker.spool_dir, &shared_worker.dropped);
+                            break;
+                        }
+                        // 启动瞬间的进程故障也需要恢复，不能只等下一次 Agent 请求。
+                        if !worker_running(&config_worker.spool_dir)
+                            && queue::records(
+                                &config_worker.spool_dir,
+                                config_worker.max_disk_bytes,
+                            )
+                            .is_ok_and(|rs| {
+                                rs.iter()
+                                    .any(|r| matches!(r.status.as_str(), "pending" | "uploading"))
+                            })
+                        {
+                            let _ = ensure_worker(&config_worker.spool_dir, false);
+                        }
+                    }
                 }
-            })?;
+                persist_dropped(&config_worker.spool_dir, &shared_worker.dropped);
+            }
+        }));
+        if started.is_err() {
+            health.thread_unavailable();
+            anyhow::bail!("capture_thread_unavailable");
+        }
         Ok(Self {
             sender,
             shared,
@@ -292,6 +316,104 @@ mod drop_counter_tests {
             headers_env: None,
             headers_file: None,
         }
+    }
+
+    #[test]
+    fn failed_initialization_remains_visible_until_a_successful_capture_restart() {
+        use opentelemetry::logs::{LogRecord as _, Logger, LoggerProvider};
+
+        let dir = tempfile::tempdir().unwrap();
+        let config = config(dir.path());
+        // 控制文件写入能成功，但安装标识无法原子替换，复现曾被静默吞掉的实际磁盘故障。
+        std::fs::create_dir(dir.path().join("installation.json")).unwrap();
+        let processor = Processor::new(&config).unwrap();
+        let shared = processor.shared.clone();
+        let provider = opentelemetry_sdk::logs::SdkLoggerProvider::builder()
+            .with_log_processor(processor)
+            .build();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while status(&config).unwrap()["last_error"] != "capture_initialization_failed" {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "failure was not reported"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(shared.stopped.load(Ordering::Acquire));
+        assert_eq!(status(&config).unwrap()["state"], "degraded");
+        let snapshot = std::fs::read_to_string(dir.path().join("capture-status.json")).unwrap();
+        assert!(!snapshot.contains(dir.path().to_str().unwrap()));
+        assert!(!snapshot.contains("installation.json"));
+        assert!(!snapshot.contains(&config.endpoint));
+
+        let logger = provider.logger("fixture");
+        let start = std::time::Instant::now();
+        for _ in 0..1000 {
+            let mut record = logger.create_log_record();
+            record.set_event_name("areal.user_prompt");
+            logger.emit(record);
+        }
+        assert!(start.elapsed() < Duration::from_secs(1));
+        assert!(
+            queue::records(dir.path(), config.max_disk_bytes)
+                .unwrap()
+                .is_empty()
+        );
+        provider.shutdown().unwrap();
+
+        // 上传统计恢复、手动重试都不能清除独立的采集故障。
+        assert_eq!(
+            retry_failed(&config).unwrap()["last_error"],
+            "capture_initialization_failed"
+        );
+        let mut changed = config.clone();
+        changed.source_revision = "different-config-revision".into();
+        assert_eq!(super::super::health::error(&changed), None);
+
+        std::fs::remove_dir(dir.path().join("installation.json")).unwrap();
+        let restarted = Processor::new(&config).unwrap();
+        let (done, wait) = mpsc::channel();
+        restarted.sender.send(Work::Flush(done)).unwrap();
+        wait.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(status(&config).unwrap()["last_error"], Value::Null);
+        assert_eq!(status(&config).unwrap()["state"], "ready");
+        restarted
+            .shutdown_with_timeout(Duration::from_millis(200))
+            .unwrap();
+    }
+
+    #[test]
+    fn failed_thread_creation_is_redacted_nonblocking_and_persisted_by_existing_diagnostics() {
+        let _active = super::super::health::ACTIVE_TEST_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("not-created-on-startup");
+        let config = config(&root);
+        let health = CaptureHealth::new(&config);
+        health.activate();
+        let started = std::time::Instant::now();
+        let result = Processor::start(&config, health.clone(), |_work| {
+            Err(std::io::Error::other("private-token /private/error/path"))
+        });
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "capture_thread_unavailable"
+        );
+        assert!(!root.exists(), "startup failure must not perform disk I/O");
+        assert_eq!(
+            status(&config).unwrap()["last_error"],
+            "capture_thread_unavailable"
+        );
+        // Core 已有后台使用同一入口；初始化线程不存在时仍能保存固定类别。
+        health.persist(&config);
+        drop(health);
+        assert_eq!(
+            status(&config).unwrap()["last_error"],
+            "capture_thread_unavailable"
+        );
+        let snapshot = std::fs::read_to_string(root.join("capture-status.json")).unwrap();
+        assert!(!snapshot.contains("private-token"));
+        assert!(!snapshot.contains("/private/error/path"));
     }
 
     #[test]

@@ -47,6 +47,9 @@ pub(crate) const DEFAULTS: &[(&str, &str)] = &[
     ("trajectory.upload_interval_ms", "1000"),
 ];
 
+// 队列预留 64 KiB 控制开销；最低额度还需给轨迹副本留出空间。
+const MIN_DISK_BYTES: u64 = 1 << 20;
+
 pub(crate) fn validate(field: &str, entry: &Entry) -> Result<()> {
     let invalid = |message| error(ConfigErrorKind::InvalidValue, field, &entry.source, message);
     let leaf = field.strip_prefix("trajectory.").unwrap_or(field);
@@ -71,7 +74,7 @@ pub(crate) fn validate(field: &str, entry: &Entry) -> Result<()> {
         }
         _ => {
             let (min, max) = match leaf {
-                "max_disk_bytes" => (1, 1_u64 << 40),
+                "max_disk_bytes" => (MIN_DISK_BYTES, 1_u64 << 40),
                 "max_memory_bytes" => (1, 1 << 30),
                 "max_batch_bytes" => (1, 64 << 20),
                 "max_records" => (1, 10_000),
@@ -218,4 +221,55 @@ fn canonical_identity(path: &Path) -> PathBuf {
         }
     }
     path.to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ConfigInputs, load_management_config};
+
+    fn quota_inputs(root: &Path, disk_bytes: u64, batch_bytes: usize) -> ConfigInputs {
+        let path = root.join("config.toml");
+        std::fs::write(
+            &path,
+            format!(
+                "schema_version=2\n[trajectory]\nspool_dir='spool'\nmax_disk_bytes={disk_bytes}\nmax_memory_bytes={batch_bytes}\nmax_batch_bytes={batch_bytes}\n"
+            ),
+        )
+        .unwrap();
+        ConfigInputs {
+            cwd: root.into(),
+            homedir: Some(root.into()),
+            config_file: Some(path),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn disk_quota_rejects_budgets_without_control_and_payload_capacity() {
+        let root = tempfile::tempdir().unwrap();
+        for disk_bytes in [1, 65535, 65536, MIN_DISK_BYTES - 1] {
+            // 批次与内存也降为 1，确保旧的跨字段校验不能掩盖磁盘下限缺失。
+            let inputs = quota_inputs(root.path(), disk_bytes, 1);
+            let failure = match load_management_config(&inputs) {
+                Ok(_) => panic!("undersized disk quota accepted: {disk_bytes}"),
+                Err(error) => error,
+            };
+            assert_eq!(failure.kind, ConfigErrorKind::InvalidValue);
+            assert_eq!(failure.field, "trajectory.max_disk_bytes");
+            assert!(!root.path().join("spool").exists());
+        }
+    }
+
+    #[test]
+    fn disk_quota_accepts_supported_boundaries_without_creating_spool() {
+        let root = tempfile::tempdir().unwrap();
+        for disk_bytes in [MIN_DISK_BYTES, 1_u64 << 40] {
+            let inputs = quota_inputs(root.path(), disk_bytes, 512 * 1024);
+            let config = load_management_config(&inputs).unwrap();
+            assert_eq!(config.trajectory.max_disk_bytes, disk_bytes);
+            assert_eq!(config.trajectory.max_batch_bytes, 512 * 1024);
+            assert!(!root.path().join("spool").exists());
+        }
+    }
 }

@@ -8,7 +8,7 @@ use opentelemetry_proto::tonic::{
 use prost::Message;
 use std::time::Duration;
 
-fn config(root: &Path) -> TrajectoryConfig {
+pub(super) fn config(root: &Path) -> TrajectoryConfig {
     TrajectoryConfig {
         source_id: "test-configuration".into(),
         source_file: None,
@@ -448,11 +448,12 @@ fn restart_recovers_pending_and_preserves_event_time_and_version() {
 fn fifo_bounds_payload_and_reports_eviction_including_unsent_records() {
     let d = tempfile::tempdir().unwrap();
     let mut c = config(d.path());
-    c.max_disk_bytes = 100_000;
+    c.max_memory_bytes = 1024 * 1024;
+    c.max_batch_bytes = 700_000;
     configure(&c).unwrap();
-    queue::enqueue(&c, &event("a", true, 25_000), None).unwrap();
+    queue::enqueue(&c, &event("a", true, 600_000), None).unwrap();
     std::thread::sleep(Duration::from_millis(2));
-    queue::enqueue(&c, &event("b", true, 25_000), None).unwrap();
+    queue::enqueue(&c, &event("b", true, 600_000), None).unwrap();
     let view = status(&c).unwrap();
     assert_eq!(view["queue"]["evicted"], 1);
     assert_eq!(view["records"][1]["status"], "evicted");
@@ -465,14 +466,18 @@ fn fifo_bounds_payload_and_reports_eviction_including_unsent_records() {
 #[test]
 fn lowered_budget_rejects_old_producer_and_removes_orphan_temp() {
     let d = tempfile::tempdir().unwrap();
-    let c = config(d.path());
+    let mut c = config(d.path());
+    c.max_disk_bytes = 2 * 1024 * 1024;
+    c.max_memory_bytes = 2 * 1024 * 1024;
+    c.max_batch_bytes = 2 * 1024 * 1024;
     configure(&c).unwrap();
     std::fs::write(d.path().join(".trajectory-tmp-crashed"), vec![0; 200_000]).unwrap();
     let mut lowered = c.clone();
-    lowered.max_disk_bytes = 70_000;
+    lowered.max_disk_bytes = 1024 * 1024;
+    lowered.max_batch_bytes = 1024 * 1024;
     configure(&lowered).unwrap();
     assert!(!d.path().join(".trajectory-tmp-crashed").exists());
-    queue::enqueue(&c, &event("large", true, 20_000), None).unwrap();
+    queue::enqueue(&c, &event("large", true, 1024 * 1024 - 32768), None).unwrap();
     assert_eq!(status(&lowered).unwrap()["queue"]["pending"], 0);
     assert_eq!(status(&lowered).unwrap()["queue"]["dropped_oversize"], 1);
 }
@@ -710,12 +715,13 @@ fn legacy_statistics_keep_same_destination_delay_and_survive_interrupted_switch(
 fn completion_of_evicted_inflight_record_does_not_resurrect_it() {
     let d = tempfile::tempdir().unwrap();
     let mut c = config(d.path());
-    c.max_disk_bytes = 100_000;
+    c.max_memory_bytes = 1024 * 1024;
+    c.max_batch_bytes = 700_000;
     configure(&c).unwrap();
-    queue::enqueue(&c, &event("a", true, 25_000), None).unwrap();
+    queue::enqueue(&c, &event("a", true, 600_000), None).unwrap();
     let a = worker::pick(&c).unwrap().unwrap();
     std::thread::sleep(Duration::from_millis(2));
-    queue::enqueue(&c, &event("b", true, 25_000), None).unwrap();
+    queue::enqueue(&c, &event("b", true, 600_000), None).unwrap();
     worker::settle(&c, &a, worker::Outcome::Success).unwrap();
     assert_eq!(status(&c).unwrap()["queue"]["uploaded"], 0);
     assert_eq!(status(&c).unwrap()["queue"]["evicted"], 1);

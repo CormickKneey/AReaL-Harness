@@ -1,4 +1,5 @@
 //! 可选的标准 OTLP Logs 持久发送器；不依赖任何平台或修改 Agent 的执行结果。
+mod health;
 mod json;
 mod processor;
 mod queue;
@@ -15,6 +16,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+pub(crate) use health::CaptureHealth;
 pub(crate) use processor::Processor;
 pub use worker::run_worker;
 
@@ -282,6 +284,8 @@ pub fn status(config: &TrajectoryConfig) -> Result<Value> {
         Some("configuration_not_applied".to_string())
     } else if invalid {
         Some("invalid_endpoint".to_string())
+    } else if let Some(error) = health::error(config) {
+        Some(error.to_string())
     } else if config.enabled && !running && count("pending") + count("uploading") > 0 {
         Some("worker_not_running".to_string())
     } else {
