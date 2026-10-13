@@ -96,3 +96,48 @@ pub struct Preview {
     pub request_id: String,
     pub target: Value,
 }
+
+/// References supplied by the trusted host; secret values never enter RPCs.
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HostAuthReferences {
+    pub client_secret_ref: Option<String>,
+    pub private_key_ref: Option<String>,
+    pub private_key_id: Option<String>,
+    pub client_metadata_url: Option<String>,
+    pub api_key_ref: Option<String>,
+    pub callback_url: Option<String>,
+}
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AuthConfigure {
+    pub request_id: String,
+    pub id: String,
+    pub server: String,
+    pub expected_digest: String,
+    pub configuration: HostAuthReferences,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FormResourcePrepare {
+    pub thread_id: String,
+    pub request_id: String,
+    pub field_name: String,
+}
+/// Private native-picker data. No renderer command accepts this DTO.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FormResourceStage {
+    pub selection_token: String,
+    pub request_id: String,
+    pub paths: Vec<std::path::PathBuf>,
+}
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FormResourceRelease {
+    pub thread_id: String,
+    pub request_id: String,
+    pub field_name: String,
+    pub uri: String,
+}

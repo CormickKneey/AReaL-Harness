@@ -30,6 +30,7 @@ async fn peer(
     );
     let v: Value = serde_json::from_slice(&body).unwrap();
     let result = match v["method"].as_str().unwrap() {
+        "server/discover" => return axum::Json(json!({"jsonrpc":"2.0","id":v["id"],"error":{"code":-32601,"message":"Method not found"}})).into_response(),
         "initialize" => {
             json!({"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"test","version":"1"}})
         }

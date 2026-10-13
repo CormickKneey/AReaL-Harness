@@ -795,3 +795,38 @@ async fn cross_process_refresh_serializes() {
     );
     task.abort();
 }
+
+// Contract failures: declared endpoints must work without discovery; explicit empty
+// defaults must never expand to server scopes; resource/base scopes must survive.
+#[tokio::test]
+async fn portable_explicit_endpoints_resource_and_empty_defaults() {
+    let temp = tempfile::tempdir().unwrap();
+    let manager = AuthManager::new(temp.path().join("auth"), "portable").unwrap();
+    let o = normalize_plugin_document(true, &json!({
+        "$schema":"https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+        "mcpServers":{"server":{"type":"streamable-http","url":"http://127.0.0.1:9/mcp",
+        "extensions":{"com.openai":{"auth":{"type":"oauth",
+        "client":{"mode":"provided","clientId":"portable-client","tokenEndpointAuthMethod":"none"},
+        "authorizationUrl":"https://issuer.example/authorize", "tokenUrl":"https://issuer.example/token",
+        "authorizationServerBase":"https://issuer.example", "resource":"https://resource.example/documents",
+        "baseScopes":["read"],"defaultScopes":[],"oidcScopesSupported":["openid","email"]}}}}}
+    }), temp.path(), temp.path()).unwrap();
+    let policy = o.servers["server"].auth_policy().unwrap();
+    assert!(
+        policy.is_supported(),
+        "portable OAuth overrides must be executable"
+    );
+    let AuthStatus::Pending { authorization_url } = manager
+        .start("server", "http://127.0.0.1:9/mcp", policy, None)
+        .await
+        .unwrap()
+    else {
+        panic!("pending")
+    };
+    let u = url::Url::parse(&authorization_url).unwrap();
+    let q: std::collections::BTreeMap<_, _> = u.query_pairs().into_owned().collect();
+    assert_eq!(u.host_str(), Some("issuer.example"));
+    assert_eq!(q["resource"], "https://resource.example/documents");
+    assert_eq!(q["scope"], "read");
+    manager.cancel("server").await;
+}

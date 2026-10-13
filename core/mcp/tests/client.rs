@@ -319,6 +319,9 @@ async fn http_peer(
     let request: Value = serde_json::from_slice(&body).unwrap();
     state.records.lock().unwrap().push(request.clone());
     let operation = request["method"].as_str().unwrap();
+    if operation == "server/discover" {
+        return axum::Json(json!({"jsonrpc":"2.0","id":request["id"],"error":{"code":-32601,"message":"Method not found"}})).into_response();
+    }
     if operation != "initialize" {
         assert_eq!(headers.get("mcp-session-id").unwrap(), "fixture-session");
         assert_eq!(headers.get("mcp-protocol-version").unwrap(), "2025-11-25");

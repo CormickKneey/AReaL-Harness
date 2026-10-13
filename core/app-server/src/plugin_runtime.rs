@@ -4,6 +4,7 @@ pub(crate) const METHODS: &[&str] = &[
     "areal/plugin/mcp/list",
     "areal/plugin/connection",
     "areal/plugin/auth",
+    "areal/plugin/auth/configure",
     "areal/plugin/connector/configure",
     "areal/mcp/tool/result",
     "areal/mcp/apps/list",
@@ -14,6 +15,9 @@ pub(crate) const METHODS: &[&str] = &[
     "areal/mcp/forms/list",
     "areal/mcp/form/respond",
     "areal/mcp/form/preview",
+    "areal/mcp/form/resource/prepare",
+    "areal/mcp/form/resource/stage",
+    "areal/mcp/form/resource/release",
 ];
 use areal_protocol::plugin_runtime::*;
 pub(crate) async fn dispatch(
@@ -24,7 +28,10 @@ pub(crate) async fn dispatch(
 ) -> Result<Value, RpcError> {
     if matches!(
         method,
-        "areal/plugin/connection" | "areal/plugin/connector/configure"
+        "areal/plugin/connection"
+            | "areal/plugin/connector/configure"
+            | "areal/plugin/auth/configure"
+            | "areal/mcp/form/resource/stage"
     ) {
         let request = params
             .get("requestId")
@@ -83,6 +90,10 @@ async fn dispatch_inner(
             engine
                 .plugin_connection(p.id, p.expected_digest, p.connect)
                 .await
+        }
+        "areal/plugin/auth/configure" => {
+            let p: AuthConfigure = parse(params)?;
+            engine.plugin_auth_configure(p).await
         }
         "areal/plugin/auth" => {
             let p: Auth = parse(params)?;
@@ -161,6 +172,30 @@ async fn dispatch_inner(
             let p: Preview = parse(params)?;
             engine
                 .mcp_form_preview(identity.into(), p.thread_id, p.request_id, p.target)
+                .await
+        }
+        "areal/mcp/form/resource/prepare" => {
+            let p: FormResourcePrepare = parse(params)?;
+            engine
+                .mcp_form_resource_prepare(identity.into(), p.thread_id, p.request_id, p.field_name)
+                .await
+        }
+        "areal/mcp/form/resource/stage" => {
+            let p: FormResourceStage = parse(params)?;
+            engine
+                .mcp_form_resource_stage(identity.into(), p.selection_token, p.paths)
+                .await
+        }
+        "areal/mcp/form/resource/release" => {
+            let p: FormResourceRelease = parse(params)?;
+            engine
+                .mcp_form_resource_release(
+                    identity.into(),
+                    p.thread_id,
+                    p.request_id,
+                    p.field_name,
+                    p.uri,
+                )
                 .await
         }
         "areal/mcp/form/respond" => {

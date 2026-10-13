@@ -1226,6 +1226,7 @@ async fn retry_oauth_fixture(
             assert!(headers["authorization"] == "Bearer synthetic-retry-token");
             let request: serde_json::Value = serde_json::from_str(&body).unwrap();
             let result = match request["method"].as_str().unwrap() {
+                "server/discover" => return axum::Json(json!({"jsonrpc":"2.0","id":request["id"],"error":{"code":-32601,"message":"Method not found"}})).into_response(),
                 "initialize" => {
                     json!({"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"authorized","version":"1"}})
                 }
@@ -1404,4 +1405,520 @@ async fn explicit_retry_after_optional_oauth_keeps_old_app_owner() {
     e.shutdown().await;
     http.abort();
     let _ = http.await;
+}
+
+#[tokio::test]
+async fn mrtr_app_resource_and_tool_share_authoritative_forms() {
+    let root = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    write(
+        root.path(),
+        ".agents/plugins/marketplace.json",
+        r#"{"name":"local","plugins":[{"name":"modern","source":"./pkg"}]}"#,
+    );
+    write(
+        root.path(),
+        "pkg/.codex-plugin/plugin.json",
+        r#"{"name":"modern"}"#,
+    );
+    write(
+        root.path(),
+        "pkg/server.py",
+        include_str!("../../mcp/tests/mrtr.py"),
+    );
+    write(root.path(),"pkg/.mcp.json",&json!({"mcpServers":{"fixture":{"command":"python3","args":["server.py"],"env":{"READ_FORM":"1"}}}}).to_string());
+    let e = Engine::open(state.path(), Arc::new(ModelFixture), Limits::default()).unwrap();
+    e.set_permissions(
+        serde_json::from_value(json!({"mode":"ASK_PERMISSIONS","ask":["mcp__*"]})).unwrap(),
+        None,
+    )
+    .unwrap();
+    let store =
+        Arc::new(Store::open(root.path().join("plugins"), root.path().into(), None).unwrap());
+    e.install_plugin_store(store.clone()).unwrap();
+    let d = store.read("modern@local").unwrap();
+    e.plugin_install(
+        d.id.clone(),
+        "user".into(),
+        d.revision,
+        d.source,
+        d.source_digest,
+    )
+    .await
+    .unwrap();
+    let d = store.read(&d.id).unwrap();
+    e.plugin_connection(d.id.clone(), d.installed_digest.unwrap(), true)
+        .await
+        .unwrap();
+    let apps = e.mcp_apps_list(None).await.unwrap();
+    let server = apps["data"][0]["serverId"].as_str().unwrap().to_owned();
+    let generation = apps["data"][0]["generation"].as_u64().unwrap();
+    let thread = e
+        .create(root.path().to_str().unwrap().into())
+        .await
+        .unwrap();
+    let open = {
+        let e = e.clone();
+        let thread = thread.id.clone();
+        let server = server.clone();
+        tokio::spawn(async move {
+            e.mcp_app_open(
+                "owner".into(),
+                thread,
+                server,
+                generation,
+                "app".into(),
+                None,
+                "modern-open".into(),
+                None,
+                None,
+            )
+            .await
+        })
+    };
+    async fn next_form(e: &Arc<Engine>, thread: &str) -> serde_json::Value {
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let forms = e.mcp_forms_list(thread.into()).await.unwrap();
+                if let Some(f) = forms["data"].as_array().unwrap().first() {
+                    return f.clone();
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap()
+    }
+    for index in 0..2 {
+        let form = next_form(&e, &thread.id).await;
+        assert_eq!(form["turnId"], "");
+        let id = form["requestId"].as_str().unwrap().to_owned();
+        assert!(
+            e.mcp_form_respond(
+                "stranger".into(),
+                thread.id.clone(),
+                id.clone(),
+                json!({"action":"accept","content":{"answer":"yes"}})
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            e.mcp_form_respond(
+                "owner".into(),
+                thread.id.clone(),
+                id.clone(),
+                json!({"action":"accept","content":{"answer":true}})
+            )
+            .await
+            .is_err()
+        );
+        e.mcp_form_respond(
+            "owner".into(),
+            thread.id.clone(),
+            id,
+            json!({"action":"accept","content":{"answer":format!("round{index}")}}),
+        )
+        .await
+        .unwrap();
+    }
+    let app = open.await.unwrap().unwrap();
+    assert_eq!(app["resource"]["html"], "<p>MRTR finished</p>");
+    assert!(e.read(&thread.id, true).await.unwrap().turns.is_empty());
+    let instance = app["instanceId"].as_str().unwrap().to_owned();
+    let request = json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"app","arguments":{"mode":"normal"}}});
+    let job = {
+        let e = e.clone();
+        let thread = thread.id.clone();
+        let instance = instance.clone();
+        let request = request.clone();
+        tokio::spawn(async move {
+            e.mcp_app_request(
+                "owner".into(),
+                thread,
+                instance,
+                generation,
+                request,
+                Some("mrtr-once".into()),
+            )
+            .await
+        })
+    };
+    approve(&e, &thread.id).await;
+    for _ in 0..2 {
+        let form = next_form(&e, &thread.id).await;
+        assert_ne!(form["turnId"], "");
+        e.mcp_form_respond(
+            "owner".into(),
+            thread.id.clone(),
+            form["requestId"].as_str().unwrap().into(),
+            json!({"action":"accept","content":{"answer":"accepted"}}),
+        )
+        .await
+        .unwrap();
+    }
+    let result = job.await.unwrap().unwrap();
+    assert_eq!(result["result"]["_meta"]["preserved"], true);
+    let replay = e
+        .mcp_app_request(
+            "owner".into(),
+            thread.id.clone(),
+            instance.clone(),
+            generation,
+            request,
+            Some("mrtr-once".into()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay, result);
+    assert_eq!(e.read(&thread.id, true).await.unwrap().turns.len(), 1);
+    // Uploaded directory is outside the workspace; only the explicit picker operation can import it.
+    let picked = tempfile::tempdir().unwrap();
+    let picked_path = picked.path().canonicalize().unwrap();
+    std::fs::write(picked_path.join("data.txt"), "snapshot-before").unwrap();
+    let upload = {
+        let e = e.clone();
+        let thread = thread.id.clone();
+        let instance = instance.clone();
+        tokio::spawn(async move {
+            e.mcp_app_request("owner".into(),thread,instance,generation,json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"app","arguments":{"mode":"upload"}}}),Some("upload-once".into())).await
+        })
+    };
+    approve(&e, &thread.id).await;
+    let form = next_form(&e, &thread.id).await;
+    let form_id = form["requestId"].as_str().unwrap().to_owned();
+    assert!(
+        e.mcp_form_resource_prepare(
+            "stranger".into(),
+            thread.id.clone(),
+            form_id.clone(),
+            "selected".into()
+        )
+        .await
+        .is_err()
+    );
+    let prepared = e
+        .mcp_form_resource_prepare(
+            "owner".into(),
+            thread.id.clone(),
+            form_id.clone(),
+            "selected".into(),
+        )
+        .await
+        .unwrap();
+    let token = prepared["selectionToken"].as_str().unwrap().to_owned();
+    assert_eq!(prepared["multiple"], false);
+    assert!(
+        e.mcp_form_resource_stage("stranger".into(), token.clone(), vec![picked_path.clone()])
+            .await
+            .is_err()
+    );
+    let paths = vec![picked_path.clone()];
+    let parameters = json!({"selectionToken":token,"paths":paths});
+    let stage_id = uuid::Uuid::new_v4().to_string();
+    let staged = e
+        .management_submission(
+            "owner".into(),
+            stage_id.clone(),
+            "areal/mcp/form/resource/stage".into(),
+            parameters.clone(),
+            {
+                let token = token.clone();
+                let paths = paths.clone();
+                move |e| async move {
+                    e.mcp_form_resource_stage("owner".into(), token, paths)
+                        .await
+                        .unwrap()
+                }
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(staged["summary"]["fileCount"], 1);
+    assert_eq!(staged["summary"]["totalBytes"], 15);
+    let uri = staged["resources"][0]["uri"].as_str().unwrap().to_owned();
+    assert!(uri.starts_with("areal-mcp-resource://"));
+    assert!(!staged.to_string().contains(picked_path.to_str().unwrap()));
+    std::fs::write(picked_path.join("data.txt"), "changed-after-stage").unwrap();
+    let repeated = e
+        .management_submission(
+            "owner".into(),
+            stage_id,
+            "areal/mcp/form/resource/stage".into(),
+            parameters,
+            |_| async { panic!("duplicate stage must not run") },
+        )
+        .await
+        .unwrap();
+    assert_eq!(repeated, staged);
+    assert!(
+        e.mcp_form_respond(
+            "owner".into(),
+            thread.id.clone(),
+            form_id.clone(),
+            json!({"action":"accept","content":{"selected":"file:///ungranted"}})
+        )
+        .await
+        .is_err()
+    );
+    e.mcp_form_respond(
+        "owner".into(),
+        thread.id.clone(),
+        form_id,
+        json!({"action":"accept","content":{"selected":uri}}),
+    )
+    .await
+    .unwrap();
+    let result = upload.await.unwrap().unwrap();
+    let receipt: serde_json::Value =
+        serde_json::from_str(result["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(receipt["snapshot"], "snapshot-before");
+    assert_eq!(
+        std::fs::read_to_string(picked_path.join("data.txt")).unwrap(),
+        "changed-after-stage"
+    );
+    let snapshot = reqwest::Url::parse(receipt["fileUri"].as_str().unwrap())
+        .unwrap()
+        .to_file_path()
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        while snapshot.exists() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        e.mcp_form_resource_stage("owner".into(), token, paths)
+            .await
+            .is_err()
+    );
+    let read = {
+        let e = e.clone();
+        let thread = thread.id.clone();
+        let instance = instance.clone();
+        tokio::spawn(async move {
+            e.mcp_app_request("owner".into(),thread,instance,generation,json!({"jsonrpc":"2.0","id":2,"method":"resources/read","params":{"uri":"ui://app"}}),None).await
+        })
+    };
+    let form = next_form(&e, &thread.id).await;
+    e.mcp_app_close("owner".into(), thread.id.clone(), instance, generation)
+        .await
+        .unwrap();
+    assert!(
+        e.mcp_form_respond(
+            "owner".into(),
+            thread.id.clone(),
+            form["requestId"].as_str().unwrap().into(),
+            json!({"action":"cancel"})
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(3), read)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_err()
+    );
+    e.shutdown().await;
+}
+
+// Planned failure: the transport challenge's scope is lost between failed discovery
+// and explicit Core authentication; auth must not replay the rejected startup POST.
+async fn scoped_challenge_fixture(
+    axum::extract::State((base, attempts)): axum::extract::State<(
+        String,
+        Arc<std::sync::atomic::AtomicUsize>,
+    )>,
+    uri: axum::http::Uri,
+    headers: axum::http::HeaderMap,
+    body: String,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if uri.path() == "/mcp" && headers.get("authorization").is_none() {
+        let n = attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let scope = if n == 0 {
+            "protected.read"
+        } else {
+            "unexpected.probe"
+        };
+        return (axum::http::StatusCode::UNAUTHORIZED,[("www-authenticate",format!("Bearer resource_metadata=\"{base}/.well-known/oauth-protected-resource/mcp\", scope=\"{scope}\""))]).into_response();
+    }
+    if uri
+        .path()
+        .starts_with("/.well-known/oauth-protected-resource")
+    {
+        return axum::Json(json!({"resource":format!("{base}/mcp"),"authorization_servers":[base],"scopes_supported":["default.read"]})).into_response();
+    }
+    retry_oauth_fixture(axum::extract::State(base), uri, headers, body).await
+}
+#[tokio::test]
+async fn explicit_auth_uses_private_startup_challenge_without_replay() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let router = axum::Router::new()
+        .fallback(scoped_challenge_fixture)
+        .with_state((base.clone(), attempts.clone()));
+    let http = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let workspace = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    write(
+        workspace.path(),
+        ".agents/plugins/marketplace.json",
+        r#"{"name":"local","plugins":[{"name":"sample","source":"./pkg"}]}"#,
+    );
+    write(
+        workspace.path(),
+        "pkg/plugin.json",
+        r#"{"$schema":"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json","name":"sample","version":"1.0.0"}"#,
+    );
+    write(workspace.path(),"pkg/mcp.json",&json!({"$schema":"https://agent-plugins.org/schemas/1.0.0/mcp.schema.json","mcpServers":{"scoped":{"type":"streamable-http","url":format!("{base}/mcp"),"extensions":{"com.openai":{"auth":{"type":"mixed","client":{"mode":"provided","clientId":"fixture"}}}}}}}).to_string());
+    let e = Engine::open(data.path(), Arc::new(ModelFixture), Limits::default()).unwrap();
+    let store = Arc::new(
+        Store::open(
+            workspace.path().join("plugins"),
+            workspace.path().into(),
+            None,
+        )
+        .unwrap(),
+    );
+    e.install_plugin_store(store.clone()).unwrap();
+    let d = store.read("sample@local").unwrap();
+    e.plugin_install(
+        d.id.clone(),
+        "user".into(),
+        d.revision,
+        d.source,
+        d.source_digest,
+    )
+    .await
+    .unwrap();
+    let d = store.read(&d.id).unwrap();
+    let digest = d.installed_digest.unwrap();
+    let failed = e
+        .plugin_connection(d.id.clone(), digest.clone(), true)
+        .await
+        .unwrap();
+    let server = failed["data"][0]["servers"][0]["serverId"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(failed["data"][0]["servers"][0]["state"], "authRequired");
+    assert!(!failed.to_string().contains("protected.read"));
+    let pending = e
+        .plugin_auth(d.id.clone(), server.clone(), "start".into())
+        .await
+        .unwrap();
+    let url = reqwest::Url::parse(pending["authorizationUrl"].as_str().unwrap()).unwrap();
+    let query: std::collections::BTreeMap<_, _> = url.query_pairs().into_owned().collect();
+    let scopes: std::collections::BTreeSet<_> = query["scope"].split_whitespace().collect();
+    assert_eq!(
+        scopes,
+        std::collections::BTreeSet::from(["default.read", "protected.read"])
+    );
+    assert_eq!(
+        attempts.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "explicit authentication never replays discovery"
+    );
+    let mut callback = reqwest::Url::parse(&query["redirect_uri"]).unwrap();
+    callback
+        .query_pairs_mut()
+        .append_pair("code", "fixture-code")
+        .append_pair("state", &query["state"]);
+    assert!(
+        reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .unwrap()
+            .get(callback)
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success()
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while e
+            .plugin_auth(d.id.clone(), server.clone(), "status".into())
+            .await
+            .unwrap()["status"]
+            != "ready"
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let ready = e.plugin_connection(d.id, digest, true).await.unwrap();
+    assert_eq!(ready["data"][0]["state"], "connected");
+    assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 1);
+    e.shutdown().await;
+    http.abort();
+}
+
+// Planned policy failures: ON_INSTALL mixed accidentally calls anonymously;
+// listing/installation starts OAuth; ON_USE is prematurely blocked as installed.
+#[tokio::test]
+async fn marketplace_authentication_timing_gates_only_declared_servers() {
+    for (timing, expected) in [("ON_INSTALL", "authRequired"), ("ON_USE", "disconnected")] {
+        let workspace = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        write(workspace.path(),".agents/plugins/marketplace.json",&json!({"name":"local","plugins":[{"name":"sample","source":"./pkg","policy":{"installation":"AVAILABLE","authentication":timing}}]}).to_string());
+        write(
+            workspace.path(),
+            "pkg/plugin.json",
+            r#"{"$schema":"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json","name":"sample","version":"1.0.0"}"#,
+        );
+        write(workspace.path(),"pkg/mcp.json",&json!({"$schema":"https://agent-plugins.org/schemas/1.0.0/mcp.schema.json","mcpServers":{"authenticated":{"type":"streamable-http","url":"http://127.0.0.1:1/mcp","extensions":{"com.openai":{"auth":{"type":"mixed","client":{"mode":"provided","clientId":"fixture"}}}}},"anonymous":{"type":"streamable-http","url":"http://127.0.0.1:1/other"}}}).to_string());
+        let e = Engine::open(data.path(), Arc::new(ModelFixture), Limits::default()).unwrap();
+        let store = Arc::new(
+            Store::open(
+                workspace.path().join("plugins"),
+                workspace.path().into(),
+                None,
+            )
+            .unwrap(),
+        );
+        e.install_plugin_store(store.clone()).unwrap();
+        let d = store.read("sample@local").unwrap();
+        e.plugin_install(
+            d.id.clone(),
+            "user".into(),
+            d.revision,
+            d.source,
+            d.source_digest,
+        )
+        .await
+        .unwrap();
+        let listed = e.plugin_mcp_list().await.unwrap();
+        let row = &listed["data"][0];
+        assert_eq!(row["state"], expected);
+        let servers = row["servers"].as_array().unwrap();
+        let authenticated = servers
+            .iter()
+            .find(|s| s["authentication"] != "none")
+            .unwrap();
+        let anonymous = servers
+            .iter()
+            .find(|s| s["authentication"] == "none")
+            .unwrap();
+        assert_eq!(authenticated["state"], expected);
+        assert_eq!(anonymous["state"], "disconnected");
+        assert!(
+            e.plugin_auth(
+                d.id,
+                authenticated["serverId"].as_str().unwrap().into(),
+                "status".into()
+            )
+            .await
+            .unwrap()
+            .is_null(),
+            "installation/listing must never initiate OAuth"
+        );
+        e.shutdown().await;
+    }
 }

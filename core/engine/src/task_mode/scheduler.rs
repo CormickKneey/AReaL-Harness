@@ -528,6 +528,7 @@ mod control_race_tests {
                     task_id: task.id.clone(),
                     request_id: "resume-task".into(),
                     expected_revision: task.revision,
+                    expected_run_id: None,
                 },
             )
             .await
@@ -545,6 +546,7 @@ mod control_race_tests {
                     task_id: task.id.clone(),
                     request_id: "pause-task".into(),
                     expected_revision: stale.revision,
+                    expected_run_id: None,
                 },
             )
             .await

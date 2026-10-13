@@ -22,6 +22,8 @@ pub(crate) struct GitPin {
     pub url: String,
     pub reference: Option<String>,
     pub commit: String,
+    #[serde(default)]
+    pub sparse_paths: Vec<String>,
 }
 pub(crate) fn is_remote(v: &Value) -> bool {
     matches!(
@@ -318,6 +320,29 @@ pub(crate) fn normalize_git_url(url: &str, marketplace_root: &Path) -> Result<St
     Ok(format!("https://github.com/{}/{repo}.git", segments[0]))
 }
 fn fetch_git(stage: &Path, url: &str, reference: Option<&str>) -> Result<String> {
+    fetch_git_sparse(stage, url, reference, &[])
+}
+fn fetch_git_sparse(
+    stage: &Path,
+    url: &str,
+    reference: Option<&str>,
+    sparse_paths: &[String],
+) -> Result<String> {
+    ensure!(
+        sparse_paths.len() <= 256 && sparse_paths.iter().map(String::len).sum::<usize>() <= 65536,
+        "sparse paths exceed budget"
+    );
+    for path in sparse_paths {
+        package::relative(path)?;
+        ensure!(
+            !path.starts_with('-')
+                && !path
+                    .chars()
+                    .any(|c| c.is_control() || "\\*?[]!".contains(c))
+                && !path.split('/').any(|s| s == ".git" || s == "."),
+            "unsafe sparse path"
+        );
+    }
     let url = normalize_git_url(url, stage)?;
     let reference = reference.unwrap_or("HEAD");
     ensure!(
@@ -328,23 +353,22 @@ fn fetch_git(stage: &Path, url: &str, reference: Option<&str>) -> Result<String>
         "invalid Git ref"
     );
     git(stage, &["init", "--quiet"])?;
-    git(
-        stage,
-        &[
-            "fetch",
-            "--depth=1",
-            "--no-tags",
-            "--no-recurse-submodules",
-            "--",
-            &url,
-            reference,
-        ],
-    )?;
+    let mut fetch = vec!["fetch", "--depth=1", "--no-tags", "--no-recurse-submodules"];
+    if !sparse_paths.is_empty() {
+        fetch.push("--filter=blob:none");
+    }
+    fetch.extend(["--", &url, reference]);
+    git(stage, &fetch)?;
     let commit = git(stage, &["rev-parse", "--verify", "FETCH_HEAD^{commit}"])?;
     ensure!(
         commit.len() == 40 && commit.bytes().all(|b| b.is_ascii_hexdigit()),
         "invalid resolved commit"
     );
+    if !sparse_paths.is_empty() {
+        let mut sparse = vec!["sparse-checkout", "set", "--cone", "--"];
+        sparse.extend(sparse_paths.iter().map(String::as_str));
+        git(stage, &sparse)?;
+    }
     git(stage, &["checkout", "--quiet", "--detach", &commit])?;
     Ok(commit)
 }
@@ -539,10 +563,11 @@ impl Store {
         &self,
         url: &str,
         reference: Option<&str>,
+        sparse_paths: &[String],
     ) -> Result<(GitPin, package::Files, String)> {
         let url = normalize_git_url(url, &self.workspace)?;
         let stage = tempfile::tempdir_in(self.root.join("staging"))?;
-        let commit = fetch_git(stage.path(), &url, reference)?;
+        let commit = fetch_git_sparse(stage.path(), &url, reference, sparse_paths)?;
         let files = package::snapshot(stage.path())?;
         let catalog = CATALOG_PATHS
             .iter()
@@ -567,6 +592,7 @@ impl Store {
                 url,
                 reference: reference.map(str::to_owned),
                 commit,
+                sparse_paths: sparse_paths.to_vec(),
             },
             files,
             name.into(),
@@ -606,6 +632,15 @@ impl Store {
         reference: Option<&str>,
         expected_revision: u64,
     ) -> Result<PluginList> {
+        self.add_git_marketplace_sparse(url, reference, &[], expected_revision)
+    }
+    pub fn add_git_marketplace_sparse(
+        &self,
+        url: &str,
+        reference: Option<&str>,
+        sparse_paths: &[String],
+        expected_revision: u64,
+    ) -> Result<PluginList> {
         let actual = self.state()?.revision;
         if actual != expected_revision {
             return Err(StoreError::Conflict {
@@ -614,7 +649,7 @@ impl Store {
             }
             .into());
         }
-        let (pin, files, name) = self.prepare_git_marketplace(url, reference)?;
+        let (pin, files, name) = self.prepare_git_marketplace(url, reference, sparse_paths)?;
         self.transact(expected_revision, |state| {
             self.register_git_marketplace(state, pin, &files, &name)
         })?;
@@ -652,7 +687,9 @@ impl Store {
             .git_marketplaces
             .iter()
             .filter(|(root, _)| roots.contains(*root))
-            .map(|(_, pin)| self.prepare_git_marketplace(&pin.url, pin.reference.as_deref()))
+            .map(|(_, pin)| {
+                self.prepare_git_marketplace(&pin.url, pin.reference.as_deref(), &pin.sparse_paths)
+            })
             .collect::<Result<Vec<_>>>()?;
         if prepared.is_empty() {
             return self.list();

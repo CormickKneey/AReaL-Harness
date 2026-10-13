@@ -70,7 +70,11 @@ areal plugin --workspace /absolute/workspace submission REQUEST_ID
 
 详情中先“解析并预览来源”，核对提交、版本和摘要，再勾选确认并安装。候选摘要与已安装摘要分开显示。连接必须确认已安装摘要；新版本安装后需要再次核对。MCP 配置按便携/legacy 格式归一化；命令、环境和认证字段不作为管理结果返回。服务器策略控制工具启用、必需性、审批和模型可见输出预算；失败不等于包已卸载。
 
-OAuth 使用独立的私有存储和 loopback PKCE callback。显式重试会重新认证已被拒绝的凭据；刷新和并发登录按凭据键协调。认证失败不会自动重发 MCP 操作。便携认证中尚不能执行的声明会明确报告，见[验收矩阵](../development/codex-plugins-p1-p3-acceptance.md)。
+认证配置支持 provided、DCR、CIMD preference、声明的 endpoint/resource/OIDC/scopes，以及 API-key bearer/basic/custom header。没有宿主可信 metadata URL 的 CIMD preference 回退 DCR；不会借用 OpenAI 客户端身份。OAuth client secret 和签名私钥在详情中配置并由 Main 安全存储，Core 只持引用。`ON_INSTALL` 安装后显示待认证并门控声明认证的服务；`ON_USE` 在需要时提出需求，mixed 可先匿名使用公开能力。
+
+OAuth 使用私有存储和 loopback PKCE callback。scope override（包括空列表）在授权与刷新时保留；认证挑战只交给认证所有者。工具级拒绝绑定实际发送的 token，不误删并发刷新得到的新 token，也不自动重发 MCP 操作。实现与真实服务证据分开记录，见[验收矩阵](../development/codex-plugins-p1-p3-acceptance.md)。
+
+Codex `marketplace/add` 接受顶层 `sparsePaths`：非空列表使用 Git cone 目录选择并在更新时保留；调用方须包含目录文件与所需插件路径，不自动扩大选择。省略或空列表保留完整 checkout；本地目录来源不接受非空 sparse 选择。
 
 ## 桌面 Apps 与 GitHub
 
@@ -82,6 +86,10 @@ GitHub Connector 保留 `.app.json` 的原始 ID。在详情中填写这个 ID �
 
 文件入口只给 App 不透明资源 URI。Core 校验保存的文件授权，并复用 Runtime 的目录描述符文件助手读写；Main 只管理窗口与文件监听。读取最多2 MiB，当前原子写入最多64 KiB；超限返回 `too-large`。写入支持 ETag/CAS 和持久请求回执；重试同键返回原结果，不覆盖后续编辑。
 
+现代 MCP `2026-07-28` 支持多轮 MRTR 表单；直接旧连接仍支持 legacy elicitation。每轮保留原工具参数和 Core 调用归属，重新检查权限，不重放 UNKNOWN。资源更新只投递给订阅该 URI 的 App；多个 App 共享 wire 订阅，关闭最后一个才退订。
+
+表单可通过原生选择器添加本机文件/目录。Core 导入只读副本，原文件后续编辑不影响副本；每文件16 MiB、每逻辑调用256文件/64 MiB、目录深度16。URI 绑定表单字段和服务世代，取消/关闭/撤权/调用结束会清理。当前文件副本仅交给同机 stdio 服务；HTTP 服务没有公开约定的上传通道时明确报告不支持，仍可选择服务器提供的资源。
+
 ## 当前边界
 
-P2 hooks 未实现。本批次不宣称全部 Codex 协议已经兼容：原生表单用户上传、现代2026 MRTR、部分便携认证机制、私有 OpenAI catalog/sharing、跨平台和安装包验收仍有缺项。受支持的 legacy 表单按完整 schema 验证；不支持的上传表单整表拒绝。固定 Codex 管理 RPC 使用独立 adapter，共享安装所有者；未配置的托管服务返回明确 capability error。完整清单与可重复证据见[验收矩阵](../development/codex-plugins-p1-p3-acceptance.md)。
+P2 hooks、OpenAI 私有 catalog/sharing、跨平台、真实供应商 OAuth 和签名/公证安装包仍未接受。部分子进程验收在本机收到原因未确认的 SIGKILL；不能把源码完成或局部通过当作完整兼容验收。未配置的托管服务返回明确 capability error。完整清单与可重复证据见[验收矩阵](../development/codex-plugins-p1-p3-acceptance.md)。

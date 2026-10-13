@@ -37,7 +37,7 @@ export function PluginsSettings({
       </div>
       {tab === "catalog" ? (
         <PluginCatalogSettings
-          key={`${props.project?.id}:${!!props.project?.state?.connected}`}
+          key={props.project?.id}
           {...props}
         />
       ) : tab === "apps" ? apps : tab === "mcp" ? (

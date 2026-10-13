@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 import { McpAppIcon } from "./McpAppIcon.js";
 const icon = z
@@ -205,6 +205,7 @@ export function McpAppForm({
     onRespond,
     onUnsupported,
     onPickResources,
+    onReleaseResource,
     onPreview,
 }: {
     requestId: string;
@@ -212,10 +213,8 @@ export function McpAppForm({
     requestedSchema: unknown;
     onRespond: (requestId: string, response: McpFormResponse) => Promise<void>;
     onUnsupported: (requestId: string) => Promise<void>;
-    onPickResources?: (options: {
-        kind?: "file" | "directory";
-        accept?: string[];
-    }) => Promise<McpFormResource[]>;
+    onPickResources?: (fieldName: string) => Promise<McpFormResource[]>;
+    onReleaseResource?: (fieldName: string, uri: string) => Promise<void>;
     onPreview?: (target: unknown) => Promise<void>;
 }) {
     const parsed = useMemo(() => {
@@ -244,8 +243,51 @@ export function McpAppForm({
             ),
         ),
         [added, setAdded] = useState<Record<string, McpFormResource[]>>({}),
+        [removed, setRemoved] = useState<Record<string, string[]>>({}),
         [busy, setBusy] = useState(false),
         [error, setError] = useState("");
+    const mounted = useRef(true);
+    useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+    async function pick(name: string, field: Field) {
+        if (busy || !onPickResources) return;
+        setBusy(true); setError("");
+        try {
+            const next = (await onPickResources(name)).map((item) => resource.parse(item));
+            if (!mounted.current) {
+                await Promise.all(next.map(item => onReleaseResource?.(name, item.uri)));
+                return;
+            }
+            if (!next.length) return;
+            if (field.type !== "array")
+                await Promise.all((added[name] ?? []).map(item => onReleaseResource?.(name, item.uri)));
+            setAdded(previous => ({ ...previous, [name]: field.type === "array"
+                ? [...(previous[name] ?? []), ...next] : next }));
+            setValues(previous => ({ ...previous, [name]: field.type === "array"
+                ? [...(Array.isArray(previous[name]) ? previous[name] : []), ...next.map(item => item.uri)]
+                : next[0].uri }));
+        } catch (cause) {
+            if (mounted.current) setError(String(cause).includes("RESOURCE_UPLOAD_UNSUPPORTED")
+                ? "此服务器不支持本机文件上传。您仍可选择服务器提供的资源。"
+                : "资源选择未确认，请检查表单状态。");
+        } finally { if (mounted.current) setBusy(false); }
+    }
+    async function remove(name: string, item: McpFormResource) {
+        if (busy) return;
+        setBusy(true); setError("");
+        try {
+            if ((added[name] ?? []).some(resource => resource.uri === item.uri))
+                await onReleaseResource?.(name, item.uri);
+            setRemoved(previous => ({ ...previous, [name]: [...(previous[name] ?? []), item.uri] }));
+            setAdded(previous => ({ ...previous, [name]: (previous[name] ?? []).filter(resource => resource.uri !== item.uri) }));
+            setValues(previous => {
+                const next = { ...previous };
+                if (Array.isArray(previous[name])) next[name] = previous[name].filter(uri => uri !== item.uri);
+                else delete next[name];
+                return next;
+            });
+        } catch { setError("资源移除尚未确认，请核对表单状态。"); }
+        finally { if (mounted.current) setBusy(false); }
+    }
     async function respond(action: McpFormResponse["action"]) {
         if (busy || !parsed.data) return;
         if (action === "accept")
@@ -305,7 +347,7 @@ export function McpAppForm({
                     const set = (value: Values[string]) =>
                         setValues((previous) => ({ ...previous, [name]: value }));
                     if (input) {
-                        const options = [...input.options, ...(added[name] ?? [])];
+                        const options = [...input.options, ...(added[name] ?? [])].filter(item => !(removed[name] ?? []).includes(item.uri));
                         return (
                             <fieldset key={name}>
                                 <legend>{field.title ?? name}</legend>
@@ -323,6 +365,7 @@ export function McpAppForm({
                                                             : "radio"
                                                     }
                                                     name={name}
+                                                    disabled={busy || input.selection === "implicit"}
                                                     checked={checked}
                                                     onChange={(event) =>
                                                         set(
@@ -346,6 +389,11 @@ export function McpAppForm({
                                                 />
                                                 {item.title ?? item.name}
                                             </label>
+                                            {(input.selection === "implicit" || (added[name] ?? []).some(resource => resource.uri === item.uri)) && (
+                                                <button type="button" disabled={busy} onClick={() => void remove(name, item)}>
+                                                    移除 {item.name}
+                                                </button>
+                                            )}
                                             {onPreview &&
                                                 item._meta?.["openai/preview"] !== undefined && (
                                                     <button
@@ -368,32 +416,8 @@ export function McpAppForm({
                                     (input.userOptions || input.selection === "implicit") && (
                                         <button
                                             type="button"
-                                            onClick={() => {
-                                                void onPickResources(
-                                                    input.userOptions ?? { kind: "file" },
-                                                )
-                                                    .then((resources) => {
-                                                        const next = resources.map((item) =>
-                                                            resource.parse(item),
-                                                        );
-                                                        setAdded((previous) => ({
-                                                            ...previous,
-                                                            [name]: [
-                                                                ...(previous[name] ?? []),
-                                                                ...next,
-                                                            ],
-                                                        }));
-                                                        if (field.type === "array")
-                                                            set([
-                                                                ...(Array.isArray(value)
-                                                                    ? value
-                                                                    : []),
-                                                                ...next.map((item) => item.uri),
-                                                            ]);
-                                                        else if (next[0]) set(next[0].uri);
-                                                    })
-                                                    .catch(() => setError("无法添加所选资源。"));
-                                            }}
+                                            disabled={busy}
+                                            onClick={() => void pick(name, field)}
                                         >
                                             添加
                                             {input.userOptions?.kind === "directory"

@@ -28,6 +28,22 @@ fn main() {
     );
     add!("areal/plugin/auth", areal_protocol::plugin_runtime::Auth);
     add!(
+        "areal/mcp/form/resource/prepare",
+        areal_protocol::plugin_runtime::FormResourcePrepare
+    );
+    add!(
+        "areal/mcp/form/resource/stage",
+        areal_protocol::plugin_runtime::FormResourceStage
+    );
+    add!(
+        "areal/mcp/form/resource/release",
+        areal_protocol::plugin_runtime::FormResourceRelease
+    );
+    add!(
+        "areal/plugin/auth/configure",
+        areal_protocol::plugin_runtime::AuthConfigure
+    );
+    add!(
         "areal/plugin/connector/configure",
         areal_protocol::plugin_runtime::Connector
     );

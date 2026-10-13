@@ -1,94 +1,87 @@
 [中文](codex-plugins-p1-p3-acceptance.md) | **English**
 
-# Codex plugins P1/P3 acceptance ledger
+# Codex plugin P1/P3 acceptance
 
-**Status: first GitHub delivery; full P1/P3 acceptance remains open.** Updated 2026-10-13. Source, actual Core/CLI and native desktop evidence exist, without full Codex compatibility acceptance. Branch `codex/codex-plugins-p1-p3`, baseline `d4ee44af837afec758c89224a2351881ce2b5661`.
+This pass implements public MRTR, file/directory selection, portable auth, authentication timing, App subscription cleanup and sparse marketplaces. **Source review passes; complete P1/P3 and full Codex acceptance remain open.** Partial passes do not replace process, external-service or distribution evidence.
 
-## Scope and pinned contracts
+## Baseline and candidate
 
-The current batch covers P1 source acquisition/MCP lifecycle and P3 desktop Apps/extensions, with GitHub as the first real service. P2 hooks are excluded. P0 retains its separate [accepted record](codex-plugins-p0-acceptance.en.md); it does not discharge the new requirements in the [phase plan](codex-plugins-plan.en.md).
+- Codex0.162.1 revision092d3acd6bec3e3a14bdc7e7a2810ab628ab759d; Agent Plugins1.0.0; OpenAI extensions revision0d606217705e0e71eb21fff009619b67b80611dc. See [pins](../../upstream/pins.json).
+- rmcp3.3.0, modern MCP2026-07-28 and direct legacy2025-11-25; official Apps AppBridge.
+- Base commit5e7def7737f3aeeab93aa4652b0a28d3ab11a216, branch codex/codex-plugins-p1-p3. No push, PR or release.
+- Accepted Core SHA256: 2ee44d3fac1b82290263ff4fcd58452c297a6f28e30bb929cc403aae51f40b71. Ignored .scratch/codex-plugins/evidence/p1-p3-gap-final/manifest.json records file fingerprints, environments and raw outcomes without browser profiles or credential vaults.
 
-| Contract | Fixed reference and claim boundary |
+## Implemented contracts
+
+| Capability | Owner and behavior |
 |---|---|
-| Codex package behavior and plugin-management wire types | `0.162.1`, commit `092d3acd6bec3e3a14bdc7e7a2810ab628ab759d`; plugin adapter only, not an upgrade of the existing `0.145.0` app-server contract |
-| Agent Plugins manifest/MCP schemas | `1.0.0`; manifest SHA-256 `0a4aad95ce337878ad38802ebf0daa3fde76abe3f65400c86bcbb1ec0b3ab883`, MCP SHA-256 `6539175bfcdf43085855183e86da40ea94b166547a72b47ae9a0a390516d3acb` |
-| OpenAI public MCP Extensions | Revision `0d606217705e0e71eb21fff009619b67b80611dc`; source pinned independently of service access |
-| MCP connection host | rmcp `3.3.0`, negotiated host baseline `2025-11-25`; Apps capability `io.modelcontextprotocol/ui`, MIME `text/html;profile=mcp-app` |
+| MRTR | core/mcp modern discovery, tool/resource rounds; fixed arguments, private requestState, Core authorization/cancellation on every round; no UNKNOWN replay |
+| Legacy forms | Standard simple elicitation and openai/elicitation/create remain; resource extensions do not masquerade as standard simple schema |
+| Selection | Main native picker, Core field/form/caller/generation grants, Runtime NOFOLLOW immutable snapshots; only opaque URIs reach Renderer |
+| Lifetime/budgets | 16 MiB/file, 256 files/64 MiB/logical operation, depth16; cancel/close/revoke/settle cleanup; stage UUID/payload bound to existing receipts |
+| UNKNOWN | Query only original unknown stage; definite pre-dispatch rejection or another request conflict permits a fresh selection |
+| Configuration | Main vault for client secrets/PEM/API keys; Core refs/revisions only, disconnected current digest required; transient auth and durable configure are separate |
+| OAuth | Provided/public/confidential, DCR and CIMD preference, with DCR fallback absent trusted host metadata; declared endpoint/resource/OIDC/scopes and empty overrides persist through refresh |
+| Credentials | client_secret_basic/post, private_key_jwt (RS256/ES256), API-key bearer/basic/custom header; RSA fixtures are disposable public test keys, not provider credentials |
+| Challenges | HTTP401/403 and tool mcp/www_authenticate remain private; reject exact sent RequestId/token, preserve concurrent refresh, never replay POST |
+| Timing | ON_INSTALL pending auth and mixed gating; ON_USE requests auth when needed, allowing anonymous mixed public access; installation/listing never starts OAuth |
+| App subscriptions | URI/generation/instance owner sets, first subscribe/last unsubscribe; close preserves other owners; gated close/dispatch and no stale delivery |
+| Sparse | Top-level Codex marketplace/add sparsePaths, Git cone directories retained on updates; callers include catalog/package paths, no silent full fallback |
+| GUI recovery | Preserve auth form/request owner across same-project reconnect; refresh after gate clears; project switches reset and late settlements never mutate the new project |
 
-The pinned public OpenAI specification requires MCP `2026-07-28` or later and multi-round-trip requests (MRTR) for forms on OpenAI-registered servers. Direct MCP connections can use legacy forms. This host's `2025-11-25` behavior does not implement that modern MRTR path; an Apps/form implementation must not be described as support for every OpenAI mechanism. Protocol support and private service access are separate prerequisites.
+Same-host stdio can read accepted snapshots. No published HTTP upload channel is implemented: remote selection reports RESOURCE_UPLOAD_UNSUPPORTED while server-provided resources remain selectable. No multipart/download-auth protocol is invented. Apps still reopen after Core restart.
 
-## Implemented owners and observable interfaces
+## Final evidence
 
-| Owner | Current source/interface | Evidence boundary |
-|---|---|---|
-| Package Store | `core/plugins/src/{remote,components,metadata}.rs`; source resolution, pinned Git/npm content and component documents | Installation and resolution do not execute package lifecycle scripts; source tests do not prove a real remote MCP service |
-| MCP normalization/auth | `normalize_plugin_document`, `PluginServerConfig::redacted_view`, `AuthPolicy::is_supported`; `AuthManager::{start,status,cancel,ready_credential}` | Config literals and credentials remain internal; public states are Pending/Ready/Failed/Cancelled |
-| MCP connections | `Connections::connect_plugins_with_options`, generation-bound `McpTool::call_raw_with_meta`, `McpServer` resource APIs and `ResourceUpdates` | Original metadata and full results retained; schemas fixed for a generation; revocation cancels cloned handles; list changes never replay calls |
-| Legacy elicitation | `ElicitationBroker`, standard and `openai/elicitation/create` requests | Bound server/generation/request identity and cancellation; not modern MRTR acceptance |
-| Core desktop protocol | `core/protocol/src/plugin_runtime.rs`; `areal/plugin/connection`, `areal/plugin/auth`, `areal/plugin/connector/configure`, `areal/mcp/tool/result`, App/extension/form methods | Typed ownership and receipts; Main-authorized file paths must not be inferred from App input |
-| Desktop host | `clients/gui/app/src/core/mcp-apps*.cjs`, `McpAppHost`, `McpAppForm`, `McpAppsWorkspace` | Electron owns isolated surfaces/files; Core owns execution; GUI/SDK checks below do not prove native rendering or user uploads |
-| Codex management adapter | `core/app-server/src/codex_plugins.rs`, pinned `plugin/*` and `marketplace/*` handlers | Uses the existing Store; hosted catalog/search/sharing remains an explicit unavailable capability when not configured |
-
-These entries identify implementation owners. Acceptance depends on the evidence below and the final integrated candidate, not the presence of a route or type.
-
-## Authentication mechanism matrix
-
-| Mechanism | Current result |
+| Check | Actual outcome |
 |---|---|
-| Legacy `auth: "oauth"` without an OAuth object | Creates a discovery policy; no silent anonymous normalization |
-| OAuth discovery, provided public client, DCR, legacy CIMD with metadata URL | SDK-backed local HTTP fixture coverage, including callback state/issuer, refresh and cancellation; not real-provider acceptance |
-| HTTP401/403 and refresh `invalid_grant` | Rejected credentials invalidated with token comparison; explicit retry returns to authorization; no automatic MCP POST replay |
-| Concurrent owners | Atomic flow supersession, epoch-bound callbacks, authoritative reload and private OS store lock; latest cross-process execution limitation below |
-| Provider error/code/token logging | Own freshness selection uses direct SDK refresh; scoped no-subscriber authentication futures prevent SDK secret logs, without changing global logging |
-| Portable `extensions["com.openai"].auth` | Declaration retained privately with valid siblings and a diagnostic that pinned Codex rejects extensions; the dotted declaration form is recognized too |
-| Portable discovery/provided public client/DCR/base scopes | Supported by current normalization/auth owner |
-| Portable endpoint/resource/OIDC/default-scope overrides, client-secret/key provisioning, CIMD preference without host metadata URL, mixed authentication and API-key execution | Declaration retained but explicitly unsupported by this host; `is_supported()` and redacted `authenticationSupported` report the gap; no anonymous fallback claim |
-| Legacy SSE transport | Explicit unsupported outcome matching pinned Codex; not full Agent Plugins transport support |
+| Workspace build | Pass |
+| Package/source | 28pass, including sparse/update/restart/filter/rejection |
+| MCP | 36pass/3fail/2explicit ignored; real GitHub accepted separately |
+| Engine | 31pass/1fail; three missing TaskControl test literals permanently repaired |
+| Runtime import | 1pass across files/directories/links/budgets |
+| Core CLI / Codex wire | 8 / 7pass; real sparse snapshot and malformed input rejection |
+| Real GitHub | 5pass, single read-only get_me through ordinary Core journal; no writes |
+| Native Electron/Core | Apps8/extensions5/API-key6/legacy uploads8/modern MRTR uploads9 =36pass, one Core SHA |
+| GUI/docs | Typecheck, public verify, renderer build and paired links pass |
+| Independent review | SHIP for full source risk review and scoped GUI recovery; not package/provider acceptance |
 
-The fresh review identified five auth/normalization findings: rejected-token retry, SDK secret logging, concurrent start supersession, shared-store refresh serialization, and portable/legacy auth preservation. Their scoped fixes are present. Three meaningful pre-fix regressions reproduced stale Ready status, sentinel log leakage and duplicate refresh. Fix presence and passing local checks do not replace final integration review or real credential/service acceptance.
+Chooser and directory-confirmation responses are scripted. Real Main/Core/Runtime, sandbox pages, system encryption and MCP reads execute; physical OS picker and signed-package acceptance do not. Modern uploads use two human form rounds, no snapshot read until final confirmation, fixed arguments and fresh request IDs.
 
-## Final local evidence
+RED/GREEN preserves definite-rejection UNKNOWN, scope/challenge handoff, same-scope rejected-token recovery and GUI reconnect-owner failures. Two fixture contract errors are retained: internal stored nulls sent as desktop params and resource extensions sent as standard legacy schema. Fixtures were corrected without loosening production validation.
 
-| Layer | Result | Acceptance boundary |
-|---|---|---|
-| Sources/packages | 27 passed: metadata 1, remote 11, store 15 | Local Git/npm fixtures; no live SSH/all registries claim |
-| MCP | 24 unaffected checks passed | Client 7, concurrency 1, local GitHub 2, OAuth 6, optional 2, normalization 4, resources/forms 2 |
-| Engine | Primary 24 passed; 1 restart probe unaccepted after SIGKILL | Admission 9, plugins 8, MCP runtime 7. Isolated lane's original integration harness passed 8, without closing the primary gap |
-| Actual Core/CLI | CLI 8 and pinned Codex wire 6 passed | Pins, shared state, receipt deduplication and read-only recovery after response loss |
-| Real GitHub | 5 passed | Original opaque ID, explicit mapping, official `api.githubcopilot.com`, one read-only `get_me` through Core journal, disconnect. No writes, DCR or real model acceptance |
-| Native Electron Apps | 8 passed | Explicit Profile/model-only declared entrypoint, sandbox/private metadata, later visibility/same-server limits, draft/resources, model filtering and revocation |
-| Native extensions | 5 passed | Settings changed fields once, mentions, legacy form ownership across Threads/accept/cancel, opaque file URI and actual read-only I/O |
-| GUI/build | Workspace build, GUI build/typecheck/public boundary, official SDK and draft smokes passed | No CI, signed/notarized package, installation or cross-platform acceptance |
+## Failed and unaccepted boundaries
 
-Source manifest SHA-256: `b63428ca03285806fc5fd2e11134e2bc11a9b25d39b6ce11f3c6e02337eea908`. Core binary SHA-256: `000307ca6e63e62afa3dcab51d22f1b08c20daccaa7f8eadcaa2b7f64d31de61`. Git-excluded evidence lives in `.scratch/codex-plugins/evidence/p1-p3/`, including `candidate.json`, logs/manifests and screenshots. It binds code, locks and schema without credentials or service-state directories.
-
-Final independent source review: **SHIP, limited to inspected code**. Fixes cover auth retry/logging/concurrency, npm executable bits/Git sources, App process epoch, descriptor/CAS/write receipts, close races, server-name length, optional failure/reconnect, per-Connector credential isolation, and IPC incorrectly rejecting trusted Main file grants. Renderer-supplied paths remain forbidden; JSON cannot forge the trusted `serviceOnly` option.
-
-## Unaccepted and uncovered requirements
-
-- Final OAuth cross-process refresh and Engine restart children received SIGKILL (9), with empty stdout/stderr. Two existing MCP proxy fixtures also failed with no child output. Cause is unconfirmed; no bypass or retry loop. These checks remain open.
-- Existing Engine `cargo test --lib` cannot compile three `TaskControl` literals missing `expected_run_id`. Credential-isolation RED/GREEN used temporary test-literal repairs in an isolated lane, restored afterward. This substituted harness is not final primary library-test acceptance.
-- Core file write/CAS/receipts use Runtime descriptor helpers and have harness evidence. Native evidence covers reads only; real writable Runtime, native write/CAS and ancestor-directory swap acceptance remain absent.
-- `ON_INSTALL/ON_USE` is retained/projected, while connection/auth remain explicit; complete automatic install-time authentication remains open. Portable auth limitations are listed above.
-- Upload forms decline the whole schema; modern 2026 MRTR is unimplemented. Apps reopen after restart. Close stops delivery without per-resource unsubscribe.
-- P2 hooks, private OpenAI registered services/catalog/sharing, sparse marketplace checkout, cross-platform, real vendor OAuth/models and signed/notarized distribution remain unaccepted. GitHub does not close these requirements.
+- Engine restart and OAuth subprocesses explicitly receive SIGKILL9 with empty output. Proxy fixtures only record failed children/empty output; their signal is unknown.
+- make desktop-schemas separately receives killed9/137. The same-source earlier Rust generator succeeded; its complete stdout restores the owning Core schema. Native-host types are unchanged. Make remains failed.
+- Current binaries verify signatures. OS scans/provenance show no attributable kill decision. Older passing binaries do not close current failures. Missing libLLVM.dylib explains separate rust-objcopy SIGABRT warnings, not SIGKILL. Cause UNKNOWN, with no proven EDR/Gatekeeper/memory/source attribution or security bypass.
+- Legacy SSE remains explicitly unsupported, matching pinned Codex; no complete Agent Plugins transport claim.
+- P2 hooks, private OpenAI catalog/sharing/registered services, cross-platform, real provider OAuth/models, physical picker, native writable-file/CAS races and signed/notarized distribution remain unaccepted. GitHub does not close them.
 
 ## Reproduction
 
-Run at the repository root with `AREAL_TEST_BIN_DIR`/`AREAL_CORE_BIN` pointing at the same workspace build. Run native scripts serially with isolated home/workspace; external inference uses deterministic fixtures. GitHub reads existing `gh` credentials privately in memory, performing only `get_me` without token argv/logging.
+Use one workspace build for Core/runtime paths and isolated state. Native scripts run serially; GitHub reads existing authorized credentials only in memory.
 
 ```sh
 cargo build --locked --workspace
 cargo test --locked -p areal-plugins --tests
 cargo test --locked -p areal-mcp --tests
-cargo test --locked -p areal-engine --test plugin_mcp_runtime --test codex_plugins --test admission_guards
+cargo test --locked -p areal-engine --test plugin_mcp_runtime --test plugin_mcp_subscriptions --test codex_plugins --test admission_guards
+cargo test --locked -p areal-engine --lib connector_transport_inputs_do_not_cross_accounts
+cargo test --locked -p areal-runtime-fs --test import
+make desktop-schemas
 pnpm --dir clients/gui typecheck
 pnpm --dir clients/gui run verify
+pnpm --dir clients/gui build
 node scripts/plugin-wire-smoke.mjs
 node scripts/plugin-cli-p1-smoke.mjs
 node scripts/plugin-github-smoke.mjs
+node clients/gui/scripts/plugin-p1-auth-smoke.mjs
+node clients/gui/scripts/plugin-p3-uploads-smoke.mjs
+AREAL_MCP_FORM_PROTOCOL=modern node clients/gui/scripts/plugin-p3-uploads-smoke.mjs
 node clients/gui/scripts/plugin-p1-p3-smoke.mjs
 node clients/gui/scripts/plugin-p3-extensions-smoke.mjs
+python3 scripts/check-docs.py
 ```
 
-Complete commands include the recorded failures; they are not guaranteed green here. Resolve remaining contract/platform requirements before closing P1/P3 or claiming full compatibility.
+These include currently failed checks. Full compatibility requires closing remaining contracts and actual environment evidence.

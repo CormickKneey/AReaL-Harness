@@ -61,13 +61,15 @@ Core enforces permissions; observers and Thread-scoped identities cannot perform
 
 ## Current limits
 
-Git/npm sources, MCP connections, desktop Apps and an explicit GitHub Connector mapping are integrated. Full compatibility is not accepted: P2 hooks, native form uploads, modern 2026 MRTR, some portable auth mechanisms, private OpenAI catalog/sharing, cross-platform and packaged acceptance remain gaps. Unsupported upload forms decline the entire schema. Hosted service methods return explicit capability errors. See the [acceptance matrix](../development/codex-plugins-p1-p3-acceptance.en.md).
+Git/npm sources, modern MRTR, native stdio resource snapshots, portable auth, App subscriptions and explicit GitHub mapping are implemented. Full compatibility is not accepted: P2 hooks, private OpenAI catalog/sharing, cross-platform, real provider OAuth and signed/notarized package evidence remain open. Some local subprocess checks receive unexplained SIGKILL. Source completion and partial passes do not close full acceptance. Hosted service methods return explicit capability errors. See the [acceptance matrix](../development/codex-plugins-p1-p3-acceptance.en.md).
 
 ## Git/npm and MCP
 
 Add a Git marketplace in the GUI. Entries accept `git-subdir` with `url/ref/path` and `npm` with `package/version/registry`. Resolve and preview before installation, reviewing the pinned commit, concrete npm version, integrity and content digest. Git refs and npm ranges become immutable candidates; installation runs no lifecycle scripts. Candidate and installed digests remain separate. Explicitly trust the installed digest before connection, and review upgrades again.
 
-Portable and legacy adapters normalize command/environment/HTTP/auth fields privately. Server policy controls tool enablement, required status, approvals and model output limits. OAuth uses private storage and a loopback PKCE callback; explicit retries recover rejected credentials and refresh/login ownership is coordinated. MCP operations are never replayed after auth failure. Unsupported portable mechanisms remain visible in the acceptance matrix.
+Portable and legacy adapters normalize fields privately. Auth supports provided/DCR/CIMD preference, declared endpoint/resource/OIDC/scope overrides and API-key bearer/basic/custom headers. CIMD preference without a trusted host metadata URL falls back to DCR; it never impersonates an OpenAI client. Main stores client secrets and signing keys securely; Core stores references. ON_INSTALL exposes pending authentication and gates declared auth services; ON_USE requests auth when needed, allowing mixed public access anonymously. OAuth uses PKCE and private storage. Empty scope overrides remain exact through refresh; private challenges reject the exact sent token without deleting concurrent refreshed tokens or replaying MCP operations.
+
+Codex marketplace/add accepts top-level sparsePaths. Nonempty paths use Git cone directory selection, retained across updates. Callers include the catalog and required package paths; selection is never silently widened. Missing/empty paths retain full checkout; local directory sources reject nonempty sparse selection.
 
 ## Desktop Apps and GitHub
 
@@ -78,3 +80,7 @@ The Apps tab and global/thread/file entrypoints use the official MCP Apps AppBri
 GitHub preserves the original `.app.json` Connector ID. Enter that ID and a GitHub token in plugin details, save through system secure storage, then explicitly connect. Core maps that configured ID to `https://api.githubcopilot.com/mcp/`; opaque IDs never imply a provider. Missing mapping, missing credentials and unsupported declarations are distinct. Real read-only `get_me` evidence is separate from deterministic model/desktop fixtures.
 
 File entrypoints expose opaque URIs. Core validates saved grants and reuses Runtime descriptor traversal for actual I/O; Main owns windows/watchers. Reads are capped at 2 MiB, atomic writes at 64 KiB with `too-large` responses. ETag/CAS and durable request receipts ensure same-key retries return prior results without overwriting later edits.
+
+Modern MCP 2026-07-28 supports MRTR forms; direct older connections retain legacy elicitation. Each round preserves original arguments and Core ownership, rechecks authority and never replays UNKNOWN. Resource updates target subscribed App/URI owners; the final owner releases the shared wire subscription.
+
+Native form selection imports immutable local file/directory snapshots: 16 MiB per file, 256 files/64 MiB per logical call and depth16. Grants bind form, field and server generation, and clear on cancellation, close, revocation or settlement. Only same-host stdio receives these snapshots. HTTP without a publicly defined upload channel returns explicit unsupported behavior while server-provided resources remain selectable.

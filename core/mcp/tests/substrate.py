@@ -13,4 +13,6 @@ for line in sys.stdin:
  elif m=="resources/subscribe":
   print(json.dumps({"jsonrpc":"2.0","method":"notifications/resources/updated","params":{"uri":p["uri"]}}),flush=True);out={}
  elif m=="resources/unsubscribe":out={}
+ if m=="server/discover":
+  print(json.dumps({"jsonrpc":"2.0","id":r["id"],"error":{"code":-32601,"message":"Method not found"}}),flush=True);continue
  if "id" in r:print(json.dumps({"jsonrpc":"2.0","id":r["id"],"result":out}),flush=True)

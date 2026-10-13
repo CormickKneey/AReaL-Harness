@@ -3,8 +3,7 @@ use crate::AuthPolicy;
 use anyhow::{Result, ensure};
 use oauth2::TokenResponse;
 use rmcp::transport::auth::{
-    AuthError, AuthorizationManager, AuthorizationRequest, AuthorizationSession, CredentialStore,
-    StoredCredentials,
+    AuthError, AuthorizationManager, AuthorizationSession, CredentialStore, StoredCredentials,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -16,6 +15,26 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use tracing::instrument::WithSubscriber;
+#[path = "auth_transport.rs"]
+mod transport;
+
+/// Values resolved by the trusted host from private credential references.
+/// This type deliberately has no serialization implementation.
+#[derive(Clone, Default)]
+pub struct HostAuthConfiguration {
+    pub account_id: String,
+    pub client_secret: Option<String>,
+    pub private_key_pem: Option<String>,
+    pub private_key_id: Option<String>,
+    pub client_metadata_url: Option<String>,
+    pub api_key: Option<String>,
+    pub callback_url: Option<String>,
+}
+impl std::fmt::Debug for HostAuthConfiguration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("HostAuthConfiguration([REDACTED])")
+    }
+}
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "status", rename_all = "camelCase")]
@@ -31,8 +50,12 @@ pub enum AuthStatus {
 #[derive(Clone)]
 pub struct AuthorizedCredential {
     endpoint: String,
-    manager: Arc<AuthorizationManager>,
-    store: FileStore,
+    manager: Option<Arc<AuthorizationManager>>,
+    store: Option<FileStore>,
+    fixed_header: Option<(
+        reqwest_mcp::header::HeaderName,
+        reqwest_mcp::header::HeaderValue,
+    )>,
     rejected_token: Arc<std::sync::Mutex<Option<String>>>,
     pub(crate) failed: Arc<std::sync::atomic::AtomicBool>,
     pub(crate) cancelled: CancellationToken,
@@ -52,8 +75,16 @@ impl AuthorizedCredential {
             return Err(AuthError::AuthorizationRequired);
         }
         let result = async {
-            let _guard = self.store.guard().await?;
-            safe_token(&self.manager, &self.store).await
+            let store = self
+                .store
+                .as_ref()
+                .ok_or(AuthError::AuthorizationRequired)?;
+            let manager = self
+                .manager
+                .as_ref()
+                .ok_or(AuthError::AuthorizationRequired)?;
+            let _guard = store.guard().await?;
+            safe_token(manager, store).await
         }
         .with_subscriber(tracing::subscriber::NoSubscriber::default())
         .await;
@@ -65,22 +96,46 @@ impl AuthorizedCredential {
     }
 }
 impl AuthorizedCredential {
+    pub(crate) fn fixed_header(
+        &self,
+        endpoint: &str,
+    ) -> std::result::Result<
+        Option<(
+            reqwest_mcp::header::HeaderName,
+            reqwest_mcp::header::HeaderValue,
+        )>,
+        AuthError,
+    > {
+        if self.fixed_header.is_none() {
+            return Ok(None);
+        }
+        if url::Url::parse(endpoint).ok() != url::Url::parse(&self.endpoint).ok()
+            || self.cancelled.is_cancelled()
+            || self.failed.load(Ordering::Acquire)
+        {
+            return Err(AuthError::AuthorizationRequired);
+        }
+        Ok(self.fixed_header.clone())
+    }
     pub(crate) async fn reject(&self, token: Option<&str>) {
         self.failed.store(true, Ordering::Release);
         if let Ok(mut rejected) = self.rejected_token.lock() {
             *rejected = token.map(str::to_owned);
         }
-        let Ok(_guard) = self.store.guard().await else {
+        let Some(store) = &self.store else {
             return;
         };
-        if let Ok(Some(saved)) = self.store.load().await {
+        let Ok(_guard) = store.guard().await else {
+            return;
+        };
+        if let Ok(Some(saved)) = store.load().await {
             if saved
                 .token_response
                 .as_ref()
                 .map(|t| t.access_token().secret().as_str())
                 == token
             {
-                let _ = self.store.invalidate().await;
+                let _ = store.invalidate().await;
             }
         }
     }
@@ -158,6 +213,25 @@ impl AuthManager {
         policy: &AuthPolicy,
         challenge: Option<&str>,
     ) -> Result<AuthStatus> {
+        self.start_with_options(
+            name,
+            endpoint,
+            policy,
+            challenge,
+            &HostAuthConfiguration::default(),
+        )
+        .await
+    }
+    pub async fn start_with_options(
+        &self,
+        name: &str,
+        endpoint: &str,
+        policy: &AuthPolicy,
+        challenge: Option<&str>,
+        host: &HostAuthConfiguration,
+    ) -> Result<AuthStatus> {
+        // Validate host-only credentials before cancelling an existing flow.
+        transport::validate_host(policy, host)?;
         static NEXT_FLOW: AtomicU64 = AtomicU64::new(1);
         let id = NEXT_FLOW.fetch_add(1, Ordering::Relaxed);
         let cancel = CancellationToken::new();
@@ -183,7 +257,7 @@ impl AuthManager {
             );
             rejected
         };
-        let prepared = tokio::select! {biased;_ = cancel.cancelled()=>return Ok(AuthStatus::Cancelled),r=tokio::time::timeout(Duration::from_secs(60),self.prepare(name,endpoint,policy,challenge,rejected).with_subscriber(tracing::subscriber::NoSubscriber::default()))=>r.map_err(|_|anyhow::anyhow!("MCP authentication setup timed out")).and_then(|r|r)};
+        let prepared = tokio::select! {biased;_ = cancel.cancelled()=>return Ok(AuthStatus::Cancelled),r=tokio::time::timeout(Duration::from_secs(60),self.prepare(name,endpoint,policy,challenge,rejected,host).with_subscriber(tracing::subscriber::NoSubscriber::default()))=>r.map_err(|_|anyhow::anyhow!("MCP authentication setup timed out")).and_then(|r|r)};
         let prepared = match prepared {
             Ok(p) => p,
             Err(_) => {
@@ -196,11 +270,31 @@ impl AuthManager {
         };
         let endpoint = endpoint.to_owned();
         match prepared {
+            Prepared::Fixed(header) => {
+                let credential = AuthorizedCredential {
+                    endpoint,
+                    manager: None,
+                    store: None,
+                    fixed_header: Some(header),
+                    rejected_token: Arc::default(),
+                    failed: Arc::default(),
+                    cancelled: cancel.clone(),
+                };
+                let mut entries = self.entries.lock().await;
+                if cancel.is_cancelled() || !entries.get(name).is_some_and(|e| e.id == id) {
+                    return Ok(AuthStatus::Cancelled);
+                }
+                let e = entries.get_mut(name).unwrap();
+                e.status = AuthStatus::Ready;
+                e.credential = Some(credential);
+                Ok(AuthStatus::Ready)
+            }
             Prepared::Ready(manager, store) => {
                 let credential = AuthorizedCredential {
                     endpoint: endpoint.clone(),
-                    manager: Arc::new(manager),
-                    store,
+                    manager: Some(Arc::new(manager)),
+                    store: Some(store),
+                    fixed_header: None,
                     rejected_token: Arc::default(),
                     failed: Arc::default(),
                     cancelled: cancel.clone(),
@@ -239,8 +333,9 @@ impl AuthManager {
                     if result.is_some() {
                         entry.credential = Some(AuthorizedCredential {
                             endpoint,
-                            manager: Arc::new(session.auth_manager),
-                            store,
+                            manager: Some(Arc::new(session.auth_manager)),
+                            store: Some(store),
+                            fixed_header: None,
                             rejected_token: Arc::default(),
                             failed: Arc::default(),
                             cancelled: cancel,
@@ -261,12 +356,12 @@ impl AuthManager {
         policy: &AuthPolicy,
         challenge: Option<&str>,
         rejected: Option<String>,
+        host: &HostAuthConfiguration,
     ) -> Result<Prepared> {
         ensure!(
             !policy.unsupported,
             "portable authentication mechanism requires host support"
         );
-        let _declaration = &policy.portable_declaration;
         let parsed =
             url::Url::parse(endpoint).map_err(|_| anyhow::anyhow!("invalid MCP endpoint"))?;
         ensure!(
@@ -275,27 +370,41 @@ impl AuthManager {
                 && parsed.password().is_none(),
             "invalid MCP endpoint"
         );
-        let mut manager = AuthorizationManager::new(endpoint)
-            .await
-            .map_err(|_| anyhow::anyhow!("OAuth manager unavailable"))?;
-        let key = format!(
-            "{:x}",
-            Sha256::digest(format!("{}\0{name}\0{endpoint}", self.prefix))
-        );
+        if policy.mode() == "api_key" {
+            return Ok(Prepared::Fixed(transport::api_key_header(policy, host)?));
+        }
+        let (mut manager, metadata, mut scopes, resource_identity, refresh_scope_boundary) =
+            transport::prepare_manager(endpoint, policy, challenge, host).await?;
+        // Bind every persisted token to the trusted account, all declared configuration,
+        // issuer, client identity and host credential values (hash only, never plaintext).
+        let binding = serde_json::to_vec(&serde_json::json!([
+            self.prefix,
+            name,
+            endpoint,
+            policy.portable_declaration,
+            policy.client_id,
+            policy.client_secret,
+            policy.client_metadata_url,
+            policy.scopes,
+            policy.callback_url,
+            policy.callback_port,
+            host.account_id,
+            host.client_secret,
+            host.private_key_pem,
+            host.private_key_id,
+            host.client_metadata_url,
+            host.callback_url,
+            metadata,
+            resource_identity
+        ]))
+        .map_err(|_| anyhow::anyhow!("invalid auth binding"))?;
+        let key = format!("{:x}", Sha256::digest(&binding));
         let store = FileStore {
             path: self.root.join(format!("{key}.json")),
             epoch: Arc::default(),
         };
         manager.set_credential_store(store.clone());
-        let metadata = manager
-            .resolve_metadata_from_challenge(challenge)
-            .await
-            .map_err(|_| anyhow::anyhow!("OAuth discovery failed"))?;
-        ensure!(
-            metadata.source.is_discovered(),
-            "OAuth discovery required; guessed endpoints are not accepted"
-        );
-        manager.set_metadata(metadata.metadata);
+        manager.set_metadata(metadata.clone());
         let _guard = store.guard().await?;
         store.adopt()?;
         if let Some(rejected) = rejected {
@@ -308,6 +417,28 @@ impl AuthManager {
                 store.invalidate().await?;
             }
         }
+        if let Some(saved) = store.load().await? {
+            if !scopes
+                .iter()
+                .all(|scope| saved.granted_scopes.contains(scope))
+                && saved.token_response.is_some()
+            {
+                if challenge.is_some() {
+                    scopes.extend(saved.granted_scopes);
+                    scopes.sort();
+                    scopes.dedup();
+                    if policy.portable_declaration.is_some() {
+                        refresh_scope_boundary.set(Some(scopes.clone()))?;
+                    }
+                }
+                store.invalidate().await?;
+            }
+        }
+        let registered = store
+            .load()
+            .await?
+            .filter(|saved| saved.issuer.as_deref() == metadata.issuer.as_deref())
+            .map(|saved| saved.client_id);
         if manager
             .initialize_from_store()
             .await
@@ -316,13 +447,18 @@ impl AuthManager {
             if let Some(id) = &policy.client_id {
                 let mut config = rmcp::transport::auth::OAuthClientConfig::new(
                     id,
-                    policy
-                        .callback_url
-                        .clone()
+                    host.callback_url
+                        .as_ref()
+                        .or(policy.callback_url.as_ref())
+                        .cloned()
                         .unwrap_or_else(|| "http://127.0.0.1/callback".into()),
                 )
-                .with_scopes(policy.scopes.clone());
-                if let Some(secret) = &policy.client_secret {
+                .with_scopes(scopes.clone());
+                if let Some(secret) = host
+                    .client_secret
+                    .as_ref()
+                    .or(policy.client_secret.as_ref())
+                {
                     config = config.with_client_secret(secret);
                 }
                 manager
@@ -337,9 +473,9 @@ impl AuthManager {
         }
         store.invalidate().await?;
         let mut redirect = url::Url::parse(
-            policy
-                .callback_url
+            host.callback_url
                 .as_deref()
+                .or(policy.callback_url.as_deref())
                 .unwrap_or("http://127.0.0.1/callback"),
         )
         .map_err(|_| anyhow::anyhow!("invalid callback URL"))?;
@@ -367,28 +503,69 @@ impl AuthManager {
             .set_port(Some(listener.local_addr()?.port()))
             .map_err(|_| anyhow::anyhow!("invalid callback port"))?;
         let redirect = redirect.to_string();
-        let mut request = AuthorizationRequest::new(redirect)
-            .with_client_name("AReaL Harness")
-            .with_scopes(policy.scopes.clone());
-        if let Some(id) = &policy.client_id {
-            request = request.with_preregistered_client(id);
+        let scope_refs: Vec<&str> = scopes.iter().map(String::as_str).collect();
+        let mut config = if let Some(id) = &policy.client_id {
+            rmcp::transport::auth::OAuthClientConfig::new(id, &redirect).with_scopes(scopes.clone())
+        } else if let Some(url) = host
+            .client_metadata_url
+            .as_ref()
+            .or(policy.client_metadata_url.as_ref())
+            && policy
+                .portable_declaration
+                .as_ref()
+                .and_then(|v| v["client"]["mode"].as_str())
+                != Some("dcr")
+            && metadata
+                .additional_fields
+                .get("client_id_metadata_document_supported")
+                .and_then(|v| v.as_bool())
+                == Some(true)
+        {
+            rmcp::transport::auth::OAuthClientConfig::new(url, &redirect)
+                .with_scopes(scopes.clone())
+        } else if let Some(id) = registered {
+            rmcp::transport::auth::OAuthClientConfig::new(id, &redirect).with_scopes(scopes.clone())
+        } else {
+            manager
+                .register_client("AReaL Harness", &redirect, &scope_refs)
+                .await
+                .map_err(|_| anyhow::anyhow!("OAuth registration failed"))?
+        };
+        if let Some(secret) = host
+            .client_secret
+            .as_ref()
+            .or(policy.client_secret.as_ref())
+        {
+            config = config.with_client_secret(secret);
         }
-        if let Some(secret) = &policy.client_secret {
-            request = request.with_client_secret(secret);
-        }
-        if let Some(url) = &policy.client_metadata_url {
-            request = request.with_client_metadata_url(url);
-        }
-        if let Some(challenge) = challenge {
-            request = request.with_challenge(challenge);
-        }
-        let session = AuthorizationSession::new(manager, request)
+        let registered_id = config.client_id.clone();
+        manager
+            .configure_client(config)
+            .map_err(|_| anyhow::anyhow!("OAuth client configuration failed"))?;
+        // Use the SDK's PKCE/state/issuer machinery with the exact selected scope set;
+        // Session::new would re-expand an explicitly empty defaults declaration.
+        let authorization_url = manager
+            .get_authorization_url(&scope_refs)
             .await
-            .map_err(|_| anyhow::anyhow!("OAuth client registration failed"))?;
+            .map_err(|_| anyhow::anyhow!("OAuth authorization failed"))?;
+        store
+            .save(
+                StoredCredentials::new(registered_id, None, vec![], None)
+                    .with_issuer(metadata.issuer.clone()),
+            )
+            .await?;
+        let session =
+            AuthorizationSession::for_scope_upgrade(manager, authorization_url, &redirect);
         Ok(Prepared::Pending(session, listener, store.clone()))
     }
 }
 enum Prepared {
+    Fixed(
+        (
+            reqwest_mcp::header::HeaderName,
+            reqwest_mcp::header::HeaderValue,
+        ),
+    ),
     Ready(AuthorizationManager, FileStore),
     Pending(AuthorizationSession, tokio::net::TcpListener, FileStore),
 }
@@ -572,6 +749,9 @@ impl FileStore {
     }
     async fn invalidate(&self) -> std::result::Result<(), AuthError> {
         self.check_epoch()?;
+        let registration = self.load().await?.map(|saved| {
+            StoredCredentials::new(saved.client_id, None, vec![], None).with_issuer(saved.issuer)
+        });
         // Clear first: a crash can require login, but can never revive a rejected token.
         self.clear().await?;
         let epoch = format!(
@@ -596,6 +776,9 @@ impl FileStore {
             .map_err(|_| store_error())?;
         file.sync_all().map_err(|_| store_error())?;
         *self.epoch.lock().map_err(|_| store_error())? = epoch;
+        if let Some(registration) = registration {
+            self.save(registration).await?;
+        }
         Ok(())
     }
 }

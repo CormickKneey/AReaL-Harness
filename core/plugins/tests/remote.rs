@@ -575,3 +575,108 @@ fn remote_preview_has_normalized_source_and_safe_catalog_interface_without_fetch
         json!({"installation":"AVAILABLE","authentication":"ON_INSTALL"})
     );
 }
+
+// Failure boundaries selected before implementation: sparse checkout must not
+// materialize unselected directories; update keeps the exact selection and pin;
+// unsafe paths/missing catalog fail atomically without expanding to full checkout.
+#[test]
+fn sparse_marketplace_snapshots_and_updates_preserve_selection() {
+    let t = tempfile::tempdir().unwrap();
+    let repo = t.path().join("repo");
+    fs::create_dir(&repo).unwrap();
+    write(
+        &repo,
+        ".agents/plugins/marketplace.json",
+        r#"{"name":"sparse","plugins":[{"name":"sample","source":"packages/selected"}]}"#,
+    );
+    write(&repo, "packages/selected/plugin.json", manifest());
+    write(&repo, "packages/unselected/private.txt", "not selected");
+    write(&repo, "unrelated/large.txt", "not selected");
+    write(&repo, "README.md", "cone mode retains root files");
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["config", "uploadpack.allowFilter", "true"]);
+    let source = format!("file://{}", repo.display());
+    commit_fixture(&repo, "A");
+    let reference = git(&repo, &["branch", "--show-current"]);
+    let store = Store::open(t.path().join("state"), t.path().into(), None).unwrap();
+    let paths = vec![".agents/plugins".to_owned(), "packages/selected".to_owned()];
+    let first = store
+        .add_git_marketplace_sparse(&source, Some(&reference), &paths, 0)
+        .unwrap();
+    assert!(first.errors.is_empty(), "{:?}", first.errors);
+    let root = &first.marketplaces[0].root;
+    assert!(root.join("packages/selected/plugin.json").exists());
+    assert!(root.join(".agents/plugins/marketplace.json").exists());
+    assert!(root.join("README.md").exists());
+    assert!(
+        !root.join("packages/unselected").exists(),
+        "unselected files were materialized"
+    );
+    assert!(!root.join("unrelated").exists());
+    let installed = store
+        .install(
+            "sample@sparse",
+            "user",
+            1,
+            &first.data[0].source,
+            &first.data[0].source_digest,
+        )
+        .unwrap();
+    write(&repo, "packages/selected/updated.txt", "B");
+    write(&repo, "unrelated/later.txt", "excluded");
+    commit_fixture(&repo, "B");
+    let store = Store::open(t.path().join("state"), t.path().into(), None).unwrap();
+    let updated = store.update_marketplaces(2).unwrap();
+    assert!(
+        updated.marketplaces[0]
+            .root
+            .join("packages/selected/updated.txt")
+            .exists()
+    );
+    assert!(!updated.marketplaces[0].root.join("unrelated").exists());
+    assert!(
+        !updated.marketplaces[0]
+            .root
+            .join("packages/unselected")
+            .exists()
+    );
+    assert_eq!(
+        updated.marketplaces[0].resolved_commit.as_deref(),
+        Some(git(&repo, &["rev-parse", "HEAD"]).as_str())
+    );
+    assert_eq!(updated.data[0].installed_digest, installed.installed_digest);
+    for unsafe_path in [
+        "../outside",
+        "/absolute",
+        "packages/../unrelated",
+        "--no-cone",
+        "packages/*",
+        "packages\\selected",
+        ".",
+        "packages\nother",
+    ] {
+        assert!(
+            store
+                .add_git_marketplace_sparse(&source, None, &[unsafe_path.into()], 3)
+                .is_err(),
+            "accepted unsafe sparse path"
+        );
+        assert_eq!(store.list().unwrap().revision, 3);
+    }
+    assert!(
+        store
+            .add_git_marketplace_sparse(&source, None, &["packages/selected".into()], 3)
+            .is_err(),
+        "missing catalog must not trigger full checkout"
+    );
+    assert_eq!(store.list().unwrap().revision, 3);
+    let full = store
+        .add_git_marketplace(&source, Some(&reference), 3)
+        .unwrap();
+    assert!(
+        full.marketplaces[0]
+            .root
+            .join("unrelated/later.txt")
+            .exists()
+    );
+}

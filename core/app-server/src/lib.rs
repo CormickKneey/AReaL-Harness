@@ -413,6 +413,13 @@ async fn connection(
             conn.send(response(id.unwrap(),Err(RpcError::invalid("authenticated clients must upload media; host filesystem paths are not accepted"))));
             continue;
         }
+        // Native selection imports require the authenticated desktop host.
+        if matches!(method, "areal/mcp/form/resource/prepare" | "areal/mcp/form/resource/stage")
+            && (conn.principal.id != "desktop-owner" || conn.principal.token.is_empty())
+        {
+            conn.send(response(id.unwrap(), Err(RpcError { code: -32003, message: "authenticated native selection host required".into(), data: None })));
+            continue;
+        }
         if !conn.principal.token.is_empty()
             && conn.principal.id != "desktop-owner"
             && ((method == "areal/mcp/app/open" && params["fileResource"].is_object())

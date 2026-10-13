@@ -49,8 +49,22 @@
       "local-marketplaces",
       "portable-and-legacy-packages",
       "skills",
-      "onboarding"
+      "onboarding",
+      "git-and-npm-sources",
+      "marketplace-sparse-checkout",
+      "mcp-connections",
+      "portable-auth",
+      "mcp-mrtr",
+      "mcp-apps",
+      "openai-desktop-extensions",
+      "native-stdio-form-uploads",
+      "github-connector",
+      "codex-management-wire"
     ],
-    "openaiExtensionsRevision": "0d606217705e0e71eb21fff009619b67b80611dc"
+    "openaiExtensionsRevision": "0d606217705e0e71eb21fff009619b67b80611dc",
+    "mcpProtocolVersions": [
+      "2026-07-28",
+      "2025-11-25"
+    ]
   }
 }

@@ -590,14 +590,24 @@ impl Invocation<'_> {
                     .check_plugin_mcp(tool)
                     .await
                     .map_err(|e| rt::Error::new(rt::ErrorCode::PermissionDenied, e.to_string()))?;
-                let owner = self
+                let mut owner = self
                     .engine
                     .mcp_call_owner(self.cell, self.call)
                     .await
                     .map_err(invalid)?;
+                owner.cancellation = self.cancel.child_token();
+                let call_cancel = owner.cancellation.clone();
+                let _owner_drop = owner.cancellation.clone().drop_guard();
+                let context = self.engine.mcp_request_context(
+                    owner.clone(),
+                    tool.server_name().into(),
+                    tool.generation(),
+                    Some(tool.clone()),
+                );
                 let key = (tool.server_name().to_owned(), tool.generation());
                 {
                     let mut calls = self.engine.desktop.mcp_apps.calls.lock().await;
+                    calls.retain(|_, o| !o.cancellation.is_cancelled());
                     if calls.contains_key(&key) {
                         return Err(rt::Error::new(
                             rt::ErrorCode::PermissionDenied,
@@ -615,7 +625,7 @@ impl Invocation<'_> {
                     .as_ref()
                     .and_then(|a| a.tool_meta.clone());
                 let raw = tool
-                    .call_raw_with_meta(args.clone(), meta, self.cancel.clone())
+                    .call_raw_owned(args.clone(), meta, call_cancel, Some(&context))
                     .await;
                 self.engine.desktop.mcp_apps.calls.lock().await.remove(&key);
                 let raw = raw.map_err(|e| {

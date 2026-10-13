@@ -184,6 +184,23 @@ impl Engine {
         })
         .await
     }
+    pub async fn plugin_add_git_marketplace_sparse(
+        self: &Arc<Self>,
+        url: String,
+        reference: Option<String>,
+        sparse_paths: Vec<String>,
+        expected: u64,
+    ) -> Result<Value> {
+        self.plugin_change(move |s| {
+            Ok(serde_json::to_value(s.add_git_marketplace_sparse(
+                &url,
+                reference.as_deref(),
+                &sparse_paths,
+                expected,
+            )?)?)
+        })
+        .await
+    }
     pub async fn plugin_remove_marketplace(
         self: &Arc<Self>,
         root: PathBuf,

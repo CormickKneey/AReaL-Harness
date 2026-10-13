@@ -388,17 +388,16 @@ pub(crate) async fn dispatch(
         "plugin/reconcile" => engine.plugin_reconcile_wire().await.map_err(map_error),
         "marketplace/add" => {
             let source = required(&params, "source")?;
-            if params["sparsePaths"].is_array() {
-                return Err(RpcError {
-                    code: -32004,
-                    message: "sparse marketplace checkout is unavailable".into(),
-                    data: Some(json!({"capability":"marketplaceSparseCheckout"})),
-                });
-            }
+            let sparse_paths = array(&params, "sparsePaths")?.unwrap_or_default();
             let before = engine.plugin_list().await.map_err(map_error)?;
             let revision = before["revision"].as_u64().unwrap();
             let local = std::path::Path::new(source);
             let list = if local.is_dir() {
+                if !sparse_paths.is_empty() {
+                    return Err(RpcError::invalid(
+                        "sparsePaths is only supported for Git marketplace sources",
+                    ));
+                }
                 engine
                     .plugin_add_marketplace(
                         local
@@ -409,9 +408,10 @@ pub(crate) async fn dispatch(
                     .await
             } else {
                 engine
-                    .plugin_add_git_marketplace(
+                    .plugin_add_git_marketplace_sparse(
                         source.into(),
                         params["refName"].as_str().map(str::to_owned),
+                        sparse_paths,
                         revision,
                     )
                     .await

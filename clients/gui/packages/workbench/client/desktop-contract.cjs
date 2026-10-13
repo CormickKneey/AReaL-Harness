@@ -74,8 +74,28 @@ function validateCommand(name, params, { serviceOnly = false } = {}) {
     if (params.requestId !== undefined && !identifier(params.requestId)) invalid();
   }
   if (name === 'manage' && params.operation === 'pluginSubmission'
-    && (!identifier(params.requestId) || !['marketplaceAdd', 'marketplaceAddGit', 'marketplaceRemove', 'marketplaceUpdate', 'pluginResolve', 'pluginConnection', 'connectorConfigure', 'pluginInstall', 'pluginConfigure', 'pluginUninstall', 'pluginSetup'].includes(String(params.mutation)))) invalid();
+    && (!identifier(params.requestId) || !['marketplaceAdd', 'marketplaceAddGit', 'marketplaceRemove', 'marketplaceUpdate', 'pluginResolve', 'pluginConnection', 'pluginAuthConfigure', 'connectorConfigure', 'pluginInstall', 'pluginConfigure', 'pluginUninstall', 'pluginSetup'].includes(String(params.mutation)))) invalid();
   if (name === 'manage') {
+    if (['mcpFormResourcePrepare', 'mcpFormResourceStage', 'mcpFormResourceSubmission', 'mcpFormResourceRelease'].includes(String(params.operation))) {
+      const operation = String(params.operation);
+      // Only native Main mediation may acquire selection tokens or submit filesystem paths.
+      if (operation !== 'mcpFormResourceRelease' && !serviceOnly) invalid();
+      const keys = operation === 'mcpFormResourceStage' ? ['selectionToken', 'requestId', 'paths']
+        : operation === 'mcpFormResourceSubmission' ? ['requestId']
+        : ['threadId', 'requestId', 'fieldName', ...(operation === 'mcpFormResourceRelease' ? ['uri'] : [])];
+      if (Object.keys(params).some(key => !['operation', 'projectId', ...keys].includes(key))
+        || !identifier(params.requestId)) invalid();
+      if (operation === 'mcpFormResourceStage') {
+        if (!identifier(params.selectionToken) || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(String(params.requestId))
+          || !Array.isArray(params.paths) || params.paths.length < 1 || params.paths.length > 256
+          || params.paths.some(path => typeof path !== 'string' || path.length > 4096 || path.includes('\0')
+            || !(/^(?:\/|[a-zA-Z]:[\\/])/.test(path)))) invalid();
+      } else if (operation !== 'mcpFormResourceSubmission') {
+        if (!identifier(params.threadId) || typeof params.fieldName !== 'string' || !params.fieldName || params.fieldName.length > 4096) invalid();
+        if (operation === 'mcpFormResourceRelease' && (typeof params.uri !== 'string' || !params.uri || params.uri.length > 4096 || params.uri.includes('\0'))) invalid();
+      }
+    }
+
     // Main grants file paths; renderer requests cannot supply a saved grant.
     if (params.operation === 'mcpAppOpen' && params.fileResource !== undefined) {
       const grant = params.fileResource;
@@ -89,6 +109,16 @@ function validateCommand(name, params, { serviceOnly = false } = {}) {
     if (['connectorConfigure','connectorCredential'].includes(String(params.operation)) && (!identifier(params.connectorId) || params.provider !== 'github')) invalid();
     if (params.operation === 'connectorCredential' && (typeof params.secret !== 'string' || !params.secret.trim() || params.secret.length > 16384 || /[\r\n]/.test(params.secret))) invalid();
     if (params.operation === 'connectorConfigure' && !identifier(params.credentialRef)) invalid();
+    if (['pluginAuthCredential','pluginAuthConfigure'].includes(String(params.operation))) {
+      if (!identifier(params.id) || !identifier(params.server) || typeof params.expectedDigest !== 'string' || !/^[a-f0-9]{64}$/.test(params.expectedDigest) || !identifier(params.requestId)
+        || !record(params.configuration) || Object.keys(params.configuration).some(key => !['clientSecretRef','privateKeyRef','privateKeyId','clientMetadataUrl','apiKeyRef','callbackUrl'].includes(key))) invalid();
+      for (const key of ['clientSecretRef','privateKeyRef','privateKeyId']) if (params.configuration[key] !== undefined && !identifier(params.configuration[key])) invalid();
+      for (const key of ['clientMetadataUrl','callbackUrl']) if (params.configuration[key] !== undefined && (typeof params.configuration[key] !== 'string' || params.configuration[key].length > 4096 || params.configuration[key].includes('\0'))) invalid();
+      if (params.operation === 'pluginAuthCredential') {
+        if (!record(params.credentials) || Object.keys(params.credentials).some(key => !['clientSecret','privateKeyPem','apiKey'].includes(key))) invalid();
+        for (const [key,value] of Object.entries(params.credentials)) if (typeof value !== 'string' || value.length > (key === 'privateKeyPem' ? 32768 : 16384) || value.includes('\0') || (key !== 'privateKeyPem' && /[\r\n]/.test(value))) invalid();
+      }
+    }
     if (params.operation === 'pluginAuth' && (!identifier(params.id) || !identifier(params.server) || !['start','status','cancel'].includes(String(params.authOperation)))) invalid();
   }
   if (name !== 'configure') return;

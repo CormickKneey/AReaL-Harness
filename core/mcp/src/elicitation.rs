@@ -11,6 +11,7 @@ pub struct ElicitationRequest {
     pub generation: u64,
     pub request_id: Value,
     pub method: String,
+    pub owner: Option<String>,
     pub params: Value,
     pub cancellation: CancellationToken,
     response: oneshot::Sender<Value>,
@@ -46,6 +47,61 @@ impl ElicitationBroker {
         let (sender, receiver) = mpsc::channel(16);
         (Self { sender }, receiver)
     }
+    pub(crate) async fn request_owned(
+        &self,
+        server: &str,
+        generation: u64,
+        request_id: Value,
+        mut params: Value,
+        owner: String,
+        cancel: CancellationToken,
+        revoked: CancellationToken,
+    ) -> Result<Value> {
+        ensure!(
+            serde_json::to_vec(&params)?.len() <= 65536,
+            "MCP elicitation exceeds budget"
+        );
+        if params
+            .get("mode")
+            .and_then(Value::as_str)
+            .is_some_and(|v| v != "form")
+        {
+            return Ok(serde_json::json!({"action":"decline"}));
+        }
+        let extended = params["_meta"]["openai/elicitation"]["requestedSchema"].clone();
+        let placeholder = params["requestedSchema"]["properties"]
+            .as_object()
+            .is_some_and(|v| v.is_empty());
+        if !extended.is_null() || placeholder {
+            if !extended.is_object() {
+                return Ok(serde_json::json!({"action":"decline"}));
+            }
+            params["requestedSchema"] = extended;
+        }
+        if !params["requestedSchema"].is_object() {
+            return Ok(serde_json::json!({"action":"decline"}));
+        }
+        let cancellation = cancel.child_token();
+        let _drop = cancellation.clone().drop_guard();
+        let (tx, rx) = oneshot::channel();
+        self.sender
+            .try_send(ElicitationRequest {
+                server: server.into(),
+                generation,
+                request_id,
+                method: "elicitation/create".into(),
+                owner: Some(owner),
+                params,
+                cancellation: cancellation.clone(),
+                response: tx,
+            })
+            .map_err(|_| anyhow::anyhow!("MCP elicitation queue unavailable"))?;
+        tokio::select! {biased;
+            _=cancellation.cancelled()=>bail!("MCP elicitation cancelled"),
+            _=revoked.cancelled()=>bail!("MCP elicitation generation revoked"),
+            r=tokio::time::timeout(Duration::from_secs(120),rx)=>r.context("MCP elicitation timed out")?.context("MCP elicitation owner ended"),
+        }
+    }
     pub(crate) async fn request(
         &self,
         handler: &Handler,
@@ -76,6 +132,7 @@ impl ElicitationBroker {
             generation: handler.generation,
             request_id: serde_json::to_value(context.id).map_err(|_| error())?,
             method: method.into(),
+            owner: None,
             params,
             cancellation: cancellation.clone(),
             response: tx,

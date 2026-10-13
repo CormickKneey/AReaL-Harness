@@ -24,13 +24,17 @@ async fn startup_diagnostic_is_useful_without_response_or_url_secrets() {
     .await
     {
         Ok(_) => panic!("server failure expected"),
-        Err(e) => e.to_string(),
+        Err(e) => e,
     };
-    assert!(
-        error.contains("500"),
-        "missing status classification: {error}"
+    let initialization = error
+        .downcast_ref::<areal_mcp::InitializationFailure>()
+        .expect("typed initialization diagnostic retained");
+    assert_eq!(
+        initialization.http.as_ref().and_then(|http| http.status),
+        Some(500)
     );
-    assert!(!error.contains("private-provider-body") && !error.contains("private-url-value"));
+    let redacted = format!("{error:?}");
+    assert!(!redacted.contains("private-provider-body") && !redacted.contains("private-url-value"));
     task.abort();
 }
 

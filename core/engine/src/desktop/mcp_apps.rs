@@ -1,5 +1,7 @@
 //! App iframe 只持绑定能力；有副作用的调用复用普通 Turn、审批和持久日志。
 use super::*;
+#[path = "form_resources.rs"]
+mod form_resources;
 use crate::model::ToolCall;
 use areal_protocol::ToolOutcome;
 #[derive(Clone, Serialize, Deserialize)]
@@ -26,7 +28,15 @@ struct Instance {
     file_resource: Option<Value>,
 }
 #[derive(Clone)]
+pub(crate) enum CallOwnerScope {
+    Tool,
+    AppRead { cwd: String, epoch: String },
+}
+#[derive(Clone)]
 pub(crate) struct CallOwner {
+    pub token: String,
+    pub scope: CallOwnerScope,
+    pub cancellation: tokio_util::sync::CancellationToken,
     pub identity: String,
     pub thread: String,
     pub turn: String,
@@ -37,16 +47,30 @@ struct Form {
     owner: CallOwner,
     request: areal_mcp::ElicitationRequest,
 }
+// Transient leases: persisted Apps never replay a previous connection's subscriptions.
+struct Subscription {
+    server: areal_mcp::McpServer,
+    instances: std::collections::BTreeSet<String>,
+}
 pub(crate) struct Manager {
     runtime_epoch: String,
     instances: std::sync::RwLock<BTreeMap<String, Instance>>,
     mutation: Mutex<()>,
+    subscriptions: std::sync::RwLock<BTreeMap<(String, u64, String), Subscription>>,
     settings: std::sync::RwLock<BTreeMap<(String, String, String, u64), Value>>,
     pub(crate) calls: Mutex<BTreeMap<(String, u64), CallOwner>>,
     forms: Mutex<BTreeMap<String, Form>>,
+    uploads: Mutex<form_resources::Uploads>,
+    reads: std::sync::RwLock<BTreeMap<String, (u64, tokio_util::sync::CancellationToken)>>,
 }
 impl Manager {
     pub fn open(root: &Path) -> anyhow::Result<Self> {
+        let uploads = root.join("desktop/mcp-form-uploads");
+        match std::fs::remove_dir_all(uploads) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
         let path = root.join("desktop/mcp-apps.json");
         let instances = if path.exists() {
             let bytes = std::fs::read(path)?;
@@ -59,18 +83,24 @@ impl Manager {
             runtime_epoch: uuid::Uuid::new_v4().to_string(),
             instances: std::sync::RwLock::new(instances),
             mutation: Mutex::new(()),
+            subscriptions: Default::default(),
             settings: Default::default(),
             calls: Mutex::new(BTreeMap::new()),
             forms: Mutex::new(BTreeMap::new()),
+            uploads: Mutex::new(form_resources::Uploads::default()),
+            reads: Default::default(),
         })
     }
     pub fn generations(&self) -> Vec<u64> {
+        let mut reads = self.reads.write().unwrap();
+        reads.retain(|_, (_, cancel)| !cancel.is_cancelled());
         self.instances
             .read()
             .unwrap()
             .values()
             .filter(|i| i.runtime_epoch == self.runtime_epoch)
             .map(|i| i.generation)
+            .chain(reads.values().map(|(generation, _)| *generation))
             .collect()
     }
 }
@@ -243,10 +273,14 @@ fn form_supported(schema: &Value) -> bool {
                 scalar
                     && field.get("x-openai-input").is_none_or(|input| {
                         matches!(input["type"].as_str(), Some("resource" | "file"))
-                            && input.get("userOptions").is_none()
+                            && form_resources::supported_user_options(input)
                             && input.as_object().is_some_and(|m| {
-                                m.keys()
-                                    .all(|k| matches!(k.as_str(), "type" | "selection" | "options"))
+                                m.keys().all(|k| {
+                                    matches!(
+                                        k.as_str(),
+                                        "type" | "selection" | "options" | "userOptions"
+                                    )
+                                })
                             })
                             && input
                                 .get("selection")
@@ -378,7 +412,7 @@ impl Engine {
                     }
                 }
 
-                data.push(json!({"serverId":server.name(),"generation":server.generation(),"pluginId":owner.plugin,"installedDigest":owner.digest,"tools":tools,"capabilities":capabilities,"title":info["serverInfo"]["title"],"icons":info["serverInfo"]["icons"],"instructions":info["instructions"]}));
+                data.push(json!({"serverId":server.name(),"generation":server.generation(),"protocolVersion":info["protocolVersion"],"pluginId":owner.plugin,"installedDigest":owner.digest,"tools":tools,"capabilities":capabilities,"title":info["serverInfo"]["title"],"icons":info["serverInfo"]["icons"],"instructions":info["instructions"]}));
             }
         }
         Ok(json!({"data":data}))
@@ -449,15 +483,28 @@ impl Engine {
             if existing.request_digest != hash {
                 return Err(Error::Conflict);
             }
+            drop(_guard);
             existing
         } else {
-            let read = serde_json::to_value(
-                server
-                    .read_resource(&uri, self.shutdown.child_token())
-                    .await
-                    .map_err(invalid)?,
-            )
-            .map_err(invalid)?;
+            drop(_guard);
+            let read = self
+                .app_read_resource(&identity, &thread_id, None, &server, &uri)
+                .await?;
+            let _guard = self.desktop.mcp_apps.mutation.lock().await;
+            self.plugin_server(&server_id, expected_generation).await?;
+            if self
+                .desktop
+                .mcp_apps
+                .instances
+                .read()
+                .unwrap()
+                .values()
+                .any(|i| {
+                    i.identity == identity && i.thread_id == thread_id && i.request_id == request_id
+                })
+            {
+                return Err(Error::Conflict);
+            }
             let content = read["contents"]
                 .as_array()
                 .and_then(|v| {
@@ -503,7 +550,6 @@ impl Engine {
             self.app_save().await?;
             saved
         };
-        drop(_guard);
         let initial_result = if arguments.is_some() {
             Some(
                 self.app_tool_turn(
@@ -613,25 +659,76 @@ impl Engine {
                     .map_err(invalid)?,
             )
             .map_err(invalid)?,
-            "resources/read" => serde_json::to_value(
-                server
-                    .read_resource(uri()?, self.shutdown.child_token())
-                    .await
-                    .map_err(invalid)?,
-            )
-            .map_err(invalid)?,
-            "resources/subscribe" => {
-                server
-                    .subscribe(uri()?, self.shutdown.child_token())
-                    .await
-                    .map_err(invalid)?;
-                json!({})
+            "resources/read" => {
+                self.app_read_resource(
+                    &identity,
+                    &thread_id,
+                    Some(instance_id.clone()),
+                    &server,
+                    uri()?,
+                )
+                .await?
             }
-            "resources/unsubscribe" => {
-                server
-                    .unsubscribe(uri()?, self.shutdown.child_token())
-                    .await
-                    .map_err(invalid)?;
+            "resources/subscribe" | "resources/unsubscribe" => {
+                let uri = uri()?;
+                if uri.len() > 8192 {
+                    return Err(invalid("resource URI exceeds budget"));
+                }
+                let _guard = self.desktop.mcp_apps.mutation.lock().await;
+                // The App may have closed while this request waited for the gate.
+                let (_, _, server) = self
+                    .app_bound(&identity, &thread_id, &instance_id, generation)
+                    .await?;
+                let key = (server.name().to_owned(), generation, uri.to_owned());
+                let subscribed = {
+                    let mut subscriptions = self.desktop.mcp_apps.subscriptions.write().unwrap();
+                    subscriptions.retain(|_, subscription| !subscription.server.is_revoked());
+                    subscriptions.contains_key(&key)
+                };
+                if method == "resources/subscribe" {
+                    if !subscribed {
+                        server
+                            .subscribe(uri, self.shutdown.child_token())
+                            .await
+                            .map_err(invalid)?;
+                    }
+                    if server.is_revoked() {
+                        return Err(invalid("server generation revoked"));
+                    }
+                    self.desktop
+                        .mcp_apps
+                        .subscriptions
+                        .write()
+                        .unwrap()
+                        .entry(key)
+                        .or_insert_with(|| Subscription {
+                            server,
+                            instances: Default::default(),
+                        })
+                        .instances
+                        .insert(instance_id.clone());
+                } else {
+                    let last = {
+                        let mut subscriptions =
+                            self.desktop.mcp_apps.subscriptions.write().unwrap();
+                        let last = subscriptions.get_mut(&key).is_some_and(|subscription| {
+                            subscription.instances.remove(&instance_id)
+                                && subscription.instances.is_empty()
+                        });
+                        if last {
+                            subscriptions.remove(&key);
+                        }
+                        last
+                    };
+                    // An App cannot release another App's lease; unknown/duplicate release is local.
+                    // Remove ownership before I/O: a failed/unknown response must not replay it.
+                    if last && !server.is_revoked() {
+                        server
+                            .unsubscribe(uri, self.shutdown.child_token())
+                            .await
+                            .map_err(invalid)?;
+                    }
+                }
                 json!({})
             }
             "ui/update-model-context" => {
@@ -807,13 +904,56 @@ impl Engine {
         {
             return Err(invalid("App owner or generation mismatch"));
         }
+        // Recheck live ownership under the gate. Stale instances remain closable, but
+        // cannot send cleanup to a revoked/replaced connection or changed package.
+        let live = self
+            .app_bound(&identity, &thread_id, &instance_id, generation)
+            .await
+            .is_ok();
         self.desktop
             .mcp_apps
             .instances
             .write()
             .unwrap()
             .remove(&instance_id);
+        for owner in self.desktop.mcp_apps.calls.lock().await.values() {
+            if owner.identity == identity
+                && owner.thread == thread_id
+                && owner.instance.as_deref() == Some(&instance_id)
+            {
+                owner.cancellation.cancel();
+            }
+        }
+        let releases = {
+            let mut subscriptions = self.desktop.mcp_apps.subscriptions.write().unwrap();
+            let mut releases = Vec::new();
+            subscriptions.retain(|(_, _, uri), subscription| {
+                if subscription.server.is_revoked() {
+                    return false;
+                }
+                if subscription.instances.remove(&instance_id) && subscription.instances.is_empty()
+                {
+                    if live {
+                        releases.push((uri.clone(), subscription.server.clone()));
+                    }
+                    return false;
+                }
+                true
+            });
+            releases
+        };
+        let mut cleanup_error = None;
+        for (uri, server) in releases {
+            if !server.is_revoked() {
+                if let Err(error) = server.unsubscribe(&uri, self.shutdown.child_token()).await {
+                    cleanup_error.get_or_insert_with(|| invalid(error));
+                }
+            }
+        }
         self.app_save().await?;
+        if let Some(error) = cleanup_error {
+            return Err(error);
+        }
         Ok(json!({"closed":true}))
     }
     pub async fn mcp_extension_call(
@@ -1059,7 +1199,7 @@ impl Engine {
                 &request_id,
                 method,
                 hash,
-                json!({"turnId":turn.id}),
+                json!({"turnId":turn.id,"mcpAppInstance":instance}),
             );
             self.persist(&candidate).await?;
             state.thread = candidate;
@@ -1159,6 +1299,126 @@ impl Engine {
         }
         Err(invalid("App result snapshot unavailable; refusing replay"))
     }
+    async fn validate_mcp_owner(
+        &self,
+        owner: &CallOwner,
+        server: &str,
+        generation: u64,
+    ) -> Result<()> {
+        if owner.cancellation.is_cancelled() {
+            return Err(invalid("MCP caller ended"));
+        }
+        let cell = self.cell(&owner.thread).await?;
+        match &owner.scope {
+            CallOwnerScope::Tool => {
+                if cell
+                    .state
+                    .lock()
+                    .await
+                    .active
+                    .as_ref()
+                    .is_none_or(|a| a.id != owner.turn)
+                {
+                    return Err(invalid("MCP caller turn ended"));
+                }
+                if let Some(instance) = &owner.instance {
+                    self.app_bound(&owner.identity, &owner.thread, instance, generation)
+                        .await?;
+                }
+            }
+            CallOwnerScope::AppRead { cwd, epoch } => {
+                self.app_scope(&owner.thread).await?;
+                self.plugin_server(server, generation).await?;
+                if epoch != &self.desktop.mcp_apps.runtime_epoch
+                    || cell.state.lock().await.thread.cwd != *cwd
+                {
+                    return Err(invalid("MCP App read binding changed"));
+                }
+                if let Some(instance) = &owner.instance {
+                    self.app_bound(&owner.identity, &owner.thread, instance, generation)
+                        .await?;
+                }
+            }
+        }
+        Ok(())
+    }
+    pub(crate) fn mcp_request_context(
+        self: &Arc<Self>,
+        owner: CallOwner,
+        server: String,
+        generation: u64,
+        tool: Option<areal_mcp::McpTool>,
+    ) -> areal_mcp::RequestOwner {
+        let engine = Arc::downgrade(self);
+        areal_mcp::RequestOwner::new(owner.token.clone(), move || {
+            let engine = engine.clone();
+            let owner = owner.clone();
+            let server = server.clone();
+            let tool = tool.clone();
+            Box::pin(async move {
+                let engine = engine
+                    .upgrade()
+                    .ok_or_else(|| anyhow::anyhow!("Core ended"))?;
+                if let Some(tool) = tool {
+                    engine.check_plugin_mcp(&tool).await?;
+                } else {
+                    engine
+                        .plugin_server(&server, generation)
+                        .await
+                        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                }
+                engine
+                    .validate_mcp_owner(&owner, &server, generation)
+                    .await
+                    .map_err(|e| anyhow::anyhow!(e.to_string()))
+            })
+        })
+    }
+    async fn app_read_resource(
+        self: &Arc<Self>,
+        identity: &str,
+        thread: &str,
+        instance: Option<String>,
+        server: &areal_mcp::McpServer,
+        uri: &str,
+    ) -> Result<Value> {
+        let cell = self.app_scope(thread).await?;
+        let cancellation = self.shutdown.child_token();
+        let _drop = cancellation.clone().drop_guard();
+        let owner = CallOwner {
+            token: id(),
+            scope: CallOwnerScope::AppRead {
+                cwd: cell.state.lock().await.thread.cwd.clone(),
+                epoch: self.desktop.mcp_apps.runtime_epoch.clone(),
+            },
+            cancellation: cancellation.clone(),
+            identity: identity.into(),
+            thread: thread.into(),
+            turn: String::new(),
+            call: String::new(),
+            instance,
+        };
+        self.desktop.mcp_apps.reads.write().unwrap().insert(
+            owner.token.clone(),
+            (server.generation(), cancellation.clone()),
+        );
+        let key = (server.name().to_owned(), server.generation());
+        {
+            let mut calls = self.desktop.mcp_apps.calls.lock().await;
+            calls.retain(|_, o| !o.cancellation.is_cancelled());
+            if calls.contains_key(&key) {
+                return Err(invalid("MCP server has an active caller"));
+            }
+            calls.insert(key.clone(), owner.clone());
+        }
+        let context =
+            self.mcp_request_context(owner, server.name().into(), server.generation(), None);
+        let result = server
+            .read_resource_owned(uri, cancellation, Some(&context))
+            .await;
+        self.desktop.mcp_apps.calls.lock().await.remove(&key);
+        serde_json::to_value(result.map_err(invalid)?).map_err(invalid)
+    }
     pub(crate) async fn mcp_call_owner(&self, cell: &Cell, call: &ToolCall) -> Result<CallOwner> {
         let state = cell.state.lock().await;
         let turn = state.active.as_ref().ok_or(Error::Conflict)?.id.clone();
@@ -1168,16 +1428,15 @@ impl Engine {
             .find(|r| r.result["turnId"] == turn || r.result["turn"]["id"] == turn)
             .map(|r| r.identity.clone())
             .unwrap_or_default();
-        let instance = self
-            .desktop
-            .mcp_apps
-            .instances
-            .read()
-            .unwrap()
-            .values()
-            .find(|i| i.thread_id == cell.id && i.identity == identity && i.tool_name == call.name)
-            .map(|i| i.instance_id.clone());
+        let instance = desktop(&state.thread)
+            .receipts
+            .iter()
+            .find(|r| r.result["turnId"] == turn)
+            .and_then(|r| r.result["mcpAppInstance"].as_str().map(str::to_owned));
         Ok(CallOwner {
+            token: id(),
+            scope: CallOwnerScope::Tool,
+            cancellation: self.shutdown.child_token(),
             identity,
             thread: cell.id.clone(),
             turn,
@@ -1193,13 +1452,15 @@ impl Engine {
         let cancel = self.shutdown.clone();
         self.tasks.spawn(async move{loop{let request=tokio::select!{_=cancel.cancelled()=>break,r=receiver.recv()=>match r{Some(r)=>r,None=>break}};let Some(engine)=weak.upgrade()else{break;};let owner=engine.desktop.mcp_apps.calls.lock().await.get(&(request.server.clone(),request.generation)).cloned();
             if !form_supported(&request.params["requestedSchema"]){let _=request.respond(json!({"action":"decline"}));continue;}
-            if let Some(owner)=owner.filter(|o|!o.identity.is_empty()){let request_id=id();if let Ok(cell)=engine.cell(&owner.thread).await{cell.emit("areal/mcp/form/requested",json!({"threadId":owner.thread,"requestId":request_id,"serverId":request.server,"generation":request.generation}));}engine.desktop.mcp_apps.forms.lock().await.insert(request_id,Form{owner,request});}else{let _=request.respond(json!({"action":"cancel"}));}
+            if let Some(owner)=owner.filter(|o|!o.identity.is_empty() && !o.cancellation.is_cancelled() && request.owner.as_ref().is_none_or(|token|token==&o.token)){let request_id=id();if let Ok(cell)=engine.cell(&owner.thread).await{cell.emit("areal/mcp/form/requested",json!({"threadId":owner.thread,"requestId":request_id,"serverId":request.server,"generation":request.generation}));}engine.desktop.mcp_apps.forms.lock().await.insert(request_id,Form{owner,request});}else{let _=request.respond(json!({"action":"cancel"}));}
         }});
     }
     pub async fn mcp_forms_list(&self, thread_id: String) -> Result<Value> {
         self.app_scope(&thread_id).await?;
         let mut forms = self.desktop.mcp_apps.forms.lock().await;
-        forms.retain(|_, f| !f.request.cancellation.is_cancelled());
+        forms.retain(|_, f| {
+            !f.request.cancellation.is_cancelled() && !f.owner.cancellation.is_cancelled()
+        });
         Ok(
             json!({"data":forms.iter().filter(|(_,f)|f.owner.thread==thread_id).map(|(id,f)|json!({"requestId":id,"threadId":thread_id,"turnId":f.owner.turn,"callId":f.owner.call,"instanceId":f.owner.instance,"serverId":f.request.server,"generation":f.request.generation,"message":f.request.params["message"],"requestedSchema":f.request.params["requestedSchema"]})).collect::<Vec<_>>()}),
         )
@@ -1211,7 +1472,7 @@ impl Engine {
         request_id: String,
         response: Value,
     ) -> Result<Value> {
-        let response = if response == json!({"unsupported":true}) {
+        let mut response = if response == json!({"unsupported":true}) {
             json!({"action":"decline"})
         } else {
             response
@@ -1225,30 +1486,21 @@ impl Engine {
         {
             return Err(invalid("form owner mismatch or request expired"));
         }
-        let cell = self.cell(&thread_id).await?;
-        if cell
-            .state
-            .lock()
-            .await
-            .active
-            .as_ref()
-            .is_none_or(|a| a.id != form.owner.turn)
-        {
-            return Err(invalid("form owner turn ended"));
-        }
+        self.validate_mcp_owner(&form.owner, &form.request.server, form.request.generation)
+            .await?;
         if response["action"] == "accept" {
             if !form_supported(&form.request.params["requestedSchema"]) {
                 return Err(invalid("unsupported form schema"));
             }
+            let schema = self
+                .resolve_form_resources(&request_id, form, &mut response)
+                .await?;
             let validator = jsonschema::options()
                 .should_validate_formats(true)
-                .build(&form.request.params["requestedSchema"])
+                .build(&schema)
                 .map_err(invalid)?;
             if !validator.is_valid(&response["content"])
-                || !form_resources_valid(
-                    &form.request.params["requestedSchema"],
-                    &response["content"],
-                )
+                || !form_resources_valid(&schema, &response["content"])
             {
                 return Err(invalid("form response does not match complete schema"));
             }
@@ -1327,7 +1579,34 @@ impl Engine {
         let mut updates = server.resource_updates();
         let weak = Arc::downgrade(self);
         let cancel = self.shutdown.clone();
-        self.tasks.spawn(async move{while let Ok(update)=updates.recv(cancel.clone()).await{let Some(engine)=weak.upgrade()else{break;};let owners:Vec<_>=engine.desktop.mcp_apps.instances.read().unwrap().values().filter(|i|i.runtime_epoch==engine.desktop.mcp_apps.runtime_epoch&&i.server_id==update.server&&i.generation==update.generation).cloned().collect();for owner in owners{if let Ok(cell)=engine.cell(&owner.thread_id).await{cell.emit("areal/mcp/app/notification",json!({"threadId":owner.thread_id,"instanceId":owner.instance_id,"generation":update.generation,"notification":{"jsonrpc":"2.0","method":"notifications/resources/updated","params":{"uri":update.uri}}}));}}}});
+        self.tasks.spawn(async move {
+            while let Ok(update) = updates.recv(cancel.clone()).await {
+                let Some(engine) = weak.upgrade() else { break; };
+                // Also orders subscribe-time notifications after ownership is committed and
+                // prevents a queued notification from escaping after close/unsubscribe.
+                let _guard = engine.desktop.mcp_apps.mutation.lock().await;
+                if server.is_revoked() { break; }
+                let instances = engine.desktop.mcp_apps.subscriptions.read().unwrap()
+                    .get(&(update.server.clone(), update.generation, update.uri.clone()))
+                    .map(|subscription| subscription.instances.clone()).unwrap_or_default();
+                let owners: Vec<_> = engine.desktop.mcp_apps.instances.read().unwrap().values()
+                    .filter(|i| i.runtime_epoch == engine.desktop.mcp_apps.runtime_epoch
+                        && i.server_id == update.server && i.generation == update.generation
+                        && instances.contains(&i.instance_id)).cloned().collect();
+                for owner in owners {
+                    if let Ok(cell) = engine.cell(&owner.thread_id).await {
+                        if server.is_revoked() { break; }
+                        cell.emit("areal/mcp/app/notification", json!({"threadId":owner.thread_id,"instanceId":owner.instance_id,"generation":update.generation,"notification":{"jsonrpc":"2.0","method":"notifications/resources/updated","params":{"uri":update.uri}}}));
+                    }
+                }
+            }
+            // Revocation does not acquire mutation (open may hold it while revoking).
+            // Cleanup is memory-only; subsequent operations also discard revoked handles.
+            if let Some(engine) = weak.upgrade() {
+                engine.desktop.mcp_apps.subscriptions.write().unwrap()
+                    .retain(|_, subscription| !subscription.server.is_revoked());
+            }
+        });
     }
 }
 impl Engine {
@@ -1375,7 +1654,7 @@ impl Engine {
         target: Value,
     ) -> Result<Value> {
         self.app_scope(&thread_id).await?;
-        let (server_id, generation, cancellation) = {
+        let (server_id, generation, cancellation, call_owner) = {
             let forms = self.desktop.mcp_apps.forms.lock().await;
             let form = forms.get(&request_id).ok_or(Error::NotFound)?;
             if form.owner.identity != identity
@@ -1406,6 +1685,7 @@ impl Engine {
                 form.request.server.clone(),
                 form.request.generation,
                 form.request.cancellation.clone(),
+                form.owner.clone(),
             )
         };
         let (owner, server) = self.plugin_server(&server_id, generation).await?;
@@ -1414,8 +1694,10 @@ impl Engine {
                 let uri = target["uri"]
                     .as_str()
                     .ok_or_else(|| invalid("preview URI required"))?;
+                let context =
+                    self.mcp_request_context(call_owner, server_id.clone(), generation, None);
                 let resource = server
-                    .read_resource(uri, cancellation)
+                    .read_resource_owned(uri, cancellation, Some(&context))
                     .await
                     .map_err(invalid)?;
                 Ok(

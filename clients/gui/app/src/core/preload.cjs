@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('arealDesktop', {
     ipcRenderer.on('areal-core:mcp-app-deep-link', handler); handler();
     return () => { active = false; ipcRenderer.removeListener('areal-core:mcp-app-deep-link', handler); };
   },
+  mcpFormResource: (operation, request) => ipcRenderer.invoke('areal-core:mcp-form-resource', operation, request),
   mcpApp: request => ipcRenderer.invoke('areal-core:mcp-app', request),
   onMcpAppEvent: listener => {
     const handler = (_event, value) => listener(value);

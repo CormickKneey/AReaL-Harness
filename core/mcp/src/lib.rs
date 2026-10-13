@@ -1,7 +1,9 @@
 //! MCP tool client. Transport/lifecycle belong here, model and Turn state stay in Engine.
 mod config;
 mod elicitation;
+mod mrtr;
 pub use elicitation::{ConnectionOptions, ElicitationBroker, ElicitationRequest};
+pub use mrtr::RequestOwner;
 mod http;
 pub use http::{AuthenticationFailed, HttpFailure};
 
@@ -11,6 +13,12 @@ pub struct InitializationFailure {
     pub kind: &'static str,
     /// Last observed HTTP failure during startup; diagnostic only, never call acceptance evidence.
     pub http: Option<HttpFailure>,
+    challenge: http::AuthChallenge,
+}
+impl InitializationFailure {
+    pub fn challenge(&self) -> Option<String> {
+        self.challenge.get()
+    }
 }
 impl std::fmt::Display for InitializationFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -26,7 +34,7 @@ impl std::fmt::Display for InitializationFailure {
 }
 impl std::error::Error for InitializationFailure {}
 mod auth;
-pub use auth::{AuthManager, AuthStatus, AuthorizedCredential};
+pub use auth::{AuthManager, AuthStatus, AuthorizedCredential, HostAuthConfiguration};
 mod resources;
 pub use resources::{McpServer, ResourceUpdate, ResourceUpdates};
 mod plugin;
@@ -38,9 +46,12 @@ pub use plugin::{
     PluginServerConfig, ToolPolicy, normalize_plugin_document,
 };
 use rmcp::{
-    ClientHandler, RoleClient, ServiceExt,
+    ClientHandler, RoleClient,
     model::*,
-    service::{NotificationContext, Peer, PeerRequestOptions, RunningService},
+    service::{
+        ClientLifecycleMode, ClientServiceExt, NotificationContext, Peer, PeerRequestOptions,
+        RunningService,
+    },
     transport::{
         StreamableHttpClientTransport, TokioChildProcess,
         streamable_http_client::StreamableHttpClientTransportConfig,
@@ -60,9 +71,32 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 
+fn lifecycle() -> ClientLifecycleMode {
+    ClientLifecycleMode::Auto {
+        preferred_versions: vec![ProtocolVersion::V_2026_07_28],
+        legacy_version: Some(ProtocolVersion::V_2025_11_25),
+    }
+}
+fn reject_modern_reverse(
+    context: &rmcp::service::RequestContext<RoleClient>,
+) -> std::result::Result<(), ErrorData> {
+    if context
+        .peer
+        .peer_info()
+        .is_some_and(|i| i.protocol_version >= ProtocolVersion::V_2026_07_28)
+    {
+        return Err(ErrorData::invalid_params(
+            "Modern elicitation requires MRTR",
+            None,
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug)]
 struct Handler {
     server: Arc<str>,
+    local_stdio: bool,
     resource_updates: tokio::sync::broadcast::Sender<ResourceUpdate>,
     elicitation: Option<ElicitationBroker>,
     changed: Arc<AtomicBool>,
@@ -70,6 +104,8 @@ struct Handler {
     generation: u64,
     auth_failed: Arc<AtomicBool>,
     auth_rejected: http::AuthRejections,
+    auth_challenge: http::AuthChallenge,
+    sent_credentials: http::SentCredentials,
 }
 impl ClientHandler for Handler {
     fn get_info(&self) -> ClientInfo {
@@ -107,6 +143,7 @@ impl ClientHandler for Handler {
         request: ElicitRequestParams,
         context: rmcp::service::RequestContext<RoleClient>,
     ) -> std::result::Result<ElicitResult, ErrorData> {
+        reject_modern_reverse(&context)?;
         let Some(broker) = &self.elicitation else {
             return Ok(ElicitResult::new(ElicitationAction::Decline));
         };
@@ -123,6 +160,7 @@ impl ClientHandler for Handler {
         request: CustomRequest,
         context: rmcp::service::RequestContext<RoleClient>,
     ) -> std::result::Result<CustomResult, ErrorData> {
+        reject_modern_reverse(&context)?;
         if request.method != "openai/elicitation/create" {
             return Err(ErrorData::new(
                 ErrorCode::METHOD_NOT_FOUND,
@@ -178,8 +216,11 @@ pub struct McpTool {
     generation: u64,
     auth_failed: Arc<AtomicBool>,
     auth_rejected: http::AuthRejections,
+    auth_challenge: http::AuthChallenge,
+    sent_credentials: http::SentCredentials,
     metadata: Tool,
     approval: Option<ApprovalMode>,
+    elicitation: Option<ElicitationBroker>,
 }
 impl McpTool {
     pub fn is_stale(&self) -> bool {
@@ -232,6 +273,16 @@ impl McpTool {
         host_meta: Option<serde_json::Map<String, Value>>,
         cancel: CancellationToken,
     ) -> Result<CallToolResult> {
+        self.call_raw_owned(arguments, host_meta, cancel, None)
+            .await
+    }
+    pub async fn call_raw_owned(
+        &self,
+        arguments: Value,
+        host_meta: Option<serde_json::Map<String, Value>>,
+        cancel: CancellationToken,
+        owner: Option<&RequestOwner>,
+    ) -> Result<CallToolResult> {
         if self.auth_failed.load(Ordering::Acquire) {
             return Err(AuthenticationFailed.into());
         }
@@ -260,55 +311,20 @@ impl McpTool {
             );
         }
         let request = ClientRequest::CallToolRequest(CallToolRequest::new(params));
-        // Use the SDK's single cancellable request, without automatic MRTR resubmission.
-        let deadline = async {
-            match self.timeout {
-                Some(duration) => tokio::time::sleep(duration).await,
-                None => std::future::pending::<()>().await,
-            }
-        };
-        tokio::pin!(deadline);
-        let mut handle = tokio::select! {
-            biased;
-            _ = cancel.cancelled() => bail!("MCP call cancelled before submission"),
-            _ = self.revoked.cancelled() => bail!("MCP connection generation revoked before submission"),
-            _ = &mut deadline => bail!("MCP request submission timed out; outcome is UNKNOWN"),
-            handle = self.peer.send_cancellable_request(request, PeerRequestOptions::no_options()) => handle.map_err(|_| anyhow::anyhow!("MCP {} request could not be submitted; outcome is UNKNOWN", self.server))?,
-        };
-        let request_id = handle.id.clone();
-        let result = tokio::select! {
-            biased;
-            _ = cancel.cancelled() => None,
-            _ = self.revoked.cancelled() => None,
-            _ = &mut deadline => None,
-            result = &mut handle.rx => Some(result),
-        };
-        let Some(result) = result else {
-            let _ = tokio::time::timeout(
-                Duration::from_secs(1),
-                handle.cancel(Some("AReaL tool timeout or cancellation".into())),
-            )
-            .await;
-            if http::take_rejection(&self.auth_rejected, &request_id) {
-                return Err(AuthenticationFailed.into());
-            }
-            bail!(
-                "MCP {} call cancelled or timed out; outcome is UNKNOWN",
-                self.server
-            );
-        };
-        let rejected = http::take_rejection(&self.auth_rejected, &request_id);
-        if rejected && !matches!(&result, Ok(Ok(_))) {
-            return Err(AuthenticationFailed.into());
+        let result = mrtr::RequestChannel {
+            peer: &self.peer,
+            server: &self.server,
+            generation: self.generation,
+            revoked: &self.revoked,
+            auth_failed: &self.auth_failed,
+            auth_rejected: &self.auth_rejected,
+            auth_challenge: &self.auth_challenge,
+            sent_credentials: &self.sent_credentials,
+            timeout: self.timeout,
+            broker: self.elicitation.as_ref(),
         }
-        let result = result
-            .map_err(|_| anyhow::anyhow!("MCP {} disconnected; outcome is UNKNOWN", self.server))?
-            .map_err(|_| {
-                anyhow::anyhow!(
-                    "MCP {} returned a protocol/transport error; outcome is UNKNOWN",
-                    self.server
-                )
-            })?;
+        .exchange(request, owner, cancel)
+        .await?;
         let ServerResult::CallToolResult(result) = result else {
             bail!("MCP returned an incomplete or unexpected result; outcome is UNKNOWN");
         };
@@ -393,11 +409,28 @@ fn convert_result(value: Value) -> Result<DynamicToolResponse> {
     })
 }
 
-/// Redacted failure of an optional package server. Never includes provider text.
+/// Redacted server identity for optional failures and required-failure error chains.
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct ConnectionFailure {
     pub server: String,
     pub class: &'static str,
+    #[serde(skip)]
+    challenge: http::AuthChallenge,
+}
+impl std::fmt::Display for ConnectionFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "MCP server {} connection failed ({})",
+            self.server, self.class
+        )
+    }
+}
+impl std::error::Error for ConnectionFailure {}
+impl ConnectionFailure {
+    pub fn authentication_challenge(&self) -> Option<String> {
+        self.challenge.get()
+    }
 }
 
 /// Owns live connections. Required failures roll back all earlier connections.
@@ -575,6 +608,26 @@ impl Connections {
                     if error.is::<AuthenticationFailed>() {
                         class = "authentication";
                     }
+                    let challenge = pending
+                        .as_ref()
+                        .map(|s| s.service().auth_challenge.clone())
+                        .or_else(|| {
+                            error
+                                .downcast_ref::<InitializationFailure>()
+                                .map(|e| e.challenge.clone())
+                        })
+                        .unwrap_or_default();
+                    let error = if error.downcast_ref::<InitializationFailure>().is_none()
+                        && challenge.get().is_some()
+                    {
+                        error.context(InitializationFailure {
+                            kind: "discovery",
+                            http: None,
+                            challenge: challenge.clone(),
+                        })
+                    } else {
+                        error
+                    };
                     let mut cleanup_failed = false;
                     if let Some(mut service) = pending.take() {
                         service.service().revoked.cancel();
@@ -584,6 +637,11 @@ impl Connections {
                         );
                     }
                     if required || cancel.is_cancelled() || cleanup_failed {
+                        let error = error.context(ConnectionFailure {
+                            server: name.clone(),
+                            class,
+                            challenge,
+                        });
                         cleanup_failed |= connections.shutdown().await.is_err();
                         if cleanup_failed {
                             return Err(error.context("MCP cleanup unconfirmed"));
@@ -593,6 +651,7 @@ impl Connections {
                     connections.failures.push(ConnectionFailure {
                         server: name.clone(),
                         class,
+                        challenge,
                     });
                 }
             }
@@ -647,6 +706,7 @@ async fn connect_one(
     static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
     let handler = Handler {
         server: name.into(),
+        local_stdio: matches!(&config.transport, TransportConfig::Stdio { .. }),
         resource_updates: tokio::sync::broadcast::channel(64).0,
         elicitation,
         changed: Arc::new(AtomicBool::new(false)),
@@ -654,9 +714,13 @@ async fn connect_one(
         generation: NEXT_GENERATION.fetch_add(1, Ordering::Relaxed),
         auth_failed: Arc::default(),
         auth_rejected: Arc::default(),
+        auth_challenge: Default::default(),
+        sent_credentials: Default::default(),
     };
     let auth_failed = handler.auth_failed.clone();
     let auth_rejected = handler.auth_rejected.clone();
+    let auth_challenge = handler.auth_challenge.clone();
+    let sent_credentials = handler.sent_credentials.clone();
     let startup_failure: http::StartupHttpFailure = Arc::default();
     let service = match &config.transport {
         TransportConfig::Stdio {
@@ -691,7 +755,7 @@ async fn connect_one(
                 .stderr(std::process::Stdio::null())
                 .spawn()
                 .with_context(|| format!("cannot start MCP {name}"))?;
-            handler.serve(transport).await
+            handler.serve_with_lifecycle(transport, lifecycle()).await
         }
         TransportConfig::StreamableHttp {
             url,
@@ -764,20 +828,25 @@ async fn connect_one(
                 .connect_timeout(Duration::from_secs(10))
                 .build()?;
             handler
-                .serve(StreamableHttpClientTransport::with_client(
-                    http::HttpClient {
-                        client,
-                        credential: if explicit_authorization {
-                            None
-                        } else {
-                            credential.cloned()
+                .serve_with_lifecycle(
+                    StreamableHttpClientTransport::with_client(
+                        http::HttpClient {
+                            client,
+                            credential: if explicit_authorization {
+                                None
+                            } else {
+                                credential.cloned()
+                            },
+                            failed: auth_failed.clone(),
+                            rejected: auth_rejected,
+                            startup_failure: startup_failure.clone(),
+                            challenge: auth_challenge.clone(),
+                            sent_credentials: sent_credentials.clone(),
                         },
-                        failed: auth_failed.clone(),
-                        rejected: auth_rejected,
-                        startup_failure: startup_failure.clone(),
-                    },
-                    config,
-                ))
+                        config,
+                    ),
+                    lifecycle(),
+                )
                 .await
         }
     };
@@ -804,9 +873,18 @@ async fn connect_one(
             "MCP initialization failed"
         );
         if auth_failed.load(Ordering::Acquire) {
-            AuthenticationFailed.into()
+            anyhow::Error::new(AuthenticationFailed).context(InitializationFailure {
+                kind,
+                http,
+                challenge: auth_challenge.clone(),
+            })
         } else {
-            InitializationFailure { kind, http }.into()
+            InitializationFailure {
+                kind,
+                http,
+                challenge: auth_challenge.clone(),
+            }
+            .into()
         }
     })
 }
@@ -873,8 +951,11 @@ async fn discover(
                 generation: service.service().generation,
                 auth_failed: service.service().auth_failed.clone(),
                 auth_rejected: service.service().auth_rejected.clone(),
+                auth_challenge: service.service().auth_challenge.clone(),
+                sent_credentials: service.service().sent_credentials.clone(),
                 metadata,
                 approval: None,
+                elicitation: service.service().elicitation.clone(),
             });
         }
         match page.next_cursor {

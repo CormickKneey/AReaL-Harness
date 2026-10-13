@@ -14039,6 +14039,77 @@
       "title": "Preview",
       "type": "object"
     },
+    "areal/mcp/form/resource/prepare": {
+      "additionalProperties": false,
+      "properties": {
+        "fieldName": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "requestId",
+        "fieldName"
+      ],
+      "title": "FormResourcePrepare",
+      "type": "object"
+    },
+    "areal/mcp/form/resource/release": {
+      "additionalProperties": false,
+      "properties": {
+        "fieldName": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "uri": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "requestId",
+        "fieldName",
+        "uri"
+      ],
+      "title": "FormResourceRelease",
+      "type": "object"
+    },
+    "areal/mcp/form/resource/stage": {
+      "additionalProperties": false,
+      "description": "Private native-picker data. No renderer command accepts this DTO.",
+      "properties": {
+        "paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "selectionToken": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "selectionToken",
+        "requestId",
+        "paths"
+      ],
+      "title": "FormResourceStage",
+      "type": "object"
+    },
     "areal/mcp/form/respond": {
       "additionalProperties": false,
       "properties": {
@@ -14216,6 +14287,75 @@
         "operation"
       ],
       "title": "Auth",
+      "type": "object"
+    },
+    "areal/plugin/auth/configure": {
+      "additionalProperties": false,
+      "properties": {
+        "configuration": {
+          "additionalProperties": false,
+          "description": "References supplied by the trusted host; secret values never enter RPCs.",
+          "properties": {
+            "apiKeyRef": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "callbackUrl": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "clientMetadataUrl": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "clientSecretRef": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "privateKeyId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "privateKeyRef": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "expectedDigest": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "server": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "id",
+        "server",
+        "expectedDigest",
+        "configuration"
+      ],
+      "title": "AuthConfigure",
       "type": "object"
     },
     "areal/plugin/configure": {

@@ -53,6 +53,19 @@ pub struct AuthPolicy {
     pub(crate) callback_url: Option<String>,
 }
 impl AuthPolicy {
+    pub fn mode(&self) -> &str {
+        self.portable_declaration
+            .as_ref()
+            .and_then(|v| v["type"].as_str())
+            .unwrap_or("oauth")
+    }
+    pub fn requirements(&self) -> Value {
+        let declaration = self.portable_declaration.as_ref();
+        let method = declaration
+            .and_then(|v| v["client"]["tokenEndpointAuthMethod"].as_str())
+            .unwrap_or("none");
+        json!({"mode":self.mode(),"apiKey":self.mode()=="api_key", "clientSecret":matches!(method,"client_secret_basic"|"client_secret_post"),"privateKey":method=="private_key_jwt", "tokenEndpointAuthMethod":method,"headerScheme":declaration.and_then(|v|v["headerScheme"].as_str()),"cimdFallback":"dcr"})
+    }
     /// Portable policy declaration is retained internally; this reports whether the current host can execute it.
     pub fn is_supported(&self) -> bool {
         !self.unsupported
@@ -91,7 +104,7 @@ impl PluginServerConfig {
         self.auth.as_ref()
     }
     pub fn redacted_view(&self) -> Value {
-        json!({"transport":match self.config.transport {TransportConfig::Stdio{..}=>"stdio", _=>"streamable-http"},"enabled":self.policy.enabled,"authentication":self.auth.is_some(),"authenticationSupported":self.auth.as_ref().is_none_or(AuthPolicy::is_supported),"startupTimeoutMs":self.config.startup_timeout_ms,"callTimeoutMs":self.config.call_timeout_ms,"enabledTools":self.config.enabled_tools,"disabledTools":self.policy.disabled_tools})
+        json!({"transport":match self.config.transport {TransportConfig::Stdio{..}=>"stdio", _=>"streamable-http"},"enabled":self.policy.enabled,"authentication":self.auth.is_some(),"authenticationSupported":self.auth.as_ref().is_none_or(AuthPolicy::is_supported),"authenticationRequirements":self.auth.as_ref().map(AuthPolicy::requirements),"startupTimeoutMs":self.config.startup_timeout_ms,"callTimeoutMs":self.config.call_timeout_ms,"enabledTools":self.config.enabled_tools,"disabledTools":self.policy.disabled_tools})
     }
 }
 const OWNED: &[&str] = &[
@@ -619,7 +632,7 @@ fn portable_auth(v: &Value) -> Result<Option<AuthPolicy>> {
     }
     let mut policy = AuthPolicy {
         portable_declaration: Some(v.clone()),
-        unsupported: kind != "oauth",
+        unsupported: false,
         ..Default::default()
     };
     for key in [
@@ -645,7 +658,6 @@ fn portable_auth(v: &Value) -> Result<Option<AuthPolicy>> {
                     && u.fragment().is_none(),
                 "invalid authentication URL"
             );
-            policy.unsupported = true;
         }
     }
     for key in ["baseScopes", "defaultScopes", "oidcScopesSupported"] {
@@ -660,12 +672,6 @@ fn portable_auth(v: &Value) -> Result<Option<AuthPolicy>> {
     }
     policy.scopes.sort();
     policy.scopes.dedup();
-    if o.contains_key("defaultScopes")
-        || o.contains_key("oidcEnabled")
-        || o.contains_key("oidcScopesSupported")
-    {
-        policy.unsupported = true;
-    }
     if let Some(client) = o.get("client") {
         let client = client
             .as_object()
@@ -707,7 +713,6 @@ fn portable_auth(v: &Value) -> Result<Option<AuthPolicy>> {
                     !client.contains_key("clientId"),
                     "CIMD cannot provide clientId"
                 );
-                policy.unsupported = true;
             }
             _ => bail!("invalid OAuth client mode"),
         }
@@ -725,9 +730,6 @@ fn portable_auth(v: &Value) -> Result<Option<AuthPolicy>> {
                 .contains(&method),
                 "invalid token endpoint authentication method"
             );
-            if method != "none" {
-                policy.unsupported = true;
-            }
         }
     }
     if kind == "api_key" {
@@ -742,7 +744,7 @@ fn portable_auth(v: &Value) -> Result<Option<AuthPolicy>> {
                 .and_then(Value::as_str)
                 .ok_or_else(|| anyhow::anyhow!("missing API key header name"))?;
             ensure!(
-                !header.eq_ignore_ascii_case("host"),
+                !OWNED.contains(&header.to_ascii_lowercase().as_str()),
                 "reserved API key header"
             );
             reqwest_mcp::header::HeaderName::from_bytes(header.as_bytes())

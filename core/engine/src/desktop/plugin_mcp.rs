@@ -1,6 +1,7 @@
 //! 安装摘要是信任边界；目录刷新不执行包，旧代只在所有已准入所有者排空后关闭。
 use super::*;
 use areal_mcp::{Connections, McpTool, PluginServerConfig};
+use sha2::Digest;
 use std::{collections::BTreeSet, ffi::OsString, path::PathBuf};
 #[derive(Clone)]
 pub(super) struct Generation {
@@ -41,6 +42,15 @@ impl Connector {
             .map(|value| (self.credential_environment_key().into(), value.into()))
     }
 }
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AuthConfiguration {
+    plugin: String,
+    server: String,
+    digest: String,
+    references: areal_protocol::plugin_runtime::HostAuthReferences,
+    revision: String,
+}
 pub(crate) struct Manager {
     live: std::sync::RwLock<BTreeMap<String, Generation>>,
     owners: Mutex<Vec<Owned>>,
@@ -48,6 +58,9 @@ pub(crate) struct Manager {
     server_states: std::sync::RwLock<BTreeMap<String, (String, BTreeMap<String, String>)>>,
     trusted: std::sync::RwLock<BTreeMap<String, String>>,
     connectors: std::sync::RwLock<BTreeMap<String, Connector>>,
+    auth_configurations: std::sync::RwLock<BTreeMap<String, AuthConfiguration>>,
+    // Private startup challenges are scoped to installed snapshot and named server.
+    auth_challenges: std::sync::RwLock<BTreeMap<(String, String, String), String>>,
     wire: std::sync::RwLock<BTreeMap<String, Value>>,
     operation: Mutex<()>,
     known: std::sync::RwLock<BTreeMap<u64, (String, bool)>>,
@@ -73,6 +86,10 @@ impl Manager {
             server_states: Default::default(),
             trusted: std::sync::RwLock::new(serde_json::from_value(load("plugin-trust")?)?),
             connectors: std::sync::RwLock::new(serde_json::from_value(load("plugin-connectors")?)?),
+            auth_configurations: std::sync::RwLock::new(serde_json::from_value(load(
+                "plugin-auth-configurations",
+            )?)?),
+            auth_challenges: Default::default(),
             wire: Default::default(),
             operation: Mutex::new(()),
             known: Default::default(),
@@ -408,6 +425,12 @@ impl Engine {
             .write()
             .unwrap()
             .retain(|id, g| current.get(id) == Some(&g.digest));
+        self.desktop
+            .plugin_mcp
+            .auth_challenges
+            .write()
+            .unwrap()
+            .retain(|(plugin, _, digest), _| current.get(plugin) == Some(digest));
         // 所有者扫描只读取已冻结的代；已受理旧工具在新包安装后仍可结算。
         let cells: Vec<_> = self.threads.read().await.values().cloned().collect();
         let mut active = BTreeSet::new();
@@ -464,6 +487,23 @@ impl Engine {
         let mut rows = vec![];
         for c in components {
             let (configs, mut diagnostics) = self.component_configuration(&c)?;
+            let mut installation_auth = BTreeSet::new();
+            if c.policy["authentication"] == "ON_INSTALL" {
+                for (name, config) in &configs {
+                    if config.policy().enabled
+                        && config.auth_policy().is_some()
+                        && self
+                            .desktop
+                            .plugin_mcp
+                            .auth
+                            .ready_credential(&self.plugin_auth_key(&c.id, name, &c.digest))
+                            .await
+                            .is_err()
+                    {
+                        installation_auth.insert(name.clone());
+                    }
+                }
+            }
             diagnostics.extend(c.diagnostics.iter().map(|d| json!(d)));
             let outcomes = self
                 .desktop
@@ -500,9 +540,14 @@ impl Engine {
                 .get(&c.id)
                 .cloned()
                 .unwrap_or_else(|| "disconnected".into());
+            let state = if !installation_auth.is_empty() && state == "disconnected" {
+                "authRequired".into()
+            } else {
+                state
+            };
             rows.push(json!({"pluginId":c.id,"installedDigest":c.digest,"state":state,"authenticationTiming":c.policy["authentication"],"trusted":self.desktop.plugin_mcp.trusted.read().unwrap().get(&c.id)==Some(&c.digest),"servers":configs.iter().map(|(name,cfg)|{
-                let state=if !cfg.policy().enabled {"disabled"} else if live.as_ref().is_some_and(|g|g.servers.iter().any(|s|s.name()==name)){"connected"}else{match outcomes.get(name).map(String::as_str).unwrap_or("disconnected") {"startup"|"discovery"=>"failed","authentication"=>"authRequired",state=>state}};
-                json!({"serverId":name,"state":state,"config":cfg.redacted_view(),"policy":cfg.policy(),"authenticationTiming":c.policy["authentication"],"authentication":if cfg.auth_policy().is_some(){"required"}else{"none"}})
+                let state=if !cfg.policy().enabled {"disabled"} else if installation_auth.contains(name) {"authRequired"} else if let Some(server)=live.as_ref().and_then(|g|g.servers.iter().find(|s|s.name()==name)){if server.authentication_required(){"authRequired"}else{"connected"}}else{match outcomes.get(name).map(String::as_str).unwrap_or("disconnected") {"startup"|"discovery"=>"failed","authentication"=>"authRequired",state=>state}};
+                json!({"serverId":name,"state":state,"config":cfg.redacted_view(),"policy":cfg.policy(),"authenticationTiming":c.policy["authentication"],"authentication":match cfg.auth_policy().map(|p|p.mode()){Some("mixed")=>"optional",Some(_)=>"required",None=>"none"}})
             }).collect::<Vec<_>>(),"connectors":connector_ids(&c).iter().map(|id|json!({"id":id,"state":self.connector_state(&c.id,&c.digest,id)})).collect::<Vec<_>>(),"diagnostics":diagnostics}));
         }
         Ok(json!({"data":rows}))
@@ -583,7 +628,7 @@ impl Engine {
                     self.desktop
                         .plugin_mcp
                         .auth
-                        .ready_credential(&format!("{server}/{}", component.digest))
+                        .ready_credential(&self.plugin_auth_key(&id, server, &component.digest))
                         .await
                         .ok()
                 } else {
@@ -591,7 +636,9 @@ impl Engine {
                 };
                 if let Some(credential) = credential {
                     options.credentials.insert(server.clone(), credential);
-                } else {
+                } else if policy.mode() != "mixed"
+                    || component.policy["authentication"] == "ON_INSTALL"
+                {
                     let state = if policy.is_supported() {
                         "authRequired"
                     } else {
@@ -644,6 +691,12 @@ impl Engine {
         }
         let (broker, receiver) = areal_mcp::ElicitationBroker::channel();
         options.elicitation = Some(broker);
+        self.desktop
+            .plugin_mcp
+            .auth_challenges
+            .write()
+            .unwrap()
+            .retain(|(plugin, _, _), _| plugin != &id);
         let mut connection = Connections::connect_plugins_with_options(
             &eligible,
             &options,
@@ -653,6 +706,22 @@ impl Engine {
         )
         .await
         .map_err(|error| {
+            if let Some(failure) = error
+                .chain()
+                .find_map(|e| e.downcast_ref::<areal_mcp::ConnectionFailure>())
+            {
+                if let Some(challenge) = failure.authentication_challenge() {
+                    self.desktop
+                        .plugin_mcp
+                        .auth_challenges
+                        .write()
+                        .unwrap()
+                        .insert(
+                            (id.clone(), failure.server.clone(), component.digest.clone()),
+                            challenge,
+                        );
+                }
+            }
             let state = if error
                 .chain()
                 .any(|e| e.to_string() == "MCP cleanup unconfirmed")
@@ -663,6 +732,12 @@ impl Engine {
             };
             for server in eligible.keys() {
                 outcomes.insert(server.clone(), state.into());
+            }
+            if let Some(failure) = error
+                .chain()
+                .find_map(|e| e.downcast_ref::<areal_mcp::ConnectionFailure>())
+            {
+                outcomes.insert(failure.server.clone(), failure.class.into());
             }
             self.desktop
                 .plugin_mcp
@@ -680,6 +755,17 @@ impl Engine {
         })?;
         for failure in connection.failures() {
             outcomes.insert(failure.server.clone(), failure.class.into());
+            if let Some(challenge) = failure.authentication_challenge() {
+                self.desktop
+                    .plugin_mcp
+                    .auth_challenges
+                    .write()
+                    .unwrap()
+                    .insert(
+                        (id.clone(), failure.server.clone(), component.digest.clone()),
+                        challenge,
+                    );
+            }
         }
         for server in connection.servers() {
             outcomes.insert(server.name().into(), "connected".into());
@@ -803,6 +889,172 @@ impl Engine {
         self.watch_plugin_mcp();
         self.plugin_mcp_list().await
     }
+    fn plugin_auth_key(&self, plugin: &str, server: &str, digest: &str) -> String {
+        let mappings = self.desktop.plugin_mcp.auth_configurations.read().unwrap();
+        let revision = mappings
+            .get(&format!("{plugin}/{server}"))
+            .filter(|entry| {
+                entry.digest == digest && entry.plugin == plugin && entry.server == server
+            })
+            .map(|entry| entry.revision.as_str())
+            .unwrap_or("default");
+        format!("{server}/{digest}/{revision}")
+    }
+    fn plugin_auth_snapshot(
+        &self,
+        plugin: &str,
+        server: &str,
+        digest: &str,
+    ) -> Result<(String, areal_mcp::HostAuthConfiguration)> {
+        let mapping = self
+            .desktop
+            .plugin_mcp
+            .auth_configurations
+            .read()
+            .unwrap()
+            .get(&format!("{plugin}/{server}"))
+            .filter(|entry| {
+                entry.digest == digest && entry.plugin == plugin && entry.server == server
+            })
+            .cloned();
+        let Some(mapping) = mapping else {
+            return Ok((
+                format!("{server}/{digest}/default"),
+                areal_mcp::HostAuthConfiguration::default(),
+            ));
+        };
+        let values = self.desktop.credentials.read().unwrap();
+        let resolve = |reference: &Option<String>| -> Result<Option<String>> {
+            reference
+                .as_ref()
+                .map(|key| {
+                    values.get(key).cloned().ok_or_else(|| {
+                        invalid("authentication credential reference is unavailable")
+                    })
+                })
+                .transpose()
+        };
+        let account_id = format!(
+            "{plugin}/{server}/{digest}/{:x}",
+            sha2::Sha256::digest(serde_json::to_vec(&mapping.references).map_err(invalid)?)
+        );
+        let key = format!("{server}/{digest}/{}", mapping.revision);
+        Ok((
+            key,
+            areal_mcp::HostAuthConfiguration {
+                account_id,
+                client_secret: resolve(&mapping.references.client_secret_ref)?,
+                private_key_pem: resolve(&mapping.references.private_key_ref)?,
+                private_key_id: mapping.references.private_key_id,
+                client_metadata_url: mapping.references.client_metadata_url,
+                api_key: resolve(&mapping.references.api_key_ref)?,
+                callback_url: mapping.references.callback_url,
+            },
+        ))
+    }
+    pub async fn plugin_auth_configure(
+        self: &Arc<Self>,
+        request: areal_protocol::plugin_runtime::AuthConfigure,
+    ) -> Result<Value> {
+        let component = self.plugin_component(&request.id).await?;
+        if component.digest != request.expected_digest {
+            return Err(Error::Conflict);
+        }
+        let configs = self.component_configs(&component)?;
+        let config = configs.get(&request.server).ok_or(Error::NotFound)?;
+        if config.auth_policy().is_none() {
+            return Err(invalid("server has no authentication declaration"));
+        }
+        let references = &request.configuration;
+        for reference in [
+            &references.client_secret_ref,
+            &references.private_key_ref,
+            &references.api_key_ref,
+        ] {
+            if reference.as_ref().is_some_and(|key| !valid_id(key)) {
+                return Err(invalid("invalid credential reference"));
+            }
+        }
+        if references.private_key_id.as_ref().is_some_and(|key| {
+            key.is_empty() || key.len() > 256 || key.chars().any(char::is_control)
+        }) {
+            return Err(invalid("invalid signing key identifier"));
+        }
+        if let Some(metadata) = &references.client_metadata_url {
+            let url =
+                url::Url::parse(metadata).map_err(|_| invalid("invalid client metadata URL"))?;
+            if url.scheme() != "https"
+                || url.host_str().is_none()
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.fragment().is_some()
+            {
+                return Err(invalid(
+                    "client metadata URL must be a trusted HTTPS document",
+                ));
+            }
+        }
+        if let Some(callback) = &references.callback_url {
+            let url = url::Url::parse(callback).map_err(|_| invalid("invalid callback URL"))?;
+            if url.scheme() != "http"
+                || url.host_str() != Some("127.0.0.1")
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.fragment().is_some()
+                || url.query().is_some()
+            {
+                return Err(invalid("callback must use local IPv4 loopback HTTP"));
+            }
+        }
+        let _guard = self.desktop.plugin_mcp.operation.lock().await;
+        if self
+            .desktop
+            .plugin_mcp
+            .live
+            .read()
+            .unwrap()
+            .contains_key(&request.id)
+        {
+            return Err(invalid(
+                "disconnect plugin before changing authentication configuration",
+            ));
+        }
+        let key = format!("{}/{}", request.id, request.server);
+        let old_auth_key = self.plugin_auth_key(&request.id, &request.server, &component.digest);
+        let entry = AuthConfiguration {
+            plugin: request.id.clone(),
+            server: request.server.clone(),
+            digest: request.expected_digest,
+            references: request.configuration,
+            revision: uuid::Uuid::new_v4().to_string(),
+        };
+        // Persist before publishing; failed storage cannot change live credential selection.
+        let mut mappings = self
+            .desktop
+            .plugin_mcp
+            .auth_configurations
+            .read()
+            .unwrap()
+            .clone();
+        mappings.insert(key, entry);
+        self.store
+            .save_metadata("plugin-auth-configurations", &mappings)
+            .await
+            .map_err(invalid)?;
+        *self.desktop.plugin_mcp.auth_configurations.write().unwrap() = mappings;
+        self.desktop
+            .plugin_mcp
+            .auth_challenges
+            .write()
+            .unwrap()
+            .remove(&(
+                request.id.clone(),
+                request.server.clone(),
+                component.digest.clone(),
+            ));
+        self.desktop.plugin_mcp.auth.cancel(&old_auth_key).await;
+        Ok(json!({"pluginId":request.id,"serverId":request.server,"state":"configured"}))
+    }
     pub async fn plugin_auth(
         self: &Arc<Self>,
         id: String,
@@ -813,7 +1065,7 @@ impl Engine {
         let configs = self.component_configs(&c)?;
         let cfg = configs.get(&server).ok_or(Error::NotFound)?;
         let auth = &self.desktop.plugin_mcp.auth;
-        let auth_key = format!("{server}/{}", c.digest);
+        let auth_key = self.plugin_auth_key(&id, &server, &c.digest);
         match operation.as_str() {
             "start" => {
                 let policy = cfg
@@ -822,12 +1074,35 @@ impl Engine {
                 let endpoint = cfg
                     .endpoint()
                     .ok_or_else(|| invalid("authentication unsupported"))?;
-                serde_json::to_value(
-                    auth.start(&auth_key, endpoint, policy, None)
-                        .await
-                        .map_err(|_| invalid("authentication failed"))?,
-                )
-                .map_err(invalid)
+                let (auth_key, host) = self.plugin_auth_snapshot(&id, &server, &c.digest)?;
+                let challenge = self
+                    .desktop
+                    .plugin_mcp
+                    .live
+                    .read()
+                    .unwrap()
+                    .get(&id)
+                    .filter(|g| g.digest == c.digest)
+                    .and_then(|g| g.servers.iter().find(|s| s.name() == server))
+                    .and_then(|s| s.authentication_challenge())
+                    .or_else(|| {
+                        self.desktop
+                            .plugin_mcp
+                            .auth_challenges
+                            .read()
+                            .unwrap()
+                            .get(&(id.clone(), server.clone(), c.digest.clone()))
+                            .cloned()
+                    });
+                let result = auth
+                    .start_with_options(&auth_key, endpoint, policy, challenge.as_deref(), &host)
+                    .await
+                    .map_err(|_| invalid("authentication failed"))?;
+                if self.plugin_auth_key(&id, &server, &c.digest) != auth_key {
+                    auth.cancel(&auth_key).await;
+                    return Err(Error::Conflict);
+                }
+                serde_json::to_value(result).map_err(invalid)
             }
             "status" => Ok(serde_json::to_value(auth.status(&auth_key).await).map_err(invalid)?),
             "cancel" => {

@@ -72,6 +72,6 @@ P0 执行依赖：01 固定基线，02/03 建立格式与目录边界，04 完�
 
 已独立验收的历史状态：P0 源码实现与本地组合验收通过。48 项包/Engine 集成、真实 Core/CLI 权限与丢失响应恢复、GUI 类型/公开契约/构建、真实 Electron 安装/setup/停用/卸载和显式收据恢复均通过，独立评审为 SHIP。证据及未覆盖范围见[P0 验收记录](codex-plugins-p0-acceptance.md)。这不代表整个 Codex 插件协议已经兼容。
 
-当前状态：GitHub 首批交付已有证据。来源27/MCP24项未受环境失败影响的检查、实际 CLI8/wire6/GitHub5、原生 Apps8/扩展5通过；独立源码评审通过。primary Engine24项通过，重启探针 SIGKILL；OAuth 跨进程/proxy 和既有库测试编译缺口仍开放。P1/P3 与完整兼容尚未关闭，逐项边界见验收记录。
+当前状态：公开 MRTR、原生 stdio 文件/目录上传、便携认证、ON_INSTALL/ON_USE、App 订阅清理与 sparse checkout 已实现。来源28/MCP36/Engine31通过；进程类4项失败及 schema Make 失败保留。CLI8/wire7/GitHub5和原生36项通过，独立源码复核 SHIP。既有3处库测试编译缺字段已修复；跨进程与分发/私有服务证据仍开放。P1/P3与最终兼容尚未关闭，逐项见验收记录。
 
 P3 验收前须明确桌面扩展集合、必须运行的服务/Connector 与支持平台。格式解析不会赋予托管服务权限，未解决要求必须保留在最终矩阵中。

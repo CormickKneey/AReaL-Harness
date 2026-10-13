@@ -1,4 +1,4 @@
-// 固定协商 2025-11-25；2026 subscriptions/listen 未宣告。
+// Resource reads share the same caller-owned MRTR transport as tool calls.
 #![allow(deprecated)]
 use crate::*;
 #[derive(Clone, Debug, serde::Serialize)]
@@ -23,13 +23,17 @@ impl ResourceUpdates {
 pub struct McpServer {
     name: Arc<str>,
     generation: u64,
+    local_stdio: bool,
     info: Arc<ServerPeerInfo>,
     peer: Peer<RoleClient>,
     revoked: CancellationToken,
     timeout: Option<Duration>,
     auth_failed: Arc<AtomicBool>,
     auth_rejected: http::AuthRejections,
+    auth_challenge: http::AuthChallenge,
+    sent_credentials: http::SentCredentials,
     updates: tokio::sync::broadcast::Sender<ResourceUpdate>,
+    elicitation: Option<ElicitationBroker>,
 }
 impl McpServer {
     pub(crate) fn new(
@@ -40,13 +44,17 @@ impl McpServer {
         Self {
             name: name.into(),
             generation: service.service().generation,
+            local_stdio: service.service().local_stdio,
             info: service.peer_info().expect("initialized service").clone(),
             peer: service.peer().clone(),
             revoked: service.service().revoked.clone(),
             timeout: timeout.map(Duration::from_millis),
             auth_failed: service.service().auth_failed.clone(),
             auth_rejected: service.service().auth_rejected.clone(),
+            auth_challenge: service.service().auth_challenge.clone(),
+            sent_credentials: service.service().sent_credentials.clone(),
             updates: service.service().resource_updates.clone(),
+            elicitation: service.service().elicitation.clone(),
         }
     }
     pub fn resource_updates(&self) -> ResourceUpdates {
@@ -70,6 +78,15 @@ impl McpServer {
             "MCP App tool is outside the live server generation"
         );
         tool.call_raw_with_meta(arguments, host_meta, cancel).await
+    }
+    pub fn authentication_required(&self) -> bool {
+        self.auth_failed.load(Ordering::Acquire)
+    }
+    pub fn authentication_challenge(&self) -> Option<String> {
+        self.auth_challenge.get()
+    }
+    pub fn is_local_stdio(&self) -> bool {
+        self.local_stdio
     }
     pub fn name(&self) -> &str {
         &self.name
@@ -99,40 +116,22 @@ impl McpServer {
             "MCP server does not advertise resources"
         );
         ensure!(!self.is_revoked(), "MCP connection generation revoked");
-        let deadline = async {
-            match self.timeout {
-                Some(d) => tokio::time::sleep(d).await,
-                None => std::future::pending::<()>().await,
-            }
-        };
-        tokio::pin!(deadline);
-        let mut handle = tokio::select! {biased;_ = cancel.cancelled()=>bail!("MCP resource request cancelled before submission"),_ = self.revoked.cancelled()=>bail!("MCP generation revoked before submission"),_=&mut deadline=>bail!("MCP resource submission timed out; outcome is UNKNOWN"),h=self.peer.send_cancellable_request(request,PeerRequestOptions::no_options())=>h.map_err(|_|anyhow::anyhow!("MCP resource submission failed; outcome is UNKNOWN"))?};
-        let request_id = handle.id.clone();
-        let result = tokio::select! {biased;_ = cancel.cancelled()=>None,_ = self.revoked.cancelled()=>None,_=&mut deadline=>None,r=&mut handle.rx=>Some(r)};
-        let Some(result) = result else {
-            let _ = tokio::time::timeout(
-                Duration::from_secs(1),
-                handle.cancel(Some("resource request cancelled".into())),
-            )
-            .await;
-            if http::take_rejection(&self.auth_rejected, &request_id) {
-                return Err(AuthenticationFailed.into());
-            }
-            bail!("MCP resource request interrupted; outcome is UNKNOWN")
-        };
-        let rejected = http::take_rejection(&self.auth_rejected, &request_id);
-        if rejected && !matches!(&result, Ok(Ok(_))) {
-            return Err(AuthenticationFailed.into());
+        mrtr::RequestChannel {
+            peer: &self.peer,
+            server: &self.name,
+            generation: self.generation,
+            revoked: &self.revoked,
+            auth_failed: &self.auth_failed,
+            auth_rejected: &self.auth_rejected,
+            auth_challenge: &self.auth_challenge,
+            sent_credentials: &self.sent_credentials,
+            timeout: self.timeout,
+            broker: self.elicitation.as_ref(),
         }
-        let result = result
-            .map_err(|_| anyhow::anyhow!("MCP resource disconnected; outcome is UNKNOWN"))?
-            .map_err(|_| anyhow::anyhow!("MCP resource failed; outcome is UNKNOWN"))?;
-        ensure!(
-            serde_json::to_vec(&result)?.len() <= 24 * 1024 * 1024,
-            "MCP resource response exceeds budget"
-        );
-        Ok(result)
+        .exchange(request, None, cancel)
+        .await
     }
+
     pub async fn list_resources(
         &self,
         cursor: Option<String>,
@@ -176,15 +175,36 @@ impl McpServer {
         uri: &str,
         cancel: CancellationToken,
     ) -> Result<ReadResourceResult> {
+        self.read_resource_owned(uri, cancel, None).await
+    }
+    pub async fn read_resource_owned(
+        &self,
+        uri: &str,
+        cancel: CancellationToken,
+        owner: Option<&RequestOwner>,
+    ) -> Result<ReadResourceResult> {
         ensure!(uri.len() <= 8192, "resource URI exceeds budget");
-        match self
-            .request(
-                ClientRequest::ReadResourceRequest(ReadResourceRequest::new(
-                    ReadResourceRequestParams::new(uri),
-                )),
-                cancel,
-            )
-            .await?
+        ensure!(
+            self.info.capabilities.resources.is_some(),
+            "MCP resources unavailable"
+        );
+        let request = ClientRequest::ReadResourceRequest(ReadResourceRequest::new(
+            ReadResourceRequestParams::new(uri),
+        ));
+        match (mrtr::RequestChannel {
+            peer: &self.peer,
+            server: &self.name,
+            generation: self.generation,
+            revoked: &self.revoked,
+            auth_failed: &self.auth_failed,
+            auth_rejected: &self.auth_rejected,
+            auth_challenge: &self.auth_challenge,
+            sent_credentials: &self.sent_credentials,
+            timeout: self.timeout,
+            broker: self.elicitation.as_ref(),
+        })
+        .exchange(request, owner, cancel)
+        .await?
         {
             ServerResult::ReadResourceResult(r) => Ok(r),
             _ => bail!("unexpected MCP read result"),

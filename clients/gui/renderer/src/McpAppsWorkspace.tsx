@@ -9,7 +9,7 @@ import {
     type McpAppMessage,
     type McpAppModelContext,
 } from "./McpAppHost.js";
-import { McpAppForm, type McpFormResponse } from "./McpAppForm.js";
+import { McpAppForm, type McpFormResponse, type McpFormResource } from "./McpAppForm.js";
 import { McpContentLabel } from "./McpComposerAttachments.js";
 import { appendMcpDraft } from "./mcp-app-draft.js";
 import { sending, markSending, submitMessage } from "./Composer.js";
@@ -32,6 +32,14 @@ type FormRequest = {
     message: string;
     requestedSchema: unknown;
 };
+type FormResourceRequest = { projectId: string; threadId: string; requestId: string; fieldName: string; uri?: string };
+function formResource(operation: "pick" | "release", request: FormResourceRequest): Promise<{ resources?: McpFormResource[] }> {
+    const desktop = (window as unknown as { arealDesktop?: {
+        mcpFormResource?: (operation: string, request: FormResourceRequest) => Promise<{ resources?: McpFormResource[] }>;
+    } }).arealDesktop;
+    if (!desktop?.mcpFormResource) return Promise.reject(new Error("本机资源选择不可用"));
+    return desktop.mcpFormResource(operation, request);
+}
 const appTab = (app: McpAppDescriptor) => `mcp-app:${app.instanceId}`;
 const visible = (block: ContentBlock) =>
     !(block.annotations?.audience?.length === 1 && block.annotations.audience[0] === "assistant");
@@ -527,6 +535,21 @@ export function useMcpAppsWorkspace({
                         onRespond={(_id, response) => respond(form, response)}
                         onUnsupported={() => respond(form, { unsupported: true })}
                         onPreview={(target) => previewForm(form, target)}
+                        onPickResources={async (fieldName) => {
+                            if (!project?.id || current.current.project?.id !== project.id || current.current.threadId !== form.threadId)
+                                throw new Error("Form owner expired");
+                            const owner = { projectId: project.id, threadId: form.threadId, requestId: form.requestId, fieldName };
+                            const result = await formResource("pick", owner);
+                            if (current.current.project?.id !== owner.projectId || current.current.threadId !== owner.threadId) {
+                                await Promise.all((result.resources ?? []).map(item => formResource("release", { ...owner, uri: item.uri })));
+                                throw new Error("Form owner expired");
+                            }
+                            return result.resources ?? [];
+                        }}
+                        onReleaseResource={async (fieldName, uri) => {
+                            if (!project?.id) throw new Error("Form owner expired");
+                            await formResource("release", { projectId: project.id, threadId: form.threadId, requestId: form.requestId, fieldName, uri });
+                        }}
                     />
                 ))}
                 {formPreview && forms.some((form) => form.requestId === formPreview.requestId) && (

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Package } from "lucide-react";
+import {PluginAuthConfiguration} from "./PluginAuthConfiguration.js";
 import { Button } from "../components/ui/button.js";
 import { Input } from "../components/ui/input.js";
 import { Feedback, SettingsDialog } from "./common.js";
@@ -60,6 +61,7 @@ type PluginMutation =
   | "marketplaceUpdate"
   | "pluginConnection"
   | "pluginAuth"
+  | "pluginAuthConfigure"
   | "connectorConfigure";
 type PluginSubmission = { mutation: PluginMutation; requestId: string };
 type PluginReceipt =
@@ -87,6 +89,7 @@ const pluginMethods: Record<string, PluginMutation> = {
   "areal/marketplace/update": "marketplaceUpdate",
   "areal/plugin/connection": "pluginConnection",
   "areal/plugin/auth": "pluginAuth",
+  "areal/plugin/auth/configure": "pluginAuthConfigure",
   "areal/plugin/connector/configure": "connectorConfigure",
 };
 type PluginFailure = {
@@ -163,8 +166,16 @@ export function PluginCatalogSettings({
   const actionRef = useRef(action);
   actionRef.current = action;
   const api = useCallback(
-    (operation: string, values: Data = {}) =>
-      actionRef.current("manage", { projectId, operation, ...values }),
+    async (operation: string, values: Data = {}) => {
+      try {
+        return await actionRef.current("manage", { projectId, operation, ...values });
+      } finally {
+        // Main clears its configuration gate before replying, including UNKNOWN.
+        // Re-read only the catalog; keep the form's original submission receipt alive.
+        if (operation === "pluginAuthCredential")
+          window.dispatchEvent(new Event("areal-plugins-changed"));
+      }
+    },
     [projectId],
   );
   const refresh = useCallback(async () => {
@@ -195,8 +206,11 @@ export function PluginCatalogSettings({
   }, [api, connected]);
   useEffect(() => {
     mounted.current = true;
+    const changed = () => void refresh();
+    window.addEventListener("areal-plugins-changed", changed);
     void refresh();
     return () => {
+      window.removeEventListener("areal-plugins-changed", changed);
       mounted.current = false;
       readGeneration.current++;
       detailGeneration.current++;
@@ -268,6 +282,7 @@ export function PluginCatalogSettings({
   ]);
   const pending = !!project?.pending?.length;
   const disabled =
+    !connected ||
     busy ||
     loading ||
     !catalog ||
@@ -483,7 +498,9 @@ export function PluginCatalogSettings({
         .includes(query.toLowerCase()),
   );
 
-  if (!connected)
+  // A credential save restarts Core. Keep the selected form/receipt mounted while
+  // disconnected; project changes still reset this owner through the parent's key.
+  if (!connected && !catalog && !selected)
     return (
       <div className="resource-empty">
         <Package size={26} />
@@ -513,7 +530,7 @@ export function PluginCatalogSettings({
         />
         <Button
           variant="outline"
-          disabled={busy || loading}
+          disabled={!connected || busy || loading}
           onClick={() => void refresh()}
         >
           {loading ? "刷新中…" : "刷新目录"}
@@ -919,7 +936,9 @@ export function PluginCatalogSettings({
                           · {String(row.state ?? row.status ?? "未连接")}
                         </span>
                         {row.message && <p>{String(row.message)}</p>}
-                        {(row.authentication === "required" ||
+                        {row.config?.authentication && <p>{row.authenticationTiming === "ON_INSTALL" ? "此插件要求安装后认证。完成认证后再连接服务。" : "首次需要受保护功能时，请先完成认证。"}</p>}
+                        {row.config?.authentication && detail.installedDigest && <PluginAuthConfiguration key={`${detail.id}:${row.serverId}:${detail.installedDigest}`} pluginId={detail.id} server={row} digest={detail.installedDigest} disabled={disabled} command={api} onSaved={()=>{window.dispatchEvent(new Event("areal-plugins-changed"));void readDetail(detail.id);}} />}
+                        {(row.authentication === "required" || row.authentication === "optional" ||
                           /auth|认证/i.test(
                             String(row.state ?? row.status),
                           )) && (
@@ -935,7 +954,7 @@ export function PluginCatalogSettings({
                                 })
                               }
                             >
-                              在浏览器中认证
+                              {row.config?.authenticationRequirements?.apiKey ? "启用认证" : "在浏览器中认证"}
                             </Button>
                             <Button
                               variant="outline"

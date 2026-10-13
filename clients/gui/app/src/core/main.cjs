@@ -8,6 +8,7 @@ const { setupUpdater } = require('../update/electron.cjs');
 const { showCoreNotification } = require('./notifications.cjs');
 const { MenuBar } = require('./menu-bar.cjs');
 const { fileOpen } = require('./file-open.cjs');
+const { McpFormResources } = require('./mcp-form-resources.cjs');
 const { McpAppsHost, parseDeepLink } = require('./mcp-apps.cjs');
 const { McpMetadataImages } = require('./mcp-apps-images.cjs');
 const { validateCommand, validatePreview, desktopError } = require('@areal/workbench/desktop-contract');
@@ -206,6 +207,18 @@ app.whenReady().then(async () => {
   ipcMain.handle('areal-core:mcp-app-deep-link-target', event => { trusted(event); return mcpAppDeepLink; });
   ipcMain.handle('areal-core:mcp-app-deep-link-consumed', (event, id) => { trusted(event); if (mcpAppDeepLink?.id === id) mcpAppDeepLink = null; });
   const mcpMetadataImages = new McpMetadataImages(backend);
+  const mcpFormResources = new McpFormResources({ backend,
+    choose: options => dialog.showOpenDialog(window, options),
+    confirm: options => dialog.showMessageBox(window, options) });
+  app.on('before-quit', () => mcpFormResources.dispose());
+  ipcMain.handle('areal-core:mcp-form-resource', async (event, operation, request) => {
+    trusted(event);
+    const ownerWindow = window;
+    const current = () => { trusted(event); if (window !== ownerWindow || ownerWindow.isDestroyed()) throw new Error('Form window expired'); };
+    if (operation === 'pick') return mcpFormResources.pick(request, current);
+    if (operation === 'release') return mcpFormResources.release(request, current);
+    throw new Error('Invalid form resource operation');
+  });
   ipcMain.handle('areal-core:mcp-app', async (event, request) => {
     trusted(event);
     if (!request || typeof request !== 'object') throw new Error('Invalid app request');

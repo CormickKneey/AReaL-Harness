@@ -20,6 +20,28 @@ impl std::fmt::Display for AuthenticationFailed {
     }
 }
 impl std::error::Error for AuthenticationFailed {}
+/// Private protocol data: never included in management DTOs, Debug or errors.
+#[derive(Clone, Default)]
+pub(crate) struct AuthChallenge(Arc<std::sync::Mutex<Option<String>>>);
+impl std::fmt::Debug for AuthChallenge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AuthChallenge([REDACTED])")
+    }
+}
+impl AuthChallenge {
+    pub(crate) fn capture(&self, value: &str) {
+        let value = value.trim();
+        if value.is_empty() || value.len() > 8192 || value.chars().any(char::is_control) {
+            return;
+        }
+        if let Ok(mut slot) = self.0.lock() {
+            *slot = Some(value.to_owned());
+        }
+    }
+    pub(crate) fn get(&self) -> Option<String> {
+        self.0.lock().ok().and_then(|slot| slot.clone())
+    }
+}
 #[derive(Clone, Debug)]
 pub struct HttpFailure {
     pub kind: &'static str,
@@ -81,6 +103,45 @@ pub(crate) fn take_rejection(rejected: &AuthRejections, id: &RequestId) -> bool 
         .map(|mut ids| ids.remove(id))
         .unwrap_or(false)
 }
+// Only caller-owned tools/read requests are tracked, never initialization or
+// discovery. Entries are consumed on every reply/cancellation; overflow fails
+// before POST rather than evicting an in-flight credential binding.
+#[derive(Clone, Default)]
+pub(crate) struct SentCredentials(
+    Arc<std::sync::Mutex<HashMap<RequestId, (AuthorizedCredential, Option<String>)>>>,
+);
+impl std::fmt::Debug for SentCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SentCredentials([REDACTED])")
+    }
+}
+impl SentCredentials {
+    fn insert(
+        &self,
+        id: RequestId,
+        credential: AuthorizedCredential,
+        token: Option<String>,
+    ) -> Result<(), StreamableHttpError<reqwest_mcp::Error>> {
+        let mut entries = self.0.lock().map_err(|_| {
+            StreamableHttpError::UnexpectedServerResponse(
+                "MCP credential binding unavailable".into(),
+            )
+        })?;
+        if entries.len() >= 256 {
+            return Err(StreamableHttpError::UnexpectedServerResponse(
+                "MCP credential binding capacity exceeded".into(),
+            ));
+        }
+        entries.insert(id, (credential, token));
+        Ok(())
+    }
+    pub(crate) fn take(&self, id: &RequestId) -> Option<(AuthorizedCredential, Option<String>)> {
+        self.0
+            .lock()
+            .ok()
+            .and_then(|mut entries| entries.remove(id))
+    }
+}
 #[derive(Clone)]
 pub(crate) struct HttpClient {
     pub client: reqwest_mcp::Client,
@@ -88,6 +149,8 @@ pub(crate) struct HttpClient {
     pub failed: Arc<AtomicBool>,
     pub rejected: AuthRejections,
     pub startup_failure: StartupHttpFailure,
+    pub challenge: AuthChallenge,
+    pub sent_credentials: SentCredentials,
 }
 impl HttpClient {
     async fn token(
@@ -99,6 +162,13 @@ impl HttpClient {
             return Ok(fallback);
         }
         match &self.credential {
+            Some(c)
+                if c.fixed_header(endpoint)
+                    .map_err(StreamableHttpError::Auth)?
+                    .is_some() =>
+            {
+                Ok(None)
+            }
             Some(c) => match c.token(endpoint).await {
                 Ok(t) => Ok(Some(t)),
                 Err(_) => {
@@ -110,6 +180,21 @@ impl HttpClient {
             },
             None => Ok(fallback),
         }
+    }
+    fn authenticated_headers(
+        &self,
+        endpoint: &str,
+        mut headers: HashMap<HeaderName, HeaderValue>,
+    ) -> Result<HashMap<HeaderName, HeaderValue>, StreamableHttpError<reqwest_mcp::Error>> {
+        if let Some(c) = &self.credential {
+            if let Some((name, value)) = c
+                .fixed_header(endpoint)
+                .map_err(StreamableHttpError::Auth)?
+            {
+                headers.insert(name, value);
+            }
+        }
+        Ok(headers)
     }
     fn record_rejection(&self, id: Option<RequestId>) {
         if let Some(id) = id
@@ -125,6 +210,9 @@ impl HttpClient {
         r: Result<T, StreamableHttpError<reqwest_mcp::Error>>,
     ) -> Result<T, StreamableHttpError<reqwest_mcp::Error>> {
         if let Err(error) = &r {
+            if let Some(challenge) = error.auth_challenge() {
+                self.challenge.capture(challenge);
+            }
             if let Ok(mut slot) = self.startup_failure.lock() {
                 *slot = Some(classify(error));
             }
@@ -178,6 +266,7 @@ impl StreamableHttpClient for HttpClient {
             JsonRpcMessage::Request(r) => Some(r.id.clone()),
             _ => None,
         };
+        let track = matches!(&message, JsonRpcMessage::Request(r) if matches!(&r.request, rmcp::model::ClientRequest::CallToolRequest(_) | rmcp::model::ClientRequest::ReadResourceRequest(_)));
         let token = match self.token(auth_header, &uri).await {
             Ok(token) => token,
             Err(error) => {
@@ -185,6 +274,11 @@ impl StreamableHttpClient for HttpClient {
                 return Err(error);
             }
         };
+        let headers = self.authenticated_headers(&uri, headers)?;
+        if track && let (Some(id), Some(credential)) = (&id, &self.credential) {
+            self.sent_credentials
+                .insert(id.clone(), credential.clone(), token.clone())?;
+        }
         let result = self
             .client
             .post_message_with_max_sse_event_size(
@@ -201,7 +295,12 @@ impl StreamableHttpClient for HttpClient {
             Err(StreamableHttpError::AuthRequired(_) | StreamableHttpError::InsufficientScope(_))
         ) || matches!(&result,Err(StreamableHttpError::Client(e)) if e.status().is_some_and(|s|s==401||s==403))
         {
-            self.record_rejection(id);
+            self.record_rejection(id.clone());
+        }
+        if result.is_err()
+            && let Some(id) = &id
+        {
+            self.sent_credentials.take(id);
         }
         self.result(token.as_deref(), result).await
     }
@@ -213,6 +312,7 @@ impl StreamableHttpClient for HttpClient {
         headers: HashMap<HeaderName, HeaderValue>,
     ) -> Result<(), StreamableHttpError<Self::Error>> {
         let token = self.token(auth_header, &uri).await?;
+        let headers = self.authenticated_headers(&uri, headers)?;
         self.result(
             token.as_deref(),
             self.client
@@ -255,6 +355,7 @@ impl StreamableHttpClient for HttpClient {
         StreamableHttpError<Self::Error>,
     > {
         let token = self.token(auth_header, &uri).await?;
+        let headers = self.authenticated_headers(&uri, headers)?;
         self.result(
             token.as_deref(),
             self.client
