@@ -100,6 +100,8 @@ When staging a candidate package, `AREAL_GUI_CORE_BUNDLE=/absolute/core-bundle` 
 
 Finish Core builds before starting desktop smoke tests that use that binary, and do not relink it during acceptance. Model-selection smoke waits for saving and the Core model-selection state before the next action; GUI CI runs it and uploads logs, screenshots and manifests. On Core model-configuration child-process failure, the background service log preserves the operation, exit code, signal and timeout classification without recording secrets or the full environment.
 
+`pnpm --dir clients/gui run test:conversation-derivation` preserves the complete RPC record and actively performs a real `trajectory/status` query during the measured bring-back interval. Bring-back assertions exclude only this exact read-only background query; retry, send, configure, queue and steer commands still fail the check, and related-discussion navigation additionally permits only `side/list`.
+
 `pnpm --dir clients/gui run test:connection` covers real Core disconnect recovery, concurrent operations, retired connection messages and explicit shutdown. `pnpm --dir clients/gui run test:architecture` uses real Electron IPC to cover contract rejection, error-code forwarding and native preview eviction, crash reconstruction and owner release. Both isolate data and produce evidence; they do not replace package acceptance.
 
 See [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES.md). Runtime icons retain the source repository's versions; capture archives, development Skills/AGENTS, and source Git history are excluded.

@@ -100,6 +100,8 @@ pnpm --dir clients/gui run sign:mac --app "/absolute/new-package/package/mac-arm
 
 Core 构建完成后再启动使用该二进制的桌面 smoke，验收期间不重新链接它。模型专项等待保存完成及 Core 的模型选择状态，再进行下一步操作；GUI CI 运行该专项并上传其日志、截图和 manifest。Core 模型配置子进程失败时，后台服务日志保留操作、退出码、signal 和超时分类，不记录密钥或完整环境。
 
+`pnpm --dir clients/gui run test:conversation-derivation` 保留完整 RPC 记录，并在草稿回传的测量区间主动执行一次真实 `trajectory/status` 查询。回传断言只排除该精确只读后台查询；`retry`、发送、配置、排队和 steer 等命令仍使检查失败，相关讨论导航仅另允许 `side/list`。
+
 `pnpm --dir clients/gui run test:connection` 验证真实 Core 断线恢复、并发操作、旧连接消息隔离及显式关闭；`pnpm --dir clients/gui run test:architecture` 通过真实 Electron IPC 验证契约拒绝、错误码透传及原生预览的驱逐、崩溃重建和归属释放。两者使用隔离目录并输出证据，不替代安装包验收。
 
 第三方归属见 [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES.md)。运行时图标沿用源仓库版本；不迁入采集档案、开发 Skills/AGENTS 或来源 Git 历史。
