@@ -1167,3 +1167,36 @@ async fn history_page_cost_and_control_latency_benchmark() {
     );
     engine.shutdown().await;
 }
+
+#[tokio::test]
+async fn side_capacity_recheck_does_not_invert_parent_state_and_creation_locks() {
+    let root = tempfile::tempdir().unwrap();
+    let engine = Engine::open(root.path(), Arc::new(PendingModel), Limits::default()).unwrap();
+    let parent = engine.create("/fixture".into()).await.unwrap();
+    let source = engine.create("/fixture".into()).await.unwrap();
+    let cell = engine.raw_cell(&parent.id).await.unwrap();
+    let state = cell.state.lock().await;
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let owner = engine.clone();
+    let id = source.id.clone();
+    let notify = entered.clone();
+    let side = tokio::spawn(async move {
+        notify.notify_one();
+        let _gate = owner.reserve_side_creation(&id).await.unwrap();
+    });
+    entered.notified().await;
+    // 现有 TaskRun/agent 路径持 parent.state 调用 create_inner；Side 不能反向等待它。
+    let owner = engine.clone();
+    let mut creator = tokio::spawn(async move { owner.create("/fixture".into()).await });
+    let observed = tokio::time::timeout(std::time::Duration::from_millis(300), &mut creator).await;
+    drop(state);
+    side.await.unwrap();
+    if observed.is_err() {
+        creator.await.unwrap().unwrap();
+    }
+    engine.shutdown().await;
+    assert!(
+        observed.is_ok_and(|result| result.is_ok_and(|created| created.is_ok())),
+        "Side capacity inspection inverted parent-state/create admission lock order"
+    );
+}

@@ -66,6 +66,44 @@ fn resolve_selection(
 }
 
 impl Engine {
+    pub(crate) async fn reserve_side_creation(
+        &self,
+        source_id: &str,
+    ) -> Result<tokio::sync::MutexGuard<'_, ()>> {
+        'validate: loop {
+            let gate = self.thread_creation.lock().await;
+            let cells: Vec<_> = self.threads.read().await.values().cloned().collect();
+            let mut deployment = 0;
+            let mut source = 0;
+            for cell in cells {
+                let state = match cell.state.try_lock() {
+                    Ok(state) => state,
+                    Err(_) => {
+                        // 既有 worker 持 parent.state 调用创建；不能反向持创建准入等待状态锁。
+                        drop(gate);
+                        drop(cell.state.lock().await);
+                        continue 'validate;
+                    }
+                };
+                if state.active.is_some()
+                    && let Some(areal_protocol::Conversation::Side { origin, .. }) =
+                        &state.thread.conversation
+                {
+                    deployment += 1;
+                    if origin.source_thread_id == source_id {
+                        source += 1;
+                    }
+                }
+            }
+            if source >= self.limits.max_side_turns_per_source {
+                return Err(Error::Exhausted("SIDE_SOURCE_CAPACITY_REACHED".into()));
+            }
+            if deployment >= self.limits.max_side_turns_per_deployment {
+                return Err(Error::Exhausted("SIDE_DEPLOYMENT_CAPACITY_REACHED".into()));
+            }
+            return Ok(gate);
+        }
+    }
     pub(crate) async fn check_side_capacity(
         &self,
         source_id: &str,
@@ -496,9 +534,7 @@ impl Engine {
                     host: None,
                 },
             );
-            let _creation = engine.thread_creation.lock().await;
-            // 等待提交准入后重新核对已发布的 Side，不能用等待之前的容量快照。
-            engine.check_side_capacity(&source.id, None).await?;
+            let _creation = engine.reserve_side_creation(&source.id).await?;
             if engine.threads.read().await.len() >= engine.limits.max_threads {
                 return Err(Error::Exhausted("thread capacity reached".into()));
             }
