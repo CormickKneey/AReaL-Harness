@@ -3,15 +3,34 @@ import { createRequire } from "node:module";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, copyFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, basename } from "node:path";
 import test from "node:test";
+delete process.env.ELECTRON_GET_USE_PROXY;
 const nonce = randomUUID();
 const require = createRequire(new URL("../app/package.json", import.meta.url));
 const electronBuilder = createRequire(require.resolve("electron-builder/package.json"));
 const builder = createRequire(electronBuilder.resolve("app-builder-lib/package.json"));
-const { download } = builder("./out/binDownload.js");
+const { downloadElectronArtifactZip } = builder("./out/util/electronGet.js");
+async function download(url, output, checksum, deadline = 1000) {
+  const filename = basename(new URL(url).pathname);
+  const file = await downloadElectronArtifactZip({
+    version: "9.9.9",
+    platformName: process.platform,
+    arch: process.arch,
+    artifactName: filename,
+    cacheDir: join(tmpdir(), "areal-builder-fixture-" + nonce),
+    electronDownload: {
+      mirrorOptions: { customFilename: filename, resolveAssetURL: async () => url },
+      checksums: {
+        [filename + "-v9.9.9-" + process.platform + "-" + process.arch + ".zip"]: checksum,
+      },
+      downloadOptions: { timeout: { request: deadline }, retry: { limit: 0 } },
+    },
+  });
+  await copyFile(file, output);
+}
 test("actual electron-builder download API retains checked bytes with upgraded official downloader and rejects tampering", async () => {
   const root = await mkdtemp(join(tmpdir(), "areal-builder-download-"));
   const body = Buffer.from("task-owned artifact fixture");
@@ -64,7 +83,6 @@ test("upgraded builder downloader still honors standard HTTP proxy configuration
     previousNoProxy = process.env.NO_PROXY;
   process.env.HTTP_PROXY = `http://127.0.0.1:${proxy.address().port}`;
   process.env.NO_PROXY = "";
-  builder("@electron/get").initializeProxy();
   try {
     await download(
       "http://areal-proxy-fixture.invalid/task-owned-proxy-" + nonce + ".bin",
@@ -148,11 +166,11 @@ test("official downloader preserves HTTPS CONNECT, custom CA, NO_PROXY and proxy
     child,
     [
       "const assert=require('node:assert/strict');const {createRequire}=require('node:module');",
-      "const builder=createRequire(process.argv[2]);const get=builder('@electron/get');const {download}=builder('./out/binDownload.js');",
+      "const builder=createRequire(process.argv[2]);const {downloadElectronArtifactZip}=builder('./out/util/electronGet.js');const {copyFile}=require('node:fs/promises');const {basename,join}=require('node:path');async function download(url,output,checksum){const filename=basename(new URL(url).pathname);const file=await downloadElectronArtifactZip({version:'9.9.9',platformName:process.platform,arch:process.arch,artifactName:filename,cacheDir:join(process.argv[3],'cache'),electronDownload:{mirrorOptions:{customFilename:filename,resolveAssetURL:async()=>url},checksums:{[filename+'-v9.9.9-'+process.platform+'-'+process.arch+'.zip']:checksum},downloadOptions:{timeout:{request:1000},retry:{limit:0}}}});await copyFile(file,output);}",
       "const root=process.argv[3],port=process.argv[4],proxy=process.argv[5],checksum=process.argv[6];",
-      "async function run(){process.env.HTTPS_PROXY='http://127.0.0.1:1';process.env.NO_PROXY='localhost';get.initializeProxy();await download('https://localhost:'+port+'/direct.bin',root+'/direct.bin',checksum);",
-      "process.env.HTTPS_PROXY=proxy;process.env.NO_PROXY='';get.initializeProxy();await download('https://areal-secure-fixture.invalid:'+port+'/connect.bin',root+'/connect.bin',checksum);",
-      "process.env.HTTPS_PROXY='http://127.0.0.1:1';get.initializeProxy();await assert.rejects(download('https://localhost:'+port+'/no-fallback.bin',root+'/no-fallback.bin',checksum));}",
+      "async function run(){process.env.HTTPS_PROXY='http://127.0.0.1:1';process.env.NO_PROXY='localhost';await download('https://localhost:'+port+'/direct.bin',root+'/direct.bin',checksum);",
+      "process.env.HTTPS_PROXY=proxy;process.env.NO_PROXY='';await download('https://areal-secure-fixture.invalid:'+port+'/connect.bin',root+'/connect.bin',checksum);",
+      "process.env.HTTPS_PROXY='http://127.0.0.1:1';await assert.rejects(download('https://localhost:'+port+'/no-fallback.bin',root+'/no-fallback.bin',checksum));}",
       "run().catch(error=>{console.error(error);process.exitCode=1});",
     ].join("\n"),
   );
@@ -187,6 +205,77 @@ test("official downloader preserves HTTPS CONNECT, custom CA, NO_PROXY and proxy
     tls.closeAllConnections();
     tls.close();
     await once(tls, "close");
+    await rm(root, { recursive: true, force: true });
+  }
+});
+test("real builder cold download enforces the configured production request deadline while body is stalled", async () => {
+  const root = await mkdtemp(join(tmpdir(), "areal-builder-deadline-"));
+  const closed = [];
+  const server = createServer((request, response) => {
+    const started = Date.now();
+    response.writeHead(200, { "content-length": "100" });
+    response.write("partial");
+    const watchdog = setTimeout(() => response.destroy(), 2000);
+    response.on("close", () => {
+      clearTimeout(watchdog);
+      closed.push(Date.now() - started);
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    await assert.rejects(
+      download(
+        "http://127.0.0.1:" + server.address().port + "/deadline-" + nonce + ".bin",
+        join(root, "not-complete.bin"),
+        "0".repeat(64),
+        100,
+      ),
+      (error) => error.code === "ETIMEDOUT" && /Timeout/i.test(error.message),
+    );
+    assert.ok(closed.length > 0);
+    assert.ok(
+      closed.every((duration) => duration < 1000),
+      "Got request deadline must abort before fixture watchdog",
+    );
+  } finally {
+    server.closeAllConnections();
+    server.close();
+    await once(server, "close");
+    await rm(root, { recursive: true, force: true });
+  }
+});
+test("real builder toolset cold path verifies and extracts a task-owned archive", async () => {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const { writeFile, mkdir } = await import("node:fs/promises");
+  const root = await mkdtemp(join(tmpdir(), "areal-builder-toolset-"));
+  const archive = join(root, "toolset.tar.gz");
+  await promisify(execFile)("/usr/bin/python3", [
+    "-I",
+    "-S",
+    "-c",
+    "import io,sys,tarfile; data=b'owned toolset'; t=tarfile.open(sys.argv[1],'w:gz'); f=tarfile.TarInfo('fixture/owned.txt'); f.size=len(data); t.addfile(f,io.BytesIO(data)); t.close()",
+    archive,
+  ]);
+  const body = await readFile(archive),
+    checksum = createHash("sha256").update(body).digest("hex");
+  const server = createServer((_request, response) => response.end(body));
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const { downloadBuilderToolset } = builder("./out/util/electronGet.js");
+    const path = await downloadBuilderToolset({
+      releaseName: "task-owned-" + nonce,
+      filenameWithExt: "toolset-" + nonce + ".tar.gz",
+      checksums: { ["toolset-" + nonce + ".tar.gz"]: checksum },
+      overrideUrl: "http://127.0.0.1:" + server.address().port,
+    });
+    assert.equal(await readFile(join(path, "owned.txt"), "utf8"), "owned toolset");
+  } finally {
+    server.closeAllConnections();
+    server.close();
+    await once(server, "close");
     await rm(root, { recursive: true, force: true });
   }
 });
