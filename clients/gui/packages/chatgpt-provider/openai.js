@@ -2,6 +2,8 @@ import { createServer } from 'node:http'
 import { randomBytes, randomUUID, createHash } from 'node:crypto'
 import { createLocalJWKSet, jwtVerify } from 'jose'
 import { ChatGPTAccount, ACCOUNT_KEY } from './account.js'
+import { AuthSessionDirectory } from './sessions.js'
+import { ProviderError, providerError, responseError } from './errors.js'
 
 const ISSUER = 'https://auth.openai.com'
 const RESOURCE = 'https://api.openai.com/v1'
@@ -15,8 +17,10 @@ class OpenAIOAuth {
   constructor(fetch) { this.fetch = fetch }
   async json(url, options = {}) {
     const signal = AbortSignal.any([AbortSignal.timeout(30_000), ...(options.signal ? [options.signal] : [])])
-    const response = await this.fetch(url, { ...options, signal, redirect: 'error' })
-    if (!response.ok) { await response.body?.cancel(); throw new Error('OpenAI 认证服务请求失败') }
+    let response
+    try { response = await this.fetch(url, { ...options, signal, redirect: 'error' }) }
+    catch (error) { throw providerError(error, options.phase ?? 'authentication') }
+    if (!response.ok) throw await responseError(response, options.phase ?? 'authentication', [options.body?.get?.('refresh_token')])
     let bytes = 0, chunks = []
     for await (const chunk of response.body) { bytes += chunk.length; if (bytes > 1024 * 1024) throw new Error('OpenAI 认证响应过大'); chunks.push(chunk) }
     return JSON.parse(Buffer.concat(chunks).toString('utf8'))
@@ -47,10 +51,10 @@ class OpenAIOAuth {
   }
   async tokens(form, signal) {
     const config = await this.metadata(signal)
-    const result = await this.json(config.token_endpoint, { method: 'POST', signal, headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form })
+    const result = await this.json(config.token_endpoint, { method: 'POST', signal, phase: form.get('grant_type') === 'refresh_token' ? 'refresh' : 'sign_in', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form })
     if (result.token_type?.toLowerCase() !== 'bearer' || typeof result.access_token !== 'string' || !result.access_token || typeof result.refresh_token !== 'string' || !result.refresh_token || !Number.isFinite(result.expires_in) || result.expires_in <= 0) throw new Error('OpenAI 凭据无效')
     const scopes = typeof result.scope === 'string' ? result.scope.split(/\s+/) : []
-    if (!['resource.invoke', 'chatgpt.tokens.use.direct'].every(scope => scopes.includes(scope))) throw new Error('未授权 ChatGPT API 使用权限')
+    // 仅身份授权也保留有效注册，推理入口独立检查 direct 权限。
     return { result, value: { type: 'oauth', access: result.access_token, refresh: result.refresh_token, expires: Date.now() + result.expires_in * 1000, scopes } }
   }
   async login(saved, { signal, onAuth }) {
@@ -82,6 +86,8 @@ class OpenAIOAuth {
       const redirect = `http://127.0.0.1:${server.address().port}/auth/callback`
       const url = new URL(config.authorization_endpoint)
       url.search = new URLSearchParams({ client_id: saved.clientId ?? 'dynamic_agent_client', ...(registered(saved) ? {} : { agent_name_hint: 'AReaL Harness' }), ext_agent_host_id: saved.hostId, response_type: 'code', redirect_uri: redirect, resource: RESOURCE, scope: SCOPES, state, nonce, code_challenge_method: 'S256', code_challenge: createHash('sha256').update(verifier).digest('base64url') }).toString()
+      if (saved.idToken) url.searchParams.set('id_token_hint', saved.idToken)
+      if (saved.email) url.searchParams.set('login_hint', saved.email)
       onAuth(url.href)
       const { code, clientId } = await callback
       const { result, value } = await this.tokens(new URLSearchParams({ grant_type: 'authorization_code', client_id: clientId, code, code_verifier: verifier, redirect_uri: redirect, resource: RESOURCE }), signal)
@@ -119,22 +125,102 @@ class OpenAIOAuth {
 export class OpenAIAccount extends ChatGPTAccount {
   constructor(store, { fetch } = {}) {
     const auth = new OpenAIOAuth(fetch)
-    super(store, { oauth: async (action, options) => {
+    const directory = new AuthSessionDirectory(store)
+    const selected = directory.view()
+    super(selected, { oauth: async (action, options) => {
       if (action === 'refresh') return auth.refresh(options.credential, options)
-      const record = await store.modifyRecord(ACCOUNT_KEY, current => current ?? { kind: 'registration', payload: { hostId: `urn:uuid:${randomUUID()}` } })
-      return auth.login(registration(record.payload), options)
+      const record = await (options.store ?? selected).modifyRecord(ACCOUNT_KEY, current => current ?? { kind: 'registration', payload: { hostId: `urn:uuid:${randomUUID()}` } })
+      return auth.login({ ...registration(record.payload), ...(record.kind === 'grant' ? { idToken: record.payload.idToken } : {}) }, options)
     } })
     this.auth = auth
+    this.directory = directory
+  }
+  async begin(options = {}) {
+    if (this.preparingLogin) return this.preparingLogin
+    this.preparingLogin = this.track(this.prepareLogin(options).finally(() => { this.preparingLogin = null }))
+    return this.preparingLogin
+  }
+  async prepareLogin({ newAccount = false, accountId } = {}) {
+    this.check()
+    if (this.attempt) return this.attempt.ready
+    if (this.busy) throw new Error('账号操作进行中，请稍后重试。')
+    const snapshot = await this.directory.snapshot()
+    const target = newAccount ? await this.directory.add() : accountId ?? snapshot.activeId
+    if (!newAccount && !snapshot.records[target]) throw new ProviderError('account_changed', { phase: 'account' })
+    this.loginStore = this.directory.view(target)
+    this.onAuthorized = async () => {
+      const sameAccount = (await this.directory.snapshot()).activeId === target
+      // 同一注册的新授权已落盘，取代其旧轮换；保存未激活账号不广播当前会话变化。
+      if (sameAccount) { this.pendingRotation = null; this.terminalFailure = null; this.failure = null }
+      const activate = async () => {
+        this.busy = true
+        try {
+          if (!sameAccount) await this.settleRotation()
+          await this.directory.activate(target)
+          this.pendingRotation = null; this.terminalFailure = null; this.failure = null
+          this.changed()
+          return true
+        } finally { this.busy = false }
+      }
+      // Host 先在准入锁内检查活动任务，再调用确实切换会话的步骤。
+      const active = this.activateAuthorized ? await this.activateAuthorized(target, activate)
+        : this.canActivate && !await this.canActivate() ? false : await activate()
+      if (!active) this.error = '新账号已保存；请等待活动任务结束后选择该账号。'
+      return active ? { changed: true } : false
+    }
+    return super.begin()
+  }
+  async settleRotation() {
+    // busy 阻止新请求进入；已开始的刷新仍须完成，写失败则保留 pending 并拒绝切换。
+    await this.refreshing?.catch(() => {})
+    if (this.pendingRotation) await this.rotate({})
+  }
+  async selectAccount(id) {
+    this.check()
+    if (this.busy || this.attempt || this.preparingLogin) throw new Error('请先完成或取消当前账号操作')
+    const snapshot = await this.directory.snapshot()
+    if (id === snapshot.activeId) return
+    const target = snapshot.records[id]?.record
+    if (target?.kind !== 'grant' || !registered(target.payload) || target.payload.issuer !== ISSUER) throw new ProviderError('credential_missing', { phase: 'account' })
+    this.busy = true
+    this.changed()
+    this.selectionCandidates ??= new Map()
+    const candidate = this.selectionCandidates.get(id) ?? new ChatGPTAccount(this.directory.view(id), { oauth: (_action, options) => this.auth.refresh(options.credential, options) })
+    this.selectionCandidates.set(id, candidate)
+    try {
+      await this.settleRotation()
+      await candidate.accessToken()
+      const record = await this.directory.view(id).readRecord()
+      if (!['resource.invoke', 'chatgpt.tokens.use.direct'].every(scope => record?.payload?.scopes?.includes(scope))) throw new ProviderError('permission_missing', { phase: 'authorization' })
+      await this.directory.activate(id)
+      this.pendingRotation = null; this.terminalFailure = null; this.failure = null
+      this.selectionCandidates.delete(id); await candidate.close()
+    } finally { this.busy = false; this.changed() }
+  }
+  async close() {
+    await super.close()
+    await Promise.allSettled([...(this.selectionCandidates?.values() ?? [])].map(candidate => candidate.close()))
+  }
+  async status() {
+    const status = await super.status()
+    try { return { ...status, ...await this.directory.public() } }
+    catch { return status }
   }
   async read() {
     this.check(); const record = await this.store.readRecord(ACCOUNT_KEY)
     if (record?.kind !== 'grant') return null
     const c = record.payload
-    if (!registered(c) || c.issuer !== ISSUER || c.type !== 'oauth' || !c.access || !c.refresh || !Number.isFinite(c.expires)) throw new Error('ChatGPT API 登录记录无效，请重新登录')
+    if (!registered(c) || c.issuer !== ISSUER || c.type !== 'oauth' || !c.access || !c.refresh || !Number.isFinite(c.expires)) throw new ProviderError('credential_invalid', { phase: 'storage' })
     return { type: 'openai', email: c.email ?? null, planType: null }
   }
+  async accessToken(signal, options) {
+    const token = await super.accessToken(signal, options)
+    const record = await this.store.readRecord(ACCOUNT_KEY)
+    if (!['resource.invoke', 'chatgpt.tokens.use.direct'].every(scope => record?.payload?.scopes?.includes(scope))) throw this.fail(new ProviderError('permission_missing', { phase: 'authorization' }), 'authorization')
+    return token
+  }
   async logout() {
-    this.check(); if (this.busy) throw new Error('账号操作进行中，请稍后重试。')
+    this.check(); if (this.busy || this.preparingLogin) throw new Error('账号操作进行中，请稍后重试。')
     this.busy = true; this.changed()
     try {
       await this.cancel()
@@ -146,11 +232,12 @@ export class OpenAIAccount extends ChatGPTAccount {
         }
         return { kind: 'registration', payload: registration(current.payload) }
       })
+      this.failure = null; this.pendingRotation = null
     } finally { this.busy = false; this.changed() }
   }
   async forget() {
     this.check()
-    if (this.busy || this.attempt) throw new Error('请先完成或取消当前账号操作')
+    if (this.busy || this.attempt || this.preparingLogin) throw new Error('请先完成或取消当前账号操作')
     if (await this.read()) throw new Error('请先退出当前 ChatGPT API 账号')
     await this.store.modifyRecord(ACCOUNT_KEY, current => current ? { kind: 'registration', payload: { hostId: current.payload.hostId } } : undefined)
     this.error = null; this.changed()

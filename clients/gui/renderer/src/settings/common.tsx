@@ -42,7 +42,12 @@ export function useResource(load: () => Promise<Data>, identity: string) {
       epoch.current++;
     };
   }, [identity, refresh]);
-  return { ...state, refresh };
+  const accept = useCallback((value: Data) => {
+    // 已确认的写操作回执优先于更早的读请求，避免保存后重新展示旧目录。
+    epoch.current++;
+    setState({ value, loading: false });
+  }, []);
+  return { ...state, refresh, accept };
 }
 export { Feedback } from "../components/ui/feedback.js";
 export function SettingsToolbar({

@@ -23,6 +23,9 @@ importers:
       '@areal/chatgpt-provider':
         specifier: workspace:*
         version: link:../packages/chatgpt-provider
+      '@areal/provider-config':
+        specifier: workspace:*
+        version: link:../packages/provider-config
       '@areal/remote':
         specifier: workspace:*
         version: link:../packages/remote
@@ -90,6 +93,8 @@ importers:
       it-pushable:
         specifier: 3.2.4
         version: 3.2.4
+
+  packages/provider-config: {}
 
   packages/runtime-client: {}
 

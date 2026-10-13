@@ -45,7 +45,12 @@ export function ModelEditor({ model, editing, ids, onSave, onClose }: {
       if (temperatureInput.current?.validity.badInput || (temperature && (!Number.isFinite(Number(temperature)) || Number(temperature) < 0 || Number(temperature) > 2))) {
         fail("temperature", "温度须在 0 到 2 之间", temperatureInput.current); return;
       }
+      const parameters = { ...model.parameters };
+      delete parameters.maxOutputTokens;
+      delete parameters.temperature;
+      delete parameters.reasoningEffort;
       onSave({ ...model, id: id.trim(), displayName: name.trim(), parameters: {
+        ...parameters,
         ...(maximum ? { maxOutputTokens: Number(maximum) } : {}),
         ...(temperature ? { temperature: Number(temperature) } : {}),
         ...(effort ? { reasoningEffort: effort } : {}),

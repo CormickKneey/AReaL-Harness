@@ -1,0 +1,30 @@
+name: Provider configuration fixtures
+on:
+  pull_request:
+    paths:
+      - 'clients/gui/packages/chatgpt-provider/**'
+      - 'clients/gui/packages/provider-config/**'
+      - 'clients/gui/app/src/core/providers.cjs'
+      - 'clients/gui/app/src/core/subscription.cjs'
+      - 'clients/gui/renderer/src/settings/**'
+      - 'clients/gui/scripts/provider-*.test.mjs'
+      - '.github/workflows/provider-config.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  fixtures:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '22'
+      - run: npm install --global pnpm@11.7.0
+      - run: pnpm --dir clients/gui install --frozen-lockfile --ignore-scripts
+      - run: node --test clients/gui/scripts/provider-*.test.mjs
+      - run: pnpm --dir clients/gui typecheck
+      - run: pnpm --dir clients/gui run verify
