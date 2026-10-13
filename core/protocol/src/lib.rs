@@ -2,6 +2,7 @@ pub mod delegation;
 pub mod goals;
 pub mod service;
 pub mod tasks;
+pub mod work;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 

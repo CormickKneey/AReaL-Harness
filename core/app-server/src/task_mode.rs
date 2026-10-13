@@ -409,6 +409,7 @@ mod tests {
                 owner.id.clone(),
                 "cancel".into(),
                 TaskControl {
+                    expected_run_id: None,
                     request_id: "cancel".into(),
                     task_id: ids[0].clone(),
                     expected_revision: task.revision,

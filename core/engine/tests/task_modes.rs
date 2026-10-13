@@ -428,6 +428,7 @@ async fn cancelling_task_cleans_detached_workers_and_prevents_goal_resume() {
     let mut revision = waiting.revision;
     for attempt in 0..20 {
         let req = TaskControl {
+            expected_run_id: None,
             request_id: "cancel".into(),
             task_id: id.clone(),
             expected_revision: revision,
@@ -598,6 +599,7 @@ async fn channel_reply_survives_restart_and_requires_explicit_task_resume() {
         "owner".into(),
         "resume".into(),
         TaskControl {
+            expected_run_id: None,
             request_id: "resume".into(),
             task_id: id.clone(),
             expected_revision: task.revision,
@@ -783,6 +785,7 @@ async fn recurring_schedule_keeps_channel_identity_and_uses_distinct_runs_and_go
         loop {
             let task = e.task_read(id).await.unwrap();
             let request = TaskControl {
+                expected_run_id: None,
                 request_id: "cancel-recurrence".into(),
                 task_id: task.id.clone(),
                 expected_revision: task.revision,

@@ -66,6 +66,8 @@ pub struct TaskCreate {
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TaskControl {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_run_id: Option<String>,
     pub request_id: String,
     pub task_id: String,
     pub expected_revision: u64,

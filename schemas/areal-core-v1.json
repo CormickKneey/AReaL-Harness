@@ -15731,6 +15731,12 @@
           "minimum": 0,
           "type": "integer"
         },
+        "expectedRunId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "requestId": {
           "type": "string"
         },
@@ -16285,6 +16291,26 @@
     "areal/thread/start": {
       "additionalProperties": false,
       "properties": {
+        "admissionGuard": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "description": "Resolve and admit only a profile without Workflow execution.",
+              "properties": {
+                "ordinarySession": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "ordinarySession"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "agentProfile": {
           "anyOf": [
             {
@@ -16461,6 +16487,32 @@
     "areal/turn/enqueue": {
       "additionalProperties": false,
       "properties": {
+        "admissionGuard": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "description": "Optional atomic ordinary-session admission; callers must request `true`.",
+              "properties": {
+                "configRevision": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "ordinarySession": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "configRevision",
+                "ordinarySession"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "expectedConfigRevision": {
           "format": "uint64",
           "minimum": 0,
@@ -16665,6 +16717,32 @@
     "areal/turn/start": {
       "additionalProperties": false,
       "properties": {
+        "admissionGuard": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "description": "Optional atomic ordinary-session admission; callers must request `true`.",
+              "properties": {
+                "configRevision": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "ordinarySession": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "configRevision",
+                "ordinarySession"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "expectedConfigRevision": {
           "format": "uint64",
           "minimum": 0,
@@ -16864,6 +16942,42 @@
         "input"
       ],
       "title": "TurnStart",
+      "type": "object"
+    },
+    "areal/work/overview": {
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "filter": {
+          "anyOf": [
+            {
+              "enum": [
+                "all",
+                "active",
+                "attention"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "limit": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "title": "OverviewRequest",
       "type": "object"
     },
     "areal/workflow/list": {
@@ -17586,6 +17700,26 @@
     "turn/interrupt": {
       "additionalProperties": false,
       "properties": {
+        "admissionGuard": {
+          "anyOf": [
+            {
+              "additionalProperties": false,
+              "description": "在同一准入边界核验活动 Turn 和普通会话所有权。",
+              "properties": {
+                "ordinarySession": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "ordinarySession"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "threadId": {
           "type": "string"
         },
@@ -17597,6 +17731,7 @@
         "threadId",
         "turnId"
       ],
+      "title": "TurnInterrupt",
       "type": "object"
     },
     "turn/start": {
@@ -64261,6 +64396,329 @@
       "required": [
         "turn"
       ],
+      "type": "object"
+    },
+    "areal/work/overview": {
+      "properties": {
+        "complete": {
+          "type": "boolean"
+        },
+        "data": {
+          "items": {
+            "properties": {
+              "attentionComplete": {
+                "type": "boolean"
+              },
+              "attentionCount": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "attentionRefs": {
+                "items": {
+                  "properties": {
+                    "attentionRef": {
+                      "type": "string"
+                    },
+                    "interactionId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "questionId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "runId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "summary": {
+                      "type": "string"
+                    },
+                    "taskId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "threadId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "turnId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "attentionRef",
+                    "kind",
+                    "summary",
+                    "status"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "availableActions": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "execution": {
+                "properties": {
+                  "runStatus": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "queued",
+                          "running",
+                          "waitingForInput",
+                          "waitingForAgents",
+                          "paused",
+                          "blocked",
+                          "completed",
+                          "failed",
+                          "cancelled"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "state": {
+                    "type": "string"
+                  },
+                  "turnId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "turnStatus": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "inProgress",
+                          "completed",
+                          "interrupted",
+                          "failed"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "state"
+                ],
+                "type": "object"
+              },
+              "kind": {
+                "type": "string"
+              },
+              "parentThreadId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "queue": {
+                "properties": {
+                  "paused": {
+                    "type": "boolean"
+                  },
+                  "pendingCount": {
+                    "format": "uint",
+                    "minimum": 0,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "pendingCount",
+                  "paused"
+                ],
+                "type": "object"
+              },
+              "resultAvailable": {
+                "type": "boolean"
+              },
+              "runId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "sourceUpdatedAt": {
+                "format": "int64",
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "summaryTruncated": {
+                "type": "boolean"
+              },
+              "taskId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "threadId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "title": {
+                "type": "string"
+              },
+              "workerCount": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "workers": {
+                "items": {
+                  "properties": {
+                    "execution": {
+                      "anyOf": [
+                        {
+                          "oneOf": [
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "kind": {
+                                  "const": "thread",
+                                  "type": "string"
+                                },
+                                "threadId": {
+                                  "type": "string"
+                                },
+                                "turnId": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "threadId",
+                                "turnId"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "additionalProperties": false,
+                              "properties": {
+                                "automatic": {
+                                  "default": false,
+                                  "type": "boolean"
+                                },
+                                "kind": {
+                                  "const": "workgroup",
+                                  "type": "string"
+                                },
+                                "workgroupId": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "workgroupId"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "executionId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "settled": {
+                      "type": "boolean"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "threadId": {
+                      "type": "string"
+                    },
+                    "turnId": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "settled"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "workersComplete": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "kind",
+              "title",
+              "execution",
+              "attentionRefs",
+              "attentionCount",
+              "attentionComplete",
+              "resultAvailable",
+              "availableActions",
+              "queue",
+              "workers",
+              "workerCount",
+              "workersComplete",
+              "summaryTruncated"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "data",
+        "complete"
+      ],
+      "title": "OverviewPage",
       "type": "object"
     },
     "areal/workflow/list": {

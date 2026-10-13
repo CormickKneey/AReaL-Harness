@@ -1,0 +1,9 @@
+{
+  "publicOrigin": "https://remote.example.org",
+  "listen": "127.0.0.1:8080",
+  "trustedLocalTlsProxy": true,
+  "allowedClientOrigins": ["https://remote.example.org"],
+  "dataDir": "/data",
+  "assetsDir": "/assets",
+  "payloadLogging": false
+}

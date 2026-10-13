@@ -492,6 +492,7 @@ async fn queued_input_invalidates_completion_and_precedes_automatic_continuation
         .start_durable(
             "test".into(),
             areal_protocol::desktop::TurnStart {
+                admission_guard: None,
                 interaction_mode: None,
                 request_id: "followup".into(),
                 thread_id: t.id.clone(),

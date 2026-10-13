@@ -763,6 +763,13 @@ impl Connection {
         if !self.ready {
             return Err(RpcError::invalid("Not initialized"));
         }
+        if method == "areal/work/overview" {
+            return engine
+                .work_overview(self.principal.thread_ids.as_ref(), parse(params)?)
+                .await
+                .map(|page| json!(page))
+                .map_err(map_error);
+        }
         if task_mode::METHODS.contains(&method) {
             if matches!(method, "areal/task/subscribe" | "areal/task/unsubscribe") {
                 let p: areal_protocol::tasks::TaskTarget = parse(params)?;
@@ -880,6 +887,7 @@ impl Connection {
                 }
                 methods.extend_from_slice(desktop::METHODS);
                 methods.extend_from_slice(task_mode::METHODS);
+                methods.push("areal/work/overview");
                 if !engine.runtime_capabilities().is_null() {
                     methods.extend_from_slice(processes::METHODS);
                 }
@@ -899,8 +907,8 @@ impl Connection {
                     "notifications": NOTIFICATIONS, "serverRequests":["item/tool/call"],
                     "browserToolBundles":if can_attach_browser {json!([{"bundleId":areal_protocol::desktop::BROWSER_V1_BUNDLE,
                         "definition":areal_protocol::desktop::browser_v1_tool()}])} else {json!([])},
-                    "features":{"conversationDerivationV1":json!({"preview":false,"methods":["areal/thread/fork","areal/side/start","areal/conversation/list","areal/conversation/history","areal/conversation/unarchive","areal/side/context/read"],"limits":engine.conversation_derivation_limits(),"forkBoundaries":["after","before"],"workspaceModes":["sharedCurrent"],"sideWorkspaceAccess":if engine.side_workspace_read_available() {json!(["none","readOnly"])} else {json!(["none"])},"historyBytes":engine.fork_snapshot_limit()}),"subscriptionRemoval":true,"atomicResume":true,"atomicObserve":true,"browserToolAttachment":can_attach_browser,
-                        "taskModes":true,"taskChannels":true,"asyncQuestions":true,"headlessInteractions":true,"goals":true,"dynamicTools":true,"mediaOutput":true,"durableSubmissionDeduplication":true,"profiles":true,"skills":true,"plans":true,"interactions":true,"queue":true,"providerConfiguration":true,"modelReset":true,"toolMedia":true,"blobUpload":true},
+                    "features":{"conversationDerivationV1":json!({"preview":false,"methods":["areal/thread/fork","areal/side/start","areal/conversation/list","areal/conversation/history","areal/conversation/unarchive","areal/side/context/read"],"limits":engine.conversation_derivation_limits(),"forkBoundaries":["after","before"],"workspaceModes":["sharedCurrent"],"sideWorkspaceAccess":if engine.side_workspace_read_available() {json!(["none","readOnly"])} else {json!(["none"])},"historyBytes":engine.fork_snapshot_limit()}),"subscriptionRemoval":true,"atomicResume":true,"atomicObserve":true,"atomicObserveOwnership":true,"browserToolAttachment":can_attach_browser,
+                        "turnStartAdmissionGuard":true,"turnInterruptAdmissionGuard":true,"threadStartAdmissionGuard":true,"taskPauseRunGuard":true,"taskModes":true,"taskChannels":true,"asyncQuestions":true,"headlessInteractions":true,"goals":true,"dynamicTools":true,"mediaOutput":true,"durableSubmissionDeduplication":true,"profiles":true,"skills":true,"plans":true,"interactions":true,"queue":true,"providerConfiguration":true,"modelReset":true,"toolMedia":true,"blobUpload":true},
                     "limits":{"frameBytes":MAX_FRAME_BYTES,"subscriptions":128,"sendQueue":256,"threadEventWindow":128},
                     "runtime":engine.runtime_capabilities()}))
             }
@@ -988,12 +996,17 @@ impl Connection {
                         data: None,
                     });
                 }
-                let (thread, events) = engine
-                    .snapshot_and_subscribe(&p.thread_id)
+                let (thread, ownership, events) = engine
+                    .snapshot_and_subscribe_with_ownership(
+                        &p.thread_id,
+                        self.principal.thread_ids.as_ref(),
+                    )
                     .await
                     .map_err(map_error)?;
                 self.forward(&p.thread_id, events);
-                Ok(thread_result(engine, thread))
+                let mut result = thread_result(engine, thread);
+                result["ownership"] = json!(ownership);
+                Ok(result)
             }
             "thread/read" => {
                 let p: ThreadRead = parse(params)?;
@@ -1033,9 +1046,9 @@ impl Connection {
                 Ok(json!({"turnId":p.expected_turn_id}))
             }
             "turn/interrupt" => {
-                let p: Interrupt = parse(params)?;
+                let p: areal_protocol::desktop::TurnInterrupt = parse(params)?;
                 engine
-                    .interrupt(&p.thread_id, &p.turn_id)
+                    .interrupt_guarded(&p.thread_id, &p.turn_id, p.admission_guard)
                     .await
                     .map_err(map_error)?;
                 Ok(json!({}))
@@ -1179,12 +1192,6 @@ struct Steer {
     thread_id: String,
     expected_turn_id: String,
     input: Vec<Input>,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Interrupt {
-    thread_id: String,
-    turn_id: String,
 }
 pub fn local_address(value: &str) -> anyhow::Result<SocketAddr> {
     let address: SocketAddr = value.parse()?;

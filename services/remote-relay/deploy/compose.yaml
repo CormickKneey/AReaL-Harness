@@ -1,0 +1,77 @@
+name: areal-remote-relay
+services:
+  relay:
+    image: ${RELAY_IMAGE:?Set RELAY_IMAGE to your locally built revision tag or verified image digest}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    user: "1000:1000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=16m,mode=1777,noexec,nosuid,nodev
+    volumes:
+      - relay-data:/data
+      - type: bind
+        source: ${RELAY_CONFIG:?Set absolute path to relay.json}
+        target: /config/relay.json
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${RELAY_ASSETS:?Set absolute path to the exported Remote-only assets directory}
+        target: /assets
+        read_only: true
+        bind: {create_host_path: false}
+    ports: ["443:8443"]
+    healthcheck:
+      test: [CMD, node, deploy/healthcheck.mjs]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    stop_grace_period: 30s
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 1.0
+    logging:
+      driver: local
+      options: {max-size: 10m, max-file: "2"}
+  tls:
+    image: nginxinc/nginx-unprivileged:1.30.5-alpine@sha256:15c994d10d6d78658721c3bcafff14cb281fba2a4bdf9d5ba92c416a472516e3
+    network_mode: service:relay
+    depends_on:
+      relay: {condition: service_healthy}
+    user: "101:101"
+    entrypoint: [nginx]
+    command: [-g, "daemon off;"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:size=16m,mode=1777,noexec,nosuid,nodev
+    volumes:
+      - type: bind
+        source: ${NGINX_CONFIG:?Set absolute path to nginx.conf}
+        target: /etc/nginx/nginx.conf
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${TLS_CERT:?Set absolute path to fullchain.pem}
+        target: /certs/fullchain.pem
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${TLS_KEY:?Set absolute path to private key}
+        target: /certs/privkey.pem
+        read_only: true
+        bind: {create_host_path: false}
+    stop_grace_period: 30s
+    pids_limit: 32
+    mem_limit: 128m
+    cpus: 1.0
+    logging:
+      driver: local
+      options: {max-size: 10m, max-file: "2"}
+volumes:
+  relay-data:

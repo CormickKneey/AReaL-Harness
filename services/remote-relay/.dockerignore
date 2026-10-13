@@ -1,0 +1,13 @@
+**
+!package.json
+!package-lock.json
+!src/
+!src/cli.mjs
+!src/config.mjs
+!src/server.mjs
+!src/relay.mjs
+!src/store.mjs
+!deploy/
+!deploy/healthcheck.mjs
+!deploy/licenses/
+!deploy/licenses/**

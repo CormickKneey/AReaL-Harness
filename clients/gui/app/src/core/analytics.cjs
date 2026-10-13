@@ -1,6 +1,7 @@
 "use strict";
 const { readFile } = require("node:fs/promises");
 const { join } = require("node:path");
+const WebSocket = require("ws");
 const dayKey = (time) => {
   const d = new Date(time);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -138,21 +139,70 @@ class UsageAnalytics {
   }
   async syncProject(project) {
     if (this.syncing.has(project.id)) return this.syncing.get(project.id);
+    const primary = project.client;
+    const { endpoint, token } = project;
+    const serviceId = project.service?.serviceId;
+    const generation = project.service?.generation;
+    const summaries = (project.summaries ?? []).map((summary) => summary.id);
+    let reader;
+    let primaryClosed = false;
+    const ownsIdentity = () =>
+      this.backend.projects.get(project.id) === project &&
+      project.client === primary &&
+      project.endpoint === endpoint &&
+      project.token === token &&
+      project.service?.serviceId === serviceId &&
+      project.service?.generation === generation;
+    const current = () =>
+      ownsIdentity() &&
+      !primaryClosed &&
+      !this.backend.closing &&
+      primary?.ready &&
+      !primary.closed;
+    const requireCurrent = () => {
+      if (!current()) throw new Error("历史同步中断");
+    };
+    // 主连接关闭必须覆盖模块加载与握手等待，只释放本次统计读取连接。
+    const removeClose = primary?.onClose(() => {
+      primaryClosed = true;
+      reader?.close();
+    });
     const task = (async () => {
       try {
-        // thread/read does not subscribe, resume, or execute historical tasks.
-        for (const summary of project.summaries ?? []) {
-          if (!project.client?.ready || this.backend.closing)
-            throw new Error("历史同步中断");
-          const { thread } = await project.client.request("thread/read", {
-            threadId: summary.id,
+        requireCurrent();
+        const { CoreClient } = await import("@areal/runtime-client/core");
+        requireCurrent();
+        reader = new CoreClient({
+          createSocket: () =>
+            new WebSocket(endpoint, {
+              headers: { Authorization: `Bearer ${token}` },
+              followRedirects: false,
+              maxPayload: 4 * 1024 * 1024,
+            }),
+        });
+        await reader.connect();
+        requireCurrent();
+        // 独立连接只读取历史，不订阅、恢复或执行历史任务。
+        for (const threadId of summaries) {
+          requireCurrent();
+          const { thread } = await reader.request("thread/read", {
+            threadId,
             includeTurns: true,
           });
+          requireCurrent();
           this.ingest(project.id, thread);
         }
+        requireCurrent();
         this.syncErrors.delete(project.id);
       } catch {
-        this.syncErrors.set(project.id, "部分历史尚未同步，连接工作区后重试。");
+        if (ownsIdentity())
+          this.syncErrors.set(
+            project.id,
+            "部分历史尚未同步，连接工作区后重试。",
+          );
+      } finally {
+        removeClose?.();
+        reader?.close();
       }
       await this.flush();
     })().finally(() => this.syncing.delete(project.id));

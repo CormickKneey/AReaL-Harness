@@ -134,6 +134,7 @@ pub(crate) fn permission(method: &str) -> Permission {
         method,
         "initialize"
             | "areal/capabilities"
+            | "areal/work/overview"
             | "model/list"
             | "thread/list"
             | "thread/read"

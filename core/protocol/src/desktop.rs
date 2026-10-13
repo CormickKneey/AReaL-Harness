@@ -133,6 +133,19 @@ pub enum SideSelection {
         claimed_item_id: Option<String>,
     },
 }
+
+/// 与观察快照同锁捕获，不持久化到 Thread；标识仅对可见 Task 暴露。
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub enum ThreadOwnership {
+    Ordinary,
+    Task {
+        #[serde(rename = "taskId", skip_serializing_if = "Option::is_none")]
+        task_id: Option<String>,
+        #[serde(rename = "runId", skip_serializing_if = "Option::is_none")]
+        run_id: Option<String>,
+    },
+}
 pub const NOTIFICATIONS: &[&str] = &[
     "areal/goal/updated",
     "areal/goal/cleared",
@@ -429,6 +442,8 @@ pub struct WorkflowRun {
 #[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ThreadStart {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission_guard: Option<ThreadStartAdmissionGuard>,
     pub request_id: String,
     pub cwd: Option<String>,
     pub agent_profile: Option<VersionRef>,
@@ -441,12 +456,42 @@ pub struct ThreadStart {
 #[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TurnStart {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission_guard: Option<TurnStartAdmissionGuard>,
     #[serde(default)]
     pub interaction_mode: Option<crate::tasks::InteractionMode>,
     pub request_id: String,
     pub thread_id: String,
     pub input: Vec<Input>,
     pub expected_config_revision: Option<u64>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TurnInterrupt {
+    pub thread_id: String,
+    pub turn_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission_guard: Option<TurnInterruptAdmissionGuard>,
+}
+/// 在同一准入边界核验活动 Turn 和普通会话所有权。
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TurnInterruptAdmissionGuard {
+    pub ordinary_session: bool,
+}
+
+/// Resolve and admit only a profile without Workflow execution.
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ThreadStartAdmissionGuard {
+    pub ordinary_session: bool,
+}
+/// Optional atomic ordinary-session admission; callers must request `true`.
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TurnStartAdmissionGuard {
+    pub config_revision: u64,
+    pub ordinary_session: bool,
 }
 /// 把一个 pending 排队项一次受理到指定活动轮次；不允许客户端拼接 remove/steer。
 #[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]

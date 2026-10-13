@@ -1,0 +1,16 @@
+{
+  "name": "@areal/remote-relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "24.2.0"
+  },
+  "scripts": {
+    "start": "node src/cli.mjs serve",
+    "test": "node --test --test-concurrency=1 test/*.test.mjs"
+  },
+  "dependencies": {
+    "ws": "8.21.3"
+  }
+}

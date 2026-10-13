@@ -21,6 +21,17 @@ impl Engine {
             if let Some(result) = receipt(&data,&identity,&request.request_id,method,&hash)? { return Ok(result); }
             if state.poisoned || state.thread.parent_thread_id.is_some() || state.thread.source == "nativeTaskAgent" { return Err(Error::Conflict); }
             if request.expected_config_revision.is_some_and(|revision| revision != data.configuration.revision) { return Err(Error::Conflict); }
+            // 锁顺序为 lifecycle → Thread → Tasks；持久化和激活完成前保留 Task 预留锁。
+            let _ordinary = if let Some(guard) = &request.admission_guard {
+                if enqueue || !guard.ordinary_session { return Err(invalid("ordinary admission requires turn/start and ordinarySession=true")); }
+                if guard.config_revision != data.configuration.revision || data.archived
+                    || data.queue.paused || data.queue.items.iter().any(|item| matches!(item.status.as_str(), "pending" | "running"))
+                { return Err(Error::Conflict); }
+                if data.configuration.profile.as_ref().is_some_and(|profile| profile.workflow.is_some()) {
+                    return Err(invalid("UNSUPPORTED_PROFILE: ordinary sessions cannot use a Workflow profile"));
+                }
+                Some(engine.ordinary_admission(&state.thread).await?)
+            } else { None };
             engine.validate_uploads(&state.thread,&request.input)?;
             let mut configuration = engine.freeze_configuration(data.configuration.clone());
             if let Some(mode) = request.interaction_mode { configuration.options.interaction_mode = mode; }

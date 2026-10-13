@@ -345,8 +345,33 @@ impl Engine {
     }
 
     pub async fn interrupt(&self, thread_id: &str, turn_id: &str) -> Result<()> {
+        self.interrupt_guarded(thread_id, turn_id, None).await
+    }
+
+    pub async fn interrupt_guarded(
+        &self,
+        thread_id: &str,
+        turn_id: &str,
+        admission_guard: Option<areal_protocol::desktop::TurnInterruptAdmissionGuard>,
+    ) -> Result<()> {
         let cell = self.cell(thread_id).await?;
         let mut state = cell.state.lock().await;
+        // Thread → Tasks 锁持续到队列持久化和取消完成，防止所有权在校验后改变。
+        let _ordinary = if let Some(guard) = admission_guard {
+            if !guard.ordinary_session {
+                return Err(Error::Invalid("ordinarySession must be true".into()));
+            }
+            if state
+                .active
+                .as_ref()
+                .is_none_or(|active| active.id != turn_id)
+            {
+                return Err(Error::Conflict);
+            }
+            Some(self.ordinary_admission(&state.thread).await?)
+        } else {
+            None
+        };
         if let Some(active) = &state.active {
             if active.id != turn_id {
                 return Err(Error::Conflict);

@@ -19,12 +19,13 @@ export function byteChannel(write, terminate) {
   const input = pushable({ objectMode: false });
   let closed = false;
   return {
+    get bufferedBytes() { return input.readableLength; },
     stream: { source: input, sink: async source => { for await (const bytes of source) { if (closed) throw new Error('连接已断开'); await write(bytes.subarray()); } } },
     receive(bytes) { if (input.readableLength + bytes.length > 2 * 1024 * 1024) throw new Error('连接接收缓冲已满'); input.push(bytes); },
     close() { if (closed) return; closed = true; input.end(); terminate(); },
   };
 }
-export async function secureChannel(wire, identity, hostPeer) {
+export async function secureChannel(wire, identity, hostPeer, limits = {}) {
   const privateKey = privateKeyFromProtobuf(unbase64(identity));
   const silent = Object.assign(() => {}, { error() {}, trace() {}, enabled: false });
   const encryption = noise({ prologueBytes: new TextEncoder().encode('areal.remote.v1') })({
@@ -40,19 +41,23 @@ export async function secureChannel(wire, identity, hostPeer) {
   } catch (error) { wire.close(); throw error; }
   const output = pushable({ objectMode: false });
   let failure;
+  const maxMessageBytes = limits.maxMessageBytes ?? 24 * 1024 * 1024;
+  const maxBufferedBytes = limits.maxBufferedBytes ?? 32 * 1024 * 1024;
   // libp2p's iterable sink resolves when its source is attached, not when the
   // channel closes. Only a sink error or source EOF may terminate this wire.
   const done = secured.conn.sink(lp.encode(output)).catch(error => { failure = error; wire.close(); });
   return {
     peer: secured.remotePeer.toString(), done,
+    // 只读排队字节用于验证发送各阶段的总预算，不暴露消息内容。
+    get bufferedBytes() { return output.readableLength; },
     send(value) {
       const data = new TextEncoder().encode(JSON.stringify(value));
-      if (data.length > 24 * 1024 * 1024 || output.readableLength + data.length > 32 * 1024 * 1024) { wire.close(); throw new Error('数据超过传输上限'); }
+      if (data.length > maxMessageBytes || output.readableLength + data.length > maxBufferedBytes) { wire.close(); throw new Error('数据超过传输上限'); }
       output.push(data);
     },
     async *messages() {
       try {
-        for await (const frame of lp.decode(secured.conn.source, { maxDataLength: 24 * 1024 * 1024 })) yield JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(frame.subarray()));
+        for await (const frame of lp.decode(secured.conn.source, { maxDataLength: maxMessageBytes })) yield JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(frame.subarray()));
         if (failure) throw failure;
       }
       finally { output.end(); wire.close(); }
@@ -60,3 +65,5 @@ export async function secureChannel(wire, identity, hostPeer) {
     close() { output.end(); wire.close(); },
   };
 }
+
+export { decodeRelayMessage, decodeRelayData, encodeRelayData } from "./relay-codec.mjs";

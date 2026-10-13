@@ -1,6 +1,8 @@
 //! 任务身份与通信独立持久化；执行继续复用 Goal、Thread 和 Runtime 的准入边界。
 mod channel;
 mod delegations;
+
+mod overview;
 mod scheduler;
 mod workers;
 use super::*;
@@ -148,7 +150,91 @@ fn summary(task: &Task) -> Value {
     value
 }
 
+// Thread 与 Task 的所有权判断共用纯函数，防止观察和写准入漂移。
+fn thread_ownership(
+    thread: &Thread,
+    tasks: &Snapshot,
+    allowed: Option<&std::collections::BTreeSet<String>>,
+) -> areal_protocol::desktop::ThreadOwnership {
+    use areal_protocol::desktop::ThreadOwnership;
+    let managed = thread.parent_thread_id.is_some()
+        || thread.goal_owner.is_some()
+        || thread.source == "nativeTaskAgent";
+    let current_goal = thread.goals.goal.as_ref().filter(|goal| {
+        goal.status == GoalStatus::Active || goal.settling || goal.active_turn_id.is_some()
+    });
+    let candidates = || {
+        tasks.tasks.values().flat_map(|task| {
+            task.runs
+                .iter()
+                .filter(|run| {
+                    run.thread_id.as_deref() == Some(thread.id.as_str())
+                        && (matches!(
+                            run.status,
+                            RunStatus::Queued
+                                | RunStatus::Running
+                                | RunStatus::WaitingForInput
+                                | RunStatus::WaitingForAgents
+                        ) || run.workers.iter().any(|worker| !worker.settled))
+                })
+                .map(move |run| (task, run))
+        })
+    };
+    let run_owned = candidates().next().is_some();
+    // 同一 Thread 可被多个 Task 预留；仅当前 Goal 的唯一 Run 或无 Goal 时的唯一候选可提供标识。
+    let mut owners = candidates().filter(|(_, run)| {
+        current_goal.is_none_or(|goal| run.goal_id.as_deref() == Some(goal.id.as_str()))
+    });
+    let owner = owners.next().filter(|_| owners.next().is_none());
+    if let Some((task, run)) = owner {
+        let sees = |id: &str| allowed.is_none_or(|ids| ids.contains(id));
+        let visible = (allowed.is_none() || task.thread_id.as_deref().is_some_and(sees))
+            && run.thread_id.as_deref().is_none_or(sees);
+        return ThreadOwnership::Task {
+            task_id: visible.then(|| task.id.clone()),
+            run_id: visible.then(|| run.id.clone()),
+        };
+    }
+    if managed || current_goal.is_some() || run_owned {
+        ThreadOwnership::Task {
+            task_id: None,
+            run_id: None,
+        }
+    } else {
+        ThreadOwnership::Ordinary
+    }
+}
+
+// 保留 Task 预留锁直到普通 Turn 持久化并激活，或观察快照和订阅完成。
+pub(super) struct OrdinaryAdmission<'a> {
+    _tasks: tokio::sync::MutexGuard<'a, Snapshot>,
+}
+
 impl Engine {
+    pub(super) async fn ownership_and_lock(
+        &self,
+        thread: &Thread,
+        allowed: Option<&std::collections::BTreeSet<String>>,
+    ) -> (
+        areal_protocol::desktop::ThreadOwnership,
+        OrdinaryAdmission<'_>,
+    ) {
+        let tasks = self.task_modes.state.lock().await;
+        let ownership = thread_ownership(thread, &tasks, allowed);
+        (ownership, OrdinaryAdmission { _tasks: tasks })
+    }
+
+    pub(super) async fn ordinary_admission(
+        &self,
+        thread: &Thread,
+    ) -> Result<OrdinaryAdmission<'_>> {
+        let (ownership, guard) = self.ownership_and_lock(thread, None).await;
+        if ownership != areal_protocol::desktop::ThreadOwnership::Ordinary {
+            return Err(Error::Conflict);
+        }
+        Ok(guard)
+    }
+
     async fn save_tasks(
         &self,
         state: &mut Snapshot,
@@ -324,12 +410,22 @@ impl Engine {
             if let Some(value) = receipt(&state, &owner, &action, &request.request_id, &hash)? {
                 return Ok(value);
             }
+            if request.expected_run_id.is_some() && action != "pause" {
+                return Err(invalid("expectedRunId is supported only for task/pause"));
+            }
             let mut candidate = state.clone();
             let task = candidate
                 .tasks
                 .get_mut(&request.task_id)
                 .ok_or(Error::NotFound)?;
             if task.revision != request.expected_revision || task.cancelled {
+                return Err(Error::Conflict);
+            }
+            if request
+                .expected_run_id
+                .as_deref()
+                .is_some_and(|expected| run_id(task) != Some(expected))
+            {
                 return Err(Error::Conflict);
             }
             match action.as_str() {

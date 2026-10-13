@@ -314,8 +314,25 @@ impl Engine {
         &self,
         thread_id: &str,
     ) -> Result<(Thread, broadcast::Receiver<Value>)> {
+        let (thread, _, events) = self
+            .snapshot_and_subscribe_with_ownership(thread_id, None)
+            .await?;
+        Ok((thread, events))
+    }
+
+    /// 按 Thread → Tasks 顺序捕获快照、所有权与订阅；授权范围只控制标识的可见性。
+    pub async fn snapshot_and_subscribe_with_ownership(
+        &self,
+        thread_id: &str,
+        allowed: Option<&std::collections::BTreeSet<String>>,
+    ) -> Result<(
+        Thread,
+        areal_protocol::desktop::ThreadOwnership,
+        broadcast::Receiver<Value>,
+    )> {
         let cell = self.raw_cell(thread_id).await?;
         let state = cell.state.lock().await;
+        let (ownership, _tasks) = self.ownership_and_lock(&state.thread, allowed).await;
         let mut thread = if state.thread.desktop.as_ref().is_some_and(|d| d.archived) {
             self.store
                 .read_thread(thread_id)
@@ -329,7 +346,7 @@ impl Engine {
         };
         project_side_capacity(&mut thread, state.active.as_ref());
         self.refresh_goal_usage(&mut thread);
-        Ok((thread, cell.events.subscribe()))
+        Ok((thread, ownership, cell.events.subscribe()))
     }
 
     pub async fn spawn_child(
