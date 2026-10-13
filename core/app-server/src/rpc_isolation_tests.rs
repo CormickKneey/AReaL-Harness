@@ -162,3 +162,153 @@ async fn slow_derivation_does_not_starve_same_connection_control() {
     server.await.unwrap().unwrap();
     engine.shutdown().await;
 }
+
+struct CompletedModel;
+#[async_trait::async_trait]
+impl areal_engine::model::Model for CompletedModel {
+    fn name(&self) -> &str {
+        "fixture"
+    }
+    async fn stream(
+        &self,
+        _: Vec<areal_engine::model::Message>,
+    ) -> anyhow::Result<areal_engine::model::ModelStream> {
+        Ok(Box::pin(futures_util::stream::iter([Ok(
+            "fixture answer".into()
+        )])))
+    }
+}
+#[tokio::test]
+async fn real_fork_commit_lock_does_not_stop_socket_control() {
+    check_real_lock("fork").await;
+}
+#[tokio::test]
+async fn real_thread_state_lock_does_not_stop_socket_control() {
+    check_real_lock("state").await;
+}
+async fn check_real_lock(stage: &str) {
+    let root = tempfile::tempdir().unwrap();
+    let engine = Engine::open(
+        root.path(),
+        Arc::new(CompletedModel),
+        areal_engine::Limits {
+            max_threads: 2,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let source = engine
+        .create(root.path().to_string_lossy().into_owned())
+        .await
+        .unwrap();
+    let anchor = engine
+        .start(&source.id, vec![Input::text("owned fixture")])
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), engine.wait(&source.id))
+        .await
+        .unwrap()
+        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let stop = CancellationToken::new();
+    let server = tokio::spawn(serve(listener, engine.clone(), stop.clone()));
+    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{address}"))
+        .await
+        .unwrap();
+    socket.send(Wire::Text(json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"real-lock-fixture","version":"1"}}}).to_string().into())).await.unwrap();
+    socket.next().await.unwrap().unwrap();
+    socket
+        .send(Wire::Text(
+            json!({"method":"initialized"}).to_string().into(),
+        ))
+        .await
+        .unwrap();
+    for stage in [stage] {
+        let entered = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let holder = if stage == "fork" {
+            engine.test_pause_fork_commit(entered.clone(), release.clone());
+            socket.send(Wire::Text(json!({"id":10,"method":"areal/thread/fork","params":{"requestId":"real-lock","sourceThreadId":source.id,"anchor":{"turnId":anchor.id,"boundary":"before"},"workspaceMode":"sharedCurrent"}}).to_string().into())).await.unwrap();
+            None
+        } else {
+            let owner = engine.clone();
+            let id = source.id.clone();
+            let entered = entered.clone();
+            let release = release.clone();
+            Some(tokio::spawn(async move {
+                owner.test_hold_thread_state(&id, entered, release).await
+            }))
+        };
+        tokio::time::timeout(Duration::from_secs(2), entered.notified())
+            .await
+            .unwrap();
+        let pending_create = if stage == "fork" {
+            // Fork 未发布时，普通创建不能越过同一容量准入；现有会话读取仍须成功。
+            assert_eq!(engine.list(None, 100, None).await.unwrap().0.len(), 1);
+            let owner = engine.clone();
+            let cwd = root.path().to_string_lossy().into_owned();
+            Some(tokio::spawn(async move { owner.create(cwd).await }))
+        } else {
+            None
+        };
+        // history/interrupt 都带 threadId；后接无 threadId 的 MCP 控制必须被接收。
+        socket.send(Wire::Text(json!({"id":20,"method":"areal/conversation/history","params":{"threadId":source.id,"view":"inherited"}}).to_string().into())).await.unwrap();
+        socket.send(Wire::Text(json!({"id":21,"method":"turn/interrupt","params":{"threadId":source.id,"turnId":"not-running"}}).to_string().into())).await.unwrap();
+        socket
+            .send(Wire::Text(
+                json!({"id":22,"method":"areal/mcp/list","params":{}})
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+        let observed = tokio::time::timeout(Duration::from_millis(300), async {
+            let mut ids = std::collections::BTreeSet::new();
+            while let Some(Ok(frame)) = socket.next().await {
+                if frame.is_text() {
+                    let value: Value = serde_json::from_str(frame.to_text().unwrap()).unwrap();
+                    if let Some(id) = value["id"].as_u64() {
+                        ids.insert(id);
+                    }
+                    if ids.contains(&22) && (stage != "fork" || ids.contains(&21)) {
+                        return true;
+                    }
+                }
+            }
+            false
+        })
+        .await;
+        release.notify_one();
+        if let Some(holder) = holder {
+            holder.await.unwrap();
+        }
+        if let Some(pending) = pending_create {
+            let result = tokio::time::timeout(Duration::from_secs(2), pending)
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(
+                matches!(result, Err(Error::Exhausted(_))),
+                "pending Fork must reserve the final thread slot"
+            );
+        }
+        assert!(
+            observed.unwrap_or(false),
+            "{stage} Core lock blocked independent same-socket control"
+        );
+        if stage == "fork" {
+            while let Some(Ok(frame)) = socket.next().await {
+                if frame.is_text()
+                    && serde_json::from_str::<Value>(frame.to_text().unwrap()).unwrap()["id"] == 10
+                {
+                    break;
+                }
+            }
+        }
+    }
+    socket.close(None).await.unwrap();
+    stop.cancel();
+    server.await.unwrap().unwrap();
+    engine.shutdown().await;
+}

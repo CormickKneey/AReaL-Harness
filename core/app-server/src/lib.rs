@@ -453,42 +453,6 @@ async fn connection(
             ));
             continue;
         }
-        if let Some(thread_id) = params
-            .get("threadId")
-            .or_else(|| params.get("parentThreadId"))
-            .and_then(Value::as_str)
-            && engine
-                .read(thread_id, false)
-                .await
-                .is_ok_and(|thread| thread.is_side())
-            && !matches!(
-                method,
-                "thread/read"
-                    | "thread/resume"
-                    | "areal/thread/observe"
-                    | "turn/start"
-                    | "areal/turn/start"
-                    | "turn/interrupt"
-                    | "areal/side/context/read"
-                    | "areal/conversation/history"
-                    | "areal/tool/acknowledge"
-                    | "areal/context/read"
-                    | "areal/thread/configure"
-                    | "areal/thread/archive"
-                    | "areal/conversation/unarchive"
-                    | "areal/request/read"
-            )
-        {
-            conn.send(response(
-                id.unwrap(),
-                Err(RpcError {
-                    code: -32010,
-                    message: "Side conversations cannot use this method".into(),
-                    data: Some(json!({"reason":"SIDE_POLICY_VIOLATION","retryable":false})),
-                }),
-            ));
-            continue;
-        }
         // Long waits and snapshot creation must not block cancellation/steering
         // on this same WebSocket. Bound independently from subscriptions.
         if conn.ready
@@ -508,6 +472,7 @@ async fn connection(
                         | "areal/side/start"
                         | "areal/conversation/history"
                         | "areal/side/context/read"
+                        | "turn/interrupt"
                 ))
         {
             let control = matches!(
@@ -526,6 +491,7 @@ async fn connection(
                     | "areal/mcp/list"
                     | "areal/mcp/read"
                     | "areal/mcp/disconnect"
+                    | "turn/interrupt"
             );
             if !control && conn.rpc_permits.available_permits() <= 4 {
                 conn.send(response(
@@ -554,7 +520,10 @@ async fn connection(
                 let durable_derivation =
                     matches!(method.as_str(), "areal/thread/fork" | "areal/side/start");
                 let dispatch = async {
-                    if delegations::METHODS.contains(&method.as_str()) {
+                    check_side_policy(&engine, &method, &params).await?;
+                    if method == "turn/interrupt" {
+                        interrupt(&engine, params).await
+                    } else if delegations::METHODS.contains(&method.as_str()) {
                         delegations::dispatch(&engine, &method, params).await
                     } else if processes::METHODS.contains(&method.as_str()) {
                         processes::dispatch(&engine, &identity, &method, params).await
@@ -576,6 +545,10 @@ async fn connection(
             });
             continue;
         }
+        if let Err(error) = check_side_policy(&engine, method, &params).await {
+            conn.send(response(id.unwrap(), Err(error)));
+            continue;
+        }
         let delivery = conn.delivery.clone();
         let _delivery = delivery.lock().await;
         let result = conn
@@ -592,6 +565,50 @@ async fn connection(
     conn.tasks.close();
     conn.tasks.wait().await;
     let _ = writer.await;
+}
+
+// Side 策略仍在调用 Core 前验证；已允许的方法无需读取目标状态锁。
+async fn check_side_policy(engine: &Engine, method: &str, params: &Value) -> Result<(), RpcError> {
+    if !matches!(
+        method,
+        "thread/read"
+            | "thread/resume"
+            | "areal/thread/observe"
+            | "turn/start"
+            | "areal/turn/start"
+            | "turn/interrupt"
+            | "areal/side/context/read"
+            | "areal/conversation/history"
+            | "areal/tool/acknowledge"
+            | "areal/context/read"
+            | "areal/thread/configure"
+            | "areal/thread/archive"
+            | "areal/conversation/unarchive"
+            | "areal/request/read"
+    ) && let Some(thread_id) = params
+        .get("threadId")
+        .or_else(|| params.get("parentThreadId"))
+        .and_then(Value::as_str)
+        && engine
+            .read(thread_id, false)
+            .await
+            .is_ok_and(|thread| thread.is_side())
+    {
+        return Err(RpcError {
+            code: -32010,
+            message: "Side conversations cannot use this method".into(),
+            data: Some(json!({"reason":"SIDE_POLICY_VIOLATION","retryable":false})),
+        });
+    }
+    Ok(())
+}
+async fn interrupt(engine: &Arc<Engine>, params: Value) -> Result<Value, RpcError> {
+    let p: Interrupt = parse(params)?;
+    engine
+        .interrupt(&p.thread_id, &p.turn_id)
+        .await
+        .map_err(map_error)?;
+    Ok(json!({}))
 }
 
 impl Connection {
@@ -1059,14 +1076,7 @@ impl Connection {
                     .map_err(map_error)?;
                 Ok(json!({"turnId":p.expected_turn_id}))
             }
-            "turn/interrupt" => {
-                let p: Interrupt = parse(params)?;
-                engine
-                    .interrupt(&p.thread_id, &p.turn_id)
-                    .await
-                    .map_err(map_error)?;
-                Ok(json!({}))
-            }
+            "turn/interrupt" => interrupt(engine, params).await,
             "areal/agent/spawn" => {
                 let p: areal_protocol::desktop::AgentSpawn = parse(params)?;
                 engine.spawn_agent(p).await.map_err(map_error)

@@ -271,11 +271,13 @@ impl Engine {
                     host: None,
                 },
             );
-            // 容量锁跨越持久提交；read/list 只会看见已经同步完成的目标。
-            let mut threads = engine.threads.write().await;
-            if threads.len() >= engine.limits.max_threads {
+            // 创建准入保护未发布目标的容量；目录锁不跨磁盘等待，现有控制仍可查找会话。
+            let _creation = engine.thread_creation.lock().await;
+            if engine.threads.read().await.len() >= engine.limits.max_threads {
                 return Err(Error::Exhausted("thread capacity reached".into()));
             }
+            #[cfg(feature = "test-support")]
+            engine.test_fork_commit_barrier().await;
             if let Err(error) = engine.persist(&thread).await {
                 // rename 已完成而目录同步失败时，磁盘可能已有目标。先注册可核对的
                 // 完整记录，避免同进程的同键请求再创建第二个目标；原错误仍保持 UNKNOWN。
@@ -288,7 +290,7 @@ impl Engine {
                     })
                 {
                     cell.state.lock().await.poisoned = true;
-                    threads.insert(thread_id, cell);
+                    engine.threads.write().await.insert(thread_id, cell);
                 }
                 return Err(error);
             }
@@ -296,7 +298,7 @@ impl Engine {
             engine
                 .store
                 .check_fork_fault(crate::store::ForkFault::AfterTarget)?;
-            threads.insert(thread_id, cell);
+            engine.threads.write().await.insert(thread_id, cell);
             Ok(thread)
         })
         .await

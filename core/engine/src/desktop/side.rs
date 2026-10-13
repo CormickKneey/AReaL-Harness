@@ -496,8 +496,10 @@ impl Engine {
                     host: None,
                 },
             );
-            let mut threads = engine.threads.write().await;
-            if threads.len() >= engine.limits.max_threads {
+            let _creation = engine.thread_creation.lock().await;
+            // 等待提交准入后重新核对已发布的 Side，不能用等待之前的容量快照。
+            engine.check_side_capacity(&source.id, None).await?;
+            if engine.threads.read().await.len() >= engine.limits.max_threads {
                 return Err(Error::Exhausted("thread capacity reached".into()));
             }
             if let Err(error) = engine.persist(&thread).await {
@@ -510,7 +512,7 @@ impl Engine {
                     })
                 {
                     cell.state.lock().await.poisoned = true;
-                    threads.insert(thread_id, cell);
+                    engine.threads.write().await.insert(thread_id, cell);
                 }
                 return Err(error);
             }
@@ -523,7 +525,7 @@ impl Engine {
                 admission,
             );
             drop(state);
-            threads.insert(thread_id, cell);
+            engine.threads.write().await.insert(thread_id, cell);
             Ok((thread, turn))
         })
         .await
