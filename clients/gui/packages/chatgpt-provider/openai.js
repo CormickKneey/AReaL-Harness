@@ -154,10 +154,11 @@ export class OpenAIAccount extends ChatGPTAccount {
       if (sameAccount) { this.pendingRotation = null; this.terminalFailure = null; this.failure = null }
       const activate = async () => {
         this.busy = true
-        this.changed()
         try {
           if (!sameAccount) await this.settleRotation()
           await this.directory.activate(target)
+          this.pendingRotation = null; this.terminalFailure = null; this.failure = null
+          this.changed()
           return true
         } finally { this.busy = false }
       }
@@ -165,7 +166,7 @@ export class OpenAIAccount extends ChatGPTAccount {
       const active = this.activateAuthorized ? await this.activateAuthorized(target, activate)
         : this.canActivate && !await this.canActivate() ? false : await activate()
       if (!active) this.error = '新账号已保存；请等待活动任务结束后选择该账号。'
-      return active
+      return active ? { changed: true } : false
     }
     return super.begin()
   }

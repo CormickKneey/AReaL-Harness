@@ -578,6 +578,7 @@ try {
   await sidePane.getByRole("region", { name: "冻结证据" }).locator("pre").filter({ hasText: unicodeExcerpt }).first().waitFor();
   await shot("05-side-answered-frozen.png");
   checks.push("AC30/39: Side answers during a live source Runtime command; Unicode source selection is verified and frozen evidence is visible");
+  const ambientStatus = entry => entry.command === "trajectory" && entry.parameters?.operation === "status" && Object.keys(entry.parameters).length === 1;
   const beforeBring = { requests: requests.length, commands: (await app.evaluate(() => globalThis.__scfMutations)).length,
     sourceTurns: sideStarted.projects[0].state.threads[sourceThreadId].turns.length,
     sideTurns: side.turns.length, workspaceSha256: await hash(fixturePath) };
@@ -601,7 +602,7 @@ try {
   await page.getByTestId("chat-input").fill(concurrentDraft);
   await showSideConversation();
   await preview.waitFor();
-  const commandsBeforeInsert = (await app.evaluate(() => globalThis.__scfMutations)).length;
+  const commandsBeforeInsert = (await app.evaluate(() => globalThis.__scfMutations)).filter(entry => !ambientStatus(entry)).length;
   await preview.getByRole("button", { name: "确认插入主草稿" }).click();
   await sidePane.getByText("已追加到更新后的主会话草稿；请检查再发送。", { exact: true }).waitFor();
   const mainDraft = await page.evaluate(key => localStorage.getItem(key), `areal-gui:draft:${projectId}:${sourceThreadId}`);
@@ -609,11 +610,15 @@ try {
     "actual main Composer draft must retain its previous text and append the confirmed Side answer");
   assert.equal(requests.length, beforeBring.requests, "bring-back must not send or steer");
   const bringCommands = await app.evaluate(() => globalThis.__scfMutations);
-  assert.equal(bringCommands.length, commandsBeforeInsert,
+  assert.equal(bringCommands.filter(entry => !ambientStatus(entry)).length, commandsBeforeInsert,
     "confirming bring-back must not issue any Core command, including queue or steer");
-  assert.ok(bringCommands.slice(beforeBring.commands).every(entry =>
+  const bringScope = bringCommands.slice(beforeBring.commands);
+  // 全局轨迹状态轮询走同一连接，但不属于 Side 操作；原始 RPC 仍完整保留于 manifest。
+  // 仅识别精确的无额外参数只读 status，其余命令继续受原来的 side/list 白名单约束。
+  events.push({ bringBackAmbientStatusReads: bringScope.filter(ambientStatus).length });
+  assert.ok(bringScope.filter(entry => !ambientStatus(entry)).every(entry =>
     entry.command === "side" && entry.parameters.operation === "list"),
-  "switching related discussions may only refresh the read-only list before insertion");
+  `switching related discussions may only refresh the read-only list before insertion: ${JSON.stringify(bringScope.filter(entry => !ambientStatus(entry)).map(entry => ({ command: entry.command, operation: entry.parameters?.operation })))}`);
   assert.equal((await state()).projects[0].state.threads[sourceThreadId].turns.length, beforeBring.sourceTurns);
   assert.equal((await state()).projects[0].state.threads[sideThreadId].turns.length, beforeBring.sideTurns);
   assert.equal(await hash(fixturePath), beforeBring.workspaceSha256);

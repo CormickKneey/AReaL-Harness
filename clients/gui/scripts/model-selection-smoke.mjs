@@ -44,15 +44,10 @@ let app, page, failure = null, passed = false;
 const checks = [], errors = [];
 const button = name => page.getByRole("button", { name, exact: true });
 async function saveProvider() {
-  await button("保存供应商").click();
-  // 等待已保存目录刷新和按钮恢复，避免读取“保存中…”的旧状态。
-  await button("应用模型配置").click({ trial: true });
-}
-async function applyProvider() {
-  await button("应用模型配置").click();
-  // Core 目录事件可能早于 apply 回执；等待整个设置操作恢复准入再发下一条命令。
-  // 对齐 apply IPC 的 150 秒预算，另留配置刷新（15 秒）及 UI 结算余量；不重发 apply。
+  await button("保存").click();
+  await page.getByText("已保存", { exact: true }).waitFor({ timeout: 180_000 });
   await button("返回应用").click({ trial: true, timeout: 180_000 });
+  assert.equal(await button("应用模型配置").count(), 0);
 }
 const state = () => page.evaluate(() => window.arealDesktop.snapshot());
 async function call(name, params) {
@@ -94,46 +89,40 @@ try {
   checks.push("Core unavailable models remain visible with credential reasons and an active settings entry");
   await page.locator(".provider-catalog-row").filter({ hasText: "theta" }).click();
   const providerStatus = page.getByRole("status", { name: "供应商状态", exact: true });
-  const applyStatus = page.getByRole("status", { name: "配置应用状态", exact: true });
   await providerStatus.waitFor();
-  assert.match(await providerStatus.innerText(), /已启用.*缺少凭据/);
-  assert.match(await providerStatus.innerText(), /环境变量凭据/);
-  assert.match(await applyStatus.innerText(), /已应用/);
-  assert.match(await page.getByRole("status", { name: "模型 theta-model 状态", exact: true }).innerText(), /已启用.*缺少凭据/);
+  assert.match(await providerStatus.innerText(), /缺少凭据/);
+
+
+  assert.match(await page.getByRole("status", { name: "模型 theta-model 状态", exact: true }).innerText(), /缺少凭据/);
   await page.getByRole("textbox", { name: "API Key", exact: true }).fill("fixture-key");
   assert.match(await providerStatus.innerText(), /缺少凭据/, "unsaved credentials cannot claim readiness");
   await saveProvider();
-  await page.waitForFunction(() => document.querySelector('[aria-label="配置应用状态"]')?.textContent.includes("待应用"));
   const saved = await call("providers", { operation: "list" });
-  assert.equal(saved.credentialStates.theta, "available", "credential state is supplied by Core config read");
-  assert.equal(saved.credentialSources.theta, "stored", "Core classifies the adapter's secure-storage input");
-  assert.equal(saved.pendingApply, true);
-  assert.match(await providerStatus.innerText(), /凭据就绪/);
-  assert.match(await providerStatus.innerText(), /已保存凭据/);
-  assert.match(await applyStatus.innerText(), /待应用/);
-  assert.match(await page.getByRole("status", { name: "模型 theta-model 状态", exact: true }).innerText(), /待应用/);
-  assert.equal((await state()).projects[0].models.find(m => m.providerId === "theta").available, false, "saving does not silently apply credentials to a live project");
-  await page.screenshot({ path: join(scratch, "pending-model-configuration.png"), animations: "disabled" });
-  await applyProvider();
-  await until(s => s.projects[0].models.some(m => m.available === true), "credential applies to Core");
-  await page.waitForFunction(() => document.querySelector('[aria-label="配置应用状态"]')?.textContent.includes("已应用"));
-  assert.equal((await call("providers", { operation: "list" })).pendingApply, false);
+  assert.equal(saved.credentialStates.theta, "available");
+  assert.equal(saved.credentialSources.theta, "stored");
+  assert.equal(saved.pendingApply, false, "save confirms persistence and Core synchronization");
+  await until(s => s.projects[0].models.some(m => m.available === true), "single save makes model available in Core");
+  await page.screenshot({ path: join(scratch, "saved-model-configuration.png"), animations: "disabled" });
   await button("返回应用").click();
+  await button("模型").click(); await button("选择模型").click();
+  await page.getByRole("radio", { name: "theta-model", exact: true }).click();
+  await page.keyboard.press("Escape");
   assert.match(await button("模型").innerText(), /theta-model/);
+  assert.equal(requests.length, 0, "model selection does not create or send a task");
   await page.getByTestId("chat-input").fill("Use the configured model");
   await button("发送").click();
   await until(s => Object.values(s.projects[0].state.threads).some(t => t.turns?.at(-1)?.status === "completed"), "model turn completes");
   assert.deepEqual(requests, [{ model: "theta-model", authenticated: true, authorizationPresent: true }]);
+  assert.equal((await state()).projects[0].configurations[Object.keys((await state()).projects[0].state.threads)[0]]?.model?.providerId, "theta", "the newly created Core task uses the chosen model");
   await button("模型").click(); await button("选择模型").click();
   assert.equal(await page.getByRole("radio", { name: /arena-model/ }).isDisabled(), true);
   await button("配置模型").click();
   await page.getByRole("heading", { name: "模型设置", exact: true }).waitFor();
-  checks.push("settings credential save and safe apply restore draft and existing Composer selection; Core executes the selected model");
+  checks.push("single save confirms persistence/Core readiness; user chooses a model in the existing Composer and Core executes it");
   // 启用开关、凭据与配置应用分别验收；两个可用模型之间必须能实际切换。
   await page.locator(".provider-catalog-row").filter({ hasText: "arena" }).click();
   await page.getByRole("textbox", { name: "API Key", exact: true }).fill("fixture-key");
-  await saveProvider();
-  // 真实 Core 完成应用后暂留回执，稳定覆盖目录已刷新但设置操作尚未结算的窗口。
+  // 真实 Core 完成保存/同步后暂留回执，稳定覆盖目录已刷新但设置操作尚未结算的窗口。
   await app.evaluate(({ app }) => {
     const { ServiceConnection } = process.mainModule.require(`${app.getAppPath()}/src/core/service-client.cjs`);
     const original = ServiceConnection.prototype.request;
@@ -143,13 +132,13 @@ try {
     globalThis.modelApplyReceipt = { ready, release, restore: () => { ServiceConnection.prototype.request = original; } };
     ServiceConnection.prototype.request = async function (method, params, mutation) {
       const result = await original.call(this, method, params, mutation);
-      if (method === "command" && params.name === "providers" && params.request.operation === "apply") {
+      if (method === "command" && params.name === "providers" && params.request.operation === "saveAndApply") {
         reached(); await held;
       }
       return result;
     };
   });
-  await button("应用模型配置").click();
+  await button("保存").click();
   await until(s => s.projects[0].models.every(m => m.available === true), "both models available");
   await app.evaluate(() => globalThis.modelApplyReceipt.ready);
   assert.equal(await button("返回应用").isDisabled(), true, "back navigation must reflect the pending apply receipt");
@@ -160,7 +149,7 @@ try {
   });
   await button("返回应用").click();
   await page.locator('[data-testid="areal-workbench"][data-view="workspace"]').waitFor();
-  checks.push("settings navigation stays disabled while a real apply receipt is pending and returns to the conversation after settlement");
+  checks.push("settings navigation stays disabled while a real save receipt is pending and returns to the conversation after settlement");
   await button("模型").click(); await button("选择模型").click();
   const arena = page.getByRole("radio", { name: "arena-model", exact: true });
   assert.equal(await arena.isEnabled(), true); await arena.click();
@@ -174,14 +163,14 @@ try {
   // 无需认证是同一 Core 文件的编辑；不能继续发送已退役的保存凭据。
   await page.getByRole("combobox", { name: "认证方式", exact: true }).click();
   await page.getByRole("option", { name: "无需认证", exact: true }).click();
-  assert.match(await providerStatus.innerText(), /已保存凭据/);
+  assert.match(await providerStatus.innerText(), /可用/);
   await saveProvider();
   const noAuth = await call("providers", { operation: "list" });
   assert.equal(noAuth.credentialStates.arena, "notRequired");
   assert.equal(noAuth.credentialSources.arena, "none");
   assert.equal(noAuth.data.find(p => p.id === "arena").apiKeyEnv, undefined);
-  assert.match(await providerStatus.innerText(), /无需认证/);
-  assert.match(await applyStatus.innerText(), /待应用/);
+  assert.match(await providerStatus.innerText(), /可用/);
+
   const shared = JSON.parse(execFileSync(coreBinary, ["config", "models", "read"], { env: { ...env, HOME: userHome }, encoding: "utf8" }));
   assert.equal(shared.path, config);
   assert.equal(shared.credentialSources.arena, "none");
@@ -189,14 +178,14 @@ try {
   assert.equal((await readFile(config, "utf8")).includes("fixture-key"), false);
   await page.getByRole("combobox", { name: "认证方式", exact: true }).click();
   await page.getByRole("option", { name: "API Key", exact: true }).click();
-  await button("保存供应商").click();
+  await button("保存").click();
   await page.getByText("请填写 API Key，或保留已配置的凭据环境变量。", { exact: true }).waitFor();
   assert.equal((await call("providers", { operation: "list" })).revision, noAuth.revision, "an empty API Key mode must fail without modifying shared no-auth configuration");
   await page.getByRole("combobox", { name: "认证方式", exact: true }).click();
   await page.getByRole("option", { name: "无需认证", exact: true }).click();
   await page.screenshot({ path: join(scratch, "no-auth-pending.png"), animations: "disabled" });
-  await applyProvider();
-  await page.waitForFunction(() => document.querySelector('[aria-label="配置应用状态"]')?.textContent.includes("已应用"));
+
+
   await button("返回应用").click();
   await button("模型").click(); await button("选择模型").click();
   await page.getByRole("radio", { name: "theta-model", exact: true }).click();
@@ -210,13 +199,13 @@ try {
   await until(s => Object.values(s.projects[0].state.threads).some(t => t.turns?.length === 3 && t.turns.at(-1).status === "completed"), "no-auth turn completes");
   assert.deepEqual(requests.at(-1), { model: "arena-model", authenticated: false, authorizationPresent: false });
   await page.screenshot({ path: join(scratch, "no-auth-composer.png"), animations: "disabled" });
-  checks.push("GUI no-auth save removes the shared Core credential reference; application and Composer reselection execute without an Authorization header");
+  checks.push("one no-auth save removes the Core credential reference; explicit Composer reselection executes without Authorization");
   await button("模型").click(); await button("配置模型").click();
   await page.locator(".provider-catalog-row").filter({ hasText: /^env/ }).click();
-  assert.match(await providerStatus.innerText(), /环境变量凭据.*凭据就绪/);
+  assert.match(await providerStatus.innerText(), /已停用/);
   await page.getByRole("textbox", { name: "API Key", exact: true }).fill("");
   await page.getByRole("switch", { name: "启用供应商", exact: true }).click();
-  await saveProvider(); await applyProvider();
+  await saveProvider();
   await until(s => s.projects[0].models.length === 3, "environment model available after apply");
   assert.equal((await call("providers", { operation: "list" })).credentialSources.env, "environment", "an empty API Key input preserves the configured environment reference");
   await page.screenshot({ path: join(scratch, "environment-credential.png"), animations: "disabled" });
@@ -232,28 +221,27 @@ try {
   await button("模型").click(); await button("配置模型").click();
   await page.locator(".provider-catalog-row").filter({ hasText: /^env/ }).click();
   await page.getByRole("switch", { name: "启用供应商", exact: true }).click();
-  await saveProvider(); await applyProvider();
+  await saveProvider();
   await until(s => s.projects[0].models.length === 2, "environment provider disabled again");
   await page.locator(".provider-catalog-row").filter({ hasText: "arena" }).click();
   await page.getByRole("switch", { name: "启用供应商", exact: true }).click();
-  assert.match(await providerStatus.innerText(), /已启用/, "unsaved toggles cannot change saved status");
+  assert.match(await providerStatus.innerText(), /可用/, "unsaved toggles cannot change saved status");
   await saveProvider();
-  assert.match(await providerStatus.innerText(), /未启用/);
-  assert.match(await applyStatus.innerText(), /待应用/);
-  await applyProvider();
+  assert.match(await providerStatus.innerText(), /已停用/);
+
+
   await until(s => s.projects[0].models.length === 1, "disabled provider absent from executable Core catalog");
   await page.screenshot({ path: join(scratch, "disabled-provider.png"), animations: "disabled" });
   await page.locator(".provider-catalog-row").filter({ hasText: "theta" }).click();
   await page.getByRole("switch", { name: "启用模型 theta-model", exact: true }).click();
   await saveProvider();
-  assert.match(await page.getByRole("status", { name: "模型 theta-model 状态", exact: true }).innerText(), /未启用/);
-  await applyProvider();
+  assert.match(await page.getByRole("status", { name: "模型 theta-model 状态", exact: true }).innerText(), /已停用/);
+
   await until(s => s.projects[0].models.length === 0, "disabled model absent from executable Core catalog");
   checks.push("Core credential states and saved enablement remain separate from drafts and pending apply; Composer explicitly selects and executes another available model");
   // 空目录也必须提供可操作入口，不制造一个不可选的占位模型。
   let providers = await call("providers", { operation: "list" });
-  for (const provider of [...providers.data]) providers = await call("providers", { operation: "remove", id: provider.id, expectedRevision: providers.revision });
-  await call("providers", { operation: "apply", expectedRevision: providers.revision });
+  for (const provider of [...providers.data]) providers = await call("providers", { operation: "removeAndApply", id: provider.id, expectedRevision: providers.revision });
   await button("返回应用").click();
   await createProjectConversation(page, "workspace");
   await until(s => s.projects[0].models.length === 0, "empty Core catalog");

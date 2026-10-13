@@ -127,7 +127,9 @@ try {
         window.calls.push({ name, params });
         if (name === "providers") {
           const store = window.fixtureProviders;
-          if (params.operation === "save") {
+          if (params.operation === "saveAndApply") {
+            if (window.fixtureWork)
+              return { ok: false, error: { message: "任务正在进行，完成后再保存；修改仍保留。" } };
             const raw = params.provider;
             const id = raw.id || `fixture-new-${++revision}`;
             const item = {
@@ -148,7 +150,7 @@ try {
             store.credentialStates[id] =
               params.authentication === "none" ? "notRequired" : "available";
             store.revision = `fixture-${++revision}`;
-            store.pendingApply = true;
+            store.pendingApply = false;
           }
           if (params.operation === "apply") {
             if (window.fixtureWork)
@@ -184,12 +186,14 @@ try {
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByRole("button", { name: "模型设置", exact: true }).click();
   await page.locator(".provider-catalog-row").filter({ hasText: "API Fixture" }).click();
+  await page.getByText("帮助", { exact: true }).click();
   await page.locator('[aria-label="供应商计费方式"]').filter({ hasText: "API 计费" }).waitFor();
   await page.getByRole("button", { name: "编辑模型 fixture-model", exact: true }).click();
   await page.getByRole("textbox", { name: "显示名称", exact: true }).fill("Renamed fixture");
   await page.getByRole("button", { name: "保存模型", exact: true }).click();
-  await page.getByRole("button", { name: "保存供应商", exact: true }).click();
-  await page.locator('[aria-label="配置应用状态"]').filter({ hasText: "待应用" }).waitFor();
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await page.getByText("已保存", { exact: true }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "应用模型配置", exact: true }).count(), 0);
   assert.equal(
     await page.evaluate(
       () => window.fixtureProviders.data[0].models[0].parameters.contextWindowTokens,
@@ -201,13 +205,19 @@ try {
     200000,
   );
   checks.push(
-    "rendered model edit preserves GUI/CLI context parameters and distinguishes saved/pending application",
+    "one save confirms Core readiness, preserves GUI/CLI context parameters and leaves model choice in the conversation",
   );
   await page.evaluate(() => {
     window.fixtureWork = true;
   });
-  await page.getByRole("button", { name: "应用模型配置", exact: true }).click();
-  await page.getByText("请等待任务完成后再应用模型配置", { exact: true }).waitFor();
+  await page.getByRole("textbox", { name: "供应商名称", exact: true }).fill("Busy save draft");
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await page.getByText("任务正在进行，完成后再保存；修改仍保留。", { exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => window.fixtureProviders.data[0].name), "API Fixture");
+  assert.equal(
+    await page.getByRole("textbox", { name: "供应商名称", exact: true }).inputValue(),
+    "Busy save draft",
+  );
   assert.equal(
     await page.evaluate(() =>
       window.calls.some((call) => ["cancel", "restart", "configure"].includes(call.name)),
@@ -226,10 +236,13 @@ try {
   await page.evaluate(() => {
     window.fixtureWork = false;
   });
-  await page.getByRole("button", { name: "应用模型配置", exact: true }).click();
-  await page.locator('[aria-label="配置应用状态"]').filter({ hasText: "已应用" }).waitFor();
+  await page
+    .getByRole("textbox", { name: "供应商名称", exact: true })
+    .fill("API Fixture Confirmed");
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await page.getByText("已保存", { exact: true }).waitFor();
   checks.push(
-    "busy application is rejected without cancel/restart and guarded navigation retains the draft",
+    "busy save rejects before writing, keeps the draft and guards navigation; explicit retry saves successfully",
   );
   await page.locator(".provider-catalog-row").filter({ hasText: "ChatGPT" }).click();
   await page.locator('[aria-label="ChatGPT 连接状态"]').filter({ hasText: "可用" }).waitFor();
@@ -344,10 +357,10 @@ try {
   await page.getByRole("button", { name: /^无需认证/ }).click();
   await page.getByTestId("provider-base-url").fill("https://custom.fixture.invalid/v1");
   assert.equal(await page.getByTestId("provider-api-key").count(), 0);
-  await page.getByRole("button", { name: "保存并检测连接", exact: true }).click();
+  await page.getByRole("button", { name: "获取模型", exact: true }).click();
   await page.getByRole("checkbox", { name: "fixture-discovered", exact: true }).check();
   await page.getByRole("button", { name: "添加所选模型", exact: true }).click();
-  await page.getByRole("button", { name: "保存供应商", exact: true }).click();
+  await page.getByRole("button", { name: "保存", exact: true }).click();
   assert.equal(
     await page.evaluate(() => window.fixtureProviders.data.at(-1).authentication),
     "none",
@@ -365,14 +378,14 @@ try {
   await page.getByRole("button", { name: /^使用 API Key/ }).click();
   assert.equal(await page.getByTestId("provider-base-url").isVisible(), false);
   await page.getByTestId("provider-api-key").fill("fixture-key-only");
-  await page.getByRole("button", { name: "保存并检测连接", exact: true }).click();
+  await page.getByRole("button", { name: "获取模型", exact: true }).click();
   await page.getByRole("checkbox", { name: "fixture-discovered", exact: true }).check();
   await page.getByRole("button", { name: "添加所选模型", exact: true }).click();
-  await page.getByRole("button", { name: "保存供应商", exact: true }).click();
+  await page.getByRole("button", { name: "保存", exact: true }).click();
   assert.equal(
     await page.evaluate(() =>
       window.calls
-        .filter((call) => call.name === "providers" && call.params.operation === "save")
+        .filter((call) => call.name === "providers" && call.params.operation === "saveAndApply")
         .some(
           (call) =>
             call.params.authentication === "apiKey" && call.params.apiKey === "fixture-key-only",

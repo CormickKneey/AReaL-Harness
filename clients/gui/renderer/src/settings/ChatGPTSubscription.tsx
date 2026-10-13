@@ -14,14 +14,14 @@ import { subscriptionProjection } from "./provider-ui-state.js";
 import type { Action, Data } from "../services.js";
 
 const recovery: Record<string, string> = {
-    ready: "模型来自当前账号，实际权限和额度以服务端为准。",
-    refreshing: "刷新由后台完成，已保存的连接和模型配置继续保留。",
-    temporarily_unavailable: "登录和配置已保留，请稍后重试状态。",
-    storage_locked: "解锁本机安全存储后重试状态。",
-    reauth_required: "授权已终止，请为此账号重新登录。",
-    permission_denied: "请检查账号授权、地域或服务策略。",
-    quota_exceeded: "请在 ChatGPT 设置检查本应用用量，不会自动切换至 API Key 计费。",
-    signed_out: "在浏览器授权应用使用所选 ChatGPT 账号。",
+    ready: "",
+    refreshing: "正在刷新",
+    temporarily_unavailable: "稍后重试",
+    storage_locked: "请解锁本机安全存储",
+    reauth_required: "授权失效，请重新登录",
+    permission_denied: "请检查账号权限",
+    quota_exceeded: "请检查账号用量",
+    signed_out: "浏览器授权",
 };
 
 export function ChatGPTSubscription({
@@ -94,7 +94,7 @@ export function ChatGPTSubscription({
             <SettingsSection
                 className="subscription-settings"
                 title="ChatGPT 订阅"
-                description="浏览器授权 → 连接检测 → 当前账号模型。API Key 的计费与此连接独立。"
+
                 action={
                     <Button
                         variant="ghost"
@@ -116,7 +116,7 @@ export function ChatGPTSubscription({
                         label={value?.email || "ChatGPT 账号"}
                         description={
                             value?.login
-                                ? "等待浏览器授权，完成后页面会自动更新。"
+                                ? "等待浏览器授权"
                                 : (recovery[projection.state] ?? "请刷新核对连接状态。")
                         }
                         control={
@@ -245,7 +245,7 @@ export function ChatGPTSubscription({
                 {value?.authenticated && (
                     <div className="subscription-models-footer flex flex-wrap items-center justify-between gap-3 pt-1">
                         <span className="settings-muted">
-                            测试发送少量模型请求，使用当前账号的应用额度。
+                            使用账号额度
                         </span>
                         <Button
                             variant="outline"

@@ -187,8 +187,12 @@ class AppProviders {
     if (this.saving || this.backend.providerUpdating) throw new Error('模型配置正在保存，请稍后重试');
     if (request.operation === 'list') { await this.config.current(); return this.public(); }
     if (request.operation === 'probe' || request.operation === 'discover') { await this.config.current(); return this.test(request); }
+    if (request.operation === 'saveAndApply' || request.operation === 'removeAndApply') return this.saveAndApply(request);
     if (request.operation === 'apply') return this.apply(request);
     if (!['save', 'remove', 'default'].includes(request.operation)) throw new Error('不支持的供应商操作');
+    return this.write(request);
+  }
+  async write(request) {
     this.saving = true;
     try {
       const current = await this.config.current();
@@ -220,12 +224,54 @@ class AppProviders {
           else if (request.authentication !== 'apiKey') delete item.apiKeyEnv;
         }
         if (request.authentication === 'apiKey' && !item.apiKeyEnv) throw new Error('请填写 API Key，或保留已配置的凭据环境变量。');
+        if (request.discoverModels && !previous && item.enabled && item.models.length === 0) {
+          const catalog = await this.testConnection(item, { operation: 'discover' });
+          if (!catalog.models.length) throw new Error('服务未提供模型，请手动添加后保存。');
+          item.models = [...new Set(catalog.models)].map(id => ({ id, enabled: true, parameters: {} }));
+        }
         next.data = previous ? next.data.map(p => p.id === item.id ? item : p) : [...next.data, item];
       }
       this.config.value = await this.config.execute('write', { expectedRevision: current.revision, data: next.data, defaultModel: next.defaultModel });
       this.backend.onChange();
       return this.public();
     } finally { this.saving = false; }
+  }
+  async saveAndApply(request) {
+    if (this.backend.providerUpdating || this.backend.resourcesUpdating || this.backend.activeCommands || this.backend.starting.size || this.backend.hasWork()) throw new Error('任务或操作正在进行，完成后再保存；修改仍保留。');
+    this.backend.providerUpdating = true;
+    const drained = [];
+    let previous, written;
+    try {
+      previous = await this.config.current();
+      if (request.expectedRevision !== previous.revision) throw new Error('配置已变化，请刷新后重试。');
+      // 写文件前由每个 Core 在准入锁下确认空闲；不会取消已有任务或终端。
+      for (const project of this.backend.projects.values()) {
+        if (project.service && !project.client?.ready) throw new Error('项目尚未连接，重新连接后再保存。');
+        if (project.client?.ready && !(await project.client.request('areal/server/status')).restartSafe) throw new Error('任务或终端正在运行，完成后再保存；修改仍保留。');
+      }
+      for (const project of this.backend.projects.values()) if (project.client?.ready) {
+        const status = await project.client.request('areal/server/drain', { strategy: 'ifIdle', timeoutMs: 30_000 }, { timeoutMs: 35_000 });
+        if (!status.restartSafe) throw new Error('任务尚未结算，完成后再保存；修改仍保留。');
+        drained.push(project);
+      }
+      written = await this.write({ ...request, operation: request.operation === 'removeAndApply' ? 'remove' : 'save', discoverModels: true });
+      const failures = await this.restart(drained);
+      if (failures.length) throw new Error('项目配置同步失败。');
+      await this.config.current();
+      const result = this.public();
+      if (result.pendingApply) throw new Error('Core 尚未确认配置。');
+      return result;
+    } catch (error) {
+      let rollbackError = null;
+      if (written) {
+        try {
+          this.config.value = await this.config.execute('write', { expectedRevision: written.revision, data: previous.data, defaultModel: previous.defaultModel });
+        } catch (failure) { rollbackError = failure; }
+      }
+      // 已排空的实例恢复准入；已保存但未同步成功时先 CAS 回滚，绝不宣告保存成功。
+      const failures = await this.restart(drained);
+      throw new Error(`${this.redact(error.message)}${rollbackError ? ' 回滚未确认，请刷新核对配置。' : written ? ' 已恢复原配置，修改仍保留。' : ''}${failures.length ? ' 部分项目需重新连接。' : ''}`);
+    } finally { this.backend.providerUpdating = false; this.backend.onChange(); }
   }
   async apply(request) {
     if (this.backend.providerUpdating || this.backend.resourcesUpdating || this.backend.activeCommands || this.backend.starting.size || this.backend.hasWork()) throw new Error('请等待任务和操作完成，并处理排队消息后再应用模型配置');
@@ -269,6 +315,9 @@ class AppProviders {
   async test({ id, model, operation }) {
     const provider = this.value.data.find(p => p.id === id);
     if (!provider) throw new Error('请先保存供应商');
+    return this.testConnection(provider, { model, operation });
+  }
+  async testConnection(provider, { model, operation }) {
     const key = this.key(provider);
     const url = operation === 'discover' ? `${endpointBase(provider.endpoint)}/models` : provider.endpoint;
     if (operation === 'probe' && !provider.models.some(m => m.id === model && m.enabled)) throw new Error('请选择已启用的模型');

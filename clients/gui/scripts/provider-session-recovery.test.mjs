@@ -298,3 +298,30 @@ test("new authorization saved during an old-account Core request never aborts th
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test("successful authorization publishes one session change inside activation admission", async () => {
+  const f = await fixture({ failures: 0 });
+  let locked = false;
+  const changes = [];
+  try {
+    f.account.oauth = async (_action, { onAuth }) => {
+      onAuth("https://auth.openai.com/fixture");
+      return grant("added").payload;
+    };
+    f.account.activateAuthorized = async (_id, activate) => {
+      locked = true;
+      try {
+        return await activate();
+      } finally {
+        locked = false;
+      }
+    };
+    f.account.on("changed", () => changes.push(locked));
+    await f.account.begin({ newAccount: true });
+    await f.account.attempt?.done;
+    assert.deepEqual(changes, [true], "no second invalidation after releasing host admission");
+    assert.equal(await f.account.accessToken(), "access-added");
+  } finally {
+    await f.account.close();
+  }
+});

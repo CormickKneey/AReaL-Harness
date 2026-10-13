@@ -74,7 +74,8 @@ export class ChatGPTAccount extends EventEmitter {
           return { kind: 'grant', payload: value }
         })
         const activated = await this.onAuthorized?.()
-        if (activated !== false) { this.failure = null; this.pendingRotation = null; this.terminalFailure = null; this.changed() }
+        // OpenAI 的激活回调在 Host 准入锁内完成状态清理与通知，不在锁释放后重复失效新请求。
+        if (activated !== false && !activated?.changed) { this.failure = null; this.pendingRotation = null; this.terminalFailure = null; this.changed() }
       } catch {
         if (!signal.aborted) this.error = 'ChatGPT 授权未完成或已失败，请重试。'
         attempt.reject(new Error(this.error || 'ChatGPT 登录已取消。'))
