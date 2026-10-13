@@ -214,3 +214,27 @@ test("connection discovery failure does not persist a new provider or report suc
   assert.deepEqual(f.service.config.value, f.original);
   assert.equal(f.project.models[0].id, "old-model");
 });
+
+test("a lost persistence receipt is reconciled and CAS rolled back without leaving a silent new configuration", async () => {
+  const f = fixture();
+  let native = structuredClone(f.original),
+    writes = 0;
+  f.service.config.current = async () => (f.service.config.value = structuredClone(native));
+  f.service.config.execute = async (_operation, request) => {
+    assert.equal(request.expectedRevision, native.revision);
+    writes++;
+    native = {
+      ...native,
+      revision: `native-${writes}`,
+      data: structuredClone(request.data),
+      defaultModel: request.defaultModel,
+    };
+    if (writes === 1) throw new Error("fixture persisted receipt lost");
+    return structuredClone(native);
+  };
+  await assert.rejects(f.service.command(f.request), /已恢复原配置/);
+  assert.equal(writes, 2);
+  assert.deepEqual(native.data, f.original.data);
+  assert.equal(f.project.models[0].id, "old-model");
+  assert.equal(f.backend.providerUpdating, false);
+});

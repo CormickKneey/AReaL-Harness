@@ -2,6 +2,7 @@
 const { readFile, appendFile } = require('node:fs/promises');
 const { join } = require('node:path');
 const { randomUUID, randomBytes } = require('node:crypto');
+const { isDeepStrictEqual } = require('node:util');
 const { SubscriptionStore } = require('./subscription.cjs');
 const { definitions, connectionMetadata } = require('@areal/provider-config');
 const { ModelConfiguration, protocolToCore, baseUrl: endpointBase } = require('./model-config.cjs');
@@ -192,7 +193,7 @@ class AppProviders {
     if (!['save', 'remove', 'default'].includes(request.operation)) throw new Error('不支持的供应商操作');
     return this.write(request);
   }
-  async write(request) {
+  async write(request, prepared) {
     this.saving = true;
     try {
       const current = await this.config.current();
@@ -231,6 +232,7 @@ class AppProviders {
         }
         next.data = previous ? next.data.map(p => p.id === item.id ? item : p) : [...next.data, item];
       }
+      prepared?.(next);
       this.config.value = await this.config.execute('write', { expectedRevision: current.revision, data: next.data, defaultModel: next.defaultModel });
       this.backend.onChange();
       return this.public();
@@ -240,7 +242,7 @@ class AppProviders {
     if (this.backend.providerUpdating || this.backend.resourcesUpdating || this.backend.activeCommands || this.backend.starting.size || this.backend.hasWork()) throw new Error('任务或操作正在进行，完成后再保存；修改仍保留。');
     this.backend.providerUpdating = true;
     const drained = [];
-    let previous, written;
+    let previous, written, candidate;
     try {
       previous = await this.config.current();
       if (request.expectedRevision !== previous.revision) throw new Error('配置已变化，请刷新后重试。');
@@ -254,7 +256,7 @@ class AppProviders {
         if (!status.restartSafe) throw new Error('任务尚未结算，完成后再保存；修改仍保留。');
         drained.push(project);
       }
-      written = await this.write({ ...request, operation: request.operation === 'removeAndApply' ? 'remove' : 'save', discoverModels: true });
+      written = await this.write({ ...request, operation: request.operation === 'removeAndApply' ? 'remove' : 'save', discoverModels: true }, next => { candidate = structuredClone(next); });
       const failures = await this.restart(drained);
       if (failures.length) throw new Error('项目配置同步失败。');
       await this.config.current();
@@ -263,6 +265,13 @@ class AppProviders {
       return result;
     } catch (error) {
       let rollbackError = null;
+      if (!written && candidate) {
+        try {
+          // CLI 可能已落盘但回执丢失；只对本次精确候选的已确认版本回滚，不能覆盖外部编辑。
+          const observed = await this.config.current();
+          if (observed.revision !== previous.revision && isDeepStrictEqual(observed.data, candidate.data) && isDeepStrictEqual(observed.defaultModel, candidate.defaultModel)) written = { revision: observed.revision };
+        } catch (failure) { rollbackError = failure; }
+      }
       if (written) {
         try {
           this.config.value = await this.config.execute('write', { expectedRevision: written.revision, data: previous.data, defaultModel: previous.defaultModel });
