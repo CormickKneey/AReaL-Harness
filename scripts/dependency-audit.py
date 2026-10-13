@@ -18,14 +18,16 @@ SCANS = [
 def outcome(code, document):
     if not isinstance(document, dict) or document.get("error"):
         return "scan_error"
+    metadata = document.get("metadata")
     vulnerabilities = document.get("vulnerabilities")
     if isinstance(vulnerabilities, dict) and isinstance(vulnerabilities.get("list"), list):
         hits = len(vulnerabilities["list"])
-    elif isinstance(document.get("metadata", {}).get("vulnerabilities"), dict):
-        hits = sum(
-            value
-            for key, value in document["metadata"]["vulnerabilities"].items()
-            if key != "total" and isinstance(value, int)
+    elif isinstance(metadata, dict) and isinstance(metadata.get("vulnerabilities"), dict):
+        counts = metadata["vulnerabilities"]
+        if not counts or any(type(value) is not int or value < 0 for value in counts.values()):
+            return "scan_error"
+        hits = max(
+            counts.get("total", 0), sum(value for key, value in counts.items() if key != "total")
         )
     else:
         return "scan_error"

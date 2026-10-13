@@ -3,6 +3,9 @@
 import importlib.util
 from pathlib import Path
 import subprocess
+import tempfile
+import shutil
+import sys
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -36,6 +39,55 @@ class CiContracts(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertTrue(scope.applicable("release", [path]))
         self.assertFalse(scope.applicable("release", ["docs/features.md"]))
+
+    def test_gui_inputs_and_inapplicable_docs(self):
+        for path in (
+            "clients/cli/src/main.rs",
+            "clients/tui/src/lib.rs",
+            "clients/web/app.js",
+            "core/server/build.rs",
+            "runtime/daemon/src/main.rs",
+            "schemas/native-host-v2.json",
+            "Makefile",
+        ):
+            with self.subTest(path=path):
+                self.assertTrue(scope.applicable("gui", [path]))
+        self.assertFalse(scope.applicable("gui", ["docs/features.md"]))
+
+    def test_real_npm_scanner_error_in_isolated_lock_fixture_still_runs_next_scan(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name in ("package.json", "package-lock.json"):
+                shutil.copy2(ROOT / name, root / name)
+            results = audit.scan_all(
+                [
+                    (
+                        "offline-registry",
+                        [
+                            "npm",
+                            "audit",
+                            "--json",
+                            "--registry",
+                            "http://127.0.0.1:1",
+                            "--fetch-retries=0",
+                            "--fetch-timeout=1000",
+                        ],
+                        ".",
+                    ),
+                    (
+                        "next-scan",
+                        [
+                            sys.executable,
+                            "-c",
+                            'print(\'{"metadata":{"vulnerabilities":{"total":0,"high":0}}}\')',
+                        ],
+                        ".",
+                    ),
+                ],
+                root=root,
+            )
+            self.assertEqual([item["status"] for item in results], ["scan_error", "clean"])
+            self.assertFalse(all(item["status"] == "clean" for item in results))
 
     def test_unexpected_skip_failure_cancel_or_missing_result_fails(self):
         for needed in (True, False):
@@ -72,6 +124,16 @@ class CiContracts(unittest.TestCase):
         )
 
     def test_malformed_or_missing_scanner_results_cannot_pass(self):
-        for report in (None, {}, {"error": "failed"}):
+        for report in (
+            None,
+            {},
+            {"error": "failed"},
+            {"metadata": None},
+            {"metadata": []},
+            {"metadata": "invalid"},
+            {"metadata": {"vulnerabilities": None}},
+            {"metadata": {"vulnerabilities": {"high": -1}}},
+            {"metadata": {"vulnerabilities": {"high": "1"}}},
+        ):
             self.assertEqual(audit.outcome(0, report), "scan_error")
         self.assertEqual(audit.outcome(1, {"vulnerabilities": {"list": []}}), "scan_error")

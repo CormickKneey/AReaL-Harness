@@ -9,7 +9,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 SCOPES = {
     "gui": [
-        "clients/gui/**",
+        "clients/**",
         "core/**",
         "runtime/**",
         "schemas/**",
