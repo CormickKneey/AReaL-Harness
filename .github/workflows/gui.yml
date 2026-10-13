@@ -3,30 +3,8 @@ name: GUI checks
 on:
   workflow_dispatch:
   pull_request:
-    paths:
-      - '.github/workflows/gui.yml'
-      - 'clients/gui/**'
-      - 'core/**'
-      - 'runtime/**'
-      - 'schemas/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'rust-toolchain.toml'
-      - 'Makefile'
-      - 'scripts/launch.py'
   push:
     branches: [main]
-    paths:
-      - '.github/workflows/gui.yml'
-      - 'clients/gui/**'
-      - 'core/**'
-      - 'runtime/**'
-      - 'schemas/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'rust-toolchain.toml'
-      - 'Makefile'
-      - 'scripts/launch.py'
 
 permissions:
   contents: read
@@ -46,7 +24,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  scope:
+    name: Determine applicable work
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      gui: ${{ steps.scope.outputs.gui }}
+      release: ${{ steps.scope.outputs.release }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: scope
+        run: python3 scripts/ci-scope.py
+
   gui:
+    needs: scope
+    if: needs.scope.outputs.gui == 'true'
     name: macOS GUI checks and Composer/queue smoke
     runs-on: macos-15
     timeout-minutes: 60
@@ -65,7 +60,10 @@ jobs:
           rustup show
           if ! command -v cmake; then brew install cmake; fi
           make gui-install
-          pnpm --dir clients/gui --filter @areal/gui-desktop exec playwright-core install ffmpeg
+      - name: Verify fast GUI regressions
+        run: pnpm --dir clients/gui run test:regressions
+      - name: Record tool and cache fingerprints
+        run: python3 scripts/ci-fingerprint.py > target/ci/gui/fingerprint.json
       - name: Check GUI types and public boundaries
         run: |
           pnpm --dir clients/gui typecheck 2>&1 | tee target/ci/gui/typecheck.log
@@ -110,3 +108,20 @@ jobs:
             /private/tmp/areal-browser-*/
             /private/tmp/shared-browser-06-evidence-*/
           retention-days: 7
+
+  gate:
+    name: GUI gate
+    needs: [scope, gui]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Require applicable work
+        env:
+          SCOPE_RESULT: ${{ needs.scope.result }}
+          WORK_RESULT: ${{ needs.gui.result }}
+          NEEDED: ${{ needs.scope.outputs.gui }}
+        run: python3 scripts/ci-gate.py

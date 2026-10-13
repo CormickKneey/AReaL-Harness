@@ -20,7 +20,6 @@
     "test:connection": "node scripts/connection-smoke.mjs",
     "test:architecture": "node scripts/architecture-smoke.mjs",
     "test:conversation-derivation": "node scripts/conversation-derivation-smoke.mjs",
-
     "test:trajectory": "node --test scripts/trajectory.test.mjs scripts/trajectory-polling.test.mjs",
     "test:trajectory-config": "node scripts/trajectory-config-smoke.mjs",
     "test:trajectory-ui": "node scripts/trajectory-ui-smoke.mjs",
@@ -31,7 +30,8 @@
     "test:browser-feasibility": "node scripts/browser-feasibility.mjs",
     "test:browser-attach": "node scripts/browser-attach-smoke.mjs",
     "test:browser-annotations": "node scripts/browser-annotation-smoke.mjs",
-    "test:browser-contracts": "node --test scripts/browser-read-contract.test.mjs scripts/browser-network-policy.test.mjs scripts/browser-diagnostics-contract.test.cjs scripts/browser-evidence-contract.test.mjs scripts/browser-startup-contract.test.mjs"
+    "test:browser-contracts": "node --test scripts/browser-read-contract.test.mjs scripts/browser-network-policy.test.mjs scripts/browser-diagnostics-contract.test.cjs scripts/browser-evidence-contract.test.mjs scripts/browser-startup-contract.test.mjs scripts/browser-observation-privacy.test.cjs",
+    "test:regressions": "node --test scripts/browser-observation-privacy.test.cjs scripts/trajectory-polling.test.mjs scripts/builder-download.test.mjs"
   },
   "devDependencies": {
     "prettier": "3.9.8"
