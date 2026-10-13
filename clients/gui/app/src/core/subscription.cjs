@@ -7,7 +7,7 @@ class SubscriptionStore {
   constructor(backend, encryption) {
     this.filename = 'openai-subscription.json'; this.backend = backend; this.encryption = encryption; this.chain = Promise.resolve(); }
   check() {
-    if (!this.encryption?.isEncryptionAvailable() || this.encryption.getSelectedStorageBackend?.() === 'basic_text') throw new Error('系统安全存储不可用，无法保存 ChatGPT 登录');
+    if (!this.encryption?.isEncryptionAvailable() || this.encryption.getSelectedStorageBackend?.() === 'basic_text') throw Object.assign(new Error('系统安全存储不可用，请解锁后重试'), { code: 'storage_locked' });
   }
   async readRecord() {
     try {
@@ -15,14 +15,15 @@ class SubscriptionStore {
       if (!record.secret) return undefined;
       this.check();
       return JSON.parse(this.encryption.decryptString(Buffer.from(record.secret, 'base64')));
-    } catch (error) { if (error.code === 'ENOENT') return undefined; throw new Error('无法读取 ChatGPT 登录，请解锁系统钥匙串或重新登录'); }
+    } catch (error) { if (error.code === 'ENOENT') return undefined; throw Object.assign(new Error('无法读取 ChatGPT 登录，请解锁系统安全存储后重试'), { code: 'storage_locked' }); }
   }
   modifyRecord(_key, mutate) {
     const result = this.chain.then(async () => {
       const current = await this.readRecord(), next = await mutate(current);
       if (next === undefined) return current;
       this.check();
-      await this.backend.save(this.filename, { secret: this.encryption.encryptString(JSON.stringify(next)).toString('base64') });
+      try { await this.backend.save(this.filename, { secret: this.encryption.encryptString(JSON.stringify(next)).toString('base64') }); }
+      catch { throw Object.assign(new Error('ChatGPT 凭据轮换尚未保存，请重试'), { code: 'storage_write_failed' }); }
       return next;
     });
     this.chain = result.catch(() => {}); return result;

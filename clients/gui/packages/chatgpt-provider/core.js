@@ -5,6 +5,7 @@ import { Readable } from 'node:stream'
 import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex'
 import { ChatGPTAccount } from './account.js'
 import { OpenAIAccount } from './openai.js'
+import { providerError, responseError, safeRefresh } from './errors.js'
 import { probeResponse } from './probe.js'
 export { probeResponse } from './probe.js'
 import { subscriptionNetwork } from './network.js'
@@ -71,24 +72,6 @@ async function responseStream(response, signal) {
   }
 }
 
-// Recognize only a fixed upstream rejection. Never echo arbitrary response bodies.
-async function unsupportedModel(response) {
-  if (response.status !== 400 || !response.body) return false
-  const reader = response.body.getReader(), chunks = []; let size = 0
-  try {
-    while (true) {
-      const { value, done } = await reader.read()
-      if (done) break
-      size += value.byteLength
-      if (size > 16384) return false
-      chunks.push(Buffer.from(value))
-    }
-    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'))
-    return /model is not supported when using Codex with a ChatGPT account/.test(body.detail ?? body.error?.message ?? '')
-  } catch { return false }
-  finally { void reader.cancel().catch(() => {}); reader.releaseLock() }
-}
-
 // Only provider transport: no conversation store, tool execution or Agent loop.
 export function subscriptionRequest(body) {
   if (!body || typeof body.model !== 'string' || !Array.isArray(body.input) || body.stream !== true)
@@ -143,13 +126,20 @@ export class CoreSubscription {
     if (this.catalogRevision === this.account.revision && this.catalogExpires > Date.now()) return this.models
     if (this.catalogLoading) return this.catalogLoading
     const revision = this.account.revision
-    this.catalogLoading = this.loadCatalog(revision).finally(() => { this.catalogLoading = null })
+    this.catalogLoading = this.loadCatalog(revision).catch(error => { this.models = []; this.catalogExpires = 0; throw this.account.fail(error, error?.phase ?? 'catalog') }).finally(() => { this.catalogLoading = null })
     return this.catalogLoading
   }
   async loadCatalog(revision) {
-    const access = await this.account.accessToken()
-    const response = await this.network.fetch('https://api.openai.com/v1/models', { headers: { Authorization: `Bearer ${access}` }, redirect: 'error', signal: AbortSignal.timeout(30_000) })
-    if (!response.ok) { await response.body?.cancel(); throw new Error('OpenAI model discovery failed') }
+    let access = await this.account.accessToken()
+    const send = token => this.network.fetch('https://api.openai.com/v1/models', { headers: { Authorization: `Bearer ${token}` }, redirect: 'error', signal: AbortSignal.any([this.account.lifetime.signal, AbortSignal.timeout(30_000)]) })
+    let response = await send(access)
+    if (response.status === 401) {
+      const failure = await responseError(response, 'catalog', [access])
+      if (!safeRefresh(failure)) throw this.account.fail(failure, 'catalog')
+      access = await this.account.accessToken(undefined, { force: true, rejectedToken: access })
+      response = await send(access)
+    }
+    if (!response.ok) { this.models = []; this.catalogExpires = 0; throw this.account.fail(await responseError(response, 'catalog', [access]), 'catalog') }
     let bytes = 0, chunks = []
     for await (const chunk of response.body) { bytes += chunk.length; if (bytes > 1024 * 1024) throw new Error('OpenAI model catalog too large'); chunks.push(chunk) }
     const data = JSON.parse(Buffer.concat(chunks).toString('utf8'))
@@ -170,7 +160,7 @@ export class CoreSubscription {
   }
   async handle(req, res) {
     let audit = null
-    const deny = (status, message) => { if (!res.headersSent) { if (audit && !res.destroyed) audit.localHttpStatus = status; res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: { message } })) } else res.destroy() }
+    const deny = (status, message, failure) => { if (!res.headersSent) { if (audit && !res.destroyed) audit.localHttpStatus = status; res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: { message, ...(failure ? failure.diagnostic() : {}) } })) } else res.destroy() }
     const expected = Buffer.from(`Bearer ${this.token}`), actual = Buffer.from(req.headers.authorization ?? '')
     if (req.method !== 'POST' || req.url !== '/responses' || req.headers.origin || actual.length !== expected.length || !timingSafeEqual(actual, expected)) { deny(403, 'Subscription transport denied'); return }
     const controller = new AbortController()
@@ -192,35 +182,42 @@ export class CoreSubscription {
           accountId = JSON.parse(Buffer.from(token.split('.')[1], 'base64url'))['https://api.openai.com/auth']?.chatgpt_account_id
           if (typeof accountId !== 'string' || !accountId) throw new Error('missing account')
         }
-      } catch {
-        if (audit) { audit.outcome = controller.signal.aborted ? 'cancelled' : 'failed'; audit.failureKind = controller.signal.aborted ? 'cancelled' : 'auth' }
-        deny(401, 'ChatGPT 登录已失效，请重新登录'); return
+      } catch (error) {
+        const failure = providerError(error, 'authentication')
+        if (audit) { audit.outcome = controller.signal.aborted ? 'cancelled' : 'failed'; audit.failureKind = controller.signal.aborted ? 'cancelled' : 'auth'; Object.assign(audit, failure.diagnostic()) }
+        deny(controller.signal.aborted ? 499 : failure.state === 'reauth_required' ? 401 : failure.state === 'permission_denied' ? 403 : 503, failure.message, failure); return
       }
-      const response = await this.network.fetch(this.kind === 'openai' ? 'https://api.openai.com/v1/responses' : ENDPOINT, { method: 'POST', redirect: 'error', signal: controller.signal,
+      const send = token => this.network.fetch(this.kind === 'openai' ? 'https://api.openai.com/v1/responses' : ENDPOINT, { method: 'POST', redirect: 'error', signal: controller.signal,
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'text/event-stream', ...(this.kind === 'codex' ? { 'ChatGPT-Account-Id': accountId, 'OpenAI-Beta': 'responses=experimental', originator: 'areal-harness' } : {}) }, body: JSON.stringify(body) })
+      let response = await send(token)
+      // POST 无已接纳状态的权威证明，认证拒绝也不自动重放推理。
       if (audit) {
         audit.upstreamHttpStatus = response.status
         const type = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase()
         audit.upstreamContentType = !type ? 'missing' : type === 'text/event-stream' ? 'event-stream' : type === 'application/json' || type.endsWith('+json') ? 'json' : 'other'
       }
       if (!response.ok) {
-        if (audit) audit.failureKind = response.status === 401 || response.status === 403 ? 'auth' : 'HTTP'
-        const unsupported = await unsupportedModel(response)
-        void response.body?.cancel().catch(() => {})
-        deny(response.status, unsupported ? '当前 ChatGPT 账号不支持所选模型，请选择其他订阅模型。模型目录不代表账号实际权限。' : `ChatGPT 服务端请求失败（HTTP ${response.status}），请检查登录、订阅额度或稍后重试`); return
+        const failure = await responseError(response, 'admission', [token])
+        this.account.fail(failure, 'admission')
+        if (audit) { audit.failureKind = response.status === 401 || response.status === 403 ? 'auth' : 'HTTP'; Object.assign(audit, failure.diagnostic()) }
+        deny(response.status, failure.message, failure); return
       }
+      this.account.failure = null
       const stream = await responseStream(response, controller.signal)
       if (audit) audit.localHttpStatus = 200
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store' })
       await pipeline(stream, res, { signal: controller.signal })
-      if (audit) { audit.outcome = 'completed'; audit.failureKind = null }
+      if (audit) { audit.outcome = 'forwarded'; audit.failureKind = null }
     } catch (error) {
       if (audit) {
         audit.outcome = controller.signal.aborted ? 'cancelled' : 'failed'
         audit.failureKind = controller.signal.aborted ? 'cancelled' : audit.upstreamHttpStatus === null ? 'network' : 'stream'
         if (error instanceof InvalidSubscriptionStream) audit.streamFailureReason = error.reason
       }
-      deny(502, transportError(error))
+      const failure = providerError(error, error?.phase ?? 'transport')
+      if (!controller.signal.aborted) this.account.fail(failure, failure.phase)
+      if (audit) Object.assign(audit, failure.diagnostic())
+      deny(failure.state === 'reauth_required' ? 401 : failure.state === 'storage_locked' ? 503 : 502, error instanceof InvalidSubscriptionStream ? transportError(error) : failure.message, failure)
     } finally {
       this.account.off('changed', abort); res.off('close', abort)
       if (audit) {

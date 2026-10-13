@@ -16,9 +16,14 @@ function connection(baseUrl, protocol) {
 }
 
 function modelParameters(raw = {}) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('模型参数无效');
+  const rules = { temperature: v => Number.isFinite(v) && v >= 0 && v <= 2, maxOutputTokens: v => Number.isSafeInteger(v) && v > 0,
+    contextWindowTokens: v => Number.isSafeInteger(v) && v > 0 && v <= 2_000_000,
+    reasoningEffort: v => ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'].includes(v) };
   const result = {};
-  for (const [name, valid] of Object.entries({ temperature: v => Number.isFinite(v) && v >= 0 && v <= 2, maxOutputTokens: v => Number.isSafeInteger(v) && v > 0, reasoningEffort: v => ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'].includes(v) })) {
-    if (raw[name] != null) { if (!valid(raw[name])) throw new Error('模型参数无效'); result[name] = raw[name]; }
+  for (const [name, value] of Object.entries(raw)) {
+    if (!Object.hasOwn(rules, name) || value !== null && !rules[name](value)) throw new Error('模型参数无效');
+    if (value !== null) result[name] = value;
   }
   return result;
 }
@@ -43,9 +48,9 @@ class AppProviders {
   async openai() {
     if (!this.openaiPromise) this.openaiPromise = import('@areal/chatgpt-provider/core').then(({ CoreSubscription }) => {
       this.openaiStore = new SubscriptionStore(this.backend, this.encryption);
-      const onRequest = process.env.AREAL_CORE_PROVIDER_AUDIT === '1' ? async ({ providerId, protocol, model, startedAt, completedAt, upstreamHttpStatus, upstreamContentType, localHttpStatus, outcome, failureKind, streamFailureReason }) => {
+      const onRequest = process.env.AREAL_CORE_PROVIDER_AUDIT === '1' ? async ({ providerId, protocol, model, startedAt, completedAt, upstreamHttpStatus, upstreamContentType, localHttpStatus, outcome, failureKind, streamFailureReason, code, state, phase, httpStatus, requestId }) => {
         await appendFile(join(this.backend.home, 'provider-requests.jsonl'), JSON.stringify({ providerId, protocol, model, startedAt, completedAt,
-          upstreamHttpStatus, upstreamContentType, localHttpStatus, outcome, failureKind, streamFailureReason }) + '\n', { mode: 0o600 });
+          upstreamHttpStatus, upstreamContentType, localHttpStatus, outcome, failureKind, streamFailureReason, code, state, phase, httpStatus, requestId }) + '\n', { mode: 0o600 });
       } : undefined;
       return new CoreSubscription({ store: this.openaiStore, token: this.openaiToken, port: this.transport.port, onListen: async port => { this.transport.port = port; await this.backend.save('subscription-transport.json', this.transport); }, kind: 'openai', onRequest });
     }).catch(error => { this.openaiPromise = null; throw error; });
@@ -113,7 +118,7 @@ class AppProviders {
   async applySubscription(project, service) {
     const status = service ? await service.account.status() : { authenticated: false };
     const existing = (await project.client.request('areal/provider/list')).data.find(p => p.id === (service?.id ?? 'areal_openai'));
-    if (status.modelError) return;
+    if (status.modelError || status.state && !['ready', 'signed_out'].includes(status.state)) return;
     if (!status.authenticated || status.models?.length === 0) {
       if (existing) await this.backend.submit(project, 'areal/provider/remove', { id: existing.id, expectedRevision: existing.revision });
       return;

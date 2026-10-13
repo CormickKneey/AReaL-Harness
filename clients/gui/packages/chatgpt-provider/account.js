@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
 import { runOAuth } from './oauth.js'
+import { ProviderError, providerError } from './errors.js'
 
 // 账号记录键由此适配器拥有；保留已有格式而不引入其他执行后端。
 export const ACCOUNT_KEY = 'areal-chatgpt/subscription'
@@ -15,7 +16,7 @@ function credential(record) {
   const value = record?.kind === 'grant' ? record.payload : undefined
   if (!value) return undefined
   if (value.type !== 'oauth' || typeof value.access !== 'string' || !value.access || typeof value.refresh !== 'string' || !value.refresh || !Number.isFinite(value.expires)) {
-    throw new Error('Invalid stored ChatGPT credential; sign in again')
+    throw new ProviderError('credential_invalid', { phase: 'storage' })
   }
   return value
 }
@@ -71,6 +72,9 @@ export class ChatGPTAccount extends EventEmitter {
           signal.throwIfAborted()
           return { kind: 'grant', payload: value }
         })
+        this.failure = null
+        this.pendingRotation = null
+        this.terminalFailure = null
         this.changed()
       } catch {
         if (!signal.aborted) this.error = 'ChatGPT 授权未完成或已失败，请重试。'
@@ -99,6 +103,9 @@ export class ChatGPTAccount extends EventEmitter {
       await this.cancel()
       await this.store.deleteRecord(ACCOUNT_KEY)
       this.error = null
+      this.failure = null
+      this.pendingRotation = null
+      this.terminalFailure = null
     } finally { this.busy = false; this.changed() }
   }
   async read() {
@@ -110,35 +117,89 @@ export class ChatGPTAccount extends EventEmitter {
     return { type: 'chatgpt', email: payload.email ?? payload['https://api.openai.com/profile']?.email ?? null,
       planType: payload['https://api.openai.com/auth']?.chatgpt_plan_type ?? null }
   }
-  async accessToken(signal) {
+  fail(error, phase) {
+    const failure = providerError(error, phase)
+    if (failure.code !== 'cancelled' && failure.code !== 'account_changed') this.failure = failure
+    return failure
+  }
+  async accessToken(signal, { force = false, rejectedToken } = {}) {
     this.check()
-    if (this.busy) throw new Error('ChatGPT account is changing')
+    signal?.throwIfAborted()
+    if (this.busy) throw new ProviderError('account_changed', { phase: 'account' })
     const revision = this.revision
-    const cancellation = signal ? AbortSignal.any([signal, this.lifetime.signal]) : this.lifetime.signal
-    const record = await this.track(this.store.modifyRecord(ACCOUNT_KEY, async current => {
-      cancellation.throwIfAborted()
-      const value = credential(current)
-      if (!value) throw new Error('请在设置 → ChatGPT Subscription 重新登录。')
-      if (value.expires > Date.now() + 60_000) return undefined
-      // A completed rotation must be saved even if the requesting turn is cancelled.
-      const next = await this.oauth('refresh', { credential: value, signal: this.lifetime.signal })
-      credential({ kind: 'grant', payload: next })
-      if (next.accountId !== value.accountId) throw new Error('ChatGPT refresh changed account')
-      return { kind: 'grant', payload: next }
-    }))
-    cancellation.throwIfAborted()
-    if (revision !== this.revision || this.busy) throw new Error('ChatGPT account changed; retry explicitly')
+    // 同一 Host 只有该账户实例进入安全存储；共享 promise 包括失败，避免并发重复刷新。
+    if (!this.refreshing) {
+      this.refreshing = this.track(this.rotate({ force, rejectedToken }).finally(() => { this.refreshing = null }))
+    }
+    let abort
+    const cancelled = signal && new Promise((_, reject) => {
+      abort = () => reject(signal.reason)
+      signal.addEventListener('abort', abort, { once: true })
+      if (signal.aborted) abort()
+    })
+    let record
+    try { record = await (cancelled ? Promise.race([this.refreshing, cancelled]) : this.refreshing) }
+    finally { if (abort) signal.removeEventListener('abort', abort) }
+    signal?.throwIfAborted()
+    this.check()
+    if (revision !== this.revision || this.busy) throw new ProviderError('account_changed', { phase: 'account' })
+    if (record?.kind !== 'grant') throw this.failure ?? new ProviderError('credential_missing', { phase: 'account' })
     return credential(record).access
   }
+  async rotate({ force, rejectedToken }) {
+    try {
+      const record = await this.store.modifyRecord(ACCOUNT_KEY, async current => {
+        this.check()
+        const value = credential(current)
+        if (!value) throw new ProviderError('credential_missing', { phase: 'account' })
+        if (this.pendingRotation) {
+          if (this.pendingRotation.previousRefresh !== value.refresh) throw new ProviderError('account_changed', { phase: 'account' })
+          return this.pendingRotation.record
+        }
+        if (value.expires > Date.now() + 60_000 && (!force || rejectedToken && rejectedToken !== value.access)) return undefined
+        let next
+        try { next = await this.oauth('refresh', { credential: value, signal: this.lifetime.signal }) }
+        catch (error) {
+          const failure = this.fail(error, 'refresh')
+          if (failure.state !== 'reauth_required') throw failure
+          // 终止错误仅清 token，保留注册、host 和经验证的账户映射用于重新授权。
+          const { access, refresh, idToken, expires, ...registration } = value
+          this.terminalFailure = failure
+          this.pendingRotation = { previousRefresh: value.refresh, record: { kind: 'registration', payload: { ...registration, reauthRequired: true } } }
+          return this.pendingRotation.record
+        }
+        credential({ kind: 'grant', payload: next })
+        if (next.accountId !== value.accountId) throw new ProviderError('account_changed', { phase: 'refresh' })
+        // 轮换结果保留到写入确认；原 Turn 取消不取消刷新及落盘。
+        this.pendingRotation = { previousRefresh: value.refresh, record: { kind: 'grant', payload: next } }
+        return this.pendingRotation.record
+      })
+      this.pendingRotation = null
+      if (record?.kind === 'registration' && record.payload?.reauthRequired) this.failure = this.terminalFailure ?? new ProviderError('credential_missing', { phase: 'account' })
+      else if (record?.kind === 'grant' && this.failure?.phase !== 'admission') this.failure = null
+      return record
+    } catch (error) { throw this.fail(error, this.pendingRotation ? 'storage' : error?.phase ?? 'storage') }
+  }
   async status() {
-    const account = await this.read()
-    let models = [], modelError = null
-    if (account) {
-      try { models = await this.models() }
-      catch { modelError = '无法获取账号模型，请检查网络或重新登录后刷新。' }
+    let account = null, models = [], modelError = null
+    try { account = await this.read() }
+    catch (error) { this.fail(error, 'storage') }
+    if (account && !this.refreshing && this.failure?.state !== 'reauth_required') {
+      try {
+        models = await this.models()
+        if (this.failure?.phase === 'catalog') this.failure = null
+      }
+      catch (error) { modelError = this.fail(error, error?.phase ?? 'catalog').message }
     }
+    let state = this.failure?.state ?? (account ? 'ready' : 'signed_out')
+    if (!account && !this.failure) {
+      try { if ((await this.store.readRecord(ACCOUNT_KEY))?.payload?.reauthRequired) state = 'reauth_required' }
+      catch (error) { state = this.fail(error, 'storage').state }
+    }
+    if (this.refreshing && state !== 'storage_locked') state = 'refreshing'
     return {
       authenticated: !!account, email: account?.email ?? null, planType: account?.planType ?? null,
+      state, diagnostic: this.failure?.diagnostic() ?? null,
       login: this.login, error: this.error, modelError, models,
     }
   }

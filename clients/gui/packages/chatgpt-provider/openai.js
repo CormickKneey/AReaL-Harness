@@ -2,6 +2,7 @@ import { createServer } from 'node:http'
 import { randomBytes, randomUUID, createHash } from 'node:crypto'
 import { createLocalJWKSet, jwtVerify } from 'jose'
 import { ChatGPTAccount, ACCOUNT_KEY } from './account.js'
+import { ProviderError, providerError, responseError } from './errors.js'
 
 const ISSUER = 'https://auth.openai.com'
 const RESOURCE = 'https://api.openai.com/v1'
@@ -15,8 +16,10 @@ class OpenAIOAuth {
   constructor(fetch) { this.fetch = fetch }
   async json(url, options = {}) {
     const signal = AbortSignal.any([AbortSignal.timeout(30_000), ...(options.signal ? [options.signal] : [])])
-    const response = await this.fetch(url, { ...options, signal, redirect: 'error' })
-    if (!response.ok) { await response.body?.cancel(); throw new Error('OpenAI 认证服务请求失败') }
+    let response
+    try { response = await this.fetch(url, { ...options, signal, redirect: 'error' }) }
+    catch (error) { throw providerError(error, options.phase ?? 'authentication') }
+    if (!response.ok) throw await responseError(response, options.phase ?? 'authentication', [options.body?.get?.('refresh_token')])
     let bytes = 0, chunks = []
     for await (const chunk of response.body) { bytes += chunk.length; if (bytes > 1024 * 1024) throw new Error('OpenAI 认证响应过大'); chunks.push(chunk) }
     return JSON.parse(Buffer.concat(chunks).toString('utf8'))
@@ -47,10 +50,10 @@ class OpenAIOAuth {
   }
   async tokens(form, signal) {
     const config = await this.metadata(signal)
-    const result = await this.json(config.token_endpoint, { method: 'POST', signal, headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form })
+    const result = await this.json(config.token_endpoint, { method: 'POST', signal, phase: form.get('grant_type') === 'refresh_token' ? 'refresh' : 'sign_in', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form })
     if (result.token_type?.toLowerCase() !== 'bearer' || typeof result.access_token !== 'string' || !result.access_token || typeof result.refresh_token !== 'string' || !result.refresh_token || !Number.isFinite(result.expires_in) || result.expires_in <= 0) throw new Error('OpenAI 凭据无效')
     const scopes = typeof result.scope === 'string' ? result.scope.split(/\s+/) : []
-    if (!['resource.invoke', 'chatgpt.tokens.use.direct'].every(scope => scopes.includes(scope))) throw new Error('未授权 ChatGPT API 使用权限')
+    // 仅身份授权也保留有效注册，推理入口独立检查 direct 权限。
     return { result, value: { type: 'oauth', access: result.access_token, refresh: result.refresh_token, expires: Date.now() + result.expires_in * 1000, scopes } }
   }
   async login(saved, { signal, onAuth }) {
@@ -130,8 +133,14 @@ export class OpenAIAccount extends ChatGPTAccount {
     this.check(); const record = await this.store.readRecord(ACCOUNT_KEY)
     if (record?.kind !== 'grant') return null
     const c = record.payload
-    if (!registered(c) || c.issuer !== ISSUER || c.type !== 'oauth' || !c.access || !c.refresh || !Number.isFinite(c.expires)) throw new Error('ChatGPT API 登录记录无效，请重新登录')
+    if (!registered(c) || c.issuer !== ISSUER || c.type !== 'oauth' || !c.access || !c.refresh || !Number.isFinite(c.expires)) throw new ProviderError('credential_invalid', { phase: 'storage' })
     return { type: 'openai', email: c.email ?? null, planType: null }
+  }
+  async accessToken(signal, options) {
+    const token = await super.accessToken(signal, options)
+    const record = await this.store.readRecord(ACCOUNT_KEY)
+    if (!['resource.invoke', 'chatgpt.tokens.use.direct'].every(scope => record?.payload?.scopes?.includes(scope))) throw this.fail(new ProviderError('permission_missing', { phase: 'authorization' }), 'authorization')
+    return token
   }
   async logout() {
     this.check(); if (this.busy) throw new Error('账号操作进行中，请稍后重试。')
@@ -146,6 +155,7 @@ export class OpenAIAccount extends ChatGPTAccount {
         }
         return { kind: 'registration', payload: registration(current.payload) }
       })
+      this.failure = null; this.pendingRotation = null
     } finally { this.busy = false; this.changed() }
   }
   async forget() {
