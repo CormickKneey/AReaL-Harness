@@ -60,6 +60,8 @@ The table omits the `areal/` prefix. create/update/control/reply require interac
 | channel/reply | `requestId, taskId, runId, questionId, answers` | `{accepted:true, messageId, taskId, runId, channelSequence}` |
 | inbox/list | `after?, limit?` | `{data:[{taskId, objective, message}], nextCursor}` |
 
+`task/pause` also accepts optional `expectedRunId`, advertised by `features.taskPauseRunGuard`. After receipt lookup, Core checks it against the latest Run together with `expectedRevision` under the same Task lock; a missing or changed Run conflicts. Supplying it to resume/cancel is invalid. An identical accepted duplicate returns its original receipt even after revision/Run changes or restart; changing the Run under the same request key conflicts. Omission preserves existing callers and receipt digests. Acceptance records the pause intent; Run and worker settlement still determine when execution has stopped.
+
 Task projections contain `id, revision, channelSequence, owner, mode, interactionMode, objective, threadId, schedule, nextRunAt, paused, cancelled, tokenBudget, maxTurns, maxActiveSeconds, runs, pendingQuestions`, without embedded messages. A Run contains `id, threadId, goalId, status, reason, scheduledAt, completedAt, usage, waitRequested, workers`. Workers contain `threadId, turnId, status, settled`, with running/completed/cancelled/failed status.
 
 Run status is `queued/running/waitingForInput/waitingForAgents/paused/blocked/completed/failed/cancelled`; the last three are terminal. Task paused/cancelled fields express control intent; the Run can remain running during cleanup. Determine settlement from Run termination and worker.settled, not a control response or coordinator Turn completion.

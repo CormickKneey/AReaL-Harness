@@ -19,3 +19,5 @@ Start with the [quickstart](guides/quickstart.en.md). [Capabilities and limitati
 Maintained pages pair a Chinese `.md` file with an English `.en.md` file in the same directory, linked at the top. Update both together. Machine schemas, code and shared diagrams have one copy. API contracts and their linked types/schemas define parameters; guides avoid duplicating them.
 
 - [Installation and upgrades](guides/installation.en.md) · [Release workflow](development/releasing.en.md)
+
+Remote v2 design and implementation boundaries: [architecture](design/remote-control.en.md) · [API](api/remote-control.en.md) · [connectivity and deployment](guides/remote-control.en.md) · [acceptance plan](development/remote-control-testing.en.md) · [Host ownership](adr/0008-remote-host-ownership.en.md). Each page distinguishes implemented slices from future design; these documents do not claim full P0 delivery.

@@ -20,7 +20,7 @@ Core 提供固定 Codex app-server 0.145.0 的子集与 AReaL 扩展，不代表
 | `thread/resume` | `{threadId}` |
 | `turn/start` | `{threadId,input}` |
 | `turn/steer` | `{threadId,expectedTurnId,input}` |
-| `turn/interrupt` | `{threadId,turnId}` |
+| `turn/interrupt` | `{threadId,turnId,admissionGuard?}` |
 
 Core 拥有 Thread/Turn/Item 的稳定 ID 与历史。read 不订阅，resume 原子读取快照并建立增量边界，先返回基线再发事件。每连接最多 128 订阅，发送队列 256、Thread 事件窗口 128；落后时断连，重连后重新 resume。普通观察断连不取消任务。
 
@@ -29,6 +29,8 @@ Core 拥有 Thread/Turn/Item 的稳定 ID 与历史。read 不订阅，resume �
 input 为有序 text/image/audio/file 等内容，UTF-8 文本合计最多 1 MiB，仍受历史预算约束；认证客户端上传媒体 Blob，不传宿主 localImage/localAudio 路径。模态由 adapter/模型能力校验。原有 thread/start 的 model 需匹配服务默认；产品模型选择使用 areal/thread/start/configure。
 
 事件包括 thread/started、turn/started/completed、item/started/completed、item/agentMessage/delta；AReaL 媒体通知为 areal/item/agentMedia/available。终态 completed/interrupted/failed 在保存后发布。steer 保留已输出文本，取消当前模型请求后在同一 Turn 继续。
+
+可选 `admissionGuard: {ordinarySession: true}` 要求指定 `turnId` 在 Core 获得 Thread → Tasks 锁时仍是活动 Turn，且当前所有权属于普通会话；锁持续到队列持久化和取消完成。目标已结束/更换或属于 Task、Goal、协调者/子会话时，在任何队列、Goal 或取消操作前返回冲突（-32009）；`ordinarySession: false` 无效（-32602）。能力标志为 `features.turnInterruptAdmissionGuard`，依赖此保证的客户端在缺失时必须拒绝停止。省略 guard 保留旧行为，包括历史终态 Turn 可暂停队列。返回成功仅表示取消已受理，客户端仍需等待原 Turn 的 terminal 事件；该方法没有提交收据。
 
 ### 结构化终止原因
 

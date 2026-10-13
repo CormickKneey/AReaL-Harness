@@ -20,7 +20,7 @@ Each WebSocket text frame carries one request, response or notification, up to 4
 | `thread/resume` | `{threadId}` |
 | `turn/start` | `{threadId,input}` |
 | `turn/steer` | `{threadId,expectedTurnId,input}` |
-| `turn/interrupt` | `{threadId,turnId}` |
+| `turn/interrupt` | `{threadId,turnId,admissionGuard?}` |
 
 Core owns stable Thread/Turn/Item IDs and history. read does not subscribe; resume atomically snapshots and subscribes, returning the baseline before subsequent events. Each connection permits 128 subscriptions, a 256-item send queue and 128-event Thread windows. Lag disconnects consumers; reconnect and resume again. Observer disconnection does not cancel tasks.
 
@@ -29,6 +29,8 @@ Core owns stable Thread/Turn/Item IDs and history. read does not subscribe; resu
 input preserves text/image/audio/file ordering with at most 1 MiB aggregate UTF-8 text, also constrained by the history budget. Authenticated clients upload media Blobs rather than supplying host localImage/localAudio paths. Adapter/model capabilities validate modalities. Original thread/start model must match the service default; product model selection uses areal/thread/start/configure.
 
 Events include thread/started, turn/started/completed, item/started/completed and item/agentMessage/delta; AReaL media uses areal/item/agentMedia/available. Terminal completed/interrupted/failed state is published after persistence. steer preserves emitted text, cancels the current model request and continues within the same Turn.
+
+Optional `admissionGuard: {ordinarySession: true}` requires the supplied `turnId` to remain active and currently ordinary-owned when Core acquires the Thread → Tasks locks, retained through queue persistence and cancellation. A terminal/replaced target or Task, Goal, coordinator/child ownership conflicts (-32009) before any queue, Goal, or cancellation mutation; `ordinarySession: false` is invalid (-32602). The capability is `features.turnInterruptAdmissionGuard`; clients requiring this guarantee must refuse stop when it is absent. Omitting the guard preserves legacy behavior, including queue pausing for a historical terminal Turn. Success means cancellation was accepted; clients must still wait for the original Turn terminal event. This method has no submission receipt.
 
 ### Structured terminal outcomes
 
