@@ -18,7 +18,7 @@ endif
 	test-protocol test-concurrency verify smoke server tui schemas docs clean \
 	capacity capacity-primitives capacity-core perf runtime test-runtime runtime-smoke verify-runtime \
 	cordis-pin update-cordis sdk-test harness harness-smoke verify-harness \
-	setup setup-node sdk-build script-test workgroup-smoke unified-execution-smoke capacity-workgroup local-service-smoke \
+	setup setup-node sdk-build script-test launcher-test workgroup-smoke unified-execution-smoke capacity-workgroup local-service-smoke \
 	verify-native integration-boundaries envarena-check envarena-smoke
 
 help: ## 显示常用操作（默认目标）
@@ -101,7 +101,7 @@ verify: ## 常规验收：格式、静态检查、Rust/SDK/Python 测试与 TUI 
 	$(MAKE) -j2 fmt-check sdk-test script-test
 	$(MAKE) lint desktop-schema-check
 	$(MAKE) test
-	$(MAKE) smoke
+	$(MAKE) launcher-test smoke
 
 sdk-build: ## 编译两套 TypeScript SDK
 	npm --prefix runtime/sdk-typescript run build
@@ -114,7 +114,10 @@ sdk-test: ## 编译两套 SDK 并验证 Runtime 与插件行为
 integration-boundaries: ## 检查独立构建、发行与产品代码不依赖可选平台适配器
 	python3 scripts/check-integration-boundaries.py
 
-script-test: integration-boundaries ## 启动器、Web 投影、perf 与文档的离线回归
+launcher-test: build ## 构建后验证真实 Rust launcher；缺二进制必须失败
+	python3 -m unittest discover -s scripts/launcher-tests
+
+script-test: integration-boundaries ## 无需产品二进制的脚本、Web 投影、perf 与文档离线回归
 	python3 scripts/check-docs.py
 	node --test scripts/web-progress.test.mjs
 	node --test scripts/local-service-wait.test.mjs
@@ -163,7 +166,7 @@ verify-harness: ## 全部常规与原生集成验收（容量测试单独运行�
 
 verify-native: ## macOS 原生后端与 Harness 集成验收（通用回归由 Linux CI 执行）
 	cargo test --locked -p areal-runtime-exec-native
-	$(MAKE) runtime-smoke harness-smoke examples-desktop-api workgroup-smoke
+	$(MAKE) launcher-test runtime-smoke harness-smoke examples-desktop-api workgroup-smoke
 
 smoke: build ## 构建后验证 TUI、HTTP/SSE、持久化、强杀恢复和异步轨迹补传
 	node scripts/smoke.mjs
@@ -231,6 +234,7 @@ install: release ## 构建并安装完整运行时；PREFIX 指定前缀，DESTD
 gui-install: ## 安装 GUI 的公开锁定依赖（需 pnpm）
 	pnpm --dir clients/gui install --frozen-lockfile
 	pnpm --dir clients/gui --filter @areal/gui-desktop exec install-electron
+	pnpm --dir clients/gui --filter @areal/gui-desktop exec playwright-core install ffmpeg
 gui-build: ## 构建 GUI renderer
 	pnpm --dir clients/gui build
 gui: gui-build ## 启动桌面 GUI（先 make build）

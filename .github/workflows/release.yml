@@ -3,15 +3,6 @@ name: Release bundles
 on:
   workflow_dispatch:
   pull_request:
-    paths:
-      - '.github/workflows/release.yml'
-      - 'scripts/package.py'
-      - 'scripts/install.py'
-      - 'scripts/release-*.py'
-      - 'scripts/tests/test_release.py'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'clients/cli/**'
   push:
     tags: ['v*']
 
@@ -22,8 +13,29 @@ defaults:
   run:
     shell: bash
 
+concurrency:
+  group: release-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  scope:
+    name: Determine applicable work
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      gui: ${{ steps.scope.outputs.gui }}
+      release: ${{ steps.scope.outputs.release }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: scope
+        run: python3 scripts/ci-scope.py
+
   bundle:
+    needs: scope
+    if: needs.scope.outputs.release == 'true'
     name: Bundle and install (${{ matrix.target }})
     strategy:
       fail-fast: false
@@ -44,6 +56,8 @@ jobs:
           node-version: '22'
       - name: Build prerequisites
         run: |
+          mkdir -p target/ci
+          exec > >(tee -a target/ci/release.log) 2>&1
           if [ "$RUNNER_OS" = Linux ]; then
             sudo apt-get update
             sudo apt-get install -y cmake bubblewrap
@@ -56,8 +70,16 @@ jobs:
         with:
           key: release-${{ matrix.target }}
           cache-on-failure: true
+      - name: Record tool and cache fingerprints
+        run: |
+          mkdir -p target/ci
+          exec > >(tee -a target/ci/release.log) 2>&1
+          mkdir -p target/ci
+          python3 scripts/ci-fingerprint.py > target/ci/fingerprint.json
       - name: Build release and validate version
         run: |
+          mkdir -p target/ci
+          exec > >(tee -a target/ci/release.log) 2>&1
           make release
           version=$(target/release/areal --version | cut -d ' ' -f 2)
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
@@ -67,6 +89,8 @@ jobs:
           python3 -m unittest discover -s scripts/tests -p test_release.py
       - name: Package the complete release
         run: |
+          mkdir -p target/ci
+          exec > >(tee -a target/ci/release.log) 2>&1
           python3 scripts/package.py --profile release --output ${{ runner.temp }}/areal-release-bundle/areal
           python3 scripts/release-artifacts.py archive --bundle ${{ runner.temp }}/areal-release-bundle/areal --output ${{ runner.temp }}/areal-release-assets
           mkdir -p '${{ runner.temp }}/areal relocated bundle'
@@ -75,6 +99,8 @@ jobs:
       - name: Verify Linux installation and native tools
         if: runner.os == 'Linux'
         run: |
+          mkdir -p target/ci
+          exec > >(tee -a target/ci/release.log) 2>&1
           cat ${{ runner.temp }}/areal-release-assets/*.sha256 > ${{ runner.temp }}/areal-release-assets/SHA256SUMS
           prefix="$RUNNER_TEMP/areal installed"
           python3 scripts/install.py --version "$RELEASE_VERSION" --prefix "$prefix" \
@@ -86,6 +112,8 @@ jobs:
       - name: Verify Homebrew installation and packaged lifecycle
         if: runner.os == 'macOS'
         run: |
+          mkdir -p target/ci
+          exec > >(tee -a target/ci/release.log) 2>&1
           archive="${{ runner.temp }}/areal-release-assets/areal-harness-v${RELEASE_VERSION}-${{ matrix.target }}.tar.gz"
           cat ${{ runner.temp }}/areal-release-assets/*.sha256 > ${{ runner.temp }}/areal-release-assets/SHA256SUMS
           prefix="$RUNNER_TEMP/areal standalone"
@@ -101,6 +129,12 @@ jobs:
           python3 scripts/release-smoke.py --bundle "$(brew --prefix areal)" --executable "$(brew --prefix)/bin/areal"
           AREAL_PACKAGE_PROFILE=release node examples/desktop-api/soak.mjs
           python3 scripts/release-artifacts.py formula --archive "$archive" --output ${{ runner.temp }}/areal-release-assets/areal.rb
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: failure()
+        with:
+          name: release-diagnostics-${{ matrix.target }}
+          path: target/ci/
+          retention-days: 7
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: release-${{ matrix.target }}
@@ -128,6 +162,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          mkdir -p target/ci
+          exec > >(tee -a target/ci/release.log) 2>&1
           cp scripts/install.py target/release-assets/install.py
           cd target/release-assets
           cat *.tar.gz.sha256 > SHA256SUMS
@@ -137,3 +173,20 @@ jobs:
           gh release create "$GITHUB_REF_NAME" --verify-tag --draft \
             --title "AReaL-Harness $GITHUB_REF_NAME" --generate-notes \
             ./*.tar.gz ./SHA256SUMS ./install.py ./areal.rb ./manifest-*.json
+
+  gate:
+    name: Release gate
+    needs: [scope, bundle]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Require applicable work
+        env:
+          SCOPE_RESULT: ${{ needs.scope.result }}
+          WORK_RESULT: ${{ needs.bundle.result }}
+          NEEDED: ${{ needs.scope.outputs.release }}
+        run: python3 scripts/ci-gate.py

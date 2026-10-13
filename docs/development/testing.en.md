@@ -175,3 +175,11 @@ For slow tools, enable `areal::tool_timing=debug,areal::persistence=debug` in th
 Search regressions run the Runtime file helper directly, covering search without host rg/Python, workspace ignore rules, globs, context, truncation and symlink rejection. Native and release smoke tests exercise the complete Core `search_files` path without requiring rg in the shell.
 
 Desktop soak and GUI bundle validation accept the embedded-search layout without standalone tools/rg. Soak also verifies the platform-specific Runtime components and manifest file hashes.
+
+## CI gates and cold starts
+
+`make script-test` needs no product binary. `make launcher-test` builds the workspace before the real Rust launcher regressions; a missing binary fails direct suite execution. `make verify` runs both. Run the inexpensive privacy and trajectory polling regressions with `pnpm --dir clients/gui test:regressions`; `make gui-install` prepares both Electron and FFmpeg.
+
+The Verify aggregate requires host, container and dependency audit success. GUI gate and Release gate run for every PR. Expensive jobs may be skipped only after a successful scope decision declares them inapplicable. Failures, cancellations and unexpected skips fail. Recommended required checks are these three stable aggregates; conditional matrix names should not be required. Maintainers must separately approve and apply branch protection settings; repository tools do not change them.
+
+Audits independently scan Cargo, three npm lockfiles and the GUI pnpm lockfile. Vulnerability hits and scanner errors are distinct failures. RustSec revision and reports are retained for seven days; the live npm database has no immutable revision. A weekly lightweight audit installs cargo-audit without its tool cache, without daily full macOS/GUI runs. Tool versions and lockfile fingerprints omit credentials and environment variables.
