@@ -2,7 +2,7 @@ import { useSettingsOperation } from "./useSettingsOperation.js";
 import { useDraftBlocker, useGuardedNavigation } from "./UnsavedChanges.js";
 import { ModelEditor } from "./ModelEditor.js";
 import { ChatGPTSubscription } from "./ChatGPTSubscription.js";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Pencil, Plus, Trash2, Unplug, ArrowUp, ArrowDown, RefreshCw } from "lucide-react";
 import { Button } from "../components/ui/button.js";
 import { Input } from "../components/ui/input.js";
@@ -11,6 +11,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { SettingsSearchInput } from "./SettingsSearchInput.js";
 import { DialogFooter } from "../components/ui/dialog.js";
 import { EmptySettings, Feedback, SettingsDialog, useResource } from "./common.js";
+import { ConnectionMethodPicker } from "./ConnectionMethodPicker.js";
+import { connectionBilling, newConnectionDraft } from "./provider-ui-state.js";
 import { ProviderTemplatePicker } from "./ProviderTemplatePicker.js";
 import { ProviderApiKeySection, ProviderConnectionSection } from "./model-provider-section/ProviderCardSections.js";
 import type { Action, Data } from "../services.js";
@@ -32,6 +34,8 @@ export function ModelSettings({ project, thread, action }: { project?: Data; thr
   const api = (operation: string, values: Data = {}) => action("providers", { operation, ...values });
   const state = useResource(() => api("list"), "application");
   const [accountModels, setAccountModels] = useState<Data[]>([]);
+  const [accountReady, setAccountReady] = useState(false);
+  const [connectionChoice, setConnectionChoice] = useState<Data | null>(null);
   const [accountLabel, setAccountLabel] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -52,8 +56,8 @@ export function ModelSettings({ project, thread, action }: { project?: Data; thr
   const visibleModels = (provider?.models ?? []).map((model: Data, index: number) => ({ model, index })).filter(({ model }: { model: Data }) => `${model.displayName ?? ""} ${model.id}`.toLowerCase().includes(modelQuery.toLowerCase()));
   const configuration = thread && project?.configurations?.[thread.id];
   const edit = (patch: Data) => setDraft({ ...provider, ...patch, basedOnRevision: draft?.basedOnRevision ?? state.value?.revision });
-  const select = (item: Data) => { setSelected(item.id); setPicker(false); setDraft(null); setKey(undefined); setKeyVisible(false); setModelQuery(""); setError(""); setMessage(""); };
-  const choose = (id: string) => navigate(() => { setSelected(id); setPicker(false); setDraft(null); setKey(undefined); setKeyVisible(false); setModelQuery(""); setError(""); setMessage(""); });
+  const select = (item: Data) => { setSelected(item.id); setPicker(false); setConnectionChoice(null); setDraft(null); setKey(undefined); setKeyVisible(false); setModelQuery(""); setError(""); setMessage(""); };
+  const choose = (id: string) => navigate(() => { setSelected(id); setPicker(false); setConnectionChoice(null); setDraft(null); setKey(undefined); setKeyVisible(false); setModelQuery(""); setError(""); setMessage(""); });
   const save = async (candidate = provider, apiKey = key) => {
     if (!candidate) throw new Error("没有可保存的供应商");
     const result = await api("save", { expectedRevision: candidate.basedOnRevision ?? state.value?.revision, provider: candidate, authentication: candidate.authentication ?? (candidate.apiKeyEnv ? "apiKey" : "none"), ...(apiKey !== undefined ? { apiKey } : {}) });
@@ -65,7 +69,7 @@ export function ModelSettings({ project, thread, action }: { project?: Data; thr
   const baseline = items.find(item => item.id === selected);
   // 开关与输入框是草稿；状态只投影 Core 的已保存目录和凭据诊断。
   const savedStatus = (item?: Data) => item
-    ? [item.enabled ? "已启用" : "未启用", credentialSourceLabels[state.value?.credentialSources?.[item.id]] ?? "凭据来源待刷新", credentialLabels[state.value?.credentialStates?.[item.id]] ?? "凭据状态待刷新", state.value?.pendingApply ? "待应用" : ""].filter(Boolean).join(" · ")
+    ? [item.enabled ? "已启用" : "未启用", credentialSourceLabels[state.value?.credentialSources?.[item.id]] ?? "凭据来源待刷新", credentialLabels[state.value?.credentialStates?.[item.id]] ?? "凭据状态待刷新", "已保存", state.value?.pendingApply ? "待应用" : state.value?.projects?.some((project: Data) => project.connected) ? "已应用" : "连接时应用"].filter(Boolean).join(" · ")
     : "未保存";
   const modelStatus = (model: Data) => {
     const saved = baseline?.models.find((item: Data) => item.id === model.id);
@@ -88,11 +92,15 @@ export function ModelSettings({ project, thread, action }: { project?: Data; thr
   });
   const canChoose = configuration && !thread?.desktop?.archived && !thread?.turns?.some((t: Data) => t.status === "inProgress");
   const current = selected ?? (accountModels.length ? CHATGPT : items.find(item => item.enabled)?.id ?? items[0]?.id ?? null);
+  useEffect(() => {
+    // 初始选择只决定一次；账号临时状态变化不能把用户移到另一份连接配置。
+    if (selected === null && !picker && state.value && accountLabel) setSelected(accountModels.length ? CHATGPT : items.find(item => item.enabled)?.id ?? items[0]?.id ?? CHATGPT);
+  }, [selected, picker, state.value, accountLabel, accountModels.length]);
   const refreshCatalog = () => navigate(() => { discard(); void state.refresh(); });
   const matches = (name: string) => name.toLowerCase().includes(query.trim().toLowerCase());
   const catalog = [
-    { id: CHATGPT, name: "ChatGPT", enabled: accountModels.length > 0, detail: accountLabel || "未登录" },
-    ...items.map(item => ({ id: item.id as string, name: item.name as string, enabled: !!item.enabled, detail: savedStatus(item) })),
+    { id: CHATGPT, name: "ChatGPT", enabled: accountModels.length > 0, detail: accountLabel || "订阅 · 状态待刷新" },
+    ...items.map(item => ({ id: item.id as string, name: item.name as string, enabled: !!item.enabled, detail: `${item.connection?.billing === "api" ? "API 计费" : "服务商计费"} · ${savedStatus(item)}` })),
   ].filter(item => matches(item.name));
   const enabled = catalog.filter(item => item.enabled);
   const disabled = catalog.filter(item => !item.enabled);
@@ -100,10 +108,11 @@ export function ModelSettings({ project, thread, action }: { project?: Data; thr
   const overrides = Object.entries(state.value?.effective?.sources ?? {}).filter(([field, source]) => field.startsWith("model.") && ["env", "cli"].includes((source as Data).kind));
   return <div className="model-settings">
     <Feedback error={state.error || error} message={message} />
+    <p className="settings-muted">保存配置影响后续任务；运行中的任务保持原配置，应用配置需等待任务空闲。</p>
     <div className="provider-settings" data-provider={current === CHATGPT && !picker ? CHATGPT : "custom"}>
       <aside className="provider-navigation" aria-label="供应商目录">
         <SettingsSearchInput placeholder="搜索供应商" aria-label="搜索供应商" value={query} onChange={e => setQuery(e.target.value)} onClear={() => setQuery("")} clearLabel="清除搜索" />
-        <Button className="provider-catalog-add" variant="outline" disabled={busy} onClick={() => navigate(() => { discard(); setPicker(true); setSelected(null); setMessage(""); })}><Plus size={14} />添加供应商</Button>
+        <Button className="provider-catalog-add" variant="outline" disabled={busy} onClick={() => navigate(() => { discard(); setPicker(true); setConnectionChoice(null); setSelected(null); setMessage(""); })}><Plus size={14} />添加供应商</Button>
         <div className="provider-catalog">
           {[["已启用", enabled], ["未启用", disabled]].map(([label, group]) => (group as typeof catalog).length ? <section key={label as string}>
             <p className="provider-catalog-label">{label as string}</p>
@@ -129,16 +138,20 @@ export function ModelSettings({ project, thread, action }: { project?: Data; thr
         </div>
         <div className="chatgpt-subscription-panel">
           <p className="settings-muted">ChatGPT 模型需要桌面账号授权。独立命令行暂不复用此登录，也不能写入配置文件。</p>
-          <ChatGPTSubscription action={action} onModelsChange={setAccountModels} onAccountChange={setAccountLabel} />
+          <ChatGPTSubscription action={action} onModelsChange={setAccountModels} onAccountChange={setAccountLabel} onReadyChange={setAccountReady} />
           {accountModels.length > 0 && <div className="subscription-model-list provider-model-scroll" aria-label="ChatGPT 模型">
             {accountModels.filter(model => `${model.displayName ?? model.name ?? ""} ${model.id}`.toLowerCase().includes(modelQuery.toLowerCase())).map(model => <div key={model.id} className="provider-model-row flex items-center gap-2 px-3 py-2">
-              <div className="min-w-0 flex-1"><strong>{model.displayName || model.name || model.id}</strong><small>{model.id}</small></div>
-              {isDefault("areal_openai", model.id) ? <span className="provider-model-default">默认</span> : <Button variant="ghost" size="sm" disabled={busy || dirty} onClick={() => setDefault({ providerId: "areal_openai", modelId: model.id })}>设为默认</Button>}
+              <div className="min-w-0 flex-1"><strong className="block">{model.displayName || model.name || model.id}</strong><small className="block text-foreground-subtle">{model.id}</small></div>
+              {isDefault("areal_openai", model.id) ? <span className="provider-model-default">默认</span> : <Button variant="ghost" size="sm" disabled={busy || dirty || !accountReady} onClick={() => setDefault({ providerId: "areal_openai", modelId: model.id })}>设为默认</Button>}
             </div>)}
           </div>}
           {accountModels.length > 0 && <SettingsSearchInput placeholder="搜索模型名称或 ID" aria-label="搜索模型名称或 ID" value={modelQuery} onChange={e => setModelQuery(e.target.value)} onClear={() => setModelQuery("")} clearLabel="清除模型搜索" containerClassName="provider-model-search" />}
         </div>
-        {picker ? <ProviderTemplatePicker disabled={busy} onBack={() => choose(current ?? "")} onCreate={template => { if (template.subscription) { choose(CHATGPT); return; } setSelected(""); setDraft({ ...template, authentication: "apiKey", enabled: true, parameters: {}, basedOnRevision: state.value?.revision }); setKey(""); setKeyVisible(false); setPicker(false); setError(""); }} /> : current === CHATGPT ? null : provider ? <fieldset disabled={busy} className="provider-inline space-y-5">
+        {picker ? connectionChoice ? <ConnectionMethodPicker definition={connectionChoice} disabled={busy} onBack={() => setConnectionChoice(null)} onSelect={authentication => {
+          if (authentication === "siwc") { choose(CHATGPT); return; }
+          setSelected(""); setDraft(newConnectionDraft(connectionChoice, authentication, state.value?.revision));
+          setKey(authentication === "apiKey" ? "" : undefined); setKeyVisible(false); setPicker(false); setConnectionChoice(null); setError("");
+        }} /> : <ProviderTemplatePicker disabled={busy} onBack={() => choose(current ?? "")} onCreate={setConnectionChoice} /> : current === CHATGPT ? null : provider ? <fieldset disabled={busy} className="provider-inline space-y-5">
           <div className="flex items-center gap-3">
             <Input aria-label="供应商名称" size="lg" value={provider.name} onChange={e => edit({ name: e.target.value })} className="flex-1 font-semibold" />
             <Switch disabled={busy} aria-label="启用供应商" checked={provider.enabled} onCheckedChange={enabled => edit({ enabled })} />
@@ -146,7 +159,10 @@ export function ModelSettings({ project, thread, action }: { project?: Data; thr
           </div>
           <p className="settings-muted" role="status" aria-label="供应商状态">{savedStatus(baseline)}</p>
           {dirty && <p className="settings-muted" role="status" aria-label="保存状态">有未保存修改；状态展示以已保存配置为准。</p>}
+          <p className="settings-muted" aria-label="供应商计费方式">{connectionBilling(provider)}</p>
+          <details key={provider.id ?? "new-connection"} open={!provider.id && provider.kind === "compatible"}><summary className="settings-muted">高级连接：地址与协议</summary>
           <ProviderConnectionSection provider={{ config: { api: { baseUrl: provider.baseUrl, type: provider.protocol } } }} apiFormat={provider.protocol} baseUrlValue={provider.baseUrl} onApiFormatChange={protocol => edit({ protocol })} onBaseUrlChange={baseUrl => edit({ baseUrl })} onBaseUrlBlur={() => {}} />
+          </details>
           <div>
             <label className="mb-1 block text-ui-base text-foreground-subtle" htmlFor="provider-authentication">认证方式</label>
             <Select<"apiKey" | "none"> value={authentication} items={[{ value: "apiKey", label: "API Key" }, { value: "none", label: "无需认证" }]} onValueChange={value => { if (value !== null) { edit({ authentication: value }); setError(""); if (value === "none") setKey(undefined); } }}>
@@ -160,6 +176,10 @@ export function ModelSettings({ project, thread, action }: { project?: Data; thr
             {state.value?.credentialSources?.[baseline?.id] === "environment" && <p className="settings-muted">凭据来自应用启动时的环境。终端中新设置的变量不会自动更新运行中的后台。</p>}
             {state.value?.credentialSources?.[baseline?.id] === "stored" && key === undefined && <p className="settings-muted">API Key 已安全保存。留空保持不变；填写新值替换。</p>}
           </> : <p className="settings-muted">保存后不再为该供应商配置 API Key；已连接项目需应用配置后生效。</p>}
+          <div className="flex flex-wrap items-center justify-between gap-3" aria-label="连接检测">
+            <span className="settings-muted">保存连接后获取模型；模型测试会发送请求并按当前方式计费。</span>
+            <Button variant="outline" onClick={() => void saveThen(async saved => { const result = await api("discover", { id: saved.id }); setDiscovered(result.models); setChecked([]); setMessage("连接成功，模型目录已获取；请选择要添加的模型。"); })}>保存并检测连接</Button>
+          </div>
           <div>
             <div className="mb-1 flex flex-wrap items-center justify-between gap-3">
               <span className="text-ui-base text-foreground-subtle">模型 · {provider.models.length}</span>
