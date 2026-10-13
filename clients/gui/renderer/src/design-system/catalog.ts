@@ -1,0 +1,22 @@
+// 只记录角色与定义名，数值始终从生产 CSS 读取。
+export const tokenGroups = [
+  { title: "文字", tokens: [
+    ["--text-ui-lg", "输入与强调正文"], ["--text-ui-base", "正文"],
+    ["--text-ui-caption", "控件标签"], ["--text-ui-sm", "说明"], ["--text-ui-xs", "辅助信息"],
+    ["--line-height-ui", "公共内容行高"], ["--line-height-ui-sm", "紧凑说明行高"],
+  ] },
+  { title: "表面与反馈", tokens: [
+    ["--color-background", "页面背景"], ["--color-composer", "输入表面"],
+    ["--color-foreground", "主要文字"], ["--color-foreground-subtle", "次要文字"],
+    ["--color-border", "分隔与边框"], ["--color-destructive", "错误反馈"],
+  ] },
+  { title: "尺寸与间距", tokens: [
+    ["--spacing-control", "标准控件"], ["--spacing-control-sm", "紧凑控件"],
+    ["--spacing-inline", "相邻内容"], ["--spacing-field", "内容块"], ["--spacing-section", "分区"],
+  ] },
+  { title: "形状与动效", tokens: [
+    ["--radius-control", "控件"], ["--radius-overlay", "浮层和决策卡片"],
+    ["--radius-composer", "输入区"], ["--motion-fast", "控件反馈"], ["--focus-width", "焦点描边"],
+    ["--radius-inset", "表面内的预览内容"], ["--radius-pill", "胶囊或圆形动作"],
+  ] },
+] as const;

@@ -413,9 +413,8 @@ export function Composer({
           </ControlHintTooltip>
         ) : running ? (
           <ControlHintTooltip title="发送" shortcut={prefs.sendShortcut === "enter" ? "Enter" : "⌘/Ctrl+Enter"}>
-            <Button type="button" size="icon-md" aria-label="发送" data-testid="chat-send-button"
+            <Button type="button" variant="composer" size="icon-md" aria-label="发送" data-testid="chat-send-button"
               disabled={disabled || (!text.trim() && !files.length && !comments.length && !skills.selected.length)}
-              className="composer-primary-action bg-foreground text-background hover:bg-foreground/90 disabled:bg-secondary disabled:text-foreground-subtlest disabled:opacity-100"
               onClick={event => void submit(api.current?.getMarkdown() ?? text, event.metaKey || event.ctrlKey)}>
               <SendMessageIcon className="size-5" />
             </Button>

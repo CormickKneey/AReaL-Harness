@@ -450,11 +450,11 @@ export function ChatPromptEditor({
               <ControlHintTooltip title={submitLabel} shortcut={enterSubmits ? "Enter" : "⌘/Ctrl+Enter"}>
                 <Button
                   type="submit"
+                  variant="composer"
                   size="icon-md"
                   disabled={submitDisabled}
                   data-testid={submitTestId ?? TID_CHAT_SEND_BUTTON}
                   aria-label={submitLabel}
-                  className="gap-1 bg-foreground text-ui-base text-background hover:bg-foreground/90 disabled:bg-secondary disabled:text-foreground-subtlest disabled:opacity-100"
                 >
                   {submitting ? <Spinner className="size-4" /> : <SendMessageIcon className="size-5" />}
                   <span className="sr-only">{submitLabel}</span>

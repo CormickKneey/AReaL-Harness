@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "design:dev": "vite --mode design-system --host 127.0.0.1 --open /design-system.html",
+    "design:build": "vite build --mode design-system"
   },
   "dependencies": {
     "@codemirror/commands": "6.11.0",

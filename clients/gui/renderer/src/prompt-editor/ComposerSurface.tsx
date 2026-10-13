@@ -1,4 +1,5 @@
 import type { ComponentProps, ReactNode } from "react";
+import "./ComposerSurface.css";
 import { cn } from "../components/lib/utils.js";
 
 /** The editor and actions belong to the host; this surface owns only their layout. */

@@ -1,4 +1,4 @@
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig, type Plugin, type UserConfig } from "vite";
 import { remoteStaticAssets } from "../scripts/remote-static-assets.mjs";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -17,19 +17,21 @@ const remoteShell: Plugin = {
     }
   },
 };
-export default defineConfig({
+export default defineConfig(({ mode }): UserConfig => ({
   base: "./",
-  plugins: [react(), tailwindcss(), remoteShell],
+  plugins: [react(), tailwindcss(), ...(mode === "design-system" ? [] : [remoteShell])],
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   build: {
-    outDir: "dist",
+    outDir: mode === "design-system" ? "../dist/design-system" : "dist",
     emptyOutDir: true,
     rollupOptions: {
-      input: {
+      input: mode === "design-system" ? {
+        design: fileURLToPath(new URL("./design-system.html", import.meta.url)),
+      } : {
         main: fileURLToPath(new URL("./index.html", import.meta.url)),
         remote: fileURLToPath(new URL("./remote.html", import.meta.url)),
       },
     },
     commonjsOptions: { include: [/node_modules/, /desktop-contract\.cjs$/] },
   },
-});
+}));
