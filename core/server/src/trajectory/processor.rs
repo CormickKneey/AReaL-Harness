@@ -368,7 +368,10 @@ mod drop_counter_tests {
         );
         let mut changed = config.clone();
         changed.source_revision = "different-config-revision".into();
-        assert_eq!(super::super::health::error(&changed), None);
+        assert_eq!(
+            super::super::health::error(&changed),
+            Some("capture_initialization_failed")
+        );
 
         std::fs::remove_dir(dir.path().join("installation.json")).unwrap();
         let restarted = Processor::new(&config).unwrap();

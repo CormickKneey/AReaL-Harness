@@ -74,10 +74,13 @@ fn snapshot(root: &Path) -> Result<Option<Snapshot>> {
 }
 
 fn identity(config: &TrajectoryConfig) -> String {
-    // 摘要同时绑定配置归属、版本和目的地；不保存路径、请求头或底层错误文本。
+    // 与部署兼容性使用同一有效设置；模型或注释修订不能掩盖仍存活 Core 的采集故障。
+    // 原文件版本只参与写入防过期，不是故障身份；摘要不保存路径或凭据正文。
     format!(
         "{:x}",
-        Sha256::digest(serde_json::to_vec(config).expect("trajectory configuration serializes"))
+        Sha256::digest(
+            serde_json::to_vec(&config.diagnostic()).expect("trajectory configuration serializes")
+        )
     )
 }
 
@@ -129,17 +132,21 @@ impl CaptureHealth {
     fn persist_inner(&self, config: &TrajectoryConfig, state: u8) -> Result<()> {
         let _lock = queue::lock(&config.spool_dir, ".queue.lock", false)?
             .context("capture_diagnostic_busy")?;
-        if let Some(path) = &config.source_file {
+        let control = persisted_control(&config.spool_dir)?;
+        // 同一采集配置的活动故障必须能继续补写，模型或注释修订不能永久饿死诊断。
+        // 这里只写健康快照，不更新控制；成功清理或没有控制快照时仍要求原文件版本。
+        let failure_scope = control.is_some() && failure(state).is_some();
+        if !failure_scope && let Some(path) = &config.source_file {
             anyhow::ensure!(
                 source_revision(path)? == config.source_revision,
                 "capture_diagnostic_expired"
             );
         }
-        if let Some(control) = persisted_control(&config.spool_dir)? {
+        if let Some(control) = control {
             anyhow::ensure!(
                 owns_control(config, &control)
-                    && control.source_revision == config.source_revision
-                    && same_settings(config, &control),
+                    && same_settings(config, &control)
+                    && (failure_scope || control.source_revision == config.source_revision),
                 "capture_diagnostic_expired"
             );
         }
@@ -163,7 +170,7 @@ impl CaptureHealth {
                     error,
                 });
             } else {
-                // 超过固定上限时保持保守告警；配置版本变化前不能证明遗漏的 Core 已恢复。
+                // 超过固定上限时保持保守告警；有效采集设置变化前不能证明遗漏的 Core 已恢复。
                 snapshot.overflow = true;
             }
         }
@@ -210,6 +217,183 @@ pub(super) fn error(config: &TrajectoryConfig) -> Option<&'static str> {
 mod tests {
     use super::*;
 
+    fn file_config(root: &Path, model: &str, comment: &str, endpoint: &str) -> TrajectoryConfig {
+        let path = root.join("config.toml");
+        std::fs::write(
+            &path,
+            format!(
+                "schema_version=2\n# {comment}\n[model]\nname='{model}'\n[trajectory]\nenabled=true\nendpoint='{endpoint}'\nspool_dir='spool'\n"
+            ),
+        )
+        .unwrap();
+        areal_config::load_management_config(&areal_config::ConfigInputs {
+            cwd: root.into(),
+            homedir: Some(root.into()),
+            config_file: Some(path),
+            overrides: areal_config::ConfigOverrides {
+                model_endpoint: Some("http://127.0.0.1:9/v1/chat/completions".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .unwrap()
+        .trajectory
+    }
+
+    #[test]
+    fn file_model_and_comment_edits_keep_live_capture_failure_visible() {
+        use opentelemetry_sdk::logs::LogProcessor;
+        let _active = ACTIVE_TEST_LOCK.lock().unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let original = file_config(directory.path(), "first", "initial", "http://127.0.0.1:1");
+        configure(&original).unwrap();
+        // 用真实初始化文件错误终止采集线程；存活的 Core 状态仍由同一个 health 持有。
+        std::fs::create_dir(original.spool_dir.join("installation.json")).unwrap();
+        let failed = CaptureHealth::new(&original);
+        failed.activate();
+        let processor =
+            super::super::processor::Processor::with_health(&original, failed.clone()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while snapshot(&original.spool_dir).unwrap().is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "failure not persisted"
+            );
+            failed.persist(&original);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let saved = std::fs::read(original.spool_dir.join("capture-status.json")).unwrap();
+        for (model, comment) in [("first", "comment edit"), ("second", "comment edit")] {
+            let current = file_config(directory.path(), model, comment, "http://127.0.0.1:1");
+            assert_ne!(original.source_revision, current.source_revision);
+            assert!(same_settings(&original, &current));
+            assert_eq!(error(&current), Some("capture_initialization_failed"));
+            assert_eq!(status(&current).unwrap()["state"], "degraded");
+            // 独立 CLI/GUI 没有当前 Core 内存态，也必须继续看见已经保存的故障。
+            *ACTIVE.lock().unwrap() = None;
+            assert_eq!(error(&current), Some("capture_initialization_failed"));
+            assert_eq!(status(&current).unwrap()["state"], "degraded");
+            failed.activate();
+        }
+
+        let changed = file_config(directory.path(), "second", "changed", "http://127.0.0.1:2");
+        configure(&changed).unwrap();
+        assert_eq!(error(&changed), None);
+        failed.initialized();
+        failed.persist(&original);
+        assert_eq!(
+            std::fs::read(original.spool_dir.join("capture-status.json")).unwrap(),
+            saved,
+            "old configuration must not overwrite the new destination's diagnostic scope"
+        );
+        let mut disabled = original.clone();
+        disabled.enabled = false;
+        assert_eq!(error(&disabled), None);
+        processor
+            .shutdown_with_timeout(std::time::Duration::from_millis(200))
+            .unwrap();
+    }
+
+    #[test]
+    fn failed_diagnostic_retries_after_model_edit_without_changing_control() {
+        let _active = ACTIVE_TEST_LOCK.lock().unwrap();
+        *ACTIVE.lock().unwrap() = None;
+        for apply_current in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let original = file_config(directory.path(), "first", "initial", "http://127.0.0.1:1");
+            configure(&original).unwrap();
+            let failed = CaptureHealth::new(&original);
+            failed.thread_unavailable();
+            queue::fail_next_write("capture-status.json".into());
+            failed.persist(&original);
+            assert!(snapshot(&original.spool_dir).unwrap().is_none());
+
+            let current = file_config(
+                directory.path(),
+                "second",
+                "new comment",
+                "http://127.0.0.1:1",
+            );
+            if apply_current {
+                configure(&current).unwrap();
+            }
+            let control = std::fs::read(current.spool_dir.join("control.json")).unwrap();
+            failed.persist(&original);
+            // 不注册 ACTIVE，独立状态读取必须能看见后台迟到的故障补写。
+            assert_eq!(error(&current), Some("capture_thread_unavailable"));
+            assert_eq!(status(&current).unwrap()["state"], "degraded");
+            assert_eq!(
+                std::fs::read(current.spool_dir.join("control.json")).unwrap(),
+                control
+            );
+
+            let saved = std::fs::read(current.spool_dir.join("capture-status.json")).unwrap();
+            let stale_ready = CaptureHealth::new(&original);
+            stale_ready.initialized();
+            stale_ready.persist(&original);
+            assert_eq!(
+                std::fs::read(current.spool_dir.join("capture-status.json")).unwrap(),
+                saved,
+                "model-only edits must not authorize stale success to clear a failure"
+            );
+            let mut foreign = current.clone();
+            foreign.source_id = "another-configuration".into();
+            let foreign_failure = CaptureHealth::new(&foreign);
+            foreign_failure.initialization_failed();
+            foreign_failure.persist(&foreign);
+            assert_eq!(
+                std::fs::read(current.spool_dir.join("capture-status.json")).unwrap(),
+                saved
+            );
+
+            let mut disabled = current.clone();
+            disabled.enabled = false;
+            configure(&disabled).unwrap();
+            let stale_failure = CaptureHealth::new(&original);
+            stale_failure.initialization_failed();
+            stale_failure.persist(&original);
+            assert_eq!(
+                std::fs::read(current.spool_dir.join("capture-status.json")).unwrap(),
+                saved
+            );
+            assert_eq!(error(&disabled), None);
+
+            let changed = file_config(
+                directory.path(),
+                "second",
+                "new destination",
+                "http://127.0.0.1:2",
+            );
+            configure(&changed).unwrap();
+            let snapshot = std::fs::read(current.spool_dir.join("capture-status.json")).unwrap();
+            let stale = CaptureHealth::new(&original);
+            stale.initialization_failed();
+            stale.persist(&original);
+            assert_eq!(
+                std::fs::read(current.spool_dir.join("capture-status.json")).unwrap(),
+                snapshot
+            );
+            assert_eq!(error(&changed), None);
+        }
+    }
+
+    #[test]
+    fn missing_control_keeps_file_revision_fence_for_thread_failure() {
+        let directory = tempfile::tempdir().unwrap();
+        let original = file_config(directory.path(), "first", "initial", "http://127.0.0.1:1");
+        let failed = CaptureHealth::new(&original);
+        failed.thread_unavailable();
+        file_config(
+            directory.path(),
+            "second",
+            "new comment",
+            "http://127.0.0.1:1",
+        );
+        failed.persist(&original);
+        assert!(snapshot(&original.spool_dir).unwrap().is_none());
+        assert!(persisted_control(&original.spool_dir).unwrap().is_none());
+    }
+
     #[test]
     fn diagnostic_retries_after_write_failure_and_cannot_overwrite_new_control() {
         let directory = tempfile::tempdir().unwrap();
@@ -247,14 +431,14 @@ mod tests {
             saved
         );
         assert_eq!(error(&config), Some("capture_thread_unavailable"));
-        assert_eq!(error(&stale), None);
+        assert_eq!(error(&stale), Some("capture_thread_unavailable"));
     }
 
     #[test]
     fn healthy_core_does_not_hide_another_live_core_failure() {
         let _active = ACTIVE_TEST_LOCK.lock().unwrap();
         let directory = tempfile::tempdir().unwrap();
-        let config = super::super::tests::config(directory.path());
+        let config = file_config(directory.path(), "first", "initial", "http://127.0.0.1:1");
         configure(&config).unwrap();
         // 独立存活进程表示共用队列的另一个 Core，无需启动 Agent 或发送网络请求。
         let mut process = std::process::Command::new("sleep")
@@ -266,6 +450,13 @@ mod tests {
         failed.initialization_failed();
         failed.persist(&config);
 
+        let config = file_config(
+            directory.path(),
+            "second",
+            "model edit",
+            "http://127.0.0.1:1",
+        );
+        configure(&config).unwrap();
         let healthy = CaptureHealth::new(&config);
         healthy.activate();
         healthy.initialized();
