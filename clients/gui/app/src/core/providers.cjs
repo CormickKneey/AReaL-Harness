@@ -54,7 +54,7 @@ class AppProviders {
           upstreamHttpStatus, upstreamContentType, localHttpStatus, outcome, failureKind, streamFailureReason, code, state, phase, httpStatus, requestId, adjustments }) + '\n', { mode: 0o600 });
       } : undefined;
       const service = new CoreSubscription({ store: this.openaiStore, token: this.openaiToken, port: this.transport.port, onListen: async port => { this.transport.port = port; await this.backend.save('subscription-transport.json', this.transport); }, kind: 'openai', onRequest });
-      service.account.activateAuthorized = async id => {
+      service.account.activateAuthorized = async (id, activate) => {
         if (this.backend.hasWork() || this.backend.activeCommands || this.backend.providerUpdating || this.backend.resourcesUpdating || this.backend.starting.size) return false;
         this.backend.providerUpdating = true;
         try {
@@ -62,7 +62,7 @@ class AppProviders {
             if (project.service && !project.client?.ready) return false;
             if (project.client?.ready && !(await project.client.request('areal/server/status')).restartSafe) return false;
           }
-          await service.account.directory.activate(id);
+          await activate();
           return true;
         } finally { this.backend.providerUpdating = false; }
       };

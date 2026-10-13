@@ -149,24 +149,23 @@ export class OpenAIAccount extends ChatGPTAccount {
     if (!newAccount && !snapshot.records[target]) throw new ProviderError('account_changed', { phase: 'account' })
     this.loginStore = this.directory.view(target)
     this.onAuthorized = async () => {
-      this.busy = true
-      this.changed()
-      try {
-        // 新授权写在目标注册下；切换前先确认旧账号的轮换或终止标记已落盘。
-        if ((await this.directory.snapshot()).activeId !== target) await this.settleRotation()
-        else {
-          // 同一注册的新授权已经成功写入，明确取代其旧轮换与终止状态。
-          this.pendingRotation = null; this.terminalFailure = null; this.failure = null
-        }
-        if (this.activateAuthorized) {
-          const active = await this.activateAuthorized(target)
-          if (!active) this.error = '新账号已保存；请等待活动任务结束后选择该账号。'
-          return active
-        }
-        if (this.canActivate && !await this.canActivate()) { this.error = '新账号已保存；请等待活动任务结束后选择该账号。'; return false }
-        await this.directory.activate(target)
-        return true
-      } finally { this.busy = false }
+      const sameAccount = (await this.directory.snapshot()).activeId === target
+      // 同一注册的新授权已落盘，取代其旧轮换；保存未激活账号不广播当前会话变化。
+      if (sameAccount) { this.pendingRotation = null; this.terminalFailure = null; this.failure = null }
+      const activate = async () => {
+        this.busy = true
+        this.changed()
+        try {
+          if (!sameAccount) await this.settleRotation()
+          await this.directory.activate(target)
+          return true
+        } finally { this.busy = false }
+      }
+      // Host 先在准入锁内检查活动任务，再调用确实切换会话的步骤。
+      const active = this.activateAuthorized ? await this.activateAuthorized(target, activate)
+        : this.canActivate && !await this.canActivate() ? false : await activate()
+      if (!active) this.error = '新账号已保存；请等待活动任务结束后选择该账号。'
+      return active
     }
     return super.begin()
   }

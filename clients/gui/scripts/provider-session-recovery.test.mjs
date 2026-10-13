@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { OpenAIAccount } from "../packages/chatgpt-provider/openai.js";
+import { AppProviders } from "../app/src/core/providers.cjs";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const grant = (id) => ({
   kind: "grant",
@@ -192,5 +196,105 @@ test("saved reauthorization of the active registration replaces its failed old r
     assert.equal(f.exchanges(), 1);
   } finally {
     await f.account.close();
+  }
+});
+
+test("new authorization saved during an old-account Core request never aborts that request", async () => {
+  const home = await mkdtemp(join(tmpdir(), "provider-active-auth-"));
+  let running = false,
+    authorize,
+    finishRequest,
+    requestStarted,
+    inferenceSignal;
+  const authorized = new Promise((resolve) => {
+    authorize = resolve;
+  });
+  const finished = new Promise((resolve) => {
+    finishRequest = resolve;
+  });
+  const started = new Promise((resolve) => {
+    requestStarted = resolve;
+  });
+  const backend = {
+    home,
+    hasWork: () => running,
+    activeCommands: 0,
+    providerUpdating: false,
+    resourcesUpdating: false,
+    starting: new Set(),
+    projects: new Map(),
+    onChange() {},
+    save: async (name, value) => writeFile(join(home, name), JSON.stringify(value)),
+  };
+  // 该跨层 fixture 使用隔离测试记录；安全存储替身不代表真实钥匙串。
+  const providers = new AppProviders(backend, {
+    isEncryptionAvailable: () => true,
+    encryptString: (value) => Buffer.from(value),
+    decryptString: (value) => value.toString(),
+  });
+  providers.transport = { port: 0 };
+  providers.openaiToken = "fixture-transport";
+  const service = await providers.openai();
+  try {
+    await service.account.directory.view().modifyRecord("", () => grant("old"));
+    service.account.oauth = async (_action, { onAuth }) => {
+      onAuth("https://auth.openai.com/fixture");
+      return authorized;
+    };
+    service.network.fetch = async (_url, { signal }) => {
+      inferenceSignal = signal;
+      running = true;
+      requestStarted();
+      await Promise.race([
+        finished,
+        new Promise((_, reject) =>
+          signal.addEventListener(
+            "abort",
+            () => reject(new DOMException("fixture abort", "AbortError")),
+            { once: true },
+          ),
+        ),
+      ]);
+      return new Response(
+        'event: response.completed\ndata: {"type":"response.completed","response":{"status":"completed"}}\n\n',
+        { headers: { "content-type": "text/event-stream" } },
+      );
+    };
+    await service.account.begin({ newAccount: true });
+    const completion = service.account.attempt.done;
+    service.catalog.models = [{ id: "fixture-model" }];
+    await service.ready();
+    const response = fetch(service.endpoint, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${service.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "fixture-model", input: [], stream: true }),
+    });
+    const result = response.then(async (r) => ({ status: r.status, body: await r.text() }));
+    await started;
+    let changes = 0;
+    service.account.on("changed", () => changes++);
+    const revision = service.account.revision;
+    authorize(grant("added").payload);
+    await completion;
+    assert.equal((await service.account.directory.public()).activeAccountId, "primary");
+    assert.equal(
+      inferenceSignal.aborted,
+      false,
+      "production CoreSubscription changed listener must not cancel the old request",
+    );
+    assert.equal(changes, 0, "saving an inactive account does not broadcast a session change");
+    assert.equal(service.account.revision, revision);
+    assert.equal(service.catalog.models[0].id, "fixture-model");
+    assert.equal(
+      (await service.account.directory.public()).accounts.find((a) => !a.active).state,
+      "saved",
+    );
+    finishRequest();
+    assert.equal((await result).status, 200);
+    running = false;
+  } finally {
+    finishRequest();
+    await providers.close();
+    await rm(home, { recursive: true, force: true });
   }
 });
