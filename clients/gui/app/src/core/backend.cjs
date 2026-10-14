@@ -743,6 +743,10 @@ class CoreBackend {
     const taskReply = entry.method === 'areal/channel/reply' && entry.remote.method === 'task.question.reply';
     const taskPause = entry.method === 'areal/task/pause' && entry.remote.method === 'task.pause';
     let receipt;
+    if (entry.method === 'areal/goal/create' && !error) {
+      if (typeof result?.goal?.id !== 'string' || !Number.isSafeInteger(result.revision)) throw new Error('目标受理结果不完整');
+      receipt = {goalId:result.goal.id,revision:result.revision};
+    }
     if (taskPause && !error) {
       if (result?.id !== entry.params.taskId || result.paused !== true || result.runs?.at(-1)?.id !== entry.params.expectedRunId
         || !Number.isSafeInteger(result.revision) || result.revision !== entry.params.expectedRevision + 1) throw new Error('Task 暂停受理结果不完整');
@@ -782,13 +786,13 @@ class CoreBackend {
     }
     if (this.awaitingResponses.has(entry) || !project.client?.ready || project.client.closed || !project.model?.state?.connected)
       return entry;
-    if (!['areal/thread/start', 'areal/turn/start'].includes(entry.method)) return entry;
+    if (!['areal/thread/start', 'areal/turn/start', 'areal/turn/enqueue', 'areal/thread/configure', ...['update','remove','reorder','pause','resume','steer'].map(op => `areal/queue/${op}`), ...['create','pause','resume','clear'].map(op => `areal/goal/${op}`)].includes(entry.method)) return entry;
     const client = project.client, generation = project.service?.generation;
     try {
       beforeReceipt?.(entry);
       // 精确查询原生键，不打开 Thread、不配置、不重放；离线只返回已有日志。
       const value = await client.request('areal/request/read', { requestId: entry.params.requestId,
-        ...(entry.method === 'areal/turn/start' ? { threadId: entry.params.threadId } : {}) });
+        ...(entry.method !== 'areal/thread/start' ? { threadId: entry.params.threadId } : {}) });
       if (project.client !== client || project.service?.generation !== generation) return entry;
       const receipt = value.data?.find(value => value.method === entry.method);
       const response = entry.method === 'areal/thread/start' && typeof receipt?.threadId === 'string'
@@ -803,7 +807,7 @@ class CoreBackend {
   async submitRemote(project, method, parameters, remote, dispatch) {
     const operationId = randomUUID();
     // interrupt 无请求键，respond 的 requestId 是交互领域标识；日志 UUID 不得覆盖它们。
-    const entry = { method, operationId, params: { ...structuredClone(parameters), ...(['turn/interrupt', 'areal/interaction/respond'].includes(method) ? {} : { requestId: operationId }) }, remote: structuredClone(remote) };
+    const entry = { method, operationId, params: { ...structuredClone(parameters), ...(['turn/interrupt', 'turn/steer', 'areal/interaction/respond'].includes(method) ? {} : { requestId: operationId }) }, remote: structuredClone(remote) };
     if (Buffer.byteLength(JSON.stringify(entry)) > 72 * 1024)
       throw Object.assign(new Error('提交记录超过预算'), { code: 'LIMIT_EXCEEDED' });
     let original;

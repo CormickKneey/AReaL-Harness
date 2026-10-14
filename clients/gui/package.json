@@ -37,6 +37,7 @@
     "test:remote-command": "node scripts/remote-command-contract.mjs",
     "test:remote-command-e2e": "node scripts/remote-session-commands-e2e.mjs",
     "test:remote-session": "node scripts/remote-session-contract.mjs",
+    "test:remote-session-body": "node --test scripts/remote-session-body.test.mjs scripts/remote-session-body-browser.test.mjs",
     "test:remote-session-e2e": "node scripts/remote-session-observation-e2e.mjs",
     "test:remote-work-overview": "node scripts/remote-work-overview-e2e.mjs",
     "test:remote-interaction": "node scripts/remote-interaction-contract.mjs",

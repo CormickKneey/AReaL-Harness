@@ -390,6 +390,8 @@ async function observe(remote, socket, owner) {
                                   ? ["filter", "cursor", "limit"]
                                   : request.method === "session.open"
                                     ? ["threadId"]
+                                    : request.method === "session.body"
+                                      ? ["threadId", "turnId", "itemId", "cursor"]
                                     : request.method === "session.history"
                                       ? ["threadId", "cursor", "limit"]
                                       : request.method === "subscription.close"
@@ -467,6 +469,7 @@ async function observe(remote, socket, owner) {
                     typeof id !== "string" ||
                     id.length < 1 ||
                     id.length > 128 ||
+                    (request.method === "session.body" && [params.turnId, params.itemId].some(value => typeof value !== "string" || !value.length || value.length > 128)) ||
                     (params.cursor !== undefined &&
                         (typeof params.cursor !== "string" || params.cursor.length > 1024)) ||
                     (params.limit !== undefined &&
@@ -486,6 +489,8 @@ async function observe(remote, socket, owner) {
                             params.threadId,
                             publish,
                         );
+                    else if (request.method === "session.body")
+                        await observers.body(connection, request.context.projectId, params, publish);
                     else if (request.method === "session.history")
                         await observers.history(
                             connection,
@@ -505,7 +510,7 @@ async function observe(remote, socket, owner) {
                         publish({ closed: observers.release(connectionId, params.subscriptionId) });
                     }
                 } catch (error) {
-                    secure.send(fail(request.id, error.code ?? "CORE_UNAVAILABLE", error.message));
+                    secure.send(fail(request.id, error.code ?? "CORE_UNAVAILABLE", request.method === "session.body" ? "正文读取失败，请重新读取或打开会话" : error.message));
                 }
                 continue;
             }

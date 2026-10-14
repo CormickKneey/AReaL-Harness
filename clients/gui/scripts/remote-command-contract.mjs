@@ -359,6 +359,18 @@ await check("send-authoritative-ownership-precedes-cached-busy-without-writes", 
   assert.deepEqual(f.project.outcomes, {});
   assert.deepEqual(results, ["TASK_CONTROL_REQUIRED", "TURN_BUSY", "TASK_CONTROL_REQUIRED"]);
 });
+await check("paused-empty-queue-allows-explicit-send-but-pending-queue-stays-blocked", async (f) => {
+  const send = (queue) => sessionCommand(f.remote, f.connection,
+    f.request("session.send", {threadId:"t",expectedConfigRevision:1,text:"explicit follow-up"}),
+    value => value, async () => ({ownership:{kind:"ordinary"},status:"idle",configRevision:1,queue}));
+  const accepted = await send({paused:true,pendingCount:0});
+  assert.equal(accepted.admissionState,"accepted");
+  const calls = f.calls.length;
+  for (const paused of [true,false]) {
+    await assert.rejects(send({paused,pendingCount:1}),{code:"TARGET_CHANGED"});
+    assert.equal(f.calls.length,calls,"pending queue must never reach native dispatch");
+  }
+});
 await check("utf8-invalid-grants-capabilities-and-configuration", async (f) => {
   const params = { threadId: "t", expectedConfigRevision: 1, text: "界".repeat(21846) };
   await assert.rejects(f.run(f.request("session.send", params)), { code: "INVALID_PARAMS" });

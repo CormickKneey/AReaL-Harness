@@ -1,4 +1,5 @@
 "use strict";
+const { createHash } = require("node:crypto");
 // Remote 仅保留可丢弃、有界的显示投影；完整历史与工具执行始终归 Core。
 const ITEM_LIMIT = 100,
     TEXT_BYTES = 1024,
@@ -52,24 +53,63 @@ function itemView(item) {
             .map((v) => v.text);
     }
     Object.assign(value, preview(parts));
+    const body = publicBody(item);
+    if (body) {
+        const encoded = JSON.stringify(body);
+        if (Buffer.byteLength(encoded) <= 512) value.body = body;
+        value.bodyDetail = value.body
+            ? { state: "inline" }
+            : { state: "available", revision: createHash("sha256").update(encoded).digest("hex") };
+    }
     if (
         item.type === "agentMedia" ||
         (item.type === "userMessage" && (item.content ?? []).some((v) => v.type !== "text")) ||
         (item.type === "dynamicToolCall" &&
             (item.contentItems ?? []).some((v) => v.type !== "inputText" && v.type !== "text"))
     ) {
-        value.bodyDetail = { state: "unavailable", reason: "mediaRequiresDesktop" };
+        value.mediaUnavailable = true;
+        if (!body) value.bodyDetail = { state: "unavailable", reason: "mediaRequiresDesktop" };
         value.truncated = true;
     }
     return value;
 }
+// Only public conversation fields; no modelContext, credentials, configuration,
+// instruction snapshots, hook payloads or arbitrary native object passthrough.
+function publicBody(item) {
+    const body = pick(item, ["id", "type"]);
+    if (item.type === "agentMessage") body.text = item.text ?? "";
+    else if (item.type === "userMessage")
+        body.content = (item.content ?? []).filter(v => v.type === "text").map(v => pick(v, ["type", "text"]));
+    else if (item.type === "reasoning") {
+        body.summary = item.summary ?? [];
+        body.content = item.content ?? [];
+    } else if (item.type === "dynamicToolCall") {
+        Object.assign(body, pick(item, ["tool", "arguments", "status", "success"]));
+        body.contentItems = (item.contentItems ?? []).filter(v => ["inputText", "text"].includes(v.type)).map(v => pick(v, ["type", "text"]));
+        body.execution = pick(item.execution, ["outcome", "exitCode", "startedAt", "completedAt", "durationMs"]);
+    } else return null;
+    return body;
+}
 function turnView(turn, items) {
-    return { ...pick(turn, ["id", "status", "startedAt", "completedAt"]), items };
+    return {
+        ...pick(turn, ["id", "status", "startedAt", "completedAt", "durationMs"]),
+        // Shared GUI Messages uses Core's origin, never the input wording, to
+        // distinguish scheduler continuations from user-authored messages.
+        ...(turn.goal ? { goal: pick(turn.goal, ["origin", "sequence"]) } : {}),
+        items,
+    };
 }
 function queueView(queue) {
     return {
         pendingCount: (queue?.items ?? []).filter((v) => v.status === "pending").length,
         paused: queue?.paused === true,
+        revision: queue?.revision ?? 0,
+        complete: (queue?.items ?? []).length <= 128,
+        items: (queue?.items ?? []).filter(v => v.status === "pending").slice(0,128).map(item => {
+            const body = preview((item.input ?? []).filter(part => part.type === "text").map(part => part.text));
+            return { ...pick(item, ["id", "status"]), input: [{type:"text", text:body.preview}], truncated:body.truncated,
+                hasAttachments:(item.input ?? []).some(part => part.type !== "text") };
+        }),
     };
 }
 function interactionView(item) {
@@ -176,6 +216,16 @@ function historyPage(thread, scope, cursor, limit = ITEM_LIMIT) {
         range: "coreAccessible",
     };
 }
+function configurationView(config) {
+    if (!config) return null;
+    return { ...pick(config,["revision","readOnly"]), model:config.model == null ? null : pick(config.model,["providerId","modelId"]), parameters:pick(config.parameters,["reasoningEffort"]),
+      profile:config.profile == null ? null : pick(config.profile,["id","revision","readOnly"]), options:pick(config.options,["readOnly","appendInstructions","approvalTools","preapprovedTools"]) };
+}
+function goalView(state) {
+    if (!state) return {revision:0,eventSequence:0,goal:null};
+    const goal=state.goal;
+    return {revision:state.revision,eventSequence:state.eventSequence,goal:goal?{...pick(goal,["id","status","reason","settling","waitingForInput","waitingForAgents","waitingForCapacity","limits","usage"]),objective:preview([goal.objective],4096).preview}:null};
+}
 function snapshot(thread, scope, ownership) {
     const page = historyPage(thread, scope);
     // 无正文的活动 Turn 也必须可见，不能把它当作空闲。
@@ -190,6 +240,9 @@ function snapshot(thread, scope, ownership) {
         threadId: thread.id,
         title: preview([thread.preview], 512).preview,
         configRevision: thread.desktop?.configuration?.revision ?? null,
+        configuration: configurationView(thread.desktop?.configuration),
+        goals: goalView(thread.goals),
+        goalControlAllowed: !thread.parentThreadId && !thread.goalOwner && thread.source !== "nativeTaskAgent",
         ownership: pick(ownership, ["kind", "taskId", "runId"]),
         activeTurnId:
             [...(thread.turns ?? [])].reverse().find((v) => v.status === "inProgress")?.id ?? null,
@@ -242,6 +295,7 @@ function constrain(state, scope) {
 function update(state, method, params, scope) {
     if (method === "areal/thread/configured") {
         state.configRevision = params.configuration?.revision ?? state.configRevision;
+        state.configuration = configurationView(params.configuration);
         return true;
     }
     if (method === "areal/queue/updated") {
@@ -320,10 +374,13 @@ function update(state, method, params, scope) {
             item.textBytes = total;
             item.truncated = total > TEXT_BYTES;
             if (item.truncated)
-                item.bodyDetail = { state: "unavailable", reason: "desktopRequired" };
+                item.bodyDetail = { state: "available", revision: `stream:${total}` };
+            item.body = !item.truncated ? publicBody(item.type === "reasoning"
+                ? { ...item, summary: [item.preview], content: [] }
+                : { ...item, text: item.preview }) : undefined;
         }
     }
     constrain(state, scope);
     return true;
 }
-module.exports = { snapshot, update, historyPage, constrain, PAGE_BYTES, ITEM_LIMIT, TEXT_BYTES };
+module.exports = { snapshot, update, historyPage, constrain, publicBody, PAGE_BYTES, ITEM_LIMIT, TEXT_BYTES };

@@ -1,3 +1,4 @@
+import { SessionBodyReader } from '../renderer/remote-web/session-bodies.mjs';
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFile } from "node:fs/promises";
@@ -222,6 +223,7 @@ function page({
       this.onclose?.();
     }
   }
+  let guiAPI, guiView;
   const context = createContext({
     document,
     window,
@@ -239,6 +241,8 @@ function page({
     crypto,
     structuredClone,
     CommandState,
+  SessionBodyReader,
+  createRemoteWorkbench: api => { guiAPI = api; return { render(view) { guiView = view; } }; },
     acceptSessionMessage,
     BrowserState: class extends BrowserState {
       constructor(options) {
@@ -297,6 +301,8 @@ function page({
   return {
     db,
     drafts,
+    get guiAPI() { return guiAPI; },
+    get guiView() { return guiView; },
     element,
     calls,
     sockets,
@@ -485,11 +491,17 @@ async function connectedPage(options = {}) {
   await until(() => !p.element("session-create").disabled);
   return p;
 }
-function openThread(p) {
-  p.element("work-items")
-    .children[0].children.find((child) => child.textContent === "打开会话")
-    .click();
+async function openThread(p) {
+  await until(() => p.guiView?.groups.project?.rows.some(row => row.threadId));
+  const row = p.guiView.groups.project.rows.find(row => row.threadId);
+  await p.guiAPI.open("project", row.threadId);
 }
+async function openPause(p) {
+  await until(() => p.guiView?.groups.project?.rows.some(row => row.kind === "taskRun"));
+  const row = p.guiView.groups.project.rows.find(row => row.kind === "taskRun");
+  await p.guiAPI.pause("project", row);
+}
+
 test("forget fences a held locator transaction and cannot dispatch or resurrect credentials", async () => {
   const db = new IDBFactory(),
     gate = writeGate(db),
@@ -528,8 +540,8 @@ test("transaction failure prevents dispatch and leaves the user's draft in memor
     gate = writeGate(db),
     p = await connectedPage({ db });
   try {
-    openThread(p);
-    await until(() => p.element("session-title").textContent === "Session");
+    await openThread(p);
+    await until(() => p.guiView?.detail?.snapshot.title === "Session");
     p.element("session-draft").value = "do not lose this";
     p.element("session-draft").dispatchEvent({ type: "input" });
     gate.abort();
@@ -549,8 +561,8 @@ test("navigation during locator commit keeps the original target and sends nothi
     gate = writeGate(db),
     p = await connectedPage({ db });
   try {
-    openThread(p);
-    await until(() => p.element("session-title").textContent === "Session");
+    await openThread(p);
+    await until(() => p.guiView?.detail?.snapshot.title === "Session");
     p.element("session-draft").value = "original target";
     p.element("session-draft").dispatchEvent({ type: "input" });
     gate.arm();
@@ -635,7 +647,7 @@ test("reload recovers opted-in tab draft without sending or erasing it from an u
   const p = page({ db, drafts, hash: "" });
   try {
     await until(() => p.calls.some((call) => call.method === "command.read"));
-    openThread(p);
+    await openThread(p);
     await until(() => p.element("session-draft").value === "draft at reload");
     const query = p.calls.find((call) => call.method === "command.read");
     p.reply(query, {
@@ -709,8 +721,8 @@ test("one numeric storage failure after accepted receipt stays unknown until a r
     channel: null,
   });
   try {
-    openThread(p);
-    await until(() => p.element("session-title").textContent === "Session");
+    await openThread(p);
+    await until(() => p.guiView?.detail?.snapshot.title === "Session");
     p.element("session-draft").value = "keep until retirement commits";
     p.element("session-draft").dispatchEvent({ type: "input" });
     p.element("session-send").click();
@@ -869,12 +881,9 @@ function descendants(element) {
   return [element, ...element.children.flatMap(descendants)];
 }
 async function openTaskQuestion(p) {
-  await until(() =>
-    descendants(p.element("work-items")).some((value) => value.textContent === "审阅待处理事项"),
-  );
-  descendants(p.element("work-items"))
-    .find((value) => value.textContent === "审阅待处理事项")
-    .click();
+  await until(() => p.guiView?.groups.project?.rows.some(row => row.attentionRefs?.length));
+  const item = p.guiView.groups.project.rows.flatMap(row => row.attentionRefs ?? [])[0];
+  await p.guiAPI.attention("project", item);
   await until(() => p.element("attention-questions").children.length === 1);
   const input = p.element("attention-questions").children[0].children.at(-1);
   input.value = "B";
@@ -1041,12 +1050,7 @@ test("Task pause reviews original Run and requires explicit future-schedule conf
     },
   });
   try {
-    await until(() => p.element("work-items").children.length === 1);
-    const button = p
-      .element("work-items")
-      .children[0].children.find((x) => x.textContent === "审阅暂停 Task");
-    assert.ok(button, "Task Run exposes explicit pause review");
-    button.click();
+    await openPause(p);
     await until(() => p.calls.some((x) => x.method === "task.read"));
     await tick();
     assert.equal(p.element("task-pause-confirm").disabled, true);
@@ -1120,9 +1124,7 @@ test("Task pause cannot confirm historical Run, absent guard or revoked pause gr
       },
     });
     try {
-      p.element("work-items")
-        .children[0].children.find((x) => x.textContent === "审阅暂停 Task")
-        .click();
+      await openPause(p);
       await until(() => p.calls.some((x) => x.method === "task.read"));
       await tick();
       p.element("task-pause-reviewed").checked = true;
@@ -1167,9 +1169,7 @@ async function pauseReviewPage(onPauseCall) {
       }
     },
   });
-  p.element("work-items")
-    .children[0].children.find((x) => x.textContent === "审阅暂停 Task")
-    .click();
+  await openPause(p);
   await until(() => p.calls.some((x) => x.method === "task.read"));
   await tick();
   return p;

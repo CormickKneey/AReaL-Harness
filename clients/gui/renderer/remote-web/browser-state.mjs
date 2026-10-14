@@ -24,6 +24,7 @@ function validate(record) {
 const TARGET_FIELDS = Object.freeze({
   "session.create": [],
   "session.send": ["threadId"],
+  "session.control": ["threadId", "operation"],
   "turn.stop": ["threadId", "expectedTurnId"],
   "interaction.respond": ["threadId", "turnId", "interactionId"],
   "task.pause": ["taskId", "expectedRunId"],

@@ -1,3 +1,4 @@
+import { SessionBodyReader } from '../renderer/remote-web/session-bodies.mjs';
 import assert from "node:assert/strict";
 import { BrowserState } from "../renderer/remote-web/browser-state.mjs";
 import { CommandState } from "../renderer/remote-web/command-state.mjs";
@@ -40,7 +41,7 @@ const long = project({ ...toolItem, contentItems: [{ type: "inputText", text: "�
 assert.equal(long.preview, "界".repeat(341));
 assert.equal(long.textBytes, 1500);
 assert.equal(long.truncated, true);
-assert.equal(long.bodyDetail.state, "unavailable");
+assert.equal(long.bodyDetail.state, "available");
 const media = project({
   ...toolItem,
   contentItems: [
@@ -49,7 +50,26 @@ const media = project({
   ],
 }).turns[0].items[0];
 assert.equal(media.preview, "native tool result");
-assert.equal(media.bodyDetail.state, "unavailable");
+assert.equal(media.bodyDetail.state, "inline");
+assert.equal(media.mediaUnavailable, true);
+
+// Shared GUI Messages must distinguish Core-authored continuation from user text.
+const continuation = {
+  id: "goal-turn", status: "completed", durationMs: 3500,
+  goal: { goalId: "goal", origin: "continuation", sequence: 3, privateContext: "PRIVATE" },
+  instructionSnapshot: "PRIVATE", configuration: { credentialRef: "PRIVATE" },
+  items: [{ id: "goal-input", type: "userMessage", content: [{ type: "text", text: "Continue the active goal" }] }],
+};
+const continued = snapshot({ id: "t", turns: [continuation] }, scope, { kind: "ordinary" });
+assert.deepEqual(continued.turns[0].goal, { origin: "continuation", sequence: 3 });
+assert.equal(continued.turns[0].durationMs, 3500);
+assert.ok(!JSON.stringify(continued.turns).includes("PRIVATE"));
+const streamed = snapshot({ id: "t", turns: [] }, scope, { kind: "ordinary" });
+for (const method of ["turn/started", "turn/completed"]) {
+  update(streamed, method, { threadId: "t", turn: continuation }, scope);
+  assert.deepEqual(streamed.turns[0].goal, continued.turns[0].goal);
+}
+assert.equal(project(continuation.items[0]).turns[0].goal, undefined);
 
 // 整个生产入口运行在 DOM/加密传输边界替身上；通过真实按钮和消息分发复现延迟响应。
 const { readFile } = await import("node:fs/promises");
@@ -164,6 +184,7 @@ class Socket {
     this.onclose?.();
   }
 }
+let guiAPI;
 const context = createContext({
   document: {
     hidden: false,
@@ -181,6 +202,8 @@ const context = createContext({
     }
   },
   CommandState,
+  SessionBodyReader,
+  createRemoteWorkbench: (api) => { guiAPI = api; return {render() {}}; },
   location: { hash: "#host=host", pathname: "/remote", protocol: "http:", host: "localhost" },
   history: { replaceState() {} },
   TextEncoder,
@@ -224,10 +247,7 @@ await element("connect").click();
 const flush = async () => {
   for (let n = 0; n < 12; n++) await Promise.resolve();
 };
-const open = () =>
-  element("work-items")
-    .children[0].children.find((child) => child.textContent === "打开会话")
-    .click();
+const open = async () => { void guiAPI.open("p", "t"); await flush(); };
 const lastOpen = () => calls.filter((call) => call.method === "session.open").at(-1);
 const closes = () => calls.filter((call) => call.method === "subscription.close");
 const response = (subscriptionId) => ({
@@ -244,11 +264,8 @@ const response = (subscriptionId) => ({
     history: {},
   },
 });
-assert.ok(
-  element("work-items").children.length,
-  `工作列表未就绪: ${element("status").textContent}; ${element("work-error").textContent}`,
-);
-open();
+assert.equal(typeof guiAPI.open, "function", "生产 Remote 工作台必须提供权威会话入口");
+await open();
 const delayed = lastOpen();
 element("session-close").click();
 reply(delayed, response("abandoned"));
@@ -259,10 +276,10 @@ assert.equal(closes()[0].params.subscriptionId, "abandoned");
 assert.equal(closes()[0].context.projectId, "p");
 
 // 旧请求迟到不能释放随后打开的新订阅。
-open();
+await open();
 const oldOpen = lastOpen();
 element("session-close").click();
-open();
+await open();
 const newOpen = lastOpen();
 reply(newOpen, response("replacement"));
 await flush();
@@ -284,7 +301,7 @@ const pendingTimer = () => {
   assert.equal(requestTimers().length, 1);
   return requestTimers()[0];
 };
-open();
+await open();
 const timedOpen = lastOpen();
 const timedSocket = sockets.at(-1);
 const timeout = pendingTimer();
@@ -306,7 +323,7 @@ assert.equal(element("host").textContent, "");
 // 已排队的旧连接超时回调在重连后执行，只能关闭旧连接。
 assert.equal(requestTimers().length, 0);
 await element("connect").click();
-open();
+await open();
 const oldTimer = pendingTimer();
 const originatingSocket = sockets.at(-1);
 await element("connect").click();
@@ -500,8 +517,10 @@ function buttonDeep(node, label) {
     if (result) return result;
   }
 }
-const reviewButton = buttonDeep(element("work-items"), "审阅待处理事项");
-assert.ok(reviewButton, "production overview must open authoritative attention detail");
+await open();
+const attentionBaseline=response("attention-baseline");attentionBaseline.snapshot.attentionRefs=row.attentionRefs;reply(lastOpen(),attentionBaseline);await flush();
+const reviewButton = buttonDeep(element("session-attention"), "审阅待处理事项");
+assert.ok(reviewButton, "production Session must open authoritative attention detail");
 reviewButton.click();
 await flush();
 const lastAttention = () => calls.filter((c) => c.method === "attention.read").at(-1);
@@ -606,13 +625,13 @@ row.attentionRefs = [
     summary: "Core question",
   },
 ];
-element("work-refresh").click();
-await flush();
-buttonDeep(element("work-items"), "审阅待处理事项").click();
+await open();
+const questionBaseline=response("question-baseline");questionBaseline.snapshot.attentionRefs=row.attentionRefs;reply(lastOpen(),questionBaseline);await flush();
+buttonDeep(element("session-attention"), "审阅待处理事项").click();
 await flush();
 const delayedReview = lastAttention();
 element("attention-close").click();
-buttonDeep(element("work-items"), "审阅待处理事项").click();
+buttonDeep(element("session-attention"), "审阅待处理事项").click();
 await flush();
 const freshReview = lastAttention();
 reply(delayedReview, reviewPage());

@@ -1,9 +1,9 @@
 "use strict";
 const { randomUUID } = require("node:crypto");
 const WebSocket = require("ws");
-const { snapshot, update, historyPage, constrain } = require("./remote-session-projection.cjs");
+const { snapshot, update, historyPage, constrain, publicBody } = require("./remote-session-projection.cjs");
 const { LIMITS: TASK_QUESTION_LIMITS } = require("./remote-task-questions.cjs");
-const METHODS = ["session.open", "session.history", "subscription.close"];
+const METHODS = ["session.open", "session.history", "session.body", "subscription.close"];
 const LIMITS = Object.freeze({
     observerConnections: 16,
     observerSubscriptions: 16,
@@ -11,6 +11,7 @@ const LIMITS = Object.freeze({
     sessionItems: 100,
     sessionPreviewBytes: 1024,
     nativeHistoryBytes: 4 * 1024 * 1024,
+    sessionBodyPageBytes: 32 * 1024,
 });
 const READ_METHODS = new Set([
     "areal/thread/observe",
@@ -120,7 +121,8 @@ class SessionObservers {
         const result = {
             ...this.keys(viewer),
             sequence: initial ? 0 : ++viewer.sequence,
-            snapshot: viewer.thread.state,
+            snapshot: { ...viewer.thread.state, goalControlAllowed: viewer.thread.state.goalControlAllowed && Object.values(viewer.entry.project.outcomes ?? {}).some(record =>
+                record.remote?.hostId === this.remote.crypto.identityId(this.remote.config.identity) && record.remote?.devicePeerId === viewer.connection.peer && record.remote?.projectId === viewer.entry.projectId && record.remote?.method === "session.control" && record.remote?.target?.operation === "goalCreate" && record.admissionState === "accepted" && record.receipt?.goalId === viewer.thread.state.goals?.goal?.id) },
         };
         // secure.send 同步序列化、入有界队列；不把可变投影交给稍后的异步写入。
         try {
@@ -177,6 +179,7 @@ class SessionObservers {
             }
             for (const thread of entry.threads.values())
                 for (const viewer of thread.viewers) {
+                    if (viewer.body?.expiresAt < Date.now()) viewer.body = null;
                     try {
                         this.check(entry, viewer);
                     } catch {
@@ -317,6 +320,8 @@ class SessionObservers {
         if (!["ordinary", "task"].includes(result.ownership?.kind))
             throw failure("CORE_INCOMPATIBLE", "Core 未返回原子会话归属");
         thread.state = snapshot(result.thread, this.scope(entry, thread.id), result.ownership);
+        const catalog = this.remote.backend.providers?.catalog(entry.project.models ?? [],entry.project) ?? entry.project.models ?? [];
+        thread.state.models = catalog.slice(0,200).map(model => Object.fromEntries(["providerId","modelId","displayName","reasoningEffortOptions","available","unavailableReason"].filter(key=>model[key]!==undefined).map(key=>[key,model[key]])));
         constrain(thread.state, this.scope(entry, thread.id));
     }
     refresh(entry, thread) {
@@ -604,10 +609,48 @@ class SessionObservers {
             );
         });
     }
+    async body(connection, projectId, params, publish) {
+        const viewer = this.viewers.get(connection.connectionId);
+        if (!viewer || !viewer.published || viewer.entry.projectId !== projectId || viewer.thread.id !== params.threadId)
+            throw failure("INVALID_PARAMS", "请先打开此会话");
+        const entry = viewer.entry;
+        return this.enqueue(entry, async () => {
+            this.check(entry, viewer);
+            if (params.cursor === undefined) {
+                const result = await this.rpc(entry, "thread/read", { threadId: params.threadId, includeTurns: true });
+                this.check(entry, viewer);
+                if (result.thread?.id !== params.threadId) throw failure("RESYNC_REQUIRED", "会话身份不匹配");
+                const item = result.thread.turns?.find(t => t.id === params.turnId)?.items?.find(i => i.id === params.itemId);
+                const body = item && publicBody(item);
+                if (!body) throw failure("FORBIDDEN", "此正文不可读取");
+                const encoded = Buffer.from(JSON.stringify(body));
+                if (encoded.length > LIMITS.nativeHistoryBytes) throw failure("RESOURCE_UNAVAILABLE", "正文超过读取容量");
+                // One frozen, bounded body per active subscription. Streaming
+                // changes cannot splice together pages from different versions.
+                viewer.body = { id: randomUUID(), encoded, turnId: params.turnId, itemId: params.itemId, expiresAt: Date.now() + 45000 };
+            }
+            const body = viewer.body;
+            const [id, rawOffset] = (params.cursor ?? `${body?.id}:0`).split(":");
+            const offset = Number(rawOffset);
+            if (!body || body.expiresAt < Date.now() || body.id !== id || body.turnId !== params.turnId || body.itemId !== params.itemId
+                || !Number.isSafeInteger(offset) || offset < 0 || offset >= body.encoded.length)
+                throw failure("RESYNC_REQUIRED", "正文版本已变化，请重新读取");
+            const chunk = new TextDecoder().decode(body.encoded.subarray(offset, offset + LIMITS.sessionBodyPageBytes), { stream: true });
+            const next = offset + Buffer.byteLength(chunk);
+            this.check(entry, viewer);
+            const result = { ...this.keys(viewer), threadId: params.threadId, turnId: params.turnId, itemId: params.itemId,
+                body: { version: body.id, offset, totalBytes: body.encoded.length, chunk },
+                nextCursor: next < body.encoded.length ? `${body.id}:${next}` : null };
+            const value = publish(result);
+            if (!result.nextCursor) viewer.body = null;
+            return value;
+        });
+    }
     release(connectionId, subscriptionId) {
         const viewer = this.viewers.get(connectionId);
         if (!viewer || (subscriptionId !== undefined && viewer.id !== subscriptionId)) return false;
         this.viewers.delete(connectionId);
+        viewer.body = null;
         const { entry, thread } = viewer;
         thread.viewers.delete(viewer);
         if (entry.closed || thread.viewers.size) return true;

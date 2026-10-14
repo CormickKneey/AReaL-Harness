@@ -8,11 +8,11 @@
   </head>
   <body>
     <main>
-      <header class="remote-header">
-        <h1>AReaL Remote</h1>
+      <header class="remote-header remote-legacy">
+        <h1>AReaL Harness</h1>
         <p id="status" role="status">准备连接</p>
       </header>
-      <details id="connection-details" open>
+      <details id="connection-details" class="remote-legacy" open>
         <summary>连接与设备设置</summary>
         <div class="connection-body">
           <h2 id="connection-title">连接到你的电脑</h2>
@@ -65,13 +65,13 @@
           </details>
         </div>
       </details>
-      <section id="unconfirmed" aria-label="原命令核对" hidden>
+      <section id="unconfirmed" class="remote-legacy" aria-label="原命令核对" hidden>
         <h2>待核对的操作</h2>
         <p>只核对原操作，不自动重发。暂未找到回执不代表未执行。</p>
         <ul id="unconfirmed-commands"></ul>
       </section>
       <section id="project-section" hidden>
-        <h2>选择项目</h2>
+        <div id="remote-projects"></div>
         <ul id="projects"></ul>
       </section>
       <section id="work-overview" aria-label="工作概览" hidden>
@@ -107,7 +107,7 @@
           <p id="create-command-state" role="status"></p>
         </details>
       </section>
-      <section id="task-pause" aria-label="Task 暂停审阅" hidden>
+      <section id="task-pause" class="remote-legacy" aria-label="Task 暂停审阅" hidden>
         <h2>暂停 Task</h2>
         <p id="task-pause-target"></p>
         <p>
@@ -125,7 +125,7 @@
         <p id="task-pause-state" role="status"></p>
         <p id="task-pause-error" role="alert"></p>
       </section>
-      <section id="attention" aria-label="同步交互审阅" hidden>
+      <section id="attention" class="remote-legacy" aria-label="同步交互审阅" hidden>
         <h2>审批与同步问题</h2>
         <button id="attention-close" type="button">关闭审阅</button>
         <button id="attention-refresh" type="button">刷新原交互</button>
@@ -142,6 +142,7 @@
         <p id="attention-command-state" role="status"></p>
       </section>
       <section id="session" aria-label="会话详情" hidden>
+        <div id="remote-session-ui"></div>
         <div class="session-navigation">
           <button id="session-close" type="button">返回工作列表</button
           ><button id="session-refresh" type="button">刷新会话</button>
@@ -169,7 +170,7 @@
           </div>
           <p id="send-summary" role="status"></p>
         </div>
-        <details class="command-details">
+        <details class="command-details legacy-session-details">
           <summary>会话与操作详情</summary>
           <p id="session-state"></p>
           <p id="send-command-state" role="status"></p>

@@ -8,14 +8,14 @@ const remoteShell: Plugin = {
   name: "remote-static-shell",
   apply: "build",
   enforce: "post",
-  generateBundle(_options, bundle) {
+  generateBundle: { order: "post", handler(_options, bundle) {
     const { files } = remoteStaticAssets(bundle);
     for (const [fileName, source] of files) {
       if (fileName === "remote.html" && bundle[fileName].type === "asset")
         bundle[fileName].source = source;
       else if (!bundle[fileName]) this.emitFile({ type: "asset", fileName, source });
     }
-  },
+  } },
 };
 export default defineConfig(({ mode }): UserConfig => ({
   base: "./",

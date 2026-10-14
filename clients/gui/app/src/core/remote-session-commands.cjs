@@ -2,7 +2,9 @@
 const { createHash } = require("node:crypto");
 const { validateReply, validatePause } = require("./remote-task-questions.cjs");
 const { validateResponse } = require("./remote-interactions.cjs");
+const { validateControl, nativeControl } = require("./remote-session-controls.cjs");
 const METHODS = [
+    "session.control",
     "session.create",
     "session.send",
     "turn.stop",
@@ -60,12 +62,14 @@ function validate(request) {
                       : request.method === "turn.stop"
                         ? ["threadId", "expectedTurnId"]
                         : request.method === "session.send"
-                          ? ["threadId", "expectedConfigRevision", "text"]
-                          : [],
+                          ? ["threadId", "expectedConfigRevision", "text", "enqueue", "expectedTurnId"]
+                          : request.method === "session.control" ? ["threadId", "operation", "expectedRevision", "values"] : [],
         ) ||
         !uuid(read ? request.params.commandId : request.commandId)
     )
         throw failure("INVALID_PARAMS", "无效的命令参数");
+    if (request.method === "session.control") validateControl(request.params);
+    if (request.method === "session.send" && (request.params.enqueue !== undefined && typeof request.params.enqueue !== "boolean" || request.params.expectedTurnId !== undefined && (typeof request.params.expectedTurnId !== "string" || request.params.expectedTurnId.length > 128))) throw failure("INVALID_PARAMS", "无效的后续消息条件");
     if (request.method === "task.pause") validatePause(request.params);
     if (request.method === "interaction.respond") validateResponse(request.params);
     if (request.method === "task.question.reply") validateReply(request.params);
@@ -152,7 +156,7 @@ function view(backend, record, commandId) {
         method: record.remote.method,
         target: record.remote.target,
         operationId: record.operationId,
-        ...(!["turn/interrupt", "areal/interaction/respond"].includes(record.method)
+        ...(!["turn/interrupt", "turn/steer", "areal/interaction/respond"].includes(record.method)
             ? { nativeRequestId: record.params?.requestId ?? record.operationId }
             : {}),
         admissionState:
@@ -178,6 +182,8 @@ async function sessionCommand(
     validate(request);
     const backend = remote.backend,
         projectId = request.context.projectId;
+    const control = request.method === "session.control";
+    const controlCall = control ? nativeControl(request.params) : null;
     const stop = request.method === "turn.stop";
     const respond = request.method === "interaction.respond";
     const reply = request.method === "task.question.reply";
@@ -215,7 +221,7 @@ async function sessionCommand(
         });
     let record = await readRecord();
     auth();
-    const semantic = pause
+    const semantic = control ? { method: request.method, ...request.params } : pause
         ? {
               method: request.method,
               taskId: request.params.taskId,
@@ -262,6 +268,8 @@ async function sessionCommand(
                       threadId: request.params.threadId,
                       expectedConfigRevision: request.params.expectedConfigRevision,
                       text: request.params.text,
+                      ...(request.params.enqueue !== undefined ? { enqueue: request.params.enqueue } : {}),
+                      ...(request.params.expectedTurnId ? { expectedTurnId: request.params.expectedTurnId } : {}),
                   }
                 : { method: request.method };
     const semanticDigest = createHash("sha256").update(JSON.stringify(semantic)).digest("hex");
@@ -306,7 +314,7 @@ async function sessionCommand(
                 serviceId: project.service?.serviceId,
                 generation: project.service?.generation,
             };
-            const nativeMethod = pause
+            const nativeMethod = control ? controlCall.method : pause
                 ? "areal/task/pause"
                 : reply
                   ? "areal/channel/reply"
@@ -316,14 +324,14 @@ async function sessionCommand(
                       ? "turn/interrupt"
                       : request.method === "session.create"
                         ? "areal/thread/start"
-                        : "areal/turn/start";
+                        : request.params.enqueue ? "areal/turn/enqueue" : "areal/turn/start";
             const feature = pause
                 ? "taskPauseRunGuard"
                 : stop
                   ? "turnInterruptAdmissionGuard"
                   : request.method === "session.create"
                     ? "threadStartAdmissionGuard"
-                    : "turnStartAdmissionGuard";
+                    : request.params.enqueue ? "turnEnqueueAdmissionGuard" : "turnStartAdmissionGuard";
             const check = () => {
                 current();
                 const context = request.context;
@@ -334,11 +342,11 @@ async function sessionCommand(
                 )
                     throw failure("RESYNC_REQUIRED", "提交条件已变化，请刷新状态");
                 if (
-                    (!respond && !reply && !project.client.capabilities?.features?.[feature]) ||
+                    (!control && !respond && !reply && !project.client.capabilities?.features?.[feature]) ||
                     !project.client.capabilities?.methods?.includes(nativeMethod)
                 )
                     throw failure("CORE_INCOMPATIBLE", "Core 不支持安全提交，请在桌面升级");
-                if (request.method === "session.send") {
+                if (request.method === "session.send" || control) {
                     if (project.configurationChanges?.has(request.params.threadId))
                         throw failure("TARGET_CHANGED", "会话配置正在变化");
                     const thread = project.model.state.threads?.[request.params.threadId];
@@ -347,7 +355,8 @@ async function sessionCommand(
                 }
             };
             check();
-            if (request.method === "session.send" || stop) {
+            let admissionState;
+            if (request.method === "session.send" || stop || control) {
                 if (!observeAdmission) throw failure("CORE_INCOMPATIBLE", "缺少安全会话观察入口");
                 const state = await observeAdmission(
                     connection,
@@ -355,21 +364,40 @@ async function sessionCommand(
                     request.params.threadId,
                 );
                 check();
-                if (state?.ownership?.kind !== "ordinary")
+                admissionState = state;
+                const ownGoalControl = control && ["goalPause", "goalResume", "goalClear"].includes(request.params.operation) && state.goalControlAllowed && state.goals?.goal?.id === request.params.values.goalId;
+                if (control && ["goalPause", "goalResume", "goalClear"].includes(request.params.operation) && !ownGoalControl) throw failure("TASK_CONTROL_REQUIRED", "此目标不属于本设备创建的普通 Session");
+                if (state?.ownership?.kind !== "ordinary" && !ownGoalControl)
                     throw failure("TASK_CONTROL_REQUIRED", "此会话由 Task 管理");
+                if (request.params.enqueue && state.activeTurnId !== request.params.expectedTurnId) throw failure("TARGET_CHANGED", "原活动轮次已变化");
                 if (stop && state.activeTurnId !== request.params.expectedTurnId)
                     throw failure("TARGET_CHANGED", "原轮次已结束或改变");
-                if (!stop && (state.activeTurnId || state.status !== "idle"))
+                if (!stop && !control && !request.params.enqueue && (state.activeTurnId || state.status !== "idle"))
                     throw failure("TURN_BUSY", "会话正在运行，草稿已保留");
                 if (
-                    !stop &&
+                    !stop && !control &&
                     (state.configRevision !== request.params.expectedConfigRevision ||
-                        state.queue?.paused ||
-                        state.queue?.pendingCount)
+                        !request.params.enqueue && state.queue?.pendingCount)
                 )
                     throw failure("TARGET_CHANGED", "配置或队列条件已变化，草稿已保留");
             }
             const profile = project.resourceProfile ?? backend.defaultProfile;
+            if (control) {
+                const op = request.params.operation;
+                if (op === "configure" && (admissionState.activeTurnId || admissionState.configRevision !== request.params.expectedRevision)) throw failure("TARGET_CHANGED", "配置或轮次已变化");
+                if (["steer", "queueSteer"].includes(op) && admissionState.activeTurnId !== request.params.values.expectedTurnId) throw failure("TARGET_CHANGED", "原轮次已变化");
+                if (op === "configure") {
+                    const inspection = await project.client.request("areal/thread/inspect", {threadId:request.params.threadId});
+                    check();
+                    if (inspection.configuration?.revision !== request.params.expectedRevision) throw failure("TARGET_CHANGED", "配置已变化");
+                    if (request.params.values.options) controlCall.params.options = { ...inspection.configuration.options, ...request.params.values.options };
+                    if (request.params.values.parameters) controlCall.params.parameters = { ...inspection.configuration.parameters, ...request.params.values.parameters };
+                }
+                if (op === "queueUpdate") {
+                    const item = admissionState.queue.items?.find(item => item.id === request.params.values.queueItemId);
+                    if (!item || item.truncated || item.hasAttachments) throw failure("TARGET_CHANGED", "此排队消息必须在桌面编辑");
+                }
+            }
             let preparedParams;
             if (respond) {
                 if (!reviews) throw failure("CORE_INCOMPATIBLE", "缺少交互审阅入口");
@@ -390,7 +418,7 @@ async function sessionCommand(
                 preparedParams = await taskQuestions.prepare(connection, projectId, request.params);
                 check();
             }
-            const params =
+            const params = control ? controlCall.params :
                 respond || reply || pause
                     ? preparedParams
                     : stop
@@ -412,6 +440,7 @@ async function sessionCommand(
                               admissionGuard: {
                                   ordinarySession: true,
                                   configRevision: request.params.expectedConfigRevision,
+                                  ...(request.params.enqueue ? {expectedTurnId:request.params.expectedTurnId} : {}),
                               },
                           };
             record = await backend.submit(project, nativeMethod, params, {
@@ -421,7 +450,7 @@ async function sessionCommand(
                     capability,
                     admittedGrantRevision: connection.grantRevision,
                     semanticDigest,
-                    target: pause
+                    target: control ? { threadId: request.params.threadId, operation: request.params.operation, expectedRevision: request.params.expectedRevision } : pause
                         ? { ...request.params }
                         : reply
                           ? {
