@@ -113,7 +113,9 @@ try{
  // 用户明确打开运行会话，审批复用普通 Conversation UI。
  await page.getByRole('button',{name:`打开自动化 ${approval.objective}`,exact:true}).click();
  await page.getByRole('button',{name:'任务资源',exact:true}).click();
- await page.getByText('运行记录',{exact:true}).click();
+ const approvalHistory=page.locator('.task-resource-history');
+ await approvalHistory.waitFor();
+ if(await approvalHistory.getAttribute('open')===null)await approvalHistory.locator('summary').click();
  await page.getByRole('button',{name:'打开执行会话',exact:true}).click();
  await page.getByRole('button',{name:'允许一次',exact:true}).waitFor();
  await page.screenshot({path:join(scratch,'schedule-approval.png')});
