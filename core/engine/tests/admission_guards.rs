@@ -70,6 +70,89 @@ async fn ordinary_start_checks_config_before_acceptance_and_replays_after_restar
     engine.shutdown().await;
 }
 
+#[tokio::test]
+async fn ordinary_start_accepts_paused_empty_queue_without_resuming_queue() {
+    let root = tempfile::tempdir().unwrap();
+    let engine = Engine::open(root.path(), Arc::new(Held), Limits::default()).unwrap();
+    let thread = engine.create("/workspace".into()).await.unwrap();
+    let revision = areal_protocol::desktop::EffectiveConfig::default().revision;
+    let queue = engine
+        .edit_queue(thread.id.clone(), 0, "pause".into(), json!({}))
+        .await
+        .unwrap();
+    assert!(queue.paused && queue.items.is_empty());
+    let request = |config_revision, key| {
+        serde_json::from_value(json!({
+        "requestId":key,"threadId":thread.id,"input":[{"type":"text","text":"explicit new turn"}],
+        "admissionGuard":{"configRevision":config_revision,"ordinarySession":true}
+    })).unwrap()
+    };
+    assert!(matches!(
+        engine
+            .start_durable("owner".into(), request(revision + 1, "stale"), false)
+            .await,
+        Err(Error::Conflict)
+    ));
+    let accepted = engine
+        .start_durable("owner".into(), request(revision, "once"), false)
+        .await
+        .unwrap();
+    assert!(engine.queue(&thread.id).await.unwrap().paused);
+    assert_eq!(
+        engine
+            .start_durable("owner".into(), request(revision, "once"), false)
+            .await
+            .unwrap(),
+        accepted
+    );
+    assert_eq!(engine.read(&thread.id, true).await.unwrap().turns.len(), 1);
+    engine.shutdown().await;
+}
+
+#[tokio::test]
+async fn ordinary_start_still_rejects_pending_queue_while_paused() {
+    let root = tempfile::tempdir().unwrap();
+    let engine = Engine::open(root.path(), Arc::new(Held), Limits::default()).unwrap();
+    let thread = engine.create("/workspace".into()).await.unwrap();
+    engine
+        .edit_queue(thread.id.clone(), 0, "pause".into(), json!({}))
+        .await
+        .unwrap();
+    let request = |key, guard| {
+        serde_json::from_value(json!({
+        "requestId":key,"threadId":thread.id,"input":[{"type":"text","text":"retained queued message"}],
+        "admissionGuard":guard
+    })).unwrap()
+    };
+    engine
+        .start_durable(
+            "owner".into(),
+            request("queued", serde_json::Value::Null),
+            true,
+        )
+        .await
+        .unwrap();
+    let guard = json!({"configRevision":areal_protocol::desktop::EffectiveConfig::default().revision,"ordinarySession":true});
+    assert!(matches!(
+        engine
+            .start_durable("owner".into(), request("explicit", guard), false)
+            .await,
+        Err(Error::Conflict)
+    ));
+    let queue = engine.queue(&thread.id).await.unwrap();
+    assert!(queue.paused);
+    assert_eq!(queue.items[0].status, "pending");
+    assert!(
+        engine
+            .read(&thread.id, true)
+            .await
+            .unwrap()
+            .turns
+            .is_empty()
+    );
+    engine.shutdown().await;
+}
+
 struct Host;
 #[async_trait]
 impl areal_engine::tools::DynamicToolHost for Host {
@@ -242,6 +325,11 @@ async fn ordinary_send_preserves_archive_and_paused_queue_barriers() {
         } else {
             engine
                 .edit_queue(thread.id.clone(), 0, "pause".into(), json!({}))
+                .await
+                .unwrap();
+            let queued = serde_json::from_value(json!({"requestId":"retained","threadId":thread.id,"input":[{"type":"text","text":"retain pending"}]})).unwrap();
+            engine
+                .start_durable("owner".into(), queued, true)
                 .await
                 .unwrap();
         }

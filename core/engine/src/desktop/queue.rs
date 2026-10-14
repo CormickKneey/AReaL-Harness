@@ -23,9 +23,15 @@ impl Engine {
             if request.expected_config_revision.is_some_and(|revision| revision != data.configuration.revision) { return Err(Error::Conflict); }
             // 锁顺序为 lifecycle → Thread → Tasks；持久化和激活完成前保留 Task 预留锁。
             let _ordinary = if let Some(guard) = &request.admission_guard {
-                if enqueue || !guard.ordinary_session { return Err(invalid("ordinary admission requires turn/start and ordinarySession=true")); }
+                if !guard.ordinary_session { return Err(invalid("ordinary admission requires ordinarySession=true")); }
+                if enqueue {
+                    let expected = guard.expected_turn_id.as_deref().filter(|id| !id.is_empty()).ok_or_else(|| invalid("ordinary enqueue requires expectedTurnId"))?;
+                    if state.active.as_ref().is_none_or(|active| active.id != expected) { return Err(Error::Conflict); }
+                }
                 if guard.config_revision != data.configuration.revision || data.archived
-                    || data.queue.paused || data.queue.items.iter().any(|item| matches!(item.status.as_str(), "pending" | "running"))
+                    // Pause controls queued work, not a new explicit turn when
+                    // no queued work remains. Never resume or bypass retained items.
+                    || (!enqueue && data.queue.items.iter().any(|item| matches!(item.status.as_str(), "pending" | "running")))
                 { return Err(Error::Conflict); }
                 if data.configuration.profile.as_ref().is_some_and(|profile| profile.workflow.is_some()) {
                     return Err(invalid("UNSUPPORTED_PROFILE: ordinary sessions cannot use a Workflow profile"));

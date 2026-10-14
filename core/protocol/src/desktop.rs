@@ -492,6 +492,8 @@ pub struct ThreadStartAdmissionGuard {
 #[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TurnStartAdmissionGuard {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_turn_id: Option<String>,
     pub config_revision: u64,
     pub ordinary_session: bool,
 }
