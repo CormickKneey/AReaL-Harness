@@ -40,6 +40,10 @@ class AppProviders {
     this.openaiToken = this.transport.token;
   }
   get value() { return this.config.value ?? { data: [] }; }
+  async network() {
+    if (!this.networkPromise) this.networkPromise = import('@areal/chatgpt-provider/network').then(({ subscriptionNetwork }) => subscriptionNetwork(this.backend.hooks.environment()));
+    return this.networkPromise;
+  }
   async openai() {
     if (!this.openaiPromise) this.openaiPromise = import('@areal/chatgpt-provider/core').then(({ CoreSubscription }) => {
       this.openaiStore = new SubscriptionStore(this.backend, this.encryption);
@@ -47,7 +51,7 @@ class AppProviders {
         await appendFile(join(this.backend.home, 'provider-requests.jsonl'), JSON.stringify({ providerId, protocol, model, startedAt, completedAt,
           upstreamHttpStatus, upstreamContentType, localHttpStatus, outcome, failureKind, streamFailureReason }) + '\n', { mode: 0o600 });
       } : undefined;
-      return new CoreSubscription({ store: this.openaiStore, token: this.openaiToken, port: this.transport.port, onListen: async port => { this.transport.port = port; await this.backend.save('subscription-transport.json', this.transport); }, kind: 'openai', onRequest });
+      return new CoreSubscription({ store: this.openaiStore, fetch: async (...args) => (await this.network()).fetch(...args), token: this.openaiToken, port: this.transport.port, onListen: async port => { this.transport.port = port; await this.backend.save('subscription-transport.json', this.transport); }, kind: 'openai', onRequest });
     }).catch(error => { this.openaiPromise = null; throw error; });
     return this.openaiPromise;
   }
@@ -139,7 +143,10 @@ class AppProviders {
       expectedRevision: configuration.revision, model: configuration.model, parameters: configuration.parameters,
     });
   }
-  async close() { if (this.openaiPromise) await (await this.openaiPromise).close(); }
+  async close() {
+    try { if (this.openaiPromise) await (await this.openaiPromise).close(); }
+    finally { if (this.networkPromise) (await this.networkPromise).close(); }
+  }
   public() { return this.config.public(); }
   model(ref, project) { return (project?.providerSnapshot ?? this.value).data.find(p => p.id === ref?.providerId)?.models.find(m => m.id === ref.modelId); }
   catalog(models, project) { return models.map(m => ({ ...m, displayName: this.model(m, project)?.displayName || m.displayName || m.modelId })); }
@@ -254,7 +261,7 @@ class AppProviders {
     const body = provider.protocol === 'responses' ? { model, input: [{ role: 'user', content: 'Reply with OK.' }], store: false, stream: true } : { model, messages: [{ role: 'user', content: 'Reply with OK.' }], stream: true };
     let response;
     try {
-      response = await fetch(url, { method: operation === 'discover' ? 'GET' : 'POST', redirect: 'error', signal: AbortSignal.timeout(30000), headers: { ...(key ? { Authorization: `Bearer ${key}` } : {}), 'Content-Type': 'application/json' }, ...(operation === 'probe' ? { body: JSON.stringify(body) } : {}) });
+      response = await (await this.network()).fetch(url, { method: operation === 'discover' ? 'GET' : 'POST', redirect: 'error', signal: AbortSignal.timeout(30000), headers: { ...(key ? { Authorization: `Bearer ${key}` } : {}), 'Content-Type': 'application/json' }, ...(operation === 'probe' ? { body: JSON.stringify(body) } : {}) });
     } catch { throw new Error('连接失败：请检查 Base URL、网络及服务是否可用'); }
     if (!response.ok) { await response.body?.cancel(); throw new Error(response.status === 401 || response.status === 403 ? '认证失败：请检查 API Key 及模型访问权限' : `模型服务返回 HTTP ${response.status}`); }
     if (operation === 'probe') {

@@ -13,7 +13,7 @@ This page describes implemented behavior. Compilation, mechanism tests and real-
 | Tool results | Bundled pinned rg, paged original historical results, and configurable search grouping/exact repeated-line views, defaulting to observe. [Tools](guides/tools.en.md) |
 | Public multimodal input | Arena task entries/read-only assets; on-demand PNG/JPEG/WebP/GIF views and independent model request byte limits. [Evaluation inputs](benchmarks/README.en.md#arena-lazy-public-inputs) |
 | Tool extensions | Command tools, hooks, client callbacks, MCP stdio/Streamable HTTP and trusted Node plugin Hosts. [Tools](guides/tools.en.md) |
-| Network proxies | HTTP/HTTPS/SOCKS5 proxies, authentication and NO_PROXY for models, HTTP MCP and OTLP; trusted stdio MCP/plugin Hosts inherit proxy variables. [Configuration](guides/configuration.en.md#proxies) |
+| Network proxies | HTTP/HTTPS/SOCKS5 proxies, authentication and NO_PROXY for models, HTTP MCP and OTLP; trusted stdio MCP/plugin Hosts inherit proxy variables. The macOS GUI reads static system proxies and shares the proxy snapshot with model tests and subscriptions. [Configuration](guides/configuration.en.md#proxies) |
 | Unified child work | One model delegation surface; Core selects shared read-only, shared exclusive or isolated execution with unified waiting, cancellation, artifacts and delivery. [Agent design](design/multi-agent.en.md) |
 | Workgroups | DAGs, isolated writable workspaces, artifact verification and integration; fixed/auto/adaptive admission through CLI and service. [Guide](guides/workgroups.en.md) |
 | Permissions | Default local YOLO; configurable ASK_PERMISSIONS; TUI/Web approvals, exact session/project grants, automatic Thread scratch. [Configuration](guides/configuration.en.md#permissions) |

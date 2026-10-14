@@ -26,6 +26,8 @@ make gui
 
 macOS 开发和安装版均需要可执行的 `/usr/bin/python3`，供 Runtime 及可信工具助手启动中转；可通过 `xcode-select --install` 安装 Xcode Command Line Tools。该解释器不随应用打包；共享服务在启动前检查可用性并返回明确错误。
 
+macOS GUI 后台自动读取系统静态 HTTP、HTTPS 和 SOCKS 代理，供 Core、模型连接测试与订阅请求使用；显式环境变量优先。绕过规则、重启生效和限制见[代理配置](../../docs/guides/configuration.md#proxies)。`pnpm --dir clients/gui run test:proxy` 验证实际 HTTP 转发、HTTPS CONNECT、SOCKS5 远端 DNS、后台 TCP 转接和本机直连。设置 `AREAL_TEST_MODEL_PROXY_BIN` 为已编译的 `core/engine/tests/model_proxy.rs` 测试可执行文件，可同时验证真实 Core 的 HTTP/HTTPS 流式回复。
+
 ## Composer
 
 权限审批和 Ask User 共用固定在对话底部的交互卡片。审批默认显示拒绝与允许一次，Core 允许记住授权时才提供任务／项目范围菜单；原有授权条件和状态核对保持不变。问题支持选项、自由回答和逐题填写；“跳过”或关闭仅暂时收起，保留草稿和待回答入口，不提交空答案或停止任务。提问期间输入框保持紧凑，审批期间保留并隐藏普通输入草稿；回答回显来自 Core 已保存的工具历史。`pnpm --dir clients/gui run test:interactions` 使用隔离的真实 Electron/Core/Runtime 和确定性本地模型验证审批、回答及历史恢复，不替代真实供应商或安装包验收。
