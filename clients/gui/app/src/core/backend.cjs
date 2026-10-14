@@ -1222,6 +1222,7 @@ class CoreBackend {
           ...(request.selection ? { selection: request.selection } : {}),
           ...(request.anchor ? { anchor: request.anchor } : {}),
           input: [{ type: 'text', text: request.text }],
+          ...(request.resetModel === true ? { resetModel: true } : {}),
           ...(request.model ? { model: request.model } : {}),
           ...(request.parameters ? { parameters: request.parameters } : {}),
         }, { requestId: request.requestId });

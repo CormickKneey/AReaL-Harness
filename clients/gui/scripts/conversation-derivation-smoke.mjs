@@ -69,6 +69,17 @@ const toolSse = (name, args) => [
   { id: "scf-tool", object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } },
 ].map(value => `data: ${JSON.stringify(value)}\n\n`).join("") + "data: [DONE]\n\n";
 
+// 只剔除与草稿动作无关的精确只读轮询，保留原始 RPC 证据与全部变更命令。
+const isBackgroundTrajectoryStatus = entry => entry.command === "trajectory"
+  && entry.parameters?.operation === "status" && Object.keys(entry.parameters).length === 1;
+assert.ok(isBackgroundTrajectoryStatus({ command: "trajectory", parameters: { operation: "status" } }));
+for (const entry of [
+  ...["retry", "configure", "send", "queue", "steer"].map(operation => ({ command: "trajectory", parameters: { operation } })),
+  ...["side", "configure", "send", "queue", "steer", "unknown"].map(command => ({ command, parameters: { operation: "status" } })),
+  { command: "trajectory", parameters: { operation: "status", retry: true } },
+  { command: "trajectory", parameters: {} },
+]) assert.equal(isBackgroundTrajectoryStatus(entry), false, "only the exact background trajectory status request may be excluded");
+
 async function state() { return page.evaluate(() => window.arealDesktop.snapshot()); }
 async function showMainConversation() {
   const input = page.getByTestId("chat-input");
@@ -607,6 +618,9 @@ try {
   await showSideConversation();
   await preview.waitFor();
   const commandsBeforeInsert = (await app.evaluate(() => globalThis.__scfMutations)).length;
+  // 在两个测量区间内执行真实查询，确定性覆盖后台轮询插入的时序。
+  const observedStatus = await page.evaluate(() => window.arealDesktop.command("trajectory", { operation: "status" }));
+  assert.ok(observedStatus.ok, "the real background trajectory status request must succeed");
   await preview.getByRole("button", { name: "确认插入主草稿" }).click();
   await sidePane.getByText("已追加到更新后的主会话草稿；请检查再发送。", { exact: true }).waitFor();
   const mainDraft = await page.evaluate(key => localStorage.getItem(key), `areal-gui:draft:${projectId}:${sourceThreadId}`);
@@ -614,11 +628,17 @@ try {
     "actual main Composer draft must retain its previous text and append the confirmed Side answer");
   assert.equal(requests.length, beforeBring.requests, "bring-back must not send or steer");
   const bringCommands = await app.evaluate(() => globalThis.__scfMutations);
-  assert.equal(bringCommands.length, commandsBeforeInsert,
-    "confirming bring-back must not issue any Core command, including queue or steer");
+  const insertCommands = bringCommands.slice(commandsBeforeInsert);
+  assert.ok(insertCommands.some(entry => isBackgroundTrajectoryStatus(entry) && entry.accepted),
+    "the raw RPC evidence must retain the successful injected trajectory status request");
+  assert.deepEqual(insertCommands.filter(entry => !isBackgroundTrajectoryStatus(entry)), [],
+    "confirming bring-back must not issue any command beyond the independent trajectory status read, including queue or steer");
   assert.ok(bringCommands.slice(beforeBring.commands).every(entry =>
-    entry.command === "side" && entry.parameters.operation === "list"),
-  "switching related discussions may only refresh the read-only list before insertion");
+    isBackgroundTrajectoryStatus(entry) || (entry.command === "side" && entry.parameters.operation === "list")),
+  "switching related discussions may only refresh the read-only list alongside independent trajectory status reads");
+  events.push({ bringBackCommandWindow: { from: beforeBring.commands, insertionFrom: commandsBeforeInsert,
+    to: bringCommands.length, injectedStatusAccepted: true } });
+  checks.push("bring-back retains raw RPC evidence and tolerates a real background trajectory/status read without allowing retry, send, configure, queue or steer");
   assert.equal((await state()).projects[0].state.threads[sourceThreadId].turns.length, beforeBring.sourceTurns);
   assert.equal((await state()).projects[0].state.threads[sideThreadId].turns.length, beforeBring.sideTurns);
   assert.equal(await hash(fixturePath), beforeBring.workspaceSha256);
@@ -1036,7 +1056,7 @@ try {
       "04-source-tool-running.png": "Core/Runtime command marker exists and source Turn remains inProgress",
       "04a-stale-selection.png": "real Core stale-selection rejection retains the Side question without creating a Side",
       "05-side-answered-frozen.png": "Side first answer completed while source tool remains active; Unicode selection verified",
-      "06-bring-back-draft.png": "preview confirmed; local main draft includes Side text and no Core command was issued",
+      "06-bring-back-draft.png": "preview confirmed; local main draft includes Side text and insertion issues no command beyond independent trajectory/status reads",
       "07-before-active.png": "before-active Fork has idle bounded inherited history",
       "07a-main-error-isolated.png": "Core refuses unsupported main attachment without sending or losing its draft; Side has no main Composer error",
       "07b-inherited-raw-result.png": "target-owned inherited raw result is displayed and downloaded with no source controls or local execution",

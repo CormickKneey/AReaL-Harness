@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
 import test_launcher_lifecycle as legacy
 
 
@@ -18,7 +19,7 @@ class RustLauncherTests(legacy.LauncherTests):
             )
         )
         if not executable.is_file():
-            self.skipTest("build target/debug/areal first")
+            self.fail(f"missing launcher binary: {executable}; run make build first")
         self.command = [str(executable), "launcher", *self.command[2:]]
         # Rust launcher 只给自己创建的最终 TUI 标记本地队列检查来源。
         self.fixture(

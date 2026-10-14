@@ -1,3 +1,4 @@
+use sha2::{Digest, Sha256};
 use std::{path::PathBuf, process::Command};
 
 fn main() {
@@ -25,13 +26,32 @@ fn main() {
     {
         println!("cargo:rerun-if-changed={}", root.join(path).display());
     }
+    let mut input_hasher = Sha256::new();
     if let Some(files) = git(&["ls-files", "--cached", "--others", "--exclude-standard"]) {
-        for path in files.lines().filter(|p| {
-            p.ends_with(".rs") || p.ends_with("Cargo.toml") || p.ends_with("Cargo.lock")
-        }) {
+        let mut inputs = files
+            .lines()
+            .filter(|p| {
+                p.ends_with(".rs")
+                    || p.ends_with("Cargo.toml")
+                    || p.ends_with("Cargo.lock")
+                    || *p == "rust-toolchain.toml"
+                    || p.starts_with("schemas/") && p.ends_with(".json")
+            })
+            .collect::<Vec<_>>();
+        inputs.sort_unstable();
+        inputs.dedup();
+        for path in inputs {
             println!("cargo:rerun-if-changed={}", root.join(path).display());
+            input_hasher.update(path.as_bytes());
+            input_hasher.update([0]);
+            input_hasher.update(std::fs::read(root.join(path)).expect("build input readable"));
+            input_hasher.update([0]);
         }
     }
+    println!(
+        "cargo:rustc-env=AREAL_BUILD_INPUT_HASH={:x}",
+        input_hasher.finalize()
+    );
     let revision = std::env::var("AREAL_BUILD_REVISION")
         .ok()
         .filter(|s| s.len() >= 7 && s.len() <= 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))

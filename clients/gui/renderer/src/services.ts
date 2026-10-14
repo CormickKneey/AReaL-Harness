@@ -1,6 +1,7 @@
 // The renderer consumes only the narrow preload contract. Execution facts remain in Core.
-import { validateCommand } from '@areal/workbench/desktop-contract';
+import { validateCommand, validateCommandResponse } from '@areal/workbench/desktop-contract';
 import type { CommandName, CommandParams, DesktopResult, PreviewRequest } from '@areal/workbench/desktop-contract';
+export type { CommandName };
 export type Data = Record<string, any>;
 export type FileOpenTargets = { targets: { id: string; label: string }[]; preferred: string; preferredLabel: string };
 export type FileOpenRequest = { operation: 'targets' } | { operation: 'setDefault'; target: string }
@@ -51,7 +52,19 @@ export interface PlatformServices {
     preview(params: PreviewRequest): Promise<Data>;
     onPreviewEvent?(listener: (event: Data) => void): () => void;
 }
-export type Action = (name: CommandName, params?: Data) => Promise<any>;
+type SideRequest = CommandParams<"side">;
+type SideResult<Operation extends SideRequest["operation"]> =
+  Operation extends "start" ? { threadId: string; requestId: string; turnId?: string } :
+  Operation extends "recover" ? { confirmed: false } | { confirmed: true; threadId: string } :
+  Operation extends "list" ? { data: Record<string, unknown>[]; nextCursor?: string | null } :
+  Operation extends "context" ? { snapshotId: string; evidence: Record<string, unknown>[]; nextCursor?: string | null } :
+  { turn: { id: string } };
+export interface Action {
+  <Request extends SideRequest>(name: "side", params: Request): Promise<SideResult<Request["operation"]>>;
+  (name: "fork", params: CommandParams<"fork">): Promise<{ threadId: string; requestId: string }>;
+  (name: "configure", params: CommandParams<"configure">): Promise<Snapshot>;
+  <Name extends Exclude<CommandName, "side" | "fork" | "configure">>(name: Name, params?: Data): Promise<any>;
+}
 // 业务投影仍由各能力所有者建模；此适配保留现有 Action 调用方的返回类型。
 export async function call<N extends CommandName>(services: PlatformServices, name: N, params: CommandParams<N>): Promise<any> { validateCommand(name, params); const result = await services.command(name, params); if (!result.ok)
-    throw Object.assign(new Error(result.error.message), result.error); return result.value; }
+    throw Object.assign(new Error(result.error.message), result.error); validateCommandResponse(name, params, result.value); return result.value; }

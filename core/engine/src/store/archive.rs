@@ -163,6 +163,37 @@ impl Store {
         );
         Ok((segment.turns, segment.source_thread_ids))
     }
+    pub(crate) async fn fork_snapshot_page<T, F>(
+        &self,
+        snapshot: String,
+        page: F,
+    ) -> crate::Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(Vec<Turn>, Vec<String>) -> crate::Result<T> + Send + 'static,
+    {
+        let permit = self
+            .fork_reads
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|e| crate::Error::Storage(e.to_string()))?;
+        let root = self.root.clone();
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let segment =
+                read_segment(&root, &snapshot).map_err(|e| crate::Error::Storage(e.to_string()))?;
+            if segment.previous.is_some() || segment.source_thread_ids.len() != segment.turns.len()
+            {
+                return Err(crate::Error::Storage(
+                    "fork snapshot provenance mismatch".into(),
+                ));
+            }
+            page(segment.turns, segment.source_thread_ids)
+        })
+        .await
+        .map_err(|e| crate::Error::Storage(e.to_string()))?
+    }
     pub(crate) async fn history_page(
         &self,
         thread: &Thread,
@@ -444,5 +475,63 @@ mod tests {
             assert!(hot.history_archive.is_none());
             assert_eq!(hot.turns[0].items.len(), 1);
         }
+    }
+    #[tokio::test]
+    async fn snapshot_pages_bound_blocking_work_without_blocking_control() {
+        let root = tempfile::tempdir().unwrap();
+        let store = Arc::new(Store::open(root.path()).unwrap());
+        let (snapshot, _) = store
+            .write_fork_snapshot(vec![], vec![], 1024)
+            .await
+            .unwrap();
+        let gate = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+        let (entered_tx, mut entered_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut tasks = Vec::new();
+        for index in 0..3 {
+            let store = store.clone();
+            let snapshot = snapshot.clone();
+            let gate = gate.clone();
+            let entered_tx = entered_tx.clone();
+            tasks.push(tokio::spawn(async move {
+                store
+                    .fork_snapshot_page(snapshot, move |_, _| {
+                        entered_tx.send(index).unwrap();
+                        let (lock, ready) = &*gate;
+                        let mut released = lock.lock().unwrap();
+                        while !*released {
+                            released = ready.wait(released).unwrap();
+                        }
+                        Ok(index)
+                    })
+                    .await
+            }));
+        }
+        let mut cancelled = usize::MAX;
+        let observed = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            cancelled = entered_rx.recv().await.unwrap();
+            entered_rx.recv().await.unwrap();
+            // 接收任务取消不能提前释放仍在运行的 blocking 工作所持名额。
+            tasks[cancelled].abort();
+            tokio::time::timeout(std::time::Duration::from_millis(100), entered_rx.recv())
+                .await
+                .is_err()
+        })
+        .await;
+        // 无论断言结果如何先释放本测试拥有的 blocking 任务。
+        let (lock, ready) = &*gate;
+        *lock.lock().unwrap() = true;
+        ready.notify_all();
+        for (index, task) in tasks.into_iter().enumerate() {
+            let result = task.await;
+            if index == cancelled {
+                assert!(result.unwrap_err().is_cancelled());
+            } else {
+                result.unwrap().unwrap();
+            }
+        }
+        assert!(
+            observed.unwrap_or(false),
+            "snapshot reads must leave the async executor responsive and admit at most two blocking jobs"
+        );
     }
 }

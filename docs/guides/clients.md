@@ -45,6 +45,8 @@ target/debug/areal service stop --json
 
 `areal exec 'prompt' --output-format stream-json --verbose` 提供非交互 CLI，`areal serve` 启动持续服务；参数、认证、恢复与退出码见 [CLI 契约](../api/claude-cli.md)。Web 位于服务的 `/ui`；通过 `areal web` 打开会自动登录，无需复制 token。直接打开地址且没有有效会话时，可在设置中填写服务数据目录 `security/auth.json` 中的本地 token。
 
+本地 `areal exec` 通过受监督的 launcher 拥有 Core/Runtime；macOS 复用可信服务启动适配，需要可用的 `/usr/bin/python3`，Linux 直接启动。CLI 退出时等待实际 launcher 的清理回执；启动阶段提前退出会报告其退出状态，就绪或认证文件无效也会先回收已启动的 owned 服务。显式 `--endpoint` 连接不拥有远端服务生命周期。
+
 TUI 的 `--input-file /absolute/input.json` 与 `--prompt` 互斥，接受最多 2 MiB 的 Core Input 数组，如 `[{"type":"text","text":"Inspect the image"},{"type":"localImage","path":"/absolute/image.png"}]`。本地模式和显式 endpoint 均支持，可信 launcher 可用 `--tui --input-file` 透传；媒体路径与字段仍按 [Core API](../api/core.md) 验证。
 
 ## Web 操作与外观

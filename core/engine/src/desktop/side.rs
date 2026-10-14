@@ -66,6 +66,44 @@ fn resolve_selection(
 }
 
 impl Engine {
+    pub(crate) async fn reserve_side_creation(
+        &self,
+        source_id: &str,
+    ) -> Result<tokio::sync::MutexGuard<'_, ()>> {
+        'validate: loop {
+            let gate = self.thread_creation.lock().await;
+            let cells: Vec<_> = self.threads.read().await.values().cloned().collect();
+            let mut deployment = 0;
+            let mut source = 0;
+            for cell in cells {
+                let state = match cell.state.try_lock() {
+                    Ok(state) => state,
+                    Err(_) => {
+                        // 既有 worker 持 parent.state 调用创建；不能反向持创建准入等待状态锁。
+                        drop(gate);
+                        drop(cell.state.lock().await);
+                        continue 'validate;
+                    }
+                };
+                if state.active.is_some()
+                    && let Some(areal_protocol::Conversation::Side { origin, .. }) =
+                        &state.thread.conversation
+                {
+                    deployment += 1;
+                    if origin.source_thread_id == source_id {
+                        source += 1;
+                    }
+                }
+            }
+            if source >= self.limits.max_side_turns_per_source {
+                return Err(Error::Exhausted("SIDE_SOURCE_CAPACITY_REACHED".into()));
+            }
+            if deployment >= self.limits.max_side_turns_per_deployment {
+                return Err(Error::Exhausted("SIDE_DEPLOYMENT_CAPACITY_REACHED".into()));
+            }
+            return Ok(gate);
+        }
+    }
     pub(crate) async fn check_side_capacity(
         &self,
         source_id: &str,
@@ -145,17 +183,15 @@ impl Engine {
         } else {
             (0, 0)
         };
-        let (turns, source_ids) = self
-            .store
-            .read_fork_snapshot_with_sources(&snapshot)
-            .map_err(|e| Error::Storage(e.to_string()))?;
-        let entries: Vec<Value> = turns.into_iter().zip(source_ids).flat_map(|(turn, source)| turn.items.into_iter().map(move |item| {
-            json!({"sourceThreadId":source,"sourceTurnId":turn.id,"sourceItemId":item.id(),"sourceTurnStatus":turn.status,"item":item})
-        })).collect();
-        if index > entries.len() || index == entries.len() && offset != 0 {
+        self.store.fork_snapshot_page(snapshot.clone(), move |turns, source_ids| {
+        let item_count = turns.iter().map(|turn| turn.items.len()).sum::<usize>();
+        let mut entries = turns.into_iter().zip(source_ids).flat_map(|(turn, source)| turn.items.into_iter().map(move |item| {
+            (source.clone(), turn.id.clone(), turn.status.clone(), item)
+        }));
+        if index > item_count || index == item_count && offset != 0 {
             return Err(invalid("invalid evidence cursor"));
         }
-        if index == entries.len() {
+        if index == item_count {
             let page =
                 json!({"snapshotId":snapshot,"evidence":[],"nextCursor":null,"complete":true});
             if serde_json::to_vec(&page).map_err(invalid)?.len() > max_bytes {
@@ -163,7 +199,8 @@ impl Engine {
             }
             return Ok(page);
         }
-        let entry = &entries[index];
+        let (source, turn_id, status, item) = entries.nth(index).ok_or_else(|| invalid("invalid evidence cursor"))?;
+        let entry = json!({"sourceThreadId":source,"sourceTurnId":turn_id,"sourceItemId":item.id(),"sourceTurnStatus":status,"item":item});
         let content = entry["item"].to_string();
         if offset > content.len() || !content.is_char_boundary(offset) {
             return Err(invalid("invalid evidence cursor"));
@@ -173,7 +210,7 @@ impl Engine {
             let next_offset = offset + part.len();
             let next_cursor = if next_offset < content.len() {
                 Some(format!("{}:{}:{}", snapshot, index, next_offset))
-            } else if index + 1 < entries.len() {
+            } else if index + 1 < item_count {
                 Some(format!("{}:{}:0", snapshot, index + 1))
             } else {
                 None
@@ -211,6 +248,7 @@ impl Engine {
             return Err(invalid("EVIDENCE_BUDGET_TOO_SMALL"));
         }
         Ok(page)
+        }).await
     }
     /// 首问与只读身份在同一持久记录中提交；提交之前不会激活模型。
     pub async fn side_start(
@@ -221,6 +259,9 @@ impl Engine {
         self.mutate(move |engine| async move {
             let _serial = engine.desktop.creation.lock().await;
             let _admission_gate = engine.desktop.lifecycle.gate.lock().await;
+            if request.reset_model && request.model.is_some() {
+                return Err(invalid("resetModel and model cannot be combined"));
+            }
             let hash = digest(&request)?;
             let method = "areal/side/start";
             if !valid_id(&request.request_id) {
@@ -345,7 +386,11 @@ impl Engine {
             }
             let mut config = engine.resolve_config(
                 None,
-                request.model.or(config.model),
+                if request.reset_model {
+                    None
+                } else {
+                    request.model.or(config.model)
+                },
                 request.parameters.unwrap_or(config.parameters),
                 config.revision,
             )?;
@@ -489,8 +534,8 @@ impl Engine {
                     host: None,
                 },
             );
-            let mut threads = engine.threads.write().await;
-            if threads.len() >= engine.limits.max_threads {
+            let _creation = engine.reserve_side_creation(&source.id).await?;
+            if engine.threads.read().await.len() >= engine.limits.max_threads {
                 return Err(Error::Exhausted("thread capacity reached".into()));
             }
             if let Err(error) = engine.persist(&thread).await {
@@ -503,7 +548,7 @@ impl Engine {
                     })
                 {
                     cell.state.lock().await.poisoned = true;
-                    threads.insert(thread_id, cell);
+                    engine.threads.write().await.insert(thread_id, cell);
                 }
                 return Err(error);
             }
@@ -516,7 +561,7 @@ impl Engine {
                 admission,
             );
             drop(state);
-            threads.insert(thread_id, cell);
+            engine.threads.write().await.insert(thread_id, cell);
             Ok((thread, turn))
         })
         .await

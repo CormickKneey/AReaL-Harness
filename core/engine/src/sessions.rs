@@ -216,6 +216,8 @@ impl Engine {
         }
         let mut guard = cell.state.lock().await;
         {
+            // 与 Fork/Side 的未发布持久提交共用容量准入；注册预留后即可释放它。
+            let _creation = self.thread_creation.lock().await;
             let mut threads = self.threads.write().await;
             if threads.len() >= self.limits.max_threads {
                 return Err(Error::Exhausted("thread capacity reached".into()));

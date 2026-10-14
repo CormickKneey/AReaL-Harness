@@ -102,6 +102,8 @@ pub struct SideAnchor {
 #[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SideStart {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reset_model: bool,
     pub request_id: String,
     pub source_thread_id: String,
     pub anchor: Option<SideAnchor>,

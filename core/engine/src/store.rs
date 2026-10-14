@@ -24,6 +24,7 @@ pub struct Store {
     _lock: File,
     io: Arc<Semaphore>,
     blob_write: Arc<tokio::sync::Mutex<()>>,
+    fork_reads: Arc<Semaphore>,
     #[cfg(test)]
     fork_fault: std::sync::Mutex<Option<ForkFault>>,
 }
@@ -56,6 +57,8 @@ impl Store {
             _lock: lock,
             io: Arc::new(Semaphore::new(8)),
             blob_write: Arc::new(tokio::sync::Mutex::new(())),
+            // 最多同时解析两份 64 MiB 快照；页请求不占满通用 Store 写入容量。
+            fork_reads: Arc::new(Semaphore::new(2)),
             #[cfg(test)]
             fork_fault: std::sync::Mutex::new(None),
         })

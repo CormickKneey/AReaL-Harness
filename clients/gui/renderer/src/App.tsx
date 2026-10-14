@@ -397,7 +397,7 @@ function AppContent({ services }: { services: PlatformServices }) {
     setPanelTabs(tabs => [...tabs.filter(id => !isTerminalTab(id) || terminalState.ids.includes(id)), ...terminalState.ids.filter(id => !tabs.includes(id))]);
   }, [terminalState.ids]);
   const action: Action = useCallback(
-    async (name, params = {}) => {
+    async (name: import("./services.js").CommandName, params: Data = {}) => {
       // 新投递清除上一操作的界面提示；本次失败仍由下方 catch 显示。
       if (name === "send" || name === "steer") setError("");
       try {
@@ -416,7 +416,7 @@ function AppContent({ services }: { services: PlatformServices }) {
   );
   // Resource pages own their loading, validation and recovery feedback.
   const resourceAction: Action = useCallback(
-    (name, params = {}) => call(services, name, params),
+    (name: import("./services.js").CommandName, params: Data = {}) => call(services, name, params),
     [services],
   );
   const onTrajectoryStatus = useCallback((status: TrajectoryStatus | null) => {

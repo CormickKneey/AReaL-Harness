@@ -120,6 +120,7 @@ pub struct TelemetryGuard {
     provider: Option<opentelemetry_sdk::trace::SdkTracerProvider>,
     logger_provider: Option<opentelemetry_sdk::logs::SdkLoggerProvider>,
     durable_provider: Option<opentelemetry_sdk::logs::SdkLoggerProvider>,
+    capture_health: Option<crate::trajectory::CaptureHealth>,
 }
 
 impl TelemetryGuard {
@@ -134,9 +135,14 @@ impl TelemetryGuard {
             .with_service_name(config.service_name)
             .with_attribute(KeyValue::new("service.version", env!("CARGO_PKG_VERSION")))
             .build();
-        let durable = if trajectory.enabled {
+        let capture_health = trajectory.enabled.then(|| {
+            let health = crate::trajectory::CaptureHealth::new(trajectory);
+            health.activate();
+            health
+        });
+        let durable = if let Some(health) = &capture_health {
             // 用户提示统一由客户端状态入口负责，Core 不重复向继承终端输出。
-            crate::trajectory::Processor::new(trajectory).ok()
+            crate::trajectory::Processor::with_health(trajectory, health.clone()).ok()
         } else {
             let control = trajectory.clone();
             let _ = std::thread::Builder::new()
@@ -235,7 +241,12 @@ impl TelemetryGuard {
             provider,
             logger_provider,
             durable_provider,
+            capture_health,
         })
+    }
+
+    pub(crate) fn capture_health(&self) -> Option<crate::trajectory::CaptureHealth> {
+        self.capture_health.clone()
     }
 
     pub fn shutdown(mut self) {

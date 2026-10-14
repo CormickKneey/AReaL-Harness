@@ -192,6 +192,34 @@ fn convert_result(value: Value) -> Result<DynamicToolResponse> {
     })
 }
 
+#[derive(Debug)]
+pub struct CleanupUnconfirmed;
+impl std::fmt::Display for CleanupUnconfirmed {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("MCP shutdown could not be confirmed")
+    }
+}
+impl std::error::Error for CleanupUnconfirmed {}
+
+#[derive(Debug)]
+struct StartupRollbackError {
+    operation: anyhow::Error,
+    cleanup: anyhow::Error,
+}
+impl std::fmt::Display for StartupRollbackError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}; rollback: {}", self.operation, self.cleanup)
+    }
+}
+impl std::error::Error for StartupRollbackError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.cleanup.as_ref())
+    }
+}
+fn rollback_error(operation: anyhow::Error, cleanup: anyhow::Error) -> anyhow::Error {
+    StartupRollbackError { operation, cleanup }.into()
+}
+
 /// Owns live connections. Startup failures roll back all earlier connections.
 pub struct Connections {
     services: Vec<RunningService<RoleClient, Handler>>,
@@ -238,7 +266,7 @@ impl Connections {
                         .err()
                         .unwrap_or_else(|| anyhow::anyhow!("MCP tools exceed 128"));
                     if let Err(cleanup) = connections.shutdown().await {
-                        return Err(error.context(cleanup));
+                        return Err(rollback_error(error, cleanup));
                     }
                     return Err(error);
                 }
@@ -261,7 +289,9 @@ impl Connections {
             );
         }
         self.services.clear();
-        ensure!(!failed, "MCP shutdown could not be confirmed");
+        if failed {
+            return Err(CleanupUnconfirmed.into());
+        }
         Ok(())
     }
 }
@@ -429,4 +459,20 @@ fn alias(server: &str, tool: &str) -> String {
     }
     let digest = format!("{:x}", Sha256::digest(format!("{server}\0{tool}")));
     format!("mcp__{server}__{}", &digest[..24])
+}
+
+#[cfg(test)]
+mod cleanup_chain_tests {
+    use super::*;
+    #[test]
+    fn startup_rollback_cleanup_marker_remains_in_source_chain() {
+        let operation = anyhow::anyhow!("discovery failed");
+        let cleanup: anyhow::Error = CleanupUnconfirmed.into();
+        let wrapped = rollback_error(operation, cleanup);
+        assert!(
+            wrapped
+                .chain()
+                .any(|cause| cause.is::<CleanupUnconfirmed>())
+        );
+    }
 }

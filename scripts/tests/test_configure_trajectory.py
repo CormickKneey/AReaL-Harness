@@ -192,6 +192,124 @@ mode = "YOLO"
                 self.assertEqual(self.run_script(home, "--disable", *arguments)[0], 1)
                 self.assertEqual(config.read_text(), original)
 
+    def test_undersized_disk_override_creates_no_state_or_control_calls(self):
+        for disk_bytes in (1, 65536, MODULE.MIN_DISK_BYTES - 1):
+            with self.subTest(disk_bytes=disk_bytes), tempfile.TemporaryDirectory() as directory:
+                home = Path(directory) / "new-home"
+                with patch.object(MODULE.subprocess, "run") as run:
+                    code, stdout, stderr = self.run_script(
+                        home,
+                        "--enable",
+                        "--endpoint",
+                        "https://collector.example",
+                        "--max-disk-bytes",
+                        str(disk_bytes),
+                        "--max-memory-bytes",
+                        "1",
+                        "--max-batch-bytes",
+                        "1",
+                        "--headers-env",
+                        "HEADERS",
+                        environment={"HEADERS": "authorization=fixture-secret"},
+                        binary="/safe/areal",
+                    )
+                self.assertEqual(code, 1)
+                self.assertIn("1 MiB", stderr)
+                self.assertNotIn("fixture-secret", stdout + stderr)
+                self.assertFalse(home.exists())
+                run.assert_not_called()
+
+    def test_undersized_disk_preserves_configuration_credentials_and_spool(self):
+        for source in ("argument", "configuration", "script-default"):
+            with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
+                home = Path(directory)
+                config = home / "config.toml"
+                credential = home / "trajectory-credentials" / "headers.txt"
+                credential.parent.mkdir()
+                credential.write_text("authorization=old-fixture-secret")
+                spool = home / "trajectory"
+                spool.mkdir()
+                (spool / "control.json").write_text('{"enabled":true}')
+                (spool / "pending.pb").write_bytes(b"pending-fixture")
+                (home / ".config.toml.lock").touch()
+                old_limit = (
+                    f"max_disk_bytes={MODULE.MIN_DISK_BYTES - 1}\n"
+                    if source == "configuration"
+                    else ""
+                )
+                config.write_text(
+                    "schema_version=2\n[trajectory]\nenabled=true\n"
+                    'endpoint="https://old.example"\n'
+                    f"headers_file={json.dumps(str(credential))}\n"
+                    f"spool_dir={json.dumps(str(spool))}\n"
+                    "max_memory_bytes=1\nmax_batch_bytes=1\n" + old_limit
+                )
+                before = {
+                    path.relative_to(home): (path.read_bytes(), path.stat().st_mtime_ns)
+                    for path in home.rglob("*")
+                    if path.is_file()
+                }
+                arguments = (
+                    ("--max-disk-bytes", str(MODULE.MIN_DISK_BYTES - 1))
+                    if source == "argument"
+                    else ()
+                )
+                defaults = (
+                    {"max_disk_bytes": MODULE.MIN_DISK_BYTES - 1}
+                    if source == "script-default"
+                    else {}
+                )
+                with (
+                    patch.dict(MODULE.DEFAULTS, defaults),
+                    patch.object(MODULE.subprocess, "run") as run,
+                    patch.object(MODULE, "atomic_private", wraps=MODULE.atomic_private) as write,
+                ):
+                    code, stdout, stderr = self.run_script(
+                        home,
+                        "--enable",
+                        "--endpoint",
+                        "https://new.example",
+                        "--spool-dir",
+                        str(home / "new-spool"),
+                        "--headers-env",
+                        "HEADERS",
+                        *arguments,
+                        environment={"HEADERS": "authorization=new-fixture-secret"},
+                        binary="/safe/areal",
+                    )
+                self.assertEqual(code, 1)
+                self.assertIn("1 MiB", stderr)
+                self.assertNotIn("fixture-secret", stdout + stderr)
+                run.assert_not_called()
+                write.assert_not_called()
+                self.assertFalse((home / "new-spool").exists())
+                after = {
+                    path.relative_to(home): (path.read_bytes(), path.stat().st_mtime_ns)
+                    for path in home.rglob("*")
+                    if path.is_file()
+                }
+                self.assertEqual(after, before)
+
+    def test_supported_disk_boundaries_persist_with_a_fitting_batch(self):
+        for disk_bytes in (MODULE.MIN_DISK_BYTES, 1 << 40):
+            with self.subTest(disk_bytes=disk_bytes), tempfile.TemporaryDirectory() as directory:
+                home = Path(directory)
+                code, _, _ = self.run_script(
+                    home,
+                    "--enable",
+                    "--endpoint",
+                    "https://collector.example",
+                    "--max-disk-bytes",
+                    str(disk_bytes),
+                    "--max-batch-bytes",
+                    str(512 * 1024),
+                )
+                self.assertEqual(code, 0)
+                values = tomllib.loads((home / "config.toml").read_text())["trajectory"]
+                self.assertEqual(values["max_disk_bytes"], disk_bytes)
+                self.assertEqual(values["max_batch_bytes"], 512 * 1024)
+                self.assertFalse((home / "trajectory").exists())
+
     def test_environment_selected_file_is_updated_without_touching_default_configuration(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory) / "home"

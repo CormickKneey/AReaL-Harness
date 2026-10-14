@@ -12,7 +12,7 @@
     "typecheck": "pnpm --filter @areal/gui-renderer typecheck && pnpm --filter @areal/gui-renderer exec tsc --allowJs --checkJs --noEmit --skipLibCheck --target ES2022 --module NodeNext ../packages/workbench/client/desktop-contract.cjs",
     "start": "node scripts/start.mjs",
     "package": "node scripts/package.mjs",
-    "verify": "node scripts/verify-public.mjs && node scripts/design-system-audit.mjs",
+    "verify": "node scripts/verify-public.mjs && node scripts/design-system-audit.mjs && node --test scripts/side-restore.test.mjs scripts/operation-contract.test.cjs scripts/side-model-intent.test.mjs",
     "test:queue": "node scripts/queue-smoke.mjs",
     "test:interactions": "node scripts/interaction-smoke.mjs",
     "test:composer": "node scripts/composer-smoke.mjs",
@@ -20,7 +20,6 @@
     "test:connection": "node scripts/connection-smoke.mjs",
     "test:architecture": "node scripts/architecture-smoke.mjs",
     "test:conversation-derivation": "node scripts/conversation-derivation-smoke.mjs",
-
     "test:trajectory": "node --test scripts/trajectory.test.mjs scripts/trajectory-polling.test.mjs",
     "test:trajectory-config": "node scripts/trajectory-config-smoke.mjs",
     "test:trajectory-ui": "node scripts/trajectory-ui-smoke.mjs",
@@ -34,7 +33,7 @@
     "test:browser-feasibility": "node scripts/browser-feasibility.mjs",
     "test:browser-attach": "node scripts/browser-attach-smoke.mjs",
     "test:browser-annotations": "node scripts/browser-annotation-smoke.mjs",
-    "test:browser-contracts": "node --test scripts/browser-read-contract.test.mjs scripts/browser-network-policy.test.mjs scripts/browser-diagnostics-contract.test.cjs scripts/browser-evidence-contract.test.mjs scripts/browser-startup-contract.test.mjs",
+    "test:browser-contracts": "node --test scripts/browser-read-contract.test.mjs scripts/browser-network-policy.test.mjs scripts/browser-diagnostics-contract.test.cjs scripts/browser-evidence-contract.test.mjs scripts/browser-startup-contract.test.mjs scripts/browser-observation-privacy.test.cjs",
     "test:remote-command": "node scripts/remote-command-contract.mjs",
     "test:remote-command-e2e": "node scripts/remote-session-commands-e2e.mjs",
     "test:remote-session": "node scripts/remote-session-contract.mjs",
@@ -53,7 +52,8 @@
     "design:dev": "pnpm --filter @areal/gui-renderer design:dev",
     "design:build": "pnpm --filter @areal/gui-renderer design:build",
     "test:design": "node scripts/design-system-smoke.mjs",
-    "verify:design": "node scripts/design-system-audit.mjs"
+    "verify:design": "node scripts/design-system-audit.mjs",
+    "test:regressions": "node --test scripts/browser-observation-privacy.test.cjs scripts/trajectory-polling.test.mjs scripts/builder-download.test.mjs"
   },
   "devDependencies": {
     "fake-indexeddb": "6.2.4",

@@ -58,6 +58,9 @@ try:
             }
             if not params.get("cursor") or mode == "repeat-cursor":
                 result["nextCursor"] = "second-page"
+            if mode == "budget-tools":
+                tool = result["tools"][0]
+                result = {"tools": [{**tool, "name": f"tool-{i}"} for i in range(70)]}
         elif method == "tools/call":
             value = params["arguments"]["value"]
             if value == "hang":

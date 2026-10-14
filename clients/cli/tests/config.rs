@@ -208,6 +208,37 @@ fn short_exec_keeps_json_clean_and_remote_ignores_local_trajectory() {
 }
 
 #[test]
+fn owned_exec_reaches_launcher_and_reports_its_startup_error() {
+    let temp = tempfile::tempdir().unwrap();
+    fs::create_dir(temp.path().join("workspace")).unwrap();
+    let out = invoke(
+        temp.path(),
+        &[
+            "exec",
+            "hello",
+            "--workspace",
+            "workspace",
+            "--scratch",
+            "missing-scratch",
+            "--output-format",
+            "json",
+        ],
+        &[("HOME", temp.path().to_str().unwrap())],
+    );
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    // 无需 Runtime 产物或模型：launcher 自身的确定性错误证明自派生链已经进入 main。
+    assert!(stderr.contains("Local Harness:"), "{stderr}");
+    assert!(stderr.contains(r#""state":"failed""#), "{stderr}");
+    assert!(
+        stderr.contains("Harness startup failed (exit status:"),
+        "{stderr}"
+    );
+    let result: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(result["is_error"], true);
+}
+
+#[test]
 fn source_build_does_not_self_upgrade() {
     let temp = tempfile::tempdir().unwrap();
     let out = invoke(temp.path(), &["upgrade", "--check"], &[]);

@@ -331,6 +331,8 @@ async fn run_configured(mut args: Args, diagnostic: Option<ConfigCommand>) -> Re
     });
     let diagnostics_stop = stopping.clone();
     let diagnostics_root = config.data_dir.clone();
+    let capture_health = telemetry.capture_health();
+    let capture_config = config.trajectory.clone();
     let diagnostics_task = tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(60));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -339,7 +341,13 @@ async fn run_configured(mut args: Args, diagnostic: Option<ConfigCommand>) -> Re
                 _ = diagnostics_stop.cancelled() => break,
                 _ = interval.tick() => {
                     let root = diagnostics_root.clone();
-                    if !matches!(tokio::task::spawn_blocking(move || areal_engine::diagnostics::collect(&root)).await, Ok(Ok(()))) {
+                    let capture_health = capture_health.clone();
+                    let capture_config = capture_config.clone();
+                    if !matches!(tokio::task::spawn_blocking(move || {
+                        // 首次 tick 立即执行；采集线程创建失败也由已有后台报告，不阻塞启动。
+                        if let Some(health) = capture_health { health.persist(&capture_config); }
+                        areal_engine::diagnostics::collect(&root)
+                    }).await, Ok(Ok(()))) {
                         tracing::warn!("diagnostic retention cleanup failed");
                     }
                 }
@@ -774,4 +782,9 @@ fn configured_models(
         result.default_model = None;
     }
     Ok(result)
+}
+
+/// 返回输入二进制内嵌的构建身份，打包不能用当前 checkout 冒充。
+pub fn build_info() -> serde_json::Value {
+    serde_json::json!({"sourceRevision":env!("AREAL_BUILD_REVISION"),"workingTree":env!("AREAL_BUILD_DIRTY"),"inputHash":env!("AREAL_BUILD_INPUT_HASH"),"apiVersion":areal_protocol::desktop::API_VERSION,"stateVersion":areal_engine::state_version()})
 }

@@ -32,10 +32,17 @@ DEFAULTS = {
     "upload_interval_ms": 1000,
 }
 MAX_CONFIG_BYTES = 1024 * 1024
+# 与 Core 一致：覆盖队列的 64 KiB 控制预留，并为轨迹副本留下空间。
+MIN_DISK_BYTES = 1024 * 1024
 
 
 class ConfigurationError(ValueError):
     """仅包含可直接展示的固定错误说明。"""
+
+
+def validate_disk_limit(value):
+    if type(value) is not int or not MIN_DISK_BYTES <= value <= 1 << 40:
+        raise ConfigurationError("max_disk_bytes 必须为 1 MiB–1 TiB 范围内的整数")
 
 
 def regular_text(path, limit=MAX_CONFIG_BYTES):
@@ -187,6 +194,9 @@ def apply_control(binary, action, config, home):
 
 
 def configure(args):
+    # 显式无效额度在创建配置目录或锁文件前拒绝；合并已有配置后仍须再次校验。
+    if args.max_disk_bytes is not None:
+        validate_disk_limit(args.max_disk_bytes)
     env_home = os.environ.get("AREAL_HARNESS_HOME")
     if (
         not args.home
@@ -265,6 +275,7 @@ def configure(args):
                 0 if field == "max_retries" else 1
             ):
                 raise ConfigurationError("容量和时间必须为正整数；max_retries 可以为 0")
+        validate_disk_limit(values["max_disk_bytes"])
         maxima = {
             "max_disk_bytes": 1 << 40,
             "max_memory_bytes": 1 << 30,
