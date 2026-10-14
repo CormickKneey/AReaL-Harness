@@ -3,6 +3,8 @@ const { ServiceConnection, waitForServiceExit } = require('./service-client.cjs'
 const { PROTOCOL } = require('./service-protocol.cjs');
 const { createResourceRecovery, summary } = require('./resource-recovery.cjs');
 
+const { cancelLegacyService } = require('./legacy-service-cancel.cjs');
+
 // 只使用旧服务的资源恢复/安全停止接口，不将其任务投影接入新 GUI。
 async function recoverStartupService({ metadata, home, notify }) {
   const connection = new ServiceConnection();
@@ -21,6 +23,7 @@ async function recoverStartupService({ metadata, home, notify }) {
       const unsafe = projects.some(p => !p.restartSafe);
       const blocked = busy || peers || unsafe;
       const canRecover = !busy && !peers && projects.some(p => p.resources.length);
+      const canCancel = busy && !peers;
       const detail = [
         '检测到另一版本或启动配置的后台服务。安全重启后继续打开应用，已有模型配置和历史记录会保留。',
         peers && '请先退出其他连接此后台的 GUI。',
@@ -28,12 +31,35 @@ async function recoverStartupService({ metadata, home, notify }) {
         canRecover && '受管终端阻止后台重启。请检查并关闭不再需要的终端，然后重新检查。',
         summary(projects), lastError,
       ].filter(Boolean).join('\n\n');
-      const buttons = blocked ? ['稍后处理', '重新检查', ...(canRecover ? ['检查后台资源…'] : [])] : ['稍后处理', '重启后台并继续'];
+      const buttons = blocked ? ['稍后处理', '重新检查', ...(canRecover ? ['检查后台资源…'] : []), ...(canCancel ? ['取消任务并重启'] : [])] : ['稍后处理', '重启后台并继续'];
       const answer = await notify({ type: blocked ? 'warning' : 'question', message: blocked ? '后台暂时无法重启' : '需要重启后台服务', detail, buttons, defaultId: canRecover ? 2 : 1, cancelId: 0, noLink: true });
       if (answer.response === 0) throw Object.assign(new Error('后台连接已暂缓，原后台保持运行。可重新检查并处理后台资源。'), { code: 'STARTUP_CANCELLED' });
       lastError = '';
       if (blocked) {
         if (canRecover && answer.response === 2) await recoverResources();
+        const cancelIndex = buttons.indexOf('取消任务并重启');
+        if (canCancel && answer.response === cancelIndex) {
+          const confirm = await notify({ type: 'warning', message: '确认取消后台任务？', detail: '当前活动轮次和未完成的模型/工具请求将被取消；未确认的结果会保留为 UNKNOWN。取消后将安全重启后台服务。', buttons: ['返回', '取消任务并重启'], defaultId: 0, cancelId: 0, noLink: true });
+          if (confirm.response !== 1) continue;
+          try {
+            await connection.request('stopService', { protocol: PROTOCOL, forUpdate: true, cancel: true }, true);
+            await waitForServiceExit(home, metadata);
+            return;
+          } catch (error) {
+            if (error.submissionUnknown || error.code === 'DISCONNECTED') throw error;
+            if (service.cancelStop || !error.message.startsWith('后台仍有任务')) { lastError = error.message; continue; }
+            try {
+              // 旧后台忽略 cancel 字段；直接取消旧 Core 后仍走原有安全退出。
+              await cancelLegacyService({ connection, home });
+              await connection.request('stopService', { protocol: PROTOCOL, forUpdate: true }, true);
+              await waitForServiceExit(home, metadata);
+              return;
+            } catch (fallbackError) {
+              if (fallbackError.submissionUnknown || fallbackError.code === 'DISCONNECTED') throw fallbackError;
+              lastError = `${error.message}；兼容旧后台取消失败：${fallbackError.message}`;
+            }
+          }
+        }
         continue;
       }
       try {
