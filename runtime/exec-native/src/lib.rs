@@ -145,6 +145,12 @@ impl Backend for NativeBackend {
     fn sandbox_profile(&self) -> &'static str {
         self.profile.name()
     }
+    fn restricted_scope_isolation(&self) -> bool {
+        matches!(
+            self.profile,
+            SandboxProfile::Native | SandboxProfile::FullAccess
+        ) && sandbox::supported(SandboxProfile::Native).is_ok()
+    }
     fn supports_input(&self) -> bool {
         true
     }

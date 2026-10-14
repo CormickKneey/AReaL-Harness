@@ -83,6 +83,10 @@ enum Command {
         expected_digest: String,
         #[arg(long)]
         definition_digest: String,
+        /// Independently allow command hooks in ordinary read-only child tasks: workspace read-only,
+        /// private scratch and plugin data writable, no network or provider secrets.
+        #[arg(long)]
+        allow_read_only_commands: bool,
     },
     HooksRevoke {
         id: String,
@@ -243,9 +247,10 @@ pub async fn run(options: Options) -> Result<()> {
             id,
             expected_digest,
             definition_digest,
+            allow_read_only_commands,
         } => (
             "areal/plugin/hooks/configure",
-            json!({"id":id,"expectedDigest":expected_digest,"definitionDigest":definition_digest,"enabled":true,"trusted":true}),
+            json!({"id":id,"expectedDigest":expected_digest,"definitionDigest":definition_digest,"enabled":true,"trusted":true,"allowReadOnlyCommands":allow_read_only_commands}),
             true,
         ),
         Command::HooksRevoke { id } => {

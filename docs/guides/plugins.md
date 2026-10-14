@@ -110,4 +110,6 @@ areal plugin --workspace /absolute/workspace hooks-revoke review-helper@team-too
 
 Core 保存每次受理的 `desktop.hookRuns`。UNKNOWN 保留并阻止继续执行；检查实际副作用和资源后，可通过 `areal/hook/acknowledge` 保存有界说明，结果仍为 UNKNOWN且不重放。归档和关闭先取消、等待已受理任务，再结算 SessionEnd；正在关闭的 Session 不接受新轮次。后台结果只在安全点或下一次用户 Turn 投影，不自行启动空闲 Turn。
 
-已信任的 command hook 使用有界 Runtime 任务写入组：固定窗口内同任务 hook/工具允许重叠，ordinary/ordinary 与跨任务冲突仍独占。窗口不能延长，封口后的操作可能排在外组任务之后。P2 尚未完整验收：只读/Side/研究及限制 Profile 保留原准入边界。Windows shell、只读子任务 hooks、完整配置栈与固定 Codex 二进制对照仍开放。详见 [P2 验收矩阵](../development/codex-plugins-p2-acceptance.md)。
+已信任的 command hook 使用有界 Runtime 任务写入组：固定窗口内同任务 hook/工具允许重叠，ordinary/ordinary 与跨任务冲突仍独占。窗口不能延长，封口后的操作可能排在外组任务之后。P2 尚未完整验收：Side/研究及限制 Profile 继续排除；普通只读子任务采用独立 command 许可。Windows shell、完整配置栈与固定 Codex 二进制对照仍开放。详见 [P2 验收矩阵](../development/codex-plugins-p2-acceptance.md)。
+
+普通只读子任务的 command hooks 需要审阅当前定义后另行勾选同意；CLI 在 `hooks-trust` 添加 `--allow-read-only-commands`，省略该选项会移除此项同意。工作区/安装包只读，仅私有子任务 scratch 和本插件 data 可写，禁止网络和 provider 秘密继承，data 目录被重定向时拒绝执行。Side、研究任务、nativeTaskAgent、受限 Profile 和只读根会话继续排除，此项同意不包含 MCP handler。

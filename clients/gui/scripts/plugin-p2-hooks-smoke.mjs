@@ -61,6 +61,7 @@ const hooks=page.getByRole('region',{name:'插件钩子',exact:true});
 await hooks.getByText('UserPromptSubmit',{exact:false}).first().waitFor();
 assert(await button('信任并启用当前钩子').isDisabled());
 assert.equal((await call('manage',{projectId,operation:'pluginHooks'})).data.find(r=>r.pluginId==='hello@gui-p0').definitions[0].trusted,false);
+const readOnlyConsent=hooks.getByRole('checkbox',{name:/单独允许以上命令钩子在普通只读子任务运行/});assert.equal(await readOnlyConsent.isChecked(),false);assert(await readOnlyConsent.isDisabled());
 await hooks.scrollIntoViewIfNeeded();await page.screenshot({path:join(scratch,'hook-review.png'),animations:'disabled'});
 // Lose only the first completed trust reply at Main -> Renderer; Core remains real.
 await app.evaluate(({ipcMain})=>{const channel='areal-core:command',original=ipcMain._invokeHandlers.get(channel);let lose=true;
@@ -70,6 +71,8 @@ await page.getByRole('checkbox',{name:'我已审阅以上安装包摘要、全�
 await page.getByRole('dialog').getByRole('button',{name:'核对插件提交',exact:true}).click();
 await button('刷新钩子').click();await hooks.getByText('当前定义已获信任',{exact:false}).waitFor();
 checks.push('actual hook content/digests render, explicit review gates trust and lost trust response recovers via original receipt without replay');
+assert.equal((await call('manage',{projectId,operation:'pluginHooks'})).data.find(r=>r.pluginId==='hello@gui-p0').definitions[0].readOnlyCommandTrusted,false);checks.push('normal GUI trust and lost-reply recovery never imply read-only command consent');
+await hooks.getByRole('checkbox',{name:'我已审阅以上安装包摘要、全部钩子定义及其执行内容，允许当前定义运行。'}).check();await readOnlyConsent.check();await button('信任并启用当前钩子').click();await hooks.getByText('当前定义已单独获准',{exact:false}).waitFor();assert.equal((await call('manage',{projectId,operation:'pluginHooks'})).data.find(r=>r.pluginId==='hello@gui-p0').definitions[0].readOnlyCommandTrusted,true);await hooks.scrollIntoViewIfNeeded();await page.screenshot({path:join(scratch,'hook-readonly-consent.png'),animations:'disabled'});checks.push('separate visible GUI read-only child consent reaches Core for the reviewed definitions');
 
 // Lose a completed response only at the Main-to-renderer boundary. Core executes unchanged.
 await app.evaluate(({ipcMain})=>{const channel='areal-core:command',original=ipcMain._invokeHandlers.get(channel);let lose=true;
@@ -87,7 +90,7 @@ checks.push('explicit setup enters ordinary accessible chat with packaged skill 
 checks.push('GUI recovers completed setup after injected Main-to-renderer response loss using real Core receipt without replay');
 await page.screenshot({path:join(scratch,'setup-chat.png'),animations:'disabled'});
 await settings();
-await button('撤销钩子信任并停用').click();await button('刷新钩子').click();await page.getByRole('region',{name:'插件钩子'}).getByText('尚未授予信任',{exact:false}).waitFor();checks.push('native revoke reaches authoritative Core definition trust');
+await button('撤销钩子信任并停用').click();await button('刷新钩子').click();await page.getByRole('region',{name:'插件钩子'}).getByText('尚未授予信任',{exact:false}).waitFor();assert.equal((await call('manage',{projectId,operation:'pluginHooks'})).data.find(r=>r.pluginId==='hello@gui-p0').definitions[0].readOnlyCommandTrusted,false);checks.push('native revoke reaches authoritative Core definition trust and removes independent read-only consent');
 await page.screenshot({path:join(scratch,'hook-revoked.png'),animations:'disabled'});
 await button('在用户范围停用').click();await pluginState(r=>r?.enabled===false,'disable committed');
 const current=await call('manage',{projectId,operation:'plugins'});

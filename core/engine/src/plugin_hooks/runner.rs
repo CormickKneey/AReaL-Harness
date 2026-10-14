@@ -10,7 +10,7 @@ use areal_plugins::hooks::HookHandler;
 use areal_runtime_protocol as rt;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
 
 const INPUT_LIMIT: usize = 1024 * 1024;
@@ -143,6 +143,44 @@ pub(super) async fn run(
     }
 }
 
+// Store roots are canonical when bound. Never turn a redirected data directory
+// into a new write grant by canonicalizing it at execution time. A missing leaf
+// may be created by the hook under its existing, fixed data parent.
+fn read_only_data_uri(path: &Path, runtime: &crate::tools::RuntimeConfig) -> Result<String> {
+    ensure!(
+        !path.starts_with(&runtime.workspace) && !runtime.workspace.starts_with(path),
+        "read-only hook data cannot overlap task workspace"
+    );
+    let parent = path.parent().context("hook data has no parent")?;
+    ensure!(
+        path.is_absolute() && parent.canonicalize()? == parent && parent.is_dir(),
+        "read-only hook data parent was redirected"
+    );
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => ensure!(
+            metadata.is_dir() && path.canonicalize()? == path,
+            "read-only hook data was redirected"
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    areal_plugins::prepare_data_directory(path)?;
+    let data = path.to_str().context("hook data root is not UTF-8")?;
+    if runtime.client.info().capabilities["fullAccess"] == true
+        && !path.starts_with(&runtime.workspace)
+        && !runtime
+            .command_scratch
+            .as_ref()
+            .is_some_and(|root| !root.starts_with(&runtime.workspace) && path.starts_with(root))
+    {
+        // Keep the reviewed literal identity. Native sandbox execution rejects
+        // redirected grants; it must not receive their newly resolved target.
+        Ok(format!("workspace://host{data}"))
+    } else {
+        crate::tools::resource_uri(data, runtime)
+    }
+}
+
 async fn command_run(
     engine: &Arc<Engine>,
     cell: &Arc<Cell>,
@@ -153,6 +191,16 @@ async fn command_run(
 ) -> Result<RawOutput> {
     let runtime = engine.runtime.as_ref().context("hooks require Runtime")?;
     let client = &runtime.client;
+    if hook.read_only {
+        ensure!(
+            client.info().capabilities["restrictedScopeIsolation"] == true,
+            "read-only hooks require confirmed native Scope isolation; no fallback"
+        );
+        ensure!(
+            matches!(hook.definition.handler, HookHandler::Command { .. }),
+            "read-only consent excludes MCP handlers"
+        );
+    }
     let cwd = cell.state.lock().await.thread.cwd.clone();
     let cwd_uri = crate::tools::resource_uri(&cwd, runtime)?;
     let root = hook.root.to_str().context("plugin root is not UTF-8")?;
@@ -161,7 +209,11 @@ async fn command_run(
         .to_str()
         .context("plugin data root is not UTF-8")?;
     let root_uri = crate::tools::resource_uri(root, runtime)?;
-    let data_uri = crate::tools::resource_uri(data, runtime)?;
+    let data_uri = if hook.read_only && hook.packaged {
+        read_only_data_uri(&hook.data_root, runtime)?
+    } else {
+        crate::tools::resource_uri(data, runtime)?
+    };
     let mut input = serde_json::to_vec(input)?;
     ensure!(input.len() < INPUT_LIMIT, "hook stdin exceeds budget");
     input.push(b'\n');
@@ -202,31 +254,54 @@ async fn command_run(
         .min(parent_info.limits.wall_time_ms);
     let output_limit = (OUTPUT_LIMIT as u64).min(parent_info.limits.output_bytes);
     let mut permissions = engine.active_permissions(cell).await?;
-    if permissions.read_roots.is_none() {
-        permissions.read_roots = Some(parent_info.read_roots.clone());
-    }
-    // Inherited writes are narrowed to the task workspace; hook data adds one explicit
-    // capability, still checked against the Runtime parent's authorized roots.
-    if permissions.write_roots.is_none() {
-        let mut roots = if runtime.writable {
-            vec!["workspace://repo".into()]
-        } else {
-            vec![]
-        };
+    if hook.read_only {
+        // Build the capability explicitly rather than inheriting broad launcher
+        // roots. The task anchor supplies identity only, never execution grants.
+        let mut reads = vec!["workspace://repo".into()];
+        let mut writes = Vec::new();
         if runtime.command_scratch.is_some() {
-            roots.push(engine.scratch_uri(cell));
+            let scratch = engine.scratch_uri(cell);
+            reads.push(scratch.clone());
+            writes.push(scratch);
         }
-        permissions.write_roots = Some(roots);
+        if hook.packaged {
+            reads.extend([root_uri.clone(), data_uri.clone()]);
+            writes.push(data_uri.clone());
+        }
+        permissions = rt::PermissionRequest {
+            read_roots: Some(reads),
+            write_roots: Some(writes),
+            network: rt::NetworkRequest::Deny,
+        };
+    } else {
+        if permissions.read_roots.is_none() {
+            permissions.read_roots = Some(parent_info.read_roots.clone());
+        }
+        if permissions.write_roots.is_none() {
+            let mut roots = if runtime.writable {
+                vec!["workspace://repo".into()]
+            } else {
+                vec![]
+            };
+            if runtime.command_scratch.is_some() {
+                roots.push(engine.scratch_uri(cell));
+            }
+            permissions.write_roots = Some(roots);
+        }
+        if let Some(reads) = &mut permissions.read_roots
+            && hook.packaged
+        {
+            reads.extend([root_uri.clone(), data_uri.clone()]);
+        }
+        if hook.packaged {
+            permissions
+                .write_roots
+                .as_mut()
+                .unwrap()
+                .push(data_uri.clone());
+        }
     }
-    if let Some(reads) = &mut permissions.read_roots
-        && hook.packaged
-    {
-        reads.extend([root_uri.clone(), data_uri.clone()]);
-    }
-    let writes = permissions.write_roots.as_mut().unwrap();
-    if hook.packaged {
-        writes.push(data_uri.clone());
-    }
+    let writes = permissions.write_roots.as_ref().unwrap();
     // A read grant cannot subtract a covering write grant. Reject that layout instead
     // of describing the installed package as immutable while granting writes to it.
     for write in writes.iter().filter(|_| hook.packaged) {

@@ -25,6 +25,25 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Create only the package data leaf through an existing anchored parent.
+/// No symlink component may redirect Core's pre-execution directory creation.
+pub fn prepare_data_directory(path: &Path) -> Result<()> {
+    use rustix::fs::{Mode, OFlags, mkdirat, openat};
+    let parent = package::directory(path.parent().context("data directory has no parent")?)?;
+    let leaf = path.file_name().context("data directory has no name")?;
+    match mkdirat(&parent, leaf, Mode::RWXU) {
+        Ok(()) | Err(rustix::io::Errno::EXIST) => {}
+        Err(error) => return Err(error.into()),
+    }
+    openat(
+        &parent,
+        leaf,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )?;
+    Ok(())
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstalledSkill {

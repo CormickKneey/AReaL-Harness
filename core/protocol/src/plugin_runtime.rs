@@ -152,6 +152,9 @@ pub struct HooksConfigure {
     pub definition_digest: String,
     pub enabled: bool,
     pub trusted: bool,
+    /// Separate consent for isolated command hooks in ordinary read-only child Sessions.
+    #[serde(default)]
+    pub allow_read_only_commands: bool,
 }
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

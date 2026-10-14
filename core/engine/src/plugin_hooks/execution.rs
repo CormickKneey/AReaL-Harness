@@ -93,7 +93,7 @@ impl Engine {
     ) -> HookOutput {
         let result = async {
             ensure_current(self, &cell, &hook).await?;
-            if hook.packaged {
+            if hook.packaged && !hook.read_only {
                 tokio::fs::create_dir_all(&hook.data_root).await?;
             }
             runner::run(self, &cell, &hook, &input, &cancel).await

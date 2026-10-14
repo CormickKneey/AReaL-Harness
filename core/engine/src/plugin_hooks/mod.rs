@@ -27,12 +27,15 @@ pub(super) struct BoundHook {
     pub(super) definition: HookDefinition,
     pub(super) caller_admitted: bool,
     pub(super) packaged: bool,
+    pub(super) read_only: bool,
 }
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct Trust {
     enabled: bool,
     package: String,
     definition: String,
+    #[serde(default)]
+    allow_read_only_commands: bool,
 }
 pub(super) struct Manager {
     plans: std::sync::RwLock<Vec<BoundHook>>,
@@ -81,6 +84,18 @@ impl Manager {
                         && t.package == h.package_digest
                         && t.definition == h.definition.digest
                 })
+    }
+    fn read_only_allowed(&self, h: &BoundHook) -> bool {
+        matches!(
+            h.definition.handler,
+            areal_plugins::hooks::HookHandler::Command { .. }
+        ) && self.allowed(h)
+            && self
+                .trust
+                .read()
+                .unwrap()
+                .get(&Self::key(h))
+                .is_some_and(|t| t.allow_read_only_commands)
     }
     pub(super) fn publish(&self, hooks: Vec<BoundHook>, enabled: HashSet<String>) {
         for (_, (plugin, token)) in self.invocations.lock().unwrap().iter() {
@@ -172,6 +187,7 @@ pub(super) fn bind(c: &areal_plugins::InstalledComponents) -> anyhow::Result<Vec
             definition,
             caller_admitted: false,
             packaged: true,
+            read_only: false,
         })
         .collect())
 }
@@ -189,8 +205,37 @@ pub(super) fn bind_source(source: &areal_plugins::hook_sources::HookSource) -> V
             definition,
             caller_admitted: false,
             packaged: false,
+            read_only: false,
         })
         .collect()
+}
+/// One Session policy for both frozen admission and live authority checks.
+/// Read-only command consent applies only to ordinary child Sessions; it never
+/// turns Side, research, native workers or restricted Profiles into hook callers.
+fn hook_scope(thread: &Thread, research: bool) -> Option<bool> {
+    if thread.is_side()
+        || research
+        || matches!(
+            thread.source.as_str(),
+            "nativeResearchAgent" | "nativeTaskAgent"
+        )
+    {
+        return None;
+    }
+    let config = thread
+        .turns
+        .last()
+        .filter(|t| t.status == areal_protocol::TurnStatus::InProgress)
+        .and_then(|t| t.configuration.as_ref())
+        .or_else(|| thread.desktop.as_ref().map(|d| &d.configuration));
+    if config.is_some_and(|c| !c.allow_plugin_skills) {
+        return None;
+    }
+    let read_only = config.is_some_and(|c| c.read_only);
+    if read_only && thread.parent_thread_id.is_none() {
+        return None;
+    }
+    Some(read_only)
 }
 pub(super) async fn ensure_current(
     engine: &Engine,
@@ -211,22 +256,10 @@ pub(super) async fn ensure_current(
         "hook disabled or review changed"
     );
     let state = cell.state.lock().await;
-    let config = state
-        .active
-        .as_ref()
-        .and_then(|_| {
-            state
-                .thread
-                .turns
-                .last()
-                .and_then(|t| t.configuration.as_ref())
-        })
-        .or_else(|| state.thread.desktop.as_ref().map(|d| &d.configuration));
     anyhow::ensure!(
-        !state.thread.is_side()
-            && !cell.research
-            && config.is_none_or(|c| c.allow_plugin_skills && !c.read_only),
-        "hook scope excluded"
+        hook_scope(&state.thread, cell.research) == Some(hook.read_only)
+            && (!hook.read_only || engine.plugin_hooks.read_only_allowed(hook)),
+        "hook scope or independent read-only consent excluded"
     );
     Ok(())
 }
@@ -256,29 +289,32 @@ impl Engine {
             .set((home, config))
             .map_err(|_| anyhow::anyhow!("hook configuration already installed"))
     }
-    pub(super) fn frozen_plugin_hooks(&self, thread: &Thread) -> Vec<BoundHook> {
-        let config = thread
-            .turns
-            .last()
-            .and_then(|t| t.configuration.as_ref())
-            .or_else(|| thread.desktop.as_ref().map(|d| &d.configuration));
-        if thread.is_side()
-            || matches!(
-                thread.source.as_str(),
-                "nativeResearchAgent" | "nativeTaskAgent"
-            )
-            || config.is_some_and(|c| !c.allow_plugin_skills || c.read_only)
-        {
+    pub(super) fn admitted_plugin_hooks(
+        &self,
+        thread: &Thread,
+        hooks: &[BoundHook],
+    ) -> Vec<BoundHook> {
+        let Some(read_only) = hook_scope(thread, false) else {
             return vec![];
-        }
-        self.plugin_hooks
-            .plans
-            .read()
-            .unwrap()
+        };
+        hooks
             .iter()
-            .filter(|h| self.plugin_hooks.allowed(h))
+            .filter(|h| {
+                if read_only {
+                    self.plugin_hooks.read_only_allowed(h)
+                } else {
+                    self.plugin_hooks.allowed(h)
+                }
+            })
             .cloned()
+            .map(|mut h| {
+                h.read_only = read_only;
+                h
+            })
             .collect()
+    }
+    pub(super) fn frozen_plugin_hooks(&self, thread: &Thread) -> Vec<BoundHook> {
+        self.admitted_plugin_hooks(thread, &self.plugin_hooks.plans.read().unwrap())
     }
     pub async fn plugin_hooks_list(&self) -> Result<Value> {
         self.refresh_plugins().await?;
@@ -291,11 +327,11 @@ impl Engine {
         for c in components {
             let plan = areal_plugins::hooks::normalize(&c).map_err(invalid)?;
             let hooks = bind(&c).map_err(invalid)?;
-            rows.push(json!({"pluginId":c.id,"installedDigest":c.digest,"definitionDigest":plan_digest(&hooks),"definitions":plan.entries.iter().zip(&hooks).map(|(d,h)|json!({"definition":d,"trusted":self.plugin_hooks.allowed(h)})).collect::<Vec<_>>(),"diagnostics":plan.diagnostics}));
+            rows.push(json!({"pluginId":c.id,"installedDigest":c.digest,"definitionDigest":plan_digest(&hooks),"definitions":plan.entries.iter().zip(&hooks).map(|(d,h)|json!({"definition":d,"trusted":self.plugin_hooks.allowed(h),"readOnlyCommandTrusted":self.plugin_hooks.read_only_allowed(h)})).collect::<Vec<_>>(),"diagnostics":plan.diagnostics}));
         }
         for source in self.plugin_hooks.sources.read().unwrap().iter() {
             let hooks = bind_source(source);
-            rows.push(json!({"pluginId":source.id,"sourceKind":format!("{:?}",source.kind),"origin":source.origin,"enabled":source.enabled,"installedDigest":source.digest,"definitionDigest":plan_digest(&hooks),"definitions":source.plan.entries.iter().zip(&hooks).map(|(d,h)|json!({"definition":d,"trusted":self.plugin_hooks.allowed(h)})).collect::<Vec<_>>(),"diagnostics":source.plan.diagnostics}));
+            rows.push(json!({"pluginId":source.id,"sourceKind":format!("{:?}",source.kind),"origin":source.origin,"enabled":source.enabled,"installedDigest":source.digest,"definitionDigest":plan_digest(&hooks),"definitions":source.plan.entries.iter().zip(&hooks).map(|(d,h)|json!({"definition":d,"trusted":self.plugin_hooks.allowed(h),"readOnlyCommandTrusted":self.plugin_hooks.read_only_allowed(h)})).collect::<Vec<_>>(),"diagnostics":source.plan.diagnostics}));
         }
         Ok(json!({"data":rows}))
     }
@@ -325,6 +361,8 @@ impl Engine {
             ));
         }
         let mut candidate = self.plugin_hooks.trust.read().unwrap().clone();
+        let read_only_revoked = !p.allow_read_only_commands
+            && hooks.iter().any(|h| self.plugin_hooks.read_only_allowed(h));
         if !p.enabled || !p.trusted {
             candidate.retain(|k, _| !k.starts_with(&format!("{}:", p.id)));
         } else {
@@ -335,6 +373,11 @@ impl Engine {
                         enabled: true,
                         package: h.package_digest.clone(),
                         definition: h.definition.digest.clone(),
+                        allow_read_only_commands: p.allow_read_only_commands
+                            && matches!(
+                                h.definition.handler,
+                                areal_plugins::hooks::HookHandler::Command { .. }
+                            ),
                     },
                 );
             }
@@ -344,7 +387,7 @@ impl Engine {
             .await
             .map_err(invalid)?;
         *self.plugin_hooks.trust.write().unwrap() = candidate;
-        if !p.enabled || !p.trusted {
+        if !p.enabled || !p.trusted || read_only_revoked {
             for (_, (plugin, token)) in self.plugin_hooks.invocations.lock().unwrap().iter() {
                 if plugin == &p.id {
                     token.cancel();
@@ -352,7 +395,7 @@ impl Engine {
             }
         }
         Ok(
-            json!({"id":p.id,"installedDigest":p.expected_digest,"definitionDigest":p.definition_digest,"enabled":p.enabled,"trusted":p.trusted}),
+            json!({"id":p.id,"installedDigest":p.expected_digest,"definitionDigest":p.definition_digest,"enabled":p.enabled,"trusted":p.trusted,"allowReadOnlyCommands":p.enabled&&p.trusted&&p.allow_read_only_commands}),
         )
     }
     pub async fn hook_acknowledge(

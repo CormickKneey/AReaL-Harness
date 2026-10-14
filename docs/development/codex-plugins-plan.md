@@ -76,4 +76,4 @@ P0 执行依赖：01 固定基线，02/03 建立格式与目录边界，04 完�
 
 P3 验收前须明确桌面扩展集合、必须运行的服务/Connector 与支持平台。格式解析不会赋予托管服务权限，未解决要求必须保留在最终矩阵中。
 
-当前 P2 候选已落地解析、独立信任、Core/Runtime 执行、生命周期、MCP 活跃时间与 GUI 审阅。已批准的有界 Runtime 写入组通过56项 Runtime 检查与21项实际 Core/Runtime 场景（显式可写子任务）。只读子任务和平台/全部固定 Codex 对照仍开放；新出现的直接 Rust 子进程 SIGKILL 独立列为未通过。具体证据、失败和后续验收见 [P2 矩阵](codex-plugins-p2-acceptance.md)，不能据局部通过关闭最终兼容。
+当前 P2 候选已落地解析、独立信任、Core/Runtime 执行、生命周期、MCP 活跃时间与 GUI 审阅。已批准的有界 Runtime 写入组通过56项 Runtime 检查与21项默认实际 Core/Runtime 场景（另行同意的普通只读 command hooks）。限定子任务实现另有文件/网络/私有数据边界、过期/撤销信任与桌面独立同意流程验收。只读 MCP、自定义角色和平台/全部固定 Codex 对照仍开放；新出现的直接 Rust 子进程 SIGKILL 独立列为未通过。具体证据、失败和后续验收见 [P2 矩阵](codex-plugins-p2-acceptance.md)，不能据局部通过关闭最终兼容。

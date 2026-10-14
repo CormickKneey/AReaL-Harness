@@ -190,8 +190,10 @@ Side 首问与追问共用活跃额度：默认每来源 2、每部署 8；超�
 | 方法 | 参数 | 结果 |
 |---|---|---|
 | `areal/plugin/hooks/list` | `{}` | `data` 中逐来源列出 installedDigest、definitionDigest、definitions、诊断与信任；配置来源还有 sourceKind/origin/enabled |
-| `areal/plugin/hooks/configure` | `requestId,id,expectedDigest,definitionDigest,enabled,trusted` | 核对当前安装/来源和整份计划摘要后保存独立定义信任；失配拒绝；禁用/撤信任取消已受理调用 |
+| `areal/plugin/hooks/configure` | `requestId,id,expectedDigest,definitionDigest,enabled,trusted,allowReadOnlyCommands?` | 核对当前安装/来源和整份计划摘要后保存独立定义信任；失配拒绝；禁用/撤信任取消已受理调用 |
 | `areal/hook/acknowledge` | `requestId,threadId,invocationId,inspection` | 空闲目标自有 UNKNOWN 的有界检查说明；保留 UNKNOWN，不重放 |
+
+`allowReadOnlyCommands` 省略时默认为 false，已有信任元数据也默认 false。它只独立授予普通只读子会话的 command handler，仍绑定当前包/来源和定义摘要。每份定义返回 `readOnlyCommandTrusted`，MCP handler 始终为 false。Side、研究任务、nativeTaskAgent、只读根会话和禁止插件 Skills 的 Profile 继续排除。Core 过滤继承计划并在执行前检查当前权限。限定 hooks 要求 Runtime 确认 `restrictedScopeIsolation`：工作区/包只读，仅私有子任务 scratch 和本插件 data 可写，禁止网络和 provider 秘密继承；data 父目录/叶目录被重定向时拒绝，授权保留固定路径身份。配置来源不获得包根/data 授权。省略或清除此选项移除该能力，并保守取消该包/来源全部在途调用，包括可写 hooks；撤信任/停用移除两项同意并取消已受理调用。
 
 `desktop.hookRuns` 保存每次 invocation 的包/定义摘要、event、turnId/toolUseId、Runtime operationId、outcome、asynchronous、delivered、output 和 inspection。`areal/hook/completed` 是刷新提示，权威恢复仍读 Thread 快照。未知结果未检查时新轮次被拒绝；关闭中的 Session 也拒绝新执行。
 

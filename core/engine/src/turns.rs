@@ -253,7 +253,7 @@ impl Engine {
                 .hooks
                 .inherited
                 .get()
-                .cloned()
+                .map(|hooks| self.admitted_plugin_hooks(&state.thread, hooks))
                 .unwrap_or_else(|| self.frozen_plugin_hooks(&state.thread)),
             hook_user_input: true,
             hook_tasks: TaskTracker::new(),

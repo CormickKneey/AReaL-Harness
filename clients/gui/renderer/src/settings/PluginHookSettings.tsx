@@ -16,7 +16,7 @@ type HookView = {
   pluginId: string;
   installedDigest: string;
   definitionDigest: string;
-  definitions: { definition: Definition; trusted: boolean }[];
+  definitions: { definition: Definition; trusted: boolean; readOnlyCommandTrusted: boolean }[];
   diagnostics: string[];
 };
 type Props = {
@@ -39,7 +39,7 @@ function readView(value: unknown, id: string, digest: string): HookView {
     throw new Error("插件钩子响应格式无效。");
   }
   const definitions = row.definitions.map((entry: unknown) => {
-    if (!object(entry) || typeof entry.trusted !== "boolean" || !object(entry.definition)) throw new Error("钩子定义格式无效。");
+    if (!object(entry) || typeof entry.trusted !== "boolean" || typeof entry.readOnlyCommandTrusted !== "boolean" || !object(entry.definition)) throw new Error("钩子定义格式无效。");
     const definition = entry.definition;
     if (typeof definition.id !== "string" || typeof definition.event !== "string"
       || (definition.matcher !== null && typeof definition.matcher !== "string")
@@ -48,7 +48,7 @@ function readView(value: unknown, id: string, digest: string): HookView {
       || (definition.status_message != null && typeof definition.status_message !== "string")) {
       throw new Error("钩子定义格式无效。");
     }
-    return { definition: definition as Definition, trusted: entry.trusted };
+    return { definition: definition as Definition, trusted: entry.trusted, readOnlyCommandTrusted: entry.readOnlyCommandTrusted };
   });
   return { pluginId: id, installedDigest: digest, definitionDigest: row.definitionDigest,
     definitions, diagnostics: row.diagnostics as string[] };
@@ -61,6 +61,7 @@ export function PluginHookSettings({ id, installedDigest, disabled, api, onConfi
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [reviewedIdentity, setReviewedIdentity] = useState<string>();
+  const [readOnlyReviewedIdentity, setReadOnlyReviewedIdentity] = useState<string>();
   const generation = useRef(0);
   const apiRef = useRef(api);
   apiRef.current = api;
@@ -72,16 +73,17 @@ export function PluginHookSettings({ id, installedDigest, disabled, api, onConfi
       if (generation.current === request) {
         const nextIdentity = JSON.stringify([id, installedDigest, next.definitionDigest]);
         setReviewedIdentity(previous => previous === nextIdentity ? previous : undefined);
+        setReadOnlyReviewedIdentity(previous => previous === nextIdentity ? previous : undefined);
         setView(next);
       }
     } catch (cause) {
-      if (generation.current === request) { setError(message(cause)); setView(undefined); setReviewedIdentity(undefined); }
+      if (generation.current === request) { setError(message(cause)); setView(undefined); setReviewedIdentity(undefined); setReadOnlyReviewedIdentity(undefined); }
     } finally {
       if (generation.current === request) setLoading(false);
     }
   }, [id, installedDigest]);
   useEffect(() => {
-    setReviewedIdentity(undefined); setView(undefined); setBusy(false);
+    setReviewedIdentity(undefined); setReadOnlyReviewedIdentity(undefined); setView(undefined); setBusy(false);
     void refresh();
     return () => { ++generation.current; };
   }, [refresh, refreshKey]);
@@ -89,15 +91,18 @@ export function PluginHookSettings({ id, installedDigest, disabled, api, onConfi
   const current = view?.pluginId === id && view.installedDigest === installedDigest ? view : undefined;
   const identity = current ? JSON.stringify([id, installedDigest, current.definitionDigest]) : undefined;
   const reviewed = !!identity && reviewedIdentity === identity;
+  const hasCommands = current?.definitions.some(entry => entry.definition.handler.type === "command") ?? false;
+  const readOnlyReviewed = reviewed && !!identity && readOnlyReviewedIdentity === identity;
   const blocked = disabled || loading || busy || !current || !!error;
   const configure = async (trusted: boolean) => {
     if (blocked || !current || (trusted && !reviewed)) return;
     const request = generation.current;
-    setBusy(true); setError(""); setReviewedIdentity(undefined);
+    const allowReadOnlyCommands = trusted && hasCommands && readOnlyReviewed;
+    setBusy(true); setError(""); setReviewedIdentity(undefined); setReadOnlyReviewedIdentity(undefined);
     try {
       // The parent owns durable submission/UNKNOWN recovery. Never retry this mutation.
       await onConfigure({ id, expectedDigest: installedDigest, definitionDigest: current.definitionDigest,
-        enabled: trusted, trusted });
+        enabled: trusted, trusted, allowReadOnlyCommands });
       if (generation.current === request) { setBusy(false); await refresh(); }
     } catch (cause) {
       if (generation.current === request) setError(cause instanceof Error ? cause.message : "钩子配置未完成，请核对提交状态。");
@@ -120,8 +125,9 @@ export function PluginHookSettings({ id, installedDigest, disabled, api, onConfi
       {current.diagnostics.map((diagnostic, index) => <p className="text-ui-sm" key={index}>{diagnostic}</p>)}
       {current.definitions.length === 0 ? <p>当前安装包没有可执行的钩子定义。</p> : <>
         <ul className="space-y-3">
-          {current.definitions.map(({ definition, trusted }, index) => <li key={`${definition.id}:${index}`} className="space-y-1 rounded-md border p-3">
+          {current.definitions.map(({ definition, trusted, readOnlyCommandTrusted }, index) => <li key={`${definition.id}:${index}`} className="space-y-1 rounded-md border p-3">
             <p><strong>{definition.event}</strong> · {trusted ? "当前定义已获信任" : "尚未授予信任"}</p>
+            {definition.handler.type === "command" && <p className="text-ui-sm">普通只读子任务命令许可：{readOnlyCommandTrusted ? "当前定义已单独获准" : "尚未单独授权"}</p>}
             <p className="text-ui-sm">匹配：{definition.matcher || "全部"} · 超时：{definition.timeout_secs} 秒 · {definition.async ? "后台执行" : "同步执行"}</p>
             {definition.status_message && <p className="text-ui-sm">状态提示：{definition.status_message}</p>}
             <p className="text-ui-sm">{definition.handler.type === "command" ? "Shell 命令" : "MCP 工具及参数"}</p>
@@ -132,12 +138,16 @@ export function PluginHookSettings({ id, installedDigest, disabled, api, onConfi
           </li>)}
         </ul>
         <label className="flex items-start gap-2 text-ui-sm">
-          <input type="checkbox" checked={reviewed} disabled={blocked} onChange={event => setReviewedIdentity(event.target.checked ? identity : undefined)} />
+          <input type="checkbox" checked={reviewed} disabled={blocked} onChange={event => { setReviewedIdentity(event.target.checked ? identity : undefined); if (!event.target.checked) setReadOnlyReviewedIdentity(undefined); }} />
           我已审阅以上安装包摘要、全部钩子定义及其执行内容，允许当前定义运行。
         </label>
+        {hasCommands && <label className="flex items-start gap-2 text-ui-sm">
+          <input type="checkbox" checked={readOnlyReviewed} disabled={blocked || !reviewed} onChange={event => setReadOnlyReviewedIdentity(event.target.checked ? identity : undefined)} />
+          单独允许以上命令钩子在普通只读子任务运行：工作区只读；私有临时目录及插件数据可写；无网络访问；不提供供应商凭据。此许可仅适用于命令钩子；Side、研究模式及受限 Profile 除外。
+        </label>}
         <div className="settings-form-actions">
           <Button disabled={blocked || !reviewed} onClick={() => void configure(true)}>信任并启用当前钩子</Button>
-          <Button variant="outline" disabled={blocked || !current.definitions.some(entry => entry.trusted)} onClick={() => void configure(false)}>撤销钩子信任并停用</Button>
+          <Button variant="outline" disabled={blocked || !current.definitions.some(entry => entry.trusted || entry.readOnlyCommandTrusted)} onClick={() => void configure(false)}>撤销钩子信任并停用</Button>
         </div>
       </>}
     </>}
