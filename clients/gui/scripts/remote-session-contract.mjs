@@ -55,10 +55,26 @@ assert.equal(media.bodyDetail.state, "unavailable");
 const { readFile } = await import("node:fs/promises");
 const { createContext, runInContext } = await import("node:vm");
 class Element {
+  constructor(tag = "div") {
+    this.tagName = tag.toUpperCase();
+  }
+  querySelectorAll(tag) {
+    return this.children.flatMap((child) => [
+      ...(child.tagName === tag.toUpperCase() ? [child] : []),
+      ...child.querySelectorAll(tag),
+    ]);
+  }
   children = [];
   listeners = new Map();
   dataset = {};
   style = {};
+  attributes = new Map();
+  setAttribute(name, value) {
+    this.attributes.set(name, String(value));
+  }
+  getAttribute(name) {
+    return this.attributes.get(name) ?? null;
+  }
   value = "all";
   append(...children) {
     this.children.push(...children);
@@ -151,8 +167,9 @@ class Socket {
 const context = createContext({
   document: {
     hidden: false,
+    body: new Element(),
     getElementById: element,
-    createElement: () => new Element(),
+    createElement: (tag) => new Element(tag),
     addEventListener() {},
   },
   window: { addEventListener() {}, dispatchEvent() {} },
@@ -227,6 +244,10 @@ const response = (subscriptionId) => ({
     history: {},
   },
 });
+assert.ok(
+  element("work-items").children.length,
+  `工作列表未就绪: ${element("status").textContent}; ${element("work-error").textContent}`,
+);
 open();
 const delayed = lastOpen();
 element("session-close").click();

@@ -10,7 +10,7 @@ import { Button } from "../components/ui/button.js";
 import { Feedback } from "../components/ui/feedback.js";
 import { TooltipProvider } from "../components/ui/tooltip.js";
 import type { LexicalChatInputHandle } from "../LexicalChatInput.js";
-import type { Action } from "../services.js";
+import type { Action, CommandName } from "../services.js";
 import { tokenGroups } from "./catalog.js";
 import { useAppearance } from "../settings/applicationPreferences.js";
 
@@ -49,14 +49,15 @@ function Preview() {
     const css = getComputedStyle(root);
     setValues(Object.fromEntries(tokenGroups.flatMap(group => group.tokens.map(([name]) => [name, css.getPropertyValue(name).trim()]))));
   }, [dark, fontSize]);
-  // fixture 只反馈本地状态，不读取 preload，也不连接 Core 或供应商。
-  const action: Action = async (name) => {
+  // fixture 只接受 respond；其余 Action 重载均明确拒绝，不伪造业务返回值。
+  // 只反馈本地状态，不读取 preload，也不连接 Core 或供应商。
+  const action = (async (name: CommandName) => {
     if (name !== "respond") throw new Error("组件预览保留业务入口，不执行真实操作。");
-    if (state === "busy") return new Promise(() => {});
+    if (state === "busy") return new Promise<never>(() => {});
     if (state === "failed") throw new Error("示例：操作未受理，内容已保留。");
     if (state === "unknown") throw Object.assign(new Error("示例：等待核对"), { submissionUnknown: true });
     return {};
-  };
+  }) as Action;
   const disabled = state === "busy" || state === "unknown";
   return <main className="design-preview" data-width={width}>
     <header className="design-preview-header">
