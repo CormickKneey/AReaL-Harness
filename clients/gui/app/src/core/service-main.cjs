@@ -10,6 +10,8 @@ const { ServiceConnection } = require('./service-client.cjs');
 const { createResourceRecovery } = require('./resource-recovery.cjs');
 const { BackgroundNotifications } = require('./notifications.cjs');
 const { SharedPowerMonitor } = require('./power.cjs');
+const { systemProxyEnvironment } = require('./system-proxy.cjs');
+const { proxyRelay } = require('./proxy-relay.cjs');
 const { RemoteControl } = require('./remote.cjs');
 app.setName('AReaL Harness GUI');
 const guiUserData = configureUserData(app);
@@ -63,7 +65,12 @@ async function start() {
   // The separate recovery entry above remains able to show native dialogs.
   if (process.platform === 'darwin') app.setActivationPolicy('prohibited');
   await app.whenReady();
-  backend = new CoreBackend({ ...options, encryption: safeStorage });
+  backend = new CoreBackend({ ...options, proxyEnvironment: await systemProxyEnvironment(), encryption: safeStorage });
+  let ports;
+  try { ports = JSON.parse(await readFile(join(home, 'proxy-relays.json'), 'utf8')); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; }
+  backend.proxyRelay = await proxyRelay(backend.proxyEnvironment, { ports, save: ports => backend.save('proxy-relays.json', ports) });
+  backend.proxyEnvironment = backend.proxyRelay.environment;
   await backend.init();
   const notifications = new BackgroundNotifications(Notification, () => {
     const env = { ...process.env, AREAL_BACKEND: 'areal', AREAL_CORE_HOME: home, AREAL_GUI_USER_DATA: guiUserData };
@@ -89,4 +96,4 @@ app.on('before-quit', event => { event.preventDefault(); });
 for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => {
   void (async () => { try { await backend?.disconnect(); } finally { await finish(); } })();
 });
-void start().catch(error => { console.error(backend?.providers.redact(error.message) ?? error.message); service?.close(); app.exit(1); });
+void start().catch(async error => { console.error(backend?.providers.redact(error.message) ?? error.message); service?.close(); await backend?.proxyRelay?.close(); app.exit(1); });

@@ -10,7 +10,7 @@ const hash = value => createHash('sha256').update(value).digest('hex');
 class AppHooks {
   constructor(backend) { this.backend = backend; }
   environment() {
-    return { ...process.env, ...(this.backend.userHome ? { HOME: this.backend.userHome } : {}),
+    return { ...process.env, ...this.backend.proxyEnvironment, ...(this.backend.userHome ? { HOME: this.backend.userHome } : {}),
       // 只覆盖服务登记目录，Core 配置沿用用户 home 与显式配置的解析规则。
       AREAL_HARNESS_SERVICE_HOME: this.backend.harnessHome,
       ...(this.backend.toolExtensions ? { AREAL_HARNESS_TOOL_EXTENSIONS: this.backend.toolExtensions } : {}) };

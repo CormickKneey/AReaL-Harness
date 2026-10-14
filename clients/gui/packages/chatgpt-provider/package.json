@@ -6,6 +6,7 @@
   "type": "module",
   "exports": {
     "./core": "./core.js",
+    "./network": "./network.js",
     "./package.json": "./package.json"
   },
   "dependencies": {

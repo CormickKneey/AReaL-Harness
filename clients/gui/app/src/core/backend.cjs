@@ -29,12 +29,13 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 /** 每个项目连接公开的共享 Core 服务；这里只保留可重建投影与客户端受理回执。 */
 class CoreBackend {
-  constructor({ binary, home, harnessHome = join(home, 'harness'), config, desktopConfig, userHome, toolExtensions, workgroupPolicy, workgroupToolchain, sandboxProfile, desktopProcesses = false, defaultProfile, encryption, onChange = () => {} }) {
+  constructor({ binary, home, harnessHome = join(home, 'harness'), config, desktopConfig, userHome, toolExtensions, workgroupPolicy, workgroupToolchain, sandboxProfile, desktopProcesses = false, defaultProfile, encryption, proxyEnvironment = {}, onChange = () => {} }) {
     if (!binary || !isAbsolute(binary)) throw new Error('请设置 AREAL_CORE_BIN 为 areal 可执行文件的绝对路径');
     this.binary = binary;
     this.home = home;
     this.harnessHome = harnessHome;
     this.config = config;
+    this.proxyEnvironment = proxyEnvironment;
     this.toolExtensions = toolExtensions;
     this.workgroupPolicy = workgroupPolicy;
     this.workgroupToolchain = workgroupToolchain;
@@ -1159,6 +1160,7 @@ class CoreBackend {
     await Promise.allSettled([...this.starting.values()]);
     await Promise.allSettled([...this.projects.values()].map(project => project.summaryReads));
     await this.providers.close();
+    await this.proxyRelay?.close();
     await this.analytics.flush();
   }
 

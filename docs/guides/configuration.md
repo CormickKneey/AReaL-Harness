@@ -163,6 +163,8 @@ Core 的模型请求（含摘要、子 Agent 与 Workgroup）、Streamable HTTP 
 
 Core HTTP 客户端优先读取大写变量，再读取小写变量；第三方工具的优先级由其 HTTP 库决定，建议大小写值保持一致。`socks5` 在本地解析目标域名，`socks5h` 交给代理解析。HTTP(S) Basic 和 SOCKS5 用户名/密码可通过代理 URL 的 userinfo 配置；该 URL 可能包含凭据，不应写入仓库或共享诊断。
 
+macOS GUI 后台启动时通过系统 `scutil --proxy` 读取活动网络的静态 HTTP、HTTPS 和 SOCKS 代理，转换成上述环境变量后传给 Core；模型设置的模型发现、连接测试及 ChatGPT 订阅请求使用同一代理快照。系统 HTTPS 代理使用 HTTP CONNECT，系统 SOCKS 使用 `socks5h`，由代理解析目标域名。macOS 的 SOCKS 连接先经 GUI 后台的 loopback TCP 转接，再连接配置的上游代理，以兼容原生 Core 无法直接完成部分系统代理握手的情况；认证、SOCKS 数据和 TLS 原样透传。后台以权限 0600 保存转接端口和上游地址摘要，重启复用端口，不保存代理密码；代理 URL 及绕过规则的含义不变。优先级为对应协议的显式环境变量、显式 `ALL_PROXY`、系统对应协议代理、系统 SOCKS；大小写值统一为 Core 的大写优先规则。系统域名、IP 和 CIDR 绕过条目与已有 `NO_PROXY` 合并，`*.example.com` 转换为包含根域名的 `.example.com`；localhost、其子域、127.0.0.0/8 和 ::1 始终绕过。此路径不执行终端启动脚本、不修改系统设置；不解析 PAC、自动发现、仅排除简单主机名的选项或任意位置的通配符。其他系统沿用代理环境变量。更改系统代理后，等待任务完成，在 GUI“后台服务”中停止后台服务并重新连接，以重新读取并应用设置；只关闭窗口不会刷新后台环境。显式启用的 Responses WebSocket 仍遵循本页说明的直接连接限制。
+
 例如使用 SOCKS5 远端 DNS，并保留已有绕过条目：
 
 ```sh
