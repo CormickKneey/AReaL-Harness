@@ -17,6 +17,7 @@ const { _electron: electron } = require('playwright-core');
 const scratch = await mkdtemp('/private/tmp/areal-google-');
 const workspace = join(scratch, 'workspace'), userHome = join(scratch, 'user');
 await mkdir(workspace); await mkdir(join(userHome, '.areal'), { recursive: true });
+await writeFile(join(workspace, 'README.md'), '# Unified browser tabs fixture\n');
 execFileSync('git', ['init', '-b', 'main'], { cwd: workspace, stdio: 'ignore' });
 const localSearch = process.env.AREAL_BROWSER_LOCAL_SEARCH === '1';
 const site = localSearch ? createServer((request, response) => {
@@ -57,7 +58,13 @@ const model = createServer(async (request, response) => {
     const description = find(result, v => v.protocol === 'areal.browser.host.v1');
     if (description) pageId = description.pages[0];
     if (obs) observation = obs;
-    if (scenario === 'old') {
+    if (scenario === 'spawn') {
+      if (stage === 0) tool({ operation: 'describe', parameters: {} });
+      else if (stage === 1) tool({ operation: 'observe', parameters: { pageId } });
+      else if (stage === 2) tool({ operation: 'newPage', parameters: { pageId, url: new URL('/agent', searchUrl).href } });
+      else finish('Agent created an independent page.');
+      stage++;
+    } else if (scenario === 'old') {
       if (stage++ === 0) tool({ operation: 'act', parameters: { pageId, snapshotId: oldObservation.observationId, action: { kind: 'fill', ref: searchRef(oldObservation), value: 'MUST_NOT_DISPATCH' } } });
       else finish('Old turn refs refused.');
     } else if (scenario === 'human') {
@@ -94,18 +101,26 @@ const model = createServer(async (request, response) => {
 await new Promise(resolve => model.listen(0, '127.0.0.1', resolve));
 await writeFile(join(userHome, '.areal/config.toml'), `schema_version=1\n[model]\nprovider="fixture"\nname="fixture"\n[model.providers.fixture]\nprotocol="chat-completions"\nendpoint="http://127.0.0.1:${model.address().port}/v1/chat/completions"\n`);
 const deployment = join(scratch, 'desktop.json');
-await writeFile(deployment, JSON.stringify({ profiles: [{ id: 'fixture', revision: 'v1', displayName: 'Fixture', instructions: 'Use the browser tools and report actual observations.' }] }));
+await writeFile(deployment, JSON.stringify({ profiles: [{ id: 'fixture', revision: 'v1', displayName: 'Fixture', allowThreadProcesses: true, instructions: 'Use the browser tools and report actual observations.' }] }));
 const env = { ...process.env, AREAL_GUI_USER_DATA: join(scratch, 'electron'), AREAL_CORE_HOME: join(scratch, 'core'), AREAL_CORE_USER_HOME: userHome,
   AREAL_HARNESS_SERVICE_HOME: join(scratch, 'registry'), AREAL_CORE_DESKTOP_CONFIG: deployment, AREAL_CORE_BIN: process.env.AREAL_CORE_BIN || join(root, 'target/debug/areal') };
 for (const key of ['AREAL_CORE_WORKSPACE', 'AREAL_CORE_CONFIG', 'AREAL_HARNESS_HOME', 'AREAL_HARNESS_CONFIG', 'ELECTRON_RUN_AS_NODE']) delete env[key];
 async function until(fn, label, timeout = 90000) { const end = Date.now() + timeout; while (Date.now() < end) { const value = await fn(); if (value) return value; await new Promise(r => setTimeout(r, 100)); } throw new Error(`Timeout: ${label}`); }
 async function state() { return page.evaluate(() => window.arealDesktop.snapshot()); }
 async function command(name, params) { const result = await page.evaluate(({name,params}) => window.arealDesktop.command(name,params), {name,params}); assert.equal(result.ok,true,JSON.stringify(result)); return result.value; }
+async function readProcesses(params) {
+  const result = await page.evaluate(params => window.arealDesktop.command('manage', params), {projectId, threadId, ...params});
+  // Terminal creation/resize/write uses the same per-thread journal. Retry only
+  // the known rejection of this read, never replay a terminal mutation.
+  if (!result.ok && result.error?.code === -32009) return null;
+  assert.equal(result.ok, true, JSON.stringify(result));
+  return result.value;
+}
 async function run(kind, text) {
   scenario = kind; stage = 0;
   const count = (await state()).projects.find(p=>p.id===projectId).state.threads[threadId]?.turns?.length ?? 0;
   await page.getByTestId('chat-input').fill(text); await page.getByTestId('chat-input').press('Enter');
-  const turn = await until(async () => { const allow=page.getByRole('button',{name:'允许一次',exact:true});if(await allow.isVisible()){await allow.click();evidence.guiApprovals=(evidence.guiApprovals??0)+1;} const t = (await state()).projects.find(p=>p.id===projectId).state.threads[threadId]; const v=t?.turns?.at(-1); return t.turns.length>count && ['completed','failed'].includes(v.status) ? v : null; },kind);
+  const turn = await until(async () => { const allow=page.getByRole('button',{name:'允许一次',exact:true}).and(page.locator(':enabled'));if(await allow.isVisible()){await allow.click();evidence.guiApprovals=(evidence.guiApprovals??0)+1;} const t = (await state()).projects.find(p=>p.id===projectId).state.threads[threadId]; const v=t?.turns?.at(-1); return t.turns.length>count && ['completed','failed'].includes(v.status) ? v : null; },kind);
   evidence.turns.push({scenario:kind,turn}); assert.equal(turn.status,'completed',JSON.stringify(turn.error)); return turn;
 }
 function calls(turn) { return turn.items.filter(i=>i.type==='dynamicToolCall'); }
@@ -138,6 +153,64 @@ try {
   assert.equal(new URL(observation.url).pathname,'/search');assert.match(observation.text,/AI Agent|AI agent/i);
   const resultLinks=observation.nodes.filter(n=>n.role==='link' && n.name && /agent/i.test(n.name));assert.ok(resultLinks.length>=2,'at least two actual search result links are readable');
   evidence.resultLinks=resultLinks; evidence.native=await native(); assert.equal(new URL(evidence.native.url).searchParams.get('q'),'AI Agent');
+  // The same authoritative pages must be represented by top-level panel tabs.
+  const tabs = page.getByRole('tablist', { name: '侧边面板标签', exact: true });
+  await tabs.locator(`[data-side-pane-tab-id="browser:${pageId}"]`).waitFor();
+  assert.equal(await page.getByRole('tablist', { name: '浏览页面', exact: true }).count(), 0);
+  const originalPageId = pageId;
+  await page.getByRole('button', { name: '打开侧边面板标签页', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^浏览器/ }).click();
+  await until(async () => (await tabs.locator('[data-side-pane-tab-id^="browser:"]').count()) === 2, 'two top-level browser tabs');
+  const secondId = await tabs.locator('[data-side-pane-tab-id^="browser:"]').evaluateAll((nodes, original) => nodes.map(n => n.getAttribute('data-side-pane-tab-id')).find(id => id !== `browser:${original}`), originalPageId);
+  await page.getByLabel('预览地址').fill(new URL('/two', searchUrl).href);
+  await page.getByLabel('预览地址').press('Enter');
+  await until(async () => {
+    const value = await page.evaluate(q => window.arealDesktop.preview(q), {operation:'state', projectId, threadId, pageId:secondId.slice(8)});
+    return value.url === new URL('/two', searchUrl).href;
+  }, 'second tab navigates independently');
+  await page.evaluate(q => window.arealDesktop.preview(q), {operation:'selectPage', projectId, threadId, pageId:originalPageId});
+  await until(async () => (await tabs.locator(`[data-side-pane-tab-id="browser:${originalPageId}"] [role="tab"]`).getAttribute('aria-selected')) === 'true', 'Main-side selection is reflected in the unified strip');
+  await until(async () => (await page.getByLabel('预览地址').inputValue()).includes(new URL(searchUrl).host), 'original address restored');
+  await page.getByRole('button', { name: '打开侧边面板标签页', exact: true }).click();
+  await page.getByRole('menuitem', { name: /^终端/ }).click();
+  await tabs.locator('[data-side-pane-tab-id^="terminal:"] [role="tab"]').waitFor();
+  assert.equal(await page.locator('.preview-panel').count(), 0, 'browser view unmounts behind terminal');
+  await until(() => app.evaluate(({BrowserWindow}, origin) => {
+    const views = BrowserWindow.getAllWindows()[0].contentView.children.filter(view => view.webContents?.getURL().startsWith(origin));
+    return views.length >= 2 && views.every(view => !view.getVisible());
+  }, new URL(searchUrl).origin), 'native views really hide behind terminal');
+  const terminalProcess = await until(async () => {
+    const processes = await readProcesses({operation:'processes'});
+    const process = processes?.data?.at(-1);
+    if (!process) return null;
+    const output = await readProcesses({operation:'processOutput', id:process.id, maxBytes:4096});
+    return output?.chunks?.length ? process : null;
+  }, 'terminal process and first shell output ready');
+  await page.locator('.xterm-helper-textarea').pressSequentially('echo UNIFIED_TERMINAL_READY');
+  await page.locator('.xterm-helper-textarea').press('Enter');
+  await until(async () => {
+    const output = await readProcesses({operation:'processOutput', id:terminalProcess.id, maxBytes:4096});
+    return output?.chunks?.map(chunk => Buffer.from(chunk.dataBase64,'base64').toString()).join('').includes('UNIFIED_TERMINAL_READY');
+  }, 'terminal remains interactive');
+  await page.keyboard.press('Meta+p');
+  await page.getByRole('treeitem', { name: /README.md/ }).click();
+  await tabs.getByRole('tab', { name: 'README.md', exact:true }).waitFor();
+  await tabs.locator(`[data-side-pane-tab-id="browser:${originalPageId}"] [role="tab"]`).click();
+  await page.getByLabel('预览地址').waitFor();
+  // Closing an inactive browser tab releases that page, keeping the selected page.
+  await tabs.locator(`[data-side-pane-tab-id="${secondId}"]`).hover();
+  await tabs.locator(`[data-side-pane-tab-id="${secondId}"] button`).last().click();
+  await until(async () => (await tabs.locator('[data-side-pane-tab-id^="browser:"]').count()) === 1, 'sibling browser tab closed');
+  const kept = await page.evaluate(q => window.arealDesktop.preview(q), {operation:'state', projectId, threadId, pageId:originalPageId});
+  assert.equal(kept.browser.pageId, originalPageId);
+  assert.equal(new URL(kept.url).searchParams.get('q'), 'AI Agent');
+  evidence.unifiedTabs = { originalPageId, closedPageId: secondId.slice(8), terminalAndFile:true };
+  evidence.unifiedTabs.native = await until(() => app.evaluate(({BrowserWindow}, id) => {
+    const view = BrowserWindow.getAllWindows()[0].contentView.children.find(view => view.webContents?.id === id);
+    return view?.getVisible() ? {visible:true,bounds:view.getBounds()} : null;
+  }, evidence.native.id), 'original native view is shown on return');
+  const viewport = await page.locator('.preview-webview').boundingBox();
+  for (const key of ['x','y','width','height']) assert.ok(Math.abs(evidence.unifiedTabs.native.bounds[key] - viewport[key]) <= 1, `native ${key} aligns with the Panel viewport`);
   await page.screenshot({path:join(scratch,'gui-results.png')});
   const png=await app.evaluate(async ({webContents},id)=>(await webContents.fromId(id).capturePage()).toPNG().toString('base64'),evidence.native.id);await writeFile(join(scratch,'native-results.png'),Buffer.from(png,'base64'));
   // Force a real same-document update while the native AX read is pending.
@@ -150,6 +223,31 @@ try {
   await page.evaluate(({projectId,threadId,pageId})=>window.arealDesktop.preview({operation:'takeover',projectId,threadId,pageId}),{projectId,threadId,pageId});
   const taken=await taking;assert.equal(calls(taken)[0].success,false);assert.match(JSON.stringify(calls(taken)),/human_control/);
   const human=await run('human','检查人工接管后的拒绝。');assert.equal(calls(human)[0].success,false);assert.match(JSON.stringify(calls(human)),/host_unavailable|human_control/);
+  const spawned = await run('spawn', '在新的独立浏览器页面中打开测试链接。');
+  success(spawned);
+  const createdPage = find(calls(spawned), value => !!value.createdPage)?.createdPage;
+  assert.ok(createdPage?.pageId, 'browser_v1 newPage returns a new authoritative identity');
+  await tabs.locator(`[data-side-pane-tab-id="browser:${createdPage.pageId}"]`).waitFor();
+  await tabs.locator(`[data-side-pane-tab-id="browser:${createdPage.pageId}"] [role="tab"]`).click();
+  const agentPage = await until(async () => {
+    const value = await page.evaluate(q => window.arealDesktop.preview(q), {operation:'state', projectId, threadId, pageId:createdPage.pageId});
+    return value.url === new URL('/agent', searchUrl).href ? value : null;
+  }, 'Agent page maps to its own top-level tab');
+  assert.equal(agentPage.browser.control, 'agent');
+  evidence.unifiedTabs.agentCreatedPageId = createdPage.pageId;
+  await page.screenshot({path:join(scratch,'unified-tabs.png')});
+  await tabs.locator(`[data-side-pane-tab-id="browser:${createdPage.pageId}"] button`).last().click();
+  await until(async () => (await tabs.locator('[data-side-pane-tab-id^="browser:"]').count()) === 1, 'active Agent tab closes independently');
+  await tabs.locator(`[data-side-pane-tab-id="browser:${originalPageId}"]`).hover();
+  await tabs.locator(`[data-side-pane-tab-id="browser:${originalPageId}"] button`).last().click();
+  await until(async () => (await tabs.locator('[data-side-pane-tab-id^="browser:"]').count()) === 0, 'last page closes without a ghost browser tab');
+  assert.ok(await tabs.locator('[data-side-pane-tab-id^="terminal:"]').count());
+  await tabs.getByRole('tab', {name:'README.md',exact:true}).waitFor();
+  const otherThread = await command('create', {projectId, profile:{id:'fixture',revision:'v1'}});
+  await selectConversation(page, otherThread.threadId);
+  assert.equal(await page.locator('[data-side-pane-tab-id^="browser:"]').count(), 0, 'other conversation does not inherit browser tabs');
+  await selectConversation(page, threadId);
+  assert.equal(await page.locator('[data-side-pane-tab-id^="browser:"]').count(), 0, 'closed pages do not resurrect on return');
   assert.ok(evidence.requests.every(r=>r.guidance),'fresh-request guidance reaches each model request');
   evidence.status='passed';
 } catch(error) {evidence.status='failed';evidence.error=error.stack;if(page)await captureSmokeFailure(page,scratch,error);process.exitCode=1;}
@@ -159,5 +257,6 @@ finally {
   evidence.sourceHead=execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim();
   evidence.diffSHA256=createHash('sha256').update(execFileSync('git',['diff','HEAD'],{cwd:root})).digest('hex');
   evidence.coreBinarySHA256=createHash('sha256').update(await readFile(env.AREAL_CORE_BIN)).digest('hex');
+  evidence.tabSourceSHA256 = Object.fromEntries(await Promise.all(['renderer/src/App.tsx','renderer/src/Preview.tsx','renderer/src/app-shell/SidePane.tsx','renderer/src/app-shell/SidePaneTabTrigger.tsx','renderer/src/app-shell/useBrowserWorkspace.ts'].map(async file => [file, createHash('sha256').update(await readFile(join(gui,file))).digest('hex')])));
   await writeFile(join(scratch,'manifest.json'),JSON.stringify(evidence,null,2));console.log(JSON.stringify({status:evidence.status,evidence:scratch,error:evidence.error}));
 }

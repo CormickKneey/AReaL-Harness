@@ -750,6 +750,7 @@ impl Connection {
     }
     fn forward(&mut self, id: &str, mut events: broadcast::Receiver<Value>) {
         let task_filter = id.strip_prefix("task:").map(str::to_owned);
+        let principal = self.principal.clone();
         let subscription = self.stop.child_token();
         if let Some(old) = self
             .subscriptions
@@ -767,6 +768,7 @@ impl Connection {
                 match event {
                     Ok(event) => {
                         if task_filter.as_ref().is_some_and(|id| event["params"]["taskId"].as_str()!=Some(id)) { continue; }
+                        if task_filter.is_some() && !task_mode::visible_projection(&principal,&event["params"]["task"]) {subscription.cancel();break;}
                         if event["method"].as_str().is_some_and(|m| suppressed.contains(m)) { continue; }
                         let _delivery = delivery.lock().await;
                         if subscription.is_cancelled() { break; }
@@ -814,6 +816,26 @@ impl Connection {
                 .map(|page| json!(page))
                 .map_err(map_error);
         }
+        if method == "areal/task/host/ready" {
+            if !params.as_object().is_some_and(|p| p.is_empty()) {
+                return Err(RpcError::invalid("expected empty host readiness request"));
+            }
+            if self.principal.thread_ids.is_some()
+                || !self.principal.allows(auth::Permission::Manage)
+                || !self.principal.allows(auth::Permission::Tools)
+            {
+                return Err(RpcError {
+                    code: -32003,
+                    message: "unrestricted desktop host permission required".into(),
+                    data: None,
+                });
+            }
+            engine
+                .register_schedule_host(self.tool_host.clone())
+                .await
+                .map_err(map_error)?;
+            return Ok(json!({"ready":true}));
+        }
         if task_mode::METHODS.contains(&method) {
             if matches!(method, "areal/task/subscribe" | "areal/task/unsubscribe") {
                 let p: areal_protocol::tasks::TaskTarget = parse(params)?;
@@ -832,6 +854,13 @@ impl Connection {
                     .task_snapshot_and_subscribe(&p.task_id)
                     .await
                     .map_err(map_error)?;
+                if !task_mode::visible_projection(&self.principal, &snapshot) {
+                    return Err(RpcError {
+                        code: -32003,
+                        message: "task permission changed".into(),
+                        data: None,
+                    });
+                }
                 self.forward(&key, events);
                 return Ok(snapshot);
             }
@@ -932,6 +961,7 @@ impl Connection {
                 methods.extend_from_slice(desktop::METHODS);
                 methods.extend_from_slice(task_mode::METHODS);
                 methods.push("areal/work/overview");
+                methods.push("areal/task/host/ready");
                 if !engine.runtime_capabilities().is_null() {
                     methods.extend_from_slice(processes::METHODS);
                 }
@@ -948,7 +978,7 @@ impl Connection {
                     ]);
                 }
                 Ok(json!({"apiVersion": API_VERSION, "methods": methods,
-                    "notifications": NOTIFICATIONS, "serverRequests":["item/tool/call"],
+                    "notifications": NOTIFICATIONS, "serverRequests":["item/tool/call","areal/task/prepare"],
                     "browserToolBundles":if can_attach_browser {json!([{"bundleId":areal_protocol::desktop::BROWSER_V1_BUNDLE,
                         "definition":areal_protocol::desktop::browser_v1_tool()}])} else {json!([])},
                     "features":{"conversationDerivationV1":json!({"preview":false,"methods":["areal/thread/fork","areal/side/start","areal/conversation/list","areal/conversation/history","areal/conversation/unarchive","areal/side/context/read"],"limits":engine.conversation_derivation_limits(),"forkBoundaries":["after","before"],"workspaceModes":["sharedCurrent"],"sideWorkspaceAccess":if engine.side_workspace_read_available() {json!(["none","readOnly"])} else {json!(["none"])},"historyBytes":engine.fork_snapshot_limit()}),"subscriptionRemoval":true,"atomicResume":true,"atomicObserve":true,"atomicObserveOwnership":true,"browserToolAttachment":can_attach_browser,

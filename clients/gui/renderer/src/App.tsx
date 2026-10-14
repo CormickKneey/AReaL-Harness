@@ -9,6 +9,7 @@ import { ModelTrajectoryPane } from "./ModelTrajectoryPane.js";
 import { useAppearance, useApplicationPreferences } from "./settings/applicationPreferences.js";
 import { ConversationStatusCard } from "./ConversationStatusCard.js";
 import { SidePane } from "./app-shell/SidePane.js";
+import { useBrowserWorkspace, browserTabId, browserPageId, isBrowserTab } from "./app-shell/useBrowserWorkspace.js";
 import { Button } from "./components/ui/button.js";
 import { Popover, PopoverContent, PopoverTrigger } from "./components/ui/popover.js";
 import { ApplicationRail, SidebarSectionToggle, SidebarWorkspaceHeader } from "./app-shell/ApplicationNavigation.js";
@@ -180,8 +181,8 @@ function Usage({ thread }: { thread: Data }) {
 }
 
 // 浮层只负责资源导航；子任务对话仍由已有侧栏标签持有。
-function TaskResourcesPopover({ project, thread, action, selectedAgent, onPanel, onAgent, onFile }: {
-  project: Data; thread: Data; action: Action; selectedAgent?: string;
+function TaskResourcesPopover({ project, thread, action, selectedAgent, onPanel, onAgent, onFile, scheduledTask, runHistory }: {
+  project: Data; thread: Data; action: Action; selectedAgent?: string; scheduledTask?: Data; runHistory?: React.ReactNode;
   onPanel: (name: string) => void; onAgent: (id: string) => void; onFile: (path: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -189,7 +190,7 @@ function TaskResourcesPopover({ project, thread, action, selectedAgent, onPanel,
   return <Popover open={open} onOpenChange={setOpen}>
     <PopoverTrigger render={<button className={`icon-button ${open ? "active" : ""}`} aria-label="任务资源" />}><TaskSummaryIcon /></PopoverTrigger>
     <PopoverContent align="end" sideOffset={8} className="task-resources-popup" aria-label="任务资源面板">
-      <ConversationStatusCard project={project} thread={thread} action={action} selectedAgent={selectedAgent}
+      <ConversationStatusCard project={project} thread={thread} action={action} selectedAgent={selectedAgent} scheduledTask={scheduledTask} runHistory={runHistory}
         onPanel={navigate(onPanel)} onAgent={navigate(onAgent)} onFile={navigate(onFile)} />
     </PopoverContent>
   </Popover>;
@@ -227,7 +228,7 @@ function AppContent({ services }: { services: PlatformServices }) {
   const activePanelOwner = React.useRef("");
   const [dirtyFiles, setDirtyFiles] = useState<Record<string, boolean>>({});
   useEffect(() => {
-    if (panel && panel !== "功能")
+    if (panel && panel !== "功能" && panel !== "预览")
       setPanelTabs((tabs) => (tabs.includes(panel) ? tabs : [...tabs, panel]));
   }, [panel]);
   const [settingsTab, updateSettingsTab] = useState("常规");
@@ -289,9 +290,6 @@ function AppContent({ services }: { services: PlatformServices }) {
   useEffect(() => { localStorage.setItem("areal-gui:collapsed-sidebar", JSON.stringify(collapsedProjects)); }, [collapsedProjects]);
   const toggleSidebarGroup = (id: string) => setCollapsedProjects(current => ({ ...current, [id]: !current[id] }));
   const [projectVisibleCounts, setProjectVisibleCounts] = useState<Record<string, number>>({});
-  const [previewUrl, setPreviewUrl] = useState("");
-  const [previewSource, setPreviewSource] = useState("");
-  const [previewRequest, setPreviewRequest] = useState(0);
   const [rename, setRename] = useState<Data | null>(null);
   const [forkIntent, setForkIntent] = useState<{ projectId: string; sourceThreadId: string; turnId: string; boundary: "before" | "after"; title: string; models: Data[]; profiles: Data[]; route: string; anchor?: HTMLElement; resolve: () => void } | null>(null);
   const [renameText, setRenameText] = useState("");
@@ -369,11 +367,34 @@ function AppContent({ services }: { services: PlatformServices }) {
   }, [project?.id, threadId, noProject]);
   const previewOwner = React.useRef("");
   previewOwner.current = `${project?.id ?? ""}:${threadId}`;
+  const browserWorkspace = useBrowserWorkspace(services, project?.id ?? "", threadId, browserPageId(panel));
+  const openingBrowser = React.useRef<string | null>(null);
+  const openBrowser = useCallback(async (create = false, url?: string) => {
+    if (!project) return;
+    const owner = `${project.id}:${threadId}`;
+    if (openingBrowser.current === owner) return;
+    openingBrowser.current = owner;
+    try {
+      let value = await browserWorkspace.request("state");
+      if (previewOwner.current !== owner) return;
+      if (create || !value.workspace?.selectedPageId) value = await browserWorkspace.request("newPage");
+      if (previewOwner.current !== owner) return;
+      const pageId = value.browser?.pageId;
+      if (!pageId) return;
+      if (url) await browserWorkspace.request("navigate", { pageId, url });
+      if (previewOwner.current !== owner) return;
+      await browserWorkspace.request("selectPage", { pageId });
+      if (previewOwner.current !== owner) return;
+      setWorkspaceView(mode => mode === "split" ? mode : "panel");
+      setPanel(browserTabId(pageId));
+    } catch (cause) { if (previewOwner.current === owner) setError((cause as Error).message); }
+    finally { if (openingBrowser.current === owner) openingBrowser.current = null; }
+  }, [project?.id, threadId, browserWorkspace.request]);
   useEffect(() => services.onPreviewEvent?.(event => {
     // 仅呈现当前聊天已由 Core 批准的页面，不切换后台聊天或重放导航。
     if (event.kind !== 'reveal' || previewOwner.current !== `${event.projectId}:${event.threadId}`) return;
     setWorkspaceView('split');
-    setPanel('预览');
+    setPanel(browserTabId(event.pageId));
   }), [services]);
   const terminalState = useTerminalWorkspace(terminalOwner(project?.id ?? "", threadId));
   const panelOwner = `${project?.id ?? ""}:${threadId}`;
@@ -388,11 +409,26 @@ function AppContent({ services }: { services: PlatformServices }) {
       setFilesOpen(remembered?.filesOpen ?? false);
       setRevealedFile(remembered?.revealedFile ?? "");
       setPreviewFileTab(remembered?.previewFileTab);
-      setPreviewUrl("");
       return;
     }
     panelViews.current.set(panelOwner, { panel, lastPanel: panel || panelViews.current.get(panelOwner)?.lastPanel, tabs: panelTabs, previewFileTab, filesOpen, revealedFile });
   }, [panelOwner, panel, panelTabs, previewFileTab, filesOpen, revealedFile, terminalState.ids]);
+  useEffect(() => {
+    if (!browserWorkspace.workspace || activePanelOwner.current !== panelOwner) return;
+    const ids = browserWorkspace.pages.map(page => browserTabId(page.pageId));
+    setPanelTabs(tabs => {
+      const next = [...tabs.filter(id => id !== "预览" && (!isBrowserTab(id) || ids.includes(id))), ...ids.filter(id => !tabs.includes(id))];
+      return next.length === tabs.length && next.every((id, index) => id === tabs[index]) ? tabs : next;
+    });
+    // A removed/closed native page must never keep a stale UI tab alive.
+    setPanel(current => {
+      if (!isBrowserTab(current)) return current;
+      const selected = browserWorkspace.workspace.selectedPageId;
+      // Native popups and other Main-side selection changes share the same strip.
+      if (selected && ids.includes(browserTabId(selected))) return browserTabId(selected);
+      return ids.includes(current) ? current : "功能";
+    });
+  }, [browserWorkspace.workspace, panelOwner]);
   useEffect(() => {
     setPanelTabs(tabs => [...tabs.filter(id => !isTerminalTab(id) || terminalState.ids.includes(id)), ...terminalState.ids.filter(id => !tabs.includes(id))]);
   }, [terminalState.ids]);
@@ -602,9 +638,9 @@ function AppContent({ services }: { services: PlatformServices }) {
     void services.preview({ operation: 'openLink', projectId: project.id, threadId, url }).then(result => {
       if (previewOwner.current !== owner || result.destination !== 'internal') return;
       setWorkspaceView(mode => mode === "split" ? mode : "panel");
-      setPreviewUrl(result.url); setPreviewSource(owner); setPreviewRequest(value => value + 1); setPanel("预览");
+      void openBrowser(false, result.url);
     }).catch(cause => { if (previewOwner.current === owner) setError(cause.message); });
-  }, [services, project?.id, threadId]);
+  }, [services, project?.id, threadId, openBrowser]);
   const openFile = (path: string) => {
     setWorkspaceView(mode => mode === "split" ? mode : "panel");
     const relative =
@@ -671,6 +707,7 @@ function AppContent({ services }: { services: PlatformServices }) {
     return () => query.removeEventListener("change", resize);
   }, [panel, workspaceView]);
   const showPanel = (name: string) => {
+    if (name === "预览") { void openBrowser(); return; }
     if (name === "旁路讨论") { if (panel === name) { hidePanel(); return; } rememberSideTrigger(); }
     setWorkspaceView(mode => name === "旁路讨论" && matchMedia("(max-width: 1200px)").matches ? "panel" : mode === "split" ? mode : "panel");
     if (["编辑目标", "执行计划", "上下文", "已保存授权", "进程"].includes(name)) {
@@ -715,6 +752,7 @@ function AppContent({ services }: { services: PlatformServices }) {
         if (panelShortcut) {
           event.preventDefault();
           if (panelShortcut === "终端") { openTerminal(); return; }
+          if (panelShortcut === "预览") { void openBrowser(true); return; }
           setWorkspaceView(mode => mode === "split" ? mode : "panel");
           if (panelShortcut === "文件") {
             setFilesOpen(true);
@@ -735,7 +773,7 @@ function AppContent({ services }: { services: PlatformServices }) {
     };
     window.addEventListener("keydown", listener);
     return () => window.removeEventListener("keydown", listener);
-  }, [project?.id, settingsOpen, threadId, terminalLocation]);
+  }, [project?.id, settingsOpen, threadId, terminalLocation, openBrowser]);
   const title = (owner: Data, summary: Data) =>
     library.threads?.[`${owner.id}:${summary.id}`]?.title ||
     browserAnnotationTitle(owner.state?.threads[summary.id]?.turns
@@ -759,6 +797,7 @@ function AppContent({ services }: { services: PlatformServices }) {
     return [...map.values()].filter(summary => {
       const live = owner.state?.threads[summary.id];
       return !scheduledThreads.has(summary.id)
+        && !(owner.configurations?.[summary.id]?.options?.appendInstructions ?? live?.desktop?.configuration?.options?.appendInstructions)?.startsWith("AREAL_TASK_DRAFT_V1\n")
         && !live?.parentThreadId && !summary.parentThreadId
         && live?.conversation?.kind !== "side" && summary.conversation?.kind !== "side";
     }).map((summary) => {
@@ -947,7 +986,7 @@ function AppContent({ services }: { services: PlatformServices }) {
           <DropdownMenu>
             <DropdownMenuTrigger render={<button className="icon-button" aria-label={`项目操作 ${library.projects?.[owner.id]?.title || owner.root.split("/").pop()}`}><MoreHorizontal size={16} /></button>} />
             <DropdownMenuContent>
-              <DropdownMenuItem onClick={() => requestNavigation(() => {updateSettingsOpen(false);setTaskScope(owner.id);setTaskNotification(undefined);setTaskCenterOpen(true);})}>执行任务</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => requestNavigation(() => {updateSettingsOpen(false);setTaskScope(owner.id);setTaskNotification(undefined);setTaskCenterOpen(true);})}>定时任务</DropdownMenuItem>
               <DropdownMenuItem onClick={() => startRename({ operation: "renameProject", projectId: owner.id }, library.projects?.[owner.id]?.title || owner.root.split("/").pop())}>重命名</DropdownMenuItem>
               <DropdownMenuItem disabled={!services.fileOpen} onClick={() => void services.fileOpen?.({ operation: "open", projectId: owner.id, path: "." }).catch(cause => setError(cause.message))}>在默认应用中打开</DropdownMenuItem>
               <DropdownMenuItem disabled={!services.fileOpen} onClick={() => void services.fileOpen?.({ operation: "reveal", projectId: owner.id, path: "." }).catch(cause => setError(cause.message))}>在文件管理器中显示</DropdownMenuItem>
@@ -1067,15 +1106,16 @@ function AppContent({ services }: { services: PlatformServices }) {
           <panels.Providers {...props} />
         </div>
       );
-    if (panel === "预览")
+    if (isBrowserTab(panel))
       return (
         <Preview
-          key={`${project.id}:${threadId}`}
+          key={`${project.id}:${threadId}:${panel}`}
           services={services}
           projectId={project.id}
           threadId={threadId}
-          initialUrl={previewSource === `${project.id}:${threadId}` ? previewUrl : ""}
-          initialRequest={previewRequest}
+          pageId={browserPageId(panel)!}
+          state={browserWorkspace.state}
+          requestPage={browserWorkspace.request}
           fullAddress={library.settings?.browserFullAddress === true}
           thread={thread}
           action={resourceAction}
@@ -1094,8 +1134,7 @@ function AppContent({ services }: { services: PlatformServices }) {
     if (panel === "上下文") return <ContextPane key={`${project.id}:${threadId}`} {...props} action={resourceAction} />;
     if (panel === "进程") return <ProcessesPane key={`${project.id}:${threadId}`} {...props} action={resourceAction}
       onOpenService={url => {
-        setPreviewUrl(url); setPreviewSource(`${project.id}:${threadId}`); setPreviewRequest(value => value + 1);
-        setPanel("预览");
+        void openBrowser(false, url);
       }} />;
     if (panel === "Skills")
       return (
@@ -1192,7 +1231,7 @@ function AppContent({ services }: { services: PlatformServices }) {
               { id: "home", label: "首页", icon: <Home active={!settingsOpen && !taskCenterOpen} />, onSelect: () => requestNavigation(() => { if (taskCenterOpen) recordWorkspaceLocation({ projectId: project?.id ?? "", threadId }); setTaskCenterOpen(false); updateSettingsOpen(false); }) },
               // 暂时隐藏 Inbox 入口（恢复时同时把 InboxIcon 加回 import）
               // { id: "inbox", label: "Inbox", icon: <InboxIcon />, onSelect: () => requestNavigation(() => { updateSettingsOpen(false); setTaskSurface("inbox"); if (matchMedia("(max-width: 640px)").matches) setSidebar(false); }) },
-              { id: "tasks", label: "执行任务", icon: <CalendarClock />, onSelect: () => requestNavigation(() => { updateSettingsOpen(false); setTaskScope(undefined); setTaskNotification(undefined); setTaskCenterOpen(true); if (matchMedia("(max-width: 640px)").matches) setSidebar(false); }) },
+              { id: "tasks", label: "定时任务", icon: <CalendarClock />, onSelect: () => requestNavigation(() => { updateSettingsOpen(false); setTaskScope(undefined); setTaskNotification(undefined); setTaskCenterOpen(true); if (matchMedia("(max-width: 640px)").matches) setSidebar(false); }) },
               { id: "plugins", label: "插件", icon: <SettingsPluginIcon />, onSelect: () => requestNavigation(() => { updateSettingsTab("插件"); setSettingsOpen(true); }) },
             ]} footer={<><UpdateIndicator services={services} /><Button variant="ghost" size="icon" className="application-rail-button relative" aria-label="设置" title={trajectoryAttention ? "设置 · 数据飞轮需要检查" : "设置"} aria-current={settingsOpen ? "page" : undefined} onClick={() => showPanel("设置")}><Settings />{trajectoryAttention && <span aria-label="数据飞轮需要检查" className="absolute top-1 right-1 size-2 rounded-full bg-amber-500" />}</Button></>} />;
   const workspaceNavigation = <div className="workspace-navigation">
@@ -1438,11 +1477,13 @@ function AppContent({ services }: { services: PlatformServices }) {
           ) : taskSurface === "inbox" ? (
             <Inbox projects={snapshot.projects} connected={snapshot.connection?.state === "ready"} action={resourceAction} onClose={() => setTaskCenterOpen(false)} />
           ) : taskCenterOpen ? (
-            <TaskCenter currentThread={project && thread && !thread.parentThreadId && !thread.desktop?.archived ? {projectId:project.id,threadId} : undefined} target={taskNotification} initialProjectId={taskScope} projects={snapshot.projects.map(p => ({...p,name:library.projects?.[p.id]?.title || p.root.split(/[\\/]/).pop()}))} connected={snapshot.connection?.state === "ready"} action={resourceAction} onOpenThread={(pid,id) => void open(pid, id)} renderConversation={(owner,executionThread,beforeTurns) => <><Messages beforeTurns={beforeTurns} project={owner} thread={executionThread} action={action} dark={dark} onLink={onLink}
-              onFile={path => {void open(owner.id,executionThread.id).then(() => openFile(path));}}
-              onReview={turnId => {void open(owner.id,executionThread.id).then(() => {setReviewRequest({owner:`${owner.id}:${executionThread.id}`,turnId});setPanel("改动");});}}
-              readTurnReview={(turnId,itemId) => resourceAction("workspace",{projectId:owner.id,threadId:executionThread.id,turnId,itemId,operation:"turnReview"})}/>
-              <Composer key={executionThread.id} project={owner} thread={executionThread} action={action} readAction={resourceAction} onPanel={name => {void open(owner.id,executionThread.id).then(() => showPanel(name));}} onNew={() => void newTask()}/></>}
+            <TaskCenter target={taskNotification} initialProjectId={taskScope} projects={snapshot.projects.map(p => ({...p,name:library.projects?.[p.id]?.title || p.root.split(/[\\/]/).pop()}))} connected={snapshot.connection?.state === "ready"} action={resourceAction} onOpenThread={(pid,id) => void open(pid, id)} renderConversation={(owner,managementThread,beforeTurns) => <><Messages beforeTurns={beforeTurns} project={owner} thread={managementThread} action={resourceAction} dark={dark} onLink={onLink}
+              onFile={path => {void open(owner.id,managementThread.id).then(() => openFile(path));}}
+              onReview={turnId => {void open(owner.id,managementThread.id).then(() => {setReviewRequest({owner:`${owner.id}:${managementThread.id}`,turnId});setPanel("改动");});}}
+              readTurnReview={(turnId,itemId) => resourceAction("workspace",{projectId:owner.id,threadId:managementThread.id,turnId,itemId,operation:"turnReview"})}/>
+              <Composer key={managementThread.id} project={owner} thread={managementThread} action={resourceAction} readAction={resourceAction} onPanel={name => {if(name === "设置") {showPanel("设置");} else {void open(owner.id,managementThread.id).then(() => showPanel(name));}}} onNew={() => void newTask()}/></>}
+            renderResources={(owner,managementThread,scheduledTask,runHistory) => <TaskResourcesPopover project={owner} thread={managementThread} scheduledTask={scheduledTask} runHistory={runHistory} action={resourceAction} onPanel={name => {void open(owner.id,managementThread.id).then(() => showPanel(name));}} onAgent={id => void open(owner.id,id)} onFile={path => {void open(owner.id,managementThread.id).then(() => openFile(path));}} />}
+
             navigation={<>
               {!sidebar && <button className="icon-button" aria-label="展开侧栏" onClick={() => setSidebar(true)}><SidebarToggleIcon /></button>}
               <button className="icon-button" aria-label="返回对话" onClick={() => { setTaskCenterOpen(false); setTaskNotification(undefined); }}><ArrowLeft /></button>
@@ -1630,6 +1671,9 @@ function AppContent({ services }: { services: PlatformServices }) {
                 .map((name) => name.slice(5));
               if (!confirmCloseFiles(project.id, paths)) return false;
               try {
+                for (const name of names.filter(isBrowserTab)) {
+                  await browserWorkspace.request("release", { pageId: browserPageId(name), userIntent: true });
+                }
                 for (const name of names.filter(isTerminalTab)) await closeTerminal(terminalOwner(project.id, threadId), name);
               } catch (cause) { setError((cause as Error).message); return false; }
               setDirtyFiles((current) => {
@@ -1646,11 +1690,24 @@ function AppContent({ services }: { services: PlatformServices }) {
                 return;
               }
               if (name === "终端") { openTerminal(true); return; }
+              if (name === "预览") { void openBrowser(true); return; }
+              if (isBrowserTab(name)) {
+                const owner = panelOwner;
+                setPanel(name);
+                void browserWorkspace.request("selectPage", { pageId: browserPageId(name) })
+                  .catch(cause => { if (previewOwner.current === owner) setError(cause.message); });
+                return;
+              }
               if (isTerminalTab(name)) { selectTerminal(terminalOwner(project.id, threadId), name); setTerminalOpen(false); }
               if (name.startsWith("file:")) setRevealedFile(name.slice(5));
               setPanel(name);
             }}
-            titleFor={name => name.startsWith("agent:") ? agentName(name.slice(6)) : isTerminalTab(name) ? terminalTitle(terminalOwner(project.id, threadId), name, project.root) : undefined}
+            titleFor={name => isBrowserTab(name) ? (() => {
+              const page = browserWorkspace.pages.find(page => page.pageId === browserPageId(name));
+              let title = page?.title;
+              if (!title && page?.url) { try { title = new URL(page.url).host; } catch { title = page.url; } }
+              return (title || "新标签页") + (page?.resource === "suspended" ? " · 已暂停" : "");
+            })() : name.startsWith("agent:") ? agentName(name.slice(6)) : isTerminalTab(name) ? terminalTitle(terminalOwner(project.id, threadId), name, project.root) : undefined}
             onChange={tabs => {
               setPanelTabs(tabs);
               setPreviewFileTab(current => current && tabs.includes(current) ? current : undefined);

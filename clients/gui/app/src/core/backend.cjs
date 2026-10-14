@@ -1,6 +1,7 @@
 'use strict';
 
 const { connectService, stopService } = require('./local-service.cjs');
+const { restartSafe } = require('./resource-recovery.cjs');
 const { randomUUID, createHash } = require('node:crypto');
 const { isDeepStrictEqual } = require('node:util');
 const { mkdir, readFile, writeFile, rename, realpath, rm } = require('node:fs/promises');
@@ -16,7 +17,7 @@ const { CoreNotifications, TaskNotificationMonitor } = require('./notifications.
 const { manage, managementMethods, threadMutationMethods } = require('./management.cjs');
 const { taskMutationMethods } = require('./tasks.cjs');
 const { taskCatalog } = require('./task-catalog.cjs');
-const { isTaskDraftConfiguration } = require('./task-draft.cjs');
+const { isTaskDraftConfiguration, manageTaskDraft, displayTaskDraftThread } = require('./task-draft.cjs');
 const { mediaCommand, messageInput } = require('./media.cjs');
 const { workspaceCommand } = require('./workspace.cjs');
 const { CoreWorktrees } = require('./worktrees.cjs');
@@ -133,9 +134,11 @@ class CoreBackend {
     return { library: this.library.value, projectless: this.projectless.snapshot(), power: this.power ?? null, projects: this.saved.map(project => {
       const live = this.projects.get(project.id);
       const snapshot = live?.model.getSnapshot() ?? null;
-      // 配置会话的协议回复只在任务创建区展示，不混入普通聊天导航。
-      const state = snapshot?.threads ? {...snapshot, threads: Object.fromEntries(Object.entries(snapshot.threads).filter(([id, thread]) =>
-        !isTaskDraftConfiguration(live.configurations?.[id] ?? thread.desktop?.configuration)))} : snapshot;
+      // Management conversations remain hidden from chat navigation, but use the
+      // same snapshot/message components through a decoded display projection.
+      const state = snapshot?.threads ? {...snapshot, threads: Object.fromEntries(Object.entries(snapshot.threads).map(([id, thread]) =>
+        [id, isTaskDraftConfiguration(live.configurations?.[id] ?? thread.desktop?.configuration)
+          ? displayTaskDraftThread(thread, live) : thread]))} : snapshot;
       return { ...project, backend: 'areal', core: { ...projectCoreCapabilities(this.binary, live?.client?.capabilities),
         instanceId: live?.service?.serviceId ?? null, connectionGeneration: live?.connectionGeneration ?? 0 },
         state: state && live.resourceInitializing ? {...state, connected:false} : state,
@@ -312,6 +315,16 @@ class CoreBackend {
     const client = new CoreClient({ createSocket: () => new WebSocket(project.endpoint, {
       headers: { Authorization: `Bearer ${project.token}` }, followRedirects: false, maxPayload: 4 * 1024 * 1024,
     }), onServerRequest: async (method, params, context) => {
+      if (method === 'areal/task/prepare') {
+        this.requireConnection(project, client);
+        if (params.intent === 'resume') return {};
+        await this.resources.beforeCreate(project);
+        this.requireConnection(project, client);
+        const model = this.providers.value.defaultModel;
+        const profile = project.resourceProfile ?? this.defaultProfile;
+        return { ...(model ? { model } : {}), ...(profile ? { agentProfile: profile } : {}),
+          ...(this.supportsBrowser(project) ? { dynamicTools: [browserTool] } : {}) };
+      }
       if (!['item/tool/call', 'areal/browser/prepare'].includes(method) || params?.tool !== 'browser_v1') throw new Error('Unsupported client tool');
       const connected = this.currentConnection(project, client);
       // Core invokes only tools bound to this connection. The local Thread
@@ -382,10 +395,29 @@ class CoreBackend {
       this.requireConnection(project, client);
     }
     project.taskNotificationMonitor = new TaskNotificationMonitor(client, project.id,
-      notice => { if (this.currentConnection(project, client)) this.onNotification?.(notice); }, error => console.warn(this.providers.redact(`任务通知读取失败：${error.message}`)),
-      tasks => { if (this.currentConnection(project, client)) for (const task of tasks) project.model.setTask(task); });
+      notice => { if (this.currentConnection(project, client)) this.notifications.publish(notice); }, error => console.warn(this.providers.redact(`任务通知读取失败：${error.message}`)),
+      async tasks => {
+        if (!this.currentConnection(project, client)) return;
+        for (const task of tasks) project.model.setTask(task);
+        const scheduled=tasks.filter(task=>task.mode==='scheduled');
+        if(scheduled.some(task=>task.runs.some(run=>run.threadId&&!project.summaries.some(thread=>thread.id===run.threadId)))) {
+          await this.listThreads(project);
+          this.requireConnection(project, client);
+        }
+        for(const task of scheduled)for(const run of task.runs) {
+          if(run.status!=='completed' || !run.threadId || this.library.value.threads[`${project.id}:${run.threadId}`]?.scheduledCompletionId===run.id)continue;
+          const {thread}=await client.request('thread/read',{threadId:run.threadId,includeTurns:true});
+          this.requireConnection(project,client);
+          const completionId=thread.turns?.findLast(turn=>turn.status==='completed')?.id;
+          await this.library.recordScheduledCompletion(project.id,run,completionId);
+        }
+      });
     await project.taskNotificationMonitor.start();
     this.requireConnection(project, client);
+    if (client.capabilities?.methods?.includes('areal/task/host/ready')) {
+      await client.request('areal/task/host/ready', {});
+      this.requireConnection(project, client);
+    }
     project.model.connection(true);
     this.onChange();
   }
@@ -1128,7 +1160,11 @@ class CoreBackend {
         await this.changeOutcomes(project, previous => { const outcomes = { ...previous }; if (!outcomes[request.requestId]?.remote) delete outcomes[request.requestId]; return outcomes; }); break;
       }
       case 'media': return mediaCommand(project, request, this);
-      case 'manage': return manage(this, project, request);
+      case 'manage':
+        if (isTaskDraftConfiguration(project.configurations?.[threadId]) && request.operation?.startsWith('goal')) {
+          throw new Error('任务管理会话不执行目标；请在会话中描述要调整的定时任务。');
+        }
+        return manage(this, project, request);
       case 'list': await this.listThreads(project); break;
       case 'open': await this.openThread(project, threadId); break;
       case 'attachBrowser': {
@@ -1148,7 +1184,13 @@ class CoreBackend {
         await this.openThread(project, threadId);
         return result;
       }
-      case 'configure': await this.configureThread(project, threadId, request); break;
+      case 'configure': {
+        if (isTaskDraftConfiguration(project.configurations?.[threadId])
+          && (request.options !== undefined || request.profile !== undefined)) {
+          throw new Error('任务管理会话的执行限制不能修改；请在会话中描述要调整的任务。');
+        }
+        await this.configureThread(project, threadId, request); break;
+      }
       case 'queue': {
         if (!request.requestId) return this.refreshQueue(project, threadId);
         if (typeof request.requestId !== 'string' || !/^[0-9a-f-]{36}$/.test(request.requestId)
@@ -1237,6 +1279,11 @@ class CoreBackend {
         return { threadId: result.thread.id, turnId: result.turn?.id, requestId: result.requestId };
       }
       case 'send': {
+        if (isTaskDraftConfiguration(project.configurations?.[threadId])) {
+          const zone = project.configurations[threadId].options.appendInstructions.split('\n')[1].slice('Time zone: '.length);
+          return manageTaskDraft(this, project, { operation: 'taskDraftSend', threadId, timeZone: zone,
+            text: request.text, attachments: request.attachments });
+        }
         await this.ensureBrowserTools(project, threadId);
         const input = messageInput(this, request);
         // Queue state survives completed/interrupted turns. Only current execution
@@ -1248,6 +1295,7 @@ class CoreBackend {
         break;
       }
       case 'steer': {
+        if (isTaskDraftConfiguration(project.configurations?.[threadId])) throw new Error('请等待当前安排完成后再补充修改要求。');
         const active = project.model.state.threads[threadId]?.turns.find(turn => turn.status === 'inProgress');
         if (!active || active.id !== request.expectedTurnId) throw new Error('原轮次已结束，请作为新消息发送');
         await this.submit(project, 'turn/steer', { threadId, expectedTurnId: active.id, input: messageInput(this, request), previousItems: active.items.map(item => item.id) });
@@ -1293,7 +1341,7 @@ class CoreBackend {
     // 先检查全部已连接实例；真正停机仍由 Core 的公共服务接口关准入并结算。
     for (const project of this.projects.values()) {
       if (project.service && !project.client?.ready) throw new Error('Core 连接未恢复，不能安全停止');
-      if (project.client?.ready && !(await project.client.request('areal/server/status')).restartSafe) {
+      if (project.client?.ready && !restartSafe(await project.client.request('areal/server/status'))) {
         throw Object.assign(new Error('Core 仍有活动任务或终端，请先处理后台资源'), { code: 'CORE_RESOURCES' });
       }
     }

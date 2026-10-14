@@ -27,6 +27,7 @@ import {
 import { Button } from "../components/ui/button.js";
 import { SidePaneTabOverview } from "./SidePaneTabOverview.js";
 import { SortableSidePaneTabTrigger } from "./SidePaneTabTrigger.js";
+import { isBrowserTab } from "./useBrowserWorkspace.js";
 import { SidePaneLauncher } from "./SidePaneLauncher.js";
 import type { WorkspaceSidePaneTab, RecentClosedSidePaneTab } from "./sidePaneModel.js";
 
@@ -125,7 +126,7 @@ export function SidePane({
       closingFocusedTab.current = id;
     }
     const tab = known.current.get(id)!;
-    if (!id.startsWith("terminal:")) setClosed((previous) =>
+    if (!id.startsWith("terminal:") && !isBrowserTab(id)) setClosed((previous) =>
       [{ tab, closedAt: Date.now() }, ...previous.filter((p) => p.tab.id !== id)].slice(0, 20),
     );
     const remaining = current.current.names.filter((name) => name !== id);
@@ -138,7 +139,7 @@ export function SidePane({
     if (!await allowClose(targets) || !mounted.current) return;
     setClosed((previous) =>
       [
-        ...tabs.filter((t) => t.id !== keep && !t.id.startsWith("terminal:")).map((tab) => ({ tab, closedAt: Date.now() })),
+        ...tabs.filter((t) => t.id !== keep && !t.id.startsWith("terminal:") && !isBrowserTab(t.id)).map((tab) => ({ tab, closedAt: Date.now() })),
         ...previous.filter((p) => !names.includes(p.tab.id)),
       ].slice(0, 20),
     );
@@ -158,7 +159,7 @@ export function SidePane({
       : []),
     { id: "browser", panel: "预览", label: "浏览器", shortcut: mac ? "⌘T" : "Ctrl+T", icon: BrowserPanelIcon, onOpen: () => onSelect("预览") },
     { id: "files", panel: "文件", label: "文件", shortcut: mac ? "⌘P" : "Ctrl+P", icon: FilesPanelIcon, onOpen: () => onSelect("文件") },
-  ].filter((item) => item.id === "terminal" || !names.includes(item.panel));
+  ].filter((item) => item.id === "terminal" || item.id === "browser" || !names.includes(item.panel));
   return (
     <section
       ref={panel}
@@ -312,7 +313,7 @@ export function SidePane({
         </Button>
       </div>
       <div className="panel-resource-layout" data-file-preview={active.startsWith("file:") || undefined}>
-        <div className={`panel-content ${active === "功能" || ["预览", "终端", "改动", "文件", "旁路讨论"].includes(active) || active.startsWith("file:") || active.startsWith("terminal:") ? "full-height" : ""}`}>
+        <div className={`panel-content ${active === "功能" || ["预览", "终端", "改动", "文件", "旁路讨论"].includes(active) || active.startsWith("file:") || active.startsWith("terminal:") || isBrowserTab(active) ? "full-height" : ""}`}>
           {active === "功能" ? <SidePaneLauncher items={items} /> : render(active)}
         </div>
         {auxiliary && <aside className="panel-resource-tree" aria-label="文件列表">{auxiliary}</aside>}

@@ -122,6 +122,7 @@ export function Composer({
   const [mcpOpen, setMcpOpen] = useState(false);
 
   const skills = useComposerSkills({ project, threadId: thread.id, draftKey: key, action: readAction, disabled });
+  const taskManagement = config?.options?.appendInstructions?.startsWith("AREAL_TASK_DRAFT_V1\n") === true;
   const planActive = permissionMode(config ?? {}) === "plan";
   const executionPermission = planActive ? permissionMode({ ...config, readOnly: false, options: planModeOptions(false, config?.options) }) : permissionMode(config ?? {});
   const planReady = canExecutePlan(config ?? {}, thread, project.state?.queues?.[thread.id]);
@@ -203,9 +204,9 @@ export function Composer({
       }
       if (approvePlan) await action("configure", { projectId: project.id, threadId: thread.id, expectedRevision: config?.revision, options: permissionOptions("auto", config?.options) });
       await submitMessage(action, project.id, thread.id, value, files, {
-        steer: !!running && shouldSteer(prefs.followUp, invert),
+        steer: !taskManagement && !!running && shouldSteer(prefs.followUp, invert),
         expectedTurnId: running?.id,
-        enqueue: !!running,
+        enqueue: !taskManagement && !!running,
         skillAction: readAction,
       });
       clear();
@@ -243,8 +244,8 @@ export function Composer({
     { value: "upload", label: "上传文件", description: "添加图片、文档或其他文件", icon: <AttachmentIcon />, group: "功能", run: () => upload.current?.click() },
     { value: "mcp", label: "MCP", description: "查看服务器与连接状态", icon: <ComposerMcpIcon />, group: "功能", run: () => setMcpOpen(true) },
     { value: "files", label: "工作区文件", description: "引用当前项目中的文件", icon: <FileTree />, group: "功能", run: () => onPanel("文件") },
-    { value: "plan", label: "计划模式", description: planActive ? "关闭计划模式" : "先规划，再开始执行", icon: <Lightbulb />, group: "功能", disabled: disabled || !!running || !config || config.profile?.readOnly === true, run: () => { void configure({ options: planModeOptions(!planActive, config?.options) }); } },
-    ...(!thread.goals?.goal ? [{ value: "goal", label: "设置目标", description: creatingGoal ? "关闭目标模式" : "设置持续目标与停止条件", icon: <Target />, group: "功能" as const, disabled: disabled || !!running || !!thread.parentThreadId, run: () => changeGoalMode(!goalMode) }] : []),
+    { value: "plan", label: "计划模式", description: planActive ? "关闭计划模式" : "先规划，再开始执行", icon: <Lightbulb />, group: "功能", disabled: disabled || taskManagement || !!running || !config || config.profile?.readOnly === true, run: () => { void configure({ options: planModeOptions(!planActive, config?.options) }); } },
+    ...(!thread.goals?.goal ? [{ value: "goal", label: "设置目标", description: creatingGoal ? "关闭目标模式" : "设置持续目标与停止条件", icon: <Target />, group: "功能" as const, disabled: disabled || taskManagement || !!running || !!thread.parentThreadId, run: () => changeGoalMode(!goalMode) }] : []),
     { value: "compact", label: "压缩", description: "压缩当前上下文", icon: <ArchiveChatIcon />, group: "功能", disabled: !!running, run: () => { void action("manage", { projectId: project.id, threadId: thread.id, operation: "contextCompact" }).catch(() => {}); } },
   ];
   // TaskRun owns this worker's lifetime; its history is readable, but it is
@@ -333,7 +334,7 @@ export function Composer({
         submitTestId="chat-send-button"
         placeholder={archived ? "已归档任务只读" : creatingGoal ? "描述目标，明确可衡量的结果" : planActive ? "描述任务，生成计划…" : "随心输入"}
         disabled={disabled}
-        submitDisabled={disabled || annotationEditing || invalidAnnotation || (queueEditor.edit ? queueEditor.saveDisabled || (!text.trim() && !files.length && !queueEditor.edit.attachments.length) : creatingGoal ? !text.trim() || !!running : !text.trim() && !files.length && !comments.length && !skills.selected.length)}
+        submitDisabled={disabled || (taskManagement && !!running) || annotationEditing || invalidAnnotation || (queueEditor.edit ? queueEditor.saveDisabled || (!text.trim() && !files.length && !queueEditor.edit.attachments.length) : creatingGoal ? !text.trim() || !!running : !text.trim() && !files.length && !comments.length && !skills.selected.length)}
         submitting={busy}
         submitLabel={queueEditor.edit ? "保存排队消息" : creatingGoal ? "开始目标" : "发送"}
         enterSubmits={prefs.sendShortcut === "enter"}
@@ -387,7 +388,7 @@ export function Composer({
         )}
         leadingActions={
           <><ComposerPermissionMenu value={executionPermission}
-            disabled={disabled || !!queueEditor.edit || !!running || !config} lockedReadOnly={config?.profile?.readOnly === true}
+            disabled={disabled || !!queueEditor.edit || !!running || !config} lockedReadOnly={taskManagement || config?.profile?.readOnly === true}
             onClose={() => api.current?.focus()}
             onChange={mode => configure({ options: planModeOptions(planActive, permissionOptions(mode, config?.options)) })} />
           {planActive && <ComposerPlanMode disabled={disabled || !!queueEditor.edit || !!running || config?.profile?.readOnly === true}
@@ -414,7 +415,7 @@ export function Composer({
         ) : running ? (
           <ControlHintTooltip title="发送" shortcut={prefs.sendShortcut === "enter" ? "Enter" : "⌘/Ctrl+Enter"}>
             <Button type="button" variant="composer" size="icon-md" aria-label="发送" data-testid="chat-send-button"
-              disabled={disabled || (!text.trim() && !files.length && !comments.length && !skills.selected.length)}
+              disabled={disabled || taskManagement || (!text.trim() && !files.length && !comments.length && !skills.selected.length)}
               onClick={event => void submit(api.current?.getMarkdown() ?? text, event.metaKey || event.ctrlKey)}>
               <SendMessageIcon className="size-5" />
             </Button>

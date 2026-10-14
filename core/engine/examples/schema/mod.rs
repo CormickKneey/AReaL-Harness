@@ -97,9 +97,12 @@ pub fn projections() -> (Value, Value) {
             "task/pause",
             "task/resume",
             "task/cancel",
+            "task/stopRun",
+            "task/resumeRun",
         ],
         task_view.clone(),
     );
+    insert(&["task/host/ready"], object(json!({"ready":boolean})));
     insert(&["task/unsubscribe"], object(json!({"removed":boolean})));
     insert(
         &["task/list"],

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { processItems, toolPresentation } from "./conversationPresentation.js";
 import { ReviewPanelIcon, TerminalPanelIcon, DocumentPanelIcon } from "./app-shell/panelIcons.js";
 import { AgentsPane } from "./AgentsPane.js";
@@ -10,10 +10,10 @@ import type { Action, Data } from "./services.js";
 import "./AgentResources.css";
 
 /** 只展示已有权威资源；工具流水仍归对话信息流。 */
-export function ConversationStatusCard({ project, thread, action, onPanel, onAgent, onFile, selectedAgent }: {
+export function ConversationStatusCard({ project, thread, action, onPanel, onAgent, onFile, selectedAgent, scheduledTask, runHistory }: {
   project: Data; thread: Data; action: Action; onPanel: (name: string) => void;
   onAgent: (id: string) => void; onFile: (path: string) => void;
-  selectedAgent?: string;
+  selectedAgent?: string; scheduledTask?: Data; runHistory?: ReactNode;
 }) {
   const [git, setGit] = useState<Data>({ loading: true });
   const [processes, setProcesses] = useState<Data[]>([]);
@@ -54,9 +54,14 @@ export function ConversationStatusCard({ project, thread, action, onPanel, onAge
   const sources = [...verifiedFileReceipts((thread.turns ?? []).flatMap((turn: Data) => (turn.items ?? []).filter((item: Data) => item.tool === "fs_read"))).values()];
   const attachments: Data[] = [...new Map<string, Data>((thread.turns ?? []).flatMap((turn: Data) => (turn.items ?? []).filter((item: Data) => item.type === "userMessage").flatMap((item: Data) => (item.content ?? []).filter((part: Data) => ["image", "audio", "file"].includes(part.type) && typeof (part.url ?? part.uri) === "string")).map((part: Data) => [part.url ?? part.uri, part] as [string, Data]))).values()];
   const total = (key: string) => files.reduce((sum, file) => sum + (file[key] ?? 0), 0);
-  const workspaceName = project.name || project.root.split(/[\\/]/).pop();
+  const workspaceName = project.projectless ? "独立任务" : project.name || project.root.split(/[\\/]/).pop();
   return <section className="task-resources" role="region" aria-label="任务资源">
     <div className="task-resources-header"><h2 title={project.root}>{workspaceName}</h2><button className="icon-button" aria-label="刷新任务资源" title="刷新任务资源" disabled={!connected || git.loading} onClick={() => refresh(n => n + 1)}><ProjectFolderIcon /></button></div>
+    {scheduledTask && <section className="task-resources-section" aria-label="定时任务安排" data-scheduled-task-card={scheduledTask.id}>
+      <h3 className="task-resources-heading"><span>定时任务</span><span className="scheduled-task-status" data-enabled={scheduledTask.displayStatus === "已开启"}>{scheduledTask.displayStatus ?? (scheduledTask.cancelled ? "已取消" : scheduledTask.paused ? "已暂停" : "已开启")}</span></h3>
+      <p className="scheduled-task-description">{scheduledTask.objective}</p>
+    </section>}
+    {runHistory && <section className="task-resources-section">{runHistory}</section>}
     {!connected && <p role="status" className="task-resource-note">连接不可用，资源可能已过期。</p>}
     {git.error && <p role="alert" className="task-resource-note">工作区改动读取失败：{git.error}</p>}
     {git.review && <section className="task-resources-section task-resources-changes" aria-label="工作区变更">

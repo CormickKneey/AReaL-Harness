@@ -41,3 +41,7 @@
 .task-resource-status[data-running]::before { content: ""; width: 8px; height: 8px; border: 1px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: task-resource-spin 1s linear infinite; }
 @keyframes task-resource-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .task-resource-status[data-running]::before { animation: none; } }
+
+.scheduled-task-description { margin:4px 8px 10px; line-height:1.6; white-space:pre-wrap; overflow-wrap:anywhere; }
+.scheduled-task-status { display:inline-flex; align-items:center; gap:6px; }
+.scheduled-task-status[data-enabled="true"]::before { content:""; width:6px; height:6px; flex:none; border-radius:50%; background:var(--color-success, #32a852); }

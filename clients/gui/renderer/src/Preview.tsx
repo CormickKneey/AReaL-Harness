@@ -16,15 +16,16 @@ import { BrowserStyleTrial, type StyleTrialDraft } from './BrowserStyleTrial.js'
 import { BrowserKeyboardElementPicker } from './BrowserKeyboardElementPicker.js';
 import type { Action } from "./services.js";
 import type { PreviewRequest, OwnedPreviewOperation } from '@areal/workbench/desktop-contract';
-const locations = new Map<string, { url: string; link?: string }>();
+const locations = new Map<string, { url: string }>();
 const regionDrafts = new Map<string, RegionDraft>();
 const styleTrialDrafts = new Map<string, StyleTrialDraft>();
 export function Preview({
   services,
   projectId,
   threadId,
-  initialUrl,
-  initialRequest = 0,
+  pageId,
+  state,
+  requestPage,
   fullAddress = false,
   thread,
   action,
@@ -34,8 +35,9 @@ export function Preview({
   services: PlatformServices;
   projectId: string;
   threadId: string;
-  initialUrl: string;
-  initialRequest?: number;
+  pageId: string;
+  state: Data;
+  requestPage: (operation: OwnedPreviewOperation, extra?: Data) => Promise<Data>;
   fullAddress?: boolean;
   thread?: Data;
   action: Action;
@@ -43,11 +45,10 @@ export function Preview({
   onTool: (itemId: string) => void;
   onError: (s: string) => void;
 }) {
-  const owner = `${projectId}:${threadId}`;
+  const owner = `${projectId}:${threadId}:${pageId}`;
   const draftKey = `areal-gui:draft:${projectId}:${threadId}`;
   const stagedAnnotations = (attachmentDrafts.get(draftKey) ?? []).flatMap(file => { const note = browserAnnotation(file); return note ? [note] : []; });
-  const [url, setUrl] = useState(locations.get(owner)?.url ?? initialUrl);
-  const [state, setState] = useState<Data>({});
+  const [url, setUrl] = useState(locations.get(owner)?.url ?? state.url ?? "");
   const [error, setError] = useState("");
   const [responsive, setResponsive] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -103,9 +104,6 @@ export function Preview({
   current.current = owner;
   const mounted = useRef(false);
   const sequence = useRef(0);
-  const workspaceCursor = useRef({ id: '', sequence: 0 });
-  const subscriptionRequest = useRef(0);
-  const refreshSubscription = useRef<() => void>(() => {});
   const request = async (operation: OwnedPreviewOperation, extra: Data = {}) => {
     if (["navigate", "back", "forward", "reload", "selectPage", "newPage", "release"].includes(operation)) editing.current = false;
     if (["navigate", "back", "forward", "reload", "devtools"].includes(operation) && annotatingRef.current) {
@@ -115,25 +113,8 @@ export function Preview({
     }
     const seq = ++sequence.current;
     try {
-      const value = await services.preview({
-        operation,
-        projectId,
-        threadId,
-        ...(stateRef.current.browser?.pageId && !['state', 'subscribe', 'unsubscribe', 'newPage'].includes(operation)
-          ? { pageId: stateRef.current.browser.pageId } : {}),
-        ...extra,
-      });
+      await requestPage(operation, { pageId, ...extra });
       if (!mounted.current || current.current !== owner || seq !== sequence.current) return;
-      const workspaceChanged = !!value.workspace?.workspaceId && value.workspace.workspaceId !== workspaceCursor.current.id;
-      const selectedPageChanged = !!value.workspace && value.workspace.selectedPageId !== stateRef.current.workspace?.selectedPageId;
-      if (workspaceChanged) locations.delete(owner);
-      if (workspaceChanged)
-        refreshSubscription.current();
-      if (value.url || workspaceChanged || selectedPageChanged || ['selectPage', 'newPage', 'release'].includes(operation)) {
-        if (!editing.current) setUrl(value.url ?? '');
-        if (value.url || selectedPageChanged) locations.set(owner, { ...locations.get(owner), url: value.url ?? '' });
-      }
-      setState(value);
       if (operation !== "state") setError("");
     } catch (e) {
       if (mounted.current && current.current === owner)
@@ -146,31 +127,7 @@ export function Preview({
   errorRef.current = error;
   useEffect(() => {
     mounted.current = true;
-    const install = async () => {
-      const token = ++subscriptionRequest.current;
-      try {
-        const snapshot = await services.preview({ operation: 'subscribe', projectId, threadId });
-        if (!mounted.current || token !== subscriptionRequest.current) return;
-        workspaceCursor.current = { id: snapshot.workspaceId,
-          sequence: workspaceCursor.current.id === snapshot.workspaceId
-            ? Math.max(workspaceCursor.current.sequence, snapshot.sequence) : snapshot.sequence };
-        void request('state');
-      } catch (e) { if (mounted.current) setError(e instanceof Error ? e.message : String(e)); }
-    };
-    refreshSubscription.current = () => { void install(); };
-    const unsubscribeEvents = services.onPreviewEvent?.(event => {
-      if (!mounted.current || event.workspaceId !== workspaceCursor.current.id) return;
-      if (event.sequence <= workspaceCursor.current.sequence) return;
-      if (event.sequence !== workspaceCursor.current.sequence + 1) {
-        void install();
-      } else {
-        workspaceCursor.current.sequence = event.sequence;
-        void request('state');
-      }
-    });
-    void install();
-    let active = true,
-      reading = false;
+    let active = true;
     let lastDisplay = "";
     const update = () => {
       if (!active || !box.current) return;
@@ -192,7 +149,7 @@ export function Preview({
         operation: "show",
         projectId,
         threadId,
-        ...(value.browser?.pageId ? { pageId: value.browser.pageId } : {}),
+        pageId,
         visible: !!value.url && !value.error && !errorRef.current && !overlay && !annotatingRef.current
           && !styleTrialRef.current?.after && height > 0 &&
           box.current.checkVisibility({ visibilityProperty: true }),
@@ -221,34 +178,23 @@ export function Preview({
     window.addEventListener("scroll", update, true);
     window.visualViewport?.addEventListener("resize", update);
     update();
-    void request("state");
-    const timer = setInterval(async () => {
-      if (!reading) {
-        reading = true;
-        await request("state");
-        reading = false;
-      }
-      update();
-    }, 500);
+    const timer = setInterval(update, 500);
     return () => {
       active = false;
       mounted.current = false;
       setBrowserAnnotationEditing(draftKey, false);
-      subscriptionRequest.current++;
       sequence.current++;
       clearInterval(timer);
-      unsubscribeEvents?.();
-      void services.preview({ operation: 'unsubscribe', projectId, threadId }).catch(() => {});
       resize.disconnect();
       mutation.disconnect();
       window.removeEventListener("resize", update);
       window.removeEventListener("scroll", update, true);
       window.visualViewport?.removeEventListener("resize", update);
-      void services.preview({ operation: "hide", projectId, threadId, pageId: stateRef.current.browser?.pageId }).catch(() => {});
+      void services.preview({ operation: "hide", projectId, threadId, pageId }).catch(() => {});
       void services.preview({ operation: 'cancelElementSelection', projectId, threadId,
-        pageId: stateRef.current.browser?.pageId }).catch(() => {});
+        pageId }).catch(() => {});
     };
-  }, [services, projectId, threadId]);
+  }, [services, projectId, threadId, pageId]);
   const updateAnnotation = (draft: RegionDraft | null) => {
     annotatingRef.current = draft;
     setBrowserAnnotationEditing(draftKey, !!draft?.region);
@@ -656,13 +602,11 @@ export function Preview({
         }
     };
   useEffect(() => {
-    const link = `${initialRequest}:${initialUrl}`;
-    if (initialUrl && locations.get(owner)?.link !== link) {
-      locations.set(owner, { url: initialUrl, link });
-      setUrl(initialUrl);
-      void request("navigate", { url: initialUrl });
+    if (!editing.current && state.browser?.pageId === pageId) {
+      setUrl(state.url ?? "");
+      locations.set(owner, { url: state.url ?? "" });
     }
-  }, [initialUrl, initialRequest, owner]);
+  }, [state.url, state.browser?.pageId, owner, pageId]);
   const failure = error || state.error;
   const uninspectedUnknown = thread?.turns?.some((turn: Data) => turn.items?.some((item: Data) =>
     item.type === 'dynamicToolCall' && !item.execution?.inspection &&
@@ -674,18 +618,6 @@ export function Preview({
   }
   return (
     <div className="preview-panel">
-      <div className="preview-viewport-toolbar" role="tablist" aria-label="浏览页面">
-        {(state.workspace?.pages ?? []).map((page: Data, index: number) => (
-          <Button key={page.pageId} type="button" size="sm" role="tab"
-            aria-selected={state.workspace?.selectedPageId === page.pageId} disabled={!!annotating}
-            onClick={() => void request('selectPage', { pageId: page.pageId })}>
-            {page.title || page.url || `页面 ${index + 1}`}{page.resource === 'suspended' ? ' · 已暂停' : ''}
-          </Button>
-        ))}
-        <Button type="button" size="sm" aria-label="新建浏览页面" disabled={!!annotating} onClick={() => void request('newPage')}>＋</Button>
-        {!!state.browser?.pageId && <Button type="button" size="sm" aria-label="关闭当前浏览页面" disabled={!!annotating}
-          onClick={() => void request('release', { userIntent: true })}>关闭</Button>}
-      </div>
       {state.browser?.stateLoss && <div className="preview-viewport-toolbar" role="status">
         {state.browser.stateLoss}
       </div>}

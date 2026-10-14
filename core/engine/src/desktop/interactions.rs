@@ -242,6 +242,20 @@ impl Engine {
                 let resolved = interaction.clone();
                 data.interaction_revision += 1;
                 let revision = data.interaction_revision;
+                let block_schedule = status == "expired"
+                    && resolved.kind == "approval"
+                    && if let Some(goal) = &candidate.goals.goal {
+                        self.is_desktop_schedule_goal(&goal.id).await
+                    } else {
+                        false
+                    };
+                if block_schedule && let Some(goal) = candidate.goals.goal.as_mut() {
+                    goal.status = areal_protocol::goals::GoalStatus::Blocked;
+                    goal.reason = Some("approvalExpired".into());
+                    goal.settling = state.active.is_some();
+                    candidate.goals.revision += 1;
+                    candidate.goals.event_sequence += 1;
+                }
                 self.persist(&candidate).await?;
                 state.thread = candidate;
                 cell.interaction_changed.send_replace(revision);
@@ -249,6 +263,12 @@ impl Engine {
                     "areal/interaction/resolved",
                     json!({"revision":revision,"interaction":resolved}),
                 );
+                if block_schedule {
+                    if let Some(active) = &state.active {
+                        active.cancel.cancel();
+                    }
+                    self.wake_tasks();
+                }
                 return Err(invalid(format!("interaction {status}")));
             }
         }

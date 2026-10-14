@@ -113,7 +113,13 @@ impl Engine {
         let mut candidate = state.clone();
         let task_id = task.id.clone();
         let task = candidate.tasks.get_mut(&task_id).ok_or(Error::NotFound)?;
-        if task.cancelled || task.paused {
+        if task.cancelled
+            || (task.paused && task.mode != TaskMode::Scheduled)
+            || task
+                .runs
+                .last()
+                .is_some_and(|r| r.reason.as_deref() == Some("stopRequested"))
+        {
             return Err(Error::Conflict);
         }
         if !task.messages.iter().any(|m| m.id == message_id) {

@@ -14,12 +14,12 @@ impl Engine {
         };
         let tasks = self.task_modes.state.lock().await;
         Ok(tasks.tasks.get(task_id).is_some_and(|task| {
-            !task.paused
-                && !task.cancelled
+            !(task.cancelled || task.paused && task.mode != TaskMode::Scheduled)
                 && task.runs.iter().any(|run| {
                     &run.id == run_id
                         && run.thread_id.as_ref() == Some(thread_id)
                         && run.goal_id.as_ref() == Some(goal_id)
+                        && run.reason.as_deref() != Some("stopRequested")
                 })
         }))
     }
@@ -49,7 +49,11 @@ impl Engine {
         }) else {
             return Ok(None);
         };
-        if task.paused || task.cancelled || run.status.terminal() {
+        if (task.paused && task.mode != TaskMode::Scheduled)
+            || task.cancelled
+            || run.status.terminal()
+            || run.reason.as_deref() == Some("stopRequested")
+        {
             return Err(Error::Conflict);
         }
         Ok(Some(ExecutionOwner::TaskRun {
@@ -108,7 +112,11 @@ impl Engine {
             worker.execution = Some(execution.clone());
             worker.execution_id = Some(execution_id.into());
         } else {
-            if task.paused || task.cancelled || run.status.terminal() {
+            if (task.paused && task.mode != TaskMode::Scheduled)
+                || task.cancelled
+                || run.status.terminal()
+                || run.reason.as_deref() == Some("stopRequested")
+            {
                 return Err(Error::Conflict);
             }
             if run.workers.len() >= self.limits.max_children_per_turn {

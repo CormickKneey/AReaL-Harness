@@ -64,7 +64,11 @@ async function start() {
     assert(child.exitCode === null && child.signalCode === null, logs);
     return JSON.parse(await readFile(ready, "utf8").catch(() => "null"));
   }, Boolean);
-  c = await connect(metadata.endpoint, metadata.authFile);
+  c = await connect(metadata.endpoint, metadata.authFile, async (params) => {
+    assert.ok(params.intent);
+    return {};
+  });
+  await c.call("areal/task/host/ready", {});
 }
 async function stop() {
   await c?.close();
@@ -88,6 +92,9 @@ async function controlTask(id, action) {
         requestId: crypto.randomUUID(),
         taskId: id,
         expectedRevision: view.revision,
+        ...(["stopRun", "resumeRun"].includes(action)
+          ? { expectedRunId: view.runs.at(-1).id }
+          : {}),
       });
     } catch (error) {
       if (error.code !== -32009) throw error;
@@ -144,6 +151,7 @@ try {
     (t) => t.runs.length >= 2 && t.runs.at(-1)?.status === "blocked",
   );
   assert.equal(blocked.runs.length, 2);
+  recurring.threadId = blocked.runs.at(-1).threadId;
   await controlTask(recurring.id, "pause");
   await waitFor(
     () => goal(recurring.threadId),
@@ -185,7 +193,7 @@ try {
   assert.deepEqual(comparableRuns, beforeCancel.runs);
   assert.equal((await goal(recurring.threadId)).goal.tokenBudget, remaining);
   evidence.push("restart preserves cancelled task history and accepted budget");
-  await controlGoal(recurring.threadId, "resume");
+  await controlTask(recurring.id, "resumeRun");
   await waitFor(
     () => goal(recurring.threadId),
     (v) => v.goal.status === "blocked" && !v.goal.activeTurnId && !v.goal.settling,
@@ -207,10 +215,7 @@ try {
   await start();
   const beforeResume = await goal(recurring.threadId),
     requests = model.requests.length;
-  await assert.rejects(
-    controlGoal(recurring.threadId, "resume"),
-    (e) => e.code === -32602 && /TASK_TOKEN_BUDGET/.test(e.message),
-  );
+  await assert.rejects(controlGoal(recurring.threadId, "resume"), (e) => e.code === -32009);
   const afterResume = await goal(recurring.threadId);
   assert.equal(afterResume.revision, beforeResume.revision);
   assert.equal(afterResume.goal.status, beforeResume.goal.status);

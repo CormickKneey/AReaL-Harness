@@ -58,7 +58,7 @@ impl ToolHost {
         };
         let result = if response.get("error").is_some() || response.get("result").is_none() {
             Err(anyhow::anyhow!(if reply.prepare {
-                "browser prepare failed before execution; dispatch is not_sent"
+                "host prepare failed before execution; dispatch is not_sent"
             } else {
                 "dynamic tool client returned an RPC error or malformed reply; outcome is UNKNOWN"
             }))
@@ -95,6 +95,18 @@ impl DynamicToolHost for ToolHost {
     }
     fn is_closed(&self) -> bool {
         self.stop.is_cancelled()
+    }
+    async fn prepare_schedule(
+        &self,
+        params: Value,
+        cancel: CancellationToken,
+    ) -> anyhow::Result<Value> {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(12),
+            self.request("areal/task/prepare", params, cancel),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("schedule preparation timed out; execution not started"))?
     }
     async fn prepare_browser(
         &self,
@@ -140,7 +152,7 @@ impl ToolHost {
             id.clone(),
             PendingReply {
                 sender: tx,
-                prepare: method == "areal/browser/prepare",
+                prepare: matches!(method, "areal/browser/prepare" | "areal/task/prepare"),
             },
         );
         let _pending = Pending {

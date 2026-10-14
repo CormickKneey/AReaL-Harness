@@ -1,6 +1,9 @@
 'use strict';
 const { randomUUID } = require('node:crypto');
 const blocked = message => Object.assign(new Error(message), { code: 'CORE_RESOURCES' });
+// Mirror the public CLI's ifIdle preflight, not only resource cleanup safety.
+const restartSafe = status => status.restartSafe === true && !(status.activeGoals?.length)
+  && !(status.pendingQueueItems ?? 0) && !(status.activeTasks ?? 0);
 
 // Observe every connected Workspace before touching any of them. No drain here:
 // drain closes Core admission and cannot be undone by the GUI.
@@ -41,7 +44,7 @@ async function inspectResources(backend, { includeTasks = false } = {}) {
         cursors.add(after);
       } while (after);
     }
-    projects.push({ projectId, root: project.root, restartSafe: status.restartSafe === true, resources,
+    projects.push({ projectId, root: project.root, restartSafe: restartSafe(status), resources,
       activeTurns: status.activeTurns?.length ?? 0, unresolvedTools: status.unresolvedTools?.length ?? 0,
       compactions: status.compactions?.length ?? 0,
       workgroups: (status.workgroups ?? []).filter(g => g.status === 'running' || !g.cleanupConfirmed).length,
@@ -74,7 +77,7 @@ async function recoverResource(backend, request) {
   return { cleanupConfirmed: true };
 }
 function summary(projects) {
-  return projects.filter(p => !p.restartSafe).map(p => `${p.root ?? p.projectId}\n终端 ${p.resources.length} · 活动轮次 ${p.activeTurns} · 未确认工具 ${p.unresolvedTools} · 上下文压缩 ${p.compactions} · 子任务组 ${p.workgroups}`).join('\n\n');
+  return projects.filter(p => !p.restartSafe || p.activeTasks || p.goalThreads?.length || p.waitingMessages).map(p => `${p.root ?? p.projectId}\n终端 ${p.resources.length} · 活动轮次 ${p.activeTurns ?? 0} · 活动目标 ${p.goalThreads?.length ?? 0} · 后台任务 ${p.activeTasks ?? 0} · 排队消息 ${p.waitingMessages ?? 0}\n未确认工具 ${p.unresolvedTools ?? 0} · 上下文压缩 ${p.compactions ?? 0} · 子任务组 ${p.workgroups ?? 0}`).join('\n\n');
 }
 // Native main-process interaction; never expose an unrestricted attestation RPC
 // or credentials to the renderer. Cancellation never changes Core records.
@@ -106,4 +109,4 @@ function createResourceRecovery({ backend, notify }) {
     finally { opened = false; }
   };
 }
-module.exports = { inspectResources, recoverResource, createResourceRecovery, summary, blocked };
+module.exports = { inspectResources, recoverResource, createResourceRecovery, summary, blocked, restartSafe };

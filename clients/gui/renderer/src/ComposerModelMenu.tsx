@@ -61,6 +61,11 @@ export function ComposerModelMenu({
     const label = model?.label ?? "请选择模型";
     const efforts = model?.efforts ?? [];
     const index = effort ? efforts.indexOf(effort) : -1;
+    // Native range thumbs travel between half-thumb insets, including both endpoints.
+    const sliderPosition = (step: number) => {
+        const fraction = Math.max(0, step) / Math.max(1, efforts.length - 1);
+        return `calc(${fraction * 100}% + ${14 - fraction * 28}px)`;
+    };
     if (!options.length) return (
         <Button type="button" variant="ghost" aria-label="模型" disabled={disabled}
             className="composer-model-trigger" onClick={onConfigure}>
@@ -124,20 +129,18 @@ export function ComposerModelMenu({
                         </div>
                         {efforts.length && onEffortChange ? (
                             <div className="composer-slider-shell">
-                                <div className="composer-slider-track">
+                                <div className="composer-slider-track" aria-hidden="true">
                                     <div
                                         style={{
-                                            width:
-                                                index < 0
-                                                    ? "0%"
-                                                    : `${((index + 0.5) / efforts.length) * 100}%`,
+                                            width: sliderPosition(index),
                                         }}
                                     />
                                     {efforts.map((item, i) => (
                                         <i
                                             key={item}
+                                            data-selected={index >= i}
                                             style={{
-                                                left: `${((i + 0.5) / efforts.length) * 100}%`,
+                                                left: sliderPosition(i),
                                             }}
                                         />
                                     ))}

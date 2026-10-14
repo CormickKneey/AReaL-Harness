@@ -120,7 +120,8 @@ fn equal_token(expected: &[u8], supplied: &[u8]) -> bool {
 }
 
 pub(crate) fn permission(method: &str) -> Permission {
-    if method == "areal/process/acknowledgeCleanup"
+    if method == "areal/task/host/ready"
+        || method == "areal/process/acknowledgeCleanup"
         || method.starts_with("areal/permissions/")
         || method.starts_with("areal/provider/")
         || method.starts_with("areal/account/")

@@ -23,6 +23,17 @@ fn main() {
     add!("areal/task/create", areal_protocol::tasks::TaskCreate);
     add!("areal/task/update", areal_protocol::tasks::TaskUpdate);
     add!("areal/task/pause", areal_protocol::tasks::TaskControl);
+    for method in ["areal/task/stopRun", "areal/task/resumeRun"] {
+        let mut control =
+            serde_json::to_value(schemars::schema_for!(areal_protocol::tasks::TaskControl))
+                .unwrap();
+        control["required"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!("expectedRunId"));
+        control["properties"]["expectedRunId"] = json!({"type":"string"});
+        methods.insert(method.into(), control);
+    }
     for action in ["areal/task/resume", "areal/task/cancel"] {
         let mut control =
             serde_json::to_value(schemars::schema_for!(areal_protocol::tasks::TaskControl))
@@ -77,6 +88,7 @@ fn main() {
     let integer = json!({"type":"integer","minimum":0});
     let empty = json!({"type":"object","properties":{},"additionalProperties":false});
     for method in [
+        "areal/task/host/ready",
         "areal/model/list",
         "areal/profile/list",
         "areal/provider/list",
@@ -335,7 +347,11 @@ fn main() {
     output["serverRequests"] = json!({"item/tool/call":browser_request,
         "areal/browser/prepare":object(json!({"threadId":string,"turnId":string,"callId":string,"tool":string,"arguments":{},"hostGeneration":string}),vec!["threadId","turnId","callId","tool","arguments","hostGeneration"])});
     output["serverRequests"]["item/tool/call"]["properties"]["browserApproval"] = json!({"type":"object","properties":{"plan":{"type":"object"}},"required":["plan"],"additionalProperties":false});
-    output["serverResponses"] = json!({"item/tool/call":schemars::schema_for!(areal_protocol::DynamicToolResponse),"areal/browser/prepare":{"type":"object"}});
+    output["serverRequests"]["areal/task/prepare"] = object(
+        json!({"taskId":string,"runId":string,"threadId":string,"scheduledAt":integer,"intent":{"enum":["start","resume"]}}),
+        vec!["taskId", "runId", "threadId", "scheduledAt", "intent"],
+    );
+    output["serverResponses"] = json!({"item/tool/call":schemars::schema_for!(areal_protocol::DynamicToolResponse),"areal/browser/prepare":{"type":"object"},"areal/task/prepare":{"type":"object"}});
     inline(&mut output, &Value::Null);
     println!("{}", serde_json::to_string_pretty(&output).unwrap());
 }

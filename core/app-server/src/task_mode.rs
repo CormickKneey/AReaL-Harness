@@ -10,6 +10,8 @@ pub(crate) const METHODS: &[&str] = &[
     "areal/task/pause",
     "areal/task/resume",
     "areal/task/cancel",
+    "areal/task/stopRun",
+    "areal/task/resumeRun",
     "areal/task/subscribe",
     "areal/task/unsubscribe",
     "areal/channel/read",
@@ -18,7 +20,23 @@ pub(crate) const METHODS: &[&str] = &[
 ];
 
 pub(crate) fn visible(principal: &auth::Principal, task: &Task) -> bool {
-    principal.thread_ids.is_none() || task.thread_id.as_ref().is_some_and(|id| principal.sees(id))
+    principal.thread_ids.is_none()
+        || (task.thread_id.as_ref().is_some_and(|id| principal.sees(id))
+            && task
+                .runs
+                .iter()
+                .all(|r| r.thread_id.as_ref().is_none_or(|id| principal.sees(id))))
+}
+
+pub(crate) fn visible_projection(principal: &auth::Principal, task: &Value) -> bool {
+    principal.thread_ids.is_none()
+        || (task["threadId"]
+            .as_str()
+            .is_some_and(|id| principal.sees(id))
+            && task["runs"].as_array().is_some_and(|runs| {
+                runs.iter()
+                    .all(|r| r["threadId"].as_str().is_none_or(|id| principal.sees(id)))
+            }))
 }
 
 pub(crate) fn projection(task: Task) -> Value {
@@ -55,16 +73,19 @@ pub(crate) async fn dispatch(
     method: &str,
     params: Value,
 ) -> Result<Value, RpcError> {
-    if let Some(id) = params["taskId"].as_str() {
-        authorize(engine, principal, id).await?;
-    }
+    let authorized = if let Some(id) = params["taskId"].as_str() {
+        Some(authorize(engine, principal, id).await?)
+    } else {
+        None
+    };
     match method {
         "areal/task/create" => {
             let request: TaskCreate = parse(params)?;
-            if request
-                .thread_id
-                .as_ref()
-                .is_some_and(|id| !principal.sees(id))
+            if (request.mode == TaskMode::Scheduled && principal.thread_ids.is_some())
+                || request
+                    .thread_id
+                    .as_ref()
+                    .is_some_and(|id| !principal.sees(id))
                 || (principal.thread_ids.is_some() && request.thread_id.is_none())
             {
                 return Err(RpcError {
@@ -83,9 +104,9 @@ pub(crate) async fn dispatch(
             .await
             .map_err(map_error),
         "areal/task/read" => {
-            let p: TaskTarget = parse(params)?;
+            let _: TaskTarget = parse(params)?;
             Ok(projection(
-                engine.task_read(&p.task_id).await.map_err(map_error)?,
+                authorized.ok_or_else(|| RpcError::invalid("taskId required"))?,
             ))
         }
         "areal/task/list" | "areal/inbox/list" => {
@@ -143,7 +164,11 @@ pub(crate) async fn dispatch(
             };
             Ok(json!({"data":rows.into_iter().map(|(_,v)|v).collect::<Vec<_>>(),"nextCursor":next}))
         }
-        "areal/task/pause" | "areal/task/resume" | "areal/task/cancel" => engine
+        "areal/task/pause"
+        | "areal/task/resume"
+        | "areal/task/cancel"
+        | "areal/task/stopRun"
+        | "areal/task/resumeRun" => engine
             .task_control(
                 principal.id.clone(),
                 method.rsplit('/').next().unwrap().into(),
@@ -151,7 +176,15 @@ pub(crate) async fn dispatch(
             )
             .await
             .map_err(map_error),
-        "areal/channel/read" => engine.channel_read(parse(params)?).await.map_err(map_error),
+        "areal/channel/read" => {
+            let request: ChannelRead = parse(params)?;
+            let result = engine
+                .channel_read(request.clone())
+                .await
+                .map_err(map_error)?;
+            authorize(engine, principal, &request.task_id).await?;
+            Ok(result)
+        }
         "areal/channel/reply" => engine
             .channel_reply(principal.id.clone(), parse(params)?)
             .await

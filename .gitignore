@@ -22,3 +22,7 @@ __pycache__/
 
 # 本地跨仓轨迹互通夹具
 /out/trajectory-semantics/
+
+# Private LoopX project state and local tooling
+/.loopx/
+/.local/

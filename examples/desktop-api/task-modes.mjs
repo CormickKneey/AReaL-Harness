@@ -109,7 +109,12 @@ export async function taskModeMatrix({
   });
   assert.equal((await complete(c, waiting.id)).runs[0].usage.turnsStarted, 2);
 
-  // 调度与交互正交：一次性定时任务默认无人值守，重复任务可暂停和取消。
+  // 桌面 Host 准入：每次运行使用新会话与普通交互。
+  const scheduleHost = await client(async (params) => {
+    assert.ok(params.intent);
+    return {};
+  });
+  await scheduleHost.call("areal/task/host/ready", {});
   const scheduledThread = await startThread(c);
   const scheduled = await c.call("areal/task/create", {
     requestId: crypto.randomUUID(),
@@ -119,10 +124,11 @@ export async function taskModeMatrix({
     schedule: { at: Math.floor(Date.now() / 1000) + 2 },
     tokenBudget: 200000,
   });
-  assert.equal(scheduled.interactionMode, "headless");
+  assert.equal(scheduled.interactionMode, "interactive");
   assert.equal(scheduled.runs.length, 0);
   const scheduledDone = await complete(c, scheduled.id);
   assert.equal(scheduledDone.runs.length, 1);
+  assert.notEqual(scheduledDone.runs[0].threadId, scheduledThread.threadId);
   assert.equal(scheduledDone.nextRunAt, null);
   assert.equal(scheduledDone.runs[0].usage.turnsStarted, 2);
   const periodicThread = await startThread(c);

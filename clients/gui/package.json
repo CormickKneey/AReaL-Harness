@@ -13,6 +13,7 @@
     "start": "node scripts/start.mjs",
     "package": "node scripts/package.mjs",
     "verify": "node scripts/verify-public.mjs && node scripts/design-system-audit.mjs && node --test scripts/side-restore.test.mjs scripts/operation-contract.test.cjs scripts/side-model-intent.test.mjs scripts/startup-recovery.test.mjs scripts/system-proxy.test.mjs",
+    "test:task-conversation": "node scripts/task-conversation-smoke.mjs",
     "test:queue": "node scripts/queue-smoke.mjs",
     "test:interactions": "node scripts/interaction-smoke.mjs",
     "test:composer": "node scripts/composer-smoke.mjs",
@@ -30,7 +31,6 @@
     "sign:mac": "node scripts/notarize-macos.mjs",
     "test:update": "node scripts/update-smoke.mjs",
     "test:core-process": "node scripts/core-process-smoke.mjs",
-    "test:proxy": "node --test scripts/system-proxy.test.mjs",
     "test:browser-feasibility": "node scripts/browser-feasibility.mjs",
     "test:browser-attach": "node scripts/browser-attach-smoke.mjs",
     "test:browser-annotations": "node scripts/browser-annotation-smoke.mjs",
@@ -56,7 +56,8 @@
     "design:build": "pnpm --filter @areal/gui-renderer design:build",
     "test:design": "node scripts/design-system-smoke.mjs",
     "verify:design": "node scripts/design-system-audit.mjs",
-    "test:regressions": "node --test scripts/browser-observation-privacy.test.cjs scripts/trajectory-polling.test.mjs scripts/builder-download.test.mjs"
+    "test:regressions": "node --test scripts/browser-observation-privacy.test.cjs scripts/trajectory-polling.test.mjs scripts/builder-download.test.mjs",
+    "test:proxy": "node --test scripts/system-proxy.test.mjs"
   },
   "devDependencies": {
     "fake-indexeddb": "6.2.4",

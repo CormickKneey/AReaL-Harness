@@ -1700,10 +1700,10 @@ button.composer-project:hover > svg,
 /* Text shimmer expresses waiting, never fabricated reasoning content. */
 .turn-thinking { display: inline-block; color: var(--color-foreground-subtle); }
 @supports (background-clip: text) {
-  .turn-thinking { background: linear-gradient(90deg, var(--color-foreground-subtle) 35%, color-mix(in srgb, white 75%, transparent) 45%, color-mix(in srgb, white 75%, transparent) 50%, var(--color-foreground-subtle) 60%); background-size: 200% 100%; background-position: 150% 0; background-clip: text; color: transparent; animation: turn-thinking-shimmer 4s linear infinite; }
+  .turn-thinking { background: linear-gradient(90deg, var(--color-foreground-subtle) 35%, color-mix(in srgb, white 75%, transparent) 45%, color-mix(in srgb, white 75%, transparent) 50%, var(--color-foreground-subtle) 60%); background-size: 200% 100%; background-position: 125% 0; background-clip: text; color: transparent; animation: turn-thinking-shimmer 2.4s linear infinite; }
 }
-/* Native reference: a 1s stepped sweep, observed about every 4s. */
-@keyframes turn-thinking-shimmer { 0% { background-position: 150% 0; animation-timing-function: steps(48); } 25%, 100% { background-position: -150% 0; } }
+/* Continuous sweep; both endpoints place the highlight outside the text. */
+@keyframes turn-thinking-shimmer { from { background-position: 125% 0; } to { background-position: -35% 0; } }
 @scope (:root[data-reduced-motion="true"]) { .turn-thinking { animation: none; background: none; color: var(--color-foreground-subtle); } }
 
 /* Only the timeline scrolls during execution. The composer never participates in auto-scroll. */
@@ -2475,13 +2475,14 @@ body { font-family: var(--font-sans); }
 .composer-effort-center { text-align: center; min-width: 0; }
 .composer-effort-center strong { display: block; font-size: 14px; font-weight: 450; color: var(--color-brand); line-height: 17px; }
 .composer-effort-center button { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--color-foreground-subtle); padding: 1px 5px; line-height: 18px; }
-.composer-slider-shell { position: relative; height: 28px; margin-top: 6px; }
-.composer-slider-track { position: absolute; inset: 2px 0; border: 1px solid var(--color-border-hover); border-radius: 20px; background: var(--color-secondary); overflow: hidden; pointer-events: none; }
+.composer-slider-shell { position: relative; height: 28px; margin: 12px 0 4px; }
+.composer-slider-track { position: absolute; inset: 2px 0; border-radius: 20px; background: color-mix(in srgb, var(--color-foreground) 14%, var(--color-composer-catalog, var(--color-background))); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-foreground) 8%, transparent); overflow: hidden; pointer-events: none; }
 .composer-slider-track > div { height: 100%; background: var(--color-brand); }
-.composer-slider-track i { position: absolute; top: 9px; width: 4px; height: 4px; border-radius: 50%; background: #ffffff55; transform: translateX(-50%); }
+.composer-slider-track i { position: absolute; top: 10px; width: 4px; height: 4px; border-radius: 50%; background: color-mix(in srgb, var(--color-foreground) 35%, transparent); transform: translateX(-50%); }
+.composer-slider-track i[data-selected=true] { background: #ffffff80; }
 .composer-slider-shell input { appearance: none; width: 100%; height: 28px; margin: 0; background: transparent; position: relative; cursor: pointer; }
 .composer-slider-shell input::-webkit-slider-runnable-track { height: 28px; background: transparent; }
-.composer-slider-shell input::-webkit-slider-thumb { appearance: none; width: 28px; height: 28px; border-radius: 50%; background: white; }
+.composer-slider-shell input::-webkit-slider-thumb { appearance: none; width: 28px; height: 28px; border-radius: 50%; background: white; box-shadow: 0 1px 4px #0003, 0 0 0 1px #0000000d; }
 .composer-slider-shell input:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 3px; border-radius: 20px; }
 .composer-effort-unavailable { font-size: 12px; color: var(--color-foreground-subtle); margin-top: 8px; text-align: center; }
 .composer-model-menu { padding: 7px 4px 6px; }
@@ -2492,6 +2493,7 @@ body { font-family: var(--font-sans); }
 .composer-model-menu [role="radio"]:disabled { color: var(--color-foreground-subtle); }
 .composer-model-menu [role="radio"] small { display: block; font-size: 12px; }
 .composer-model-configure { width: 100%; margin-top: 8px; border-top: 1px solid var(--color-border); border-radius: 0; }
+.composer-effort-menu .composer-model-configure { height: 30px; padding-block: 0; color: var(--color-foreground-subtle); font-size: 12px; font-weight: 450; }
 @media (max-width: 760px) {
   .composer-catalog-description { display: none; }
   .composer-catalog-row { font-size: 13px; }

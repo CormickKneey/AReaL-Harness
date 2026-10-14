@@ -19,6 +19,7 @@ import { SidePaneTabTitleTooltip } from "./SidePaneTabTitleTooltip.js";
 import type { WorkspaceSidePaneTab } from "./sidePaneModel.js";
 export function SidePaneTabIcon({ tab }: { tab: WorkspaceSidePaneTab }) {
   if (tab.id.startsWith("agent:")) return <AgentAvatar id={tab.id.slice(6)} size={14} />;
+  if (tab.id.startsWith("browser:")) return <BrowserPanelIcon className="size-4 shrink-0" />;
   if (tab.id.startsWith("terminal:")) return <TerminalPanelIcon className="size-4 shrink-0" />;
   if (tab.id.startsWith("file:")) return <DocumentPanelIcon className="size-4 shrink-0" />;
   const Icon =
