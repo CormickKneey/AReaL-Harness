@@ -156,6 +156,22 @@ GUI 可从 Side 的一条回复中选择文字，或显式选择整条回复，�
 空闲 Side 可用 `areal/thread/archive {threadId}` 持久归档；活动轮次归档会拒绝。`areal/conversation/unarchive {requestId,threadId}` 幂等恢复已归档 Side 和完整历史，不自动发问。重放 Side 原创建键从持久历史返回原始首轮，包括重启后，不重新执行或恢复归档。读取或订阅归档 Side 不会恢复它，归档期间发送仍被拒绝。来源 Stop 或归档不级联停止或删除 Side；关闭相关讨论面板只隐藏视图。已发送内容由 Core 在 GUI 或 Core 重启后恢复，未发送草稿不承诺跨进程保存。
 Side 首问与追问共用活跃额度：默认每来源 2、每部署 8；超额分别报 `SIDE_SOURCE_CAPACITY_REACHED`、`SIDE_DEPLOYMENT_CAPACITY_REACHED`。每个 Side Turn 默认最多 8 次模型轮、16 次工具调用、300 秒；全局限额仍可进一步收紧。Side 不自动或手动调用模型压缩，避免额度外请求；上下文过大时明确失败。模型许可不足时 `areal/side/capacity` 推送 `waiting`/`available`，活跃 Side 的 `thread/read` 与 `areal/thread/observe` / `thread/resume` 订阅快照在 `desktop.sideCapacityStatus` 投影当前状态，停止后快照不保留等待状态；停止只取消对应 Side。Side 请求计入自己的 Session 与部署真实用量，不继承来源 Goal 预算。
 
+## 当前 GUI 复用入口
+
+项目下的 Session 列表来自 `project.list` / `work.list`，不使用示例数据或 GUI 已打开列表。会话详情复用 GUI 消息与 Composer；附件入口不提供。模型与权限、目标创建/暂停/恢复/清除、运行中 Follow up 队列与引导均使用真实 Core；完整目标编辑与模型目录/凭据设置仍在桌面完成。
+
+Turn 显示投影保留 Core 的 `goal.origin`、`goal.sequence` 与 `durationMs`，供同一 GUI 消息组件显示目标自动继续标签和权威耗时。不会按消息正文猜测续跑来源，也不传输 instructionSnapshot 或完整 Turn 配置。
+
+正文、推理和工具文本通过 `session.body {threadId, turnId, itemId, cursor?}` 完整读取并交给同一 GUI 消息流渲染，长回复不再只显示预览。该只读入口要求当前项目的 observe 授权和已打开的精确会话订阅；每页重新校验设备授权、连接与 Core 代际。公共消息正文超过内联额度时按最多 32 KiB 的 UTF-8 页读取，每位观察者只保留一个有效期 45 秒、最多 4 MiB 的临时冻结正文版本；游标不能跨消息或订阅使用。媒体与 Core 已归档、不可访问的历史仍不提供。工具参数、文本输出和公开执行状态可以展开；modelContext、凭据、完整配置、instructionSnapshot、钩子负载和私有执行元数据不传输。浏览器仅缓存当前显示范围的正文，切换会话或断开后清空；读取失败可显式重试，不重放发送或工具操作。现有原生历史接收上限仍适用。
+
+`session.send` 可附带 `enqueue: true, expectedTurnId`，映射 `areal/turn/enqueue`，要求 `turnEnqueueAdmissionGuard`；Core 在锁内确认普通归属与配置版本。`session.control {threadId, operation, expectedRevision, values}` 使用 submit 能力和既有 commandId journal，仅支持 configure、goalCreate/goalPause/goalResume/goalClear、queueUpdate/queueRemove/queueReorder/queuePause/queueResume/queueSteer、steer。字段严格限定；不接受路径、原生方法名、连接信息或凭据。Task 归属拒绝这些普通会话控制。
+
+快照包含脱敏模型目录、配置、目标与队列显示投影；队列至多 128 项，每项文本 1024 UTF-8 字节，含附件或截断项不可在 Remote 编辑。模型目录至多 200 项。发送和控制共享 Session 未确认门；结果未知只查原 commandId，不重发。配置/目标/队列及 enqueue 使用原生持久收据核对。直接 `turn/steer` 无可查询原生请求键，回应丢失时保持 UNKNOWN，不将消息回显当作受理证明。
+
+普通 Session 自建目标在 Core 标记为目标管理期间仍可按精确 goalId 和版本暂停、恢复或清除；TaskRun 管理的目标仍使用 Task 控制。
+
+目标控制还要求已受理日志把当前 Host／设备／项目与精确 goalId 绑定到 goalCreate；其他设备创建的目标在此只读。
+
 ## Side 模型与清理恢复
 
 `areal/side/start` 省略 `model` 和 `resetModel` 保持锚点模型继承；`resetModel: true` 显式使用部署默认模型；`model` 指定模型。二者不能同时提供。旧客户端保持继承语义，旧 Core 不支持 resetModel 时应拒绝而不是静默继承。首问与后续轮次使用同一持久配置。
