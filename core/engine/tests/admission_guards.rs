@@ -221,7 +221,8 @@ async fn ordinary_creation_rejects_workflow_before_creating_thread() {
 // Durable fixture images represent histories from a previous Core process. Assertions
 // use public Engine operations; no production mutation or test-only hooks are added.
 fn task_fixture(thread: &str, statuses: &[&str], workers: serde_json::Value) -> serde_json::Value {
-    json!({"version":1,"receipts":[],"tasks":{"task":{
+    // 准入用例保留当前 Run 的会话预留；旧格式迁移会释放未开始的定时会话。
+    json!({"version":3,"receipts":[],"tasks":{"task":{
         "id":"task","revision":7,"channelSequence":0,"owner":"owner","mode":"scheduled",
         "interactionMode":"headless","objective":"fixture","threadId":thread,
         "schedule":{"at":4102444800_i64,"intervalSeconds":null},"nextRunAt":4102444800_i64,
