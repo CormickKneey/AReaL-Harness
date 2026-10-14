@@ -1,0 +1,8 @@
+{
+  "publicOrigin": "http://127.0.0.1:8080",
+  "listen": "127.0.0.1:8080",
+  "development": true,
+  "allowedClientOrigins": ["http://127.0.0.1:8080"],
+  "dataDir": ".relay-data",
+  "payloadLogging": false
+}

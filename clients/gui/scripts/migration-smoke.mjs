@@ -692,7 +692,7 @@ try {
     operation: "taskCreate",
     mode: "scheduled",
     objective: "检查当前项目",
-    interactionMode: "headless",
+    interactionMode: "interactive",
     schedule: { at: Math.floor(Date.now() / 1000) + 3 },
     maxTurns: 1,
     maxActiveSeconds: 60,
@@ -716,10 +716,10 @@ try {
     taskId: task.id,
     expectedRevision: task.revision,
   });
-  await button("执行任务").click();
+  await button("定时任务").click();
   await shot("08-tasks");
   checks.push(
-    "Core scheduled task triggers once while GUI is closed and run history survives reopening",
+    "Desktop Host recovery coalesces one missed schedule and preserves run history",
   );
   }
   assert.deepEqual(errors, []);

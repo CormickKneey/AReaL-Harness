@@ -11,7 +11,7 @@ Task 持有任务身份、目标、调度、总 token 预算和一个持久 Chan
 | mode | threadId | 默认 interactionMode | 触发方式 |
 |---|---|---|---|
 | foreground | 必填，根 Thread | interactive | 受理后排队启动 |
-| scheduled | 必填，根 Thread | headless | UTC 时间点，可按固定间隔重复 |
+| scheduled | 必填，执行环境定位用的根 Thread | interactive | 在线桌面 Host 就绪后按 UTC 时间点触发，每次新建 Thread |
 | background | 可省略；Core 创建协调 Thread | asynchronous | 受理后排队启动，worker 可使用独立 Session |
 
 `areal/goal/create` 继续原子受理首轮，同时登记 foreground Task，响应增加 `taskId/runId`。`areal/task/create` 先持久受理 Task，执行异步调度；返回成功不表示模型已开始。已有 Goal、活动 Turn 或用户队列占用绑定 Thread 时，新的 TaskRun 等待准入。每个 Task 同时最多一个未结束 Run。
@@ -26,7 +26,7 @@ Task 身份不依赖客户端连接，通信不发往执行 Session。当前不�
 | asynchronous | 强制持久异步问题，立即返回 | 立即 PermissionDenied |
 | headless | 立即返回 `status="unavailable", reason="headless", waiting=false`，不创建问题 | 立即 PermissionDenied |
 
-headless 不等待用户、不自动批准操作；模型可以采用有依据的假设继续，或报告具体 blocker。已由有效策略批准的工具照常执行。scheduled/background 拒绝 interactive，也拒绝依赖客户端动态工具回调的 Thread。它们使用服务端持有的工具；已有 Runtime 和 Profile 权限仍然生效。
+headless 不等待用户、不自动批准操作；模型可以采用有依据的假设继续，或报告具体 blocker。已由有效策略批准的工具照常执行。background 拒绝 interactive 和依赖客户端动态工具回调的 Thread。scheduled 固定使用 interactive，由在线桌面 Host 提供当前配置和动态工具；已有 Runtime 和 Profile 权限仍然生效。
 
 `GoalCreate.interactionMode` 和 `ClientOptions.interactionMode` 可设置策略；`areal/turn/start/enqueue` 的可选 `interactionMode` 覆盖本次提交，队列冻结该值，不修改 Thread 默认配置。TUI headless 和无双向应答通道的 Claude CLI 提交显式使用 headless；明确启用双向 stream-json 的 CLI 保留 interactive 宿主协议，dontAsk 仍为 headless。交互策略不能扩展工具权限。
 
@@ -54,13 +54,17 @@ async 默认期限 86400 秒，允许 1–604800 秒；同步问题允许 1–36
 | task/read | `taskId` | Task 投影 |
 | task/update | `requestId, taskId, expectedRevision, objective?, schedule?` | 更新后的 Task 投影 |
 | task/pause, task/resume, task/cancel | `requestId, taskId, expectedRevision` | 已持久受理控制意图的 Task 投影 |
+| task/stopRun, task/resumeRun | `requestId, taskId, expectedRevision, expectedRunId` | 当前 Run 的停止／明确恢复意图，重复安排不变 |
+| task/host/ready | `{}`；需要 unrestricted manage + tools | `{ready:true}`；登记当前连接作为桌面 Host |
 | task/subscribe | `taskId` | 原子快照及后续 task/updated 通知 |
 | task/unsubscribe | `taskId` | `{removed:true}`；不取消任务 |
 | channel/read | `taskId, afterSequence?, limit?` | `{taskId, channelSequence, data, nextSequence, hasMore}` |
 | channel/reply | `requestId, taskId, runId, questionId, answers` | `{accepted:true, messageId, taskId, runId, channelSequence}` |
 | inbox/list | `after?, limit?` | `{data:[{taskId, objective, message}], nextCursor}` |
 
-Task 投影包括 `id, revision, channelSequence, owner, mode, interactionMode, objective, threadId, schedule, nextRunAt, paused, cancelled, tokenBudget, maxTurns, maxActiveSeconds, runs, pendingQuestions`；不内嵌 messages。每个 Run 包含 `id, threadId, goalId, status, reason, scheduledAt, completedAt, usage, waitRequested, workers`。worker 包含 `threadId, turnId, status, settled`；status 为 running/completed/cancelled/failed。
+`task/pause` 还接受可选 `expectedRunId`，由 `features.taskPauseRunGuard` 声明。Core 查询收据后，在同一 Task 锁内将其与最新 Run 比较，并同时检查 `expectedRevision`；Run 缺失或变化返回冲突。resume/cancel 不接受此字段。同参数已受理请求即使在版本/Run 改变或重启后仍返回原收据；同键更换 Run 返回冲突。省略字段保持旧调用与收据摘要兼容。对于 scheduled，pause 只暂停之后的触发；stopRun 才停止当前执行。执行停止仍以 Run 和 worker 结算为准。
+
+Task 投影包括 `id, revision, channelSequence, owner, mode, interactionMode, objective, threadId, schedule, nextRunAt, paused, cancelled, tokenBudget, maxTurns, maxActiveSeconds, runs, skippedRuns, lastSkippedAt, pendingQuestions`；不内嵌 messages。每个 Run 包含 `id, threadId, goalId, status, reason, objective?, scheduledAt, startedAt, completedAt, usage, waitRequested, workers`。worker 包含 `threadId, turnId, status, settled`；status 为 running/completed/cancelled/failed。
 
 Run status 为 `queued/running/waitingForInput/waitingForAgents/paused/blocked/completed/failed/cancelled`；后三项是终态。paused/cancelled 为 Task 控制意图，清理期间 Run 可能仍为 running。以 Run 终态及 worker.settled 判断执行结算，不以控制请求返回或协调 Turn completed 代替。
 
@@ -72,7 +76,7 @@ ChannelMessage 包含 `id, sequence, runId, author, kind, status, createdAt, exp
 
 ## 独立 Inbox 与订阅
 
-客户端可以在全局 Inbox 或 Task 详情页回答同一问题，无需打开协调 Thread。身份未限制 threadIds 时沿用部署共享工作区授权；受 threadIds 限制的身份只看到绑定到允许 Thread 的 Task，不能创建/查看未绑定的后台 Task。owner 记录创建身份，不新增私人邮箱 ACL；不同可访问身份竞争回答时只有首个有效回复成功。
+客户端可以在全局 Inbox 或 Task 详情页回答同一问题，无需打开协调 Thread。身份未限制 threadIds 时沿用部署共享工作区授权；受 threadIds 限制的身份必须同时获准访问安排定位 Thread 和所有 Run Thread；不能创建会生成新 Thread 的 scheduled Task，也不能创建/查看未绑定的后台 Task。订阅快照和通知重新检查可见性，新增未授权 Run Thread 后终止该订阅。owner 记录创建身份，不新增私人邮箱 ACL；不同可访问身份竞争回答时只有首个有效回复成功。
 
 `areal/task/updated` 参数为 `{taskId, revision, channelSequence, runId, task}`。订阅不依赖 thread/resume；task/subscribe 在同一锁内取得快照并注册接收器，快照响应先于后续事件。Task 事件和 Thread 事件共用每连接 128 个订阅与有界发送队列；积压时关闭连接，客户端重连并重新取得快照。
 
@@ -84,19 +88,21 @@ limit 为 1–100，Task/Inbox 默认 30，Channel 默认 50；Task/Inbox 使用
 
 `areal/task/update` 接收 `{requestId, taskId, expectedRevision, objective?, schedule?}`，至少提供一个修改字段。仅可修改未取消的 scheduled Task；schedule 必须为未来 UTC 时间，间隔范围同创建。省略字段保持原值。接口沿用任务授权、持久幂等收据和版本冲突语义，返回完整任务投影并发出 `areal/task/updated`。
 
-修改保留 Task、Thread、Run 历史、暂停状态与预算；新的时间替换后续 `nextRunAt`。已受理 Goal 继续使用原目标，其控制不会覆盖 Task 的新目标。Run 已排队但尚未受理 Goal 的短暂窗口拒绝修改，待其启动后可重试。已结束的一次性任务可通过新的未来 schedule 再次安排。修改不立即执行任务，也不迁移工作区。客户端先检查 methods 是否包含 `areal/task/update`。
+修改保留 Task、Thread、Run 历史、暂停状态与预算；新的时间替换后续 `nextRunAt`。已受理 Goal 继续使用原目标，其控制不会覆盖 Task 的新目标。新 Run 在受理时保存 objective 快照；等待 Host 准备期间也可修改安排，已受理内容不变。已结束的一次性任务可通过新的未来 schedule 再次安排。修改不立即执行任务，也不迁移工作区。客户端先检查 methods 是否包含 `areal/task/update`。
 
 ## 定时、预算与恢复
 
-schedule 为 `{at: UTC Unix秒, intervalSeconds?: 1..31536000}`；仅 scheduled 可指定。省略 intervalSeconds 表示一次性；重复调度以 at 为锚点，服务恢复后错过的触发点合并为一次，已有未结束 Run 时跳过本次触发，不创建重叠 Run。不支持 cron、日历时区规则或操作系统关机唤醒。Core 服务必须保持运行。
+schedule 为 `{at: UTC Unix秒, intervalSeconds?: 1..31536000, timeZone?: IANA 时区名}`；仅 scheduled 可指定。timeZone 保存客户端解释日期时的时区，不改变 UTC／固定间隔语义。省略 intervalSeconds 表示一次性；重复调度以 at 为锚点，服务恢复后错过的触发点合并为一次，已有未结束 Run 时跳过本次触发，不创建重叠 Run。不支持 cron、日历时区规则或操作系统关机唤醒。Core 服务和已登记桌面 Host 必须保持在线。Host 离线时不受理新执行，恢复后合并一次补执行；运行中断则保留原 Run／Thread，等待用户明确恢复。
 
 Task tokenBudget 覆盖所有 Run 的已确认和预留消费；maxTurns/maxActiveSeconds 分别限制每个 Run。沿用 Goal 的保守准入与未知消费处理。协调 Turn 和 detached worker 的活动时间取并集，重叠不重复计时；释放所有执行后等待用户的时间不计入。每个 worker 继承冻结配置、权限和同一 Goal 预算；最多使用部署 maxChildrenPerTurn 个 worker（按 Run 累计），maxModelRounds 默认取 16 与父上限的较小值，显式值不能超过父配置。交互式协调者的 worker 使用 asynchronous；headless 保持 headless。worker 不再递归创建 Task worker，也不能修改根 Goal；共享工作区写入仍须明确文件归属。
 
-pause 持久暂停调度并取消当前协调者和 worker；cancel 还撤销后续时间点且不可恢复。resume 不重置预算，不重放已结束 worker；失败/取消的 worker 不能被算作成功依赖。Goal pause/resume/update/clear 同步对应 Task；已取消 Task 的 Goal 不可再 resume。周期 Run 之间会清除同一 Task 的旧 Goal，保留历史和计量。
+scheduled 的 pause/resume 只影响后续触发，不改变本次执行或 worker；stopRun 在原 Run 结算停止，不取消后续重复安排。resumeRun 必须提供最新 Run ID，保留其 Thread 和冻结配置，Host 就绪后重新检查权限及未知操作。审批默认等待 300 秒，超时后记录 approvalExpired，结束 Turn、释放资源并保留受阻 Run；继续会生成新的审批，过期批准无效。background/foreground 的 pause/resume 继续控制当前工作。cancel 撤销未来安排并停止本次工作；已完成历史不变。
+
+每次新 Run 向经认证的在线 Host 请求 `areal/task/prepare {taskId,runId,threadId,scheduledAt,intent:"start"|"resume"}`。首次准备回复为 ThreadStart 的配置字段（model、agentProfile、parameters、dynamicTools）；Core 固定 cwd、受理键和新 Thread 身份。恢复回复不修改原配置。准备事实和 Thread 受理收据持久化，掉响应不以新键重放；迟到或旧连接回复不能启动执行。新版生效前已启动的定时 Run 按原规则结算，后续 Run 使用新会话与 Host 准入。
 
 周期Task有Token总上限时，更新或恢复关联Goal还会扣除其他Run的已确认及预留消费，校验本轮额度不超过余额；不能将本轮额度改为无限。超限返回`TASK_TOKEN_BUDGET`（参数错误），不保存修改或恢复执行。当前没有修改周期Task总上限的公开接口；需要更多总额度时应明确创建新任务。
 
-状态保存在 `desktop/task-mode.json`，含 Task、Channel 和幂等收据。每部署最多 1024 Task、8192 收据、32 MiB；每 Task 最多 128 Run、1024 消息，满后拒绝或暂停，不自动删除历史。活动或挂起等待的 Run 在 Core 重启后暂停，显式 resume 后才继续；尚未触发的 schedule 保留。恢复不自动重放未知工具副作用。`server/drain` 暂停任务与时间触发；`server/status.activeTasks` 计入待执行时间点，ifIdle 不把它们视为空闲。
+状态保存在 `desktop/task-mode.json`，含 Task、Channel 和幂等收据。每部署最多 1024 Task、8192 收据、32 MiB；每 Task 最多 128 Run、1024 消息，满后拒绝或暂停，不自动删除历史。活动或挂起等待的 Run 在 Core 重启后暂停，显式 resumeRun（scheduled）或 resume 后才继续；尚未触发的 schedule 保留。恢复不自动重放未知工具副作用。`server/drain` 停止当前执行并关闭准入，但保留 scheduled 的启用状态；`server/status.activeTasks` 计入待执行时间点，ifIdle 不把它们视为空闲。
 
 Thread 快照版本为 13，API 保持 areal.core.v1；旧 Thread/Goal 可读取，旧 Goal 在首次 resume 时补登记 Task。旧二进制不能读取新版本快照。嵌入式宿主在完成模型、工具装配后调用 `Engine::start_task_scheduler()`；app-server 自动调用。
 
@@ -131,9 +137,9 @@ Inbox 获取的是原频道问题，回复引用其 runId 和 id：
 定时请求示例：
 
 ```json
-{"id":5,"method":"areal/task/create","params":{"requestId":"daily-1","mode":"scheduled","threadId":"<已有根 Thread>","objective":"检查新增失败并整理报告","schedule":{"at":2000000000,"intervalSeconds":86400},"interactionMode":"headless","maxTurns":10,"maxActiveSeconds":600}}
+{"id":5,"method":"areal/task/create","params":{"requestId":"daily-1","mode":"scheduled","threadId":"<已有根 Thread>","objective":"检查新增失败并整理报告","schedule":{"at":2000000000,"intervalSeconds":86400},"interactionMode":"interactive","maxTurns":10,"maxActiveSeconds":600}}
 ```
 
 Task worker 在调用方和父配置均未给出轮数时默认无限；显式限制仍继承并执行。部署 Goal 上限为 0 表示无限，不表示零调用额度。Task/Channel 记录容量仍属于独立服务资源限制。
 
-Task 存储写入版本 2，兼容读取版本 1。TaskWorker 保留旧 threadId/turnId，新增可选 execution/executionId，统一投影共享与隔离 worker。新模型入口为 agent_spawn；旧 task_spawn 兼容但不再展示。候选待交付不能完成 Run；没有活跃 Turn 时唤醒原协调者，不重复执行。
+Task 存储写入版本 3，兼容读取版本 1／2，新增持久准备配置；旧二进制拒绝读取版本 3。TaskWorker 保留旧 threadId/turnId，新增可选 execution/executionId，统一投影共享与隔离 worker。新模型入口为 agent_spawn；旧 task_spawn 兼容但不再展示。候选待交付不能完成 Run；没有活跃 Turn 时唤醒原协调者，不重复执行。

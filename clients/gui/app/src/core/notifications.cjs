@@ -1,7 +1,6 @@
 'use strict';
 
-// Ephemeral delivery hints derived only from live Core events. Never derive
-// notifications from snapshots/history or persist a second execution state.
+// 通知来自 Core 活动事件或定时投影的变化；去重提示不替代执行状态。
 class CoreNotifications {
   constructor(deliver) { this.deliver = deliver; this.seen = new Set(); }
   observe(project, method, params, library) {
@@ -17,13 +16,16 @@ class CoreNotifications {
     } else return;
     if (typeof threadId !== 'string' || typeof eventId !== 'string') return;
     const id = JSON.stringify([project.id, kind, threadId, eventId]);
-    if (this.seen.has(id)) return;
-    this.seen.add(id);
-    if (this.seen.size > 4096) this.seen.delete(this.seen.values().next().value);
     const title = library.threads?.[`${project.id}:${threadId}`]?.title
       ?? project.model.state.threads[threadId]?.title
       ?? project.summaries.find(t => t.id === threadId)?.title;
-    this.deliver({ id, kind, projectId: project.id, threadId, body: String(title || '打开任务查看详情').slice(0, 200) });
+    this.publish({ id, kind, projectId: project.id, threadId, body: String(title || '打开任务查看详情').slice(0, 200) });
+  }
+  publish(notice) {
+    if (this.seen.has(notice.id)) return;
+    this.seen.add(notice.id);
+    if (this.seen.size > 4096) this.seen.delete(this.seen.values().next().value);
+    this.deliver(notice);
   }
 }
 
@@ -57,7 +59,8 @@ class TaskNotificationMonitor {
     this.pending = (async () => {
       const [tasks, inbox] = await Promise.all([this.pages('areal/task/list'), this.pages('areal/inbox/list')]);
       if (this.stopped) return;
-      this.onTasks?.(tasks);
+      await this.onTasks?.(tasks);
+      if (this.stopped) return;
       const current = new Map();
       for (const task of tasks) for (const run of task.runs ?? []) {
         if (run.status !== 'completed') continue;
@@ -69,6 +72,25 @@ class TaskNotificationMonitor {
         if (message.status !== 'pending' || (message.expiresAt != null && message.expiresAt * 1000 <= Date.now())) continue;
         const id = JSON.stringify([this.projectId, 'task-question', row.taskId, message.id]);
         current.set(id, { id, kind: 'question', projectId: this.projectId, taskId: row.taskId, runId: message.runId, questionId: message.id, body: row.objective.slice(0, 200) });
+      }
+      if (this.client.capabilities?.methods?.includes('areal/work/overview')) {
+        const schedules = new Map(tasks.filter(task => task.mode === 'scheduled').map(task => [task.id, task]));
+        let cursor;
+        const cursors=new Set();
+        do {
+          const page=await this.client.request('areal/work/overview',{filter:'attention',limit:100,...(cursor?{cursor}:{})});
+          if(this.stopped)return;
+          for(const row of page.data)for(const attention of row.attentionRefs ?? []) {
+            const task=schedules.get(attention.taskId);
+            if(!task || !['approval','syncQuestion'].includes(attention.kind) || !attention.interactionId || !attention.threadId)continue;
+            const kind=attention.kind==='approval'?'approval':'question';
+            const id=JSON.stringify([this.projectId,kind,attention.threadId,attention.interactionId]);
+            current.set(id,{id,kind,projectId:this.projectId,taskId:task.id,runId:attention.runId,threadId:attention.threadId,body:(task.runs.find(run=>run.id===attention.runId)?.objective??task.objective).slice(0,200)});
+          }
+          cursor=page.nextCursor;
+          if(cursor && cursors.has(cursor))throw new Error('任务关注分页未前进');
+          cursors.add(cursor);
+        }while(cursor && !this.stopped);
       }
       const previous = this.previous; this.previous = new Set(current.keys());
       // The first successful read on every Core connection is a baseline. A

@@ -1,0 +1,31 @@
+/* Only Remote placement; shared GUI components own messages, controls and editor. */
+html,body,#root {background:var(--color-background,#fff)!important;}
+body { background:var(--color-background,#fff);color:var(--color-foreground,#202020); }
+body[data-connection="connected"] #connection-details {display:none;}
+#projects,#work-overview,#session-content,.remote-composer,#session-title,#session-summary,#session-range,#session-state,.legacy-session-details {display:none!important;}
+#project-section>h2,#session>.session-navigation,#session-history {display:none!important;}
+body[data-detail="open"] #project-section,body[data-connection="connected"][data-detail="open"] .remote-header {display:none!important;}
+.remote-project-heading {display:flex;align-items:center;justify-content:space-between;margin:20px 0 12px;}
+.remote-project-heading h2 {font-size:21px;font-weight:600;}
+.remote-project-group {margin:12px 0;}
+.remote-project-header {display:flex;align-items:center;padding-right:8px;border-radius:var(--radius-navigation);}
+.remote-project-header:hover,.remote-project-header:has([aria-expanded="true"]) {background:var(--color-hover);}
+.remote-project-create {flex-shrink:0;}
+.remote-project-row {flex:1;min-width:0;background:transparent!important;justify-content:flex-start;gap:12px;min-height:48px;font-size:17px;}
+.remote-project-row span {overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.remote-session-list {padding-left:36px;}
+.remote-session-row {display:flex;width:100%;justify-content:flex-start;min-height:46px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;}
+.remote-session-more {display:flex;width:100%;justify-content:flex-start;padding:5px 8px;text-align:left;color:var(--color-foreground-subtle);}
+#session {height:calc(100dvh - 64px);}
+#remote-session-ui {display:flex;flex-direction:column;height:100%;min-height:0;}
+.remote-chat-heading {display:flex;align-items:center;justify-content:space-between;gap:12px;flex-shrink:0;}
+.remote-chat-heading span {font-size:12px;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--color-foreground-subtle);}
+.remote-chat-title {font-size:20px;margin:16px 8px 0;flex-shrink:0;}
+.remote-gui-composer {padding:12px 4px 4px;flex-shrink:0;overflow:visible;}
+.remote-gui-composer>p {font-size:13px;margin:8px 4px;}
+#remote-session-ui .message-column {padding:24px 12px;}
+#remote-session-ui .composer-toolbar {gap:0;}
+main {max-width:780px;margin:auto;padding:28px 24px;}
+@media(max-width:560px){main{padding:20px 14px;}#session{height:calc(100dvh - 40px);}}
+
+.remote-gui-composer .composer-queue {max-height:25dvh;overflow-y:auto;}

@@ -18,11 +18,31 @@ fn main() {
         };
     }
     add!("areal/capabilities", CapabilitiesRequest);
+    add!("areal/work/overview", areal_protocol::work::OverviewRequest);
     add!("areal/goal/create", areal_protocol::goals::GoalCreate);
     add!("areal/task/create", areal_protocol::tasks::TaskCreate);
     add!("areal/task/update", areal_protocol::tasks::TaskUpdate);
-    for action in ["areal/task/pause", "areal/task/resume", "areal/task/cancel"] {
-        add!(action, areal_protocol::tasks::TaskControl);
+    add!("areal/task/pause", areal_protocol::tasks::TaskControl);
+    for method in ["areal/task/stopRun", "areal/task/resumeRun"] {
+        let mut control =
+            serde_json::to_value(schemars::schema_for!(areal_protocol::tasks::TaskControl))
+                .unwrap();
+        control["required"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!("expectedRunId"));
+        control["properties"]["expectedRunId"] = json!({"type":"string"});
+        methods.insert(method.into(), control);
+    }
+    for action in ["areal/task/resume", "areal/task/cancel"] {
+        let mut control =
+            serde_json::to_value(schemars::schema_for!(areal_protocol::tasks::TaskControl))
+                .unwrap();
+        control["properties"]
+            .as_object_mut()
+            .unwrap()
+            .remove("expectedRunId");
+        methods.insert(action.into(), control);
     }
     for action in [
         "areal/task/read",
@@ -68,6 +88,7 @@ fn main() {
     let integer = json!({"type":"integer","minimum":0});
     let empty = json!({"type":"object","properties":{},"additionalProperties":false});
     for method in [
+        "areal/task/host/ready",
         "areal/model/list",
         "areal/profile/list",
         "areal/provider/list",
@@ -285,13 +306,7 @@ fn main() {
     );
     methods.insert("areal/side/context/read".into(),object(json!({"threadId":string,"evidenceRef":string,"cursor":string,"maxBytes":{"type":"integer","minimum":64,"maximum":16384}}),vec!["threadId"]));
     methods.insert("turn/steer".into(),object(json!({"threadId":string,"expectedTurnId":string,"input":{"type":"array","items":schemars::schema_for!(areal_protocol::Input)}}),vec!["threadId","expectedTurnId","input"]));
-    methods.insert(
-        "turn/interrupt".into(),
-        object(
-            json!({"threadId":string,"turnId":string}),
-            vec!["threadId", "turnId"],
-        ),
-    );
+    add!("turn/interrupt", TurnInterrupt);
     for (method, schema) in &mut methods {
         if matches!(
             method.as_str(),
@@ -332,7 +347,11 @@ fn main() {
     output["serverRequests"] = json!({"item/tool/call":browser_request,
         "areal/browser/prepare":object(json!({"threadId":string,"turnId":string,"callId":string,"tool":string,"arguments":{},"hostGeneration":string}),vec!["threadId","turnId","callId","tool","arguments","hostGeneration"])});
     output["serverRequests"]["item/tool/call"]["properties"]["browserApproval"] = json!({"type":"object","properties":{"plan":{"type":"object"}},"required":["plan"],"additionalProperties":false});
-    output["serverResponses"] = json!({"item/tool/call":schemars::schema_for!(areal_protocol::DynamicToolResponse),"areal/browser/prepare":{"type":"object"}});
+    output["serverRequests"]["areal/task/prepare"] = object(
+        json!({"taskId":string,"runId":string,"threadId":string,"scheduledAt":integer,"intent":{"enum":["start","resume"]}}),
+        vec!["taskId", "runId", "threadId", "scheduledAt", "intent"],
+    );
+    output["serverResponses"] = json!({"item/tool/call":schemars::schema_for!(areal_protocol::DynamicToolResponse),"areal/browser/prepare":{"type":"object"},"areal/task/prepare":{"type":"object"}});
     inline(&mut output, &Value::Null);
     println!("{}", serde_json::to_string_pretty(&output).unwrap());
 }

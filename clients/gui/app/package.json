@@ -18,7 +18,8 @@
     "qrcode": "1.5.4",
     "ws": "8.21.3",
     "yaml": "2.9.0",
-    "electron-updater": "6.8.9"
+    "electron-updater": "6.8.9",
+    "@areal/provider-config": "workspace:*"
   },
   "devDependencies": {
     "electron": "44.1.1",

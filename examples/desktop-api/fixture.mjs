@@ -35,8 +35,14 @@ export async function fixture() {
       )?.content;
       const goalView = goalText && JSON.parse(goalText.split("Current authoritative goal: ")[1]);
       if (goalView?.goal.objective === "task-controls-fixture" && result.length === 0) {
-        const firstGoal = controlGoals.get(goalView.threadId) ?? goalView.goal.id;
-        controlGoals.set(goalView.threadId, firstGoal);
+        const channelText = request.messages.findLast(
+          (m) => typeof m.content === "string" && m.content.includes("Current task channel: "),
+        )?.content;
+        const key = channelText
+          ? JSON.parse(channelText.split("Current task channel: ")[1]).taskId
+          : goalView.threadId;
+        const firstGoal = controlGoals.get(key) ?? goalView.goal.id;
+        controlGoals.set(key, firstGoal);
         const complete = firstGoal === goalView.goal.id;
         tool = [
           "goal_update",

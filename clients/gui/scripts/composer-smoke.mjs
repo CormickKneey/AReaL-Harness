@@ -653,9 +653,14 @@ try {
     .toString()
     .split("\0")
     .filter(Boolean)) {
-    sourceFiles[path] = createHash("sha256")
-      .update(await readFile(join(root, path)))
-      .digest("hex");
+    try {
+      sourceFiles[path] = createHash("sha256")
+        .update(await readFile(join(root, path)))
+        .digest("hex");
+    } catch (failure) {
+      if (failure.code !== "ENOENT") throw failure;
+      sourceFiles[path] = null; // Tracked deletions remain part of the source evidence.
+    }
   }
   const diff = execFileSync("git", ["diff", "--binary", "HEAD"], { cwd: root });
   await writeFile(

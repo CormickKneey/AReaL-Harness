@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AReaL Remote</title>
+    <link rel="stylesheet" href="/remote-web/remote.css" />
+  </head>
+  <body>
+    <main>
+      <header class="remote-header remote-legacy">
+        <h1>AReaL Harness</h1>
+        <p id="status" role="status">准备连接</p>
+      </header>
+      <details id="connection-details" class="remote-legacy" open>
+        <summary>连接与设备设置</summary>
+        <div class="connection-body">
+          <h2 id="connection-title">连接到你的电脑</h2>
+          <p id="connection-help">在电脑的「设置 → 手机连接」生成配对链接，再在这里打开。</p>
+          <ol id="pairing-instructions" hidden>
+            <li>回到电脑，打开「设置 → 手机连接」。</li>
+            <li>逐字核对两端指纹，选择项目和权限，再确认配对。</li>
+          </ol>
+          <div id="device-verification" hidden>
+            <strong>此浏览器的完整指纹</strong><code id="device"></code>
+            <p>请与电脑上显示的完整指纹逐字核对。设备名称仅供参考。</p>
+          </div>
+          <div class="connection-start">
+            <details class="paste-invitation">
+              <summary>粘贴配对链接</summary>
+              <label
+                >粘贴配对链接<input
+                  id="invitation"
+                  type="text"
+                  autocomplete="off"
+                  spellcheck="false" /></label
+              ><button id="paste" type="button">使用配对链接</button>
+            </details>
+            <label class="choice"
+              ><input id="remember-device" type="checkbox" />记住此设备（配对前选择）</label
+            >
+            <p class="remote-hint">只在自己的设备上开启；共享设备请保持「仅本次使用」。</p>
+            <button id="connect" class="primary" type="button" disabled>
+              连接电脑
+            </button>
+          </div>
+          <p id="device-storage" role="status"></p>
+          <p id="storage-error" role="alert"></p>
+          <p id="update-status" role="status"></p>
+          <details class="connection-options">
+            <summary>设备与连接详情</summary>
+            <p>电脑身份指纹</p>
+            <code id="host"></code>
+            <p id="connection-protocol"></p>
+            <p>记住设备会在本站保存浏览器私钥，同源脚本仍可访问它。清除站点数据后需重新配对。</p>
+            <label class="choice"
+              ><input
+                id="remember-drafts"
+                type="checkbox"
+                disabled
+              />恢复本标签草稿（仅当前浏览器会话，独立选择）</label
+            >
+            <p>草稿恢复不会发送消息。电脑休眠或停服时，请回到电脑恢复服务。</p>
+            <button id="forget-device" type="button">清除此浏览器设备</button>
+          </details>
+        </div>
+      </details>
+      <section id="unconfirmed" class="remote-legacy" aria-label="原命令核对" hidden>
+        <h2>待核对的操作</h2>
+        <p>只核对原操作，不自动重发。暂未找到回执不代表未执行。</p>
+        <ul id="unconfirmed-commands"></ul>
+      </section>
+      <section id="project-section" hidden>
+        <div id="remote-projects"></div>
+        <ul id="projects"></ul>
+      </section>
+      <section id="work-overview" aria-label="工作概览" hidden>
+        <div class="section-heading">
+          <h2>继续你的工作</h2>
+          <button
+            id="session-create"
+            class="primary"
+            type="button"
+
+            disabled
+          >
+            新建会话
+          </button>
+        </div>
+        <p id="create-summary" role="status"></p>
+        <div class="work-toolbar">
+          <label
+            >筛选<select id="work-filter">
+              <option value="all">全部工作</option>
+              <option value="active">正在执行</option>
+              <option value="attention">待处理</option>
+            </select></label
+          ><button id="work-refresh" type="button" disabled>刷新概览</button>
+        </div>
+        <p id="work-error" role="alert"></p>
+        <div id="work-items"></div>
+        <button id="work-more" type="button" hidden>加载更多</button>
+        <p id="work-count" class="remote-hint"></p>
+        <details class="command-details">
+          <summary>创建结果与核对</summary>
+          <button id="create-query" type="button" disabled>核对创建结果</button>
+          <p id="create-command-state" role="status"></p>
+        </details>
+      </section>
+      <section id="task-pause" class="remote-legacy" aria-label="Task 暂停审阅" hidden>
+        <h2>暂停 Task</h2>
+        <p id="task-pause-target"></p>
+        <p>
+          暂停此 Task 的当前工作和未来调度。协调 Turn 完成后仍需等待所有 worker
+          结算；暂停不是终止，不会自动恢复。
+        </p>
+        <label
+          ><input id="task-pause-reviewed" type="checkbox" />我已核对原 Task /
+          Run，确认暂停当前工作和未来调度</label
+        >
+        <button id="task-pause-confirm" type="button" disabled>确认暂停 Task</button>
+        <button id="task-pause-refresh" type="button">刷新原 Task 状态</button>
+        <button id="task-pause-query" type="button" disabled>核对原暂停命令</button>
+        <button id="task-pause-close" type="button">关闭审阅</button>
+        <p id="task-pause-state" role="status"></p>
+        <p id="task-pause-error" role="alert"></p>
+      </section>
+      <section id="attention" class="remote-legacy" aria-label="同步交互审阅" hidden>
+        <h2>审批与同步问题</h2>
+        <button id="attention-close" type="button">关闭审阅</button>
+        <button id="attention-refresh" type="button">刷新原交互</button>
+        <p id="attention-target"></p>
+        <p id="attention-status" role="status"></p>
+        <p id="attention-error" role="alert"></p>
+        <pre id="attention-body" style="white-space: pre-wrap; overflow-wrap: anywhere"></pre>
+        <button id="attention-more" type="button" hidden>继续加载审阅内容</button>
+        <div id="attention-questions"></div>
+        <button id="attention-allow" type="button" disabled>仅本次允许</button>
+        <button id="attention-deny" type="button" disabled>拒绝原请求</button>
+        <button id="attention-answer" type="button" disabled>提交原问题答案</button>
+        <button id="attention-query" type="button" disabled>核对本次受理</button>
+        <p id="attention-command-state" role="status"></p>
+      </section>
+      <section id="session" aria-label="会话详情" hidden>
+        <div id="remote-session-ui"></div>
+        <div class="session-navigation">
+          <button id="session-close" type="button">返回工作列表</button
+          ><button id="session-refresh" type="button">刷新会话</button>
+        </div>
+        <h2 id="session-title">会话</h2>
+        <p id="session-summary" class="remote-hint"></p>
+        <p id="session-attention"></p>
+        <p id="session-error" role="alert"></p>
+        <div id="session-content"></div>
+        <button id="session-history" type="button" hidden>更早历史</button>
+        <p id="session-range" class="remote-hint"></p>
+        <div class="remote-composer">
+          <label
+            >消息草稿<textarea
+              id="session-draft"
+              rows="3"
+              autocomplete="off"
+              placeholder="继续这段对话…"
+            ></textarea>
+          </label>
+          <div class="composer-actions">
+            <button id="turn-stop" type="button" disabled>
+              停止当前执行</button
+            ><button id="session-send" class="primary" type="button" disabled>发送新消息</button>
+          </div>
+          <p id="send-summary" role="status"></p>
+        </div>
+        <details class="command-details legacy-session-details">
+          <summary>会话与操作详情</summary>
+          <p id="session-state"></p>
+          <p id="send-command-state" role="status"></p>
+          <button id="send-query" type="button" disabled>核对发送结果</button>
+          <p id="stop-command-state" role="status"></p>
+          <button id="stop-query" type="button" disabled>查询停止受理</button>
+        </details>
+      </section>
+    </main>
+    <script type="module" src="/remote-web/main.js"></script>
+  </body>
+</html>

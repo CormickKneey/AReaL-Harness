@@ -1,6 +1,7 @@
 'use strict';
 
 const { connectService, stopService } = require('./local-service.cjs');
+const { restartSafe } = require('./resource-recovery.cjs');
 const { randomUUID, createHash } = require('node:crypto');
 const { isDeepStrictEqual } = require('node:util');
 const { mkdir, readFile, writeFile, rename, realpath, rm } = require('node:fs/promises');
@@ -16,7 +17,7 @@ const { CoreNotifications, TaskNotificationMonitor } = require('./notifications.
 const { manage, managementMethods, threadMutationMethods } = require('./management.cjs');
 const { taskMutationMethods } = require('./tasks.cjs');
 const { taskCatalog } = require('./task-catalog.cjs');
-const { isTaskDraftConfiguration } = require('./task-draft.cjs');
+const { isTaskDraftConfiguration, manageTaskDraft, displayTaskDraftThread } = require('./task-draft.cjs');
 const { mediaCommand, messageInput } = require('./media.cjs');
 const { workspaceCommand } = require('./workspace.cjs');
 const { CoreWorktrees } = require('./worktrees.cjs');
@@ -26,6 +27,23 @@ const { definition: browserTool, failure: browserFailure } = require('./browser-
 
 const workgroupMutationMethods = new Set(['areal/workgroup/start', 'areal/workgroup/revise', 'areal/workflow/start']);
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+// 精确 Remote 停止/交互不会重放；保留日志用于核对，不阻塞后续桌面操作。
+const isRemoteControl = entry => entry.method === 'turn/interrupt' && entry.remote?.method === 'turn.stop'
+  && entry.remote.capability === 'interrupt' && typeof entry.operationId === 'string'
+  && typeof entry.params?.turnId === 'string' && entry.remote.target?.expectedTurnId === entry.params.turnId
+  && typeof entry.params.threadId === 'string' && entry.remote.target.threadId === entry.params.threadId
+  || entry.method === 'areal/interaction/respond' && entry.remote?.method === 'interaction.respond'
+  && entry.remote.capability === 'answer' && typeof entry.operationId === 'string'
+  && typeof entry.params?.requestId === 'string' && entry.remote.target?.interactionId === entry.params.requestId
+  && typeof entry.params.turnId === 'string' && entry.remote.target.turnId === entry.params.turnId
+  && typeof entry.params.threadId === 'string' && entry.remote.target.threadId === entry.params.threadId
+  || entry.method === 'areal/channel/reply' && entry.remote?.method === 'task.question.reply'
+  && entry.remote.capability === 'answer' && typeof entry.operationId === 'string' && entry.params?.requestId === entry.operationId
+  && ['taskId', 'runId', 'questionId'].every(key => typeof entry.params[key] === 'string' && entry.remote.target?.[key] === entry.params[key])
+  || entry.method === 'areal/task/pause' && entry.remote?.method === 'task.pause'
+  && entry.remote.capability === 'pauseTask' && typeof entry.operationId === 'string' && entry.params?.requestId === entry.operationId
+  && ['taskId', 'expectedRunId'].every(key => typeof entry.params[key] === 'string' && entry.remote.target?.[key] === entry.params[key])
+  && Number.isSafeInteger(entry.params.expectedRevision) && entry.remote.target.expectedRevision === entry.params.expectedRevision;
 
 /** 每个项目连接公开的共享 Core 服务；这里只保留可重建投影与客户端受理回执。 */
 class CoreBackend {
@@ -116,13 +134,15 @@ class CoreBackend {
     return { library: this.library.value, projectless: this.projectless.snapshot(), power: this.power ?? null, projects: this.saved.map(project => {
       const live = this.projects.get(project.id);
       const snapshot = live?.model.getSnapshot() ?? null;
-      // 配置会话的协议回复只在任务创建区展示，不混入普通聊天导航。
-      const state = snapshot?.threads ? {...snapshot, threads: Object.fromEntries(Object.entries(snapshot.threads).filter(([id, thread]) =>
-        !isTaskDraftConfiguration(live.configurations?.[id] ?? thread.desktop?.configuration)))} : snapshot;
+      // Management conversations remain hidden from chat navigation, but use the
+      // same snapshot/message components through a decoded display projection.
+      const state = snapshot?.threads ? {...snapshot, threads: Object.fromEntries(Object.entries(snapshot.threads).map(([id, thread]) =>
+        [id, isTaskDraftConfiguration(live.configurations?.[id] ?? thread.desktop?.configuration)
+          ? displayTaskDraftThread(thread, live) : thread]))} : snapshot;
       return { ...project, backend: 'areal', core: { ...projectCoreCapabilities(this.binary, live?.client?.capabilities),
         instanceId: live?.service?.serviceId ?? null, connectionGeneration: live?.connectionGeneration ?? 0 },
         state: state && live.resourceInitializing ? {...state, connected:false} : state,
-        pending: (live?.pending ?? []).map(entry => ({ ...entry, awaitingResponse: this.awaitingResponses.has(entry) })), outcomes: live?.outcomes ?? {}, models: this.providers.catalog(live?.models ?? [], live), profiles: live?.profiles ?? [],
+        pending: (live?.pending ?? []).filter(entry => !isRemoteControl(entry)).map(entry => ({ ...entry, awaitingResponse: this.awaitingResponses.has(entry) })), outcomes: live?.outcomes ?? {}, models: this.providers.catalog(live?.models ?? [], live), profiles: live?.profiles ?? [],
         configurations: live?.configurations ?? {},
         summaries: live?.summaries ?? [], summariesLoaded: live?.summariesLoaded === true, error: live?.error ?? null };
     }) };
@@ -138,21 +158,40 @@ class CoreBackend {
     return task;
   }
 
+  // 本地日志加载与连接启动共用同一项目对象；只读收据不启动 Core。
+  loadProjectJournal(id) {
+    this.journalLoads ??= new Map();
+    if (this.journalLoads.has(id)) return this.journalLoads.get(id);
+    const task = (async () => {
+      const saved = this.saved.find(project => project.id === id);
+      if (!saved) throw new Error('未知项目');
+      const { CoreTaskModel } = await import('@areal/workbench/core-model');
+      let project = this.projects.get(id);
+      if (!project) {
+        project = { ...saved, model: new CoreTaskModel(), pending: [], outcomes: {}, configurations: {},
+          configurationChanges: new Map(), error: null, summaries: [] };
+        this.projects.set(id, project);
+        project.model.subscribe(() => this.onChange());
+      }
+      if (!project.journalLoaded) {
+        try { project.pending = JSON.parse(await readFile(join(this.home, `${id}-pending.json`), 'utf8')); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; }
+        try { project.outcomes = JSON.parse(await readFile(join(this.home, `${id}-outcomes.json`), 'utf8')); }
+        catch (error) { if (error.code !== 'ENOENT') throw error; }
+        project.journalLoaded = true;
+      }
+      if (this.projects.get(id) !== project || !this.saved.some(value => value.id === id)) throw new Error('项目登记已变化');
+      return project;
+    })();
+    this.journalLoads.set(id, task);
+    const clear = () => { if (this.journalLoads.get(id) === task) this.journalLoads.delete(id); };
+    task.then(clear, clear);
+    return task;
+  }
+
   async startProject(id) {
-    const saved = this.saved.find(project => project.id === id);
-    if (!saved) throw new Error('未知项目');
-    let project = this.projects.get(id);
-    if (project?.client?.ready && !project.resourceInitializing) return project;
-    const { CoreTaskModel } = await import('@areal/workbench/core-model');
-    if (!project) {
-      project = { ...saved, model: new CoreTaskModel(), pending: [], configurations: {},
-        configurationChanges: new Map(), error: null, summaries: [] };
-      this.projects.set(id, project);
-      project.model.subscribe(() => this.onChange());
-      try { project.pending = JSON.parse(await readFile(join(this.home, `${id}-pending.json`), 'utf8')); }
-      catch (error) { if (error.code !== 'ENOENT') throw error; }
-      try { project.outcomes = JSON.parse(await readFile(join(this.home, `${id}-outcomes.json`), 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-    }
+    const project = await this.loadProjectJournal(id);
+    if (project.client?.ready && !project.resourceInitializing) return project;
     try {
       project.resourceInitializing = !!project.worktreeResources;
       await this.resources.worktrees.prepare(project);
@@ -276,6 +315,16 @@ class CoreBackend {
     const client = new CoreClient({ createSocket: () => new WebSocket(project.endpoint, {
       headers: { Authorization: `Bearer ${project.token}` }, followRedirects: false, maxPayload: 4 * 1024 * 1024,
     }), onServerRequest: async (method, params, context) => {
+      if (method === 'areal/task/prepare') {
+        this.requireConnection(project, client);
+        if (params.intent === 'resume') return {};
+        await this.resources.beforeCreate(project);
+        this.requireConnection(project, client);
+        const model = this.providers.value.defaultModel;
+        const profile = project.resourceProfile ?? this.defaultProfile;
+        return { ...(model ? { model } : {}), ...(profile ? { agentProfile: profile } : {}),
+          ...(this.supportsBrowser(project) ? { dynamicTools: [browserTool] } : {}) };
+      }
       if (!['item/tool/call', 'areal/browser/prepare'].includes(method) || params?.tool !== 'browser_v1') throw new Error('Unsupported client tool');
       const connected = this.currentConnection(project, client);
       // Core invokes only tools bound to this connection. The local Thread
@@ -346,10 +395,29 @@ class CoreBackend {
       this.requireConnection(project, client);
     }
     project.taskNotificationMonitor = new TaskNotificationMonitor(client, project.id,
-      notice => { if (this.currentConnection(project, client)) this.onNotification?.(notice); }, error => console.warn(this.providers.redact(`任务通知读取失败：${error.message}`)),
-      tasks => { if (this.currentConnection(project, client)) for (const task of tasks) project.model.setTask(task); });
+      notice => { if (this.currentConnection(project, client)) this.notifications.publish(notice); }, error => console.warn(this.providers.redact(`任务通知读取失败：${error.message}`)),
+      async tasks => {
+        if (!this.currentConnection(project, client)) return;
+        for (const task of tasks) project.model.setTask(task);
+        const scheduled=tasks.filter(task=>task.mode==='scheduled');
+        if(scheduled.some(task=>task.runs.some(run=>run.threadId&&!project.summaries.some(thread=>thread.id===run.threadId)))) {
+          await this.listThreads(project);
+          this.requireConnection(project, client);
+        }
+        for(const task of scheduled)for(const run of task.runs) {
+          if(run.status!=='completed' || !run.threadId || this.library.value.threads[`${project.id}:${run.threadId}`]?.scheduledCompletionId===run.id)continue;
+          const {thread}=await client.request('thread/read',{threadId:run.threadId,includeTurns:true});
+          this.requireConnection(project,client);
+          const completionId=thread.turns?.findLast(turn=>turn.status==='completed')?.id;
+          await this.library.recordScheduledCompletion(project.id,run,completionId);
+        }
+      });
     await project.taskNotificationMonitor.start();
     this.requireConnection(project, client);
+    if (client.capabilities?.methods?.includes('areal/task/host/ready')) {
+      await client.request('areal/task/host/ready', {});
+      this.requireConnection(project, client);
+    }
     project.model.connection(true);
     this.onChange();
   }
@@ -554,7 +622,7 @@ class CoreBackend {
     let entry;
     try {
       await this.changePending(project, pending => {
-        if (pending.some(value => value.params.threadId === threadId)) {
+        if (pending.some(value => !isRemoteControl(value) && value.params.threadId === threadId)) {
           throw new Error('该会话有未结算的请求结果，请先处理后再修改配置');
         }
         return pending;
@@ -688,8 +756,129 @@ class CoreBackend {
     return receipt;
   }
 
-  async submit(project, method, parameters, { requestId } = {}) {
-    if (requestId !== undefined && (!(workgroupMutationMethods.has(method) || taskMutationMethods.has(method) || ['areal/agent/spawn', 'areal/process/start', 'areal/thread/start', 'areal/thread/fork', 'areal/side/start', 'areal/thread/tools/attach', ...['update','remove','reorder','pause','resume','steer'].map(name => `areal/queue/${name}`)].includes(method)) || typeof requestId !== 'string' || !/^[0-9a-f-]{36}$/.test(requestId))) throw new Error('无效请求标识');
+  remoteRecord(project, association) {
+    const matches = value => value?.remote && ['hostId', 'devicePeerId', 'projectId', 'commandId'].every(key => value.remote[key] === association[key]);
+    return Object.values(project.outcomes ?? {}).find(matches) ?? project.pending.find(matches);
+  }
+
+  async readRemoteRecord(project, association, beforeReceipt) {
+    // 将读取本身排在 pending 队列中，不能看见下一笔尚未落盘的临时内存。
+    const read = (project.pendingWrite ?? Promise.resolve()).catch(() => {}).then(async () => {
+      await project.outcomeWrite?.catch(() => {});
+      return this.remoteRecord(project, association);
+    });
+    project.pendingWrite = read;
+    const entry = await read;
+    return entry ? this.recoverRemoteSubmission(project, entry, beforeReceipt) : null;
+  }
+
+  async rememberRemoteOutcome(project, entry, result, error) {
+    const taskReply = entry.method === 'areal/channel/reply' && entry.remote.method === 'task.question.reply';
+    const taskPause = entry.method === 'areal/task/pause' && entry.remote.method === 'task.pause';
+    let receipt;
+    if (entry.method === 'areal/goal/create' && !error) {
+      if (typeof result?.goal?.id !== 'string' || !Number.isSafeInteger(result.revision)) throw new Error('目标受理结果不完整');
+      receipt = {goalId:result.goal.id,revision:result.revision};
+    }
+    if (taskPause && !error) {
+      if (result?.id !== entry.params.taskId || result.paused !== true || result.runs?.at(-1)?.id !== entry.params.expectedRunId
+        || !Number.isSafeInteger(result.revision) || result.revision !== entry.params.expectedRevision + 1) throw new Error('Task 暂停受理结果不完整');
+      receipt = { taskId: result.id, runId: entry.params.expectedRunId, revision: result.revision, paused: true };
+    }
+    if (taskReply && !error) {
+      if (result?.accepted !== true || ['messageId', 'taskId', 'runId'].some(key => typeof result[key] !== 'string' || !result[key] || Buffer.byteLength(result[key]) > 128)
+        || result.taskId !== entry.params.taskId || result.runId !== entry.params.runId
+        || !Number.isSafeInteger(result.channelSequence) || result.channelSequence < 1) throw new Error('Task 原生受理结果不完整');
+      receipt = { accepted: true, messageId: result.messageId, taskId: result.taskId, runId: result.runId, channelSequence: result.channelSequence };
+    }
+    const threadId = taskReply || taskPause ? undefined : entry.params.threadId ?? result?.thread?.id;
+    const turnId = taskReply || taskPause ? undefined : ['turn/interrupt', 'areal/interaction/respond'].includes(entry.method) ? entry.params.turnId : result?.turn?.id;
+    if ((threadId !== undefined && (typeof threadId !== 'string' || Buffer.byteLength(threadId) > 128))
+      || (turnId !== undefined && (typeof turnId !== 'string' || Buffer.byteLength(turnId) > 128))) throw new Error('原生关联超过预算');
+    if (!error && !taskReply && !taskPause && (typeof threadId !== 'string' || (entry.method === 'areal/turn/start' && typeof turnId !== 'string')))
+      throw new Error('原生受理结果不完整');
+    const outcome = { operationId: entry.operationId, remote: entry.remote, method: entry.method,
+      accepted: !error, admissionState: error ? 'rejected' : 'accepted', ...(receipt ? { receipt } : {}),
+      ...(threadId ? { threadId } : {}), ...(turnId ? { turnId } : {}),
+      ...(error ? { error: { code: error.code ?? 'CORE_UNAVAILABLE', ...(typeof (error.coreCode ?? error.code) === 'number' ? { coreCode: error.coreCode ?? error.code } : {}) } } : {}) };
+    if (Buffer.byteLength(JSON.stringify(outcome)) > 4096) throw new Error('受理结果超过预算');
+    // 终态先落盘，再移除 pending；并发查询不能覆盖已保存的完整关联。
+    await this.changeOutcomes(project, outcomes => outcomes[entry.operationId]?.remote ? outcomes : { ...outcomes, [entry.operationId]: outcome });
+    try { await this.changePending(project, pending => pending.filter(value => value.operationId !== entry.operationId)); }
+    catch { /* 已落盘终态优先；遗留 pending 可在下次只读查询时清理。 */ }
+    return project.outcomes[entry.operationId];
+  }
+
+  async recoverRemoteSubmission(project, entry, beforeReceipt) {
+    const known = project.outcomes?.[entry.operationId];
+    if (known?.remote) {
+      if (project.pending.some(value => value.operationId === entry.operationId)) {
+        try { await this.changePending(project, pending => pending.filter(value => value.operationId !== entry.operationId)); } catch {}
+      }
+      return known;
+    }
+    if (this.awaitingResponses.has(entry) || !project.client?.ready || project.client.closed || !project.model?.state?.connected)
+      return entry;
+    if (!['areal/thread/start', 'areal/turn/start', 'areal/turn/enqueue', 'areal/thread/configure', ...['update','remove','reorder','pause','resume','steer'].map(op => `areal/queue/${op}`), ...['create','pause','resume','clear'].map(op => `areal/goal/${op}`)].includes(entry.method)) return entry;
+    const client = project.client, generation = project.service?.generation;
+    try {
+      beforeReceipt?.(entry);
+      // 精确查询原生键，不打开 Thread、不配置、不重放；离线只返回已有日志。
+      const value = await client.request('areal/request/read', { requestId: entry.params.requestId,
+        ...(entry.method !== 'areal/thread/start' ? { threadId: entry.params.threadId } : {}) });
+      if (project.client !== client || project.service?.generation !== generation) return entry;
+      const receipt = value.data?.find(value => value.method === entry.method);
+      const response = entry.method === 'areal/thread/start' && typeof receipt?.threadId === 'string'
+        ? { result: { thread: { id: receipt.threadId } } }
+        : receipt?.result ? { result: receipt.result }
+        : receipt?.state === 'completed' ? receipt.response : undefined;
+      if (response) return await this.rememberRemoteOutcome(project, entry, response.result, response.error);
+    } catch { /* 查询失败或空收据都不能证明未执行。 */ }
+    return project.outcomes?.[entry.operationId] ?? entry;
+  }
+
+  async submitRemote(project, method, parameters, remote, dispatch) {
+    const operationId = randomUUID();
+    // interrupt 无请求键，respond 的 requestId 是交互领域标识；日志 UUID 不得覆盖它们。
+    const entry = { method, operationId, params: { ...structuredClone(parameters), ...(['turn/interrupt', 'turn/steer', 'areal/interaction/respond'].includes(method) ? {} : { requestId: operationId }) }, remote: structuredClone(remote) };
+    if (Buffer.byteLength(JSON.stringify(entry)) > 72 * 1024)
+      throw Object.assign(new Error('提交记录超过预算'), { code: 'LIMIT_EXCEEDED' });
+    let original;
+    this.awaitingResponses.add(entry);
+    try {
+      await this.changePending(project, pending => {
+        original = this.remoteRecord(project, remote);
+        if (original) {
+          if (original.remote.semanticDigest !== remote.semanticDigest)
+            throw Object.assign(new Error('命令标识已用于不同内容'), { code: 'COMMAND_CONFLICT' });
+          return pending;
+        }
+        if (pending.length + Object.keys(project.outcomes ?? {}).length >= 4096)
+          throw Object.assign(new Error('提交日志容量已满'), { code: 'CAPACITY_EXCEEDED' });
+        if (!['turn/interrupt', 'areal/interaction/respond'].includes(method) && parameters.threadId && project.configurationChanges?.has(parameters.threadId))
+          throw Object.assign(new Error('会话配置正在变化'), { code: 'TARGET_CHANGED' });
+        if (!['turn/interrupt', 'areal/interaction/respond'].includes(method) && parameters.threadId && pending.some(value => !isRemoteControl(value) && value.params.threadId === parameters.threadId && !(value.remote && project.outcomes?.[value.operationId]?.remote)))
+          throw Object.assign(new Error('此会话有未结算提交'), { code: 'SUBMISSION_UNKNOWN', submissionUnknown: true });
+        return [...pending, entry];
+      });
+      if (original) return this.recoverRemoteSubmission(project, original);
+      let result, error;
+      try { result = await dispatch(entry); }
+      catch (cause) {
+        if (cause.submissionUnknown || cause.code === -32603) return entry;
+        error = cause;
+      }
+      try { return await this.rememberRemoteOutcome(project, entry, result, error); }
+      catch { return entry; }
+    } finally {
+      this.awaitingResponses.delete(entry);
+      this.onChange();
+    }
+  }
+
+  async submit(project, method, parameters, { requestId, remote, dispatch } = {}) {
+    if (remote) return this.submitRemote(project, method, parameters, remote, dispatch);
+    if (requestId !== undefined && (!(workgroupMutationMethods.has(method) || taskMutationMethods.has(method) || ['areal/agent/spawn', 'areal/process/start', 'areal/thread/start', 'areal/turn/start', 'areal/thread/fork', 'areal/side/start', 'areal/thread/tools/attach', ...['update','remove','reorder','pause','resume','steer'].map(name => `areal/queue/${name}`)].includes(method)) || typeof requestId !== 'string' || !/^[0-9a-f-]{36}$/.test(requestId))) throw new Error('无效请求标识');
     const params = { ...parameters, requestId: requestId ?? randomUUID() };
     const entry = { method, params };
     // 活跃请求仅保存在内存；重启后仍在恢复日志中的请求应显示为结果未知。
@@ -703,7 +892,7 @@ class CoreBackend {
         }
         const conflicting = ['areal/thread/fork', 'areal/side/start'].includes(method)
           ? pending.find(value => value.method === method && value.params.sourceThreadId === parameters.sourceThreadId)
-          : pending.find(value => value.params.threadId === parameters.threadId);
+          : pending.find(value => !isRemoteControl(value) && value.params.threadId === parameters.threadId && !(value.remote && project.outcomes?.[value.operationId]?.remote));
         if (conflicting) {
           const awaiting = this.awaitingResponses.has(conflicting);
           throw Object.assign(new Error(awaiting
@@ -828,6 +1017,7 @@ class CoreBackend {
     for (const entry of [...project.pending]) {
       this.requireConnection(project, client);
       if (this.awaitingResponses.has(entry)) continue;
+      if (entry.remote) { await this.recoverRemoteSubmission(project, entry); continue; }
       if (workgroupMutationMethods.has(entry.method)) { await this.recoverWorkgroupSubmission(project, entry.params.requestId); continue; }
       if (entry.method === 'areal/agent/spawn') { await this.recoverAgentSubmission(project, entry.params.parentThreadId, entry.params.requestId); continue; }
       if (taskMutationMethods.has(entry.method)) continue; // No public receipt lookup; never infer or replay.
@@ -967,10 +1157,14 @@ class CoreBackend {
     switch (name) {
       case 'connect': return this.snapshot();
       case 'dismissRecovery': {
-        await this.changeOutcomes(project, previous => { const outcomes = { ...previous }; delete outcomes[request.requestId]; return outcomes; }); break;
+        await this.changeOutcomes(project, previous => { const outcomes = { ...previous }; if (!outcomes[request.requestId]?.remote) delete outcomes[request.requestId]; return outcomes; }); break;
       }
       case 'media': return mediaCommand(project, request, this);
-      case 'manage': return manage(this, project, request);
+      case 'manage':
+        if (isTaskDraftConfiguration(project.configurations?.[threadId]) && request.operation?.startsWith('goal')) {
+          throw new Error('任务管理会话不执行目标；请在会话中描述要调整的定时任务。');
+        }
+        return manage(this, project, request);
       case 'list': await this.listThreads(project); break;
       case 'open': await this.openThread(project, threadId); break;
       case 'attachBrowser': {
@@ -990,7 +1184,13 @@ class CoreBackend {
         await this.openThread(project, threadId);
         return result;
       }
-      case 'configure': await this.configureThread(project, threadId, request); break;
+      case 'configure': {
+        if (isTaskDraftConfiguration(project.configurations?.[threadId])
+          && (request.options !== undefined || request.profile !== undefined)) {
+          throw new Error('任务管理会话的执行限制不能修改；请在会话中描述要调整的任务。');
+        }
+        await this.configureThread(project, threadId, request); break;
+      }
       case 'queue': {
         if (!request.requestId) return this.refreshQueue(project, threadId);
         if (typeof request.requestId !== 'string' || !/^[0-9a-f-]{36}$/.test(request.requestId)
@@ -1079,6 +1279,11 @@ class CoreBackend {
         return { threadId: result.thread.id, turnId: result.turn?.id, requestId: result.requestId };
       }
       case 'send': {
+        if (isTaskDraftConfiguration(project.configurations?.[threadId])) {
+          const zone = project.configurations[threadId].options.appendInstructions.split('\n')[1].slice('Time zone: '.length);
+          return manageTaskDraft(this, project, { operation: 'taskDraftSend', threadId, timeZone: zone,
+            text: request.text, attachments: request.attachments });
+        }
         await this.ensureBrowserTools(project, threadId);
         const input = messageInput(this, request);
         // Queue state survives completed/interrupted turns. Only current execution
@@ -1090,6 +1295,7 @@ class CoreBackend {
         break;
       }
       case 'steer': {
+        if (isTaskDraftConfiguration(project.configurations?.[threadId])) throw new Error('请等待当前安排完成后再补充修改要求。');
         const active = project.model.state.threads[threadId]?.turns.find(turn => turn.status === 'inProgress');
         if (!active || active.id !== request.expectedTurnId) throw new Error('原轮次已结束，请作为新消息发送');
         await this.submit(project, 'turn/steer', { threadId, expectedTurnId: active.id, input: messageInput(this, request), previousItems: active.items.map(item => item.id) });
@@ -1122,7 +1328,7 @@ class CoreBackend {
   }
 
   hasWork({ includePausedQueues = true } = {}) {
-    return [...this.projects.values()].some(project => project.pending.length || Object.values(project.model.state.threads)
+    return [...this.projects.values()].some(project => project.pending.some(entry => !isRemoteControl(entry)) || Object.values(project.model.state.threads)
       .some(thread => thread.turns?.some(turn => turn.status === 'inProgress'))
       // Paused pending messages are persisted input, not live execution. Lifecycle
       // checks can preserve them through shutdown; provider changes still guard them.
@@ -1135,7 +1341,7 @@ class CoreBackend {
     // 先检查全部已连接实例；真正停机仍由 Core 的公共服务接口关准入并结算。
     for (const project of this.projects.values()) {
       if (project.service && !project.client?.ready) throw new Error('Core 连接未恢复，不能安全停止');
-      if (project.client?.ready && !(await project.client.request('areal/server/status')).restartSafe) {
+      if (project.client?.ready && !restartSafe(await project.client.request('areal/server/status'))) {
         throw Object.assign(new Error('Core 仍有活动任务或终端，请先处理后台资源'), { code: 'CORE_RESOURCES' });
       }
     }

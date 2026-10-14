@@ -241,7 +241,7 @@ export function DraftComposer({
         当前任务配置不可用，输入已保留。
         <button onClick={() => { setProfileSelection(""); localStorage.removeItem(`${key}:profile`); }}>恢复默认配置</button>
       </div>}
-      {project.root && !project.state?.connected && <p role="alert" className="notice">连接不可用，输入已保留。{project.error || project.state?.error}</p>}
+      {project.root && !project.state?.connected && (project.error || project.state?.error) && <p role="alert" className="notice">连接不可用，输入已保留。{project.error || project.state?.error}</p>}
       {draftError && <p role="alert" className="px-3 py-2 text-ui-sm text-destructive">{draftError}</p>}
       {reviewDraft.error && <p role="alert" className="px-3 py-2 text-ui-sm text-destructive">{reviewDraft.error}</p>}
       <div className="composer-input-stack">

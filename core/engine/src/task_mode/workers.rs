@@ -60,7 +60,7 @@ impl Engine {
             let (task_id,run_id)={
                 let tasks=engine.task_modes.state.lock().await;
                 let (task,run)=tasks.tasks.values().find_map(|t|t.runs.iter().find(|r|r.goal_id.as_deref()==Some(&goal.id)).map(|r|(t,r))).ok_or(Error::NotFound)?;
-                if task.paused || task.cancelled {return Err(Error::Conflict);}
+                if (task.paused && task.mode != TaskMode::Scheduled) || task.cancelled || run.reason.as_deref()==Some("stopRequested") {return Err(Error::Conflict);}
                 if run.workers.len()>=engine.limits.max_children_per_turn {return Err(Error::Exhausted("TaskRun worker capacity reached".into()));}
                 (task.id.clone(),run.id.clone())
             };
@@ -83,7 +83,7 @@ impl Engine {
             let mut tasks=engine.task_modes.state.lock().await;
             let mut next=tasks.clone();
             let task=next.tasks.get_mut(&task_id).ok_or(Error::NotFound)?;
-            if task.paused || task.cancelled || active.cancel.is_cancelled() {return Err(Error::Conflict);}
+            if (task.paused && task.mode != TaskMode::Scheduled) || task.cancelled || active.cancel.is_cancelled() || task.runs.iter().find(|r|r.id==run_id).is_none_or(|r|r.reason.as_deref()==Some("stopRequested")) {return Err(Error::Conflict);}
             task.runs.iter_mut().find(|r|r.id==run_id).ok_or(Error::NotFound)?.workers.push(TaskWorker{
                 thread_id:thread.id.clone(),turn_id:turn.id.clone(),status:"running".into(),settled:false,
                 execution:Some(ExecutionRef::Thread{thread_id:thread.id.clone(),turn_id:turn.id.clone()}),execution_id:None,
@@ -153,7 +153,11 @@ impl Engine {
         } else {
             Value::Null
         };
-        let stop = task.paused || task.cancelled || goal["goal"]["status"] != "active";
+        let stop = (task.paused && task.mode != TaskMode::Scheduled)
+            || task.cancelled
+            || run.reason.as_deref() == Some("stopRequested")
+            || goal["goal"]["status"] != "active"
+            || goal["goal"]["id"].as_str() != run.goal_id.as_deref();
         let owner_thread = run.thread_id.as_deref().ok_or(Error::Conflict)?;
         if stop {
             // 先通知全部执行，再读取结算；未知后端不能阻止其他 worker 收到取消。

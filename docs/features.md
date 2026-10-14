@@ -27,6 +27,8 @@
 | 观测与验证           | 标准 OpenTelemetry Traces 与 Events/Logs，通过标准 OTEL 配置导出模型和工具轨迹（OTLP HTTP/protobuf）；确定性模型回归、原生 smoke、Docker lite/pro 评测。[配置](guides/configuration.md) · [测试](development/testing.md)                                                                        |
 | 持久轨迹导出 | 可选 `[trajectory]` 配置、跨本地 run 的有界磁盘队列、独立 OTLP Logs 上传进程、退避与手动重试；CLI 状态、会话内一次异常提示和 GUI 数据飞轮实时状态；区分模型调用、Agent 执行与上传时间。上传不改变 Turn 结果；平台分析登记由接收端完成。[配置](guides/configuration.md#持久轨迹导出) |
 
+Remote 的 Direct 与 Relay 已接入共同 Host 授权和 PWA 协议，Direct 提供 Serve/组织 HTTPS 配置及可选 Funnel 范围切换。源码能力不等于路线或平台已认证；本机严格 TLS 夹具不代表 Native/Core、浏览器 TLS、真实手机或公网部署验收。配置、迁移与路线矩阵见 [Remote 指南](guides/remote-control.md)，独立验证要求见[测试与发布门槛](development/remote-control-testing.md)。
+
 ## 支持边界
 
 - macOS 的收窄工具执行使用 Seatbelt，并跟踪清退已观察到的后代；快速孤儿化仍可能漏检。Linux native 使用 Bubblewrap namespace 与 Runtime seccomp，要求部署提供 `/usr/bin/bwrap` 和 user namespace；Linux launcher 的 full-access 支持宿主执行。产品 Rust launcher 与 Linux Runtime 的单次执行回收不依赖 Python；后者使用随包发布的 Rust 二进制 `areal-runtime-reaper` 和可读的 `/proc`。详见 [Runtime 清理边界](api/runtime.md#输出与清理)。受控 Docker `outer-container-perf` 仍用于固定评测流程。Windows native Runtime 未提供。

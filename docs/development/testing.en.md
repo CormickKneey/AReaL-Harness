@@ -35,6 +35,10 @@ Composer and queue smoke share navigation and narrow-window steps in `clients/gu
 
 In the model-selection smoke, only settings-operation settlement after applying model configuration uses a 180-second deadline, covering the existing 150-second apply IPC, subsequent configuration reads and UI settlement. Other page actions retain the default 15 seconds. The test submits apply once, waits for navigation to become available, then checks the actual Core model catalog and requests; it does not hide failures with fixed sleeps or replayed applications.
 
+## Usage analytics history sync
+
+`node --test scripts/analytics-history.test.cjs` uses the real `CoreClient` and a local WebSocket protocol fixture to verify that the dedicated read-only history connection's 4 MiB frame limit does not close the primary project connection. It also covers startup before the model connects, identity changes, history deduplication, partial caches, handshake/RPC timeouts, and cleanup with partial-history errors after primary closure. The analytics connection only initializes, negotiates capabilities, and calls `thread/read`, using the client's default request deadlines; each project has at most one sync in progress. Large-history failures remain partially synced and do not establish complete history coverage. This test does not replace real Core, native GUI, installed-package, or provider acceptance.
+
 ## Python and scratch
 
 Failure state and screenshot capture each wait at most 10 seconds; derivation Electron cleanup waits at most 20 seconds. Timeouts enter the evidence without replacing the original failure. CI limits the derivation step to 10 minutes so failed diagnostics cannot block subsequent artifact upload. `make script-test` verifies diagnostic deadlines and propagation of original errors.
@@ -160,6 +164,8 @@ TUI and shared-service PTY checks share a terminal screen parser that preserves 
 
 ## Task Mode regression coverage
 
+`node examples/desktop-api/schedule-host.mjs` uses real Core/WS and persisted restart to verify offline catch-up, fresh Threads, restricted identities/subscriptions, same-Run recovery from preparation failure, stopping during preparation, and retired Host replies. `node clients/gui/scripts/schedule-desktop-smoke.mjs` uses isolated Electron/Core and a deterministic local model to verify conversational creation, time zones, fresh history, busy skips, separate pause/stop controls and ordinary approval UI, retaining screenshots and JSON. Set `AREAL_SCHEDULE_APPROVAL_EXPIRY=1` to wait the default 300-second deadline and verify Turn settlement plus fresh approval after explicit same-Run resume; an ordinary run does not claim that evidence. These checks do not replace real-provider or packaged acceptance.
+
 `cargo test --locked -p areal-engine --test task_modes` covers independent work during asynchronous questions, Channel replies and same-Run resumption, wakeup when one question expires while another remains pending, headless questions/approvals, durable scheduling, asynchronous foreground Goal questions, workers surviving coordinator Turns with shared budgets, cancellation cleanup and reply deduplication across restart. app-server unit coverage validates Task requests/responses/notifications against generated schemas, Thread authorization filtering and independent subscriptions/unsubscriptions.
 
 `node examples/desktop-api/run.mjs task-matrix` uses real binaries and Runtime to verify headless ordinary conversations/Goals reject questions and approvals while continuing permitted commands, create no implicit schedules, resume asynchronous foreground Goals after disconnection, trigger/control schedules, and account for independent worker file artifacts. `node --test scripts/web-progress.test.mjs` checks wait states, selected later-page tasks, rejection of stale revisions, Inbox drafts and idempotent reply retries after timeouts. See the [desktop examples](../examples/desktop-api.en.md#web-validation) for actual browser validation.
@@ -175,6 +181,12 @@ For slow tools, enable `areal::tool_timing=debug,areal::persistence=debug` in th
 Search regressions run the Runtime file helper directly, covering search without host rg/Python, workspace ignore rules, globs, context, truncation and symlink rejection. Native and release smoke tests exercise the complete Core `search_files` path without requiring rg in the shell.
 
 Desktop soak and GUI bundle validation accept the embedded-search layout without standalone tools/rg. Soak also verifies the platform-specific Runtime components and manifest file hashes.
+
+## Remote GUI quit continuity
+
+After building Core and the GUI, run `pnpm -C clients/gui test:remote-gui-quit`. `AREAL_CORE_BIN` selects a built Core; `AREAL_GUI_EXECUTABLE` selects a packaged Electron/Core, and `AREAL_CHROME_EXECUTABLE` selects local Chrome. This isolated native case uses a local deterministic model and the production GUI with its detached adapter. It pairs a PWA Operator through the desktop UI, quits the GUI normally while the original filesystem approval is pending, then allows once from the PWA. Assertions cover the same adapter PID/identity, Core generation from its isolated service registry, original Thread/Turn/interaction, one filesystem tool result, a durable Remote admission record, and two normal model stages. Reopening the GUI must not add provider calls. Public `stopService` with its normal confirmation dialog then checks persisted stop intent, descriptor removal, PID exit, Remote disconnection, and no automatic start on another GUI launch.
+
+`node clients/gui/scripts/remote-gui-quit-e2e.mjs --self-test` checks only the deterministic model stages and rejection conditions. It loads no Electron, starts no network, and is not native acceptance. Native execution requires OS secure storage; failure of the production owner's `enableDirect` gate returns exit code 2 and `blocked`, without replacing safeStorage. The isolated scratch retains `report.json` and failure state. If its adapter remains alive, inspect and settle that isolated service before explicitly stopping it. Reports omit service credentials and do not claim an exact Core RPC dispatch count. Sleep, physical phones, Relay, public transport, and packaged installation acceptance remain separate.
 
 ## CI gates and cold starts
 

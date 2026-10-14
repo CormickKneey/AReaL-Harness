@@ -23,6 +23,9 @@ const buttonVariants = cva(
         warning:
           "bg-warning text-warning-foreground hover:bg-warning/90 focus-visible:border-warning/40 focus-visible:ring-warning/20 aria-expanded:bg-warning aria-expanded:text-warning-foreground",
         link: "text-primary underline-offset-4 hover:underline",
+        // 主与 Side 的输入动作共用外观，发送/停止仍由调用方处理。
+        composer:
+          "composer-primary-action gap-1 bg-foreground text-ui-base text-background hover:bg-foreground/90 disabled:bg-secondary disabled:text-foreground-subtlest disabled:opacity-100",
       },
       size: {
         default:

@@ -105,6 +105,25 @@ try {
     await showOwner(threadId);
   }
   await until(async () => (await natives()).length === 8, 'bounded native page cache');
+  // 只触碰已缓存页的既有选择，使可见原页成为 LRU，防止最近使用掩盖防驱逐失效。
+  const cachedOwners = (await natives()).filter(content => content.id !== original).map(content => {
+    const index = Number(new URL(content.url).searchParams.get('page'));
+    assert.ok(Number.isInteger(index) && index >= 0 && index < owners.length
+      && content.url === `${url}?page=${index}`, 'cached native page maps to an existing owner');
+    return owners[index];
+  });
+  assert.equal(new Set(cachedOwners).size, 7, 'seven cached other owners are available for the pin probe');
+  for (const cachedThreadId of cachedOwners) {
+    const state = await preview({ operation: 'state', projectId, threadId: cachedThreadId });
+    assert.equal(state.browser?.resource, 'ready');
+    assert.equal(state.workspace.selectedPageId, state.browser.pageId);
+    await preview({ operation: 'selectPage', projectId, threadId: cachedThreadId, pageId: state.browser.pageId });
+  }
+  const pinProbe = await create();
+  await preview({ operation: 'show', projectId, threadId: pinProbe.threadId, visible: true, bounds: { x: 0, y: 80, width: 400, height: 300 } });
+  await preview({ operation: 'navigate', projectId, threadId: pinProbe.threadId, url: `${url}?pin-probe=1` });
+  await until(async () => (await natives()).length === 8
+    && (await natives()).some(content => content.url === `${url}?pin-probe=1`), 'bounded cache after visible LRU pin probe');
   assert.ok((await natives()).some(content => content.id === original), 'current native page is protected from eviction');
   await preview({ operation: 'show', projectId, threadId: owners[0], url: `${url}?page=0`, visible: false });
   await until(async () => (await natives()).some(content => content.url === `${url}?page=0`), 'evicted owner URL restores');

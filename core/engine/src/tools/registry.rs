@@ -127,6 +127,13 @@ pub trait DynamicToolHost: Send + Sync {
         self.id()
     }
     fn is_closed(&self) -> bool;
+    async fn prepare_schedule(
+        &self,
+        _request: Value,
+        _cancel: CancellationToken,
+    ) -> anyhow::Result<Value> {
+        anyhow::bail!("desktop schedule preparation unsupported")
+    }
     async fn prepare_browser(
         &self,
         _request: Value,

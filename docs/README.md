@@ -19,3 +19,5 @@
 每篇维护文档使用同目录的 `.md`（中文）和 `.en.md`（英文）配对，顶部可切换。两种语言同时更新；机器 schema、代码及共享图表只保留一份。API 参数以契约和链接的类型/schema 为准，使用指南不重复整套接口。
 
 - [安装与升级](guides/installation.md) · [发行流程](development/releasing.md)
+
+Remote v2 设计与实施边界：[架构](design/remote-control.md) · [API](api/remote-control.md) · [连接与部署](guides/remote-control.md) · [验收计划](development/remote-control-testing.md) · [Host 所有权](adr/0008-remote-host-ownership.md)。各专题区分已实现的切片与后续设计，不代表完整 P0 已交付。

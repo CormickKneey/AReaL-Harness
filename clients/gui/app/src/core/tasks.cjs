@@ -12,6 +12,8 @@ const writes = {
   taskUpdate: ['areal/task/update', ['taskId', 'expectedRevision', 'objective', 'schedule']],
   taskPause: ['areal/task/pause', ['taskId', 'expectedRevision']],
   taskResume: ['areal/task/resume', ['taskId', 'expectedRevision']],
+  taskStopRun: ['areal/task/stopRun', ['taskId', 'expectedRevision', 'expectedRunId']],
+  taskResumeRun: ['areal/task/resumeRun', ['taskId', 'expectedRevision', 'expectedRunId']],
   taskCancel: ['areal/task/cancel', ['taskId', 'expectedRevision']],
   taskReply: ['areal/channel/reply', ['taskId', 'runId', 'questionId', 'answers']],
 };
@@ -31,7 +33,7 @@ async function taskCreate(backend, project, request) {
   const next = previous.catch(() => {}).then(async () => {
     if (project.pending.some(entry => entry.params.requestId === requestId) || project.outcomes?.[requestId]) throw unknown();
     const params = pick(request, writes.taskCreate[1]);
-    if (!params.threadId && ['background', 'scheduled'].includes(params.mode)) {
+    if (!params.threadId && params.mode === 'scheduled') {
       const preludeId = executionRequestId(requestId);
       let receipt;
       try {
@@ -48,10 +50,7 @@ async function taskCreate(backend, project, request) {
       } else {
         if (pending || project.outcomes?.[preludeId]) throw unknown();
         await backend.resources.beforeCreate(project);
-        const model = backend.providers.value.defaultModel;
-        const profile = project.resourceProfile ?? backend.defaultProfile;
-        const { thread } = await backend.submit(project, 'areal/thread/start', { cwd: project.root,
-          ...(model ? { model } : {}), ...(profile ? { agentProfile: profile } : {}) }, { requestId: preludeId });
+        const { thread } = await backend.submit(project, 'areal/thread/start', { cwd: project.root }, { requestId: preludeId });
         params.threadId = thread.id;
       }
     }

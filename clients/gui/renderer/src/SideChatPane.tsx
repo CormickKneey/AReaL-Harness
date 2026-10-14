@@ -1,3 +1,4 @@
+import "./SideChat.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Messages } from "./Messages.js";
 import { ConversationComposer } from "./ConversationComposer.js";

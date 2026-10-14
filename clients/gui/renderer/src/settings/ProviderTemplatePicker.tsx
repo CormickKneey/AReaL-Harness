@@ -1,4 +1,5 @@
-import templates from "./provider-templates.json";
+import definitions from "../../../packages/provider-config/definitions.json";
+const templates = definitions.filter(item => item.kind === "api");
 import type { Data } from "../services.js";
 import type { ReactNode } from "react";
 import { ArrowLeft, Boxes, ChevronRight as ChevronRightIcon, Plus } from "lucide-react";
@@ -12,6 +13,11 @@ export function ProviderTemplatePicker({
   onCreate: (template: Data) => void;
   disabled: boolean;
 }) {
+  const create = (definition: Data) => {
+    // 服务定义身份不属于用户连接，不能把它作为 Core 的已有 provider ID 保存。
+    const { id: definitionId, ...template } = definition;
+    onCreate({ ...template, definitionId });
+  };
   return (
     <section className="space-y-5">
       <div className="resource-title">
@@ -21,9 +27,9 @@ export function ProviderTemplatePicker({
         <h2>添加供应商</h2>
       </div>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-        <ProviderTemplateCard label="创建自定义供应商" disabled={disabled} testId="custom-provider" icon={<Plus size={24} />} onClick={() => onCreate({ name: "自定义供应商", baseUrl: "", protocol: "chatCompletions", models: [] })} />
-        <ProviderTemplateCard label="ChatGPT API" disabled={disabled} testId="openai-provider" icon={<Boxes size={24} />} onClick={() => onCreate({ subscription: true })} />
-        {templates.map(template => <ProviderTemplateCard key={template.name} label={template.name} disabled={disabled} testId={template.name} icon={<img alt="" className="size-8 object-contain" src={new URL(`../assets/provider-icons/${template.icon}`, import.meta.url).href} />} onClick={() => onCreate(template)} />)}
+        <ProviderTemplateCard label="创建自定义供应商" disabled={disabled} testId="custom-provider" icon={<Plus size={24} />} onClick={() => create(definitions.find(item => item.id === "custom-compatible")!)} />
+        <ProviderTemplateCard label="ChatGPT" disabled={disabled} testId="openai-provider" icon={<Boxes size={24} />} onClick={() => create({ ...definitions.find(item => item.id === "chatgpt-siwc"), subscription: true })} />
+        {templates.map(template => <ProviderTemplateCard key={template.name} label={template.name} disabled={disabled} testId={template.name} icon={<img alt="" className="size-8 object-contain" src={new URL(`../assets/provider-icons/${template.icon}`, import.meta.url).href} />} onClick={() => create(template)} />)}
       </div>
     </section>
   );

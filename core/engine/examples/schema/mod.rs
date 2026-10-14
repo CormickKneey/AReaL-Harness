@@ -67,6 +67,10 @@ pub fn projections() -> (Value, Value) {
             responses.insert(format!("areal/{name}"), value.clone());
         }
     };
+    insert(
+        &["work/overview"],
+        schema::<areal_protocol::work::OverviewPage>(),
+    );
     let mut task_view = schema::<areal_protocol::tasks::Task>();
     task_view["properties"]
         .as_object_mut()
@@ -93,9 +97,12 @@ pub fn projections() -> (Value, Value) {
             "task/pause",
             "task/resume",
             "task/cancel",
+            "task/stopRun",
+            "task/resumeRun",
         ],
         task_view.clone(),
     );
+    insert(&["task/host/ready"], object(json!({"ready":boolean})));
     insert(&["task/unsubscribe"], object(json!({"removed":boolean})));
     insert(
         &["task/list"],
@@ -149,6 +156,10 @@ pub fn projections() -> (Value, Value) {
         object(json!({"subscriptionCount":number})),
     );
     insert(&["thread/start"], object(json!({"thread":thread})));
+    insert(
+        &["thread/observe"],
+        object(json!({"thread":thread,"ownership":schema::<ThreadOwnership>()})),
+    );
     insert(&["thread/configure"], config.clone());
     insert(
         &["thread/inspect"],

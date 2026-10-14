@@ -15,6 +15,7 @@ async function taskCatalog(backend, request) {
         const page = await client.request(inbox ? 'areal/inbox/list' : 'areal/task/list', { limit: 100, ...(after ? { after } : {}) });
         backend.requireConnection(project, client);
         for (const task of page.data) {
+          if (!inbox && task.mode !== 'scheduled') continue;
           if (!inbox) project.model.setTask(task);
           data.set(inbox ? `${task.taskId}:${task.message.runId}:${task.message.id}` : task.id, { ...task, projectId: saved.id, projectName, scope: saved.projectless ? 'independent' : 'project' });
         }

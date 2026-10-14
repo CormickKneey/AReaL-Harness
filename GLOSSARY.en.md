@@ -165,3 +165,71 @@ _Avoid_: Deletion, erasing all copies, stopping an active task
 **Delegated Agent Task**:
 Work assigned by a primary executor to another agent with coordination and lifecycle constraints.
 _Avoid_: User-initiated side chat, fork
+
+**Host**: The computer that holds projects and the actual execution environment and accepts remote observation/control.
+
+_Avoid_: Equating the Host with a closable GUI window
+
+**Core**: The business system that owns sessions, model work, task coordination and execution history.
+
+_Avoid_: Assigning Core task decisions to a Relay or execution backend
+
+**Runtime**: The system that performs operations and manages execution resources within defined permission boundaries.
+
+_Avoid_: Conflating Runtime with the model work loop
+
+**Project**: A registered working context on a Host used to organize sessions and grant device access.
+
+_Avoid_: Treating project selection as access to the entire computer
+
+**Session / Thread**: Continuous work accumulating interactions and execution history in one context; Session is the product term for the Thread domain object.
+
+_Avoid_: Creating a separate mobile session unrelated to the original Thread
+
+**Task**: A persistent work arrangement with an objective, scheduling and cross-execution constraints that can produce multiple TaskRuns.
+
+_Avoid_: Calling every overview card a new Task object
+
+**TaskRun**: One concrete execution of a Task, including coordination and its workers.
+
+_Avoid_: Treating a coordinator Turn ending as completion of the entire Run
+
+**WorkItem**: An overview entry representing a regular Session or a TaskRun.
+
+_Avoid_: Treating it as another independently scheduled task
+
+**AttentionItem**: An approval, question, unconfirmed submission or other issue requiring user attention.
+
+_Avoid_: Assuming that every attention item means execution has stopped
+
+**Remote Gateway**: The Host entry that accepts device requests, enforces their access scope and exposes remote work views.
+
+_Avoid_: Treating it as a generic terminal or another execution engine
+
+**Relay**: An optional service providing a data route between remote devices and a Host.
+
+_Avoid_: Equating Relay availability with Host availability or treating it as an approver
+
+**Pairing Invitation**: A short-lived, one-use Host invitation to request device trust.
+
+_Avoid_: Equating invitation possession with control permission
+
+**DeviceGrant**: Explicit Host permission for a paired device to access projects and perform remote actions.
+
+_Avoid_: Treating network login as project execution authority
+
+**Command**: One user operation intent against a definite target; transmission retries remain the same intent.
+
+_Avoid_: Treating every packet as a new user action
+
+**Receipt**: Confirmation concerning admission or handling of an operation, distinct from later work settlement.
+
+_Avoid_: Treating acceptance as successful completion
+
+**UNKNOWN execution**: A state where available facts cannot confirm an execution outcome and inspection is required.
+
+_Avoid_: Equating UNKNOWN with failure, no effect or permission to replay
+
+**Result Review**: Read-only inspection of outputs, changes and artifacts to assess whether work meets requirements.
+
+_Avoid_: Conflating review with tool approval, Git merge or execution permission

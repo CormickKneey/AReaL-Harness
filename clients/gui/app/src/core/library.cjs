@@ -46,6 +46,16 @@ class CoreLibrary {
       }
     });
   }
+  async recordScheduledCompletion(projectId, run, completionId) {
+    if (!completionId || !run.threadId || run.status !== 'completed' || this.value.threads[`${projectId}:${run.threadId}`]?.scheduledCompletionId===run.id) return;
+    return this.change(state => {
+      const meta=state.threads[`${projectId}:${run.threadId}`] ??= {};
+      if(meta.scheduledCompletionId===run.id)return;
+      meta.scheduledCompletionId=run.id;
+      // 只沿用同一最终 Turn 的阅读状态；较早一轮的已读不能遮蔽新的结果。
+      if(meta.completionId!==completionId){meta.completionId=completionId;meta.unread=true;}
+    });
+  }
   threadSummaries(projectId) {
     const live = this.backend.projects.get(projectId);
     if (live?.summariesLoaded || live?.summaries?.length) return live.summaries;

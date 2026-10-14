@@ -1,6 +1,11 @@
 //! 任务身份与通信独立持久化；执行继续复用 Goal、Thread 和 Runtime 的准入边界。
 mod channel;
 mod delegations;
+mod desktop_schedules;
+#[cfg(test)]
+mod desktop_schedules_tests;
+
+mod overview;
 mod scheduler;
 mod workers;
 use super::*;
@@ -19,6 +24,8 @@ struct Snapshot {
     version: u32,
     tasks: BTreeMap<String, Task>,
     receipts: Vec<RequestReceipt>,
+    #[serde(default)]
+    preparations: BTreeMap<String, areal_protocol::desktop::ThreadStart>,
 }
 
 pub(crate) struct Tasks {
@@ -26,6 +33,8 @@ pub(crate) struct Tasks {
     events: broadcast::Sender<Value>,
     changed: Arc<tokio::sync::Notify>,
     started: AtomicBool,
+    hosts: Mutex<BTreeMap<String, Arc<dyn tools::DynamicToolHost>>>,
+    dispatching: Arc<std::sync::Mutex<HashSet<String>>>,
 }
 
 impl Tasks {
@@ -39,29 +48,47 @@ impl Tasks {
             serde_json::from_slice(&std::fs::read(path)?)?
         } else {
             Snapshot {
-                version: 2,
+                version: 3,
                 ..Default::default()
             }
         };
         anyhow::ensure!(
-            matches!(state.version, 1 | 2) && state.tasks.len() <= MAX_TASKS,
+            matches!(state.version, 1..=3) && state.tasks.len() <= MAX_TASKS,
             "unsupported task store"
         );
-        state.version = 2;
+        let previous_version = state.version;
+        state.version = 3;
         for task in state.tasks.values_mut() {
             for run in &mut task.runs {
+                if task.mode == TaskMode::Scheduled
+                    && run.goal_id.is_none()
+                    && !run.status.terminal()
+                {
+                    if run.objective.is_none() {
+                        run.objective = Some(task.objective.clone());
+                    }
+                    if previous_version < 3 {
+                        run.thread_id = None;
+                    }
+                }
                 if matches!(
                     run.status,
                     RunStatus::Running | RunStatus::WaitingForInput | RunStatus::WaitingForAgents
                 ) {
                     run.status = RunStatus::Paused;
-                    run.reason = Some("serverRestarted".into());
-                    task.paused = true;
+                    if run.reason.as_deref() != Some("stopRequested") {
+                        run.reason = Some("serverRestarted".into());
+                    }
+                    if task.mode != TaskMode::Scheduled {
+                        task.paused = true;
+                    }
                     task.revision += 1;
                 }
             }
         }
         Ok(Self {
+            hosts: Mutex::new(BTreeMap::new()),
+            dispatching: Arc::new(std::sync::Mutex::new(HashSet::new())),
             state: Mutex::new(state),
             events: broadcast::channel(256).0,
             changed: Arc::new(tokio::sync::Notify::new()),
@@ -123,6 +150,8 @@ fn run_id(task: &Task) -> Option<&str> {
 }
 fn new_run(thread_id: Option<String>, scheduled_at: i64) -> TaskRun {
     TaskRun {
+        objective: None,
+        started_at: None,
         workers: vec![],
         id: id(),
         thread_id,
@@ -148,7 +177,91 @@ fn summary(task: &Task) -> Value {
     value
 }
 
+// Thread 与 Task 的所有权判断共用纯函数，防止观察和写准入漂移。
+fn thread_ownership(
+    thread: &Thread,
+    tasks: &Snapshot,
+    allowed: Option<&std::collections::BTreeSet<String>>,
+) -> areal_protocol::desktop::ThreadOwnership {
+    use areal_protocol::desktop::ThreadOwnership;
+    let managed = thread.parent_thread_id.is_some()
+        || thread.goal_owner.is_some()
+        || thread.source == "nativeTaskAgent";
+    let current_goal = thread.goals.goal.as_ref().filter(|goal| {
+        goal.status == GoalStatus::Active || goal.settling || goal.active_turn_id.is_some()
+    });
+    let candidates = || {
+        tasks.tasks.values().flat_map(|task| {
+            task.runs
+                .iter()
+                .filter(|run| {
+                    run.thread_id.as_deref() == Some(thread.id.as_str())
+                        && (matches!(
+                            run.status,
+                            RunStatus::Queued
+                                | RunStatus::Running
+                                | RunStatus::WaitingForInput
+                                | RunStatus::WaitingForAgents
+                        ) || run.workers.iter().any(|worker| !worker.settled))
+                })
+                .map(move |run| (task, run))
+        })
+    };
+    let run_owned = candidates().next().is_some();
+    // 同一 Thread 可被多个 Task 预留；仅当前 Goal 的唯一 Run 或无 Goal 时的唯一候选可提供标识。
+    let mut owners = candidates().filter(|(_, run)| {
+        current_goal.is_none_or(|goal| run.goal_id.as_deref() == Some(goal.id.as_str()))
+    });
+    let owner = owners.next().filter(|_| owners.next().is_none());
+    if let Some((task, run)) = owner {
+        let sees = |id: &str| allowed.is_none_or(|ids| ids.contains(id));
+        let visible = (allowed.is_none() || task.thread_id.as_deref().is_some_and(sees))
+            && run.thread_id.as_deref().is_none_or(sees);
+        return ThreadOwnership::Task {
+            task_id: visible.then(|| task.id.clone()),
+            run_id: visible.then(|| run.id.clone()),
+        };
+    }
+    if managed || current_goal.is_some() || run_owned {
+        ThreadOwnership::Task {
+            task_id: None,
+            run_id: None,
+        }
+    } else {
+        ThreadOwnership::Ordinary
+    }
+}
+
+// 保留 Task 预留锁直到普通 Turn 持久化并激活，或观察快照和订阅完成。
+pub(super) struct OrdinaryAdmission<'a> {
+    _tasks: tokio::sync::MutexGuard<'a, Snapshot>,
+}
+
 impl Engine {
+    pub(super) async fn ownership_and_lock(
+        &self,
+        thread: &Thread,
+        allowed: Option<&std::collections::BTreeSet<String>>,
+    ) -> (
+        areal_protocol::desktop::ThreadOwnership,
+        OrdinaryAdmission<'_>,
+    ) {
+        let tasks = self.task_modes.state.lock().await;
+        let ownership = thread_ownership(thread, &tasks, allowed);
+        (ownership, OrdinaryAdmission { _tasks: tasks })
+    }
+
+    pub(super) async fn ordinary_admission(
+        &self,
+        thread: &Thread,
+    ) -> Result<OrdinaryAdmission<'_>> {
+        let (ownership, guard) = self.ownership_and_lock(thread, None).await;
+        if ownership != areal_protocol::desktop::ThreadOwnership::Ordinary {
+            return Err(Error::Conflict);
+        }
+        Ok(guard)
+    }
+
     async fn save_tasks(
         &self,
         state: &mut Snapshot,
@@ -230,21 +343,22 @@ impl Engine {
                 let cell = engine.cell(thread).await?;
                 let state = cell.state.lock().await;
                 if state.thread.parent_thread_id.is_some() || state.thread.goal_owner.is_some() { return Err(invalid("task binding requires a root Thread")); }
-                if request.mode != TaskMode::Foreground && !state.thread.dynamic_tools.is_empty() { return Err(invalid("detached tasks require server-owned tools")); }
+                if request.mode == TaskMode::Background && !state.thread.dynamic_tools.is_empty() { return Err(invalid("detached tasks require server-owned tools")); }
             }
-            if request.mode != TaskMode::Foreground && request.interaction_mode == Some(InteractionMode::Interactive) { return Err(invalid("detached tasks require asynchronous or headless interactions")); }
+            if request.mode == TaskMode::Background && request.interaction_mode == Some(InteractionMode::Interactive) { return Err(invalid("detached tasks require asynchronous or headless interactions")); }
             let hash = desktop::digest(&request)?;
             let mut state = engine.task_modes.state.lock().await;
             if let Some(result) = receipt(&state, &owner, "create", &request.request_id, &hash)? { return Ok(result); }
             if state.tasks.len() >= MAX_TASKS { return Err(Error::Exhausted("task capacity reached".into())); }
             let mut candidate = state.clone();
             let task = Task {
+                skipped_runs: 0, last_skipped_at: None,
                 id: id(), revision: 1, channel_sequence: 0, owner: owner.clone(), mode: request.mode,
-                interaction_mode: request.interaction_mode.unwrap_or(match request.mode {
+                interaction_mode: if request.mode == TaskMode::Scheduled { InteractionMode::Interactive } else { request.interaction_mode.unwrap_or(match request.mode {
                     TaskMode::Foreground => InteractionMode::Interactive,
                     TaskMode::Background => InteractionMode::Asynchronous,
-                    TaskMode::Scheduled => InteractionMode::Headless,
-                }), objective: request.objective, thread_id: request.thread_id.clone(),
+                    TaskMode::Scheduled => InteractionMode::Interactive,
+                }) }, objective: request.objective, thread_id: request.thread_id.clone(),
                 next_run_at: request.schedule.as_ref().map(|s| s.at), schedule: request.schedule,
                 paused: false, cancelled: false, token_budget: request.token_budget,
                 max_turns: request.max_turns, max_active_seconds: request.max_active_seconds,
@@ -290,11 +404,6 @@ impl Engine {
             if task.revision != request.expected_revision || task.cancelled || task.mode != TaskMode::Scheduled {
                 return Err(Error::Conflict);
             }
-            // 排队到 Goal 受理之间仍使用 Task 配置，拒绝在这段窗口修改。
-            // Goal 已受理后持有自己的目标快照，修改只作用于下一次触发。
-            if task.runs.last().is_some_and(|r| !r.status.terminal() && r.goal_id.is_none()) {
-                return Err(invalid("task run is being dispatched; retry after it starts"));
-            }
             if let Some(objective) = request.objective { task.objective = objective; }
             if let Some(schedule) = request.schedule {
                 task.next_run_at = Some(schedule.at);
@@ -324,12 +433,26 @@ impl Engine {
             if let Some(value) = receipt(&state, &owner, &action, &request.request_id, &hash)? {
                 return Ok(value);
             }
+            if request.expected_run_id.is_some()
+                && !matches!(action.as_str(), "pause" | "stopRun" | "resumeRun")
+            {
+                return Err(invalid(
+                    "expectedRunId is supported only for pause, stopRun and resumeRun",
+                ));
+            }
             let mut candidate = state.clone();
             let task = candidate
                 .tasks
                 .get_mut(&request.task_id)
                 .ok_or(Error::NotFound)?;
             if task.revision != request.expected_revision || task.cancelled {
+                return Err(Error::Conflict);
+            }
+            if request
+                .expected_run_id
+                .as_deref()
+                .is_some_and(|expected| run_id(task) != Some(expected))
+            {
                 return Err(Error::Conflict);
             }
             match action.as_str() {
@@ -344,12 +467,45 @@ impl Engine {
                         return Err(Error::Closed);
                     }
                     task.paused = false;
-                    if let Some(run) = task.runs.last_mut()
+                    if task.mode != TaskMode::Scheduled
+                        && let Some(run) = task.runs.last_mut()
                         && !run.status.terminal()
                         && run.goal_id.is_some()
                     {
                         run.status = RunStatus::Running;
+                        run.started_at.get_or_insert(now());
                         run.reason = Some("resumeRequested".into());
+                    }
+                }
+                "stopRun" | "resumeRun" => {
+                    if request.expected_run_id.is_none() {
+                        return Err(invalid("expectedRunId required"));
+                    }
+                    let run = task.runs.last_mut().ok_or(Error::Conflict)?;
+                    if task.mode != TaskMode::Scheduled || run.status.terminal() {
+                        return Err(Error::Conflict);
+                    }
+                    if action == "resumeRun"
+                        && (run.reason.as_deref() == Some("stopRequested")
+                            || !matches!(run.status, RunStatus::Blocked | RunStatus::Paused))
+                    {
+                        return Err(Error::Conflict);
+                    }
+                    if action == "resumeRun" && !engine.accepting_work() {
+                        return Err(Error::Closed);
+                    }
+                    if action == "resumeRun" && run.goal_id.is_none() {
+                        run.status = RunStatus::Queued;
+                        run.reason = None;
+                    } else {
+                        run.reason = Some(
+                            if action == "stopRun" {
+                                "stopRequested"
+                            } else {
+                                "resumeRequested"
+                            }
+                            .into(),
+                        );
                     }
                 }
                 "cancel" => {
@@ -389,12 +545,34 @@ impl Engine {
         let mut state = self.task_modes.state.lock().await;
         let mut candidate = state.clone();
         if candidate.tasks.values().any(|t| {
-            (t.paused || t.cancelled)
+            ((t.paused && t.mode != TaskMode::Scheduled)
+                || t.cancelled
+                || t.runs
+                    .last()
+                    .is_some_and(|r| r.reason.as_deref() == Some("stopRequested")))
                 && t.runs
                     .iter()
                     .any(|r| format!("task-run-{}", r.id) == request_id)
         }) {
             return Err(Error::Conflict);
+        }
+        if let Some(_task) = candidate.tasks.values().find(|t| {
+            t.mode == TaskMode::Scheduled
+                && t.runs
+                    .iter()
+                    .any(|r| format!("task-run-{}", r.id) == request_id)
+        }) {
+            let cell = self.raw_cell(&goal.thread_id).await?;
+            let host = cell
+                .bindings
+                .read()
+                .await
+                .host
+                .clone()
+                .ok_or(Error::Conflict)?;
+            if !self.host_current(&host).await {
+                return Err(Error::Conflict);
+            }
         }
         let found = candidate.tasks.values_mut().find_map(|t| {
             let task_id = t.id.clone();
@@ -410,6 +588,7 @@ impl Engine {
             run.goal_id = Some(goal.id.clone());
             run.thread_id = Some(goal.thread_id.clone());
             run.status = RunStatus::Running;
+            run.started_at.get_or_insert(now());
             (task_id, run.id.clone())
         } else {
             if candidate.tasks.len() >= MAX_TASKS {
@@ -424,6 +603,8 @@ impl Engine {
             candidate.tasks.insert(
                 task_id.clone(),
                 Task {
+                    skipped_runs: 0,
+                    last_skipped_at: None,
                     id: task_id.clone(),
                     revision: 1,
                     channel_sequence: 0,
@@ -454,19 +635,46 @@ impl Engine {
         let Some(goal) = thread.goals.goal.as_ref() else {
             return true;
         };
-        self.task_modes
-            .state
-            .lock()
-            .await
-            .tasks
-            .values()
-            .find_map(|t| {
-                t.runs
-                    .iter()
-                    .find(|r| r.goal_id.as_deref() == Some(&goal.id))
-                    .map(|r| !t.paused && !t.cancelled && !r.wait_requested)
-            })
-            .unwrap_or(true)
+        let state = self.task_modes.state.lock().await;
+        let Some(task) = state.tasks.values().find(|t| {
+            t.runs
+                .iter()
+                .any(|r| r.goal_id.as_deref() == Some(&goal.id))
+        }) else {
+            return true;
+        };
+        let run = task
+            .runs
+            .iter()
+            .find(|r| r.goal_id.as_deref() == Some(&goal.id))
+            .unwrap();
+        if task.cancelled
+            || run.wait_requested
+            || run.reason.as_deref() == Some("stopRequested")
+            || (task.mode != TaskMode::Scheduled && task.paused)
+        {
+            return false;
+        }
+        if task.mode != TaskMode::Scheduled {
+            return true;
+        }
+        if run.status.terminal()
+            || run.reason.as_deref() == Some("stopRequested")
+            || task.runs.last().is_none_or(|r| r.id != run.id)
+        {
+            return false;
+        }
+        if run.started_at.is_none() {
+            return true;
+        }
+        let Ok(cell) = self.raw_cell(&thread.id).await else {
+            return false;
+        };
+        let Some(host) = cell.bindings.read().await.host.clone() else {
+            return false;
+        };
+        drop(state);
+        self.host_current(&host).await
     }
 
     pub(crate) async fn task_active_count(&self) -> usize {
@@ -477,18 +685,23 @@ impl Engine {
             .tasks
             .values()
             .filter(|t| {
-                !t.cancelled
-                    && !t.paused
-                    && (t.next_run_at.is_some()
-                        || t.runs.iter().any(|r| {
-                            matches!(
-                                r.status,
-                                RunStatus::Queued
-                                    | RunStatus::Running
-                                    | RunStatus::WaitingForInput
-                                    | RunStatus::WaitingForAgents
-                            )
-                        }))
+                let live_run = t.runs.iter().any(|r| {
+                    matches!(
+                        r.status,
+                        RunStatus::Queued
+                            | RunStatus::Running
+                            | RunStatus::WaitingForInput
+                            | RunStatus::WaitingForAgents
+                    )
+                });
+                match t.mode {
+                    // Future triggers are durable configuration. Drain closes
+                    // admission and preserves schedules across a safe restart.
+                    TaskMode::Scheduled => live_run,
+                    TaskMode::Foreground | TaskMode::Background => {
+                        !t.cancelled && !t.paused && (t.next_run_at.is_some() || live_run)
+                    }
+                }
             })
             .count()
     }
@@ -540,9 +753,17 @@ impl Engine {
                     run.thread_id.as_ref() == Some(&request.thread_id)
                         && run.goal_id.as_ref() == Some(&request.goal_id)
                         && match action {
-                            "pause" => task.paused || task.cancelled,
+                            "pause" => {
+                                task.paused
+                                    || task.cancelled
+                                    || (task.mode == TaskMode::Scheduled
+                                        && matches!(
+                                            run.reason.as_deref(),
+                                            Some("stopRequested" | "hostUnavailable")
+                                        ))
+                            }
                             "resume" => {
-                                !task.paused
+                                (task.mode == TaskMode::Scheduled || !task.paused)
                                     && !task.cancelled
                                     && run.reason.as_deref() == Some("resumeRequested")
                             }
@@ -553,14 +774,48 @@ impl Engine {
     }
 
     pub(crate) async fn task_goal_can_resume(&self, goal_id: &str) -> bool {
-        !self
-            .task_modes
-            .state
-            .lock()
-            .await
+        let state = self.task_modes.state.lock().await;
+        let Some(task) = state
             .tasks
             .values()
-            .any(|t| t.cancelled && t.runs.iter().any(|r| r.goal_id.as_deref() == Some(goal_id)))
+            .find(|t| t.runs.iter().any(|r| r.goal_id.as_deref() == Some(goal_id)))
+        else {
+            return true;
+        };
+        if task.cancelled {
+            return false;
+        }
+        let run = task
+            .runs
+            .iter()
+            .find(|r| r.goal_id.as_deref() == Some(goal_id))
+            .unwrap();
+        if task.mode != TaskMode::Scheduled {
+            return true;
+        }
+        if run.status.terminal()
+            || run.reason.as_deref() == Some("stopRequested")
+            || task.runs.last().is_none_or(|r| r.id != run.id)
+        {
+            return false;
+        }
+        if run.started_at.is_none() {
+            return true;
+        }
+        if run.reason.as_deref() != Some("resumeRequested") {
+            return false;
+        }
+        let Some(thread) = &run.thread_id else {
+            return false;
+        };
+        let Ok(cell) = self.raw_cell(thread).await else {
+            return false;
+        };
+        let Some(host) = cell.bindings.read().await.host.clone() else {
+            return false;
+        };
+        drop(state);
+        self.host_current(&host).await
     }
 
     pub(crate) async fn validate_prompt_limit_owner(&self, goal_id: &str) -> Result<()> {
@@ -634,9 +889,15 @@ impl Engine {
             return Err(Error::Conflict);
         }
         match action {
-            "pause" => task.paused = true,
+            "pause" => {
+                if task.mode != TaskMode::Scheduled {
+                    task.paused = true;
+                }
+            }
             "resume" => {
-                task.paused = false;
+                if task.mode != TaskMode::Scheduled {
+                    task.paused = false;
+                }
                 task.runs.last_mut().unwrap().wait_requested = false;
             }
             "clear" => {
@@ -671,8 +932,10 @@ impl Engine {
             if task.mode != TaskMode::Scheduled {
                 task.objective = goal.objective.clone();
             }
-            task.max_turns = goal.max_turns;
-            task.max_active_seconds = goal.max_active_seconds;
+            if task.mode != TaskMode::Scheduled {
+                task.max_turns = goal.max_turns;
+                task.max_active_seconds = goal.max_active_seconds;
+            }
             if task.mode != TaskMode::Scheduled {
                 task.token_budget = goal.token_budget;
             }
@@ -688,7 +951,10 @@ impl Engine {
         let mut state = self.task_modes.state.lock().await;
         let ids: Vec<_> = state.tasks.keys().cloned().collect();
         for id in ids {
-            if state.tasks[&id].paused || state.tasks[&id].cancelled {
+            if state.tasks[&id].mode == TaskMode::Scheduled
+                || state.tasks[&id].paused
+                || state.tasks[&id].cancelled
+            {
                 continue;
             }
             let mut candidate = state.clone();

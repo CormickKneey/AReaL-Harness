@@ -2,7 +2,9 @@
 const { readFile, appendFile } = require('node:fs/promises');
 const { join } = require('node:path');
 const { randomUUID, randomBytes } = require('node:crypto');
+const { isDeepStrictEqual } = require('node:util');
 const { SubscriptionStore } = require('./subscription.cjs');
+const { definitions, connectionMetadata } = require('@areal/provider-config');
 const { ModelConfiguration, protocolToCore, baseUrl: endpointBase } = require('./model-config.cjs');
 
 function connection(baseUrl, protocol) {
@@ -16,9 +18,14 @@ function connection(baseUrl, protocol) {
 }
 
 function modelParameters(raw = {}) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('模型参数无效');
+  const rules = { temperature: v => Number.isFinite(v) && v >= 0 && v <= 2, maxOutputTokens: v => Number.isSafeInteger(v) && v > 0,
+    contextWindowTokens: v => Number.isSafeInteger(v) && v > 0 && v <= 2_000_000,
+    reasoningEffort: v => ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'].includes(v) };
   const result = {};
-  for (const [name, valid] of Object.entries({ temperature: v => Number.isFinite(v) && v >= 0 && v <= 2, maxOutputTokens: v => Number.isSafeInteger(v) && v > 0, reasoningEffort: v => ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'].includes(v) })) {
-    if (raw[name] != null) { if (!valid(raw[name])) throw new Error('模型参数无效'); result[name] = raw[name]; }
+  for (const [name, value] of Object.entries(raw)) {
+    if (!Object.hasOwn(rules, name) || value !== null && !rules[name](value)) throw new Error('模型参数无效');
+    if (value !== null) result[name] = value;
   }
   return result;
 }
@@ -47,11 +54,24 @@ class AppProviders {
   async openai() {
     if (!this.openaiPromise) this.openaiPromise = import('@areal/chatgpt-provider/core').then(({ CoreSubscription }) => {
       this.openaiStore = new SubscriptionStore(this.backend, this.encryption);
-      const onRequest = process.env.AREAL_CORE_PROVIDER_AUDIT === '1' ? async ({ providerId, protocol, model, startedAt, completedAt, upstreamHttpStatus, upstreamContentType, localHttpStatus, outcome, failureKind, streamFailureReason }) => {
+      const onRequest = process.env.AREAL_CORE_PROVIDER_AUDIT === '1' ? async ({ providerId, protocol, model, startedAt, completedAt, upstreamHttpStatus, upstreamContentType, localHttpStatus, outcome, failureKind, streamFailureReason, code, state, phase, httpStatus, requestId, adjustments }) => {
         await appendFile(join(this.backend.home, 'provider-requests.jsonl'), JSON.stringify({ providerId, protocol, model, startedAt, completedAt,
-          upstreamHttpStatus, upstreamContentType, localHttpStatus, outcome, failureKind, streamFailureReason }) + '\n', { mode: 0o600 });
+          upstreamHttpStatus, upstreamContentType, localHttpStatus, outcome, failureKind, streamFailureReason, code, state, phase, httpStatus, requestId, adjustments }) + '\n', { mode: 0o600 });
       } : undefined;
-      return new CoreSubscription({ store: this.openaiStore, fetch: async (...args) => (await this.network()).fetch(...args), token: this.openaiToken, port: this.transport.port, onListen: async port => { this.transport.port = port; await this.backend.save('subscription-transport.json', this.transport); }, kind: 'openai', onRequest });
+      const service = new CoreSubscription({ store: this.openaiStore, fetch: async (...args) => (await this.network()).fetch(...args), token: this.openaiToken, port: this.transport.port, onListen: async port => { this.transport.port = port; await this.backend.save('subscription-transport.json', this.transport); }, kind: 'openai', onRequest });
+      service.account.activateAuthorized = async (id, activate) => {
+        if (this.backend.hasWork() || this.backend.activeCommands || this.backend.providerUpdating || this.backend.resourcesUpdating || this.backend.starting.size) return false;
+        this.backend.providerUpdating = true;
+        try {
+          for (const project of this.backend.projects.values()) {
+            if (project.service && !project.client?.ready) return false;
+            if (project.client?.ready && !(await project.client.request('areal/server/status')).restartSafe) return false;
+          }
+          await activate();
+          return true;
+        } finally { this.backend.providerUpdating = false; }
+      };
+      return service;
     }).catch(error => { this.openaiPromise = null; throw error; });
     return this.openaiPromise;
   }
@@ -68,8 +88,9 @@ class AppProviders {
     // Unrelated tasks, terminals and unresolved resources must not block it.
     if (op === 'login') {
       this.openaiStore.check();
-      if (await service.account.read()) throw new Error('请先退出当前 ChatGPT 账号');
-      const login = await service.account.begin();
+      if (!request.newAccount && !request.accountId && await service.account.read()) throw new Error('请先退出当前 ChatGPT 账号');
+      if ((request.newAccount || request.accountId) && (this.backend.hasWork() || this.backend.activeCommands || this.backend.starting.size)) throw new Error('请等待任务和操作完成后再切换 ChatGPT 账号');
+      const login = await service.account.begin({ newAccount: request.newAccount === true, accountId: request.accountId });
       const completion = service.account.attempt?.done;
       if (completion && this.loginAttempt !== completion) {
         this.loginAttempt = completion;
@@ -86,7 +107,7 @@ class AppProviders {
       return login;
     }
     if (op === 'forget') await service.account.forget();
-    else if (op === 'logout') {
+    else if (op === 'logout' || op === 'selectAccount') {
       if (this.backend.hasWork() || this.backend.activeCommands || this.backend.providerUpdating || this.backend.resourcesUpdating || this.backend.starting.size) throw new Error('请等待任务与操作完成后再切换 ChatGPT 账号');
       this.backend.providerUpdating = true;
       try {
@@ -94,7 +115,8 @@ class AppProviders {
           if (project.service && !project.client?.ready) throw new Error('请先重新连接项目，再切换 ChatGPT 账号');
           if (project.client?.ready && !(await project.client.request('areal/server/status')).restartSafe) throw new Error('请先停止正在运行的任务或终端，再切换 ChatGPT 账号');
         }
-        await service.account.logout();
+        if (op === 'selectAccount') await service.account.selectAccount(request.accountId);
+        else await service.account.logout();
       } finally { this.backend.providerUpdating = false; }
     } else if (op === 'cancel') await service.account.cancel();
     else if (op === 'probe') return service.probe(request.model);
@@ -108,7 +130,7 @@ class AppProviders {
       project.models = (await project.client.request('areal/model/list')).data ?? [];
     }
     this.backend.onChange();
-    return status;
+    return { ...status, billing: 'subscription', catalog: service.catalog?.metadata() ?? null };
   }
   syncSubscription(project, service) {
     const task = (this.subscriptionSync ?? Promise.resolve()).catch(() => {}).then(() => this.applySubscription(project, service));
@@ -117,7 +139,7 @@ class AppProviders {
   async applySubscription(project, service) {
     const status = service ? await service.account.status() : { authenticated: false };
     const existing = (await project.client.request('areal/provider/list')).data.find(p => p.id === (service?.id ?? 'areal_openai'));
-    if (status.modelError) return;
+    if (status.modelError || status.state && !['ready', 'signed_out'].includes(status.state)) return;
     if (!status.authenticated || status.models?.length === 0) {
       if (existing) await this.backend.submit(project, 'areal/provider/remove', { id: existing.id, expectedRevision: existing.revision });
       return;
@@ -147,7 +169,7 @@ class AppProviders {
     try { if (this.openaiPromise) await (await this.openaiPromise).close(); }
     finally { if (this.networkPromise) (await this.networkPromise).close(); }
   }
-  public() { return this.config.public(); }
+  public() { const value = this.config.public(); return { ...value, definitions, data: value.data.map(item => ({ ...item, connection: connectionMetadata(item, value.credentialSources) })) }; }
   model(ref, project) { return (project?.providerSnapshot ?? this.value).data.find(p => p.id === ref?.providerId)?.models.find(m => m.id === ref.modelId); }
   catalog(models, project) { return models.map(m => ({ ...m, displayName: this.model(m, project)?.displayName || m.displayName || m.modelId })); }
   key(item) { return this.config.key(item); }
@@ -173,8 +195,12 @@ class AppProviders {
     if (this.saving || this.backend.providerUpdating) throw new Error('模型配置正在保存，请稍后重试');
     if (request.operation === 'list') { await this.config.current(); return this.public(); }
     if (request.operation === 'probe' || request.operation === 'discover') { await this.config.current(); return this.test(request); }
+    if (request.operation === 'saveAndApply' || request.operation === 'removeAndApply') return this.saveAndApply(request);
     if (request.operation === 'apply') return this.apply(request);
     if (!['save', 'remove', 'default'].includes(request.operation)) throw new Error('不支持的供应商操作');
+    return this.write(request);
+  }
+  async write(request, prepared) {
     this.saving = true;
     try {
       const current = await this.config.current();
@@ -206,12 +232,62 @@ class AppProviders {
           else if (request.authentication !== 'apiKey') delete item.apiKeyEnv;
         }
         if (request.authentication === 'apiKey' && !item.apiKeyEnv) throw new Error('请填写 API Key，或保留已配置的凭据环境变量。');
+        if (request.discoverModels && !previous && item.enabled && item.models.length === 0) {
+          const catalog = await this.testConnection(item, { operation: 'discover' });
+          if (!catalog.models.length) throw new Error('服务未提供模型，请手动添加后保存。');
+          item.models = [...new Set(catalog.models)].map(id => ({ id, enabled: true, parameters: {} }));
+        }
         next.data = previous ? next.data.map(p => p.id === item.id ? item : p) : [...next.data, item];
       }
+      prepared?.(next);
       this.config.value = await this.config.execute('write', { expectedRevision: current.revision, data: next.data, defaultModel: next.defaultModel });
       this.backend.onChange();
       return this.public();
     } finally { this.saving = false; }
+  }
+  async saveAndApply(request) {
+    if (this.backend.providerUpdating || this.backend.resourcesUpdating || this.backend.activeCommands || this.backend.starting.size || this.backend.hasWork()) throw new Error('任务或操作正在进行，完成后再保存；修改仍保留。');
+    this.backend.providerUpdating = true;
+    const drained = [];
+    let previous, written, candidate;
+    try {
+      previous = await this.config.current();
+      if (request.expectedRevision !== previous.revision) throw new Error('配置已变化，请刷新后重试。');
+      // 写文件前由每个 Core 在准入锁下确认空闲；不会取消已有任务或终端。
+      for (const project of this.backend.projects.values()) {
+        if (project.service && !project.client?.ready) throw new Error('项目尚未连接，重新连接后再保存。');
+        if (project.client?.ready && !(await project.client.request('areal/server/status')).restartSafe) throw new Error('任务或终端正在运行，完成后再保存；修改仍保留。');
+      }
+      for (const project of this.backend.projects.values()) if (project.client?.ready) {
+        const status = await project.client.request('areal/server/drain', { strategy: 'ifIdle', timeoutMs: 30_000 }, { timeoutMs: 35_000 });
+        if (!status.restartSafe) throw new Error('任务尚未结算，完成后再保存；修改仍保留。');
+        drained.push(project);
+      }
+      written = await this.write({ ...request, operation: request.operation === 'removeAndApply' ? 'remove' : 'save', discoverModels: true }, next => { candidate = structuredClone(next); });
+      const failures = await this.restart(drained);
+      if (failures.length) throw new Error('项目配置同步失败。');
+      await this.config.current();
+      const result = this.public();
+      if (result.pendingApply) throw new Error('Core 尚未确认配置。');
+      return result;
+    } catch (error) {
+      let rollbackError = null;
+      if (!written && candidate) {
+        try {
+          // CLI 可能已落盘但回执丢失；只对本次精确候选的已确认版本回滚，不能覆盖外部编辑。
+          const observed = await this.config.current();
+          if (observed.revision !== previous.revision && isDeepStrictEqual(observed.data, candidate.data) && isDeepStrictEqual(observed.defaultModel, candidate.defaultModel)) written = { revision: observed.revision };
+        } catch (failure) { rollbackError = failure; }
+      }
+      if (written) {
+        try {
+          this.config.value = await this.config.execute('write', { expectedRevision: written.revision, data: previous.data, defaultModel: previous.defaultModel });
+        } catch (failure) { rollbackError = failure; }
+      }
+      // 已排空的实例恢复准入；已保存但未同步成功时先 CAS 回滚，绝不宣告保存成功。
+      const failures = await this.restart(drained);
+      throw new Error(`${this.redact(error.message)}${rollbackError ? ' 回滚未确认，请刷新核对配置。' : written ? ' 已恢复原配置，修改仍保留。' : ''}${failures.length ? ' 部分项目需重新连接。' : ''}`);
+    } finally { this.backend.providerUpdating = false; this.backend.onChange(); }
   }
   async apply(request) {
     if (this.backend.providerUpdating || this.backend.resourcesUpdating || this.backend.activeCommands || this.backend.starting.size || this.backend.hasWork()) throw new Error('请等待任务和操作完成，并处理排队消息后再应用模型配置');
@@ -255,6 +331,9 @@ class AppProviders {
   async test({ id, model, operation }) {
     const provider = this.value.data.find(p => p.id === id);
     if (!provider) throw new Error('请先保存供应商');
+    return this.testConnection(provider, { model, operation });
+  }
+  async testConnection(provider, { model, operation }) {
     const key = this.key(provider);
     const url = operation === 'discover' ? `${endpointBase(provider.endpoint)}/models` : provider.endpoint;
     if (operation === 'probe' && !provider.models.some(m => m.id === model && m.enabled)) throw new Error('请选择已启用的模型');

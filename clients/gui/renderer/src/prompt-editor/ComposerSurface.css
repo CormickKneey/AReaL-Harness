@@ -1,0 +1,51 @@
+/* 公共输入表面拥有布局；业务状态仍由调用方提供。 */
+.composer-surface {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) 12px;
+  gap: 0;
+  padding: 12px 0 10px;
+  border: 0;
+  border-radius: var(--radius-composer);
+  background: var(--color-composer, var(--color-background));
+  box-shadow: var(--shadow-composer);
+  backdrop-filter: blur(16px);
+}
+.composer-surface:focus-within {
+  box-shadow: var(--shadow-composer), 0 0 0 1px var(--color-border-hover);
+}
+.composer-surface[data-dragging] { outline: var(--focus-width) solid var(--color-brand); }
+/* Slot insets belong to the surface; the editor viewport spans its full width.
+   The text grows inside one scroll owner, matching the reference composer. */
+.composer-surface > * { grid-column: 2; }
+.composer-surface > :is(.composer-editor, .absolute) { grid-column: 1 / -1; }
+.composer-editor { min-width: 0; max-height: 25dvh; overflow-y: auto; padding: 0 12px; }
+.composer-editor { scrollbar-width: thin; }
+.composer-editor :is([contenteditable], textarea) {
+  min-height: 64px;
+  max-height: none;
+  overflow-y: visible;
+  padding-bottom: 8px;
+  caret-color: var(--color-foreground);
+  font-size: var(--text-ui-lg);
+  line-height: max(24px, calc(var(--ui-font-size) + 10px));
+}
+.composer-editor textarea { field-sizing: content; }
+.composer-toolbar { display: flex; align-items: center; gap: var(--spacing-inline); min-width: 0; min-height: 32px; }
+.composer-toolbar :is([type="submit"], .composer-primary-action) { border-radius: var(--radius-pill); }
+.composer-toolbar :is([type="submit"], .composer-primary-action):not(:disabled) { background: var(--color-composer-action, var(--color-brand)); color: var(--color-composer-action-foreground, white); }
+
+/* 决策面只改变布局，保留已挂载编辑器与草稿。 */
+.interaction-composer-compact .composer-surface { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 6px 8px 6px 12px; }
+.interaction-composer-compact .composer-editor { flex: 1 1 120px; padding: 0; max-height: 80px; }
+.interaction-composer-compact .composer-editor :is([contenteditable], textarea) { min-height: 20px; padding-bottom: 0; font-size: var(--text-ui-base); line-height: var(--line-height-ui); }
+.interaction-composer-compact .composer-toolbar { flex: 1 0 auto; }
+.interaction-composer-compact .composer-toolbar [data-composer-leading-actions] { flex: 0 0 auto; }
+
+/* 紧凑状态保持编辑器归属，只调整工具栏位置。 */
+.interaction-composer-compact .composer-editor { padding-left: 34px; }
+.interaction-composer-compact .composer-toolbar { position: static; flex: 0 0 auto; }
+.interaction-composer-compact [data-composer-leading-actions] { position: absolute; left: 10px; bottom: 6px; width: 32px; }
+.interaction-composer-compact :is([aria-label="更改权限"], [aria-label="退出计划模式"], [aria-label="退出目标模式"]) { display: none; }
+.interaction-composer-compact .composer-model-trigger { max-width: 200px; }

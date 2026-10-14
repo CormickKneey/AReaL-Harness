@@ -443,3 +443,227 @@ async fn resume_during_stream_replaces_baseline_without_duplicate_deltas() {
     stop.cancel();
     server.await.unwrap().unwrap();
 }
+
+// RC-03 公开边界：先按 principal 过滤，Observer 可读且不暴露执行配置或历史正文。
+#[tokio::test]
+async fn work_overview_observer_is_scoped_before_paging() {
+    use areal_app_server::auth::{Authentication, Permission, Principal};
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let dir = tempfile::tempdir().unwrap();
+    let engine = Engine::open(dir.path(), Arc::new(TextModel), Limits::default()).unwrap();
+    let mut threads = Vec::new();
+    for _ in 0..4 {
+        threads.push(engine.create(engine.default_cwd()).await.unwrap().id);
+    }
+    threads.sort();
+    let allowed = threads[3].clone();
+    let token = "overview-observer-token-000000000000";
+    let auth = Authentication {
+        version: 1,
+        principals: vec![Principal {
+            id: "observer".into(),
+            token: token.into(),
+            permissions: [Permission::Observe].into(),
+            thread_ids: Some([allowed.clone()].into()),
+        }],
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let stop = CancellationToken::new();
+    let server = tokio::spawn(areal_app_server::serve_authenticated(
+        listener,
+        engine.clone(),
+        stop.clone(),
+        Some(auth),
+    ));
+    let mut request = format!("ws://{addr}").into_client_request().unwrap();
+    request
+        .headers_mut()
+        .insert("Authorization", format!("Bearer {token}").parse().unwrap());
+    let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    call(
+        &mut socket,
+        1,
+        "initialize",
+        json!({"clientInfo":{"name":"overview","version":"1"}}),
+    )
+    .await;
+    socket
+        .send(Wire::Text(
+            json!({"method":"initialized"}).to_string().into(),
+        ))
+        .await
+        .unwrap();
+    let (page, _) = call(&mut socket, 2, "areal/work/overview", json!({"limit":1})).await;
+    assert!(page.get("error").is_none(), "{page}");
+    assert_eq!(page["result"]["data"][0]["threadId"], allowed);
+    assert_eq!(page["result"]["data"].as_array().unwrap().len(), 1);
+    assert_eq!(page["result"]["complete"], true);
+    assert_eq!(page["result"]["nextCursor"], Value::Null);
+    let row = &page["result"]["data"][0];
+    for key in ["cwd", "turns", "configuration", "receipts"] {
+        assert!(row.get(key).is_none());
+    }
+    assert_eq!(row["execution"]["state"], "idle");
+    assert_eq!(row["resultAvailable"], false);
+    let (bad, _) = call(&mut socket, 3, "areal/work/overview", json!({"limit":101})).await;
+    assert_eq!(bad["error"]["code"], -32602);
+    let (caps, _) = call(&mut socket, 4, "areal/capabilities", json!({})).await;
+    assert!(
+        caps["result"]["methods"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("areal/work/overview"))
+    );
+    socket.close(None).await.unwrap();
+    stop.cancel();
+    server.await.unwrap().unwrap();
+    engine.shutdown().await;
+}
+
+#[tokio::test]
+async fn ordinary_admission_capabilities_and_rpc_errors_are_explicit() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = Engine::open(dir.path(), Arc::new(TextModel), Limits::default()).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let stop = CancellationToken::new();
+    let server = tokio::spawn(areal_app_server::serve(
+        listener,
+        engine.clone(),
+        stop.clone(),
+    ));
+    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}"))
+        .await
+        .unwrap();
+    call(
+        &mut socket,
+        1,
+        "initialize",
+        json!({"clientInfo":{"name":"guard-contract","version":"1"}}),
+    )
+    .await;
+    socket
+        .send(Wire::Text(
+            json!({"method":"initialized"}).to_string().into(),
+        ))
+        .await
+        .unwrap();
+    let (caps, _) = call(&mut socket, 2, "areal/capabilities", json!({})).await;
+    for feature in [
+        "turnStartAdmissionGuard",
+        "turnInterruptAdmissionGuard",
+        "threadStartAdmissionGuard",
+        "taskPauseRunGuard",
+        "atomicObserveOwnership",
+    ] {
+        assert_eq!(caps["result"]["features"][feature], true, "{caps}");
+    }
+    let (invalid, _) = call(
+        &mut socket,
+        3,
+        "areal/thread/start",
+        json!({"requestId":"false-create","admissionGuard":{"ordinarySession":false}}),
+    )
+    .await;
+    assert_eq!(invalid["error"]["code"], -32602, "{invalid}");
+    let (created, _) = call(
+        &mut socket,
+        4,
+        "areal/thread/start",
+        json!({"requestId":"create","admissionGuard":{"ordinarySession":true}}),
+    )
+    .await;
+    let id = created["result"]["thread"]["id"].as_str().unwrap();
+    let (observed, _) = call(
+        &mut socket,
+        8,
+        "areal/thread/observe",
+        json!({"threadId":id}),
+    )
+    .await;
+    assert_eq!(observed["result"]["ownership"], json!({"kind":"ordinary"}));
+    let req = json!({"requestId":"stale","threadId":id,"input":[{"type":"text","text":"hello"}],"admissionGuard":{"configRevision":2,"ordinarySession":true}});
+    let (stale, _) = call(&mut socket, 5, "areal/turn/start", req.clone()).await;
+    assert_eq!(stale["error"]["code"], -32009, "{stale}");
+    let mut req = req;
+    req["admissionGuard"]["configRevision"] = json!(1);
+    req["requestId"] = json!("false-send");
+    req["admissionGuard"]["ordinarySession"] = json!(false);
+    let (invalid, _) = call(&mut socket, 6, "areal/turn/start", req.clone()).await;
+    assert_eq!(invalid["error"]["code"], -32602, "{invalid}");
+    req["admissionGuard"]["ordinarySession"] = json!(true);
+    req["requestId"] = json!("not-enqueue");
+    let (invalid, _) = call(&mut socket, 7, "areal/turn/enqueue", req).await;
+    assert_eq!(invalid["error"]["code"], -32602, "{invalid}");
+    assert!(engine.read(id, true).await.unwrap().turns.is_empty());
+    let turn = engine
+        .start(
+            id,
+            vec![serde_json::from_value(json!({"type":"text","text":"finish"})).unwrap()],
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), engine.wait(id))
+        .await
+        .unwrap()
+        .unwrap();
+    let before = serde_json::to_value(engine.queue(id).await.unwrap()).unwrap();
+    let (stale, _) = call(
+        &mut socket,
+        9,
+        "turn/interrupt",
+        json!({"threadId":id,"turnId":turn.id,"admissionGuard":{"ordinarySession":true}}),
+    )
+    .await;
+    assert_eq!(stale["error"]["code"], -32009, "{stale}");
+    let (invalid, _) = call(
+        &mut socket,
+        10,
+        "turn/interrupt",
+        json!({"threadId":id,"turnId":turn.id,"admissionGuard":{"ordinarySession":false}}),
+    )
+    .await;
+    assert_eq!(invalid["error"]["code"], -32602, "{invalid}");
+    assert_eq!(
+        serde_json::to_value(engine.queue(id).await.unwrap()).unwrap(),
+        before
+    );
+    let (legacy, _) = call(
+        &mut socket,
+        11,
+        "turn/interrupt",
+        json!({"threadId":id,"turnId":turn.id}),
+    )
+    .await;
+    assert_eq!(legacy["result"], json!({}), "{legacy}");
+    assert!(engine.queue(id).await.unwrap().paused);
+
+    socket.close(None).await.unwrap();
+    drop(socket);
+    engine.shutdown().await;
+    stop.cancel();
+    tokio::time::timeout(Duration::from_secs(3), server)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+}
+
+#[test]
+fn interrupt_schema_keeps_guard_optional_and_strict() {
+    let schema: Value =
+        serde_json::from_str(include_str!("../../../schemas/areal-core-v1.json")).unwrap();
+    let validator = jsonschema::validator_for(&schema["requests"]["turn/interrupt"]).unwrap();
+    assert!(validator.is_valid(&json!({"threadId":"thread","turnId":"original"})));
+    assert!(validator.is_valid(
+        &json!({"threadId":"thread","turnId":"original","admissionGuard":{"ordinarySession":true}})
+    ));
+    assert!(
+        !validator.is_valid(&json!({"threadId":"thread","turnId":"original","admissionGuard":{}}))
+    );
+    assert!(!validator.is_valid(&json!({"threadId":"thread","turnId":"original","admissionGuard":{"ordinarySession":true,"configRevision":1}})));
+    assert!(
+        !validator.is_valid(&json!({"threadId":"thread","turnId":"original","requestId":"new"}))
+    );
+}

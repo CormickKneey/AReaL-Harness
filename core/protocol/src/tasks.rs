@@ -44,6 +44,8 @@ impl RunStatus {
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Schedule {
+    #[serde(default, rename = "timeZone", skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
     /// UTC Unix 秒；间隔以该时间为锚点，避免执行耗时导致漂移。
     pub at: i64,
     pub interval_seconds: Option<u64>,
@@ -66,6 +68,8 @@ pub struct TaskCreate {
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TaskControl {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_run_id: Option<String>,
     pub request_id: String,
     pub task_id: String,
     pub expected_revision: u64,
@@ -136,6 +140,11 @@ pub struct ChannelMessage {
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskRun {
+    /// 受理时的任务内容；修改安排只影响之后的 Run。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub objective: Option<String>,
+    #[serde(default)]
+    pub started_at: Option<i64>,
     #[serde(default)]
     pub workers: Vec<TaskWorker>,
     pub id: String,
@@ -181,6 +190,10 @@ impl TaskWorker {
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Task {
+    #[serde(default)]
+    pub skipped_runs: u64,
+    #[serde(default)]
+    pub last_skipped_at: Option<i64>,
     pub id: String,
     pub revision: u64,
     pub channel_sequence: u64,

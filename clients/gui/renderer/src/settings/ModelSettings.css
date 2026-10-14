@@ -1,0 +1,53 @@
+/* Model settings keep business state in ModelSettings and reuse public controls. */
+.model-settings .provider-settings {
+  height: auto;
+  align-items: start;
+  gap: var(--spacing-panel);
+}
+.model-settings .provider-catalog {
+  min-height: 420px;
+  max-height: calc(100dvh - 280px);
+}
+.model-settings .provider-inline {
+  margin: 0;
+  padding: var(--spacing-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-panel);
+  background: var(--color-card);
+}
+.model-settings .provider-inline > * + * {
+  margin-top: var(--spacing-section);
+}
+.model-settings .provider-config-heading,
+.model-settings .provider-name-control,
+.model-settings .provider-save-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-inline);
+}
+.model-settings .provider-config-heading { font-size: var(--text-ui-caption); }
+.model-settings .provider-config-heading > strong { margin-right: auto; }
+.model-settings .provider-config-heading [role="status"] { margin-right: var(--spacing-inline); }
+.model-settings .provider-name-field > label { display: block; margin-bottom: var(--spacing-inline); }
+.model-settings .provider-connection-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--spacing-field);
+}
+.model-settings .provider-connection-fields > :first-child { grid-column: 1 / -1; }
+.model-settings .provider-model-section {
+  padding-top: var(--spacing-section);
+  border-top: 1px solid var(--color-border);
+}
+.model-settings .provider-model-row { flex-wrap: nowrap; }
+.model-settings .provider-model-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.model-settings .provider-model-label strong { font-size: var(--text-ui-base); font-weight: 550; }
+.model-settings .provider-save-actions { justify-content: flex-end; }
+@container (max-width: 560px) {
+  .model-settings .provider-model-row .provider-model-label { flex-basis: auto; }
+  .model-settings .provider-connection-fields { grid-template-columns: 1fr; }
+  .model-settings .provider-config-heading { flex-wrap: wrap; }
+}
+@media (max-width: 860px) {
+  .model-settings .provider-catalog { min-height: 0; max-height: 220px; }
+}

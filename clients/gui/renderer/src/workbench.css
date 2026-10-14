@@ -545,42 +545,6 @@ button.composer-project:hover > svg,
   max-width: var(--reading-width, 768px);
   padding: 12px 16px 16px;
 }
-.composer-surface {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  grid-template-columns: 12px minmax(0, 1fr) 12px;
-  gap: 0;
-  padding: 12px 0 10px;
-  border: 0;
-  border-radius: var(--radius-composer);
-  background: var(--color-composer, var(--color-background));
-  box-shadow: var(--shadow-composer);
-  backdrop-filter: blur(16px);
-}
-.composer-surface:focus-within {
-  box-shadow: var(--shadow-composer), 0 0 0 1px var(--color-border-hover);
-}
-.composer-surface[data-dragging] { outline: 2px solid var(--color-brand); }
-/* Slot insets belong to the surface; the editor viewport spans its full width.
-   The text grows inside one scroll owner, matching the reference composer. */
-.composer-surface > * { grid-column: 2; }
-.composer-surface > :is(.composer-editor, .absolute) { grid-column: 1 / -1; }
-.composer-editor { min-width: 0; max-height: 25dvh; overflow-y: auto; padding: 0 12px; }
-.composer-editor { scrollbar-width: thin; }
-.composer-editor :is([contenteditable], textarea) {
-  min-height: 64px;
-  max-height: none;
-  overflow-y: visible;
-  padding-bottom: 8px;
-  caret-color: var(--color-foreground);
-  font-size: var(--text-ui-lg);
-  line-height: max(24px, calc(var(--ui-font-size) + 10px));
-}
-.composer-editor textarea { field-sizing: content; }
-.composer-toolbar { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 32px; }
-.composer-toolbar :is([type="submit"], .composer-primary-action) { border-radius: 50%; }
-.composer-toolbar :is([type="submit"], .composer-primary-action):not(:disabled) { background: var(--color-composer-action, var(--color-brand)); color: var(--color-composer-action-foreground, white); }
 .navigation-task-row {
   min-height: max(30px, calc(var(--ui-font-size) + 16px));
   padding: 5px 5px 5px 8px;
@@ -1736,10 +1700,10 @@ button.composer-project:hover > svg,
 /* Text shimmer expresses waiting, never fabricated reasoning content. */
 .turn-thinking { display: inline-block; color: var(--color-foreground-subtle); }
 @supports (background-clip: text) {
-  .turn-thinking { background: linear-gradient(90deg, var(--color-foreground-subtle) 35%, color-mix(in srgb, white 75%, transparent) 45%, color-mix(in srgb, white 75%, transparent) 50%, var(--color-foreground-subtle) 60%); background-size: 200% 100%; background-position: 150% 0; background-clip: text; color: transparent; animation: turn-thinking-shimmer 4s linear infinite; }
+  .turn-thinking { background: linear-gradient(90deg, var(--color-foreground-subtle) 35%, color-mix(in srgb, white 75%, transparent) 45%, color-mix(in srgb, white 75%, transparent) 50%, var(--color-foreground-subtle) 60%); background-size: 200% 100%; background-position: 125% 0; background-clip: text; color: transparent; animation: turn-thinking-shimmer 2.4s linear infinite; }
 }
-/* Native reference: a 1s stepped sweep, observed about every 4s. */
-@keyframes turn-thinking-shimmer { 0% { background-position: 150% 0; animation-timing-function: steps(48); } 25%, 100% { background-position: -150% 0; } }
+/* Continuous sweep; both endpoints place the highlight outside the text. */
+@keyframes turn-thinking-shimmer { from { background-position: 125% 0; } to { background-position: -35% 0; } }
 @scope (:root[data-reduced-motion="true"]) { .turn-thinking { animation: none; background: none; color: var(--color-foreground-subtle); } }
 
 /* Only the timeline scrolls during execution. The composer never participates in auto-scroll. */
@@ -2511,13 +2475,14 @@ body { font-family: var(--font-sans); }
 .composer-effort-center { text-align: center; min-width: 0; }
 .composer-effort-center strong { display: block; font-size: 14px; font-weight: 450; color: var(--color-brand); line-height: 17px; }
 .composer-effort-center button { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; color: var(--color-foreground-subtle); padding: 1px 5px; line-height: 18px; }
-.composer-slider-shell { position: relative; height: 28px; margin-top: 6px; }
-.composer-slider-track { position: absolute; inset: 2px 0; border: 1px solid var(--color-border-hover); border-radius: 20px; background: var(--color-secondary); overflow: hidden; pointer-events: none; }
+.composer-slider-shell { position: relative; height: 28px; margin: 12px 0 4px; }
+.composer-slider-track { position: absolute; inset: 2px 0; border-radius: 20px; background: color-mix(in srgb, var(--color-foreground) 14%, var(--color-composer-catalog, var(--color-background))); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-foreground) 8%, transparent); overflow: hidden; pointer-events: none; }
 .composer-slider-track > div { height: 100%; background: var(--color-brand); }
-.composer-slider-track i { position: absolute; top: 9px; width: 4px; height: 4px; border-radius: 50%; background: #ffffff55; transform: translateX(-50%); }
+.composer-slider-track i { position: absolute; top: 10px; width: 4px; height: 4px; border-radius: 50%; background: color-mix(in srgb, var(--color-foreground) 35%, transparent); transform: translateX(-50%); }
+.composer-slider-track i[data-selected=true] { background: #ffffff80; }
 .composer-slider-shell input { appearance: none; width: 100%; height: 28px; margin: 0; background: transparent; position: relative; cursor: pointer; }
 .composer-slider-shell input::-webkit-slider-runnable-track { height: 28px; background: transparent; }
-.composer-slider-shell input::-webkit-slider-thumb { appearance: none; width: 28px; height: 28px; border-radius: 50%; background: white; }
+.composer-slider-shell input::-webkit-slider-thumb { appearance: none; width: 28px; height: 28px; border-radius: 50%; background: white; box-shadow: 0 1px 4px #0003, 0 0 0 1px #0000000d; }
 .composer-slider-shell input:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 3px; border-radius: 20px; }
 .composer-effort-unavailable { font-size: 12px; color: var(--color-foreground-subtle); margin-top: 8px; text-align: center; }
 .composer-model-menu { padding: 7px 4px 6px; }
@@ -2528,6 +2493,7 @@ body { font-family: var(--font-sans); }
 .composer-model-menu [role="radio"]:disabled { color: var(--color-foreground-subtle); }
 .composer-model-menu [role="radio"] small { display: block; font-size: 12px; }
 .composer-model-configure { width: 100%; margin-top: 8px; border-top: 1px solid var(--color-border); border-radius: 0; }
+.composer-effort-menu .composer-model-configure { height: 30px; padding-block: 0; color: var(--color-foreground-subtle); font-size: 12px; font-weight: 450; }
 @media (max-width: 760px) {
   .composer-catalog-description { display: none; }
   .composer-catalog-row { font-size: 13px; }
@@ -2551,28 +2517,7 @@ body { font-family: var(--font-sans); }
 .fork-workspace-choice small { display:block; margin-top:4px; color:var(--color-foreground-subtle); font-size:11px; }
 .fork-target-options { font-size:11px; border-top:1px solid var(--color-border); padding-top:10px; }
 .fork-target-options summary { cursor:pointer; color:var(--color-foreground-subtle); margin-bottom:6px; }
-.side-chat-pane { display:flex; flex:1; flex-direction:column; min-height:0; min-width:0; height:100%; }
-.side-chat-toolbar { display:flex; align-items:center; gap:4px; padding:6px 14px; border-bottom:1px solid var(--color-border); flex-shrink:0; }
-.side-chat-heading { display:flex; align-items:center; gap:7px; font-size:12px; margin-right:auto; color:var(--color-foreground-subtle); }
-.side-chat-related { width:340px; }
-.side-chat-related .utility-actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin:6px 0; }
-.side-chat-related button { border-radius:6px; padding:5px; text-align:left; }
-.side-chat-related button[aria-current] { background:var(--color-surface); }
-.side-chat-information { padding:10px 22px; flex-shrink:0; max-height:35%; overflow:auto; font-size:11px; color:var(--color-foreground-subtle); }
-.side-chat-context summary { cursor:pointer; }
-.side-chat-context > p, .side-chat-context > label { display:block; margin:8px 0; line-height:1.6; }
-.side-chat-transcript { display:flex; flex:1; flex-direction:column; min-height:0; min-width:0; }
-.side-chat-transcript .messages-shell { flex:1; min-height:0; }
-.side-chat-empty { margin:auto; text-align:center; padding:30px 20px; color:var(--color-foreground-subtle); }
-.side-chat-empty h2 { color:var(--color-foreground); font-size:16px; margin:14px 0 8px; font-weight:500; }
-.side-chat-empty p { font-size:12px; }
-.side-chat-empty small { display:block; font-size:11px; margin-top:8px; }
-.side-chat-composer { flex-shrink:0; }
-.side-chat-feedback { padding:0 22px; max-height:36%; overflow:auto; flex-shrink:0; font-size:12px; }
-.side-chat-feedback .utility-actions { display:flex; gap:8px; flex-wrap:wrap; padding:8px 0; }
-.side-chat-feedback textarea { width:100%; min-height:90px; padding:8px; background:var(--color-surface); border:1px solid var(--color-border); border-radius:8px; }
-.side-chat-feedback:empty { display:none; }
-.side-bring-action { font-size:11px; color:var(--color-foreground-subtle); }
+
 .message-actions > .turn-fork-trigger, .message-actions > .side-bring-action { width:auto; padding-inline:6px; white-space:nowrap; }
 
 /* 批注与导航同组，地址栏保留可用宽度。 */

@@ -19,7 +19,7 @@ async fn legacy_task_store_is_loaded_with_the_new_snapshot_version() {
     )
     .unwrap();
     let tasks = Tasks::open(root.path()).unwrap();
-    assert_eq!(tasks.state.lock().await.version, 2);
+    assert_eq!(tasks.state.lock().await.version, 3);
 }
 
 struct Coordinator {
@@ -439,6 +439,7 @@ async fn cancelling_the_task_cleans_its_isolated_execution() {
                 request_id: "cancel".into(),
                 task_id: task_id.clone(),
                 expected_revision: task.revision,
+                expected_run_id: None,
             },
         )
         .await

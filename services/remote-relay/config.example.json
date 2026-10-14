@@ -1,0 +1,15 @@
+{
+  "publicOrigin": "https://remote.example.org",
+  "listen": "127.0.0.1:8080",
+  "trustedLocalTlsProxy": true,
+  "allowedClientOrigins": ["https://remote.example.org"],
+  "dataDir": "/var/lib/areal-remote-relay",
+  "assetsDir": "/opt/areal-remote-pwa",
+  "maxHosts": 100,
+  "maxConnections": 256,
+  "maxPending": 32,
+  "maxChannelsPerHost": 16,
+  "maxFrameBytes": 524288,
+  "maxBufferedBytesPerChannel": 2097152,
+  "payloadLogging": false
+}

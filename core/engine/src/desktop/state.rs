@@ -573,7 +573,11 @@ impl Engine {
                 {
                     let thread = state.thread.clone();
                     drop(state);
-                    return engine.ensure_profile_workflow(thread, &hash).await;
+                    return if request.admission_guard.is_some() {
+                        Ok(thread)
+                    } else {
+                        engine.ensure_profile_workflow(thread, &hash).await
+                    };
                 }
             }
             let mut data = DesktopState {
@@ -587,6 +591,21 @@ impl Engine {
                 )?,
                 ..Default::default()
             };
+            if let Some(guard) = &request.admission_guard {
+                if !guard.ordinary_session {
+                    return Err(invalid("ordinarySession must be true"));
+                }
+                if data
+                    .configuration
+                    .profile
+                    .as_ref()
+                    .is_some_and(|profile| profile.workflow.is_some())
+                {
+                    return Err(invalid(
+                        "UNSUPPORTED_PROFILE: ordinary sessions cannot use a Workflow profile",
+                    ));
+                }
+            }
             receipt(
                 &data,
                 &identity,

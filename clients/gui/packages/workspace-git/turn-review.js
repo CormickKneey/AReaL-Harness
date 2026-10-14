@@ -39,8 +39,9 @@ function turnChanges(turn, { itemId } = {}) {
     const resultParts = (item.contentItems ?? []).filter(part => ['inputText', 'text'].includes(part.type));
     let result;
     try { if (resultParts.length === 1) result = JSON.parse(resultParts[0].text); } catch {}
-    const args = item.execution.effectiveArguments;
-    if (!args || typeof result?.path !== 'string' || !result.path.startsWith('workspace://repo/')
+    // 只有未记录有效参数覆盖时才使用 Core 已解析的参数；显式无效覆盖不能回退。
+    const args = Object.hasOwn(item.execution, 'effectiveArguments') ? item.execution.effectiveArguments : item.arguments;
+    if (!args || typeof args !== 'object' || Array.isArray(args) || typeof result?.path !== 'string' || !result.path.startsWith('workspace://repo/')
       || args.path !== result.path || !/^[a-f0-9]{64}$/.test(result.sha256)) throw new Error('本轮文件版本记录不完整，请使用工作区审查');
     const path = result.path.slice('workspace://repo/'.length);
     if (!path || /[\r\n\t]/.test(path) || path.split('/').some(part => ['..', '.', ''].includes(part))) throw new Error('本轮文件路径无法比较');

@@ -1,5 +1,15 @@
 use super::*;
 
+struct DispatchLease {
+    ids: Arc<std::sync::Mutex<HashSet<String>>>,
+    id: String,
+}
+impl Drop for DispatchLease {
+    fn drop(&mut self) {
+        self.ids.lock().unwrap().remove(&self.id);
+    }
+}
+
 impl Engine {
     /// 嵌入式宿主应在完成模型与工具装配后启动；重复调用不产生多个调度器。
     pub fn start_task_scheduler(self: &Arc<Self>) {
@@ -34,25 +44,53 @@ impl Engine {
                     if cancel.is_cancelled() {
                         break;
                     }
-                    if let Err(error) = engine.advance_task(&id).await {
-                        // 用户控制或其他结算已推进 CAS；下一次唤醒重读，不能自行暂停新状态。
-                        if matches!(error, Error::Conflict) {
+                    {
+                        let mut ids = engine.task_modes.dispatching.lock().unwrap();
+                        if ids.len() >= 32 {
+                            break;
+                        }
+                        if !ids.insert(id.clone()) {
                             continue;
                         }
-                        tracing::error!(task_id=%id,%error,"task dispatch failed");
-                        if let Err(error) = engine
-                            .edit_task(&id, |task| {
-                                task.paused = true;
-                                if let Some(run) = task.runs.last_mut() {
-                                    run.status = RunStatus::Blocked;
-                                    run.reason = Some(error.to_string());
-                                }
-                            })
-                            .await
-                        {
-                            tracing::error!(%error,"task failure persistence failed");
-                        }
                     }
+                    let lease = DispatchLease {
+                        ids: engine.task_modes.dispatching.clone(),
+                        id: id.clone(),
+                    };
+                    let worker = engine.clone();
+                    engine.tasks.spawn(async move {
+                        let _lease = lease;
+                        let engine = worker;
+                        if let Err(error) = engine.advance_task(&id).await {
+                            // 用户控制或其他结算已推进 CAS；下一次唤醒重读，不能自行暂停新状态。
+                            if matches!(error, Error::Conflict) {
+                                return;
+                            }
+                            tracing::error!(task_id=%id,%error,"task dispatch failed");
+                            if let Err(error) = engine
+                                .edit_task(&id, |task| {
+                                    if task.cancelled
+                                        || task.runs.last().is_some_and(|r| {
+                                            r.status.terminal()
+                                                || r.reason.as_deref() == Some("stopRequested")
+                                        })
+                                    {
+                                        return;
+                                    }
+                                    if task.mode != TaskMode::Scheduled {
+                                        task.paused = true;
+                                    }
+                                    if let Some(run) = task.runs.last_mut() {
+                                        run.status = RunStatus::Blocked;
+                                        run.reason = Some(error.to_string());
+                                    }
+                                })
+                                .await
+                            {
+                                tracing::error!(%error,"task failure persistence failed");
+                            }
+                        }
+                    });
                 }
             }
         });
@@ -75,7 +113,7 @@ impl Engine {
         self.save_tasks(&mut state, candidate, id).await
     }
 
-    async fn control_goal_from_task(
+    pub(super) async fn control_goal_from_task(
         self: &Arc<Self>,
         task: &Task,
         run: &TaskRun,
@@ -98,7 +136,7 @@ impl Engine {
         Ok(())
     }
 
-    async fn advance_task(self: &Arc<Self>, task_id: &str) -> Result<()> {
+    pub(super) async fn advance_task(self: &Arc<Self>, task_id: &str) -> Result<()> {
         self.edit_task(task_id, |task| {
             let current_run = task.runs.last().map(|r| r.id.as_str());
             let mut expired = false;
@@ -123,6 +161,15 @@ impl Engine {
             }
         })
         .await?;
+        let current = self.task_read(task_id).await?;
+        let legacy_schedule = current.mode == TaskMode::Scheduled
+            && current.runs.last().is_some_and(|r| {
+                r.goal_id.is_some() && r.started_at.is_none() && !r.status.terminal()
+            });
+        if current.mode == TaskMode::Scheduled && !legacy_schedule {
+            return self.advance_desktop_schedule(task_id).await;
+        }
+
         let task = self.task_read(task_id).await?;
         self.settle_task_workers(&task).await?;
         let task = self.task_read(task_id).await?;
@@ -132,13 +179,17 @@ impl Engine {
                 if view["goal"]["id"].as_str() == Some(goal_id) {
                     let goal: Goal =
                         serde_json::from_value(view["goal"].clone()).map_err(invalid)?;
-                    if (task.paused || task.cancelled) && goal.status == GoalStatus::Active {
+                    if ((task.paused && task.mode != TaskMode::Scheduled)
+                        || task.cancelled
+                        || run.reason.as_deref() == Some("stopRequested"))
+                        && goal.status == GoalStatus::Active
+                    {
                         self.control_goal_from_task(&task, run, "pause", &view)
                             .await?;
                         return Ok(());
                     }
                     if run.reason.as_deref() == Some("resumeRequested")
-                        && !task.paused
+                        && (task.mode == TaskMode::Scheduled || !task.paused)
                         && !task.cancelled
                         && self.accepting_work()
                         && goal.active_turn_id.is_none()
@@ -149,7 +200,13 @@ impl Engine {
                         self.control_goal_from_task(&task, run, "resume", &view)
                             .await?;
                         self.edit_task(task_id, |task| {
-                            task.runs.last_mut().unwrap().reason = None;
+                            let current = task.runs.last_mut().unwrap();
+                            if current.id == run.id
+                                && current.reason.as_deref() == Some("resumeRequested")
+                            {
+                                current.reason = None;
+                                current.status = RunStatus::Running;
+                            }
                         })
                         .await?;
                         return Ok(());
@@ -160,7 +217,11 @@ impl Engine {
                         if task.revision != expected_revision {
                             return;
                         }
-                        let cancelled = task.cancelled;
+                        let cancelled = task.cancelled
+                            || task
+                                .runs
+                                .last()
+                                .is_some_and(|r| r.reason.as_deref() == Some("stopRequested"));
                         let run = task.runs.last_mut().unwrap();
                         // 计划控制只影响未结束的执行，不能改写已结算 Run 的历史。
                         if run.status.terminal() {
@@ -262,6 +323,24 @@ impl Engine {
                 })
                 .await?;
             }
+        }
+        if legacy_schedule {
+            self.edit_task(task_id, |task| {
+                if task.paused || task.cancelled {
+                    return;
+                }
+                let Some(at) = task.next_run_at.filter(|at| *at <= now()) else {
+                    return;
+                };
+                let interval = task.schedule.as_ref().and_then(|s| s.interval_seconds);
+                let count = interval.map_or(1, |n| ((now() - at) / n as i64 + 1) as u64);
+                task.next_run_at =
+                    interval.map(|n| at.saturating_add((count as i64).saturating_mul(n as i64)));
+                task.skipped_runs = task.skipped_runs.saturating_add(count);
+                task.last_skipped_at = Some(at);
+            })
+            .await?;
+            return Ok(());
         }
         let task = self.task_read(task_id).await?;
         if task.cancelled || task.paused || !self.accepting_work() {
@@ -528,6 +607,7 @@ mod control_race_tests {
                     task_id: task.id.clone(),
                     request_id: "resume-task".into(),
                     expected_revision: task.revision,
+                    expected_run_id: None,
                 },
             )
             .await
@@ -545,6 +625,7 @@ mod control_race_tests {
                     task_id: task.id.clone(),
                     request_id: "pause-task".into(),
                     expected_revision: stale.revision,
+                    expected_run_id: None,
                 },
             )
             .await

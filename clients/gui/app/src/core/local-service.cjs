@@ -12,7 +12,14 @@ async function request(backend, args, environment = backend.hooks.environment())
       env: environment, timeout: args[0] === 'status' ? 10_000 : 120_000, maxBuffer: 2 * 1024 * 1024, windowsHide: true,
     }));
   } catch (error) {
-    throw new Error(`Core 服务请求失败：${backend.providers.redact(error.stderr || error.message).slice(0, 2048)}`);
+    let failure;
+    try { failure = JSON.parse(error.stderr).error; } catch { /* CLI/launcher diagnostics can be plain text. */ }
+    const message = typeof failure?.message === 'string' ? failure.message : error.stderr || error.message;
+    if (message.includes('service is busy; wait for work to settle or stop with --cancel')) {
+      throw Object.assign(new Error('Core 仍有活动目标、排队消息或后台任务，请等待完成或先暂停相关任务后重试。'), { code: 'CORE_BUSY' });
+    }
+    throw Object.assign(new Error(`Core 服务请求失败：${backend.providers.redact(message).slice(0, 2048)}`),
+      { code: typeof failure?.code === 'string' ? failure.code : error.code });
   }
   try { return JSON.parse(stdout); }
   catch { throw new Error('Core 返回了无效的本地服务描述'); }

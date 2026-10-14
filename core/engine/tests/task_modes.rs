@@ -15,6 +15,34 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+struct DesktopHost;
+#[async_trait]
+impl areal_engine::tools::DynamicToolHost for DesktopHost {
+    fn id(&self) -> &str {
+        "desktop-fixture"
+    }
+    fn identity(&self) -> &str {
+        "owner"
+    }
+    fn is_closed(&self) -> bool {
+        false
+    }
+    async fn prepare_schedule(
+        &self,
+        _: Value,
+        _: tokio_util::sync::CancellationToken,
+    ) -> anyhow::Result<Value> {
+        Ok(json!({}))
+    }
+    async fn call(
+        &self,
+        _: Value,
+        _: tokio_util::sync::CancellationToken,
+    ) -> anyhow::Result<areal_protocol::DynamicToolResponse> {
+        anyhow::bail!("unexpected dynamic call")
+    }
+}
+
 struct Fixture {
     calls: AtomicUsize,
     ask: bool,
@@ -258,6 +286,7 @@ async fn scheduled_task_is_durable_and_runs_at_its_timestamp() {
     let thread = e.create(e.default_cwd()).await.unwrap();
     let mut request = create(TaskMode::Scheduled, Some(thread.id));
     request.schedule = Some(Schedule {
+        timezone: None,
         at: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -274,8 +303,11 @@ async fn scheduled_task_is_durable_and_runs_at_its_timestamp() {
         result
     );
     assert!(result["runs"].as_array().unwrap().is_empty());
-    assert!(e.drain("ifIdle".into(), 0).await.is_err());
     let id = result["id"].as_str().unwrap().to_owned();
+    let drained = e.drain("ifIdle".into(), 0).await.unwrap();
+    assert_eq!(drained["restartSafe"], true);
+    assert_eq!(drained["activeTasks"], 0);
+    assert!(!e.task_read(&id).await.unwrap().paused);
     e.shutdown().await;
     drop(e);
     let model = Arc::new(Fixture {
@@ -284,11 +316,14 @@ async fn scheduled_task_is_durable_and_runs_at_its_timestamp() {
         headless: false,
     });
     let reopened = Engine::open(dir.path(), model, Limits::default()).unwrap();
-    reopened.start_task_scheduler();
+    reopened
+        .register_schedule_host(Arc::new(DesktopHost))
+        .await
+        .unwrap();
     let task = until(&reopened, &id, RunStatus::Completed).await;
     assert_eq!(task.runs.len(), 1);
     assert!(task.next_run_at.is_none());
-    assert_eq!(task.interaction_mode, InteractionMode::Headless);
+    assert_eq!(task.interaction_mode, InteractionMode::Interactive);
     reopened.shutdown().await;
 }
 
@@ -428,6 +463,7 @@ async fn cancelling_task_cleans_detached_workers_and_prevents_goal_resume() {
     let mut revision = waiting.revision;
     for attempt in 0..20 {
         let req = TaskControl {
+            expected_run_id: None,
             request_id: "cancel".into(),
             task_id: id.clone(),
             expected_revision: revision,
@@ -598,6 +634,7 @@ async fn channel_reply_survives_restart_and_requires_explicit_task_resume() {
         "owner".into(),
         "resume".into(),
         TaskControl {
+            expected_run_id: None,
             request_id: "resume".into(),
             task_id: id.clone(),
             expected_revision: task.revision,
@@ -736,9 +773,13 @@ async fn check_expired_question(another_question: bool) {
 #[tokio::test]
 async fn recurring_schedule_keeps_channel_identity_and_uses_distinct_runs_and_goals() {
     let (_dir, e, _) = open(false, false);
+    e.register_schedule_host(Arc::new(DesktopHost))
+        .await
+        .unwrap();
     let thread = e.create(e.default_cwd()).await.unwrap();
     let mut request = create(TaskMode::Scheduled, Some(thread.id.clone()));
     request.schedule = Some(Schedule {
+        timezone: None,
         at: SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -766,10 +807,11 @@ async fn recurring_schedule_keeps_channel_identity_and_uses_distinct_runs_and_go
     .unwrap();
     assert_ne!(task.runs[0].id, task.runs[1].id);
     assert_ne!(task.runs[0].goal_id, task.runs[1].goal_id);
+    assert_ne!(task.runs[0].thread_id, task.runs[1].thread_id);
     assert!(
         task.runs
             .iter()
-            .all(|r| r.thread_id.as_deref() == Some(&thread.id))
+            .all(|r| r.thread_id.as_deref() != Some(&thread.id))
     );
     assert_eq!(
         task.messages.iter().filter(|m| m.kind == "report").count(),
@@ -783,6 +825,7 @@ async fn recurring_schedule_keeps_channel_identity_and_uses_distinct_runs_and_go
         loop {
             let task = e.task_read(id).await.unwrap();
             let request = TaskControl {
+                expected_run_id: None,
                 request_id: "cancel-recurrence".into(),
                 task_id: task.id.clone(),
                 expected_revision: task.revision,
