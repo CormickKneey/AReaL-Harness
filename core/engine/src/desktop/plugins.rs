@@ -22,8 +22,14 @@ struct Snapshot {
     skills: Vec<Skill>,
     enabled: Vec<areal_plugins::InstalledSkill>,
     enabled_plugin_ids: BTreeSet<String>,
+    hooks: Vec<crate::plugin_hooks::BoundHook>,
+    hook_enabled: HashSet<String>,
+    hook_sources: Vec<areal_plugins::hook_sources::HookSource>,
 }
-fn snapshot(store: &areal_plugins::Store) -> anyhow::Result<Snapshot> {
+fn snapshot(
+    store: &areal_plugins::Store,
+    config: Option<(PathBuf, Option<PathBuf>)>,
+) -> anyhow::Result<Snapshot> {
     // Current discovery and retained-reference revocation have different lifetimes.
     // An enabled replacement may remove every skill; its old admitted refs still live.
     let enabled = store.enabled_skills()?;
@@ -41,7 +47,38 @@ fn snapshot(store: &areal_plugins::Store) -> anyhow::Result<Snapshot> {
         .into_iter()
         .map(Skill::load_plugin)
         .collect::<anyhow::Result<Vec<_>>>()?;
+    let enabled_components = store.enabled_components()?;
+    let mut hook_enabled: HashSet<_> = enabled_components.iter().map(|c| c.id.clone()).collect();
+    let components = store.installed_components()?;
+    let mut hooks: Vec<_> = components
+        .iter()
+        .map(crate::plugin_hooks::bind)
+        .collect::<anyhow::Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .collect();
+    let hook_sources = if let Some((home, path)) = config {
+        areal_plugins::hook_sources::configuration_sources(
+            &home,
+            store.workspace(),
+            path.as_deref(),
+        )?
+    } else {
+        vec![]
+    };
+    if hook_sources.first().is_some_and(|s| !s.enabled) {
+        hook_enabled.clear();
+    }
+    for source in &hook_sources {
+        if source.enabled {
+            hook_enabled.insert(source.id.clone());
+        }
+        hooks.extend(crate::plugin_hooks::bind_source(source));
+    }
     Ok(Snapshot {
+        hooks,
+        hook_enabled,
+        hook_sources,
         skills,
         enabled,
         enabled_plugin_ids,
@@ -52,11 +89,17 @@ impl Engine {
     /// Trusted synchronous startup only. Runtime filesystem work uses spawn_blocking.
     pub fn install_plugin_store(&self, store: Arc<areal_plugins::Store>) -> anyhow::Result<()> {
         self.initialize_plugin_wire(&store)?;
-        self.register_plugin_snapshot(snapshot(&store)?);
+        self.register_plugin_snapshot(snapshot(
+            &store,
+            self.plugin_hooks.source_config.get().cloned(),
+        )?);
         self.desktop.plugins.write().unwrap().store = Some(store);
         Ok(())
     }
     fn register_plugin_snapshot(&self, snapshot: Snapshot) {
+        *self.plugin_hooks.sources.write().unwrap() = snapshot.hook_sources;
+        self.plugin_hooks
+            .publish(snapshot.hooks, snapshot.hook_enabled);
         let mut catalog = self.desktop.catalog.write().unwrap();
         for skill in snapshot.skills {
             catalog
@@ -68,7 +111,7 @@ impl Engine {
         manager.enabled = snapshot.enabled;
         manager.enabled_plugin_ids = snapshot.enabled_plugin_ids;
     }
-    pub(super) fn plugin_store(&self) -> Result<Arc<areal_plugins::Store>> {
+    pub(crate) fn plugin_store(&self) -> Result<Arc<areal_plugins::Store>> {
         self.desktop
             .plugins
             .read()
@@ -82,7 +125,8 @@ impl Engine {
             return Ok(());
         };
         let _refresh = self.desktop.plugin_refresh.lock().await;
-        let snapshot = tokio::task::spawn_blocking(move || snapshot(&store))
+        let config = self.plugin_hooks.source_config.get().cloned();
+        let snapshot = tokio::task::spawn_blocking(move || snapshot(&store, config))
             .await
             .map_err(invalid)?
             .map_err(store_error)?;
@@ -129,9 +173,10 @@ impl Engine {
         let store = self.plugin_store()?;
         self.mutate(move |engine| async move {
             let _refresh = engine.desktop.plugin_refresh.lock().await;
+            let config = engine.plugin_hooks.source_config.get().cloned();
             let (result, snapshot) = tokio::task::spawn_blocking(move || {
                 let result = change(&store)?;
-                Ok::<_, anyhow::Error>((result, snapshot(&store)?))
+                Ok::<_, anyhow::Error>((result, snapshot(&store, config)?))
             })
             .await
             .map_err(invalid)?

@@ -182,3 +182,17 @@ Side 首问与追问共用活跃额度：默认每来源 2、每部署 8；超�
 原生 Main 使用 `areal/mcp/form/resource/prepare {threadId,requestId,fieldName}`、`stage {selectionToken,requestId,paths}` 和 `release {threadId,requestId,fieldName,uri}`。prepare/stage 要求带认证的 desktop-owner，通用 Renderer 命令不能调用；stage 按 UUID/参数进入已有管理账本，UNKNOWN 只查原收据。路径和 selection token 留在 Main/Core，Renderer 只见不透明 URI。现代 discovery 协商 MRTR，逐轮保留参数并将 requestState 留在私有层。
 
 固定 Codex0.162.1 的 `plugin/list/installed/read/install/uninstall/reconcile/search` 与 `marketplace/add/remove/upgrade` 共享包所有者。只有 `plugin/search` 需要 initialize 的 `experimentalApi:true`。没有配置私有托管服务时，share/remote catalog 返回 `-32004` 与 capability；不返回伪空成功。`marketplace/add {source,refName?,sparsePaths?}` 已支持顶层 sparse cone 路径和更新保留；完整 hooks 与其余边界见[验收矩阵](../development/codex-plugins-p1-p3-acceptance.md)。
+
+## 插件 Hooks
+
+以下管理方法要求无限制 manage 身份；使用已有部署提交账本。
+
+| 方法 | 参数 | 结果 |
+|---|---|---|
+| `areal/plugin/hooks/list` | `{}` | `data` 中逐来源列出 installedDigest、definitionDigest、definitions、诊断与信任；配置来源还有 sourceKind/origin/enabled |
+| `areal/plugin/hooks/configure` | `requestId,id,expectedDigest,definitionDigest,enabled,trusted` | 核对当前安装/来源和整份计划摘要后保存独立定义信任；失配拒绝；禁用/撤信任取消已受理调用 |
+| `areal/hook/acknowledge` | `requestId,threadId,invocationId,inspection` | 空闲目标自有 UNKNOWN 的有界检查说明；保留 UNKNOWN，不重放 |
+
+`desktop.hookRuns` 保存每次 invocation 的包/定义摘要、event、turnId/toolUseId、Runtime operationId、outcome、asynchronous、delivered、output 和 inspection。`areal/hook/completed` 是刷新提示，权威恢复仍读 Thread 快照。未知结果未检查时新轮次被拒绝；关闭中的 Session 也拒绝新执行。
+
+`turn/steer` 新增可选 `requestId`；提供时与 `areal/queue/steer` 一样把 hook 与提交结果包含在持久去重边界。相同身份/方法/key/参数等待原执行或返回已存结果；不同参数拒绝。`areal/request/read {requestId}` 查询部署收据，带 threadId 的查询也附带该身份同 key 的部署记录。旧客户端省略 key 可继续调用，但不能保证丢失响应后的单次重试。并行管理操作按 key 排队，日志总预算 8 MiB，为每个 accepted 操作预留最多 256 KiB 响应及记录余量；无法预留时在执行前拒绝，不截断旧收据。schema 的相应方法与投影由 `make desktop-schemas` 生成。

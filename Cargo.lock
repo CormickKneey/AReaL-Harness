@@ -283,6 +283,7 @@ dependencies = [
  "fs2",
  "libc",
  "node-semver",
+ "regex",
  "reqwest 0.12.28",
  "rustix",
  "serde",
@@ -291,6 +292,7 @@ dependencies = [
  "sha2",
  "tar",
  "tempfile",
+ "toml_edit",
 ]
 
 [[package]]

@@ -1,12 +1,21 @@
 //! Conflict-aware write leases. Only admission bookkeeping is globally locked;
-//! disjoint paths execute concurrently. Earlier conflicting waiters retain FIFO
-//! priority, so a stream of file edits cannot starve an enclosing shell writer.
+//! disjoint paths execute concurrently. Ordinary requests retain conflicting FIFO;
+//! trusted hook groups reenter only covered paths within a fixed admission window.
+//! After sealing, the next reservation queues behind earlier foreign waiters.
+use std::time::Duration;
 use std::{
     collections::BTreeMap,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
-use tokio::sync::Notify;
+use tokio::{sync::Notify, time::Instant};
+
+#[derive(Clone)]
+pub(super) struct Participant {
+    pub task: String,
+    pub hook: bool,
+    pub window: Duration,
+}
 
 #[derive(Default)]
 pub(super) struct Writes {
@@ -19,11 +28,66 @@ pub(super) struct Writes {
 struct State {
     next: u64,
     requests: BTreeMap<u64, Request>,
+    groups: BTreeMap<u64, Group>,
+    retired: bool,
 }
 
 struct Request {
     paths: Vec<PathBuf>,
     running: bool,
+    participant: Option<Participant>,
+    group: Option<u64>,
+}
+struct Group {
+    task: String,
+    paths: Vec<PathBuf>,
+    deadline: Option<Instant>,
+    window: Duration,
+}
+impl State {
+    fn sequence(&mut self) -> u64 {
+        let id = self.next;
+        self.next = self
+            .next
+            .checked_add(1)
+            .expect("write lease sequence exhausted");
+        id
+    }
+    fn group(&mut self, paths: &[PathBuf], participant: Option<&Participant>) -> Option<u64> {
+        let participant = participant?;
+        let now = Instant::now();
+        if let Some((&id, _)) = self
+            .groups
+            .iter()
+            .filter(|(_, g)| {
+                g.task == participant.task
+                    && g.deadline.is_none_or(|d| now < d)
+                    && paths
+                        .iter()
+                        .all(|p| g.paths.iter().any(|root| p.starts_with(root)))
+            })
+            .max_by_key(|(id, g)| (g.deadline.is_some(), **id))
+        {
+            return Some(id);
+        }
+        // Expansion creates an atomic new reservation; the old covered paths
+        // remain reentrant until their own original admission deadline.
+        let id = self.sequence();
+        self.groups.insert(
+            id,
+            Group {
+                task: participant.task.clone(),
+                paths: paths.to_vec(),
+                deadline: None,
+                window: participant.window,
+            },
+        );
+        Some(id)
+    }
+    fn collect_groups(&mut self) {
+        self.groups
+            .retain(|id, _| self.requests.values().any(|r| r.group == Some(*id)));
+    }
 }
 
 pub(super) struct Lease {
@@ -43,7 +107,19 @@ impl Writes {
             ..Self::default()
         }
     }
+    pub fn retire(&self) {
+        self.state.lock().unwrap().retired = true;
+        self.changed.notify_waiters();
+    }
+    #[cfg(test)]
     pub async fn acquire(self: &Arc<Self>, paths: Vec<PathBuf>) -> Lease {
+        self.acquire_participant(paths, None).await
+    }
+    pub async fn acquire_participant(
+        self: &Arc<Self>,
+        paths: Vec<PathBuf>,
+        participant: Option<Participant>,
+    ) -> Lease {
         // All authorized paths are under the canonical, bound workspace. Its
         // spelling (including non-ASCII parent directories) is not a conflict key.
         let paths: Vec<_> = paths
@@ -57,7 +133,7 @@ impl Writes {
         // writers. Non-ASCII components conservatively lock their ancestor;
         // filesystem-specific Unicode folding is not approximated as exact.
         #[cfg(any(target_os = "macos", target_os = "windows"))]
-        let paths = paths
+        let paths: Vec<PathBuf> = paths
             .into_iter()
             .map(|path| {
                 let mut key = PathBuf::new();
@@ -73,16 +149,15 @@ impl Writes {
             .collect();
         let id = {
             let mut state = self.state.lock().unwrap();
-            let id = state.next;
-            state.next = state
-                .next
-                .checked_add(1)
-                .expect("write lease sequence exhausted");
+            let group = state.group(&paths, participant.as_ref());
+            let id = state.sequence();
             state.requests.insert(
                 id,
                 Request {
                     paths,
                     running: false,
+                    participant,
+                    group,
                 },
             );
             id
@@ -97,27 +172,77 @@ impl Writes {
             let notified = self.changed.notified();
             tokio::pin!(notified);
             notified.as_mut().enable();
-            {
+            let wake = {
                 let mut state = self.state.lock().unwrap();
-                let paths = &state.requests[&id].paths;
-                let blocked = state.requests.iter().any(|(&other, request)| {
-                    other != id
-                        && (request.running || other < id)
-                        && conflicts(paths, &request.paths)
-                });
+                let own = &state.requests[&id];
+                if own.group.is_some_and(|g| {
+                    let g = &state.groups[&g];
+                    g.deadline.is_some_and(|d| Instant::now() >= d)
+                }) {
+                    let paths = own.paths.clone();
+                    let participant = own.participant.clone();
+                    let group = state.group(&paths, participant.as_ref());
+                    state.requests.get_mut(&id).unwrap().group = group;
+                    state.collect_groups();
+                }
+                let own = &state.requests[&id];
+                let priority = own.group.unwrap_or(id);
+                let paths = own.group.map_or(&own.paths, |g| &state.groups[&g].paths);
+                let blocked = state.retired
+                    || state.requests.iter().any(|(&other, request)| {
+                        if other == id {
+                            return false;
+                        }
+                        if own.group.is_some() && own.group == request.group {
+                            return !own.participant.as_ref().is_some_and(|p| p.hook)
+                                && !request.participant.as_ref().is_some_and(|p| p.hook)
+                                && (request.running || other < id)
+                                && conflicts(&own.paths, &request.paths);
+                        }
+                        let other_paths = request
+                            .group
+                            .map_or(&request.paths, |g| &state.groups[&g].paths);
+                        let group_running = request.group.is_some_and(|g| {
+                            state
+                                .requests
+                                .values()
+                                .any(|r| r.group == Some(g) && r.running)
+                        });
+                        (request.running
+                            || group_running
+                            || request.group.unwrap_or(other) < priority)
+                            && conflicts(paths, other_paths)
+                    });
                 if !blocked {
+                    let group = own.group;
                     state.requests.get_mut(&id).unwrap().running = true;
+                    if let Some(g) = group {
+                        let group = state.groups.get_mut(&g).unwrap();
+                        if group.deadline.is_none() {
+                            group.deadline = Some(Instant::now() + group.window);
+                        }
+                    }
                     return lease;
                 }
+                own.group.and_then(|g| state.groups[&g].deadline)
+            };
+            if let Some(deadline) = wake {
+                tokio::select! { _=notified=>{}, _=tokio::time::sleep_until(deadline)=>{} }
+            } else {
+                notified.await;
             }
-            notified.await;
         }
     }
 }
 
 impl Drop for Lease {
     fn drop(&mut self) {
-        self.writes.state.lock().unwrap().requests.remove(&self.id);
+        let mut state = self.writes.state.lock().unwrap();
+        if !state.retired {
+            state.requests.remove(&self.id);
+            state.collect_groups();
+        }
+        drop(state);
         self.writes.changed.notify_waiters();
     }
 }

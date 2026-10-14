@@ -425,6 +425,10 @@ pub struct DesktopState {
     pub execution_policy: crate::delegation::ChildExecutionPolicy,
     #[serde(default)]
     pub permission_grants: Vec<PermissionGrant>,
+    /// Core-owned hook invocation receipts. Running entries recover as UNKNOWN,
+    /// never as instructions to execute the hook again.
+    #[serde(default)]
+    pub hook_runs: Vec<HookRun>,
     #[serde(default)]
     pub archived: bool,
     pub configuration: EffectiveConfig,
@@ -440,6 +444,24 @@ pub struct DesktopState {
     /// 自动绑定的 Profile Workflow；线程恢复时不会再次启动。
     #[serde(default)]
     pub workflow_run: Option<WorkflowRun>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HookRun {
+    pub id: String,
+    pub plugin_id: String,
+    pub package_digest: String,
+    pub definition_digest: String,
+    pub event: String,
+    pub turn_id: Option<String>,
+    pub tool_use_id: Option<String>,
+    pub operation_id: Option<String>,
+    pub outcome: String,
+    pub asynchronous: bool,
+    pub delivered: bool,
+    pub output: serde_json::Value,
+    pub inspection: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]

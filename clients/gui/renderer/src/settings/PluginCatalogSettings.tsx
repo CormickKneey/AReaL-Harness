@@ -1,3 +1,4 @@
+import { PluginHookSettings } from "./PluginHookSettings.js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Package } from "lucide-react";
 import {PluginAuthConfiguration} from "./PluginAuthConfiguration.js";
@@ -62,7 +63,8 @@ type PluginMutation =
   | "pluginConnection"
   | "pluginAuth"
   | "pluginAuthConfigure"
-  | "connectorConfigure";
+  | "connectorConfigure"
+  | "pluginHooksConfigure";
 type PluginSubmission = { mutation: PluginMutation; requestId: string };
 type PluginReceipt =
   | { confirmed: false; state: string }
@@ -88,6 +90,7 @@ const pluginMethods: Record<string, PluginMutation> = {
   "areal/marketplace/remove": "marketplaceRemove",
   "areal/marketplace/update": "marketplaceUpdate",
   "areal/plugin/connection": "pluginConnection",
+  "areal/plugin/hooks/configure": "pluginHooksConfigure",
   "areal/plugin/auth": "pluginAuth",
   "areal/plugin/auth/configure": "pluginAuthConfigure",
   "areal/plugin/connector/configure": "connectorConfigure",
@@ -159,6 +162,7 @@ export function PluginCatalogSettings({
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
+  const [hookSources,setHookSources]=useState<{id:string;digest:string;origin:string;enabled:boolean}[]>([]);
   const active = useRef(false);
   const mounted = useRef(true);
   const readGeneration = useRef(0);
@@ -194,6 +198,12 @@ export function PluginCatalogSettings({
       const result: PluginList = await api("plugins");
       if (mounted.current && generation === readGeneration.current)
         setCatalog(result);
+      const hooks=await api("pluginHooks");
+      if(mounted.current && generation===readGeneration.current){
+        setHookSources(Array.isArray(hooks.data)?hooks.data.flatMap((row:Data)=>
+          typeof row.sourceKind==='string' && typeof row.pluginId==='string' && typeof row.installedDigest==='string' && typeof row.origin==='string' && typeof row.enabled==='boolean'
+          ?[{id:row.pluginId,digest:row.installedDigest,origin:row.origin,enabled:row.enabled}]:[]):[]);
+      }
     } catch (cause) {
       if (mounted.current && generation === readGeneration.current) {
         setReadError(failure(cause).message);
@@ -548,6 +558,13 @@ export function PluginCatalogSettings({
       )}
       <Feedback error={failureText(error)} message={message} />
       <Feedback error={readError} />
+      {!selected && hookSources.map(source=><details key={source.id} className="settings-section">
+        <summary>{source.id==='__hooks_user__'?'用户钩子':'项目钩子'} · {source.enabled?'全局开关已启用':'全局开关已停用'}</summary>
+        <p className="text-ui-sm break-all">{source.origin}</p>
+        <PluginHookSettings id={source.id} installedDigest={source.digest} disabled={disabled}
+          api={api} refreshKey={catalog?.revision}
+          onConfigure={params=>mutate("pluginHooksConfigure",params)} />
+      </details>)}
       {!selected && !adding && recoveryButton}
       {!selected && setupThreadId && onOpenThread && (
         <Button onClick={() => onOpenThread(projectId, setupThreadId)}>
@@ -919,6 +936,12 @@ export function PluginCatalogSettings({
                 >
                   安装到{scope === "user" ? "用户" : "当前项目"}
                 </Button>
+              )}
+              {detail.installed && detail.installedDigest && (
+                <PluginHookSettings id={detail.id} installedDigest={detail.installedDigest}
+                  disabled={disabled || detailLoading} api={api}
+                  onConfigure={(parameters) => mutate("pluginHooksConfigure", parameters)}
+                  refreshKey={catalog?.revision} />
               )}
               {detail.installed && (
                 <section aria-label="插件连接与认证">

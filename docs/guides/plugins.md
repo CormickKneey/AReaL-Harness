@@ -39,7 +39,7 @@ areal plugin --workspace /absolute/workspace disconnect review-helper@team-tools
 areal plugin --workspace /absolute/workspace disable review-helper@team-tools --scope project
 ```
 
-用户选择作为默认值，项目的明确选择覆盖用户默认；它们不代表更高权限的强制要求。显式 Profile 不会自动获得全部插件。MCP 必须明确核对已安装摘要后连接；Connector 必须映射原始 ID 并配置账户。未支持的 hooks、认证机制、旧命令或依赖显示诊断。“已安装”不代表服务器已经连接。
+用户选择作为默认值，项目的明确选择覆盖用户默认；它们不代表更高权限的强制要求。显式 Profile 不会自动获得全部插件。MCP 必须明确核对已安装摘要后连接；Connector 必须映射原始 ID 并配置账户。未支持的 hook handler、认证机制、旧命令或依赖显示诊断。“已安装”不代表服务器已经连接。
 
 ## Skills 与设置流程
 
@@ -92,4 +92,22 @@ GitHub Connector 保留 `.app.json` 的原始 ID。在详情中填写这个 ID �
 
 ## 当前边界
 
-P2 hooks、OpenAI 私有 catalog/sharing、跨平台、真实供应商 OAuth 和签名/公证安装包仍未接受。部分子进程验收在本机收到原因未确认的 SIGKILL；不能把源码完成或局部通过当作完整兼容验收。未配置的托管服务返回明确 capability error。完整清单与可重复证据见[验收矩阵](../development/codex-plugins-p1-p3-acceptance.md)。
+P2 完整 hooks 验收、OpenAI 私有 catalog/sharing、跨平台、真实供应商 OAuth 和签名/公证安装包仍未接受。部分子进程验收在本机收到原因未确认的 SIGKILL；不能把源码完成或局部通过当作完整兼容验收。未配置的托管服务返回明确 capability error。完整清单与可重复证据见[验收矩阵](../development/codex-plugins-p1-p3-acceptance.md)。
+
+## Hooks（P2 候选实现）
+
+包内 hooks 与用户、项目配置使用同一个 Core 执行所有者。用户来源是选定 home 的 `hooks.json` 与选定 TOML 的 `[hooks]`；项目来源是工作区 `.codex/hooks.json` 与 `.codex/config.toml` 的 `[hooks]`。每层先 JSON 后 TOML 累加，包定义沿用原格式及覆盖规则。项目文件只提供 hooks，不覆盖模型、凭据或用户全局功能开关；不导入 Codex `hooks.state` 的信任声明。
+
+在“设置 → 插件”审阅当前包摘要、定义摘要、事件、matcher、命令/MCP 输入与完整定义，勾选确认后才允许执行。用户/项目配置来源也须分别审阅。安装、启用包或连接 MCP 都不授予 hook 信任；更新定义须重新核对。CLI 使用同一 Core 状态：
+
+```sh
+areal plugin --workspace /absolute/workspace hooks-list
+areal plugin --workspace /absolute/workspace hooks-trust review-helper@team-tools --expected-digest REVIEWED_INSTALLED_DIGEST --definition-digest REVIEWED_DEFINITION_DIGEST
+areal plugin --workspace /absolute/workspace hooks-revoke review-helper@team-tools
+```
+
+已布点的事件是 SessionStart/SessionEnd、UserPromptSubmit、PreToolUse/PermissionRequest/PostToolUse、PreCompact/PostCompact、SubagentStart/SubagentStop、Stop/Interrupt。command 使用 Runtime 的现有 Scope；MCP handler 只调用已经连接且仍获授权的包内工具，不递归进入模型工具审批。MCP 的活跃时间预算在真实人工表单等待期间暂停，取消和撤权继续生效。`deny`、输入改写和已完成工具的 Post 反馈独立处理；Stop 可在同一 Turn 内继续，自动续轮不制造用户提交事件。包命令获得包根/数据环境；配置命令不获得包环境或额外路径授权，provider 秘密不继承给 hook 后代。
+
+Core 保存每次受理的 `desktop.hookRuns`。UNKNOWN 保留并阻止继续执行；检查实际副作用和资源后，可通过 `areal/hook/acknowledge` 保存有界说明，结果仍为 UNKNOWN且不重放。归档和关闭先取消、等待已受理任务，再结算 SessionEnd；正在关闭的 Session 不接受新轮次。后台结果只在安全点或下一次用户 Turn 投影，不自行启动空闲 Turn。
+
+已信任的 command hook 使用有界 Runtime 任务写入组：固定窗口内同任务 hook/工具允许重叠，ordinary/ordinary 与跨任务冲突仍独占。窗口不能延长，封口后的操作可能排在外组任务之后。P2 尚未完整验收：只读/Side/研究及限制 Profile 保留原准入边界。Windows shell、只读子任务 hooks、完整配置栈与固定 Codex 二进制对照仍开放。详见 [P2 验收矩阵](../development/codex-plugins-p2-acceptance.md)。

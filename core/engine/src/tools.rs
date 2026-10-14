@@ -863,10 +863,7 @@ impl Engine {
                 let scope = client
                     .create_scope(rt::CreateScope {
                         operation_id: client.operation_id(),
-                        parent_scope_id: runtime.command_scope.as_ref().map_or_else(
-                            || client.info().root_scope_id.clone(),
-                            |scope| scope.scope_id.clone(),
-                        ),
+                        parent_scope_id: self.runtime_task_parent(cell).await?,
                         owner: rt::Owner {
                             task_id: format!("{thread_id}/{turn_id}"),
                             plugin_instance_id: None,

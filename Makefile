@@ -215,9 +215,7 @@ examples-desktop-api: build ## 真实 Core/Runtime 的桌面 API 与 CLI 确定�
 	node examples/desktop-api/packaged-workgroup.mjs
 
 desktop-schemas: ## 从 Rust 类型导出 AReaL 桌面契约
-	cargo run --locked -q -p areal-engine --example desktop-schema > schemas/areal-core-v1.json
-	cargo run --locked -q -p areal-engine --example desktop-schema -- --native-host > schemas/native-host-v2.json
-	cargo run --locked -q -p areal-protocol --example service-schema > schemas/local-service-v1.json
+	python3 scripts/generate-desktop-schemas.py
 
 package: release ## 生成 macOS arm64 / Linux x86_64 发行产物及完整性清单；ARGS 指定 --output
 	python3 scripts/package.py $(ARGS)

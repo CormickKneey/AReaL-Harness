@@ -1,5 +1,7 @@
 //! Local-only Codex plugin packages. No package code, hooks or MCP is executed.
 mod components;
+pub mod hook_sources;
+pub mod hooks;
 mod metadata;
 mod package;
 mod remote;

@@ -522,10 +522,12 @@ pub(crate) fn parse(files: &Files, id: &str, source: &Path, cache: &Path) -> Res
         d.diagnostics
             .push("MCP declarations require explicit digest trust and connection".into());
     }
-    for (key, default, label) in [
-        ("hooks", "hooks/hooks.json", "hooks"),
-        ("apps", ".app.json", "apps"),
-    ] {
+    if overlay.get("hooks").is_some() || files.contains_key("hooks/hooks.json") {
+        crate::hooks::discover(overlay.get("hooks"), files, portable, &mut d.diagnostics);
+        d.components.push("hooks".into());
+        d.diagnostics.push("hooks: declarations do not execute during discovery; explicit hook definition trust is required".into());
+    }
+    for (key, default, label) in [("apps", ".app.json", "apps")] {
         let present = if let Some(v) = overlay.get(key) {
             declaration(v, files, label, &mut d.diagnostics)?;
             true
@@ -534,11 +536,8 @@ pub(crate) fn parse(files: &Files, id: &str, source: &Path, cache: &Path) -> Res
         };
         if present {
             d.components.push(label.into());
-            d.diagnostics.push(if label == "hooks" {
-                "hooks execution not yet supported (P2)".into()
-            } else {
-                "Connector IDs require explicit mapping and account authentication".into()
-            });
+            d.diagnostics
+                .push("Connector IDs require explicit mapping and account authentication".into());
         }
     }
     if let Some(commands) = overlay.get("commands") {

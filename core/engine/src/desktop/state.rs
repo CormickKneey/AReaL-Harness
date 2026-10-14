@@ -1040,12 +1040,15 @@ impl Engine {
         request_id: &str,
     ) -> Result<Value> {
         let thread = self.read(thread_id, false).await?;
-        let records = desktop(&thread)
+        let mut records: Vec<Value> = desktop(&thread)
             .receipts
             .into_iter()
             .filter(|r| r.identity == identity && r.request_id == request_id)
-            .collect::<Vec<_>>();
-        Ok(json!({"data":records,"retention":"threadLifetime","capacity":1024}))
+            .map(|r| json!(r))
+            .collect();
+        let management = self.management_receipts(identity, request_id).await;
+        records.extend(management["data"].as_array().into_iter().flatten().cloned());
+        Ok(json!({"data":records,"retention":"threadAndDeploymentLifetime","capacity":1024}))
     }
     pub(crate) async fn active_permissions(
         &self,

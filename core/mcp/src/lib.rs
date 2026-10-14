@@ -1,4 +1,5 @@
 //! MCP tool client. Transport/lifecycle belong here, model and Turn state stay in Engine.
+mod active_timeout;
 mod config;
 mod elicitation;
 mod mrtr;
@@ -228,6 +229,15 @@ impl McpTool {
     }
     pub fn server_name(&self) -> &str {
         &self.server
+    }
+    /// A trusted hook can narrow active execution time; elicitation pauses remain
+    /// owned by the existing transport instead of an outer wall-clock timer.
+    pub fn with_timeout_limit(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(
+            self.timeout
+                .map_or(timeout, |existing| existing.min(timeout)),
+        );
+        self
     }
     pub fn original_name(&self) -> &str {
         &self.original_name

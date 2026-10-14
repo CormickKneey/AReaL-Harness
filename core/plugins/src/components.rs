@@ -17,6 +17,7 @@ pub struct InstalledComponents {
     pub data_root: PathBuf,
     pub digest: String,
     pub mcp_documents: Vec<ComponentDocument>,
+    pub hook_documents: Vec<ComponentDocument>,
     pub app_documents: Vec<ComponentDocument>,
     pub policy: Value,
     pub diagnostics: Vec<String>,
@@ -112,6 +113,7 @@ impl Store {
             data_root: self.root.join("data").join(&detail.id),
             digest: detail.source_digest.clone(),
             mcp_documents: vec![],
+            hook_documents: vec![],
             app_documents: vec![],
             policy,
             diagnostics: vec![],
@@ -198,10 +200,14 @@ impl Store {
             &mut result.app_documents,
         );
         if detail.components.iter().any(|v| v == "hooks") {
-            result
-                .diagnostics
-                .push("hooks: execution unsupported (P2)".into());
+            result.diagnostics.push("hooks: declarations do not execute during discovery; explicit hook definition trust is required".into());
         }
+        result.hook_documents = crate::hooks::discover(
+            overlay.and_then(|v| v.get("hooks")),
+            &files,
+            portable,
+            &mut result.diagnostics,
+        );
         Ok(result)
     }
 }

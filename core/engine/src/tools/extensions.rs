@@ -115,6 +115,19 @@ impl Invocation<'_> {
                 ));
             }
         }
+        let (hook_name, hook_input) = crate::plugin_hooks::tool_input(&self.call.name, &arguments);
+        let effects=self.engine.plugin_hook_event(self.cell,areal_plugins::hooks::HookEvent::PreToolUse,
+            json!({"tool_name":hook_name,"tool_input":hook_input,"tool_use_id":self.call.id,"__areal_caller_admitted":!matches!(self.entry.backend,Backend::Agent|Backend::Coordination|Backend::Core)}),self.cancel).await.map_err(unknown)?;
+        if let Some(reason) = effects.block {
+            return Ok((false, json!({"blockedByHook":true,"reason":reason})));
+        }
+        if let Some(updated) = effects.updated_input {
+            arguments = crate::plugin_hooks::updated_input(&self.call.name, &arguments, updated)
+                .map_err(invalid)?;
+            self.validate(&arguments)?;
+            self.edit(|execution, _| execution.effective_arguments = Some(arguments.clone()))
+                .await?;
+        }
         if matches!(self.entry.backend, Backend::Coordination | Backend::Core) {
             self.engine
                 .approval(
@@ -125,7 +138,8 @@ impl Invocation<'_> {
                     self.cancel,
                 )
                 .await?;
-            return self.invoke(&arguments, None).await;
+            let (success, value) = self.invoke(&arguments, None).await?;
+            return self.codex_post(&arguments, success, value).await;
         }
         for hook in self.hooks(HookEvent::PreToolUse) {
             let response = self.hook(hook, &arguments, None).await?;
@@ -294,6 +308,42 @@ impl Invocation<'_> {
                 *post_hook_failed = true;
                 break;
             }
+        }
+        self.codex_post(&hook_arguments, success, value).await
+    }
+
+    async fn codex_post(
+        &self,
+        args: &Value,
+        success: bool,
+        value: Value,
+    ) -> rt::Result<(bool, Value)> {
+        // Persist actual outcome before effectful post handlers; feedback cannot roll back
+        // a write or make it replayable. The model projection may be replaced separately.
+        let prepared = self
+            .engine
+            .prepare_tool_result(self.cell, self.item_id, &self.call.name, &value, None)
+            .await
+            .map_err(unknown)?;
+        self.edit(|execution, content| {
+            execution.outcome = if success {
+                ToolOutcome::Succeeded
+            } else {
+                ToolOutcome::Failed
+            };
+            execution.result_snapshot = prepared.snapshot;
+            execution.output_projection = Some(prepared.metrics);
+            *content = Some(content_items(&value));
+        })
+        .await?;
+        let (name, input) = crate::plugin_hooks::tool_input(&self.call.name, args);
+        let effects=self.engine.plugin_hook_event(self.cell,areal_plugins::hooks::HookEvent::PostToolUse,
+            json!({"tool_name":name,"tool_input":input,"tool_response":value,"tool_use_id":self.call.id,"__areal_caller_admitted":!matches!(self.entry.backend,Backend::Agent|Backend::Coordination|Backend::Core)}),self.cancel).await.map_err(unknown)?;
+        if let Some(reason) = effects.block.or(effects.stop) {
+            return Ok((
+                success,
+                json!({"hookFeedback":reason,"toolOutcomeRetained":true}),
+            ));
         }
         Ok((success, value))
     }
@@ -597,6 +647,7 @@ impl Invocation<'_> {
                     .map_err(invalid)?;
                 owner.cancellation = self.cancel.child_token();
                 let call_cancel = owner.cancellation.clone();
+                let owner_token = owner.token.clone();
                 let _owner_drop = owner.cancellation.clone().drop_guard();
                 let context = self.engine.mcp_request_context(
                     owner.clone(),
@@ -607,7 +658,6 @@ impl Invocation<'_> {
                 let key = (tool.server_name().to_owned(), tool.generation());
                 {
                     let mut calls = self.engine.desktop.mcp_apps.calls.lock().await;
-                    calls.retain(|_, o| !o.cancellation.is_cancelled());
                     if calls.contains_key(&key) {
                         return Err(rt::Error::new(
                             rt::ErrorCode::PermissionDenied,
@@ -627,7 +677,12 @@ impl Invocation<'_> {
                 let raw = tool
                     .call_raw_owned(args.clone(), meta, call_cancel, Some(&context))
                     .await;
-                self.engine.desktop.mcp_apps.calls.lock().await.remove(&key);
+                {
+                    let mut calls = self.engine.desktop.mcp_apps.calls.lock().await;
+                    if calls.get(&key).is_some_and(|o| o.token == owner_token) {
+                        calls.remove(&key);
+                    }
+                }
                 let raw = raw.map_err(|e| {
                     if e.is::<areal_mcp::AuthenticationFailed>() {
                         rt::Error::new(

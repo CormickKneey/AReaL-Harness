@@ -414,10 +414,19 @@ async fn connection(
             continue;
         }
         // Native selection imports require the authenticated desktop host.
-        if matches!(method, "areal/mcp/form/resource/prepare" | "areal/mcp/form/resource/stage")
-            && (conn.principal.id != "desktop-owner" || conn.principal.token.is_empty())
+        if matches!(
+            method,
+            "areal/mcp/form/resource/prepare" | "areal/mcp/form/resource/stage"
+        ) && (conn.principal.id != "desktop-owner" || conn.principal.token.is_empty())
         {
-            conn.send(response(id.unwrap(), Err(RpcError { code: -32003, message: "authenticated native selection host required".into(), data: None })));
+            conn.send(response(
+                id.unwrap(),
+                Err(RpcError {
+                    code: -32003,
+                    message: "authenticated native selection host required".into(),
+                    data: None,
+                }),
+            ));
             continue;
         }
         if !conn.principal.token.is_empty()
@@ -547,7 +556,8 @@ async fn connection(
                 || method.starts_with("areal/mcp/")
                 || method.starts_with("areal/server/")
                 || method == "areal/agent/wait"
-                || method == "areal/context/compact")
+                || method == "areal/context/compact"
+                || matches!(method, "turn/steer" | "areal/queue/steer"))
         {
             let control = matches!(
                 method,
@@ -562,6 +572,12 @@ async fn connection(
                     | "areal/process/get"
                     | "areal/process/list"
                     | "areal/server/status"
+                    | "areal/mcp/forms/list"
+                    | "areal/mcp/form/respond"
+                    | "areal/mcp/form/resource/prepare"
+                    | "areal/mcp/form/resource/stage"
+                    | "areal/mcp/form/resource/release"
+                    | "areal/plugin/hooks/configure"
             );
             if !control && conn.rpc_permits.available_permits() <= 4 {
                 conn.send(response(
@@ -588,7 +604,7 @@ async fn connection(
             conn.tasks.spawn(async move {
                 let _permit = permit;
                 let result = tokio::select! { biased; _=stop.cancelled()=>return,
-                value=async { if plugin_runtime::METHODS.contains(&method.as_str()) { plugin_runtime::dispatch(&engine,&identity,&method,params).await } else if codex_plugins::METHODS.contains(&method.as_str()) { codex_plugins::dispatch(&engine,&identity,&method,params).await } else if delegations::METHODS.contains(&method.as_str()) { delegations::dispatch(&engine,&method,params).await } else if processes::METHODS.contains(&method.as_str()) { processes::dispatch(&engine,&identity,&method,params).await } else if desktop::METHODS.contains(&method.as_str()) { desktop::dispatch(&engine,&identity,&method,params).await } else { workgroups::dispatch(engine,&identity,&method,params).await } }=>value };
+                value=async { if method == "turn/steer" { steer_request(&engine,&identity,params).await } else if plugin_runtime::METHODS.contains(&method.as_str()) { plugin_runtime::dispatch(&engine,&identity,&method,params).await } else if codex_plugins::METHODS.contains(&method.as_str()) { codex_plugins::dispatch(&engine,&identity,&method,params).await } else if delegations::METHODS.contains(&method.as_str()) { delegations::dispatch(&engine,&method,params).await } else if processes::METHODS.contains(&method.as_str()) { processes::dispatch(&engine,&identity,&method,params).await } else if desktop::METHODS.contains(&method.as_str()) { desktop::dispatch(&engine,&identity,&method,params).await } else { workgroups::dispatch(engine,&identity,&method,params).await } }=>value };
                 if tx.try_send(response(id, result)).is_err() {
                     stop.cancel();
                 }
@@ -1092,14 +1108,7 @@ impl Connection {
                 self.subscribe(engine, &p.thread_id).await?;
                 Ok(json!({"turn":engine.start(&p.thread_id,p.input).await.map_err(map_error)?}))
             }
-            "turn/steer" => {
-                let p: Steer = parse(params)?;
-                engine
-                    .steer(&p.thread_id, &p.expected_turn_id, p.input)
-                    .await
-                    .map_err(map_error)?;
-                Ok(json!({"turnId":p.expected_turn_id}))
-            }
+            "turn/steer" => steer_request(engine, &self.principal.id, params).await,
             "turn/interrupt" => {
                 let p: areal_protocol::desktop::TurnInterrupt = parse(params)?;
                 engine
@@ -1244,6 +1253,7 @@ struct TurnStart {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Steer {
+    request_id: Option<String>,
     thread_id: String,
     expected_turn_id: String,
     input: Vec<Input>,
@@ -1369,4 +1379,48 @@ mod tests {
         assert!(engine.list(None, 100, None).await.unwrap().0.is_empty());
         engine.shutdown().await;
     }
+}
+
+// Steer can wait for hook elicitation; it needs no mutable Connection state.
+async fn steer_request(
+    engine: &Arc<Engine>,
+    identity: &str,
+    params: Value,
+) -> Result<Value, RpcError> {
+    let p: Steer = parse(params)?;
+    if let Some(request) = p.request_id {
+        let parameters =
+            json!({"threadId":p.thread_id,"expectedTurnId":p.expected_turn_id,"input":p.input});
+        let reply = engine
+            .management_submission(
+                identity.to_owned(),
+                request,
+                "turn/steer".into(),
+                parameters,
+                move |engine| async move {
+                    match engine
+                        .steer(&p.thread_id, &p.expected_turn_id, p.input)
+                        .await
+                    {
+                        Ok(()) => json!({"result":{"turnId":p.expected_turn_id}}),
+                        Err(error) => json!({"error":map_error(error)}),
+                    }
+                },
+            )
+            .await
+            .map_err(map_error)?;
+        if let Some(error) = reply.get("error") {
+            return Err(RpcError {
+                code: error["code"].as_i64().unwrap_or(-32602),
+                message: error["message"].as_str().unwrap_or("steer rejected").into(),
+                data: error.get("data").cloned(),
+            });
+        }
+        return Ok(reply["result"].clone());
+    }
+    engine
+        .steer(&p.thread_id, &p.expected_turn_id, p.input)
+        .await
+        .map_err(map_error)?;
+    Ok(json!({"turnId":p.expected_turn_id}))
 }

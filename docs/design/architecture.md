@@ -122,3 +122,9 @@ Core `permissions` 负责审批模式、规则优先级与精确请求记忆；C
 Arena 公开输入物化与清单属于 Runner；只读目录身份、文件操作拒绝及 OS 挂载保护属于 Runtime。Core 的媒体工具生成有界派生图与动画视图，模型适配器计量最终请求字节；职责不进入 Runner 的模型循环。契约见[工具](../guides/tools.md)、[Runtime](../api/runtime.md)和[评测](../benchmarks/README.md)。
 
 共享 Browser 沿用 Core 会话、审批与历史所有权，独立桌面适配器负责认证工具回调，Electron Main 拥有原生页面，Renderer 投影状态。已实现能力通过 Host 发现；持久 Profile 与云浏览器等延期能力仍属于设计范围之外。契约和限制见[Browser 规格](browser.md)、[Browser API](../api/browser.md)及[所有权决策](../adr/0002-shared-browser-ownership.md)。人工独立 Frame 授权与逐 Frame 截图隐私检查也归 Main，绑定当前 Human Page，不授予 Agent 跨源权限，复用既有 ThreadBlob/MediaRef。源码实现不等于安装版或真人验收通过。
+
+## 插件 Hooks 所有者
+
+`core/plugins/{hooks,hook_sources}` 只解析原包和受控用户/项目来源、matcher、模板与摘要。`core/engine/src/plugin_hooks` 拥有独立定义信任、Session/Turn 布点、持久受理与结果投影；同步任务同时登记在 Session 与当前 Turn，后台任务由 Session 持有。Runtime 沿用路径授权、进程预算、有界任务组写入调度和确认清理，hook 不继承任务 provider 秘密。Main 仅转发管理与恢复收据，Renderer 审阅当前定义；安装和 MCP 信任不能替代 hook 信任。
+
+MCP hook 绑定原工具 generation 与真实 Turn/compaction owner，取消旧 owner 不得移除新 owner。`core/mcp/active_timeout` 在同一逻辑请求的全部 MRTR rounds 中扣减活跃预算，broker 的人工等待守卫暂停该预算；取消/撤权不暂停。管理提交按业务键跨执行去重，日志发布短时串行并为每个在途响应预留空间，因此等待表单不挡住上传或撤销。Core 持有 epoch 绑定的 Session Task Scope；Runtime 校验 Hook 类型参与及有界组 FIFO，不扩大各进程授权。同任务 Hook/Ordinary 可重叠，ordinary/ordinary 与跨任务冲突仍独占；关闭先等待任务再关闭 anchor，UNKNOWN 不重放。只读子任务政策继续保留，见 [P2 矩阵](../development/codex-plugins-p2-acceptance.md)。

@@ -39,7 +39,7 @@ areal plugin --workspace /absolute/workspace disconnect review-helper@team-tools
 areal plugin --workspace /absolute/workspace disable review-helper@team-tools --scope project
 ```
 
-An explicit project selection overrides the user default; neither represents an enforced requirement. Explicit Profiles do not acquire every package. MCP connections require explicit trust in the installed digest; Connectors require an original-ID mapping and account credentials. Unsupported hooks/auth mechanisms/commands/dependencies remain diagnostic. Installed does not mean connected.
+An explicit project selection overrides the user default; neither represents an enforced requirement. Explicit Profiles do not acquire every package. MCP connections require explicit trust in the installed digest; Connectors require an original-ID mapping and account credentials. Unsupported hook handlers/auth mechanisms/commands/dependencies remain diagnostic. Installed does not mean connected.
 
 ## Skills and setup
 
@@ -49,7 +49,7 @@ Run Setup selects the packaged onboarding skill in an ordinary chat, with result
 
 ## Versions, disabling and recovery
 
-Installed copies retain content identity; source edits do not change installed resources. Active Turns pin skill revisions; subsequent Turns use available versions. Disabling/uninstalling revokes subsequent reads while retaining historical packages and writable data. Explicit connection starts MCP. Active Turns retain their admitted generation; disable/uninstall revoke subsequent calls and reads. Unconfirmed process cleanup blocks reconnection. Hooks remain unsupported.
+Installed copies retain content identity; source edits do not change installed resources. Active Turns pin skill revisions; subsequent Turns use available versions. Disabling/uninstalling revokes subsequent reads while retaining historical packages and writable data. Explicit connection starts MCP. Active Turns retain their admitted generation; disable/uninstall revoke subsequent calls and reads. Unconfirmed process cleanup blocks reconnection. Hooks require separate current-definition trust; see the P2 section below.
 
 Mutations require `requestId` and applicable `expectedRevision`; RPC installation additionally requires selected `source` and `expectedDigest`. Identical requests recover their prior result; reused keys with different parameters reject. Check Plugin Submission queries receipts after an unknown outcome without replay:
 
@@ -84,3 +84,21 @@ File entrypoints expose opaque URIs. Core validates saved grants and reuses Runt
 Modern MCP 2026-07-28 supports MRTR forms; direct older connections retain legacy elicitation. Each round preserves original arguments and Core ownership, rechecks authority and never replays UNKNOWN. Resource updates target subscribed App/URI owners; the final owner releases the shared wire subscription.
 
 Native form selection imports immutable local file/directory snapshots: 16 MiB per file, 256 files/64 MiB per logical call and depth16. Grants bind form, field and server generation, and clear on cancellation, close, revocation or settlement. Only same-host stdio receives these snapshots. HTTP without a publicly defined upload channel returns explicit unsupported behavior while server-provided resources remain selectable.
+
+## Hooks (P2 candidate)
+
+Package, user and project hooks share the Core execution owner. User sources are `hooks.json` in the selected home and `[hooks]` in the selected TOML; project sources are `.codex/hooks.json` and `[hooks]` in `.codex/config.toml`. JSON precedes TOML cumulatively within each layer; package declarations retain their original format and overlay rules. Project files supply only hooks and cannot replace models, credentials or the user feature gate. Codex `hooks.state` trust claims are not imported.
+
+In Settings → Plugins, review the current package/source digest, definition digest, events, matchers, command/MCP inputs and full definitions before checking the explicit consent box. User/project sources require separate review. Installation, activation and MCP connection do not authorize hooks; changed definitions require a new review. CLI commands use the same Core state:
+
+```sh
+areal plugin --workspace /absolute/workspace hooks-list
+areal plugin --workspace /absolute/workspace hooks-trust review-helper@team-tools --expected-digest REVIEWED_INSTALLED_DIGEST --definition-digest REVIEWED_DEFINITION_DIGEST
+areal plugin --workspace /absolute/workspace hooks-revoke review-helper@team-tools
+```
+
+Wired events are SessionStart/SessionEnd, UserPromptSubmit, PreToolUse/PermissionRequest/PostToolUse, PreCompact/PostCompact, SubagentStart/SubagentStop, Stop/Interrupt. Commands use existing Runtime scopes; MCP handlers call only already-connected, still-authorized package tools without recursive model-tool approvals. MCP active execution time pauses during real human form waits while cancellation and revocation remain live. Denial, input rewriting and feedback after actual tool completion are independent; Stop may continue within one Turn, and automatic continuation does not synthesize user submissions. Package commands receive package/data environment variables; configuration commands receive neither package environment nor additional path authority. Provider secrets do not propagate to hook descendants.
+
+Core retains admission records in `desktop.hookRuns`. UNKNOWN blocks further execution; after inspecting actual effects/resources, `areal/hook/acknowledge` stores a bounded explanation while retaining UNKNOWN and never replaying. Archive and close cancel and join admitted tasks before SessionEnd; closing Sessions reject new Turns. Background results project only at safe points or the next user Turn, without starting an idle Turn.
+
+Trusted command hooks now use bounded Runtime task write groups: same-task hook/tool overlap is admitted within a fixed window; ordinary/ordinary and cross-task conflicts remain exclusive. The window cannot be extended, and operations after sealing may queue behind foreign tasks. P2 remains open: Read-only, Side, research and restricted Profile boundaries remain enforced. Windows shell, read-only child hooks, the full configuration stack and pinned Codex binary comparisons are unaccepted. See the [P2 matrix](../development/codex-plugins-p2-acceptance.en.md).

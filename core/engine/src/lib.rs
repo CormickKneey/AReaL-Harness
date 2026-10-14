@@ -11,6 +11,7 @@ mod history;
 pub mod model;
 mod outcome;
 mod permissions;
+mod plugin_hooks;
 mod sessions;
 mod store;
 mod task_mode;
@@ -149,6 +150,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 struct Active {
     registry: std::result::Result<tools::Registry, String>,
+    hooks: Vec<plugin_hooks::BoundHook>,
+    hook_user_input: bool,
+    hook_tasks: TaskTracker,
     direct_tool: Option<model::ToolCall>,
     tool_meta: Option<serde_json::Map<String, Value>>,
     tool_calls: usize,
@@ -177,11 +181,13 @@ struct State {
     active: Option<Active>,
     poisoned: bool,
     compacting: bool,
+    compaction_owner: Option<desktop::mcp_apps::CallOwner>,
     // Failed cleanup or final persistence is not evidence that capacity is
     // reusable. Keep the reservation until this Engine is dropped/recovered.
     quarantined_admission: Option<OwnedSemaphorePermit>,
 }
 struct Cell {
+    hooks: plugin_hooks::Session,
     inherited_registry: Option<tools::Registry>,
     exclusive_writer: bool,
     // 工具投影可能已持有会话锁，原子角色避免为读取 Goal 可见性再次加锁。
@@ -203,6 +209,7 @@ struct Cell {
 impl Cell {
     fn new(thread: Thread, depth: usize, bindings: tools::Bindings) -> Arc<Self> {
         Arc::new(Self {
+            hooks: plugin_hooks::Session::new(&thread),
             inherited_registry: thread
                 .parent_thread_id
                 .as_ref()
@@ -224,6 +231,7 @@ impl Cell {
                 active: None,
                 poisoned: false,
                 compacting: false,
+                compaction_owner: None,
                 quarantined_admission: None,
             }),
             events: broadcast::channel(128).0,
@@ -262,6 +270,7 @@ pub struct Engine {
     workspace_gate: Arc<RwLock<()>>,
     delegation_creation: Mutex<()>,
     desktop: desktop::Desktop,
+    plugin_hooks: plugin_hooks::Manager,
 }
 
 fn now() -> i64 {
@@ -331,7 +340,11 @@ fn restore_cells(
                 },
                 host: None,
             };
+            let root_session = thread.parent_thread_id.is_none();
             let cell = Cell::new(thread, depths[&id], bindings);
+            if root_session {
+                *cell.hooks.pending.try_lock().expect("new hook session") = vec!["resume".into()];
+            }
             Ok((id, cell))
         })
         .collect()
@@ -533,6 +546,7 @@ impl Engine {
             goals,
             task_modes,
             desktop,
+            plugin_hooks: plugin_hooks::Manager::open(&store)?,
             threads: RwLock::new(threads),
             store,
             model,
@@ -696,7 +710,7 @@ impl Engine {
             .map_err(|_| Error::Storage("Core mutation task panicked".into()))?
     }
 
-    pub async fn shutdown(&self) {
+    pub async fn shutdown(self: &Arc<Self>) {
         self.shutdown.cancel();
         if let Some(service) = self.workgroups.get() {
             service.shutdown().await;
@@ -706,6 +720,10 @@ impl Engine {
         }
         self.tasks.close();
         self.tasks.wait().await;
+        let hook_cells: Vec<_> = self.threads.read().await.values().cloned().collect();
+        for cell in &hook_cells {
+            let _ = self.plugin_hooks_end(cell).await;
+        }
         if let Err(error) = self.desktop.plugin_mcp.shutdown().await {
             tracing::warn!(%error, "plugin MCP cleanup remains unconfirmed");
         }

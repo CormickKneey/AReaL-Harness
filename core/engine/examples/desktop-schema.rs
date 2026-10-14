@@ -19,6 +19,18 @@ fn main() {
     }
     add!("areal/capabilities", CapabilitiesRequest);
     add!(
+        "areal/plugin/hooks/list",
+        areal_protocol::plugin_runtime::Empty
+    );
+    add!(
+        "areal/plugin/hooks/configure",
+        areal_protocol::plugin_runtime::HooksConfigure
+    );
+    add!(
+        "areal/hook/acknowledge",
+        areal_protocol::plugin_runtime::HookAcknowledge
+    );
+    add!(
         "areal/plugin/mcp/list",
         areal_protocol::plugin_runtime::Empty
     );
@@ -418,7 +430,7 @@ fn main() {
         ),
     );
     methods.insert("areal/side/context/read".into(),object(json!({"threadId":string,"evidenceRef":string,"cursor":string,"maxBytes":{"type":"integer","minimum":64,"maximum":16384}}),vec!["threadId"]));
-    methods.insert("turn/steer".into(),object(json!({"threadId":string,"expectedTurnId":string,"input":{"type":"array","items":schemars::schema_for!(areal_protocol::Input)}}),vec!["threadId","expectedTurnId","input"]));
+    methods.insert("turn/steer".into(),object(json!({"requestId":string,"threadId":string,"expectedTurnId":string,"input":{"type":"array","items":schemars::schema_for!(areal_protocol::Input)}}),vec!["threadId","expectedTurnId","input"]));
     add!("turn/interrupt", TurnInterrupt);
     for (method, schema) in &mut methods {
         if matches!(

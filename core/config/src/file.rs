@@ -148,6 +148,43 @@ fn walk(
     let names: Vec<&str> = parts.iter().map(String::as_str).collect();
     let key = parts.join(".");
     let at = source(path, text, item.span().map_or(0, |v| v.start));
+    // Definitions and review state are owned by the hook loader; this projection
+    // never imports them as model, sandbox, account or permission settings.
+    if names.as_slice() == ["hooks"] {
+        if item.as_table_like().is_none() {
+            return Err(error(
+                Kind::InvalidValue,
+                &key,
+                &at,
+                "hooks must be a table",
+            ));
+        }
+        return Ok(());
+    }
+    if names.as_slice() == ["features"] {
+        let fields = item
+            .as_table_like()
+            .ok_or_else(|| error(Kind::InvalidValue, &key, &at, "features must be a table"))?;
+        for (name, value) in fields.iter() {
+            if !matches!(name, "hooks" | "codex_hooks") {
+                return Err(error(
+                    Kind::InvalidValue,
+                    &key,
+                    &at,
+                    "unsupported feature field",
+                ));
+            }
+            if value.as_bool().is_none() {
+                return Err(error(
+                    Kind::InvalidValue,
+                    &key,
+                    &at,
+                    "hook feature must be boolean",
+                ));
+            }
+        }
+        return Ok(());
+    }
     // 新配置按职责分组；旧键保留原来显式设置的语义，不允许别名相互覆盖。
     let alias = match names.as_slice() {
         [

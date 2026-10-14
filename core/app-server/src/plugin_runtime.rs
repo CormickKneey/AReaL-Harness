@@ -2,6 +2,9 @@
 use super::*;
 pub(crate) const METHODS: &[&str] = &[
     "areal/plugin/mcp/list",
+    "areal/plugin/hooks/list",
+    "areal/plugin/hooks/configure",
+    "areal/hook/acknowledge",
     "areal/plugin/connection",
     "areal/plugin/auth",
     "areal/plugin/auth/configure",
@@ -28,7 +31,9 @@ pub(crate) async fn dispatch(
 ) -> Result<Value, RpcError> {
     if matches!(
         method,
-        "areal/plugin/connection"
+        "areal/plugin/hooks/configure"
+            | "areal/hook/acknowledge"
+            | "areal/plugin/connection"
             | "areal/plugin/connector/configure"
             | "areal/plugin/auth/configure"
             | "areal/mcp/form/resource/stage"
@@ -80,6 +85,18 @@ async fn dispatch_inner(
         "areal/mcp/tool/result" => {
             let p: ToolResult = parse(params)?;
             engine.mcp_tool_result(p.thread_id, p.call_id).await
+        }
+        "areal/plugin/hooks/list" => {
+            let _: Empty = parse(params)?;
+            engine.plugin_hooks_list().await
+        }
+        "areal/plugin/hooks/configure" => {
+            let p: HooksConfigure = parse(params)?;
+            engine.plugin_hooks_configure(p).await
+        }
+        "areal/hook/acknowledge" => {
+            let p: HookAcknowledge = parse(params)?;
+            engine.hook_acknowledge(p).await
         }
         "areal/plugin/mcp/list" => {
             let _: Empty = parse(params)?;

@@ -15,6 +15,10 @@ impl std::fmt::Debug for RequestOwner {
     }
 }
 impl RequestOwner {
+    /// Trusted owners compose authority checks without exposing or transmitting guards.
+    pub async fn validate(&self) -> Result<()> {
+        (self.guard)().await
+    }
     pub fn new(
         token: String,
         guard: impl Fn() -> BoxFuture<'static, Result<()>> + Send + Sync + 'static,
@@ -46,12 +50,16 @@ impl RequestChannel<'_> {
     ) -> Result<ServerResult> {
         let operation = cancel.child_token();
         let _drop = operation.clone().drop_guard();
-        let deadline = async {
-            match self.timeout {
-                Some(d) => tokio::time::sleep(d).await,
-                None => std::future::pending::<()>().await,
-            }
-        };
+        let clock = crate::active_timeout::Clock::new(
+            self.server,
+            self.generation,
+            owner.map(|o| o.token.as_str()),
+            self.timeout,
+        );
+        if let Some(broker) = self.broker {
+            broker.clocks.register(&clock);
+        }
+        let deadline = clock.expired();
         tokio::pin!(deadline);
         for round in 0..10 {
             ensure!(

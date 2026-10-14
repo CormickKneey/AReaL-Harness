@@ -229,6 +229,36 @@ impl Engine {
             json!({"changedPlugins":changed,"failedRemotePluginIds":[],"failedMaterializationRemotePluginIds":[]}),
         )
     }
+    /// Hook targets use existing connections, including model-hidden tools. No connect,
+    /// approval or recursive hook dispatch occurs here; the caller holds hook authority.
+    pub(crate) fn plugin_hook_mcp_tool(
+        &self,
+        plugin: &str,
+        digest: &str,
+        server: &str,
+        name: &str,
+    ) -> anyhow::Result<McpTool> {
+        if let Some(generation) = self.desktop.plugin_mcp.live.read().unwrap().get(plugin) {
+            anyhow::ensure!(
+                generation.digest == digest,
+                "hook MCP package generation changed"
+            );
+            if let Some(tool) = generation.tools.iter().find(|tool| {
+                tool.server_name() == server_id(plugin, server) && tool.original_name() == name
+            }) {
+                anyhow::ensure!(!tool.is_stale(), "hook MCP generation stale or revoked");
+                return Ok(tool.clone());
+            }
+        }
+        self.desktop
+            .mcp
+            .tools()
+            .into_iter()
+            .find(|tool| {
+                tool.server_name() == server && tool.original_name() == name && !tool.is_stale()
+            })
+            .ok_or_else(|| anyhow::anyhow!("hook MCP target unavailable; no reconnect"))
+    }
     pub async fn plugin_component_summary(&self, id: String) -> Result<Value> {
         let store = self.plugin_store()?;
         let component = tokio::task::spawn_blocking(move || {

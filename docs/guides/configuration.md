@@ -451,3 +451,17 @@ WebSocket 求解连接携带 Core 线程 ID 作为 session-id/thread-id，以便
 模型配置登记表保留与 revision 绑定的原始编码；新增可选默认值不会使历史 revision 失效，也不重写排队 Turn 的引用，摘要不匹配仍拒绝篡改。不要手动格式化或编辑 Core 所有的 `desktop/default-models.json`。
 
 `model.max_request_bytes` 独立限制媒体物化后的完整 HTTP JSON / Responses WebSocket 发送封套，包含工具定义与历史重放，默认 16 MiB、范围 1024–134217728 字节。也可通过 `AREAL_HARNESS_MODEL_MAX_REQUEST_BYTES` 设置。它是本地有界保护值，不宣称网关支持相同大小；部署需使用已核验的服务限额。编码前检查累计媒体下界，完整序列化流式计数后才分配发送缓冲；WebSocket 续接按实际增量封套检查发送限额，候选完整历史另有 128 MiB 物化保护，退回完整请求时重新检查发送限额；超限不发请求、不做网络重试，返回 `MODEL_REQUEST_TOO_LARGE`，记录阶段、实际字节/下界及限额。HTTP 413 使用相同类别并标记请求已发送。token 预算、工具展示预算和自动压缩策略保持独立；此限额不自动丢弃历史图片或任务要求。
+
+## Hooks 配置
+
+`[features]` 接受 `hooks` 布尔开关与旧别名 `codex_hooks`（同时设置时 `hooks` 优先）；省略时启用发现，仍须独立信任每份当前定义。用户 `hooks=false` 禁止配置与包 hooks，项目开关不能覆盖它。顶层 `[hooks]` 交给插件 hooks 解析器，其他模型/权限配置仍按原严格规则解析。项目 `.codex/config.toml` 仅在 hooks 发现中读取，不改变本页的全局配置优先级。
+
+```toml
+[features]
+hooks = true
+
+[[hooks.UserPromptSubmit]]
+hooks = [{ type = "command", command = "python3 /absolute/path/hook.py", timeout = 30 }]
+```
+
+有效来源、显式审阅、执行与剩余限制见 [插件指南](plugins.md)。

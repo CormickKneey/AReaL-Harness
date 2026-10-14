@@ -6273,6 +6273,77 @@
                       },
                       "type": "array"
                     },
+                    "hookRuns": {
+                      "default": [],
+                      "description": "Core-owned hook invocation receipts. Running entries recover as UNKNOWN,\nnever as instructions to execute the hook again.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "asynchronous": {
+                            "type": "boolean"
+                          },
+                          "definitionDigest": {
+                            "type": "string"
+                          },
+                          "delivered": {
+                            "type": "boolean"
+                          },
+                          "event": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "inspection": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "operationId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "outcome": {
+                            "type": "string"
+                          },
+                          "output": true,
+                          "packageDigest": {
+                            "type": "string"
+                          },
+                          "pluginId": {
+                            "type": "string"
+                          },
+                          "toolUseId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "turnId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "pluginId",
+                          "packageDigest",
+                          "definitionDigest",
+                          "event",
+                          "outcome",
+                          "asynchronous",
+                          "delivered",
+                          "output"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
                     "interactionRevision": {
                       "format": "uint64",
                       "minimum": 0,
@@ -13553,6 +13624,31 @@
       "title": "GoalUpdate",
       "type": "object"
     },
+    "areal/hook/acknowledge": {
+      "additionalProperties": false,
+      "properties": {
+        "inspection": {
+          "type": "string"
+        },
+        "invocationId": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "threadId",
+        "invocationId",
+        "inspection"
+      ],
+      "title": "HookAcknowledge",
+      "type": "object"
+    },
     "areal/inbox/list": {
       "additionalProperties": false,
       "properties": {
@@ -14446,6 +14542,45 @@
         "expectedDigest"
       ],
       "title": "Connector",
+      "type": "object"
+    },
+    "areal/plugin/hooks/configure": {
+      "additionalProperties": false,
+      "description": "Explicit review of the current package and effective hooks, independently of MCP trust.",
+      "properties": {
+        "definitionDigest": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "expectedDigest": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "trusted": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "requestId",
+        "id",
+        "expectedDigest",
+        "definitionDigest",
+        "enabled",
+        "trusted"
+      ],
+      "title": "HooksConfigure",
+      "type": "object"
+    },
+    "areal/plugin/hooks/list": {
+      "additionalProperties": false,
+      "title": "Empty",
       "type": "object"
     },
     "areal/plugin/install": {
@@ -19058,6 +19193,9 @@
           },
           "type": "array"
         },
+        "requestId": {
+          "type": "string"
+        },
         "threadId": {
           "type": "string"
         }
@@ -20438,6 +20576,77 @@
                             "delivery",
                             "strategy",
                             "reason"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "hookRuns": {
+                        "default": [],
+                        "description": "Core-owned hook invocation receipts. Running entries recover as UNKNOWN,\nnever as instructions to execute the hook again.",
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "asynchronous": {
+                              "type": "boolean"
+                            },
+                            "definitionDigest": {
+                              "type": "string"
+                            },
+                            "delivered": {
+                              "type": "boolean"
+                            },
+                            "event": {
+                              "type": "string"
+                            },
+                            "id": {
+                              "type": "string"
+                            },
+                            "inspection": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "operationId": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "outcome": {
+                              "type": "string"
+                            },
+                            "output": true,
+                            "packageDigest": {
+                              "type": "string"
+                            },
+                            "pluginId": {
+                              "type": "string"
+                            },
+                            "toolUseId": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "turnId": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "pluginId",
+                            "packageDigest",
+                            "definitionDigest",
+                            "event",
+                            "outcome",
+                            "asynchronous",
+                            "delivered",
+                            "output"
                           ],
                           "type": "object"
                         },
@@ -24325,6 +24534,77 @@
                               "delivery",
                               "strategy",
                               "reason"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "hookRuns": {
+                          "default": [],
+                          "description": "Core-owned hook invocation receipts. Running entries recover as UNKNOWN,\nnever as instructions to execute the hook again.",
+                          "items": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "asynchronous": {
+                                "type": "boolean"
+                              },
+                              "definitionDigest": {
+                                "type": "string"
+                              },
+                              "delivered": {
+                                "type": "boolean"
+                              },
+                              "event": {
+                                "type": "string"
+                              },
+                              "id": {
+                                "type": "string"
+                              },
+                              "inspection": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "operationId": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "outcome": {
+                                "type": "string"
+                              },
+                              "output": true,
+                              "packageDigest": {
+                                "type": "string"
+                              },
+                              "pluginId": {
+                                "type": "string"
+                              },
+                              "toolUseId": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "turnId": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "pluginId",
+                              "packageDigest",
+                              "definitionDigest",
+                              "event",
+                              "outcome",
+                              "asynchronous",
+                              "delivered",
+                              "output"
                             ],
                             "type": "object"
                           },
@@ -31284,6 +31564,77 @@
                             "delivery",
                             "strategy",
                             "reason"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "hookRuns": {
+                        "default": [],
+                        "description": "Core-owned hook invocation receipts. Running entries recover as UNKNOWN,\nnever as instructions to execute the hook again.",
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "asynchronous": {
+                              "type": "boolean"
+                            },
+                            "definitionDigest": {
+                              "type": "string"
+                            },
+                            "delivered": {
+                              "type": "boolean"
+                            },
+                            "event": {
+                              "type": "string"
+                            },
+                            "id": {
+                              "type": "string"
+                            },
+                            "inspection": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "operationId": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "outcome": {
+                              "type": "string"
+                            },
+                            "output": true,
+                            "packageDigest": {
+                              "type": "string"
+                            },
+                            "pluginId": {
+                              "type": "string"
+                            },
+                            "toolUseId": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "turnId": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "pluginId",
+                            "packageDigest",
+                            "definitionDigest",
+                            "event",
+                            "outcome",
+                            "asynchronous",
+                            "delivered",
+                            "output"
                           ],
                           "type": "object"
                         },
@@ -45444,6 +45795,77 @@
                       },
                       "type": "array"
                     },
+                    "hookRuns": {
+                      "default": [],
+                      "description": "Core-owned hook invocation receipts. Running entries recover as UNKNOWN,\nnever as instructions to execute the hook again.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "asynchronous": {
+                            "type": "boolean"
+                          },
+                          "definitionDigest": {
+                            "type": "string"
+                          },
+                          "delivered": {
+                            "type": "boolean"
+                          },
+                          "event": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "inspection": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "operationId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "outcome": {
+                            "type": "string"
+                          },
+                          "output": true,
+                          "packageDigest": {
+                            "type": "string"
+                          },
+                          "pluginId": {
+                            "type": "string"
+                          },
+                          "toolUseId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "turnId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "pluginId",
+                          "packageDigest",
+                          "definitionDigest",
+                          "event",
+                          "outcome",
+                          "asynchronous",
+                          "delivered",
+                          "output"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
                     "interactionRevision": {
                       "format": "uint64",
                       "minimum": 0,
@@ -53828,6 +54250,77 @@
                       },
                       "type": "array"
                     },
+                    "hookRuns": {
+                      "default": [],
+                      "description": "Core-owned hook invocation receipts. Running entries recover as UNKNOWN,\nnever as instructions to execute the hook again.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "asynchronous": {
+                            "type": "boolean"
+                          },
+                          "definitionDigest": {
+                            "type": "string"
+                          },
+                          "delivered": {
+                            "type": "boolean"
+                          },
+                          "event": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "inspection": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "operationId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "outcome": {
+                            "type": "string"
+                          },
+                          "output": true,
+                          "packageDigest": {
+                            "type": "string"
+                          },
+                          "pluginId": {
+                            "type": "string"
+                          },
+                          "toolUseId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "turnId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "pluginId",
+                          "packageDigest",
+                          "definitionDigest",
+                          "event",
+                          "outcome",
+                          "asynchronous",
+                          "delivered",
+                          "output"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
                     "interactionRevision": {
                       "format": "uint64",
                       "minimum": 0,
@@ -58564,6 +59057,77 @@
                       },
                       "type": "array"
                     },
+                    "hookRuns": {
+                      "default": [],
+                      "description": "Core-owned hook invocation receipts. Running entries recover as UNKNOWN,\nnever as instructions to execute the hook again.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "asynchronous": {
+                            "type": "boolean"
+                          },
+                          "definitionDigest": {
+                            "type": "string"
+                          },
+                          "delivered": {
+                            "type": "boolean"
+                          },
+                          "event": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "inspection": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "operationId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "outcome": {
+                            "type": "string"
+                          },
+                          "output": true,
+                          "packageDigest": {
+                            "type": "string"
+                          },
+                          "pluginId": {
+                            "type": "string"
+                          },
+                          "toolUseId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "turnId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "pluginId",
+                          "packageDigest",
+                          "definitionDigest",
+                          "event",
+                          "outcome",
+                          "asynchronous",
+                          "delivered",
+                          "output"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
                     "interactionRevision": {
                       "format": "uint64",
                       "minimum": 0,
@@ -62429,6 +62993,77 @@
                           "delivery",
                           "strategy",
                           "reason"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "hookRuns": {
+                      "default": [],
+                      "description": "Core-owned hook invocation receipts. Running entries recover as UNKNOWN,\nnever as instructions to execute the hook again.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "asynchronous": {
+                            "type": "boolean"
+                          },
+                          "definitionDigest": {
+                            "type": "string"
+                          },
+                          "delivered": {
+                            "type": "boolean"
+                          },
+                          "event": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "inspection": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "operationId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "outcome": {
+                            "type": "string"
+                          },
+                          "output": true,
+                          "packageDigest": {
+                            "type": "string"
+                          },
+                          "pluginId": {
+                            "type": "string"
+                          },
+                          "toolUseId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "turnId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "pluginId",
+                          "packageDigest",
+                          "definitionDigest",
+                          "event",
+                          "outcome",
+                          "asynchronous",
+                          "delivered",
+                          "output"
                         ],
                         "type": "object"
                       },
@@ -72048,6 +72683,77 @@
                         },
                         "type": "array"
                       },
+                      "hookRuns": {
+                        "default": [],
+                        "description": "Core-owned hook invocation receipts. Running entries recover as UNKNOWN,\nnever as instructions to execute the hook again.",
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "asynchronous": {
+                              "type": "boolean"
+                            },
+                            "definitionDigest": {
+                              "type": "string"
+                            },
+                            "delivered": {
+                              "type": "boolean"
+                            },
+                            "event": {
+                              "type": "string"
+                            },
+                            "id": {
+                              "type": "string"
+                            },
+                            "inspection": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "operationId": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "outcome": {
+                              "type": "string"
+                            },
+                            "output": true,
+                            "packageDigest": {
+                              "type": "string"
+                            },
+                            "pluginId": {
+                              "type": "string"
+                            },
+                            "toolUseId": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            },
+                            "turnId": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "pluginId",
+                            "packageDigest",
+                            "definitionDigest",
+                            "event",
+                            "outcome",
+                            "asynchronous",
+                            "delivered",
+                            "output"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
                       "interactionRevision": {
                         "format": "uint64",
                         "minimum": 0,
@@ -75918,6 +76624,77 @@
                           "delivery",
                           "strategy",
                           "reason"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "hookRuns": {
+                      "default": [],
+                      "description": "Core-owned hook invocation receipts. Running entries recover as UNKNOWN,\nnever as instructions to execute the hook again.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "asynchronous": {
+                            "type": "boolean"
+                          },
+                          "definitionDigest": {
+                            "type": "string"
+                          },
+                          "delivered": {
+                            "type": "boolean"
+                          },
+                          "event": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "inspection": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "operationId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "outcome": {
+                            "type": "string"
+                          },
+                          "output": true,
+                          "packageDigest": {
+                            "type": "string"
+                          },
+                          "pluginId": {
+                            "type": "string"
+                          },
+                          "toolUseId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "turnId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "pluginId",
+                          "packageDigest",
+                          "definitionDigest",
+                          "event",
+                          "outcome",
+                          "asynchronous",
+                          "delivered",
+                          "output"
                         ],
                         "type": "object"
                       },
@@ -79814,6 +80591,77 @@
                           "delivery",
                           "strategy",
                           "reason"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "hookRuns": {
+                      "default": [],
+                      "description": "Core-owned hook invocation receipts. Running entries recover as UNKNOWN,\nnever as instructions to execute the hook again.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "asynchronous": {
+                            "type": "boolean"
+                          },
+                          "definitionDigest": {
+                            "type": "string"
+                          },
+                          "delivered": {
+                            "type": "boolean"
+                          },
+                          "event": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "inspection": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "operationId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "outcome": {
+                            "type": "string"
+                          },
+                          "output": true,
+                          "packageDigest": {
+                            "type": "string"
+                          },
+                          "pluginId": {
+                            "type": "string"
+                          },
+                          "toolUseId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "turnId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "pluginId",
+                          "packageDigest",
+                          "definitionDigest",
+                          "event",
+                          "outcome",
+                          "asynchronous",
+                          "delivered",
+                          "output"
                         ],
                         "type": "object"
                       },
@@ -83718,6 +84566,77 @@
                           "delivery",
                           "strategy",
                           "reason"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "hookRuns": {
+                      "default": [],
+                      "description": "Core-owned hook invocation receipts. Running entries recover as UNKNOWN,\nnever as instructions to execute the hook again.",
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "asynchronous": {
+                            "type": "boolean"
+                          },
+                          "definitionDigest": {
+                            "type": "string"
+                          },
+                          "delivered": {
+                            "type": "boolean"
+                          },
+                          "event": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "inspection": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "operationId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "outcome": {
+                            "type": "string"
+                          },
+                          "output": true,
+                          "packageDigest": {
+                            "type": "string"
+                          },
+                          "pluginId": {
+                            "type": "string"
+                          },
+                          "toolUseId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "turnId": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "pluginId",
+                          "packageDigest",
+                          "definitionDigest",
+                          "event",
+                          "outcome",
+                          "asynchronous",
+                          "delivered",
+                          "output"
                         ],
                         "type": "object"
                       },
@@ -88957,6 +89876,77 @@
                     "delivery",
                     "strategy",
                     "reason"
+                  ],
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "hookRuns": {
+                "default": [],
+                "description": "Core-owned hook invocation receipts. Running entries recover as UNKNOWN,\nnever as instructions to execute the hook again.",
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "asynchronous": {
+                      "type": "boolean"
+                    },
+                    "definitionDigest": {
+                      "type": "string"
+                    },
+                    "delivered": {
+                      "type": "boolean"
+                    },
+                    "event": {
+                      "type": "string"
+                    },
+                    "id": {
+                      "type": "string"
+                    },
+                    "inspection": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "operationId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "outcome": {
+                      "type": "string"
+                    },
+                    "output": true,
+                    "packageDigest": {
+                      "type": "string"
+                    },
+                    "pluginId": {
+                      "type": "string"
+                    },
+                    "toolUseId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "turnId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "pluginId",
+                    "packageDigest",
+                    "definitionDigest",
+                    "event",
+                    "outcome",
+                    "asynchronous",
+                    "delivered",
+                    "output"
                   ],
                   "type": "object"
                 },

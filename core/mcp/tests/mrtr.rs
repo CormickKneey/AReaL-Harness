@@ -32,7 +32,7 @@ async fn continuations_preserve_request_and_unknown_never_replays() {
     for mode in ["normal", "disconnect", "revoke", "deny", "timeout"] {
         let root = tempfile::tempdir().unwrap();
         let trace = root.path().join("wire.jsonl");
-        let config=normalize_plugin_document(false,&json!({"modern":{"command":"python3","args":[concat!(env!("CARGO_MANIFEST_DIR"),"/tests/mrtr.py")],"env":{"TRACE":trace},"tool_timeout_sec":if mode=="timeout"{0.5}else{5.0}}}),root.path(),root.path()).unwrap();
+        let config=normalize_plugin_document(false,&json!({"modern":{"command":"python3","args":[concat!(env!("CARGO_MANIFEST_DIR"),"/tests/mrtr.py")],"env":{"TRACE":trace},"tool_timeout_sec":if mode=="timeout"||mode=="normal"{0.5}else{5.0}}}),root.path(),root.path()).unwrap();
         let env = [("PATH".into(), std::env::var_os("PATH").unwrap())].into();
         let (broker, mut requests) = ElicitationBroker::channel();
         let mut c = Connections::connect_plugins_with_options(
@@ -92,6 +92,10 @@ async fn continuations_preserve_request_and_unknown_never_replays() {
         if mode == "deny" {
             allowed.store(false, Ordering::SeqCst);
         }
+        // Human waiting exceeds the entire active-execution budget on both rounds.
+        if mode == "normal" {
+            tokio::time::sleep(std::time::Duration::from_millis(650)).await;
+        }
         let _ = form.respond(json!({"action":"accept","content":{"answer":"one"}}));
         if mode == "normal" {
             let form = tokio::time::timeout(std::time::Duration::from_secs(3), requests.recv())
@@ -99,6 +103,7 @@ async fn continuations_preserve_request_and_unknown_never_replays() {
                 .unwrap()
                 .unwrap();
             assert_eq!(form.request_id, json!("second"));
+            tokio::time::sleep(std::time::Duration::from_millis(650)).await;
             form.respond(json!({"action":"cancel"})).unwrap();
         }
         let result = tokio::time::timeout(std::time::Duration::from_secs(3), task)

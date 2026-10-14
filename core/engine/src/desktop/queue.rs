@@ -35,6 +35,7 @@ impl Engine {
             if !engine.accepting_work() { return Err(Error::Closed); }
             let cell = engine.cell(&request.thread_id).await?;
             let mut state = cell.state.lock().await;
+            engine.ensure_hook_session_open(&cell,&state.thread)?;
             if state.thread.is_side() && (enqueue || request.interaction_mode.is_some() || request.input.len() != 1 || !matches!(&request.input[0], Input::Text { .. })) {
                 return Err(invalid("SIDE_POLICY_VIOLATION"));
             }
@@ -135,6 +136,16 @@ impl Engine {
             }
             let index = data.queue.items.iter().position(|item| item.id == request.queue_item_id).ok_or(Error::NotFound)?;
             if data.queue.items[index].status != "pending" { return Err(Error::Conflict); }
+            let input=data.queue.items[index].input.clone();
+            drop(engine.prepare_steer(&state,&request.expected_turn_id,input.clone())?);
+            let cancel=state.active.as_ref().ok_or(Error::Conflict)?.cancel.clone();
+            drop(state);
+            engine.plugin_hooks_user_input(&cell,&input,&cancel).await?;
+            let mut state=cell.state.lock().await;
+            let data=desktop(&state.thread);
+            if let Some(result)=receipt(&data,&identity,&request.request_id,method,&hash)?{return Ok(result);}
+            if state.poisoned || data.archived || data.queue.revision!=request.expected_revision {return Err(Error::Conflict);}
+            let index=data.queue.items.iter().position(|item|item.id==request.queue_item_id&&item.status=="pending").ok_or(Error::Conflict)?;
             let (mut candidate, item, permit) = engine.prepare_steer(&state, &request.expected_turn_id, data.queue.items[index].input.clone())?;
             let next = candidate.desktop.get_or_insert_with(Default::default);
             next.queue.items[index].status = "steered".into();
@@ -153,6 +164,7 @@ impl Engine {
         }).await
     }
     pub(crate) async fn check_turn_available(&self, cell: &Cell, state: &State) -> Result<()> {
+        self.ensure_hook_session_open(cell, &state.thread)?;
         if self.is_closed() {
             return Err(Error::Closed);
         }
@@ -324,6 +336,7 @@ impl Engine {
                 state.thread = candidate;
                 self.goal_emit(cell, &state.thread);
                 self.activate(cell, &mut state, &turn, self.shutdown.child_token(), permit);
+                state.active.as_mut().unwrap().hook_user_input = index.is_some();
             }
             Err(Error::Exhausted(ref error)) if error.starts_with("active Turn capacity") => {
                 let mut candidate = state.thread.clone();

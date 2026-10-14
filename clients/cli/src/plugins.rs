@@ -75,6 +75,19 @@ enum Command {
         id: String,
     },
     McpList,
+    HooksList,
+    /// Review current hooks separately from installation and MCP connection trust.
+    HooksTrust {
+        id: String,
+        #[arg(long)]
+        expected_digest: String,
+        #[arg(long)]
+        definition_digest: String,
+    },
+    HooksRevoke {
+        id: String,
+    },
+
     /// 认证操作直接访问当前认证状态，不产生持久管理收据。
     Auth {
         id: String,
@@ -225,6 +238,29 @@ pub async fn run(options: Options) -> Result<()> {
             true,
         ),
         Command::McpList => ("areal/plugin/mcp/list", json!({}), false),
+        Command::HooksList => ("areal/plugin/hooks/list", json!({}), false),
+        Command::HooksTrust {
+            id,
+            expected_digest,
+            definition_digest,
+        } => (
+            "areal/plugin/hooks/configure",
+            json!({"id":id,"expectedDigest":expected_digest,"definitionDigest":definition_digest,"enabled":true,"trusted":true}),
+            true,
+        ),
+        Command::HooksRevoke { id } => {
+            let hooks =
+                areal_local_service::rpc(&service, "areal/plugin/hooks/list", json!({})).await?;
+            let row = hooks["data"]
+                .as_array()
+                .and_then(|rows| rows.iter().find(|row| row["pluginId"] == id))
+                .context("installed hook package unavailable")?;
+            (
+                "areal/plugin/hooks/configure",
+                json!({"id":id,"expectedDigest":row["installedDigest"],"definitionDigest":row["definitionDigest"],"enabled":false,"trusted":false}),
+                true,
+            )
+        }
         Command::Auth {
             id,
             server,

@@ -27,7 +27,16 @@ impl Engine {
         let mut active_goals = Vec::new();
         let mut pending_queue_items = 0usize;
         for cell in &cells {
+            if let Some(scope) = self.hook_task_unknown(cell).await {
+                unknown.push(scope);
+            }
             let s = cell.state.lock().await;
+            if cell.hooks.closing.load(Ordering::Acquire)
+                && !cell.hooks.ended.load(Ordering::Acquire)
+            {
+                resources
+                    .push(json!({"threadId":s.thread.id,"kind":"hookSession","state":"closing"}));
+            }
             if s.thread
                 .goals
                 .goal
@@ -43,6 +52,16 @@ impl Engine {
                 active.push(json!({"threadId":s.thread.id,"turnId":a.id}));
             }
             if let Some(d) = &s.thread.desktop {
+                for hook in &d.hook_runs {
+                    if hook.outcome == "running" {
+                        resources.push(json!({"threadId":s.thread.id,"id":hook.id,"kind":"hook","state":"running"}));
+                    }
+                    if hook.outcome == "unknown" && hook.inspection.is_none() {
+                        unknown.push(
+                            json!({"threadId":s.thread.id,"invocationId":hook.id,"kind":"hook"}),
+                        );
+                    }
+                }
                 pending_queue_items += d
                     .queue
                     .items
@@ -168,6 +187,12 @@ impl Engine {
                 {
                     active.cancel.cancel();
                 }
+                if strategy == "cancel" {
+                    cell.hooks.cancel.cancel();
+                    if let Some(owner) = &state.compaction_owner {
+                        owner.cancellation.cancel();
+                    }
+                }
                 cell.emit(
                     "areal/server/draining",
                     json!({"threadId":state.thread.id,"strategy":strategy}),
@@ -182,8 +207,25 @@ impl Engine {
                 {
                     return Ok(engine.server_status().await);
                 }
+                while cell.state.lock().await.compacting {
+                    if tokio::time::Instant::now() >= deadline {
+                        return Ok(engine.server_status().await);
+                    }
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
             }
             if strategy == "cancel" {
+                for cell in &cells {
+                    let closing_engine = engine.clone();
+                    let cell = cell.clone();
+                    // The accepted close owns cleanup even when the drain deadline
+                    // expires or its caller disconnects; dropping a join is no abort.
+                    let closing =
+                        tokio::spawn(async move { closing_engine.plugin_hooks_end(&cell).await });
+                    if tokio::time::timeout_at(deadline, closing).await.is_err() {
+                        return Ok(engine.server_status().await);
+                    }
+                }
                 for service in [engine.workgroups.get(), engine.automatic_workgroups.get()]
                     .into_iter()
                     .flatten()

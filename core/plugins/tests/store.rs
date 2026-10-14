@@ -105,7 +105,7 @@ fn legacy_unsupported_and_schema_rejection() {
     assert!(
         d.diagnostics
             .iter()
-            .any(|s| s.contains("not yet supported"))
+            .any(|s| s.contains("do not execute") && s.contains("hook definition trust"))
     );
     write(
         t.path(),

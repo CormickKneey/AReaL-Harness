@@ -71,6 +71,7 @@ impl Config {
 }
 
 struct Scope {
+    participant: Option<writes::Participant>,
     info: ScopeInfo,
     reads: Vec<PathBuf>,
     writes: Vec<PathBuf>,
@@ -160,6 +161,7 @@ impl Supervisor {
         registry.scopes.insert(
             root.clone(),
             Scope {
+                participant: None,
                 directories: bind_directories(&reads, &writes)?,
                 info: ScopeInfo {
                     scope_id: root.clone(),
@@ -218,7 +220,7 @@ impl Supervisor {
                 "directoryObjectIsolation": false, "sandboxDenialAttribution": false,
                 "processLimits": self.config.limits,
                 "fullAccess":self.config.full_access,"readOnlyPaths":self.config.read_only_paths.iter().map(|p| self.workspace.uri(p)).collect::<Vec<_>>(),"rootNetwork": if self.config.allow_network { NetworkRequest::Inherit } else { NetworkRequest::Deny },
-                "methods": ["runtime.status", "connection.open", "connection.close", "scope.create", "scope.get", "scope.revoke",
+                "methods": ["runtime.status", "connection.open", "connection.close", "scope.create", "scope.createParticipant", "scope.get", "scope.revoke",
                     "scope.waitClosed", "owner.revoke", "process.start", "process.get", "process.terminate", "process.wait", "output.read", "operation.get"]
             }),
         };
@@ -310,7 +312,26 @@ impl Supervisor {
             .ok_or_else(not_found)
     }
 
+    pub fn create_participant_scope(&self, request: CreateParticipantScope) -> Result<ScopeInfo> {
+        // The connection root is an epoch-bound capability, never owner metadata.
+        if request.authority_scope_id != self.connection_info().root_scope_id {
+            return Err(denied(
+                "participant admission requires this connection root",
+            ));
+        }
+        let digest = digest("scope.createParticipant", &request)?;
+        self.create_scope_inner(request.scope, Some(request.participation), digest)
+    }
     pub fn create_scope(&self, request: CreateScope) -> Result<ScopeInfo> {
+        let digest = digest("scope.create", &request)?;
+        self.create_scope_inner(request, None, digest)
+    }
+    fn create_scope_inner(
+        &self,
+        request: CreateScope,
+        role: Option<ScopeParticipation>,
+        digest: [u8; 32],
+    ) -> Result<ScopeInfo> {
         self.validate_operation(&request.operation_id)?;
         self.check_handle(&request.parent_scope_id, "scope")?;
         if request.owner.task_id.is_empty()
@@ -323,7 +344,6 @@ impl Supervisor {
         {
             return Err(invalid("owner identifiers must contain 1..256 bytes"));
         }
-        let digest = digest("scope.create", &request)?;
         let mut state = self.registry.lock().unwrap();
         if let Some(old) = replay(&state, &request.operation_id, digest)? {
             return decode(
@@ -368,6 +388,39 @@ impl Supervisor {
         }
         let limits = narrow(&parent.info.limits, &request.limits)?;
         let scope_id = handle(&self.epoch, "scope");
+        let participant = match role {
+            None => parent.participant.clone(),
+            Some(ScopeParticipation::Task {
+                admission_window_ms,
+            }) => {
+                if parent.participant.is_some()
+                    || admission_window_ms == 0
+                    || admission_window_ms > 60_000
+                    || admission_window_ms > limits.wall_time_ms
+                {
+                    return Err(denied(
+                        "task group requires an ungrouped parent and a bounded admission window",
+                    ));
+                }
+                Some(writes::Participant {
+                    task: scope_id.clone(),
+                    hook: false,
+                    window: Duration::from_millis(admission_window_ms),
+                })
+            }
+            Some(ScopeParticipation::Hook { task_scope_id }) => {
+                let binding = parent
+                    .participant
+                    .as_ref()
+                    .filter(|p| p.task == task_scope_id)
+                    .ok_or_else(|| denied("hook parent must belong to the admitted task scope"))?;
+                ensure_active(state.scopes.get(&task_scope_id).ok_or_else(not_found)?)?;
+                Some(writes::Participant {
+                    hook: true,
+                    ..binding.clone()
+                })
+            }
+        };
         let info = ScopeInfo {
             scope_id: scope_id.clone(),
             parent_scope_id: Some(request.parent_scope_id),
@@ -388,6 +441,7 @@ impl Supervisor {
         state.scopes.insert(
             scope_id,
             Scope {
+                participant,
                 info: info.clone(),
                 reads,
                 writes,
@@ -512,7 +566,13 @@ impl Supervisor {
                 if let Some(program) = task_program {
                     // 使用已验证的目标执行，避免再次通过调用方的软链接解析。
                     execution.argv[0] = program.to_string_lossy().into_owned();
-                    execution.env.extend(self.config.task_environment.clone());
+                    // Package scopes and their descendants never inherit provider secrets.
+                    if !ancestors(&state, &request.scope_id)
+                        .iter()
+                        .any(|id| state.scopes[id].info.owner.plugin_instance_id.is_some())
+                    {
+                        execution.env.extend(self.config.task_environment.clone());
+                    }
                 }
                 if helper.as_ref().is_some_and(|(_, writes, _)| !writes) {
                     execution.write_roots.clear();
@@ -536,7 +596,9 @@ impl Supervisor {
                     .entry("PATH".into())
                     .or_insert_with(|| "/usr/local/bin:/usr/bin:/bin".into());
                 let write_paths = if execution.write_roots.is_empty()
-                    || (self.config.concurrent_writes && helper.is_none())
+                    || (self.config.concurrent_writes
+                        && helper.is_none()
+                        && scope.participant.is_none())
                 {
                     Vec::new()
                 } else if let Some((_, _, path)) = &helper {
@@ -544,6 +606,7 @@ impl Supervisor {
                 } else {
                     execution.write_roots.clone()
                 };
+                let participant = scope.participant.clone();
                 let ancestors = ancestors(&state, &request.scope_id);
                 for ancestor in &ancestors {
                     let scope = &state.scopes[ancestor];
@@ -608,6 +671,7 @@ impl Supervisor {
                         &request.operation_id,
                         execution,
                         write_paths,
+                        participant,
                     ))
                     .catch_unwind()
                     .await;
@@ -640,6 +704,7 @@ impl Supervisor {
         operation_id: &str,
         execution: Execution,
         write_paths: Vec<PathBuf>,
+        participant: Option<writes::Participant>,
     ) {
         let process_id = execution.process_id.clone();
         let (cancel, limits) = {
@@ -655,7 +720,7 @@ impl Supervisor {
                 biased;
                 _ = cancel.cancelled() => { self.start_failed(&process_id, operation_id, Error::new(ErrorCode::ScopeClosed, "cancelled while awaiting workspace write ownership"), OperationState::Cancelled); return; }
                 _ = tokio::time::sleep_until(deadline) => { self.start_failed(&process_id, operation_id, exhausted("workspace write queue deadline exceeded"), OperationState::Failed); return; }
-                guard = self.write_gate.acquire(write_paths) => Some(guard),
+                guard = self.write_gate.acquire_participant(write_paths, participant) => Some(guard),
             }
         };
         if cancel.is_cancelled() {
@@ -821,6 +886,8 @@ impl Supervisor {
         self.changed();
     }
     fn unknown(&self, process_id: &str, operation_id: &str, reason: &str) {
+        // Cleanup uncertainty never releases path ownership to another execution.
+        self.write_gate.retire();
         let mut state = self.registry.lock().unwrap();
         let process = state.processes.get_mut(process_id).unwrap();
         process.info.state = ProcessState::Unknown;
@@ -1164,6 +1231,10 @@ fn validate_process(request: &StartProcess) -> Result<()> {
             "RUST_BACKTRACE",
             "TMPDIR",
             "PYTHONDONTWRITEBYTECODE",
+            "PLUGIN_ROOT",
+            "PLUGIN_DATA",
+            "CLAUDE_PLUGIN_ROOT",
+            "CLAUDE_PLUGIN_DATA",
         ]
         .contains(&key.as_str())
         {

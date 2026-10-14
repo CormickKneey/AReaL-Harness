@@ -30,6 +30,8 @@ struct Instance {
 #[derive(Clone)]
 pub(crate) enum CallOwnerScope {
     Tool,
+    Hook { app_generation: Option<u64> },
+    CompactionHook { activation: String },
     AppRead { cwd: String, epoch: String },
 }
 #[derive(Clone)]
@@ -1310,7 +1312,17 @@ impl Engine {
         }
         let cell = self.cell(&owner.thread).await?;
         match &owner.scope {
-            CallOwnerScope::Tool => {
+            CallOwnerScope::CompactionHook { activation } => {
+                let state = cell.state.lock().await;
+                if !state.compacting
+                    || state.compaction_owner.as_ref().is_none_or(|current| {
+                        current.token != *activation || current.cancellation.is_cancelled()
+                    })
+                {
+                    return Err(invalid("MCP hook compaction owner ended"));
+                }
+            }
+            CallOwnerScope::Tool | CallOwnerScope::Hook { .. } => {
                 if cell
                     .state
                     .lock()
@@ -1322,7 +1334,13 @@ impl Engine {
                     return Err(invalid("MCP caller turn ended"));
                 }
                 if let Some(instance) = &owner.instance {
-                    self.app_bound(&owner.identity, &owner.thread, instance, generation)
+                    let source_generation = match owner.scope {
+                        CallOwnerScope::Hook {
+                            app_generation: Some(g),
+                        } => g,
+                        _ => generation,
+                    };
+                    self.app_bound(&owner.identity, &owner.thread, instance, source_generation)
                         .await?;
                 }
             }
@@ -1341,6 +1359,43 @@ impl Engine {
             }
         }
         Ok(())
+    }
+    pub(crate) async fn hook_call_owner(
+        self: &Arc<Self>,
+        cell: &Cell,
+        call: &ToolCall,
+    ) -> Result<CallOwner> {
+        {
+            let state = cell.state.lock().await;
+            if state.active.is_none() && state.compacting {
+                let mut owner = state.compaction_owner.clone().ok_or(Error::Conflict)?;
+                owner.scope = CallOwnerScope::CompactionHook {
+                    activation: owner.token.clone(),
+                };
+                owner.token = id();
+                owner.call = call.id.clone();
+                return Ok(owner);
+            }
+        }
+        let mut owner = self.mcp_call_owner(cell, call).await?;
+        let generation = if let Some(instance) = &owner.instance {
+            Some(
+                self.desktop
+                    .mcp_apps
+                    .instances
+                    .read()
+                    .unwrap()
+                    .get(instance)
+                    .ok_or(Error::NotFound)?
+                    .generation,
+            )
+        } else {
+            None
+        };
+        owner.scope = CallOwnerScope::Hook {
+            app_generation: generation,
+        };
+        Ok(owner)
     }
     pub(crate) fn mcp_request_context(
         self: &Arc<Self>,
@@ -1405,18 +1460,23 @@ impl Engine {
         let key = (server.name().to_owned(), server.generation());
         {
             let mut calls = self.desktop.mcp_apps.calls.lock().await;
-            calls.retain(|_, o| !o.cancellation.is_cancelled());
             if calls.contains_key(&key) {
                 return Err(invalid("MCP server has an active caller"));
             }
             calls.insert(key.clone(), owner.clone());
         }
+        let owner_token = owner.token.clone();
         let context =
             self.mcp_request_context(owner, server.name().into(), server.generation(), None);
         let result = server
             .read_resource_owned(uri, cancellation, Some(&context))
             .await;
-        self.desktop.mcp_apps.calls.lock().await.remove(&key);
+        {
+            let mut calls = self.desktop.mcp_apps.calls.lock().await;
+            if calls.get(&key).is_some_and(|o| o.token == owner_token) {
+                calls.remove(&key);
+            }
+        }
         serde_json::to_value(result.map_err(invalid)?).map_err(invalid)
     }
     pub(crate) async fn mcp_call_owner(&self, cell: &Cell, call: &ToolCall) -> Result<CallOwner> {

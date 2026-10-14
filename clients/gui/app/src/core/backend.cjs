@@ -926,7 +926,8 @@ class CoreBackend {
     try {
       const { requestId, previousItems, ...steer } = params;
       const { threadId, ...spawn } = steer;
-      return await project.client.request(method, method === 'areal/agent/spawn' ? spawn : method === 'turn/steer' ? steer : params);
+      const durableSteer=project.client.capabilities?.methods?.includes('areal/plugin/hooks/list');
+      return await project.client.request(method, method === 'areal/agent/spawn' ? spawn : method === 'turn/steer' ? {...steer,...(durableSteer?{requestId}:{})} : params);
     }
     catch (error) {
       if (['areal/thread/fork', 'areal/side/start'].includes(method) && (error.code === -32603 || typeof error.code !== 'number')) {
@@ -986,6 +987,12 @@ class CoreBackend {
       if (entry.method === 'areal/agent/spawn') { await this.recoverAgentSubmission(project, entry.params.parentThreadId, entry.params.requestId); continue; }
       if (taskMutationMethods.has(entry.method)) continue; // No public receipt lookup; never infer or replay.
       if (entry.method === 'turn/steer') {
+        if(project.client.capabilities?.methods?.includes('areal/plugin/hooks/list')) {
+          const result=await client.request('areal/request/read',{requestId:entry.params.requestId});
+          const receipt=result.data.find(item=>item.method==='turn/steer'&&item.state==='completed'&&item.response);
+          if(receipt){await this.changeOutcomes(project,outcomes=>({...outcomes,[entry.params.requestId]:{accepted:!receipt.response.error,threadId:entry.params.threadId,input:entry.params.input,message:receipt.response.error?.message}}));await this.changePending(project,pending=>pending.filter(value=>value!==entry));}
+          continue; // Receipt covers hook side effects and rejection; never replay.
+        }
         await this.openThread(project, entry.params.threadId);
         const turn = project.model.state.threads[entry.params.threadId]?.turns.find(item => item.id === entry.params.expectedTurnId);
         const normalize = input => input.map(part => part.type === 'text' ? { type: 'text', text: part.text } : { type: part.type, url: part.url });

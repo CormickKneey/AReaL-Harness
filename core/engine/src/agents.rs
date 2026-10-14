@@ -1056,6 +1056,7 @@ mod tests {
             active: None,
             poisoned: false,
             compacting: false,
+            compaction_owner: None,
             quarantined_admission: None,
         };
         state.thread.turns[0]

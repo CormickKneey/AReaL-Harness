@@ -2,7 +2,7 @@
 
 # Codex plugin implementation and acceptance
 
-This plan implements the approved design in vertical slices. P0 has its own accepted local evidence. The current batch combines P1 and P3, with GitHub as the first real service. P2 hook execution is excluded from this batch and remains a separate requirement for the final compatibility claim. A phase passes only with its own evidence.
+This plan implements the approved design in vertical slices. P0 has its own accepted local evidence. P1/P3 use GitHub as the first real service; the current batch continues with P2 hooks and retains each requirement for the final compatibility claim. A phase passes only with its own evidence.
 
 ## Baseline and controls
 
@@ -72,6 +72,8 @@ Before implementation, define failure assertions at the actual boundary. Prefer 
 
 Prior accepted status: P0 source implementation and local combined acceptance pass. All 48 package/Engine integration checks, actual Core/CLI authorization and lost-response recovery, GUI types/public contracts/build, real Electron installation/setup/disable/uninstall and explicit receipt recovery pass. Independent review is SHIP. See the [P0 acceptance record](codex-plugins-p0-acceptance.en.md) for evidence and exclusions. This does not claim compatibility with the complete Codex plugin protocol.
 
-Current status: public MRTR, native stdio uploads, portable auth, ON_INSTALL/ON_USE, App subscription cleanup and sparse checkout are implemented. Sources28 pass; final MCP40/Engine32 pass, including all four previously failed process checks, whose historical causes remain unknown. Schema Make still fails with retained diagnostics. CLI8/wire7/GitHub5 and initial native36 pass; final Core repeats all6 native auth checks. The HTTP403 scope-upgrade/cancel repair retains proven grants and passes8 portable-auth checks and independent SHIP review. Three old library test literal compile gaps are fixed. Cross-platform, real OAuth, distribution and private-service evidence remain open; P1/P3 and full compatibility are not closed.
+Current status: public MRTR, native stdio uploads, portable auth, ON_INSTALL/ON_USE, App subscription cleanup and sparse checkout are implemented. Sources28 pass; final MCP40/Engine32 pass, including all four previously failed process checks, whose historical causes remain unknown. Those are historical P1/P3 candidate results. Current standard schema Make passes; the historical SIGKILL cause remains unknown. CLI8/wire7/GitHub5 and initial native36 pass; final Core repeats all6 native auth checks. The HTTP403 scope-upgrade/cancel repair retains proven grants and passes8 portable-auth checks and independent SHIP review. Three old library test literal compile gaps are fixed. Cross-platform, real OAuth, distribution and private-service evidence remain open; P1/P3 and full compatibility are not closed.
 
 Before P3 acceptance, name the required desktop extension set, services/Connectors and supported platforms. Format parsing does not grant access to hosted services. Every unresolved requirement remains open in the final matrix.
+
+The current P2 candidate implements parsing, independent trust, Core/Runtime execution, lifecycle events, MCP active time and GUI review. The approved bounded Runtime write group passes 56 Runtime checks plus 21 actual Core/Runtime scenes with explicitly writable children. Read-only children, platforms and full pinned Codex comparisons remain open; new direct Rust child SIGKILL failures are listed independently. See the [P2 matrix](codex-plugins-p2-acceptance.en.md) for evidence, failures and remaining acceptance; partial passes do not close full compatibility.

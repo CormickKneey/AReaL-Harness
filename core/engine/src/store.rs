@@ -102,6 +102,14 @@ impl Store {
             }
             let mut record: Record = serde_json::from_slice(&std::fs::read(&path)?)
                 .with_context(|| format!("invalid session: {}", path.display()))?;
+            if let Some(desktop) = record.thread.desktop.as_mut() {
+                for run in &mut desktop.hook_runs {
+                    if run.outcome == "running" {
+                        run.outcome = "unknown".into();
+                    }
+                }
+            }
+
             anyhow::ensure!(
                 max_bytes == 0
                     || record

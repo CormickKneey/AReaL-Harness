@@ -141,3 +141,23 @@ pub struct FormResourceRelease {
     pub field_name: String,
     pub uri: String,
 }
+
+/// Explicit review of the current package and effective hooks, independently of MCP trust.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HooksConfigure {
+    pub request_id: String,
+    pub id: String,
+    pub expected_digest: String,
+    pub definition_digest: String,
+    pub enabled: bool,
+    pub trusted: bool,
+}
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HookAcknowledge {
+    pub request_id: String,
+    pub thread_id: String,
+    pub invocation_id: String,
+    pub inspection: String,
+}

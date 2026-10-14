@@ -20,3 +20,5 @@ tar = "0.4.46"
 flate2 = "1.1.10"
 node-semver = "2.2"
 libc.workspace = true
+regex = "1.12.3"
+toml_edit.workspace = true

@@ -184,3 +184,17 @@ Only trusted Main grants host files. Authenticated non-desktop-owner principals 
 Native Main uses areal/mcp/form/resource/prepare {threadId,requestId,fieldName}, stage {selectionToken,requestId,paths} and release {threadId,requestId,fieldName,uri}. Prepare/stage require authenticated desktop-owner and are denied through generic Renderer commands. Stage is UUID/payload-bound in the existing management ledger; UNKNOWN only reads its original receipt. Paths/tokens stay in Main/Core; Renderer receives opaque URIs. Modern discovery negotiates MRTR; requests preserve original arguments and keep requestState private.
 
 Pinned Codex0.162.1 plugin/list/installed/read/install/uninstall/reconcile/search and marketplace/add/remove/upgrade share the package owner. Only search requires experimentalApi opt-in. Unconfigured hosted share/catalog services return -32004 capability errors, never fake empty success. marketplace/add accepts source/refName?/sparsePaths? with persisted sparse cone paths. Full hooks and other limits remain in the [acceptance matrix](../development/codex-plugins-p1-p3-acceptance.en.md).
+
+## Plugin hooks
+
+These management methods require an unrestricted manage identity and use the deployment submission journal.
+
+| Method | Parameters | Result |
+|---|---|---|
+| `areal/plugin/hooks/list` | `{}` | Per-source installedDigest, definitionDigest, definitions, diagnostics and trust; configuration sources also expose sourceKind/origin/enabled |
+| `areal/plugin/hooks/configure` | `requestId,id,expectedDigest,definitionDigest,enabled,trusted` | Review current installation/source and complete plan digest before persisting independent definition trust; mismatch rejects; revoke/disable cancels admitted calls |
+| `areal/hook/acknowledge` | `requestId,threadId,invocationId,inspection` | Bounded inspection of an idle target's own UNKNOWN; preserves UNKNOWN without replay |
+
+`desktop.hookRuns` retains invocation package/definition digests, event, turnId/toolUseId, Runtime operationId, outcome, asynchronous, delivered, output and inspection. `areal/hook/completed` only signals refresh; Thread snapshots remain authoritative. Uninspected UNKNOWN prevents new Turns; closing Sessions reject execution.
+
+`turn/steer` accepts optional `requestId`; with it, hooks and results share the durable deduplication boundary used by `areal/queue/steer`. Matching identity/method/key/parameters wait for the original execution or return its stored response; changed parameters reject. `areal/request/read {requestId}` reads deployment receipts; thread-scoped reads also append that identity's same-key deployment records. Legacy callers may omit the key but cannot guarantee a single execution after response loss. Parallel management operations queue by key. The 8 MiB journal reserves up to 256 KiB plus record margin per accepted response; insufficient capacity rejects before execution without truncating old receipts. `make desktop-schemas` generates the method/projection schema.

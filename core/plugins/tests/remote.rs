@@ -149,7 +149,11 @@ fn git_marketplace_and_bad_component_sibling() {
     let c = store.enabled_components().unwrap();
     assert_eq!(c[0].mcp_documents.len(), 1);
     assert!(c[0].diagnostics.iter().any(|v| v.contains("missing")));
-    assert!(c[0].diagnostics.iter().any(|v| v.contains("P2")));
+    assert!(
+        c[0].diagnostics
+            .iter()
+            .any(|v| v.contains("hook definition trust"))
+    );
 }
 fn archive(link: bool) -> Vec<u8> {
     let mut tar = tar::Builder::new(Vec::new());

@@ -1581,7 +1581,11 @@ async fn mrtr_app_resource_and_tool_share_authoritative_forms() {
         let thread = thread.id.clone();
         let instance = instance.clone();
         tokio::spawn(async move {
-            e.mcp_app_request("owner".into(),thread,instance,generation,json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"app","arguments":{"mode":"upload"}}}),Some("upload-once".into())).await
+            // A steer hook can wait for a file form inside its durable submission.
+            // An independent stage must still progress, while duplicates remain single-shot.
+            e.management_submission("owner".into(), "waiting-upload".into(), "turn/steer".into(), json!({"mode":"upload"}), move |e| async move {
+                e.mcp_app_request("owner".into(),thread,instance,generation,json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"app","arguments":{"mode":"upload"}}}),Some("upload-once".into())).await.unwrap()
+            }).await
         })
     };
     approve(&e, &thread.id).await;
@@ -1616,8 +1620,9 @@ async fn mrtr_app_resource_and_tool_share_authoritative_forms() {
     let paths = vec![picked_path.clone()];
     let parameters = json!({"selectionToken":token,"paths":paths});
     let stage_id = uuid::Uuid::new_v4().to_string();
-    let staged = e
-        .management_submission(
+    let staged = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        e.management_submission(
             "owner".into(),
             stage_id.clone(),
             "areal/mcp/form/resource/stage".into(),
@@ -1631,9 +1636,11 @@ async fn mrtr_app_resource_and_tool_share_authoritative_forms() {
                         .unwrap()
                 }
             },
-        )
-        .await
-        .unwrap();
+        ),
+    )
+    .await
+    .expect("stage must progress while another submission waits for this upload form")
+    .unwrap();
     assert_eq!(staged["summary"]["fileCount"], 1);
     assert_eq!(staged["summary"]["totalBytes"], 15);
     let uri = staged["resources"][0]["uri"].as_str().unwrap().to_owned();
@@ -1921,4 +1928,104 @@ async fn marketplace_authentication_timing_gates_only_declared_servers() {
         );
         e.shutdown().await;
     }
+}
+
+// Failure contract: independent human waits must not consume unreserved journal
+// response capacity; committed effects survive restart without duplicate execution.
+#[tokio::test]
+async fn parallel_submission_responses_remain_restartable() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let state = tempfile::tempdir().unwrap();
+    fs::create_dir_all(state.path().join("desktop")).unwrap();
+    let mut seed = serde_json::Map::new();
+    for i in 0..30 {
+        seed.insert(format!("seed-{i}"), json!({"identity":"owner","requestId":format!("old-{i}"),"method":"seed","digest":"old","state":"completed","response":{"payload":"s".repeat(250*1024)}}));
+    }
+    let path = state.path().join("desktop/submissions.json");
+    fs::write(&path, serde_json::to_vec(&seed).unwrap()).unwrap();
+    let engine = Engine::open(state.path(), Arc::new(ModelFixture), Limits::default()).unwrap();
+    let release = Arc::new(tokio::sync::Notify::new());
+    let effects = Arc::new(AtomicUsize::new(0));
+    let mut jobs = vec![];
+    for i in 0..3 {
+        let engine = engine.clone();
+        let release = release.clone();
+        let effects = effects.clone();
+        jobs.push(tokio::spawn(async move {
+            engine
+                .management_submission(
+                    "owner".into(),
+                    format!("new-{i}"),
+                    "upload".into(),
+                    json!({"index":i}),
+                    move |_| async move {
+                        let wait = release.notified();
+                        tokio::pin!(wait);
+                        wait.as_mut().enable();
+                        effects.fetch_add(1, Ordering::SeqCst);
+                        wait.await;
+                        json!({"payload":"x".repeat(250*1024)})
+                    },
+                )
+                .await
+        }));
+    }
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        let mut accounted = 0;
+        for i in 0..3 {
+            let receipts = engine
+                .management_receipts("owner", &format!("new-{i}"))
+                .await;
+            if jobs[i].is_finished()
+                || receipts["data"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|r| r["state"] == "accepted")
+            {
+                accounted += 1;
+            }
+        }
+        if accounted == 3 {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "submission admission did not settle"
+        );
+        tokio::task::yield_now().await;
+    }
+    release.notify_waiters();
+    let mut completed = vec![];
+    for (i, job) in jobs.into_iter().enumerate() {
+        if let Ok(response) = job.await.unwrap() {
+            completed.push((i, response));
+        }
+        assert!(
+            fs::metadata(&path).unwrap().len() <= 8 * 1024 * 1024,
+            "parallel responses exceeded restart journal budget"
+        );
+    }
+    assert!(!completed.is_empty());
+    assert_eq!(effects.load(Ordering::SeqCst), completed.len());
+    engine.shutdown().await;
+    drop(engine);
+    let restarted = Engine::open(state.path(), Arc::new(ModelFixture), Limits::default()).unwrap();
+    for (i, response) in completed {
+        assert_eq!(
+            restarted
+                .management_submission(
+                    "owner".into(),
+                    format!("new-{i}"),
+                    "upload".into(),
+                    json!({"index":i}),
+                    |_| async { panic!("committed effect must not replay after restart") }
+                )
+                .await
+                .unwrap(),
+            response
+        );
+    }
+    restarted.shutdown().await;
 }

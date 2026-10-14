@@ -254,8 +254,8 @@ impl Engine {
         }
     }
     pub(crate) async fn approval(
-        &self,
-        cell: &Cell,
+        self: &Arc<Self>,
+        cell: &Arc<Cell>,
         call_id: &str,
         tool: &str,
         arguments: &Value,
@@ -345,6 +345,20 @@ impl Engine {
             || ((action == "ask" || browser_action)
                 && (explicit_ask || !can_remember || !(session_allowed || project_allowed)))
         {
+            if !tool.starts_with("hook:") {
+                let (name, input) = crate::plugin_hooks::tool_input(tool, arguments);
+                let effects=self.plugin_hook_event(cell,areal_plugins::hooks::HookEvent::PermissionRequest,
+                    json!({"tool_name":name,"tool_input":input,"__areal_caller_admitted":backend.as_ref().is_some_and(|b|!matches!(b,Backend::Agent|Backend::Coordination|Backend::Core))}),cancel).await.map_err(|e|RuntimeError::new(ErrorCode::Unavailable,e.to_string()))?;
+                match effects.permission {
+                    Some(crate::plugin_hooks::output::PermissionDecision::Deny { reason }) => {
+                        return Err(RuntimeError::new(ErrorCode::PermissionDenied, reason));
+                    }
+                    Some(crate::plugin_hooks::output::PermissionDecision::Allow) if !forced => {
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+            }
             if self.interaction_mode(cell).await
                 != areal_protocol::tasks::InteractionMode::Interactive
             {

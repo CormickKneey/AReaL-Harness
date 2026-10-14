@@ -4,6 +4,7 @@ use tokio::sync::{mpsc, oneshot};
 #[derive(Clone, Debug)]
 pub struct ElicitationBroker {
     sender: mpsc::Sender<ElicitationRequest>,
+    pub(crate) clocks: Arc<crate::active_timeout::Clocks>,
 }
 #[derive(Debug)]
 pub struct ElicitationRequest {
@@ -45,7 +46,13 @@ impl ElicitationRequest {
 impl ElicitationBroker {
     pub fn channel() -> (Self, mpsc::Receiver<ElicitationRequest>) {
         let (sender, receiver) = mpsc::channel(16);
-        (Self { sender }, receiver)
+        (
+            Self {
+                sender,
+                clocks: Arc::default(),
+            },
+            receiver,
+        )
     }
     pub(crate) async fn request_owned(
         &self,
@@ -82,6 +89,7 @@ impl ElicitationBroker {
             return Ok(serde_json::json!({"action":"decline"}));
         }
         let cancellation = cancel.child_token();
+        let _active_wait = self.clocks.pause(server, generation, Some(&owner));
         let _drop = cancellation.clone().drop_guard();
         let (tx, rx) = oneshot::channel();
         self.sender
@@ -125,6 +133,9 @@ impl ElicitationBroker {
             ));
         }
         let cancellation = handler.revoked.child_token();
+        // Legacy reverse forms carry no backlink. Core admits one unambiguous
+        // caller per server generation; modern forms use their exact owner token.
+        let _active_wait = self.clocks.pause(&handler.server, handler.generation, None);
         let guard = cancellation.clone().drop_guard();
         let (tx, rx) = oneshot::channel();
         let request = ElicitationRequest {

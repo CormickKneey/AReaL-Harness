@@ -147,6 +147,7 @@ pub(crate) async fn dispatch(
             | "areal/marketplace/update"
             | "areal/plugin/resolve"
             | "areal/queue/update"
+            | "areal/queue/steer"
             | "areal/queue/remove"
             | "areal/queue/reorder"
             | "areal/queue/pause"
@@ -186,7 +187,7 @@ pub(crate) async fn dispatch(
         let method = method.to_owned();
         let owner = identity.to_owned();
         let snapshot = params.clone();
-        if method == "areal/plugin/setup" {
+        if method == "areal/plugin/setup" || method == "areal/queue/steer" {
             params["requestId"] = json!(request);
         }
         let reply = engine
@@ -462,7 +463,9 @@ async fn dispatch_inner(
         }
         "areal/context/compact" => {
             let p: ThreadId = parse(params)?;
-            engine.context_compact(p.thread_id).await
+            engine
+                .context_compact_owned(identity.into(), p.thread_id)
+                .await
         }
         "areal/agent/wait" => {
             #[derive(Deserialize)]

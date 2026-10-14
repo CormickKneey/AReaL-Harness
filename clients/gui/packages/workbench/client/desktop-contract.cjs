@@ -74,7 +74,7 @@ function validateCommand(name, params, { serviceOnly = false } = {}) {
     if (params.requestId !== undefined && !identifier(params.requestId)) invalid();
   }
   if (name === 'manage' && params.operation === 'pluginSubmission'
-    && (!identifier(params.requestId) || !['marketplaceAdd', 'marketplaceAddGit', 'marketplaceRemove', 'marketplaceUpdate', 'pluginResolve', 'pluginConnection', 'pluginAuthConfigure', 'connectorConfigure', 'pluginInstall', 'pluginConfigure', 'pluginUninstall', 'pluginSetup'].includes(String(params.mutation)))) invalid();
+    && (!identifier(params.requestId) || !['marketplaceAdd', 'marketplaceAddGit', 'marketplaceRemove', 'marketplaceUpdate', 'pluginResolve', 'pluginConnection', 'pluginHooksConfigure', 'hookAcknowledge', 'pluginAuthConfigure', 'connectorConfigure', 'pluginInstall', 'pluginConfigure', 'pluginUninstall', 'pluginSetup'].includes(String(params.mutation)))) invalid();
   if (name === 'manage') {
     if (['mcpFormResourcePrepare', 'mcpFormResourceStage', 'mcpFormResourceSubmission', 'mcpFormResourceRelease'].includes(String(params.operation))) {
       const operation = String(params.operation);
@@ -106,6 +106,8 @@ function validateCommand(name, params, { serviceOnly = false } = {}) {
     }
     if (['pluginConnection','connectorConfigure','connectorCredential'].includes(String(params.operation)) && (!identifier(params.id) || typeof params.expectedDigest !== 'string' || !/^[a-f0-9]{64}$/.test(params.expectedDigest) || !identifier(params.requestId))) invalid();
     if (params.operation === 'pluginConnection' && typeof params.connect !== 'boolean') invalid();
+    if (params.operation === 'pluginHooksConfigure' && (!identifier(params.id) || !identifier(params.requestId) || typeof params.enabled !== 'boolean' || typeof params.trusted !== 'boolean' || typeof params.expectedDigest !== 'string' || !/^(?:sha256:)?[a-f0-9]{64}$/.test(params.expectedDigest) || typeof params.definitionDigest !== 'string' || !/^[a-f0-9]{64}$/.test(params.definitionDigest))) invalid();
+    if (params.operation === 'hookAcknowledge' && (!identifier(params.threadId) || !identifier(params.requestId) || !identifier(params.invocationId) || typeof params.inspection !== 'string' || !params.inspection.trim() || params.inspection.length > 8192)) invalid();
     if (['connectorConfigure','connectorCredential'].includes(String(params.operation)) && (!identifier(params.connectorId) || params.provider !== 'github')) invalid();
     if (params.operation === 'connectorCredential' && (typeof params.secret !== 'string' || !params.secret.trim() || params.secret.length > 16384 || /[\r\n]/.test(params.secret))) invalid();
     if (params.operation === 'connectorConfigure' && !identifier(params.credentialRef)) invalid();

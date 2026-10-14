@@ -247,6 +247,12 @@ impl Client {
             unavailable("Runtime response violates its contract")
         })
     }
+    pub async fn create_participant_scope(
+        &self,
+        request: CreateParticipantScope,
+    ) -> Result<ScopeInfo> {
+        self.call("scope.createParticipant", request).await
+    }
     pub async fn create_scope(&self, request: CreateScope) -> Result<ScopeInfo> {
         self.call("scope.create", request).await
     }

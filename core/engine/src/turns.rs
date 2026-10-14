@@ -36,6 +36,7 @@ impl Engine {
         let _gate = self.desktop.lifecycle.gate.lock().await;
         let cell = self.cell(thread_id).await?;
         let mut state = cell.state.lock().await;
+        self.ensure_hook_session_open(&cell, &state.thread)?;
         if !self.accepting_work() || cancel.is_cancelled() {
             return Err(Error::Closed);
         }
@@ -72,6 +73,15 @@ impl Engine {
         }
         if state.thread.turns.iter().flat_map(|turn| &turn.items).any(|item| matches!(item, Item::DynamicToolCall {execution,..} if (execution.outcome == areal_protocol::ToolOutcome::Unknown || execution.hooks.iter().any(|hook| hook.outcome == areal_protocol::ToolOutcome::Unknown)) && execution.inspection.is_none())) {
             return Err(Error::Invalid("an UNKNOWN tool result requires operator inspection and areal/tool/acknowledge before a new turn".into()));
+        }
+        if state.thread.desktop.as_ref().is_some_and(|d| {
+            d.hook_runs
+                .iter()
+                .any(|r| r.outcome == "unknown" && r.inspection.is_none())
+        }) {
+            return Err(Error::Invalid(
+                "UNKNOWN hook requires operator inspection; refusing replay".into(),
+            ));
         }
         let (candidate, turn) = self.prepare_turn(&state.thread, input)?;
         let admission = self.reserve_active_turn()?;
@@ -239,6 +249,14 @@ impl Engine {
                 self.managed_registry(&state.thread, cell.research)
                     .map_err(|e| e.to_string())
             }),
+            hooks: cell
+                .hooks
+                .inherited
+                .get()
+                .cloned()
+                .unwrap_or_else(|| self.frozen_plugin_hooks(&state.thread)),
+            hook_user_input: true,
+            hook_tasks: TaskTracker::new(),
             direct_tool,
             tool_meta,
             tool_calls: 0,
@@ -322,13 +340,24 @@ impl Engine {
     }
 
     async fn steer_inner(
-        &self,
+        self: &Arc<Self>,
         thread_id: &str,
         turn_id: &str,
         input: Vec<Input>,
         settle_request: bool,
     ) -> Result<()> {
         let cell = self.cell(thread_id).await?;
+        if !settle_request {
+            let cancel = {
+                let state = cell.state.lock().await;
+                self.ensure_hook_session_open(&cell, &state.thread)?;
+                // Validate admission without publishing user input; release the lock
+                // while hooks run, then validate the still-current Turn again below.
+                drop(self.prepare_steer(&state, turn_id, input.clone())?);
+                state.active.as_ref().ok_or(Error::Conflict)?.cancel.clone()
+            };
+            self.plugin_hooks_user_input(&cell, &input, &cancel).await?;
+        }
         let mut state = cell.state.lock().await;
         let (candidate, item, permit) = self.prepare_steer(&state, turn_id, input)?;
         self.persist(&candidate).await?;
@@ -617,6 +646,7 @@ impl Engine {
                     (active.registry.clone().map_err(anyhow::Error::msg)?, active.direct_tool.clone())
                 };
                 cell.bindings.write().await.registry = registry;
+                self.plugin_hooks_before_turn(&cell,&cancel).await?;
                 if let Some(call) = direct {
                     self.tool(&cell, &cancel, call, usize::MAX).await.map(|_| ())
                 } else {
@@ -662,6 +692,16 @@ impl Engine {
             // 在清理及账本刷新之前释放生成 future，包括内部计量 guard。
             result
         };
+        if cancel.is_cancelled() && cell.state.lock().await.thread.parent_thread_id.is_none() {
+            let _ = self
+                .plugin_hook_event(
+                    &cell,
+                    areal_plugins::hooks::HookEvent::Interrupt,
+                    json!({}),
+                    &CancellationToken::new(),
+                )
+                .await;
+        }
         // 关闭子任务准入并传播取消，再等待子树；整个过程不持有父会话锁。
         let (children, tools) = {
             let mut state = cell.state.lock().await;
@@ -675,6 +715,17 @@ impl Engine {
         };
         tools.close();
         tools.wait().await;
+        let hook_tasks = cell
+            .state
+            .lock()
+            .await
+            .active
+            .as_ref()
+            .unwrap()
+            .hook_tasks
+            .clone();
+        hook_tasks.close();
+        hook_tasks.wait().await;
         let mut cleanup_failed = false;
         let mut dependency_failed = false;
         let active_id = cell.state.lock().await.active.as_ref().unwrap().id.clone();
