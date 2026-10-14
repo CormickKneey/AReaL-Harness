@@ -28,6 +28,8 @@ make gui
 
 macOS 开发和安装版均需要可执行的 `/usr/bin/python3`，供 Runtime 及可信工具助手启动中转；可通过 `xcode-select --install` 安装 Xcode Command Line Tools。该解释器不随应用打包；共享服务在启动前检查可用性并返回明确错误。
 
+macOS GUI 后台自动读取系统静态 HTTP、HTTPS 和 SOCKS 代理，供 Core、模型连接测试与订阅请求使用；显式环境变量优先。绕过规则、重启生效和限制见[代理配置](../../docs/guides/configuration.md#proxies)。`pnpm --dir clients/gui run test:proxy` 验证实际 HTTP 转发、HTTPS CONNECT、SOCKS5 远端 DNS、后台 TCP 转接和本机直连。设置 `AREAL_TEST_MODEL_PROXY_BIN` 为已编译的 `core/engine/tests/model_proxy.rs` 测试可执行文件，可同时验证真实 Core 的 HTTP/HTTPS 流式回复。
+
 ## Composer
 
 权限审批和 Ask User 共用固定在对话底部的交互卡片。审批默认显示拒绝与允许一次，Core 允许记住授权时才提供任务／项目范围菜单；原有授权条件和状态核对保持不变。问题支持选项、自由回答和逐题填写；“跳过”或关闭仅暂时收起，保留草稿和待回答入口，不提交空答案或停止任务。提问期间输入框保持紧凑，审批期间保留并隐藏普通输入草稿；回答回显来自 Core 已保存的工具历史。`pnpm --dir clients/gui run test:interactions` 使用隔离的真实 Electron/Core/Runtime 和确定性本地模型验证审批、回答及历史恢复，不替代真实供应商或安装包验收。
@@ -72,7 +74,7 @@ Browser 工具在每次新用户请求中先 `describe`，再重新观察，拒�
 
 macOS 桌面适配器通过系统 `/usr/bin/python3` 保留可信 Core 命令的父进程，与 Runtime 的原生启动方式一致。命令参数、环境和标准输入输出保持原样；超时、取消和强杀作用于真实 Core 子进程，适配器或桥退出时清理其仍运行的直接子进程。该路径不重放写入，也不终止 Core 已建立的持久服务。`pnpm --dir clients/gui run test:core-process` 验证信号退出、超时升级、取消、输出上限及进程清理。
 
-Renderer 仅通过窄 preload IPC 访问桌面适配器。独立适配器使用 `areal service ensure/restart/stop --json` 连接 Core，不直接管理持久 Core 服务的 PID。退出 GUI 断开界面并结算 GUI 拥有的终端，Core Turn/Goal 和已配置的定时任务继续执行；重新打开按权威快照恢复，不自动重放提交。停止后台服务是显式操作，忙碌时拒绝安全停止。
+Renderer 仅通过窄 preload IPC 访问桌面适配器。独立适配器使用 `areal service ensure/restart/stop --json` 连接 Core，不直接管理持久 Core 服务的 PID。退出 GUI 断开界面并结算 GUI 拥有的终端，Core Turn/Goal 和已配置的定时任务继续执行；重新打开按权威快照恢复，不自动重放提交。停止后台服务是显式操作，忙碌时拒绝安全停止；启动恢复对话框提供“取消任务并重启”，二次确认后先调用 Core `areal/server/drain` 的 `cancel` 策略，再执行正常资源检查和后台退出。旧后台尚不支持取消参数时，Main 使用旧后台仍持有的本机 Core 管理连接完成取消，再请求旧后台安全退出；多个 GUI 连接或后台操作未完成时仍拒绝，结果未确认时不自动重发。
 
 Core 观察连接意外关闭时，项目连接所有者以 500ms 起步、最长 30s 的退避重试，通过 `service status --instance` 发现兼容的运行中实例，并用原子 `areal/thread/observe` 恢复 Thread/Task 快照、订阅和通知基线。观察恢复不重绑工具宿主；用户显式认领原生页时，才读取权威状态并在 Thread 空闲时尝试 `thread/resume` 绑定，仍受 Core 宿主冲突检查约束。恢复不重新提交任务、不同步 Provider/MCP 配置，也不执行配置 revision 屏障。旧连接的消息与异步结果失去投影写入资格。显式停止、适配器关闭、停止中的 Core 或部署指纹不兼容会阻止自动恢复；重新连接需显式操作。
 

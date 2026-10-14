@@ -46,7 +46,7 @@ class DesktopService {
   }
   packet() {
     return { sequence: ++this.sequence, snapshot: this.backend.snapshot(), service: {
-      connected: true, clients: this.clients.size, busy: this.backend.hasWork({ includePausedQueues: false }),
+      connected: true, cancelStop: true, clients: this.clients.size, busy: this.backend.hasWork({ includePausedQueues: false }),
       activeCommands: this.inflight, providerUpdating: !!this.backend.providerUpdating,
       starting: this.backend.starting.size, pid: process.pid,
       browserCore: Object.fromEntries([...this.backend.projects].map(([id, project]) =>
@@ -133,10 +133,16 @@ class DesktopService {
     // Count the union of active GUI intervals, never one duration per client.
     this.backend.analytics.sample({ time: now, focused: active });
   }
-  async stop() {
-    if (this.stopping || this.inflight || this.backend.hasWork({ includePausedQueues: false }) || this.backend.providerUpdating || this.backend.starting.size) throw new Error('后台仍有任务、可执行的排队消息或操作，完成或暂停队列后重试');
+  async stop({ cancel = false } = {}) {
+    if (this.stopping || this.inflight || (!cancel && this.backend.hasWork({ includePausedQueues: false })) || this.backend.providerUpdating || this.backend.starting.size) throw new Error('后台仍有任务、可执行的排队消息或操作，完成或暂停队列后重试');
     this.stopping = true; // Block new admissions before asynchronous status checks.
     try {
+      if (cancel) {
+        // 强制停止只由可信 Main 在用户确认后调用；Core 先结算活动轮次，
+        // 未确认的模型或工具结果继续保留为 UNKNOWN。
+        for (const project of this.backend.projects.values()) if (project.client?.ready)
+          await project.client.request('areal/server/drain', { strategy: 'cancel', timeoutMs: 30_000 }, { timeoutMs: 35_000 });
+      }
       const projects = await inspectResources(this.backend);
       if (projects.some(p => !p.restartSafe)) throw blocked('Core 仍有活动任务或终端。请打开“检查后台资源…”处理。\n' + summary(projects));
       await this.backend.shutdown({ requireSafe: true });
@@ -169,7 +175,7 @@ class DesktopService {
       if (method === 'stopService') {
         if (params?.protocol !== PROTOCOL) throw new Error('后台服务协议不兼容');
         if (params?.forUpdate && this.clients.size > 1) throw new Error('请先退出其他连接此后台服务的 GUI，再停止后台或安装更新');
-        await this.stop(); this.send(socket, { id, result: { stopped: true } });
+        await this.stop({ cancel: params?.cancel === true }); this.send(socket, { id, result: { stopped: true, cancelled: params?.cancel === true } });
         setImmediate(() => this.onStop()); return;
       }
       if (!this.clients.has(socket)) throw new Error('请先完成后台服务握手');
