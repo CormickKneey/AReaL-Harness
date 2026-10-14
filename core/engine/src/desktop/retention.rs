@@ -25,19 +25,30 @@ impl Engine {
         .await
     }
     pub async fn archive_thread(self: &Arc<Self>, thread_id: String) -> Result<Value> {
-        self.mutate(move|engine|async move{
-   let cell=engine.cell(&thread_id).await?;let _resources=cell.resource_gate.lock().await;let mut state=cell.state.lock().await;
-   if state.active.is_some()||state.compacting||state.poisoned {return Err(Error::Conflict);}
-   let mut candidate=state.thread.clone();
-   if candidate.goals.goal.as_ref().is_some_and(|g| g.status == areal_protocol::goals::GoalStatus::Active) { return Err(invalid("pause Goal before archiving")); }
-   if candidate.turns.iter().flat_map(|t|&t.items).any(|i|matches!(i,Item::DynamicToolCall{execution,..}if execution.inspection.is_none()&&(execution.outcome==areal_protocol::ToolOutcome::Unknown||execution.hooks.iter().any(|h|h.outcome==areal_protocol::ToolOutcome::Unknown)))){return Err(invalid("inspect UNKNOWN before archiving"));}
-   let data=candidate.desktop.get_or_insert_with(Default::default);
-   if data.processes.iter().any(|p|!p.cleanup_confirmed)||data.queue.items.iter().any(|i|matches!(i.status.as_str(),"pending"|"running")){return Err(invalid("settle queue and resources before archiving"));}
-   data.archived=true;engine.persist(&candidate).await?;
-   candidate.turns.clear();candidate.context_checkpoint=None;state.thread=candidate;
-   cell.emit("areal/thread/archived",json!({"threadId":thread_id}));Ok(json!({"threadId":thread_id,"archived":true,"history":"cold","receiptsRetained":true}))
-  }).await
+        self.mutate(move |engine| async move {
+            // Turn admission and session close share one linearization gate. Do not
+            // hold the thread lock across accepted hook cleanup/SessionEnd.
+            let _admission = engine.desktop.lifecycle.gate.lock().await;
+            let cell = engine.cell(&thread_id).await?;
+            let _resources = cell.resource_gate.lock().await;
+            {
+                let state = cell.state.lock().await;
+                validate_archive(&state)?;
+            }
+            engine.plugin_hooks_end(&cell).await.map_err(invalid)?;
+            let mut state = cell.state.lock().await;
+            validate_archive(&state)?;
+            let mut candidate = state.thread.clone();
+            candidate.desktop.get_or_insert_with(Default::default).archived = true;
+            engine.persist(&candidate).await?;
+            candidate.turns.clear();
+            candidate.context_checkpoint = None;
+            state.thread = candidate;
+            cell.emit("areal/thread/archived", json!({"threadId":thread_id}));
+            Ok(json!({"threadId":thread_id,"archived":true,"history":"cold","receiptsRetained":true}))
+        }).await
     }
+
     pub async fn release_upload(self: &Arc<Self>, thread_id: String, uri: String) -> Result<Value> {
         self.mutate(move |engine| async move {
             let cell = engine.cell(&thread_id).await?;
@@ -106,4 +117,39 @@ impl Engine {
         })
         .await
     }
+}
+
+fn validate_archive(state: &State) -> Result<()> {
+    if state.active.is_some() || state.compacting || state.poisoned {
+        return Err(Error::Conflict);
+    }
+    let thread = &state.thread;
+    if thread
+        .goals
+        .goal
+        .as_ref()
+        .is_some_and(|g| g.status == areal_protocol::goals::GoalStatus::Active)
+    {
+        return Err(invalid("pause Goal before archiving"));
+    }
+    if thread.turns.iter().flat_map(|t| &t.items).any(|i| matches!(i, Item::DynamicToolCall { execution, .. } if execution.inspection.is_none() && (execution.outcome == areal_protocol::ToolOutcome::Unknown || execution.hooks.iter().any(|h| h.outcome == areal_protocol::ToolOutcome::Unknown)))) { return Err(invalid("inspect UNKNOWN before archiving")); }
+    if let Some(data) = &thread.desktop {
+        if data
+            .hook_runs
+            .iter()
+            .any(|r| r.outcome == "unknown" && r.inspection.is_none())
+        {
+            return Err(invalid("inspect UNKNOWN hooks before archiving"));
+        }
+        if data.processes.iter().any(|p| !p.cleanup_confirmed)
+            || data
+                .queue
+                .items
+                .iter()
+                .any(|i| matches!(i.status.as_str(), "pending" | "running"))
+        {
+            return Err(invalid("settle queue and resources before archiving"));
+        }
+    }
+    Ok(())
 }

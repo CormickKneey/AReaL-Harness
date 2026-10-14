@@ -2,6 +2,8 @@ import { WorkspaceFileTree } from "./workspace-file-tree/WorkspaceFileTree.js";
 import { WorkspaceFilePane, confirmCloseFiles } from "./WorkspaceFilePane.js";
 import { GitPane } from "./GitPane.js";
 import { PluginsSettings } from "./settings/PluginsSettings.js";
+import { useMcpAppsWorkspace, McpAppsHub, McpMentionsPicker } from "./McpAppsWorkspace.js";
+import { McpAppEntrypoints } from "./settings/McpAppsSettings.js";
 import { UsageDashboard } from "./settings/UsageDashboard.js";
 import { Home, Settings, TerminalSquare, Browser, FileTree, ScheduledIcon as CalendarClock, NavigationBackIcon as ArrowLeft, NavigationForwardIcon as ArrowRight, SearchIcon as Search, MoreOptionsIcon as MoreHorizontal } from "./interfaceIcons.js";
 import { ReviewPanelIcon } from "./app-shell/panelIcons.js";
@@ -215,6 +217,7 @@ function AppContent({ services }: { services: PlatformServices }) {
   const [threadId, setThreadId] = useState("");
   // Window-local locations, never Core execution or a persisted recovery log.
   const [workspaceHistory, setWorkspaceHistory] = useState<{ entries: { projectId: string; threadId: string }[]; index: number }>({ entries: [], index: -1 });
+  const mcpPendingReveal = React.useRef<{tab:string;owner:string}|null>(null);
   const [panel, setPanel] = useState("");
   const [reviewRequest, setReviewRequest] = useState<{ owner: string; threadId?: string } & ({ turnId: string; scope?: never } | { scope: "unstaged"; turnId?: never })>();
   const [panelTabs, setPanelTabs] = useState<string[]>([]);
@@ -403,9 +406,11 @@ function AppContent({ services }: { services: PlatformServices }) {
       activePanelOwner.current = panelOwner;
       setWorkspaceView("split");
       const remembered = panelViews.current.get(panelOwner);
+      const appReveal = mcpPendingReveal.current?.owner === panelOwner ? mcpPendingReveal.current.tab : null;
+      if(appReveal)mcpPendingReveal.current=null;
       // Only the terminal owner can supply live IDs; the view cache owns no PTY.
-      setPanelTabs([...(remembered?.tabs.filter(id => id !== "任务资源" && !isTerminalTab(id)) ?? []), ...terminalState.ids]);
-      setPanel(remembered && remembered.panel !== "任务资源" && (!isTerminalTab(remembered.panel) || terminalState.ids.includes(remembered.panel)) ? remembered.panel : "");
+      setPanelTabs([...new Set([...(remembered?.tabs.filter(id => id !== "任务资源" && !isTerminalTab(id)) ?? []), ...terminalState.ids, ...(appReveal?[appReveal]:[])])]);
+      setPanel(appReveal ?? (remembered && remembered.panel !== "任务资源" && (!isTerminalTab(remembered.panel) || terminalState.ids.includes(remembered.panel)) ? remembered.panel : ""));
       setFilesOpen(remembered?.filesOpen ?? false);
       setRevealedFile(remembered?.revealedFile ?? "");
       setPreviewFileTab(remembered?.previewFileTab);
@@ -514,6 +519,11 @@ function AppContent({ services }: { services: PlatformServices }) {
     },
     [action, recordWorkspaceLocation],
   );
+  const [mcpMentionsOpen, setMcpMentionsOpen] = useState(false);
+  const mcpWorkspace = useMcpAppsWorkspace({ project, threadId, action: resourceAction,
+    onOpenThread: async (pid, tid) => { updateSettingsOpen(false); await open(pid, tid); },
+    onReveal: (tab, owner) => { if(activePanelOwner.current!==`${owner.projectId}:${owner.threadId}`){mcpPendingReveal.current={tab,owner:`${owner.projectId}:${owner.threadId}`};return;} updateSettingsOpen(false); setWorkspaceView("split"); setPanelTabs(tabs => tabs.includes(tab) ? tabs : [...tabs, tab]); setPanel(tab); },
+    onRemoveTab: tab => { setPanelTabs(tabs => tabs.filter(item => item !== tab)); setPanel(current => current === tab ? "" : current); }, onError: setError });
   useEffect(() => services.onNotificationOpen?.(target => requestNavigation(() => {
     updateSettingsOpen(false);
     setSearchOpen(false);
@@ -1040,6 +1050,7 @@ function AppContent({ services }: { services: PlatformServices }) {
     const panel = panelName;
     if (!project) return null;
     const props = { project, thread, action };
+    if (panel.startsWith("mcp-app:")) return mcpWorkspace.render(panel);
     if (panel === "旁路讨论" && thread && project.core?.features?.sidePreview === true && !thread.parentThreadId && thread.conversation?.kind !== "side") {
       return <SideChatPane onPanel={showPanel} onReturn={hidePanel} key={`${project.core?.instanceId}:${project.id}:${thread.id}:side`} project={project} source={thread} action={resourceAction} dark={dark} />;
     }
@@ -1051,7 +1062,8 @@ function AppContent({ services }: { services: PlatformServices }) {
     if (panel === "编辑目标" && thread) return <GoalEditor key={`${project.id}:${thread.id}:${thread.goals?.goal?.id ?? "new"}`} project={project} thread={thread} action={resourceAction} />;
     if (panel.startsWith("file:"))
       return (
-        <WorkspaceFilePane
+        <div className="flex h-full min-h-0 flex-col">
+        {threadId && <McpAppEntrypoints servers={mcpWorkspace.servers} kind="file" fileName={panel.slice(5)} onOpen={(server, tool) => { if (dirtyFiles[`${project.id}:${panel.slice(5)}`]) { setError("请先保存当前文件，再用应用打开。"); return; } void mcpWorkspace.openApp(server, tool, {kind:"file",filePath:panel.slice(5)}).catch(cause=>setError(cause.message)); }}/>}<WorkspaceFilePane
           key={`${project.id}:${panel}`}
           projectId={project.id}
           root={project.root}
@@ -1067,7 +1079,7 @@ function AppContent({ services }: { services: PlatformServices }) {
           filesOpen={filesOpen}
           onToggleFiles={() => setFilesOpen(value => !value)}
           tree={workspaceFileTree}
-        />
+        /></div>
       );
     if (panel === "文件") return <div className="file-preview-empty">选择右侧文件以预览</div>;
     if (panel === "改动") {
@@ -1263,6 +1275,7 @@ function AppContent({ services }: { services: PlatformServices }) {
               <>
                 <SidebarWorkspaceHeader title="AReaL Harness" onSearch={() => setSearchOpen(true)} />
                 <div className="sidebar-tools">
+                  <McpAppEntrypoints servers={mcpWorkspace.servers} kind="global" onOpen={(server,tool)=>void mcpWorkspace.openApp(server,tool,{kind:"global"}).catch(cause=>setError(cause.message))}/>
                   <NewTaskButtonGroup
                     disabled={false}
                     onCreateTask={() => void newTask()}
@@ -1464,7 +1477,7 @@ function AppContent({ services }: { services: PlatformServices }) {
               ) : settingsTab === "用量" ? (
                 <UsageDashboard action={resourceAction} />
               ) : ["插件", "Skills", "MCP"].includes(settingsTab) ? (
-                <PluginsSettings key={`${project?.id}:${settingsTab}`} project={project} thread={thread} action={resourceAction} initialTab={settingsTab === "Skills" ? "skills" : "mcp"}/>
+                <PluginsSettings key={`${project?.id}:${settingsTab}`} project={project} thread={thread} action={resourceAction} initialTab={settingsTab === "Skills" ? "skills" : settingsTab === "MCP" ? "mcp" : "catalog"} apps={<McpAppsHub workspace={mcpWorkspace} project={project} threadId={threadId} action={resourceAction}/>} onOpenThread={(pid, tid) => { updateSettingsOpen(false); void open(pid, tid); }}/>
               ) : !project ? (
                 <div className="settings-empty">
                   <p>请先打开项目，以读取当前项目的设置。</p>
@@ -1528,8 +1541,13 @@ function AppContent({ services }: { services: PlatformServices }) {
                             </div>
                           </div>
                         )}
+                        <McpAppEntrypoints servers={mcpWorkspace.servers} kind="thread" onOpen={(server,tool)=>void mcpWorkspace.openApp(server,tool,{kind:"thread"}).catch(cause=>setError(cause.message))}/>
+                        {mcpWorkspace.contexts}
+                        {mcpWorkspace.formsView}
+                        {mcpMentionsOpen && <McpMentionsPicker servers={mcpWorkspace.servers} projectId={project.id} threadId={thread.id} action={resourceAction} onClose={()=>setMcpMentionsOpen(false)}/>}
                         <Composer
                           key={`${project.id}:${thread.id}`}
+                          onMcpMention={()=>setMcpMentionsOpen(true)}
                           project={project}
                           thread={thread}
                           action={action}
@@ -1666,6 +1684,7 @@ function AppContent({ services }: { services: PlatformServices }) {
                 .map(([key, value]) => [key.slice(project.id.length + 1), value]),
             )}
             canClose={async (names) => {
+              for (const name of names.filter(name => name.startsWith("mcp-app:"))) await mcpWorkspace.close(name);
               const paths = names
                 .filter((name) => name.startsWith("file:"))
                 .map((name) => name.slice(5));
@@ -1702,7 +1721,7 @@ function AppContent({ services }: { services: PlatformServices }) {
               if (name.startsWith("file:")) setRevealedFile(name.slice(5));
               setPanel(name);
             }}
-            titleFor={name => isBrowserTab(name) ? (() => {
+            titleFor={name => name.startsWith("mcp-app:") ? mcpWorkspace.titleFor(name) : isBrowserTab(name) ? (() => {
               const page = browserWorkspace.pages.find(page => page.pageId === browserPageId(name));
               let title = page?.title;
               if (!title && page?.url) { try { title = new URL(page.url).host; } catch { title = page.url; } }

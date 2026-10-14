@@ -1,3 +1,4 @@
+import { McpContentLabel } from "./McpComposerAttachments.js";
 import { useForkHistory } from "./ForkHistory.js";
 import { UnknownToolInspection } from "./UnknownToolInspection.js";
 import { TurnNavigation } from "./TurnNavigation.js";
@@ -382,7 +383,8 @@ export function Messages({
                   return <div className="turn-status" key={item.id}>{continuation}</div>;
                 }
                 const content = item.content ?? [];
-                const text = content.filter((part: Data) => part.type === "text").map((part: Data) => part.text ?? "").join("\n");
+                const appContent = content.filter((part: Data) => part.type === "text" && part.mcpContent);
+                const text = content.filter((part: Data) => part.type === "text" && !part.mcpContent).map((part: Data) => part.text ?? "").join("\n");
                 const feedback = sentReviewFeedback(text);
                 const attachments = content.filter((part: Data) => part.type !== "text");
                 const browserFeedback = sentBrowserAnnotations(feedback.text, attachments);
@@ -391,6 +393,7 @@ export function Messages({
                   <div className="user-message" data-side-item-id={item.id} key={item.id}>
                     <div className="user-message-content">
                       <SentReviewComments comments={feedback.comments} />
+                      {appContent.length>0&&<div className="user-attachments" aria-label="应用内容">{appContent.map((part:Data,index:number)=><McpContentLabel key={index} block={part.mcpContent}/>)}</div>}
                       <SentBrowserAnnotations notes={browserFeedback.notes} attachments={attachments} projectId={project.id} threadId={thread.id} action={action} />
                       {ordinaryAttachments.length > 0 ? <div className="user-attachments" data-testid="user-attachments">
                         {ordinaryAttachments.map((part: Data, i: number) => <SentAttachment key={part.url ?? part.uri ?? i}

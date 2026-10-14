@@ -181,3 +181,54 @@ Goal controls additionally require an accepted journal record binding the curren
 Side restore has idle/loading/ready/error states per owner and connection generation. A definite error waits for explicit retry; a new target or connection can read again. Old results cannot update new targets. Unknown submissions only reconcile their original receipts and never replay the first question.
 
 MCP cleanup failure remains cleanupFailed with persistent cleanupUnconfirmed. Repeating disconnect without a live connection is no cleanup evidence and cannot clear the state or start another host. Directory rollback also propagates unconfirmed cleanup. Restart does not clear the marker. There is currently no remote RPC to claim successful cleanup; an operator must independently verify the task-owned host exit before repairing the record through maintenance. This state alone does not prove a process leak.
+
+
+## Plugin package management
+
+These deployment-level methods require unrestricted `manage` authority; Thread-scoped principals cannot call them. Core owns workspace paths, installation and scoped selection. Clients must not edit installation state directly. See the [plugin guide](../guides/plugins.en.md) and [implementation plan](../development/codex-plugins-plan.en.md) for pinned formats and stage boundaries.
+
+| Method | Parameters | Result/constraint |
+|---|---|---|
+| `areal/plugin/list` | `{}` | `revision/data/marketplaces/errors`; entry failures isolated |
+| `areal/plugin/read` | `id` | Package details; candidate and installed versions/digests/Skills separate |
+| `areal/marketplace/add` | `root, expectedRevision, requestId` | Add local catalog root and advance directory revision |
+| `areal/plugin/install` | `id, scope, expectedRevision, source, expectedDigest, requestId` | `scope=user/project`; digest binds the selected source snapshot |
+| `areal/plugin/configure` | `id, scope, enabled, expectedRevision, requestId` | Explicit project choice overrides user default; disabling revokes subsequent reads |
+| `areal/plugin/uninstall` | `id, expectedRevision, requestId` | Revoke access; retain historical cache |
+| `areal/plugin/setup` | `id, threadId?, requestId` | `{thread,turn,requestId}`; ordinary session only; explicitly select installed onboarding Skill |
+
+Entry `version/sourceDigest/skills/onboardingSkill` fields describe the current candidate. `installedVersion/installedDigest/installedSkills/installedOnboardingSkill` describe the persisted installed snapshot. Installation requires both selected `source` and its 64-character hexadecimal `expectedDigest`. Changes use directory `revision` for CAS. Re-read after conflicts or source drift; never retry writes implicitly.
+
+Writes reuse the deployment management submission ledger. The same identity, `requestId`, method and parameters return the original result; different parameters conflict. Query UNKNOWN through `areal/request/read {requestId}` and the matching method's completed `response`, without `threadId` or replay. Setup separately freezes the authoritative Skill reference through ordinary Turn admission; package text cannot manufacture other explicit Skill selections. Unsupported components produce diagnostics, and installation does not launch MCP/hooks/apps. AReaL management methods and the implemented experimental Codex adapter share Store/Engine owners while retaining separate wire contracts.
+
+## Plugin sources, MCP and desktop Apps
+
+New routes retain unrestricted `manage` authorization; generated schemas own parameter types. Source mutations use catalog CAS and management receipts: `areal/plugin/resolve {id,expectedRevision,requestId}`, `areal/marketplace/addGit {url,refName?,expectedRevision,requestId}`, `areal/marketplace/remove {root,expectedRevision,requestId}` and `areal/marketplace/update {expectedRevision,requestId}`.
+
+`areal/plugin/connection {id,expectedDigest,connect,requestId}` explicitly trusts/disconnects the installed version. `areal/plugin/mcp/list` distinguishes connection, authentication, optional failure and cleanup states. `areal/plugin/auth {id,server,operation}` supports transient `start/status/cancel` results without management receipts. `areal/plugin/connector/configure {id,connectorId,provider,credentialRef,expectedDigest,requestId}` supports explicit GitHub mappings; only trusted launchers inject credential values.
+
+`areal/plugin/auth/configure {id,server,expectedDigest,configuration,requestId}` persists host credential references only, requires disconnected current digest, and shares the durable management receipt. configuration supports clientSecretRef/privateKeyRef/privateKeyId/clientMetadataUrl/apiKeyRef/callbackUrl; secret values enter only trusted launch inputs. Configuration revisions isolate replaced or cancelled flows.
+
+`areal/mcp/apps/list {threadId?}` returns complete tool metadata. App `open/request/close` routes bind thread/server/instance/generation; tool requests also bind requestId. Extension-call kinds are settingsRead/settingsUpdate/settingsAction/mentionsSearch. Forms list/respond/preview validate complete pending requests and originating servers. `areal/mcp/tool/result {threadId,callId}` reads persisted raw MCP results; models receive recursively stripped projections.
+
+Only trusted Main grants host files. Authenticated non-desktop-owner principals cannot supply fileResource or private ui/host-file, which the App bridge does not expose. File-write receipts use areal/mcp/app/file/write and existing areal/request/read without threadId. New notifications preserve instance/generation through the shared desktop service: areal/mcp/app/notification, areal/mcp/tool/result and areal/mcp/form/requested.
+
+Native Main uses areal/mcp/form/resource/prepare {threadId,requestId,fieldName}, stage {selectionToken,requestId,paths} and release {threadId,requestId,fieldName,uri}. Prepare/stage require authenticated desktop-owner and are denied through generic Renderer commands. Stage is UUID/payload-bound in the existing management ledger; UNKNOWN only reads its original receipt. Paths/tokens stay in Main/Core; Renderer receives opaque URIs. Modern discovery negotiates MRTR; requests preserve original arguments and keep requestState private.
+
+Pinned Codex0.162.1 plugin/list/installed/read/install/uninstall/reconcile/search and marketplace/add/remove/upgrade share the package owner. Only search requires experimentalApi opt-in. Unconfigured hosted share/catalog services return -32004 capability errors, never fake empty success. marketplace/add accepts source/refName?/sparsePaths? with persisted sparse cone paths. Full hooks and other limits remain in the [acceptance matrix](../development/codex-plugins-p1-p3-acceptance.en.md).
+
+## Plugin hooks
+
+These management methods require an unrestricted manage identity and use the deployment submission journal.
+
+| Method | Parameters | Result |
+|---|---|---|
+| `areal/plugin/hooks/list` | `{}` | Per-source installedDigest, definitionDigest, definitions, diagnostics and trust; configuration sources also expose sourceKind/origin/enabled |
+| `areal/plugin/hooks/configure` | `requestId,id,expectedDigest,definitionDigest,enabled,trusted,allowReadOnlyCommands?` | Review current installation/source and complete plan digest before persisting independent definition trust; mismatch rejects; revoke/disable cancels admitted calls |
+| `areal/hook/acknowledge` | `requestId,threadId,invocationId,inspection` | Bounded inspection of an idle target's own UNKNOWN; preserves UNKNOWN without replay |
+
+`allowReadOnlyCommands` defaults to false when omitted, including existing trust metadata. It independently authorizes command handlers only in ordinary read-only child Sessions, bound to the same current package/source and definition digests. Each listed definition exposes `readOnlyCommandTrusted`; MCP handlers report false. Side, research, nativeTaskAgent, read-only root Sessions and Profiles disabling plugin Skills remain excluded. Core filters inherited plans and rechecks live authority. Restricted hooks require Runtime `restrictedScopeIsolation`: workspace/package reads, private child scratch and own package data writes only, network denied and no inherited provider secrets. Redirected data parents/leaves are rejected; authorization retains the fixed path identity. Configuration hooks receive no package data/root grants. Omitting or clearing the option removes this capability and conservatively cancels all pending invocations of that package/source, including writable hooks; revoke/disable removes both consents and cancels admitted calls.
+
+`desktop.hookRuns` retains invocation package/definition digests, event, turnId/toolUseId, Runtime operationId, outcome, asynchronous, delivered, output and inspection. `areal/hook/completed` only signals refresh; Thread snapshots remain authoritative. Uninspected UNKNOWN prevents new Turns; closing Sessions reject execution.
+
+`turn/steer` accepts optional `requestId`; with it, hooks and results share the durable deduplication boundary used by `areal/queue/steer`. Matching identity/method/key/parameters wait for the original execution or return its stored response; changed parameters reject. `areal/request/read {requestId}` reads deployment receipts; thread-scoped reads also append that identity's same-key deployment records. Legacy callers may omit the key but cannot guarantee a single execution after response loss. Parallel management operations queue by key. The 8 MiB journal reserves up to 256 KiB plus record margin per accepted response; insufficient capacity rejects before execution without truncating old receipts. `make desktop-schemas` generates the method/projection schema.

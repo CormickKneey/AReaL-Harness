@@ -528,6 +528,8 @@ impl Engine {
         };
         drop(configured);
         let configuration = EffectiveConfig {
+            allow_plugin_skills: false,
+            plugin_skills: None,
             default_model_revision: None,
             options: ClientOptions::default(),
             selected_skills: None,
@@ -557,11 +559,9 @@ impl Engine {
         configuration: &EffectiveConfig,
         reference: &VersionRef,
     ) -> Result<Skill> {
-        if !configuration
-            .selected_skills
-            .as_ref()
-            .or_else(|| configuration.profile.as_ref().map(|p| &p.skills))
-            .is_some_and(|s| s.contains(reference))
+        if !self
+            .effective_skill_refs(configuration, false)
+            .contains(reference)
         {
             return Err(invalid("skill is outside the effective profile"));
         }
@@ -595,37 +595,76 @@ impl Engine {
     /// 草稿目录仅观察已登记 Profile，不创建 Thread 或读取技能正文。
     pub fn profile_skills(&self, reference: &VersionRef) -> Result<Value> {
         let profile = self.profile(reference)?;
+        let refs = self.effective_skill_refs(
+            &EffectiveConfig {
+                profile: Some(profile),
+                ..Default::default()
+            },
+            false,
+        );
         let catalog = self.desktop.catalog.read().unwrap();
-        let data: Vec<_> = profile.skills.iter().map(|r| {
+        let data: Vec<_> = refs.iter().map(|r| {
             let skill = catalog.skills.get(&key(&r.id, &r.revision));
             json!({"id":r.id,"revision":r.revision,"available":skill.is_some(),
                 "name":skill.map_or(r.id.as_str(), |s| s.metadata.name.as_str()),
                 "description":skill.map_or("", |s| s.metadata.description.as_str()),
+                "pluginId":skill.and_then(|s|s.plugin.as_ref().map(|p|p.plugin_id.as_str())),
+                "allowImplicitInvocation":skill.and_then(|s|s.plugin.as_ref().map(|p|p.allow_implicit_invocation)),
                 "resources":null,
                 "resourceRoot":skill.map(|s| format!("areal://skill/{}/{}",s.location.id,s.location.revision))})
         }).collect();
         Ok(json!({"data":data}))
     }
     pub async fn skills(&self, thread_id: &str) -> Result<Value> {
+        self.skills_for_turn(thread_id, None).await
+    }
+    pub(super) async fn skills_for_turn(
+        &self,
+        thread_id: &str,
+        turn_id: Option<&str>,
+    ) -> Result<Value> {
+        self.refresh_plugins().await?;
         let cell = self.cell(thread_id).await?;
-        let state = cell.state.lock().await;
-        let config = state
-            .thread
-            .desktop
-            .as_ref()
-            .map(|d| d.configuration.clone())
-            .unwrap_or_default();
+        let (config, loaded) = {
+            let state = cell.state.lock().await;
+            let config = self.skill_configuration(&state.thread, turn_id)?;
+            (
+                config,
+                state
+                    .thread
+                    .desktop
+                    .as_ref()
+                    .map(|d| d.loaded_skills.clone()),
+            )
+        };
+        let refs = self.effective_skill_refs(&config, turn_id.is_some());
         let catalog = self.desktop.catalog.read().unwrap();
-        let data: Vec<_> = config.selected_skills.as_ref().or_else(||config.profile.as_ref().map(|p| &p.skills)).into_iter().flatten().map(|r| {
+        let data: Vec<_> = refs.iter().map(|r| {
             let skill = catalog.skills.get(&key(&r.id, &r.revision));
-            let metadata = skill.map(|s| &s.metadata);
             json!({"id":r.id,"revision":r.revision,"available":skill.is_some(),
-                "name":metadata.map_or(r.id.as_str(), |m| m.name.as_str()),
-                "description":metadata.map_or("", |m| m.description.as_str()),
+                "name":skill.map_or(r.id.as_str(), |s| s.metadata.name.as_str()),
+                "description":skill.map_or("", |s| s.metadata.description.as_str()),
+                "pluginId":skill.and_then(|s|s.plugin.as_ref().map(|p|p.plugin_id.as_str())),
+                "allowImplicitInvocation":skill.and_then(|s|s.plugin.as_ref().map(|p|p.allow_implicit_invocation)),
                 "resources":null,
                 "resourceRoot":skill.map(|s| format!("areal://skill/{}/{}",s.location.id,s.location.revision))})
         }).collect();
-        Ok(json!({"data":data,"loaded":state.thread.desktop.as_ref().map(|d| &d.loaded_skills)}))
+        Ok(json!({"data":data,"loaded":loaded}))
+    }
+    fn skill_configuration(
+        &self,
+        thread: &Thread,
+        turn_id: Option<&str>,
+    ) -> Result<EffectiveConfig> {
+        match turn_id {
+            Some(id) => thread
+                .turns
+                .iter()
+                .find(|t| t.id == id)
+                .map(|t| t.configuration.clone().unwrap_or_default())
+                .ok_or(Error::NotFound),
+            None => Ok(desktop(thread).configuration),
+        }
     }
     /// 新草稿预览只读 Profile 允许的资源，不登记 Thread 加载状态。
     pub async fn read_profile_skill(
@@ -636,6 +675,7 @@ impl Engine {
         offset: usize,
         max_bytes: usize,
     ) -> Result<Value> {
+        self.refresh_plugins().await?;
         let configuration = EffectiveConfig {
             profile: Some(self.profile(&profile)?),
             ..Default::default()
@@ -655,6 +695,7 @@ impl Engine {
         if max_bytes == 0 || max_bytes > 8192 {
             return Err(invalid("maxBytes must be 1..8192"));
         }
+        self.check_plugin_skill(&skill).await?;
         let page = skill
             .read(resource, offset, max_bytes)
             .await
@@ -680,21 +721,36 @@ impl Engine {
         offset: usize,
         max_bytes: usize,
     ) -> Result<Value> {
-        if max_bytes == 0 || max_bytes > 8192 {
-            return Err(invalid("maxBytes must be 1..8192"));
-        }
+        self.read_skill_for_turn(thread_id, None, reference, resource, offset, max_bytes)
+            .await
+    }
+    pub(super) async fn read_skill_for_turn(
+        &self,
+        thread_id: &str,
+        turn_id: Option<&str>,
+        reference: VersionRef,
+        resource: &str,
+        offset: usize,
+        max_bytes: usize,
+    ) -> Result<Value> {
+        self.refresh_plugins().await?;
         let cell = self.cell(thread_id).await?;
-        let mut state = cell.state.lock().await;
-        let configuration = state
-            .thread
-            .desktop
-            .as_ref()
-            .map(|d| d.configuration.clone())
-            .unwrap_or_default();
-        let skill = self.selected_skill(&configuration, &reference)?;
+        let config = {
+            let state = cell.state.lock().await;
+            self.skill_configuration(&state.thread, turn_id)?
+        };
+        if turn_id.is_some()
+            && !self
+                .effective_skill_refs(&config, true)
+                .contains(&reference)
+        {
+            return Err(invalid("skill is not selected for this Turn"));
+        }
+        let skill = self.selected_skill(&config, &reference)?;
         let page = self
             .read_skill_page(skill, &reference, resource, offset, max_bytes)
             .await?;
+        let mut state = cell.state.lock().await;
         let mut candidate = state.thread.clone();
         candidate
             .desktop
@@ -752,5 +808,198 @@ impl Engine {
                 json!({"providerId":id,"providerRevision":provider.revision,"modelId":name,"state":"failed","error":"API_PROBE_FAILED","checked":["authentication","textStream"]})
             }
         })
+    }
+}
+
+impl Engine {
+    pub(crate) fn effective_skill_refs(
+        &self,
+        config: &EffectiveConfig,
+        model: bool,
+    ) -> Vec<VersionRef> {
+        let catalog = self.desktop.catalog.read().unwrap();
+        let manager = self.desktop.plugins.read().unwrap();
+        let mut allowed = config
+            .profile
+            .as_ref()
+            .map(|p| p.skills.clone())
+            .unwrap_or_default();
+        if config.allow_plugin_skills {
+            allowed.extend(config.plugin_skills.clone().unwrap_or_else(|| {
+                manager
+                    .enabled
+                    .iter()
+                    .map(|s| VersionRef {
+                        id: s.id.clone(),
+                        revision: s.revision.clone(),
+                    })
+                    .collect()
+            }));
+        }
+        if config.allow_plugin_skills && config.plugin_skills.is_none() {
+            allowed.extend(
+                config
+                    .selected_skills
+                    .iter()
+                    .flatten()
+                    .filter(|r| {
+                        catalog
+                            .skills
+                            .get(&key(&r.id, &r.revision))
+                            .is_some_and(|s| s.plugin.is_some())
+                    })
+                    .cloned(),
+            );
+        }
+        let refs = config.selected_skills.as_ref().unwrap_or(&allowed);
+        let mut result = Vec::new();
+        for r in refs {
+            if !allowed.contains(r) {
+                continue;
+            }
+            let Some(skill) = catalog.skills.get(&format!("{}/{}", r.id, r.revision)) else {
+                continue;
+            };
+            if let Some(plugin) = &skill.plugin {
+                if !manager.enabled_plugin_ids.contains(&plugin.plugin_id)
+                    || (model
+                        && !plugin.allow_implicit_invocation
+                        && config.selected_skills.is_none())
+                {
+                    continue;
+                }
+            }
+            if !result.contains(r) {
+                result.push(r.clone());
+            }
+        }
+        result
+    }
+    pub(crate) fn freeze_plugin_skills(&self, config: &mut EffectiveConfig) {
+        if config.plugin_skills.is_none() {
+            let catalog = self.desktop.catalog.read().unwrap();
+            let refs = config.selected_skills.clone().unwrap_or_else(|| {
+                self.desktop
+                    .plugins
+                    .read()
+                    .unwrap()
+                    .enabled
+                    .iter()
+                    .map(|s| VersionRef {
+                        id: s.id.clone(),
+                        revision: s.revision.clone(),
+                    })
+                    .collect()
+            });
+            config.plugin_skills = Some(
+                refs.into_iter()
+                    .filter(|r| {
+                        catalog
+                            .skills
+                            .get(&format!("{}/{}", r.id, r.revision))
+                            .is_some_and(|s| s.plugin.is_some())
+                    })
+                    .collect(),
+            );
+        }
+    }
+}
+
+impl Engine {
+    /// The existing Composer transports an explicit attachment as a JSON-quoted
+    /// <skill ... id="..." revision="..."> block. Only its ref is a selector;
+    /// caller-supplied names, paths and body remain untrusted user text.
+    pub(crate) fn select_plugin_attachments(
+        &self,
+        config: &mut EffectiveConfig,
+        input: &[Input],
+        ordinary: bool,
+    ) -> Result<()> {
+        let mut scope = config.clone();
+        if ordinary {
+            scope.selected_skills = None;
+        }
+        let allowed = self.effective_skill_refs(&scope, false);
+        let mut selected = self.effective_skill_refs(config, true);
+        let mut attached = false;
+        for item in input {
+            let Input::Text {
+                text,
+                mcp_content: None,
+                ..
+            } = item
+            else {
+                continue;
+            };
+            let mut remaining = text.as_str();
+            while let Some(start) = remaining.find("<skill ") {
+                let mut header = &remaining[start + 7..];
+                let mut id = None;
+                let mut revision = None;
+                let mut valid = false;
+                // Parse JSON string attribute values rather than searching inside names/bodies.
+                for _ in 0..8 {
+                    header = header.trim_start();
+                    if let Some(body) = header.strip_prefix('>') {
+                        if let Some(end) = body.find("</skill>") {
+                            remaining = &body[end + 8..];
+                            valid = true;
+                        }
+                        break;
+                    }
+                    let Some(equal) = header.find('=') else { break };
+                    let name = &header[..equal];
+                    if !name.bytes().all(|c| c.is_ascii_alphabetic()) {
+                        break;
+                    }
+                    let mut value = serde_json::Deserializer::from_str(&header[equal + 1..])
+                        .into_iter::<String>();
+                    let Some(Ok(value_text)) = value.next() else {
+                        break;
+                    };
+                    let consumed = value.byte_offset();
+                    match name {
+                        "id" => id = Some(value_text),
+                        "revision" => revision = Some(value_text),
+                        _ => {}
+                    }
+                    header = &header[equal + 1 + consumed..];
+                }
+                if !valid {
+                    break;
+                }
+                let (Some(id), Some(revision)) = (id, revision) else {
+                    continue;
+                };
+                let reference = VersionRef { id, revision };
+                let plugin = self
+                    .desktop
+                    .catalog
+                    .read()
+                    .unwrap()
+                    .skills
+                    .get(&key(&reference.id, &reference.revision))
+                    .is_some_and(|s| s.plugin.is_some());
+                if !plugin {
+                    continue;
+                } // Standalone attachment behavior remains unchanged.
+                if !allowed.contains(&reference) {
+                    return Err(invalid(
+                        "attached plugin skill is outside the effective scope",
+                    ));
+                }
+                if !selected.contains(&reference) {
+                    selected.push(reference);
+                }
+                if selected.len() > 128 {
+                    return Err(invalid("selected skills exceed budget"));
+                }
+                attached = true;
+            }
+        }
+        if attached {
+            config.selected_skills = Some(selected);
+        }
+        Ok(())
     }
 }

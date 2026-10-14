@@ -49,6 +49,10 @@ pub trait Backend: Send + Sync {
     fn sandbox_profile(&self) -> &'static str {
         "unverified"
     }
+    /// False unless restricted filesystem and network Scopes are enforced by the backend.
+    fn restricted_scope_isolation(&self) -> bool {
+        false
+    }
     fn supports_input(&self) -> bool {
         false
     }

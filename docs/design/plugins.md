@@ -2,6 +2,8 @@
 
 # 插件边界
 
+Codex 兼容包与 Native Host 是两种入口，共用 Core/Runtime 所有权。P0 包解析、Skills 与本地管理见[插件指南](../guides/plugins.md)；最终兼容任务与逐阶段验收见[实施计划](../development/codex-plugins-plan.md)。下文描述现有 Native Host 工具适配边界。
+
 `@areal/plugins` 在独立可信 Node Host 中适配选定 DSH 工具和文件服务。Core 保留 Agent loop、会话、历史提交和取消树；Runtime 保留部署授权与执行事实。插件不能替换这些职责。
 
 ![插件边界](diagrams/plugin-boundaries.svg)

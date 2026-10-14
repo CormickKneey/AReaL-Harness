@@ -1597,6 +1597,7 @@ mod tests {
                 content: vec![Input::Text {
                     text: "question".into(),
                     text_elements: Vec::new(),
+                    mcp_content: None,
                 }],
             },
             Item::AgentMessage {

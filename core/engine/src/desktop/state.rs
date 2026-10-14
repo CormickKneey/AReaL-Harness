@@ -580,6 +580,7 @@ impl Engine {
                     };
                 }
             }
+            let allow_plugin_skills = request.agent_profile.is_none();
             let mut data = DesktopState {
                 configuration: engine.resolve_config(
                     request
@@ -591,6 +592,7 @@ impl Engine {
                 )?,
                 ..Default::default()
             };
+            data.configuration.allow_plugin_skills = allow_plugin_skills;
             if let Some(guard) = &request.admission_guard {
                 if !guard.ordinary_session {
                     return Err(invalid("ordinarySession must be true"));
@@ -706,12 +708,10 @@ impl Engine {
         self: &Arc<Self>,
         request: ConfigureThread,
     ) -> Result<EffectiveConfig> {
+        self.refresh_plugins().await?;
         self.mutate(move |engine| async move {
             let cell = engine.cell(&request.thread_id).await?;
             let is_side = cell.state.lock().await.thread.is_side();
-            if !is_side {
-                engine.refresh_managed_tools(&cell).await.map_err(invalid)?;
-            }
             let mut state = cell.state.lock().await;
             if state.active.is_some() || state.compacting {
                 return Err(Error::Conflict);
@@ -772,6 +772,8 @@ impl Engine {
             if request.reset_model && request.model.is_some() {
                 return Err(invalid("model and resetModel cannot be used together"));
             }
+            let allow_plugin_skills =
+                request.agent_profile.is_none() && previous.allow_plugin_skills;
             let mut configuration = engine.resolve_config(
                 request.agent_profile.or_else(|| {
                     previous.profile.as_ref().map(|p| VersionRef {
@@ -802,6 +804,7 @@ impl Engine {
                     "workflow-bound profiles can only be selected when creating a new thread",
                 ));
             }
+            configuration.allow_plugin_skills = allow_plugin_skills;
             configuration.options = request.options.unwrap_or(previous.options);
             let selected_skills = match request.selected_skills {
                 Some(skills) if skills.is_empty() => None,
@@ -825,9 +828,12 @@ impl Engine {
                         return Err(invalid("selected skill is unavailable"));
                     }
                 }
-                if let Some(profile) = &configuration.profile
-                    && !skills.iter().all(|skill| profile.skills.contains(skill))
-                {
+                drop(catalog);
+                if !skills.iter().all(|skill| {
+                    engine
+                        .effective_skill_refs(&configuration, false)
+                        .contains(skill)
+                }) {
                     return Err(invalid("selected skill is outside the effective profile"));
                 }
             }
@@ -865,8 +871,12 @@ impl Engine {
                 .desktop
                 .get_or_insert_with(Default::default)
                 .configuration = configuration.clone();
+            let registry = engine
+                .managed_registry(&candidate, cell.research)
+                .map_err(invalid)?;
             engine.persist(&candidate).await?;
             state.thread = candidate;
+            cell.bindings.write().await.registry = registry;
             cell.emit(
                 "areal/thread/configured",
                 json!({"threadId":request.thread_id,"configuration":configuration}),
@@ -1032,12 +1042,15 @@ impl Engine {
         request_id: &str,
     ) -> Result<Value> {
         let thread = self.read(thread_id, false).await?;
-        let records = desktop(&thread)
+        let mut records: Vec<Value> = desktop(&thread)
             .receipts
             .into_iter()
             .filter(|r| r.identity == identity && r.request_id == request_id)
-            .collect::<Vec<_>>();
-        Ok(json!({"data":records,"retention":"threadLifetime","capacity":1024}))
+            .map(|r| json!(r))
+            .collect();
+        let management = self.management_receipts(identity, request_id).await;
+        records.extend(management["data"].as_array().into_iter().flatten().cloned());
+        Ok(json!({"data":records,"retention":"threadAndDeploymentLifetime","capacity":1024}))
     }
     pub(crate) async fn active_permissions(
         &self,

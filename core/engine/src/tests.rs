@@ -855,19 +855,15 @@ async fn dropping_a_steer_waiter_keeps_durable_input_and_memory_consistent() {
     let owned = engine.clone();
     let thread_id = thread.id.clone();
     let turn_id = turn.id.clone();
-    let cell = engine.cell(&thread.id).await.unwrap();
     let request = tokio::spawn(async move {
         owned
             .steer(&thread_id, &turn_id, vec![Input::text("accepted steer")])
             .await
     });
-    tokio::time::timeout(Duration::from_secs(2), async {
-        while cell.state.try_lock().is_ok() {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
+    // hooks 会额外读取会话锁；只在真实持久写入排队后丢弃响应等待。
+    tokio::time::timeout(Duration::from_secs(2), engine.store.wait_for_paused_write())
+        .await
+        .unwrap();
     request.abort();
     let _ = request.await;
     drop(pause);

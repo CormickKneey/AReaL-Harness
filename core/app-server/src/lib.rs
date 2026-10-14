@@ -1,8 +1,10 @@
 pub mod auth;
 mod browser_auth;
+mod codex_plugins;
 mod delegations;
 mod desktop;
 mod dynamic_tools;
+mod plugin_runtime;
 mod processes;
 mod workgroups;
 use areal_engine::{Engine, Error};
@@ -273,6 +275,7 @@ struct Connection {
     principal: Arc<auth::Principal>,
     tool_host: Arc<dynamic_tools::ToolHost>,
     initialized: bool,
+    experimental_api: bool,
     ready: bool,
     subscriptions: HashMap<String, CancellationToken>,
     suppressed: HashSet<String>,
@@ -329,6 +332,7 @@ async fn connection(
         ),
         principal,
         initialized: false,
+        experimental_api: false,
         ready: false,
         subscriptions: HashMap::new(),
         suppressed: HashSet::new(),
@@ -409,9 +413,45 @@ async fn connection(
             conn.send(response(id.unwrap(),Err(RpcError::invalid("authenticated clients must upload media; host filesystem paths are not accepted"))));
             continue;
         }
+        // Native selection imports require the authenticated desktop host.
+        if matches!(
+            method,
+            "areal/mcp/form/resource/prepare" | "areal/mcp/form/resource/stage"
+        ) && (conn.principal.id != "desktop-owner" || conn.principal.token.is_empty())
+        {
+            conn.send(response(
+                id.unwrap(),
+                Err(RpcError {
+                    code: -32003,
+                    message: "authenticated native selection host required".into(),
+                    data: None,
+                }),
+            ));
+            continue;
+        }
+        if !conn.principal.token.is_empty()
+            && conn.principal.id != "desktop-owner"
+            && ((method == "areal/mcp/app/open" && params["fileResource"].is_object())
+                || (method == "areal/mcp/app/request"
+                    && params["request"]["method"] == "ui/host-file"))
+        {
+            conn.send(response(
+                id.unwrap(),
+                Err(RpcError {
+                    code: -32003,
+                    message: "trusted desktop file host required".into(),
+                    data: None,
+                }),
+            ));
+            continue;
+        }
         let project_permission = (method == "areal/interaction/respond"
             && params["decision"] == "allowProject")
-            || method.starts_with("areal/permissions/");
+            || method.starts_with("areal/permissions/")
+            || method.starts_with("areal/plugin/")
+            || method.starts_with("areal/marketplace/")
+            || codex_plugins::METHODS.contains(&method)
+            || plugin_runtime::METHODS.contains(&method);
         if (project_permission
             && (!conn.principal.allows(auth::Permission::Manage)
                 || conn.principal.thread_ids.is_some()))
@@ -430,6 +470,17 @@ async fn connection(
                 Err(RpcError {
                     code: -32003,
                     message: "permission denied".into(),
+                    data: None,
+                }),
+            ));
+            continue;
+        }
+        if method == "plugin/search" && !conn.experimental_api {
+            conn.send(response(
+                id.unwrap(),
+                Err(RpcError {
+                    code: -32600,
+                    message: "plugin/search requires experimentalApi capability".into(),
                     data: None,
                 }),
             ));
@@ -462,6 +513,10 @@ async fn connection(
                 || processes::METHODS.contains(&method)
                 || method == "areal/provider/probe"
                 || method.starts_with("areal/workflow/")
+                || codex_plugins::METHODS.contains(&method)
+                || plugin_runtime::METHODS.contains(&method)
+                || method.starts_with("areal/plugin/")
+                || method.starts_with("areal/marketplace/")
                 || method.starts_with("areal/mcp/")
                 || method.starts_with("areal/server/")
                 || method == "areal/agent/wait"
@@ -473,6 +528,8 @@ async fn connection(
                         | "areal/conversation/history"
                         | "areal/side/context/read"
                         | "turn/interrupt"
+                        | "turn/steer"
+                        | "areal/queue/steer"
                 ))
         {
             let control = matches!(
@@ -492,6 +549,12 @@ async fn connection(
                     | "areal/mcp/read"
                     | "areal/mcp/disconnect"
                     | "turn/interrupt"
+                    | "areal/mcp/forms/list"
+                    | "areal/mcp/form/respond"
+                    | "areal/mcp/form/resource/prepare"
+                    | "areal/mcp/form/resource/stage"
+                    | "areal/mcp/form/resource/release"
+                    | "areal/plugin/hooks/configure"
             );
             if !control && conn.rpc_permits.available_permits() <= 4 {
                 conn.send(response(
@@ -523,6 +586,12 @@ async fn connection(
                     check_side_policy(&engine, &method, &params).await?;
                     if method == "turn/interrupt" {
                         interrupt(&engine, params).await
+                    } else if method == "turn/steer" {
+                        steer_request(&engine, &identity, params).await
+                    } else if plugin_runtime::METHODS.contains(&method.as_str()) {
+                        plugin_runtime::dispatch(&engine, &identity, &method, params).await
+                    } else if codex_plugins::METHODS.contains(&method.as_str()) {
+                        codex_plugins::dispatch(&engine, &identity, &method, params).await
                     } else if delegations::METHODS.contains(&method.as_str()) {
                         delegations::dispatch(&engine, &method, params).await
                     } else if processes::METHODS.contains(&method.as_str()) {
@@ -794,6 +863,7 @@ impl Connection {
                 return Err(RpcError::invalid("client name and version required"));
             }
             if let Some(c) = p.capabilities {
+                self.experimental_api = c.experimental_api;
                 self.suppressed = c
                     .opt_out_notification_methods
                     .unwrap_or_default()
@@ -868,6 +938,12 @@ impl Connection {
         }
         if method == "areal/conversation/list" {
             return self.conversation_list(engine, params).await;
+        }
+        if plugin_runtime::METHODS.contains(&method) {
+            return plugin_runtime::dispatch(engine, &self.principal.id, method, params).await;
+        }
+        if codex_plugins::METHODS.contains(&method) {
+            return codex_plugins::dispatch(engine, &self.principal.id, method, params).await;
         }
         if desktop::METHODS.contains(&method) && method != "areal/thread/start" {
             if matches!(method, "areal/turn/start" | "areal/turn/enqueue") {
@@ -959,6 +1035,8 @@ impl Connection {
                     methods.retain(|method| *method != "areal/thread/tools/attach");
                 }
                 methods.extend_from_slice(desktop::METHODS);
+                methods.extend_from_slice(codex_plugins::METHODS);
+                methods.extend_from_slice(plugin_runtime::METHODS);
                 methods.extend_from_slice(task_mode::METHODS);
                 methods.push("areal/work/overview");
                 methods.push("areal/task/host/ready");
@@ -1111,14 +1189,7 @@ impl Connection {
                 self.subscribe(engine, &p.thread_id).await?;
                 Ok(json!({"turn":engine.start(&p.thread_id,p.input).await.map_err(map_error)?}))
             }
-            "turn/steer" => {
-                let p: Steer = parse(params)?;
-                engine
-                    .steer(&p.thread_id, &p.expected_turn_id, p.input)
-                    .await
-                    .map_err(map_error)?;
-                Ok(json!({"turnId":p.expected_turn_id}))
-            }
+            "turn/steer" => steer_request(engine, &self.principal.id, params).await,
             "turn/interrupt" => interrupt(engine, params).await,
             "areal/agent/spawn" => {
                 let p: areal_protocol::desktop::AgentSpawn = parse(params)?;
@@ -1199,7 +1270,7 @@ struct ClientInfo {
 struct Capabilities {
     opt_out_notification_methods: Option<Vec<String>>,
     #[serde(default, rename = "experimentalApi")]
-    _experimental_api: bool,
+    experimental_api: bool,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1256,6 +1327,7 @@ struct TurnStart {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Steer {
+    request_id: Option<String>,
     thread_id: String,
     expected_turn_id: String,
     input: Vec<Input>,
@@ -1284,6 +1356,7 @@ mod tests {
             principal: auth::Principal::embedded(),
             tool_host: dynamic_tools::ToolHost::new(tx.clone(), stop.clone()),
             initialized: true,
+            experimental_api: false,
             ready: true,
             subscriptions: HashMap::new(),
             suppressed: HashSet::new(),
@@ -1319,6 +1392,7 @@ mod tests {
             principal: auth::Principal::embedded(),
             tool_host: dynamic_tools::ToolHost::new(tx.clone(), stop.clone()),
             initialized: true,
+            experimental_api: false,
             ready: true,
             subscriptions: HashMap::new(),
             suppressed: HashSet::new(),
@@ -1357,6 +1431,7 @@ mod tests {
             principal: auth::Principal::embedded(),
             tool_host: dynamic_tools::ToolHost::new(tx.clone(), stop.clone()),
             initialized: true,
+            experimental_api: false,
             ready: true,
             subscriptions: (0..128)
                 .map(|n| (n.to_string(), CancellationToken::new()))
@@ -1382,3 +1457,47 @@ mod tests {
 
 #[cfg(test)]
 mod rpc_isolation_tests;
+
+// Steer can wait for hook elicitation; it needs no mutable Connection state.
+async fn steer_request(
+    engine: &Arc<Engine>,
+    identity: &str,
+    params: Value,
+) -> Result<Value, RpcError> {
+    let p: Steer = parse(params)?;
+    if let Some(request) = p.request_id {
+        let parameters =
+            json!({"threadId":p.thread_id,"expectedTurnId":p.expected_turn_id,"input":p.input});
+        let reply = engine
+            .management_submission(
+                identity.to_owned(),
+                request,
+                "turn/steer".into(),
+                parameters,
+                move |engine| async move {
+                    match engine
+                        .steer(&p.thread_id, &p.expected_turn_id, p.input)
+                        .await
+                    {
+                        Ok(()) => json!({"result":{"turnId":p.expected_turn_id}}),
+                        Err(error) => json!({"error":map_error(error)}),
+                    }
+                },
+            )
+            .await
+            .map_err(map_error)?;
+        if let Some(error) = reply.get("error") {
+            return Err(RpcError {
+                code: error["code"].as_i64().unwrap_or(-32602),
+                message: error["message"].as_str().unwrap_or("steer rejected").into(),
+                data: error.get("data").cloned(),
+            });
+        }
+        return Ok(reply["result"].clone());
+    }
+    engine
+        .steer(&p.thread_id, &p.expected_turn_id, p.input)
+        .await
+        .map_err(map_error)?;
+    Ok(json!({"turnId":p.expected_turn_id}))
+}

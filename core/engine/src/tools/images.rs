@@ -164,7 +164,7 @@ fn composite(canvas: &mut image::RgbaImage, frame: &gif::Frame<'_>) {
     let row_bytes = usize::from(frame.width) * 4;
     for (y, row) in frame.buffer.chunks_exact(row_bytes).enumerate() {
         let start = ((usize::from(frame.top) + y) * width + usize::from(frame.left)) * 4;
-        for (target, source) in canvas.as_mut()[start..start + row_bytes]
+        for (target, source) in canvas.as_flat_samples_mut().samples[start..start + row_bytes]
             .chunks_exact_mut(4)
             .zip(row.chunks_exact(4))
         {
@@ -279,7 +279,7 @@ fn prepare_media(bytes: Vec<u8>, args: &Value) -> rt::Result<PreparedMedia> {
         if dispose == gif::DisposalMethod::Background {
             for y in top..top + height {
                 let start = (usize::from(y) * size.0 as usize + usize::from(left)) * 4;
-                canvas.as_mut()[start..start + usize::from(width) * 4].fill(0);
+                canvas.as_flat_samples_mut().samples[start..start + usize::from(width) * 4].fill(0);
             }
         }
     }

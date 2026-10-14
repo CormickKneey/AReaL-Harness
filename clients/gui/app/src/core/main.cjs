@@ -8,6 +8,9 @@ const { setupUpdater } = require('../update/electron.cjs');
 const { showCoreNotification } = require('./notifications.cjs');
 const { MenuBar } = require('./menu-bar.cjs');
 const { fileOpen } = require('./file-open.cjs');
+const { McpFormResources } = require('./mcp-form-resources.cjs');
+const { McpAppsHost, parseDeepLink } = require('./mcp-apps.cjs');
+const { McpMetadataImages } = require('./mcp-apps-images.cjs');
 const { validateCommand, validatePreview, desktopError } = require('@areal/workbench/desktop-contract');
 const { CorePreview } = require('./preview.cjs');
 const { configureUserData, serviceOptions } = require('./service-config.cjs');
@@ -20,11 +23,11 @@ configureUserData(app);
 // Acquire before loading resources or registering shutdown hooks. The userData
 // directory scopes the lock, so explicitly isolated development/test homes coexist.
 if (!app.requestSingleInstanceLock()) { app.exit(0); return; }
-protocol.registerSchemesAsPrivileged([{ scheme: 'areal-ui', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
+protocol.registerSchemesAsPrivileged([{ scheme: 'areal-mcp', privileges: { standard: true, secure: true, supportFetchAPI: true } }, { scheme: 'areal-ui', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 
 const guiRoot = app.isPackaged ? join(process.resourcesPath, 'areal-gui') : resolve(__dirname, '../../../renderer/dist');
 const mime = { '.wasm': 'application/wasm', '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.json': 'application/json', '.woff2': 'font/woff2', '.woff': 'font/woff', '.svg': 'image/svg+xml', '.png': 'image/png' };
-let window, backend, preview, updates, quitting = false, exitReady = false, themeId = 'system';
+let window, backend, preview, mcpApps, updates, quitting = false, exitReady = false, themeId = 'system';
 let browserWindowClosed = false;
 const previewSubscriptions = new Map();
 let startupPending = true, startupPainted = false, startupReady = false;
@@ -46,6 +49,16 @@ function openNotificationTarget(target) {
   if (!startupPending) { window.show(); window.focus(); }
   window.webContents.send('areal-core:notification-open');
 }
+let mcpAppDeepLink = null, mcpAppDeepLinkSequence = 0;
+function receiveMcpAppDeepLink(raw) {
+  try { mcpAppDeepLink = { ...parseDeepLink(raw), id: ++mcpAppDeepLinkSequence }; }
+  catch { return false; }
+  if (window && !window.isDestroyed()) window.webContents.send('areal-core:mcp-app-deep-link');
+  return true;
+}
+app.on('open-url', (event, url) => { if (receiveMcpAppDeepLink(url)) event.preventDefault(); });
+app.on('second-instance', (_event, argv) => { for (const arg of argv) if (/^(areal|codex):\/\/plugins\//.test(arg)) receiveMcpAppDeepLink(arg); });
+for (const arg of process.argv) if (/^(areal|codex):\/\/plugins\//.test(arg)) receiveMcpAppDeepLink(arg);
 const themes = loadThemes();
 app.on('second-instance', () => {
   if (startupPending || !window || window.isDestroyed()) return;
@@ -63,6 +76,7 @@ function theme() {
 }
 function publish() {
   preview?.releaseInvalidOwners();
+  mcpApps?.revokeInvalid();
   if (window && !window.isDestroyed()) window.webContents.send('areal-core:state', desktopSnapshot());
 }
 function desktopSnapshot() {
@@ -111,6 +125,7 @@ async function createWindow() {
       return response === 1 && current();
     });
   preview.onRevoke = identity => { void backend.browserRevoke(identity).catch(() => {}); };
+  window.webContents.on('render-process-gone', () => mcpApps?.dispose());
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
   window.on('show', () => { browserWindowClosed = false; });
@@ -121,6 +136,7 @@ async function createWindow() {
     // native callbacks before hiding; reopening creates fresh Pages on demand.
     browserWindowClosed = true;
     preview?.dispose();
+    mcpApps?.dispose();
     window.hide();
   });
   await window.loadURL('areal-ui://app/');
@@ -134,7 +150,7 @@ app.whenReady().then(async () => {
     if (url.host !== 'app') return new Response('Not found', { status: 404 });
     const path = resolve(guiRoot, '.' + decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname));
     if (!path.startsWith(guiRoot + sep)) return new Response('Not found', { status: 404 });
-    try { return new Response(await readFile(path), { headers: { 'Content-Type': mime[extname(path)] ?? 'application/octet-stream', 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; frame-src 'none'" } }); }
+    try { return new Response(await readFile(path), { headers: { 'Content-Type': mime[extname(path)] ?? 'application/octet-stream', 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; frame-src areal-mcp:" } }); }
     catch { return new Response('GUI 未构建，请先执行 make gui-build', { status: 404 }); }
   });
   backend = new SharedCoreBackend({ app, ...serviceOptions(app), onChange: publish,
@@ -181,6 +197,37 @@ app.whenReady().then(async () => {
         : /not_sent|target_unavailable/.test(error.message) ? 'not_sent'
         : /budget exceeded|Sensitive field|viewport changed|content changed during capture|capture guard unavailable/.test(error.message) ? 'evidence_unavailable' : 'page_unavailable' }; }
   };
+  app.on('before-quit', () => mcpApps?.dispose());
+  mcpApps = new McpAppsHost({ backend, ownerId: () => window?.webContents.id,
+    notify: value => { if (window && !window.isDestroyed()) window.webContents.send('areal-core:mcp-app-event', value); },
+    openFile: (request, current) => fileOpen({ backend, shell, home: app.getPath('home'), authorize: current,
+      chooseSave: options => dialog.showSaveDialog(window, options) }, request) });
+  backend.onMcpAppNotification = event => mcpApps?.notification(event);
+  protocol.handle('areal-mcp', request => mcpApps.resource(request));
+  ipcMain.handle('areal-core:mcp-app-deep-link-target', event => { trusted(event); return mcpAppDeepLink; });
+  ipcMain.handle('areal-core:mcp-app-deep-link-consumed', (event, id) => { trusted(event); if (mcpAppDeepLink?.id === id) mcpAppDeepLink = null; });
+  const mcpMetadataImages = new McpMetadataImages(backend);
+  const mcpFormResources = new McpFormResources({ backend,
+    choose: options => dialog.showOpenDialog(window, options),
+    confirm: options => dialog.showMessageBox(window, options) });
+  app.on('before-quit', () => mcpFormResources.dispose());
+  ipcMain.handle('areal-core:mcp-form-resource', async (event, operation, request) => {
+    trusted(event);
+    const ownerWindow = window;
+    const current = () => { trusted(event); if (window !== ownerWindow || ownerWindow.isDestroyed()) throw new Error('Form window expired'); };
+    if (operation === 'pick') return mcpFormResources.pick(request, current);
+    if (operation === 'release') return mcpFormResources.release(request, current);
+    throw new Error('Invalid form resource operation');
+  });
+  ipcMain.handle('areal-core:mcp-app', async (event, request) => {
+    trusted(event);
+    if (!request || typeof request !== 'object') throw new Error('Invalid app request');
+    if (request.operation === 'metadataImage') return mcpMetadataImages.load(request.source).catch(() => { throw new Error('Metadata image unavailable'); });
+    if (request.operation === 'open') return mcpApps.open(request, event.sender.id).catch(() => { throw new Error('MCP App could not be opened'); });
+    if (request.operation === 'request') return mcpApps.request(request.token, request.request, event.sender.id).catch(() => { throw new Error('MCP App request rejected or incomplete'); });
+    if (request.operation === 'close') return mcpApps.close(request.token, event.sender.id);
+    throw new Error('Unsupported app operation');
+  });
   ipcMain.handle('areal-core:preview', async (event, request) => {
     trusted(event);
     validatePreview(request);
@@ -287,6 +334,13 @@ app.whenReady().then(async () => {
       }
       trusted(event);
       const value = await backend.command(name, params);
+      if (name === 'manage') mcpMetadataImages.remember(params, value);
+      if (name === 'manage' && params.operation === 'pluginAuth' && params.authOperation === 'start' && value?.status === 'pending') {
+        const authUrl=new URL(value.authorizationUrl);
+        if (authUrl.protocol !== 'https:' && !(authUrl.protocol === 'http:' && ['localhost','127.0.0.1','[::1]'].includes(authUrl.hostname))) throw new Error('不支持的认证 URL');
+        try { await shell.openExternal(authUrl.href); }
+        catch { throw new Error('无法打开认证页面，请核对认证状态后重试'); }
+      }
       if (name === 'chatgpt' && params.operation === 'login') {
         try { await shell.openExternal(value.authUrl); }
         catch { await backend.command('chatgpt', { operation: 'cancel', provider: params.provider }); throw new Error('无法打开浏览器，请重试 ChatGPT 登录'); }

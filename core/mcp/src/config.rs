@@ -108,7 +108,7 @@ pub fn validate(servers: &BTreeMap<String, ServerConfig>) -> Result<()> {
     }
     Ok(())
 }
-fn valid_env(value: &str) -> bool {
+pub(crate) fn valid_env(value: &str) -> bool {
     !value.is_empty()
         && value
             .bytes()

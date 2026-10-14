@@ -65,6 +65,66 @@ function validateCommand(name, params, { serviceOnly = false } = {}) {
   if (name === 'trajectory' && (!['status', 'retry'].includes(String(params.operation)) || Object.keys(params).some(key => key !== 'operation'))) invalid();
   if (['manage', 'workspace', 'media', 'queueEdit', 'library', 'providers', 'chatgpt', 'analytics', 'resources', 'projectless', 'tasks', 'remoteControl'].includes(name)
     && !identifier(params.operation)) invalid();
+  if (name === 'manage' && ['plugin', 'pluginInstall', 'pluginConfigure', 'pluginUninstall', 'pluginSetup', 'pluginResolve', 'marketplaceAdd', 'marketplaceAddGit', 'marketplaceRemove', 'marketplaceUpdate'].includes(String(params.operation))) {
+    if (!String(params.operation).startsWith('marketplace') && !identifier(params.id)) invalid();
+    if (params.operation === 'marketplaceAdd' && (typeof params.root !== 'string' || !params.root.trim() || params.root.length > 4096 || params.root.includes('\0'))) invalid();
+    if (['pluginInstall', 'pluginConfigure'].includes(String(params.operation)) && !['user', 'project'].includes(String(params.scope))) invalid();
+    if (params.operation === 'pluginInstall' && (typeof params.source !== 'string' || !params.source.trim() || params.source.length > 4096 || params.source.includes('\0') || !identifier(params.expectedDigest))) invalid();
+    if (params.operation === 'pluginConfigure' && typeof params.enabled !== 'boolean') invalid();
+    if (params.operation !== 'plugin' && params.operation !== 'pluginSetup' && (!Number.isSafeInteger(params.expectedRevision) || Number(params.expectedRevision) < 0)) invalid();
+    if (params.threadId !== undefined && !identifier(params.threadId)) invalid();
+    if (params.requestId !== undefined && !identifier(params.requestId)) invalid();
+  }
+  if (name === 'manage' && params.operation === 'pluginSubmission'
+    && (!identifier(params.requestId) || !['marketplaceAdd', 'marketplaceAddGit', 'marketplaceRemove', 'marketplaceUpdate', 'pluginResolve', 'pluginConnection', 'pluginHooksConfigure', 'hookAcknowledge', 'pluginAuthConfigure', 'connectorConfigure', 'pluginInstall', 'pluginConfigure', 'pluginUninstall', 'pluginSetup'].includes(String(params.mutation)))) invalid();
+  if (name === 'manage') {
+    if (['mcpFormResourcePrepare', 'mcpFormResourceStage', 'mcpFormResourceSubmission', 'mcpFormResourceRelease'].includes(String(params.operation))) {
+      const operation = String(params.operation);
+      // Only native Main mediation may acquire selection tokens or submit filesystem paths.
+      if (operation !== 'mcpFormResourceRelease' && !serviceOnly) invalid();
+      const keys = operation === 'mcpFormResourceStage' ? ['selectionToken', 'requestId', 'paths']
+        : operation === 'mcpFormResourceSubmission' ? ['requestId']
+        : ['threadId', 'requestId', 'fieldName', ...(operation === 'mcpFormResourceRelease' ? ['uri'] : [])];
+      if (Object.keys(params).some(key => !['operation', 'projectId', ...keys].includes(key))
+        || !identifier(params.requestId)) invalid();
+      if (operation === 'mcpFormResourceStage') {
+        if (!identifier(params.selectionToken) || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(String(params.requestId))
+          || !Array.isArray(params.paths) || params.paths.length < 1 || params.paths.length > 256
+          || params.paths.some(path => typeof path !== 'string' || path.length > 4096 || path.includes('\0')
+            || !(/^(?:\/|[a-zA-Z]:[\\/])/.test(path)))) invalid();
+      } else if (operation !== 'mcpFormResourceSubmission') {
+        if (!identifier(params.threadId) || typeof params.fieldName !== 'string' || !params.fieldName || params.fieldName.length > 4096) invalid();
+        if (operation === 'mcpFormResourceRelease' && (typeof params.uri !== 'string' || !params.uri || params.uri.length > 4096 || params.uri.includes('\0'))) invalid();
+      }
+    }
+
+    // Main grants file paths; renderer requests cannot supply a saved grant.
+    if (params.operation === 'mcpAppOpen' && params.fileResource !== undefined) {
+      const grant = params.fileResource;
+      if (!serviceOnly || !record(grant) || !identifier(params.threadId)
+        || typeof grant.uri !== 'string' || !/^areal-file:\/\/[^\s/]+$/.test(grant.uri) || grant.uri.length > 512
+        || typeof grant.path !== 'string' || !grant.path.trim() || grant.path.length > 4096 || grant.path.includes('\0')
+        || Object.keys(grant).some(key => key !== 'uri' && key !== 'path')) invalid();
+    }
+    if (['pluginConnection','connectorConfigure','connectorCredential'].includes(String(params.operation)) && (!identifier(params.id) || typeof params.expectedDigest !== 'string' || !/^[a-f0-9]{64}$/.test(params.expectedDigest) || !identifier(params.requestId))) invalid();
+    if (params.operation === 'pluginConnection' && typeof params.connect !== 'boolean') invalid();
+    if (params.operation === 'pluginHooksConfigure' && (!identifier(params.id) || !identifier(params.requestId) || typeof params.enabled !== 'boolean' || typeof params.trusted !== 'boolean' || (params.allowReadOnlyCommands !== undefined && typeof params.allowReadOnlyCommands !== 'boolean') || typeof params.expectedDigest !== 'string' || !/^(?:sha256:)?[a-f0-9]{64}$/.test(params.expectedDigest) || typeof params.definitionDigest !== 'string' || !/^[a-f0-9]{64}$/.test(params.definitionDigest))) invalid();
+    if (params.operation === 'hookAcknowledge' && (!identifier(params.threadId) || !identifier(params.requestId) || !identifier(params.invocationId) || typeof params.inspection !== 'string' || !params.inspection.trim() || params.inspection.length > 8192)) invalid();
+    if (['connectorConfigure','connectorCredential'].includes(String(params.operation)) && (!identifier(params.connectorId) || params.provider !== 'github')) invalid();
+    if (params.operation === 'connectorCredential' && (typeof params.secret !== 'string' || !params.secret.trim() || params.secret.length > 16384 || /[\r\n]/.test(params.secret))) invalid();
+    if (params.operation === 'connectorConfigure' && !identifier(params.credentialRef)) invalid();
+    if (['pluginAuthCredential','pluginAuthConfigure'].includes(String(params.operation))) {
+      if (!identifier(params.id) || !identifier(params.server) || typeof params.expectedDigest !== 'string' || !/^[a-f0-9]{64}$/.test(params.expectedDigest) || !identifier(params.requestId)
+        || !record(params.configuration) || Object.keys(params.configuration).some(key => !['clientSecretRef','privateKeyRef','privateKeyId','clientMetadataUrl','apiKeyRef','callbackUrl'].includes(key))) invalid();
+      for (const key of ['clientSecretRef','privateKeyRef','privateKeyId']) if (params.configuration[key] !== undefined && !identifier(params.configuration[key])) invalid();
+      for (const key of ['clientMetadataUrl','callbackUrl']) if (params.configuration[key] !== undefined && (typeof params.configuration[key] !== 'string' || params.configuration[key].length > 4096 || params.configuration[key].includes('\0'))) invalid();
+      if (params.operation === 'pluginAuthCredential') {
+        if (!record(params.credentials) || Object.keys(params.credentials).some(key => !['clientSecret','privateKeyPem','apiKey'].includes(key))) invalid();
+        for (const [key,value] of Object.entries(params.credentials)) if (typeof value !== 'string' || value.length > (key === 'privateKeyPem' ? 32768 : 16384) || value.includes('\0') || (key !== 'privateKeyPem' && /[\r\n]/.test(value))) invalid();
+      }
+    }
+    if (params.operation === 'pluginAuth' && (!identifier(params.id) || !identifier(params.server) || !['start','status','cancel'].includes(String(params.authOperation)))) invalid();
+  }
   if (name !== 'configure') return;
   if (params.expectedRevision !== undefined && (!Number.isSafeInteger(params.expectedRevision) || Number(params.expectedRevision) < 0)) invalid();
   if (params.model !== undefined && params.model !== null && (!record(params.model) || !identifier(params.model.providerId) || !identifier(params.model.modelId))) invalid();

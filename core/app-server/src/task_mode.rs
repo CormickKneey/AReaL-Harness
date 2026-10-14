@@ -381,6 +381,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(32);
         let stop = CancellationToken::new();
         let mut conn = Connection {
+            experimental_api: false,
             principal,
             tool_host: dynamic_tools::ToolHost::new(tx.clone(), stop.clone()),
             initialized: true,

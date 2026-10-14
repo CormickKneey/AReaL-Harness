@@ -105,7 +105,9 @@ export function useComposerSkills({
                                 name: row.name ?? row.id,
                                 description: row.description ?? "",
                                 source:
-                                    scope === 0
+                                    row.pluginId
+                                        ? "插件 · " + row.pluginId
+                                        : scope === 0
                                         ? (project.name ?? "当前项目")
                                         : scope === 1
                                           ? "个人"

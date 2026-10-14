@@ -80,7 +80,7 @@ impl Engine {
     pub(crate) async fn create_inner(
         self: &Arc<Self>,
         cwd: String,
-        parent: Option<(&Thread, usize, bool)>,
+        parent: Option<(&Thread, usize, bool, &[crate::plugin_hooks::BoundHook])>,
         initial: Option<(Vec<Input>, CancellationToken)>,
         dynamic_tools: Vec<areal_protocol::ToolDefinition>,
         host: Option<Arc<dyn tools::DynamicToolHost>>,
@@ -90,10 +90,10 @@ impl Engine {
         if !self.accepting_work() {
             return Err(Error::Closed);
         }
-        let (parent, depth, research) = parent
-            .map_or((None, 0, false), |(thread, depth, research)| {
-                (Some(thread), depth + 1, research)
-            });
+        let (parent, depth, research, inherited_hooks) = parent.map_or(
+            (None, 0, false, None),
+            |(thread, depth, research, hooks)| (Some(thread), depth + 1, research, Some(hooks)),
+        );
         if !Path::new(&cwd).is_absolute() {
             return Err(Error::Invalid("cwd must be absolute".into()));
         }
@@ -109,17 +109,34 @@ impl Engine {
         }
         // 旧 thread/start 也使用同一默认 Skill 配置；子任务继续继承父任务的冻结配置。
         let default_profile = self.desktop.default_profile.read().unwrap().clone();
-        let desktop = if desktop.is_none() && parent.is_none() && default_profile.is_some() {
+        let desktop = if desktop.is_none() && parent.is_none() {
             Some(areal_protocol::desktop::DesktopState {
-                configuration: self.resolve_config(default_profile, None, Default::default(), 1)?,
+                configuration: {
+                    let mut c =
+                        self.resolve_config(default_profile, None, Default::default(), 1)?;
+                    c.allow_plugin_skills = true;
+                    c
+                },
                 ..Default::default()
             })
         } else {
             desktop
         };
+        let parent_registry = if let Some(parent) = parent {
+            let cell = self.threads.read().await.get(&parent.id).cloned();
+            if let Some(cell) = cell {
+                Some(cell.bindings.read().await.registry.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         let bindings = tools::Bindings {
             registry: if research {
                 self.registry.clone().research_only()
+            } else if let Some(registry) = parent_registry {
+                registry
             } else {
                 self.registry
                     .with_dynamic(&dynamic_tools)
@@ -195,6 +212,12 @@ impl Engine {
         };
         // 注册预留容量后释放目录锁；磁盘 I/O 不串行化不同会话。
         let cell = Cell::new(thread.clone(), depth, bindings);
+        if let Some(hooks) = inherited_hooks
+            && !research
+        {
+            let _ = cell.hooks.inherited.set(hooks.to_vec());
+            cell.hooks.child_start.store(true, Ordering::Release);
+        }
         // Roll back an unadmitted worker's empty directory on error or future
         // cancellation. Never recursively delete paths or worker evidence.
         struct PendingScratch(Option<std::path::PathBuf>);
@@ -536,7 +559,7 @@ impl Engine {
         let (child, turn) = self
             .create_inner(
                 state.thread.cwd.clone(),
-                Some((&state.thread, parent.depth, research)),
+                Some((&state.thread, parent.depth, research, &active.hooks)),
                 Some((input, token)),
                 if research {
                     Vec::new()

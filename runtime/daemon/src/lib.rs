@@ -329,6 +329,9 @@ fn parse<T: serde::de::DeserializeOwned>(params: Value) -> Result<T> {
 }
 fn immediate(runtime: &Supervisor, method: &str, params: Value) -> Option<Result<Value>> {
     Some(match method {
+        "scope.createParticipant" => parse(params)
+            .and_then(|request| runtime.create_participant_scope(request))
+            .map(|value| json!(value)),
         "scope.create" => parse(params)
             .and_then(|request| runtime.create_scope(request))
             .map(|v| json!(v)),

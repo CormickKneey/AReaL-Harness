@@ -51,7 +51,9 @@ pub(super) fn validate_input(input: &[Input], capabilities: &ModelCapabilities) 
                     return Err(Error::Invalid("local media path must be absolute".into()));
                 }
             }
-            Input::Text { .. } => {}
+            Input::Text { .. } => {
+                item.validate_mcp_content().map_err(Error::Invalid)?;
+            }
         }
     }
     Ok(())

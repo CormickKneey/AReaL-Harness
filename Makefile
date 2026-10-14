@@ -218,7 +218,7 @@ examples-desktop-api: build ## 真实 Core/Runtime 的桌面 API 与 CLI 确定�
 	node examples/desktop-api/packaged-workgroup.mjs
 
 desktop-schemas: ## 从 Rust 类型导出 AReaL 桌面契约
-	python3 scripts/desktop-schemas.py --write
+	python3 scripts/generate-desktop-schemas.py
 
 desktop-schema-check: ## 临时生成并规范化比较三份桌面 schema，不修改已提交文件
 	python3 scripts/desktop-schemas.py

@@ -1303,6 +1303,19 @@ async fn task_credentials_are_scoped_to_canonical_deployment_executable() {
     assert_eq!(executions[1].env["MULTICA_TOKEN"], "test-task-secret");
     assert_eq!(executions[1].trusted_executable.as_ref(), Some(&program));
     assert_eq!(executions[1].argv[0], program.to_string_lossy());
+    // Planned boundary: package-owned hooks cannot inherit task-provider credentials
+    // even when their executable is otherwise an allowed credential recipient.
+    let mut hook_scope = child(&runtime, &root);
+    hook_scope.owner.plugin_instance_id = Some("hook:fixture:package-digest".into());
+    let hook_scope = runtime.create_scope(hook_scope).unwrap();
+    let mut hook_command = process(&runtime, &hook_scope.scope_id);
+    hook_command.argv = vec![program.to_string_lossy().into_owned()];
+    runtime.start(hook_command).await.unwrap();
+    assert!(
+        !executor.executions.lock().unwrap()[2]
+            .env
+            .contains_key("MULTICA_TOKEN")
+    );
     let mut forged = process(&runtime, &root);
     forged.env.insert("MULTICA_TOKEN".into(), "forged".into());
     assert_eq!(
@@ -1528,4 +1541,355 @@ async fn deployment_public_inputs_reject_writes_replacement_and_permission_expan
     runtime.shutdown().await.unwrap();
     config.read_only_paths = vec![root.parent().unwrap().into()];
     assert!(Supervisor::new(config, Executor::new(false)).is_err());
+}
+
+// Contract: task metadata is not authority; hook participation is explicitly minted
+// by the connection owner. These exercise the real supervisor admission/cleanup
+// boundary; Executor models only OS process lifetime and exposes actual starts.
+fn participant(
+    runtime: &Supervisor,
+    parent: &str,
+    role: ScopeParticipation,
+) -> CreateParticipantScope {
+    CreateParticipantScope {
+        authority_scope_id: runtime.connection_info().root_scope_id,
+        scope: child(runtime, parent),
+        participation: role,
+    }
+}
+fn grouped_runtime(path: &std::path::Path, executor: Arc<Executor>) -> Arc<Supervisor> {
+    let mut config = Config::read_only(path.into());
+    config.writable = true;
+    config.limits.max_processes = 16;
+    Supervisor::new(config, executor).unwrap()
+}
+#[tokio::test]
+async fn hook_group_reentry_preserves_foreign_fifo_and_ordinary_exclusion() {
+    let dir = tempfile::tempdir().unwrap();
+    let executor = Executor::new(false);
+    let runtime = grouped_runtime(dir.path(), executor.clone());
+    let root = runtime.connection_info().root_scope_id;
+    let task = runtime
+        .create_participant_scope(participant(
+            &runtime,
+            &root,
+            ScopeParticipation::Task {
+                admission_window_ms: 2000,
+            },
+        ))
+        .unwrap();
+    let hook = runtime
+        .create_participant_scope(participant(
+            &runtime,
+            &task.scope_id,
+            ScopeParticipation::Hook {
+                task_scope_id: task.scope_id.clone(),
+            },
+        ))
+        .unwrap();
+    let first = runtime
+        .start(process(&runtime, &hook.scope_id))
+        .await
+        .unwrap();
+    // Exact copied task/plugin metadata outside the admitted ancestry grants nothing.
+    let copied_metadata = runtime.create_scope(child(&runtime, &root)).unwrap();
+    let foreign = {
+        let rt = runtime.clone();
+        let req = process(&rt, &copied_metadata.scope_id);
+        tokio::spawn(async move { rt.start(req).await })
+    };
+    bounded(async {
+        while runtime.scope(&root).unwrap().active_processes < 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    let own = bounded(runtime.start(process(&runtime, &task.scope_id)))
+        .await
+        .unwrap();
+    let hook2 = bounded(runtime.start(process(&runtime, &hook.scope_id)))
+        .await
+        .unwrap();
+    let ordinary = {
+        let rt = runtime.clone();
+        let req = process(&rt, &task.scope_id);
+        tokio::spawn(async move { rt.start(req).await })
+    };
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    assert!(!ordinary.is_finished());
+    assert!(!foreign.is_finished());
+    executor.finish(&first.process_id, b"").await;
+    executor.finish(&hook2.process_id, b"").await;
+    assert!(!foreign.is_finished());
+    executor.finish(&own.process_id, b"").await;
+    let ordinary = bounded(ordinary).await.unwrap().unwrap();
+    assert!(!foreign.is_finished());
+    executor.finish(&ordinary.process_id, b"").await;
+    let foreign = bounded(foreign).await.unwrap().unwrap();
+    executor.finish(&foreign.process_id, b"").await;
+    bounded(runtime.shutdown()).await.unwrap();
+}
+#[tokio::test]
+async fn hook_group_seals_without_extension_and_next_generation_waits_behind_foreign() {
+    let dir = tempfile::tempdir().unwrap();
+    let executor = Executor::new(false);
+    let runtime = grouped_runtime(dir.path(), executor.clone());
+    let root = runtime.connection_info().root_scope_id;
+    let task = runtime
+        .create_participant_scope(participant(
+            &runtime,
+            &root,
+            ScopeParticipation::Task {
+                admission_window_ms: 80,
+            },
+        ))
+        .unwrap();
+    let hook = runtime
+        .create_participant_scope(participant(
+            &runtime,
+            &task.scope_id,
+            ScopeParticipation::Hook {
+                task_scope_id: task.scope_id.clone(),
+            },
+        ))
+        .unwrap();
+    let first = runtime
+        .start(process(&runtime, &hook.scope_id))
+        .await
+        .unwrap();
+    let foreign = {
+        let rt = runtime.clone();
+        let req = process(&rt, &root);
+        tokio::spawn(async move { rt.start(req).await })
+    };
+    tokio::time::sleep(Duration::from_millis(40)).await;
+    let second = runtime
+        .start(process(&runtime, &hook.scope_id))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    let late = {
+        let rt = runtime.clone();
+        let req = process(&rt, &hook.scope_id);
+        tokio::spawn(async move { rt.start(req).await })
+    };
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(!late.is_finished());
+    executor.finish(&first.process_id, b"").await;
+    executor.finish(&second.process_id, b"").await;
+    let foreign = bounded(foreign).await.unwrap().unwrap();
+    assert!(!late.is_finished());
+    executor.finish(&foreign.process_id, b"").await;
+    let late = bounded(late).await.unwrap().unwrap();
+    executor.finish(&late.process_id, b"").await;
+    bounded(runtime.shutdown()).await.unwrap();
+}
+#[tokio::test]
+async fn hook_group_authority_cannot_be_forged_by_metadata_parent_or_epoch() {
+    let dir = tempfile::tempdir().unwrap();
+    let runtime = grouped_runtime(dir.path(), Executor::new(false));
+    let root = runtime.connection_info().root_scope_id;
+    let task = runtime
+        .create_participant_scope(participant(
+            &runtime,
+            &root,
+            ScopeParticipation::Task {
+                admission_window_ms: 100,
+            },
+        ))
+        .unwrap();
+    let mut forged = participant(
+        &runtime,
+        &task.scope_id,
+        ScopeParticipation::Hook {
+            task_scope_id: task.scope_id.clone(),
+        },
+    );
+    forged.authority_scope_id = task.scope_id.clone();
+    assert!(runtime.create_participant_scope(forged).is_err());
+    assert!(
+        runtime
+            .create_participant_scope(participant(
+                &runtime,
+                &root,
+                ScopeParticipation::Hook {
+                    task_scope_id: task.scope_id.clone()
+                }
+            ))
+            .is_err()
+    );
+    assert!(
+        runtime
+            .create_participant_scope(participant(
+                &runtime,
+                &task.scope_id,
+                ScopeParticipation::Task {
+                    admission_window_ms: 100
+                }
+            ))
+            .is_err()
+    );
+    assert!(
+        runtime
+            .create_participant_scope(participant(
+                &runtime,
+                &root,
+                ScopeParticipation::Task {
+                    admission_window_ms: 60_001
+                }
+            ))
+            .is_err()
+    );
+    let other = grouped_runtime(dir.path(), Executor::new(false));
+    let mut stale = participant(
+        &runtime,
+        &task.scope_id,
+        ScopeParticipation::Hook {
+            task_scope_id: task.scope_id.clone(),
+        },
+    );
+    stale.authority_scope_id = other.connection_info().root_scope_id;
+    assert!(runtime.create_participant_scope(stale).is_err());
+    runtime.revoke(&task.scope_id).unwrap();
+    assert!(
+        runtime
+            .create_participant_scope(participant(
+                &runtime,
+                &task.scope_id,
+                ScopeParticipation::Hook {
+                    task_scope_id: task.scope_id.clone()
+                }
+            ))
+            .is_err()
+    );
+    bounded(runtime.shutdown()).await.unwrap();
+    bounded(other.shutdown()).await.unwrap();
+}
+
+#[tokio::test]
+async fn hook_group_expansion_queues_atomically_but_covered_reentry_survives() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("a")).unwrap();
+    std::fs::create_dir(dir.path().join("b")).unwrap();
+    let executor = Executor::new(false);
+    let runtime = grouped_runtime(dir.path(), executor.clone());
+    let root = runtime.connection_info().root_scope_id;
+    let task = runtime
+        .create_participant_scope(participant(
+            &runtime,
+            &root,
+            ScopeParticipation::Task {
+                admission_window_ms: 2000,
+            },
+        ))
+        .unwrap();
+    let mut a = participant(
+        &runtime,
+        &task.scope_id,
+        ScopeParticipation::Hook {
+            task_scope_id: task.scope_id.clone(),
+        },
+    );
+    a.scope.permissions.write_roots = Some(vec!["workspace://repo/a".into()]);
+    let a = runtime.create_participant_scope(a).unwrap();
+    let first = runtime.start(process(&runtime, &a.scope_id)).await.unwrap();
+    let foreign = {
+        let rt = runtime.clone();
+        let req = process(&rt, &root);
+        tokio::spawn(async move { rt.start(req).await })
+    };
+    bounded(async {
+        while runtime.scope(&root).unwrap().active_processes < 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    let expanded = runtime
+        .create_participant_scope(participant(
+            &runtime,
+            &task.scope_id,
+            ScopeParticipation::Hook {
+                task_scope_id: task.scope_id.clone(),
+            },
+        ))
+        .unwrap();
+    let expand = {
+        let rt = runtime.clone();
+        let req = process(&rt, &expanded.scope_id);
+        tokio::spawn(async move { rt.start(req).await })
+    };
+    bounded(async {
+        while runtime.scope(&expanded.scope_id).unwrap().active_processes < 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    let reentry = bounded(runtime.start(process(&runtime, &a.scope_id)))
+        .await
+        .unwrap();
+    assert!(!foreign.is_finished());
+    assert!(!expand.is_finished());
+    runtime.revoke(&expanded.scope_id).unwrap();
+    assert!(bounded(expand).await.unwrap().is_err());
+    executor.finish(&first.process_id, b"").await;
+    assert!(!foreign.is_finished());
+    executor.finish(&reentry.process_id, b"").await;
+    let foreign = bounded(foreign).await.unwrap().unwrap();
+    executor.finish(&foreign.process_id, b"").await;
+    bounded(runtime.shutdown()).await.unwrap();
+}
+#[tokio::test]
+async fn hook_group_cancelled_member_and_cleanup_unknown_do_not_release_other_members() {
+    let dir = tempfile::tempdir().unwrap();
+    let executor = Executor::new(false);
+    let runtime = grouped_runtime(dir.path(), executor.clone());
+    let root = runtime.connection_info().root_scope_id;
+    let task = runtime
+        .create_participant_scope(participant(
+            &runtime,
+            &root,
+            ScopeParticipation::Task {
+                admission_window_ms: 2000,
+            },
+        ))
+        .unwrap();
+    let hook = runtime
+        .create_participant_scope(participant(
+            &runtime,
+            &task.scope_id,
+            ScopeParticipation::Hook {
+                task_scope_id: task.scope_id.clone(),
+            },
+        ))
+        .unwrap();
+    let first = runtime
+        .start(process(&runtime, &hook.scope_id))
+        .await
+        .unwrap();
+    let own = runtime
+        .start(process(&runtime, &task.scope_id))
+        .await
+        .unwrap();
+    let foreign = {
+        let rt = runtime.clone();
+        let req = process(&rt, &root);
+        tokio::spawn(async move { rt.start(req).await })
+    };
+    runtime.revoke(&hook.scope_id).unwrap();
+    bounded(runtime.wait_closed(&hook.scope_id)).await.unwrap();
+    assert_eq!(
+        runtime.process(&first.process_id).unwrap().state,
+        ProcessState::Exited
+    );
+    assert!(!foreign.is_finished());
+    executor.fail_cleanup.store(true, Ordering::SeqCst);
+    runtime.revoke(&task.scope_id).unwrap();
+    assert!(bounded(runtime.wait_closed(&task.scope_id)).await.is_err());
+    assert_eq!(
+        runtime.process(&own.process_id).unwrap().state,
+        ProcessState::Unknown
+    );
+    assert!(bounded(foreign).await.unwrap().is_err());
+    assert_eq!(executor.starts.load(Ordering::SeqCst), 2);
+    assert!(runtime.start(process(&runtime, &root)).await.is_err());
 }

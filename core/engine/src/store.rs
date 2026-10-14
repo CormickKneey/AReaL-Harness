@@ -23,6 +23,8 @@ pub struct Store {
     root: PathBuf,
     _lock: File,
     io: Arc<Semaphore>,
+    #[cfg(test)]
+    paused_write: tokio::sync::Notify,
     blob_write: Arc<tokio::sync::Mutex<()>>,
     fork_reads: Arc<Semaphore>,
     #[cfg(test)]
@@ -56,6 +58,8 @@ impl Store {
             root,
             _lock: lock,
             io: Arc::new(Semaphore::new(8)),
+            #[cfg(test)]
+            paused_write: tokio::sync::Notify::new(),
             blob_write: Arc::new(tokio::sync::Mutex::new(())),
             // 最多同时解析两份 64 MiB 快照；页请求不占满通用 Store 写入容量。
             fork_reads: Arc::new(Semaphore::new(2)),
@@ -87,6 +91,11 @@ impl Store {
         self.io.clone().acquire_many_owned(8).await.unwrap()
     }
 
+    #[cfg(test)]
+    pub(crate) async fn wait_for_paused_write(&self) {
+        self.paused_write.notified().await;
+    }
+
     pub fn load(&self, max_threads: usize, max_bytes: usize) -> Result<Vec<Thread>> {
         let mut threads = Vec::new();
         for entry in std::fs::read_dir(&self.root)? {
@@ -105,6 +114,14 @@ impl Store {
             }
             let mut record: Record = serde_json::from_slice(&std::fs::read(&path)?)
                 .with_context(|| format!("invalid session: {}", path.display()))?;
+            if let Some(desktop) = record.thread.desktop.as_mut() {
+                for run in &mut desktop.hook_runs {
+                    if run.outcome == "running" {
+                        run.outcome = "unknown".into();
+                    }
+                }
+            }
+
             anyhow::ensure!(
                 max_bytes == 0
                     || record
@@ -443,6 +460,10 @@ if keep.contains(&name){retained+=e.metadata()?.len();}else{reclaimed+=e.metadat
 
     pub(crate) async fn save_encoded(&self, id: &str, bytes: Vec<u8>) -> Result<()> {
         let queued = std::time::Instant::now();
+        #[cfg(test)]
+        if self.io.available_permits() == 0 {
+            self.paused_write.notify_one();
+        }
         let permit = self.io.clone().acquire_owned().await?;
         let root = self.root.clone();
         let id = id.to_owned();

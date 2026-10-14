@@ -457,3 +457,17 @@ WebSocket solve connections send the Core thread ID as session-id/thread-id for 
 Model configuration archives preserve the encoded bytes bound to each revision. New optional defaults do not invalidate historical revisions or rewrite queued Turn references; digest mismatches still reject modified archives. Do not manually reformat or edit the Core-owned `desktop/default-models.json`.
 
 `model.max_request_bytes` independently caps complete materialized HTTP JSON / Responses WebSocket wire envelopes, including tools and replayed history. The default is 16 MiB; range 1024–134217728 bytes. `AREAL_HARNESS_MODEL_MAX_REQUEST_BYTES` is also supported. This is a local guard, not a claim about gateway capacity; use a verified service limit. Aggregate media lower bounds are checked before materialization, then serialized JSON is counted without allocating an oversized send buffer. WebSocket continuations apply the wire limit to the actual delta; candidate full history has a separate 128 MiB materialization guard, and full-request fallback must satisfy the wire limit again. Rejection sends no request and causes no network retry, returning `MODEL_REQUEST_TOO_LARGE` with stage, measured bytes/lower bound and limit. HTTP 413 uses the same category with request-sent status. Token, tool-display and compaction budgets remain independent; this limit never silently removes historical images or task requirements.
+
+## Hooks configuration
+
+`[features]` accepts boolean `hooks` and the legacy alias `codex_hooks` (`hooks` wins when both appear). Omission enables discovery, with separate trust still required for every current definition. User `hooks=false` gates both configuration and package hooks; project switches cannot override it. Top-level `[hooks]` is delegated to the hooks parser while model/permission fields retain strict parsing. Project `.codex/config.toml` is read only for hooks, without changing the global precedence described above.
+
+```toml
+[features]
+hooks = true
+
+[[hooks.UserPromptSubmit]]
+hooks = [{ type = "command", command = "python3 /absolute/path/hook.py", timeout = 30 }]
+```
+
+See the [plugin guide](plugins.en.md#hooks-p2-candidate) for sources, review, execution and remaining limits.

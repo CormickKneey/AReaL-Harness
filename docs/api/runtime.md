@@ -28,6 +28,7 @@ macOS 的内置搜索助手与 fs.execute 复用系统 Python 启动桥接，再
 |---|---|
 | connection.open / close | `{protocolVersion}` / `{}` |
 | scope.create | `{operationId,parentScopeId,owner,permissions?,limits?}` |
+| scope.createParticipant | `{authorityScopeId,scope,participation}` |
 | scope.get / revoke / waitClosed | `{scopeId}` |
 | owner.revoke | `{pluginInstanceId}` |
 | process.start | `{operationId,scopeId,argv,cwd,env?,tty?,pipeStdin?,limits?}` |
@@ -54,6 +55,14 @@ macOS 的内置搜索助手与 fs.execute 复用系统 Python 启动桥接，再
 默认每进程期限 30 秒，整个 Scope 后代累计 8 MiB 输出、4 个并发进程；连接保留 256 Scope/4096 操作。期限含写路径排队和启动，清理前不释放进程额度。部署可以配置，子 Scope 只能收窄。
 
 Runtime daemon 可用 `--cumulative-output-bytes` 独立设置部署及 Scope 后代累计输出上限；省略时等于 `--output-bytes`，且不得小于单进程上限。进程仍受 `--output-bytes` 限制，输出窗口另由 `--output-window-bytes` 约束。stdout/stderr 的真实接受字节对每个祖先累计一次；重复读取保留输出不再收费。文件助手的 JSON/base64 响应也是进程输出。
+
+## 有界 hook 写入组
+
+`scope.createParticipant` 仅供连接所有者受理。`authorityScopeId` 必须等于当前 epoch 的不透明 connection root；`scope` 使用既有 `scope.create` 字段。`participation` 为 `{kind:"task",admissionWindowMs}` 或 `{kind:"hook",taskScopeId}`。Task 只能在现有组之外创建；Hook 的 parent 必须已属于指定且验证过的 Task Scope。普通子 Scope 继承参与身份；复制 owner metadata 不构成授权。旧 `scope.create` 与 `ScopeInfo` 不变；不支持的新方法明确拒绝，不使用放宽权限的 fallback。
+
+受理窗口为 1–min(task 进程 wall limit,60000) 毫秒。第一次写入受理固定 generation 截止，后续成员不能延长。已占有覆盖路径上，同组至少一方为 Hook 时可重叠；ordinary/ordinary 仍串行，跨组冲突继续独占。路径扩张须完整申请新的预约并排在已有外组等待者之后。封口后新成员进入下一 generation 的 FIFO 位置，旧进程保留各自期限与 lease，直到确认清理。UNKNOWN 关闭准入，不把未确认副作用当成已释放。显式类型参与者始终采用此调度，即使开启旧 concurrent-write 选项；未分组的旧行为不变。
+
+公平性单位因此改为有界组，同任务 hook/工具可以实际并发写入。它不授予新路径、不保证事务隔离，也不保证封口后的任意依赖链可重入。Core 持有每个 Session 的 Task Scope，普通工具与 hook 从其派生，等待 hook 任务与 SessionEnd 后关闭。每进程权限收窄与 hook 秘密排除继续生效。
 
 ## 输出与清理
 
