@@ -331,11 +331,6 @@ try {
       if (method !== "command") {
         return original.call(this, method, parameters, mutation);
       }
-      // 后台只读状态轮询与带回无关；保留真实请求，但不混入本步骤操作计数。
-      // retry 仍记录，不能隐藏有副作用的轨迹操作。
-      if (parameters.name === "trajectory" && parameters.request.operation === "status") {
-        return original.call(this, method, parameters, mutation);
-      }
       // 一次性修改出站参数，拒绝结果仍由真实 Core 产生。
       const fixture = globalThis.__scfRejectNext;
       if (fixture === "workflow" && parameters.name === "fork") {
