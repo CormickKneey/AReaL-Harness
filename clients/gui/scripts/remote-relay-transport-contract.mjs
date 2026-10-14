@@ -570,7 +570,7 @@ if (!process.env.RC12_TLS_HOME) {
       assert.equal(f.remote.state().enabled, false);
     }
   });
-  test("same-origin actual exported Remote shell retains inline styles and excludes Desktop assets", async (t) => {
+  test("same-origin actual exported Remote shell serves hashed styles and excludes Desktop assets", async (t) => {
     const { exportRemoteAssets } = await import("./export-remote-assets.mjs");
     const root = await mkdtemp(join(tmpdir(), "rc12-deployed-shell-"));
     t.after(() => rm(root, { recursive: true, force: true }));
@@ -580,14 +580,18 @@ if (!process.env.RC12_TLS_HOME) {
     const response = await fetch(relay.origin);
     assert.equal(response.status, 200);
     const html = await response.text();
-    assert.match(html, /<style>[\s\S]*background:/);
+    assert.match(html, /<link[^>]*rel="stylesheet"[^>]*href="\.\/assets\/remote-[^"/]+\.css"/);
     assert.match(
       response.headers.get("content-security-policy"),
       /style-src 'self' 'unsafe-inline'/,
     );
     assert.match(response.headers.get("content-security-policy"), /script-src 'self';/);
     const descriptor = JSON.parse(await readFile(join(assetsDir, "remote-assets.json"), "utf8"));
+    let assetReads=0;
     for (const asset of [...descriptor.assets, descriptor.worker]) {
+      // Exhaustive closure checks also fetch lazy chunks and font fallbacks.
+      // Respect the production 200-request/second HTTP budget.
+      if(assetReads++ > 0 && assetReads % 100 === 0)await new Promise(resolve=>setTimeout(resolve,1000));
       const res = await fetch(relay.origin + "/" + asset.path);
       assert.equal(res.status, 200);
       assert.deepEqual(

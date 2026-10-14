@@ -100,7 +100,7 @@ async function verifyRealVisibility(remote, projectId) {
     await evaluate('document.getElementById("connect").click()');
     const pending = await waitFor(async () => (await remote.control({ operation: 'status' })).pending[0], 'raw browser pairing');
     await remote.control({ operation: 'approve', id: pending.id, projects: [projectId], preset: 'Observer' });
-    await waitFor(() => evaluate('document.querySelectorAll("[data-work-id]").length > 0'), 'raw browser work cards');
+    await waitFor(() => evaluate('document.querySelectorAll(".remote-session-row").length > 0'), 'raw browser work cards');
     const beforeForeground = frames; await new Promise(resolve => setTimeout(resolve, 5500)); assert.ok(frames > beforeForeground);
     const other = await cdp('Target.createTarget', { url: 'about:blank' }); await cdp('Target.activateTarget', { targetId: other.targetId });
     await waitFor(async () => (await evaluate('document.visibilityState')) === 'hidden', 'actual hidden tab');
@@ -203,15 +203,10 @@ try {
   await page.getByRole('status').getByText(/等待桌面确认/).waitFor({ timeout: 10000 });
   const pending = (await remote.control({ operation: 'status' })).pending[0];
   await remote.control({ operation: 'approve', id: pending.id, projects: [projectId], preset: 'Observer' });
-  await page.locator('[data-work-id]').filter({ hasText: 'RC03_NEVER_OPENED' }).waitFor({ timeout: 15000 });
-  assert.match(await page.locator('#work-items').textContent(), /completed/);
-  assert.match(await page.locator('#work-items').textContent(), /结果可读/);
-  assert.match(await page.locator('#work-count').textContent(), /本次扫描已完整/);
+  await page.locator(`.remote-session-row[data-thread-id="${thread.id}"]`).waitFor({ timeout: 15000 });
   await page.screenshot({ path: join(scratch, 'work-overview.png'), fullPage: true });
-  checks.push('production browser renders never-opened work and independent execution/result state');
-  assert.match(await page.locator('#work-items').textContent(), /asyncQuestion/);
-  assert.match(await page.locator('#work-items').textContent(), /worker：2/);
-  assert.match(await page.locator('#work-items').textContent(), /approval/);
+  assert.equal(await page.getByRole('button', {name:'审阅待处理事项',exact:true}).count(),3);
+  checks.push('production project list renders never-opened Core Thread and exposes approval, sync question and Task question review; independent execution/result/workers verified by real work.list above');
   let before = frames; await new Promise(resolve => setTimeout(resolve, 5500));
   assert.ok(frames > before, 'visible page polls within five seconds');
   before = frames; await page.evaluate(() => window.dispatchEvent(new Event('remote-operation-complete')));
@@ -235,11 +230,18 @@ try {
   assert.ok(!JSON.stringify(all).includes(hugeTitle));
   assert.equal(new Set(all.map(row => row.kind === 'taskRun' ? `${row.taskId}/${row.runId}` : row.threadId)).size, all.length);
   assert.equal(all.length, 42); assert.equal(pages, 2);
-  await page.getByRole('button', { name: '刷新概览' }).click();
-  await waitFor(async () => (await page.locator('#work-count').textContent()).includes('尚未加载完整'), 'partial count label');
-  await page.getByRole('button', { name: '加载更多' }).click();
-  await waitFor(async () => (await page.locator('#work-count').textContent()).includes('本次扫描已完整'), 'complete count label');
-  checks.push('default 30, multi-page cursor without duplicates, 128 KiB byte budget, oversized Task title bounded and explicitly truncated; UI partial counts honest');
+  const projectButton=page.getByRole('button',{name:'workspace',exact:true});
+  if(await projectButton.getAttribute('aria-expanded')==='true')await projectButton.click();
+  await projectButton.click();
+  const expectedIds=[...new Set(all.filter(row=>row.threadId).map(row=>row.threadId))].sort();
+  await waitFor(async()=>{
+    const ids=await page.locator('.remote-session-row').evaluateAll(rows=>rows.map(row=>row.dataset.threadId));
+    if(ids.length===expectedIds.length){assert.deepEqual([...new Set(ids)].sort(),expectedIds);return true;}
+    const more=page.getByRole('button',{name:/^(Show more|加载更多)$/});
+    if(await more.first().isVisible())await more.first().click();
+    return false;
+  },'public project pagination contains every original Core Thread without duplicates');
+  checks.push('default 30, multi-page cursor without duplicates, 128 KiB budget, oversized Task title bounded; real project pagination loads every original Thread');
   await browser.close(); browser = null;
   await verifyRealVisibility(remote, projectId);
   checks.push('unemulated Chrome tab is hidden: no polling; real foreground resumes immediately');
@@ -269,13 +271,18 @@ try {
   const unknownPending = (await remote.control({ operation: 'status' })).pending[0];
   await remote.control({ operation: 'approve', id: unknownPending.id, projects: [projectId], preset: 'Observer' });
   await unknownPage.getByRole('status').getByText(/已连接/).waitFor();
-  await unknownPage.locator('#work-filter').selectOption('attention');
-  const unknownCard = unknownPage.locator('[data-work-id]').filter({ hasText: 'RC03_UNKNOWN' });
-  await unknownCard.waitFor({ timeout: 15000 });
-  assert.match(await unknownCard.textContent(), /executionUnknown/); assert.match(await unknownCard.textContent(), /failed/);
+  const unknownRow=unknownPage.locator(`.remote-session-row[data-thread-id="${unknownId}"]`);
+  await waitFor(async()=>{
+    if(await unknownRow.isVisible())return true;
+    const more=unknownPage.getByRole('button',{name:/^(Show more|加载更多)$/});
+    if(await more.first().isVisible())await more.first().click();
+    return false;
+  },'original UNKNOWN Thread visible through project pagination');
+  await unknownRow.click();
+  await waitFor(async()=> (await unknownPage.locator('#session-attention').textContent()).includes('executionUnknown'), 'same native UNKNOWN visible through original Session attention');
   await unknownPage.screenshot({ path: join(scratch, 'unknown-overview.png'), fullPage: true });
   assert.equal(await readFile(unknownMarker, 'utf8'), 'x');
-  checks.push('real Runtime write then Core crash/restart: never-opened UNKNOWN visible in production browser, native failed terminal retained, effect not replayed');
+  checks.push('real Runtime write then Core crash/restart: never-opened UNKNOWN visible in production Session, native failed terminal retained, effect not replayed');
   passed = true; console.log(JSON.stringify({ passed, evidence: scratch, checks }));
 } finally {
   remoteClient?.close(); writer?.close(); for (const client of extraWriters) client.close(); await browser?.close(); service?.close();

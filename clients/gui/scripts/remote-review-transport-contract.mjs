@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createContext, runInContext } from "node:vm";
 import { BrowserState } from "../renderer/remote-web/browser-state.mjs";
+import { SessionBodyReader } from "../renderer/remote-web/session-bodies.mjs";
 import { CommandState } from "../renderer/remote-web/command-state.mjs";
 import { acceptSessionMessage } from "../renderer/remote-web/session-state.mjs";
 import { CoreClient } from "../packages/runtime-client/core.js";
@@ -192,6 +193,7 @@ async function pauseReachability(ready, request, expected) {
   const context = createContext({
     document: {
       hidden: false,
+      body: {dataset:{}},
       getElementById: element,
       createElement: () => new Element(),
       addEventListener() {},
@@ -205,6 +207,8 @@ async function pauseReachability(ready, request, expected) {
       }
     },
     CommandState,
+    SessionBodyReader,
+    createRemoteWorkbench: () => ({render() {}}),
     acceptSessionMessage,
     ...crypto,
     ...remoteWire,

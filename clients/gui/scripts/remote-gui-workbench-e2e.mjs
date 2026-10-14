@@ -13,22 +13,30 @@ const require=createRequire(import.meta.url);
 const {CoreBackend}=require('../app/src/core/backend.cjs');
 const {DesktopService}=require('../app/src/core/service-protocol.cjs');
 const {RemoteControl}=require('../app/src/core/remote.cjs');
+const {executeCore}=require('../app/src/core/core-process.cjs');
 const scratch=await mkdtemp('/private/tmp/remote-gui-workbench-');
 const home=join(scratch,'desktop');await mkdir(home);await mkdir(join(scratch,'user','.areal'),{recursive:true});
+const longReply='完整正文 😀 界\n'.repeat(6000)+'REMOTE_LONG_END';
 const held=new Set();let requests=0;
 const model=createServer(async(req,res)=>{
   const parts=[];for await(const part of req)parts.push(part);
   const body=JSON.parse(Buffer.concat(parts));requests++;
   if(JSON.stringify(body.messages).includes('HOLD_REMOTE')||JSON.stringify(body.messages).includes('REMOTE_GOAL')){held.add(res);res.on('close',()=>held.delete(res));return;}
+  const goal=body.messages.toReversed().map(message=>{try{return JSON.parse(String(message.content).split('Current authoritative goal: ')[1]);}catch{return null;}}).find(Boolean);
+  if(goal?.goal?.objective==='Remote Task entry'&&!goal.goal.report){
+    res.writeHead(200,{'Content-Type':'text/event-stream'});
+    const delta={tool_calls:[{index:0,id:randomUUID(),type:'function',function:{name:'goal_update',arguments:JSON.stringify({expectedRevision:goal.revision,status:'complete',summary:'completed original Task Run',evidence:['isolated native model fixture'],remaining:[]})}}]};
+    res.end(`data: ${JSON.stringify({choices:[{index:0,delta,finish_reason:null}]})}\n\ndata: ${JSON.stringify({choices:[{index:0,delta:{},finish_reason:'tool_calls'}],usage:{prompt_tokens:10,completion_tokens:5,total_tokens:15}})}\n\ndata: [DONE]\n\n`);return;
+  }
   res.writeHead(200,{'Content-Type':'text/event-stream'});
-  res.end(`data: ${JSON.stringify({choices:[{index:0,delta:{content:'REAL_CORE_RESULT'},finish_reason:null}]})}\n\ndata: ${JSON.stringify({choices:[{index:0,delta:{},finish_reason:'stop'}],usage:{prompt_tokens:10,completion_tokens:5,total_tokens:15}})}\n\ndata: [DONE]\n\n`);
+  res.end(`data: ${JSON.stringify({choices:[{index:0,delta:{content:JSON.stringify(body.messages.at(-1)).includes('LONG_REMOTE')?longReply:'REAL_CORE_RESULT'},finish_reason:null}]})}\n\ndata: ${JSON.stringify({choices:[{index:0,delta:{},finish_reason:'stop'}],usage:{prompt_tokens:10,completion_tokens:5,total_tokens:15}})}\n\ndata: [DONE]\n\n`);
 });
 await new Promise(r=>model.listen(0,'127.0.0.1',r));
 await writeFile(join(scratch,'user','.areal','config.toml'),`schema_version=1\n[model]\nprovider="fixture"\nname="fixture"\n[model.providers.fixture]\nprotocol="chat-completions"\nendpoint="http://127.0.0.1:${model.address().port}/v1/chat/completions"\n`);
 const deployment=join(scratch,'deployment.json');await writeFile(deployment,JSON.stringify({profiles:[{id:'fixture',revision:'v1',displayName:'Fixture',instructions:'Respond plainly'}]}));
 const backend=new CoreBackend({binary:process.env.AREAL_CORE_BIN||resolve(gui,'../../target/debug/areal'),home,harnessHome:join(scratch,'registry'),userHome:join(scratch,'user'),desktopConfig:deployment,defaultProfile:{id:'fixture',revision:'v1'}});
 const encryption={isEncryptionAvailable:()=>true,getSelectedStorageBackend:()=> 'fixture',encryptString:x=>Buffer.from(x),decryptString:x=>x.toString('utf8')};
-let service,browser,passed=false;const checks=[],errors=[];
+let service,browser,passed=false;const checks=[],errors=[],cleanup=[];
 async function waitFor(fn,label,timeout=20000){const until=Date.now()+timeout;while(Date.now()<until){const value=await fn();if(value)return value;await new Promise(r=>setTimeout(r,100));}throw new Error(`Timed out: ${label}`);}
 try{
  await backend.init();const entries=[];
@@ -99,6 +107,12 @@ try{
  await page.getByRole('button',{name:'返回项目列表',exact:true}).click();
  await page.getByRole('button',{name:'Project-A seeded Session',exact:true}).click();
  await page.getByRole('heading',{name:'Project-A seeded Session',exact:true}).waitFor();
+ await type('LONG_REMOTE');await page.getByRole('button',{name:'发送',exact:true}).click();
+ await page.getByText(/REMOTE_LONG_END/).waitFor();
+ const longTurn=(await entries[0].project.client.request('thread/read',{threadId:entries[0].threadId,includeTurns:true})).thread.turns.at(-1);
+ assert.equal(longTurn.items.findLast(item=>item.type==='agentMessage').text,longReply);
+ assert.match(await page.locator('#remote-session-ui .messages').innerText(),/REMOTE_LONG_END/);
+ checks.push('full session.body beyond preview budget matches original Core Unicode text');
  await page.getByRole('button',{name:'添加功能与 Skills',exact:true}).click();
  await page.getByRole('option',{name:/设置目标/}).click();
  await page.getByTestId('remote-chat-input').fill('REMOTE_GOAL complete one task');
@@ -108,10 +122,30 @@ try{
  checks.push('GUI goal catalog and GoalCard use actual Core goal state');
  assert.deepEqual(errors,[]);
  await page.screenshot({path:join(scratch,'remote-goal.png')});
+ await page.getByRole('button',{name:'暂停目标',exact:true}).click();
+ await waitFor(async()=>{const value=await entries[0].project.client.request('areal/goal/get',{threadId:entries[0].threadId});return value.goal.status==='paused'&&!value.goal.settling;},'goal pause settlement');
+ checks.push('self-created Goal pause settles original real Turn');
+ await page.getByRole('button',{name:'返回项目列表',exact:true}).click();
+ const taskThread=(await entries[0].project.client.request('areal/thread/start',{requestId:randomUUID(),cwd:entries[0].project.root,agentProfile:{id:'fixture',revision:'v1'}})).thread;
+ const task=await entries[0].project.client.request('areal/task/create',{requestId:randomUUID(),mode:'scheduled',threadId:taskThread.id,objective:'Remote Task entry',schedule:{at:Math.floor(Date.now()/1000)+1},interactionMode:'headless',maxTurns:4});
+ await waitFor(async()=>{const value=await entries[0].project.client.request('areal/task/read',{taskId:task.id});return value.runs.at(-1)?.completedAt;},'actual Task Run completion');
+ await page.locator('section[aria-label="Remote Task entry"]').getByRole('button',{name:'审阅暂停 Task',exact:true}).click();
+ await expectTaskTarget();
+ async function expectTaskTarget(){await waitFor(async()=> (await page.locator('#task-pause-target').innerText()).includes(task.id),'original Task review target');assert.equal(await page.locator('#task-pause-confirm').isDisabled(),true);}
+ checks.push('new Workbench exposes real Task pause review and rejects a terminal Run');
+ assert.deepEqual(errors,[]);
  passed=true;
  console.log(JSON.stringify({passed,checks,scratch,requests,browserErrors:errors,provider:'deterministic local fixture',transport:'production Direct/Noise',credentials:'isolated safeStorage fixture'},null,2));
-}catch(error){if(!error.manualComplete){console.error(error);throw error;}}finally{
- await writeFile(join(scratch,'result.json'),JSON.stringify({passed,checks,errors},null,2));
- await browser?.close();await service?.close();await backend.disconnect();
+}catch(error){if(!error.manualComplete){errors.push(error.message);console.error(error);throw error;}}finally{
+ await browser?.close();await service?.close();
+ try {
+  for(const project of backend.projects.values())if(project.service){
+   const result=await executeCore(backend.binary,['service','stop','--instance',project.service.serviceId,'--cancel','--json'],{env:backend.hooks.environment(),timeout:60000});
+   const stopped=JSON.parse(result.stdout);assert.equal(stopped.state,'stopped');cleanup.push({serviceId:project.service.serviceId,state:stopped.state});
+  }
+ }catch(error){passed=false;cleanup.push({error:error.message});process.exitCode=1;}
+ await backend.disconnect();
  for(const response of held)response.destroy();await new Promise(r=>model.close(r));
+ await writeFile(join(scratch,'result.json'),JSON.stringify({passed,checks,errors,cleanup},null,2));
+ console.log(JSON.stringify({evidence:scratch,passed,cleanup}));
 }

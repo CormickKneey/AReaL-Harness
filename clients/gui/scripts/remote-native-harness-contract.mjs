@@ -249,6 +249,7 @@ for (const [flag, selectedSuite, testCase] of [
     interactionSettlementOnly: mode.interactionSettlementOnly,
     modelRequests: 0,
     cleanup: [],
+    drainStatus: undefined,
     execFileSync: () => "fixture-source",
     root: "/unused",
     binary: "/unused",
@@ -418,7 +419,8 @@ async function ownershipCase({
         };
       if (method === "areal/task/create") {
         assert.equal(params.threadId, "fresh");
-        assert.ok(params.schedule.at <= Math.floor(Date.now() / 1000) + 2);
+        assert.equal(params.mode,"background");
+        assert.equal(params.schedule,undefined);
         return { id: "task" };
       }
       if (method === "areal/task/read") {
@@ -1031,7 +1033,7 @@ async function checkScheduledThreadBinding(fragment, kind) {
     },
     native: async (method, params) => {
       assert.equal(method, "areal/task/create");
-      assert.equal(params.mode, "scheduled");
+      assert.equal(params.mode, kind === "RACE" ? "scheduled" : "background");
       if (!params.threadId)
         throw Object.assign(new Error("foreground and scheduled tasks require threadId"), {
           code: -32602,
@@ -1039,11 +1041,12 @@ async function checkScheduledThreadBinding(fragment, kind) {
       assert.equal(
         params.threadId,
         originalThread,
-        "scheduled Task must bind this fixture's newly created Thread",
+        "Task must bind this fixture's newly created Thread",
       );
       assert.equal(params.interactionMode, "headless");
       assert.match(params.objective, new RegExp(`^RC09_${kind}:`));
-      assert.equal(params.schedule.intervalSeconds, kind === "RACE" ? 3 : 2);
+      if (kind === "RACE")assert.equal(params.schedule.intervalSeconds,3);
+      else assert.equal(params.schedule,undefined);
       assert.equal(params.maxTurns, kind === "RACE" ? 4 : 8);
       nativeCalls++;
       return { id: randomUUID(), threadId: params.threadId, runs: [] };
@@ -1067,7 +1070,7 @@ for (const [fragment, kind] of [
   await assert.rejects(checkScheduledThreadBinding(alias, kind), /must bind this fixture/);
 }
 console.log(
-  "RC09 scheduled fixtures bind 101 distinct session.create-result Thread IDs; source oracle only, zero native races executed",
+  "RC09 scheduled races and background worker bind 101 distinct session.create-result Thread IDs; source oracle only, zero native races executed",
 );
 
 // RC10 模型回调只根据当前 Turn 选择原生文件写入、失败和媒体事件。
@@ -1457,7 +1460,7 @@ for (const fault of ["enrollment-reject", "ready-timeout", "early-worker-exit"])
   );
   assert.equal(context.host, null, "failure must not publish ready");
   const stops = [];
-  const cleanup = runInNewContext(`${cleanupSource}\ncleanup;`, {
+  const cleanup = await runInNewContext(`(async () => {${cleanupSource}\nreturn cleanup;})()`, {
     instances,
     binary: "actual-core",
     registry: "/fixture/registry",

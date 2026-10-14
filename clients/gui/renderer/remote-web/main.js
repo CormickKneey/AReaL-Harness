@@ -1118,7 +1118,7 @@ async function selectGUIProject(projectId, force = false) {
 function renderGUI() {
   if(!remoteUI)return;
   const state=detail?.snapshot, command=state&&commandState.commands.get(commandKey(state.threadId)), stop=lastStop();
-  remoteUI.render({connected:document.body.dataset.connection==="connected",projects:projectCatalog,selectedProject,groups:projectGroups,
+  remoteUI.render({sessionOpen:!!detailTarget,connected:document.body.dataset.connection==="connected",projects:projectCatalog,selectedProject,groups:projectGroups,
     detail,turns:sessionBodies.decorate(displayedTurns??state?.turns),bodyError:sessionBodies.error,bodyLoading:sessionBodies.loading,draft:state?commandState.drafts.get(commandKey(state.threadId))??"":"",
     canSubmit:!!request&&!!connectionIdentity?.capabilities?.includes("submit"),canInterrupt:!!connectionIdentity?.capabilities?.includes("interrupt"),canReview:!!connectionIdentity?.capabilities?.includes("review"),
     blocked:!!commandState.unresolved(command)||!!commandState.unresolved(stop),sendDisabled:sendButton.disabled,stopDisabled:stopButton.disabled,

@@ -2,6 +2,7 @@ import { selectRemoteTransport, requireBrowserTransport } from "./remote-conform
 const transport = selectRemoteTransport();
 await requireBrowserTransport(transport, "remote-gui-quit-e2e");
 import assert from "node:assert/strict";
+import {selectConversation,captureSmokeFailure} from "./smoke-navigation.mjs";
 import { createRequire } from "node:module";
 import { mkdtemp, mkdir, readFile, writeFile, readdir, access } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,7 +15,10 @@ const effect = "approved once";
 function modelStage(body) {
   assert.equal(body.stream, true);
   const messages = body.messages ?? [];
-  const last = messages.findLastIndex((message) => message.role === "user");
+  // Core wraps areal_context as user-role text for Chat Completions.
+  // Preserve original user-Turn scoping while excluding that explicit wrapper.
+  const last = messages.findLastIndex((message) => message.role === "user" &&
+    !(typeof message.content === "string" && message.content.startsWith("AReaL runtime context (not a user request):\n")));
   assert.ok(
     JSON.stringify(messages[last]?.content).includes(prompt),
     "only original GUI turn may call model",
@@ -252,7 +256,7 @@ async function run() {
       report.blockedAt = "production enableDirect gate";
       throw error;
     }
-    await button("配对新手机").click();
+    await button("生成配对链接").click();
     const invite = await page.getByRole("textbox", { name: "配对链接", exact: true }).inputValue();
     browser = await chromium.launch({
       executablePath:
@@ -271,7 +275,7 @@ async function run() {
     assert.equal(pending.length, 1);
     const approval = page.getByRole("group", { name: `确认设备 ${pending[0].id}`, exact: true });
     await approval.getByLabel("workspace", { exact: true }).check();
-    await approval.getByRole("combobox", { name: "权限预设" }).selectOption("Operator");
+    await approval.getByRole("radio", {name:"可操作",exact:true}).check();
     await approval.getByRole("button", { name: "确认配对", exact: true }).click();
     await remote
       .getByRole("status")
@@ -282,6 +286,8 @@ async function run() {
       projectId,
       profile: { id: "standard", revision: "v1" },
     }));
+    await selectConversation(page,threadId);
+    await app.evaluate(({app,BrowserWindow})=>{app.focus({steal:true});BrowserWindow.getAllWindows()[0].focus();});
     await call("send", { projectId, threadId, text: prompt });
     const interaction = await until(
       async () =>
@@ -299,14 +305,12 @@ async function run() {
     report.adapterPid = adapter.pid;
     report.adapterIdentity = adapter.identity;
     report.coreGeneration = await generation();
-    await remote.locator("#projects button").first().click();
-    await remote.locator("#work-refresh").click();
-    const work = remote.locator(`[data-work-id="${threadId}"]`);
-    await work.getByRole("button", { name: "打开会话", exact: true }).click();
-    await remote
-      .locator("#session-attention")
-      .getByRole("button", { name: "审阅待处理事项", exact: true })
-      .click();
+    const projectButton=remote.getByRole("button",{name:"workspace",exact:true});
+    if(await projectButton.getAttribute("aria-expanded")==="true")await projectButton.click();
+    await projectButton.click();
+    await remote.locator(`.remote-session-row[data-thread-id="${threadId}"]`).click();
+    await remote.getByRole("button",{name:"返回项目列表",exact:true}).click();
+    await remote.getByRole("button", { name: "审阅待处理事项", exact: true }).click();
     await until(async () => {
       if (
         (await remote.locator("#attention-more").isVisible()) &&
@@ -333,12 +337,12 @@ async function run() {
       "review after GUI exit",
     );
     await remote.locator("#attention-allow").click();
-    await until(
-      async () =>
-        /completed/.test(await remote.locator(`[data-turn-id="${turnId}"] h3`).textContent()),
-      "original remote turn completed",
-    );
-    assert.equal(await remote.locator("#session-content [data-turn-id]").count(), 1);
+    await remote.getByRole("button",{name:"关闭审阅",exact:true}).click();
+    await remote.locator(`.remote-session-row[data-thread-id="${threadId}"]`).click();
+    await until(async () =>
+      await remote.locator(`#remote-session-ui [data-turn-id="${turnId}"]`).getAttribute('data-turn-status') === 'completed',
+      "original remote turn completed");
+    assert.equal(await remote.locator("#remote-session-ui [data-turn-id]").count(), 1);
     assert.equal(await readFile(join(workspace, "approved.txt"), "utf8"), effect);
     assert.deepEqual(stages, ["approval", "completion"]);
     assert.deepEqual(modelErrors, []);
@@ -421,6 +425,8 @@ async function run() {
     report.status = "passed";
   } catch (error) {
     report.error = error.message.replace(/#(?:host|invite)=[^\s"']+/g, "#[redacted]");
+    report.modelErrors = modelErrors;
+    if(page)await captureSmokeFailure(page,scratch,error);
     process.exitCode = report.status === "blocked" ? 2 : 1;
   } finally {
     // 失败时保留独占 scratch 与 PID 供人工恢复，绝不强杀未知或未结算工作。

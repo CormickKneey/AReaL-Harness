@@ -1,5 +1,6 @@
 // 原生 T18–T34：真实 DesktopService/Core/Runtime/Noise；本机安全存储用显式 fixture。
 import assert from "node:assert/strict";
+import { CoreClient } from "../packages/runtime-client/core.js";
 import { createRequire } from "node:module";
 import { fork, execFileSync } from "node:child_process";
 import { createServer } from "node:http";
@@ -140,9 +141,8 @@ async function taskOwnedPreflight({
     task = await native("areal/task/create", {
       requestId: randomUUID(),
       threadId,
-      mode: "scheduled",
+      mode: "background",
       objective: "RC05 queued ownership",
-      schedule: { at: Math.floor(Date.now() / 1000) + 2 },
     });
     evidence.createdTask = task;
     const queuedTask = await waitFor(async () => {
@@ -316,6 +316,10 @@ if (process.argv[2] === "--host-worker") {
   // 仅父测试进程提供隔离目录；真实远程请求不拥有这些测试控制能力。
   const options = JSON.parse(process.env.RC05_HOST_OPTIONS);
   const backend = new CoreBackend(options);
+  // This Node fixture has no native Browser adapter. Keep client-owned Browser
+  // tools out of its real Core Threads; Electron Browser compatibility has a
+  // separate production-adapter E2E.
+  backend.supportsBrowser = () => false;
   await backend.init();
   const projectId = backend.saved[0]?.id ?? (await backend.addProject(options.workspace));
   const project = await backend.start(projectId);
@@ -2290,10 +2294,9 @@ if (process.argv[2] === "--host-worker") {
       scheduledThreads.add(thread.threadId);
       const created = await native("areal/task/create", {
         requestId: randomUUID(),
-        mode: "scheduled",
+        mode: "background",
         threadId: thread.threadId,
         objective: `RC09_WORK:${effect}`,
-        schedule: { at: Math.floor(Date.now() / 1000) + 1, intervalSeconds: 2 },
         interactionMode: "headless",
         maxTurns: 8,
       });
@@ -2342,7 +2345,7 @@ if (process.argv[2] === "--host-worker") {
       const beforeDispatches = await control("dispatches");
       await pause(4500);
       const after = await taskRead(created.id);
-      assert.equal(after.runs.length, runCount, "pause suppresses future scheduled Run creation");
+      assert.equal(after.runs.length, runCount, "paused background Task never creates a replacement Run");
       assert.equal(after.paused, true);
       assert.equal(await control("dispatches"), beforeDispatches);
       assert.equal(await readFile(join(workspace, "effects", effect), "utf8"), "ready");
@@ -2350,7 +2353,7 @@ if (process.argv[2] === "--host-worker") {
       checks.push({
         case: "T31",
         detail:
-          "real coordinator completes while Runtime worker held; lost pause response UNKNOWN, separate observed pause waits for worker cleanup; future schedule suppressed without replay",
+          "real coordinator completes while Runtime worker held; lost pause response UNKNOWN, separate observed pause waits for worker cleanup; paused background Task and worker do not resume without replay",
       });
     }
     if (reviewOnly) {
@@ -2790,6 +2793,24 @@ if (process.argv[2] === "--host-worker") {
       }
     }
     for (const secure of connections) secure.close();
+    // Read through an independent owner connection: T24 intentionally disconnects the Host.
+    const drainStatus = [];
+    for (const instance of instances.values()) {
+      let client;
+      try {
+        const auth = JSON.parse(await readFile(instance.authFile, "utf8"));
+        const token = auth.principals.find((principal) => principal.id === "desktop-owner").token;
+        client = new CoreClient({ createSocket: () => new WebSocket(instance.endpoint, {
+          headers: { Authorization: `Bearer ${token}` },
+        }) });
+        await client.connect();
+        drainStatus.push({ serviceId: instance.serviceId,
+          status: await client.request("areal/server/status") });
+      } catch (error) {
+        phaseErrors.push({ phase: "drain-diagnosis", serviceId: instance.serviceId, message: error.message });
+        passed = false;
+      } finally { client?.close(); }
+    }
     if (worker?.exitCode === null && worker.signalCode === null) {
       try {
         const exited = once(worker, "exit");
@@ -2823,13 +2844,45 @@ if (process.argv[2] === "--host-worker") {
           ),
         );
       } catch (error) {
-        cleanup.push({ error: error.message });
-        phaseErrors.push({
-          phase: "service-stop",
-          serviceId: instance.serviceId,
-          message: error.message,
-        });
-        passed = false;
+        const status = drainStatus.find((entry) => entry.serviceId === instance.serviceId)?.status;
+        const unknownOnly = status && status.restartSafe === false && status.unresolvedTools?.length === 1 &&
+          status.runtime?.activeProcesses === 0 && status.activeTurns.length === 0 &&
+          status.activeTasks === 0 && status.activeGoals.length === 0 &&
+          status.resources.length === 0 && status.compactions.length === 0 && status.workgroups.length === 0;
+        const expectedGuard = (settlementOnly || taskPauseOnly) && passed && unknownOnly &&
+          error.stderr?.toString().includes("service drain is incomplete");
+        cleanup.push({ serviceId: instance.serviceId, gracefulDrain: false,
+          unknownDrainGuardVerified: expectedGuard, error: error.message });
+        if (!expectedGuard) {
+          phaseErrors.push({ phase: "service-stop", serviceId: instance.serviceId, message: error.message });
+          passed = false;
+        }
+        // Isolated fixture termination is separate from successful safe drain.
+        // Preserve the original UNKNOWN record; never acknowledge or replay it for cleanup.
+        try {
+          const current = JSON.parse(await readFile(join(registry, "services", instance.serviceId, "service.json"), "utf8"));
+          assert.equal(current.hostPid, instance.hostPid);
+          assert.equal(current.generation, instance.generation);
+          const command = execFileSync("ps", ["-p", String(instance.hostPid), "-o", "command="], {encoding:"utf8"}).trim();
+          assert.ok(command.startsWith(`${binary} service-host`));
+          process.kill(instance.hostPid, "SIGTERM");
+          await waitFor(async () => {
+            try {
+              const result = JSON.parse(execFileSync(binary,
+                ["service", "status", "--instance", instance.serviceId, "--json"],
+                { env: { ...process.env, AREAL_HARNESS_SERVICE_HOME: registry }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+              return result.state === "stopped";
+            } catch { return false; } // Host shutdown can briefly refuse its control socket.
+          }, "isolated service Host terminated", 15000);
+          await waitFor(() => {
+            try { process.kill(instance.hostPid, 0); return false; }
+            catch (error) { if (error.code === "ESRCH")return true; throw error; }
+          }, "isolated Host process exit", 15000);
+          cleanup.push({ serviceId: instance.serviceId, isolatedHarnessTermination: true, acknowledgedUnknown: false });
+        } catch (cleanupError) {
+          passed = false;
+          phaseErrors.push({ phase: "isolated-host-termination", serviceId: instance.serviceId, message: cleanupError.message });
+        }
       }
     }
     let remoteConfigSha256 = null;
@@ -2932,6 +2985,7 @@ if (process.argv[2] === "--host-worker") {
       acceptanceRepetitionsMet: passed && completedRaceIterations >= 100,
       modelRequests,
       cleanup,
+      drainStatus,
       source: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
       binary,
       sha256: createHash("sha256")
@@ -2942,6 +2996,7 @@ if (process.argv[2] === "--host-worker") {
         "public network",
         "physical phone",
         "system keychain",
+        "native Browser adapter (Node fixture)",
         "packaged Electron",
       ],
     };

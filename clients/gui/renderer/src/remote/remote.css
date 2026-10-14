@@ -4,7 +4,7 @@ body { background:var(--color-background,#fff);color:var(--color-foreground,#202
 body[data-connection="connected"] #connection-details {display:none;}
 #projects,#work-overview,#session-content,.remote-composer,#session-title,#session-summary,#session-range,#session-state,.legacy-session-details {display:none!important;}
 #project-section>h2,#session>.session-navigation,#session-history {display:none!important;}
-body[data-detail="open"] #project-section,body[data-detail="open"] .remote-header {display:none!important;}
+body[data-detail="open"] #project-section,body[data-connection="connected"][data-detail="open"] .remote-header {display:none!important;}
 .remote-project-heading {display:flex;align-items:center;justify-content:space-between;margin:20px 0 12px;}
 .remote-project-heading h2 {font-size:21px;font-weight:600;}
 .remote-project-group {margin:12px 0;}
