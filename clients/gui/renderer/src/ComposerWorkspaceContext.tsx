@@ -19,7 +19,7 @@ export function ComposerWorkspaceContext({project,action}:{project:Data;action:A
   },[owner]);
   const current=result?.owner===owner?result:undefined;
   return <div className="composer-workspace-context" role="group" aria-label="工作区上下文">
-    {!project.state?.connected?<span>未连接</span>:
+    {!project.state?.connected?<span>{project.error || project.state?.error ? '未连接' : '正在连接…'}</span>:
       current?.error?<span title={current.error}>工作区信息不可用</span>:
       !current?.info?<span>读取工作区…</span>:<>
         <span className="composer-workspace-location"><WorkspaceLocalIcon/>{current.info.target?'工作树':'本地'}</span>
