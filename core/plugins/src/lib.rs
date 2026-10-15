@@ -5,7 +5,7 @@ pub mod hooks;
 mod metadata;
 mod package;
 mod remote;
-pub use components::{ComponentDocument, InstalledComponents};
+pub use components::{ComponentDocument, InstalledComponents, InstalledSnapshot};
 // Codex 0.162.1 marketplace discovery precedence.
 const CATALOG_PATHS: &[&str] = &[
     ".agents/plugins/marketplace.json",
@@ -158,6 +158,11 @@ struct State {
     projects: BTreeMap<String, BTreeMap<String, bool>>,
 }
 pub struct Store {
+    component_cache: std::sync::Arc<
+        std::sync::Mutex<BTreeMap<String, (package::Fingerprint, InstalledComponents)>>,
+    >,
+    #[cfg(test)]
+    component_reads: std::sync::atomic::AtomicUsize,
     root: PathBuf,
     workspace: PathBuf,
     user_home: Option<PathBuf>,
@@ -172,6 +177,9 @@ impl Store {
             fs::create_dir_all(root.join(name))?;
         }
         Ok(Self {
+            component_cache: Default::default(),
+            #[cfg(test)]
+            component_reads: Default::default(),
             root,
             workspace,
             user_home,
@@ -180,6 +188,17 @@ impl Store {
     }
     pub fn workspace(&self) -> &Path {
         &self.workspace
+    }
+    /// Current authority only; never enumerate packages or contact a source.
+    /// Replacements retain old admitted revisions, while disable/uninstall revoke them.
+    pub fn enabled_revisions(&self) -> Result<BTreeMap<String, String>> {
+        let state = self.state()?;
+        Ok(state
+            .installed
+            .iter()
+            .filter(|(id, _)| self.enabled(&state, id))
+            .map(|(id, detail)| (id.clone(), detail.source_digest.clone()))
+            .collect())
     }
     fn state(&self) -> Result<State> {
         match fs::read(self.root.join("state.json")) {
@@ -414,6 +433,9 @@ impl Store {
             })
             .collect::<Result<Vec<_>>>()?;
         let view = Self {
+            component_cache: self.component_cache.clone(),
+            #[cfg(test)]
+            component_reads: Default::default(),
             root: self.root.clone(),
             workspace: workspaces
                 .first()

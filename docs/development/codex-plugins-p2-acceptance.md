@@ -67,6 +67,25 @@ python3 scripts/check-docs.py
 
 空闲 hooks 现在使用当前 desktop 配置，仅进行中的 Turn 使用固定配置。研究/nativeTaskAgent 与外部平台/供应商缺口仍按前述源码或未验边界记录。
 
+## 2026-10-15 设计评审修复验收
+
+本轮修复四项设计问题，沿用上述兼容范围；不把局部验收提升为完整协议兼容。
+
+| 问题 | 修复与验收 |
+| --- | --- |
+| MCP 清理状态 | 通过错误链中的 `CleanupUnconfirmed` 类型保留 `cleanupUnknown`；没有清理凭据的后续断开不能清除重连门禁。类型包装与实际 Engine 断开路径通过；这是边界状态注入，不是操作系统清理故障注入。 |
+| 跨实例 hooks 撤权 | 每次调用检查共享启用状态；后台轮询无需 MCP 连接即取消停用包的在途调用。新版删除 hook 定义后，旧版本调用仍保留包归属，可被撤销；冻结定义不冻结权限。 |
+| 刷新锁范围 | 远程准备不持 Engine 刷新锁，Store 保留跨进程 CAS；目录从单次安装状态读取发布，排空在锁外。真实 loopback Git 下载被屏障阻塞时，禁用仍在 2 秒验收窗口内完成。 |
+| 增量刷新 | 状态轮询不读包内容；组件缓存复用解析结果，调用只校验所属包。1 MiB 资产连续刷新五次只完整读取一次；同长度篡改仍拒绝。元数据遍历仍存在，不承诺固定耗时或任意同 UID 目录替换隔离。 |
+
+四项原始断言 RED 保存在 `/private/tmp/plugin-review-{cleanup,revoke,lock,cache}-red.log`；再次断开清除 UNKNOWN 的 RED 为 `/private/tmp/plugin-review-cleanup-retention-red.log`。包 38 项通过（`plugin-review-package-final.log`）；Engine 四个集成目标 30 项通过且无过滤（`plugin-review-engine-frozen.log`），随后最终 MCP 两目标 15 项复验通过（`plugin-review-mcp-engine-accepted.log`）。两个专项检查分别见 `plugin-review-revoke-frozen.log` 与 `plugin-review-cleanup-accepted.log`。这些日志均在 `/private/tmp/`。
+
+MCP 41 项通过、2 项原有 ignored（`/private/tmp/plugin-review-mcp-final.log`）：真实 GitHub 凭据用例本轮未执行，另一个是由父测试调用的跨进程入口。`cross_process_refresh_serializes` 父测试和 Engine 的 `mcp_only_discovery_trust_and_revocation` 本轮均通过；下文历史 SIGKILL 失败记录保留，原因仍 UNKNOWN。workspace 构建通过；已知 rust-objcopy 缺失 LLVM 布局警告仍在，未修改工具链。
+
+原生验收首次在工具外层沙箱内因 `sandbox_apply: Operation not permitted` 失败，之后在外层沙箱之外执行，产品 Runtime 沙箱保持启用。最终候选第一轮完整矩阵在上传前的 5 秒模型就绪等待失败（`/private/tmp/areal-plugin-hooks-jmCyOE/manifest.json`）：前置 command hooks 收据成功，Turn 被夹具清理中断；夹具该等待调整为有界 15 秒，产品执行超时与业务断言不变。
+
+最终冻结候选 Core SHA256 `f0a2c3bb7ca26a101ee0ca6ee03b824c400cbacc8442c4fc7447293b9920be12`：默认完整 hooks 22 项通过（`/private/tmp/areal-plugin-hooks-VbWmUS/manifest.json`，`completeMatrix:true`），只读隔离 10 项通过（`/private/tmp/areal-readonly-hooks-lhkkmD/manifest.json`）。两者运行期间二进制不变，manifest 的本任务行为/测试源码摘要与最终文件一致。新增实际双 Core 场景确认共享 user 禁用无需原实例刷新即可清理空闲后代，并拒绝在途 Turn 的冻结 Stop hook。原生模型使用 loopback fixture；本轮未新增 GUI、安装包或真实供应商验收。公共文档 174 项、Rust 格式及 diff 检查通过；只提交上述修复，未 push。
+
 ## SIGKILL 分类
 
 历史 service-schema 调用被 kill9，原 Make 重定向把快照截成0字节。现在先在同一文件系统暂存三个输出，全部生成及JSON object校验成功后逐文件原子替换；生成失败保留全部旧文件。三次 rename 不是跨文件事务。直接未改动的缓存 generator 与标准 Make 均通过，历史 killer 仍无法确认。

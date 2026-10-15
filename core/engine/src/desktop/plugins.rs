@@ -32,24 +32,16 @@ fn snapshot(
 ) -> anyhow::Result<Snapshot> {
     // Current discovery and retained-reference revocation have different lifetimes.
     // An enabled replacement may remove every skill; its old admitted refs still live.
-    let enabled = store.enabled_skills()?;
-    let retained = store.retained_skills()?;
-    let mut checked = BTreeSet::new();
-    let mut enabled_plugin_ids = BTreeSet::new();
-    for skill in &retained {
-        if checked.insert(skill.plugin_id.clone())
-            && store.is_skill_enabled(&skill.id, &skill.revision)?
-        {
-            enabled_plugin_ids.insert(skill.plugin_id.clone());
-        }
-    }
+    let installed = store.installed_snapshot()?;
+    let enabled = installed.enabled_skills;
+    let retained = installed.retained_skills;
+    let enabled_plugin_ids = installed.enabled_ids;
     let skills = retained
         .into_iter()
         .map(Skill::load_plugin)
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let enabled_components = store.enabled_components()?;
-    let mut hook_enabled: HashSet<_> = enabled_components.iter().map(|c| c.id.clone()).collect();
-    let components = store.installed_components()?;
+    let mut hook_enabled: HashSet<_> = enabled_plugin_ids.iter().cloned().collect();
+    let components = installed.components;
     let mut hooks: Vec<_> = components
         .iter()
         .map(crate::plugin_hooks::bind)
@@ -87,13 +79,17 @@ fn snapshot(
 
 impl Engine {
     /// Trusted synchronous startup only. Runtime filesystem work uses spawn_blocking.
-    pub fn install_plugin_store(&self, store: Arc<areal_plugins::Store>) -> anyhow::Result<()> {
+    pub fn install_plugin_store(
+        self: &Arc<Self>,
+        store: Arc<areal_plugins::Store>,
+    ) -> anyhow::Result<()> {
         self.initialize_plugin_wire(&store)?;
         self.register_plugin_snapshot(snapshot(
             &store,
             self.plugin_hooks.source_config.get().cloned(),
         )?);
         self.desktop.plugins.write().unwrap().store = Some(store);
+        self.watch_plugin_state();
         Ok(())
     }
     fn register_plugin_snapshot(&self, snapshot: Snapshot) {
@@ -131,6 +127,7 @@ impl Engine {
             .map_err(invalid)?
             .map_err(store_error)?;
         self.register_plugin_snapshot(snapshot);
+        drop(_refresh);
         self.reconcile_plugin_connections().await?;
         Ok(())
     }
@@ -172,17 +169,13 @@ impl Engine {
     {
         let store = self.plugin_store()?;
         self.mutate(move |engine| async move {
-            let _refresh = engine.desktop.plugin_refresh.lock().await;
-            let config = engine.plugin_hooks.source_config.get().cloned();
-            let (result, snapshot) = tokio::task::spawn_blocking(move || {
-                let result = change(&store)?;
-                Ok::<_, anyhow::Error>((result, snapshot(&store, config)?))
-            })
-            .await
-            .map_err(invalid)?
-            .map_err(store_error)?;
-            engine.register_plugin_snapshot(snapshot);
-            engine.reconcile_plugin_connections().await?;
+            // Store owns the short cross-process CAS. Fetch/preparation must not
+            // hold Engine publication locks needed by disable and hook revocation.
+            let result = tokio::task::spawn_blocking(move || change(&store))
+                .await
+                .map_err(invalid)?
+                .map_err(store_error)?;
+            engine.refresh_plugins().await?;
             Ok(result)
         })
         .await

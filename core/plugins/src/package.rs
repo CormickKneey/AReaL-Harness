@@ -101,13 +101,39 @@ pub(crate) fn read_catalog(root: &Path, path: &Path) -> Result<Vec<u8>> {
     bail!("catalog file missing")
 }
 pub(crate) fn snapshot(root: &Path) -> Result<Files> {
+    Ok(read_snapshot(root, true)?.0)
+}
+pub(crate) type Fingerprint = BTreeMap<String, [u64; 9]>;
+fn identity(metadata: &std::fs::Metadata) -> [u64; 9] {
+    [
+        metadata.dev(),
+        metadata.ino(),
+        metadata.mode() as u64,
+        metadata.nlink(),
+        metadata.len(),
+        metadata.mtime() as u64,
+        metadata.mtime_nsec() as u64,
+        metadata.ctime() as u64,
+        metadata.ctime_nsec() as u64,
+    ]
+}
+/// Descriptor-relative identity check, including ctime, links and every directory.
+/// No file contents are read. A changed fingerprint requires full digest validation.
+pub(crate) fn fingerprint(root: &Path) -> Result<Fingerprint> {
+    Ok(read_snapshot(root, false)?.1)
+}
+fn read_snapshot(root: &Path, read_content: bool) -> Result<(Files, Fingerprint)> {
     fn walk(
         dir: &File,
         prefix: &str,
         files: &mut Files,
         bytes: &mut usize,
         entries: &mut usize,
+        read_content: bool,
+        fingerprint: &mut Fingerprint,
     ) -> Result<()> {
+        let before = identity(&dir.metadata()?);
+        fingerprint.insert(prefix.into(), before);
         for entry in Dir::read_from(dir)? {
             let entry = entry?;
             let name = entry
@@ -135,8 +161,17 @@ pub(crate) fn snapshot(root: &Path) -> Result<Files> {
             );
             let metadata = file.metadata()?;
             if metadata.is_dir() {
-                walk(&file, &path, files, bytes, entries)?;
+                walk(
+                    &file,
+                    &path,
+                    files,
+                    bytes,
+                    entries,
+                    read_content,
+                    fingerprint,
+                )?;
             } else {
+                fingerprint.insert(path.clone(), identity(&metadata));
                 ensure!(
                     metadata.is_file() && metadata.nlink() == 1,
                     "package entry must be a regular single-link file: {path}"
@@ -147,17 +182,18 @@ pub(crate) fn snapshot(root: &Path) -> Result<Files> {
                     "package file exceeds 64 MiB: {path}"
                 );
                 let mut data = Vec::new();
-                file.by_ref()
-                    .take((MAX_BYTES - *bytes + 1) as u64)
-                    .read_to_end(&mut data)?;
-                *bytes += data.len();
+                if read_content {
+                    file.by_ref()
+                        .take((MAX_BYTES - *bytes + 1) as u64)
+                        .read_to_end(&mut data)?;
+                    *bytes += data.len();
+                } else {
+                    *bytes += metadata.len() as usize;
+                }
                 ensure!(*bytes <= MAX_BYTES, "package exceeds 64 MiB total");
                 let after = file.metadata()?;
                 ensure!(
-                    after.nlink() == 1
-                        && after.len() == metadata.len()
-                        && after.mtime() == metadata.mtime()
-                        && after.mtime_nsec() == metadata.mtime_nsec(),
+                    identity(&after) == identity(&metadata),
                     "package changed during read: {path}"
                 );
                 files.insert(
@@ -169,11 +205,24 @@ pub(crate) fn snapshot(root: &Path) -> Result<Files> {
                 );
             }
         }
+        ensure!(
+            identity(&dir.metadata()?) == before,
+            "package directory changed during read"
+        );
         Ok(())
     }
     let mut files = Files::new();
-    walk(&directory(root)?, "", &mut files, &mut 0, &mut 0)?;
-    Ok(files)
+    let mut fingerprint = Fingerprint::new();
+    walk(
+        &directory(root)?,
+        "",
+        &mut files,
+        &mut 0,
+        &mut 0,
+        read_content,
+        &mut fingerprint,
+    )?;
+    Ok((files, fingerprint))
 }
 pub(crate) fn digest(files: &Files) -> String {
     let mut h = Sha256::new();

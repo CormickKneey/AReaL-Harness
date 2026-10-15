@@ -1,5 +1,5 @@
 use crate::{Store, package};
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use serde_json::Value;
 use std::path::PathBuf;
 
@@ -22,12 +22,72 @@ pub struct InstalledComponents {
     pub policy: Value,
     pub diagnostics: Vec<String>,
 }
+/// One atomic state-file read for publishing an activation directory. Package
+/// bytes remain immutable; concurrent commits cannot mix selection revisions.
+pub struct InstalledSnapshot {
+    pub retained_skills: Vec<crate::InstalledSkill>,
+    pub enabled_skills: Vec<crate::InstalledSkill>,
+    pub enabled_ids: std::collections::BTreeSet<String>,
+    pub components: Vec<InstalledComponents>,
+}
 impl Store {
+    pub fn installed_snapshot(&self) -> Result<InstalledSnapshot> {
+        let state = self.state()?;
+        let enabled_ids: std::collections::BTreeSet<_> = state
+            .installed
+            .keys()
+            .filter(|id| self.enabled(&state, id))
+            .cloned()
+            .collect();
+        let enabled_skills = state
+            .installed
+            .iter()
+            .filter(|(id, _)| enabled_ids.contains(*id))
+            .flat_map(|(_, detail)| detail.skills.clone())
+            .collect();
+        let components = state
+            .installed
+            .values()
+            .map(|detail| {
+                self.read_components(
+                    detail,
+                    self.root.join("cache").join(&detail.source_digest),
+                    state
+                        .installed_policies
+                        .get(&detail.id)
+                        .cloned()
+                        .unwrap_or(Value::Null),
+                )
+            })
+            .collect::<Result<_>>()?;
+        Ok(InstalledSnapshot {
+            retained_skills: state.history,
+            enabled_skills,
+            enabled_ids,
+            components,
+        })
+    }
     pub fn installed_components(&self) -> Result<Vec<InstalledComponents>> {
         self.components(false)
     }
     pub fn enabled_components(&self) -> Result<Vec<InstalledComponents>> {
         self.components(true)
+    }
+    /// Validate only the selected package. Unrelated packages do not enter a tool's
+    /// authorization hot path; metadata changes still force full integrity checks.
+    pub fn enabled_component(&self, id: &str) -> Result<InstalledComponents> {
+        let state = self.state()?;
+        ensure!(self.enabled(&state, id), "plugin disabled or uninstalled");
+        let detail = state.installed.get(id).context("plugin not installed")?;
+        self.read_components(
+            detail,
+            self.root.join("cache").join(&detail.source_digest),
+            state
+                .installed_policies
+                .get(id)
+                .cloned()
+                .unwrap_or(Value::Null),
+        )
     }
     fn components(&self, enabled_only: bool) -> Result<Vec<InstalledComponents>> {
         let state = self.state()?;
@@ -73,6 +133,18 @@ impl Store {
         root: PathBuf,
         policy: Value,
     ) -> Result<InstalledComponents> {
+        let fingerprint = package::fingerprint(&root)?;
+        if let Some((previous, component)) = self.component_cache.lock().unwrap().get(&detail.id)
+            && previous == &fingerprint
+            && component.root == root
+            && component.digest == detail.source_digest
+            && component.policy == policy
+        {
+            return Ok(component.clone());
+        }
+        #[cfg(test)]
+        self.component_reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let files = package::snapshot(&root)?;
         ensure!(
             package::digest(&files) == detail.source_digest,
@@ -208,6 +280,63 @@ impl Store {
             portable,
             &mut result.diagnostics,
         );
+        ensure!(
+            package::fingerprint(&result.root)? == fingerprint,
+            "package changed during component validation"
+        );
+        self.component_cache
+            .lock()
+            .unwrap()
+            .insert(detail.id.clone(), (fingerprint, result.clone()));
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod review_tests {
+    use super::*;
+    use std::{fs, os::unix::fs::PermissionsExt, sync::atomic::Ordering};
+
+    #[test]
+    fn unchanged_component_refresh_reuses_content_but_tampering_invalidates() {
+        let t = tempfile::tempdir().unwrap();
+        fs::create_dir_all(t.path().join(".agents/plugins")).unwrap();
+        fs::create_dir_all(t.path().join("pkg/.codex-plugin")).unwrap();
+        fs::write(
+            t.path().join(".agents/plugins/marketplace.json"),
+            r#"{"name":"local","plugins":[{"name":"sample","source":"./pkg"}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            t.path().join("pkg/.codex-plugin/plugin.json"),
+            r#"{"name":"sample"}"#,
+        )
+        .unwrap();
+        fs::write(t.path().join("pkg/asset"), vec![b'a'; 1024 * 1024]).unwrap();
+        let store = Store::open(t.path().join("plugins"), t.path().into(), None).unwrap();
+        let d = store.read("sample@local").unwrap();
+        store
+            .install(&d.id, "user", d.revision, &d.source, &d.source_digest)
+            .unwrap();
+        for _ in 0..5 {
+            assert_eq!(store.enabled_components().unwrap().len(), 1);
+        }
+        assert_eq!(
+            store.component_reads.load(Ordering::Relaxed),
+            1,
+            "unchanged refresh reread package bytes"
+        );
+        let path = store
+            .root
+            .join("cache")
+            .join(&d.source_digest)
+            .join("asset");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        fs::write(&path, vec![b'b'; 1024 * 1024]).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o444)).unwrap();
+        assert!(
+            store.enabled_components().is_err(),
+            "same-size modified asset reused trusted cache"
+        );
     }
 }

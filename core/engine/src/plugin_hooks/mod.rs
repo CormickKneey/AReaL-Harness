@@ -9,6 +9,8 @@ mod execution;
 mod lifecycle;
 mod mcp;
 pub(crate) mod output;
+#[cfg(test)]
+mod review_tests;
 mod runner;
 mod spill;
 mod task_scope;
@@ -41,7 +43,7 @@ pub(super) struct Manager {
     plans: std::sync::RwLock<Vec<BoundHook>>,
     trust: std::sync::RwLock<BTreeMap<String, Trust>>,
     enabled: std::sync::RwLock<HashSet<String>>,
-    invocations: std::sync::Mutex<BTreeMap<String, (String, CancellationToken)>>,
+    invocations: std::sync::Mutex<BTreeMap<String, (String, bool, CancellationToken)>>,
     configuration: Mutex<()>,
     pub(super) source_config: std::sync::OnceLock<(PathBuf, Option<PathBuf>)>,
     pub(super) sources: std::sync::RwLock<Vec<areal_plugins::hook_sources::HookSource>>,
@@ -98,13 +100,33 @@ impl Manager {
                 .is_some_and(|t| t.allow_read_only_commands)
     }
     pub(super) fn publish(&self, hooks: Vec<BoundHook>, enabled: HashSet<String>) {
-        for (_, (plugin, token)) in self.invocations.lock().unwrap().iter() {
+        for (_, (plugin, _, token)) in self.invocations.lock().unwrap().iter() {
             if !enabled.contains(plugin) {
                 token.cancel();
             }
         }
         *self.enabled.write().unwrap() = enabled;
         *self.plans.write().unwrap() = hooks;
+    }
+    /// Revoke only: a watcher cannot grant trust or admit a replacement definition.
+    pub(crate) fn revoke_disabled_packages(&self, current: &BTreeMap<String, String>) {
+        let packaged: HashSet<_> = self
+            .plans
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|h| h.packaged)
+            .map(|h| h.plugin_id.clone())
+            .collect();
+        for (_, (plugin, is_packaged, token)) in self.invocations.lock().unwrap().iter() {
+            if *is_packaged && !current.contains_key(plugin) {
+                token.cancel();
+            }
+        }
+        self.enabled
+            .write()
+            .unwrap()
+            .retain(|id| !packaged.contains(id) || current.contains_key(id));
     }
 }
 pub(super) struct Session {
@@ -242,6 +264,15 @@ pub(super) async fn ensure_current(
     cell: &Cell,
     hook: &BoundHook,
 ) -> anyhow::Result<()> {
+    if hook.packaged {
+        let store = engine.plugin_store()?;
+        let current = tokio::task::spawn_blocking(move || store.enabled_revisions()).await??;
+        engine.plugin_hooks.revoke_disabled_packages(&current);
+        anyhow::ensure!(
+            current.contains_key(&hook.plugin_id),
+            "hook package disabled or uninstalled"
+        );
+    }
     anyhow::ensure!(
         !cell.hooks.ended.load(Ordering::Acquire),
         "hook session closed"
@@ -388,7 +419,7 @@ impl Engine {
             .map_err(invalid)?;
         *self.plugin_hooks.trust.write().unwrap() = candidate;
         if !p.enabled || !p.trusted || read_only_revoked {
-            for (_, (plugin, token)) in self.plugin_hooks.invocations.lock().unwrap().iter() {
+            for (_, (plugin, _, token)) in self.plugin_hooks.invocations.lock().unwrap().iter() {
                 if plugin == &p.id {
                     token.cancel();
                 }

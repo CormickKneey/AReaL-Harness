@@ -28,7 +28,7 @@ const workspace=join(scratch,'workspace'),home=join(scratch,'home'),config=join(
 const bin=resolve(process.env.AREAL_TEST_BIN_DIR??'target/debug','areal'),id='hooks@local';
 const coreSha256=createHash('sha256').update(await readFile(bin)).digest('hex');
 const env={...Object.fromEntries(Object.entries(process.env).filter(([k])=>!/^(AREAL_|OPENAI_|ANTHROPIC_|GITHUB_|GH_TOKEN$|OTEL_)/.test(k))),AREAL_HARNESS_HOME:home,AREAL_HARNESS_SERVICE_HOME:join(scratch,'registry'),OTEL_SDK_DISABLED:'true',NO_PROXY:'localhost,127.0.0.1',no_proxy:'localhost,127.0.0.1'};
-const requests=[],checks=[],counts=new Map(),holds=new Map();let service,client,failure,passed=false;
+const requests=[],checks=[],counts=new Map(),holds=new Map();let service,peerService,client,failure,passed=false;
 const pause=()=>new Promise(r=>setTimeout(r,30));
 const model=createServer(async(req,res)=>{
  try{let body='';for await(const part of req)body+=part;const q=JSON.parse(body);requests.push(q);
@@ -135,7 +135,8 @@ try{
  }
  await mutate('areal/plugin/connection',{id,expectedDigest:row.installedDigest,connect:true});const directory=await client.request('areal/plugin/mcp/list',{});await writeFile(join(scratch,'mcp-directory.json'),JSON.stringify(directory,null,2));const mcp=await turn('mcp',thread);assert.equal(mcp.turn.status,'failed',JSON.stringify(directory));assert.equal(mcp.requests.length,0);checks.push('real stdio MCP hook blocks user sampling without recursive tool invocation');
  const formTurn=turn('form',thread).then(value=>({value}),error=>({error}));const untilForm=Date.now()+5000;let form;while(Date.now()<untilForm){form=(await client.request('areal/mcp/forms/list',{threadId:thread.id})).data[0];if(form)break;await pause();}assert(form);await new Promise(r=>setTimeout(r,1400));await client.request('areal/mcp/form/respond',{threadId:thread.id,requestId:form.requestId,response:{action:'accept',content:{answer:'fixture'}}});const formResult=await formTurn;assert(!formResult.error,String(formResult.error));const replied=formResult.value;assert.equal(replied.turn.status,'failed');assert.equal(replied.requests.length,0);checks.push('MCP hook timeout counts active execution and pauses for real owner-bound elicitation longer than its one-second budget');
- const uploadHolding=turn('hold',thread).then(value=>({value}),error=>({error}));const uploadHoldDeadline=Date.now()+5000;while(!holds.size&&Date.now()<uploadHoldDeadline)await pause();assert(holds.size);
+ // Model readiness follows several native command hooks; it is not a five-second latency contract.
+ const uploadHolding=turn('hold',thread).then(value=>({value}),error=>({error}));const uploadHoldDeadline=Date.now()+15000;while(!holds.size&&Date.now()<uploadHoldDeadline)await pause();assert(holds.size);
  const uploadParent=(await client.request('thread/read',{threadId:thread.id,includeTurns:true})).thread.turns.at(-1).id;
  const picked=join(scratch,'picked.txt');await writeFile(picked,'hook-upload-snapshot');
  for(const method of ['turn/steer','areal/queue/steer']){
@@ -154,6 +155,28 @@ try{
  checks.push('actual direct/queue steer MCP upload can stage while original submission waits; concurrent duplicates and rejected retry execute one hook');
  await client.request('areal/context/compact',{threadId:thread.id});const calls=(await readFile(join(home,'plugins/data/hooks@local/mcp.jsonl'),'utf8')).trim().split('\n').map(JSON.parse);for(const event of ['PreCompact','PostCompact'])assert.equal(calls.filter(v=>v.event===event).length,1);assert.equal(calls.filter(v=>v.event==='SessionStart'&&v.source==='compact').length,1);checks.push('manual compaction executes Pre/Post/SessionStart MCP hooks under real compaction owner');
  const observedHooks=(await client.request('thread/read',{threadId:thread.id,includeTurns:true})).thread.desktop.hookRuns;assert(!observedHooks.some(r=>r.operationId&&r.outcome==='timedOut'),'normal command hook exceeded its fixture budget');const before=await events();assert(before.some(v=>v.hook_event_name==='SessionStart'));assert(before.filter(v=>v.hook_event_name==='PreToolUse').every(v=>v.tool_name==='Bash'));assert(before.every(v=>v.cwd===workspace));checks.push('real Runtime stdin EOF, plugin environment/data paths, canonical Bash payload and session cwd');
+ // Two real Core processes share the package home but have independent workspace state.
+ if(!deferred.includes('--defer-concurrency')){
+  const peerWorkspace=join(scratch,'peer-workspace');await mkdir(peerWorkspace,{recursive:true});
+  peerService=await cli(['service','ensure','--json','--workspace',peerWorkspace,'--config',config,'--allow-write']);
+  assert.notEqual(peerService.endpoint,service.endpoint);
+  ({thread}=await client.request('thread/start',{cwd:workspace}));
+  const background=await turn('cancel',thread),pid=await descendant(background.turn.id);
+  const holding=turn('hold',thread).then(value=>({value}),error=>({error}));
+  const until=Date.now()+10000;while(!holds.size&&Date.now()<until)await pause();assert(holds.size);
+  await cli(['plugin','--workspace',peerWorkspace,'--json','disable',id]);
+  // No list/configure/refresh request to the original Core before checking exit.
+  await assertExited(pid);
+  const eventCount=(await events()).length;
+  for(const release of holds.values())release();holds.clear();
+  const settled=await holding;assert(!settled.error,settled.error?.stack);
+  assert.equal(settled.value.turn.status,'completed');
+  assert.equal((await events()).length,eventCount,'frozen Stop hook executed after peer disable');
+  assert(settled.value.thread.desktop.hookRuns.some(r=>r.turnId===background.turn.id&&r.asynchronous&&r.outcome==='cancelled'));
+  await cli(['plugin','--workspace',peerWorkspace,'--json','enable',id]);
+  const stopped=await cli(['service','stop','--json','--workspace',peerWorkspace,'--cancel']);assert.equal(stopped.state,'stopped');peerService=null;
+  checks.push('peer Core user disable cancels idle native descendants without refresh and rejects frozen Stop hooks in an active Turn');
+ }
  await mutate('areal/plugin/hooks/configure',{...params,enabled:false,trusted:false});const count=(await events()).length;await turn('none',thread);assert.equal((await events()).length,count);checks.push('explicit revocation prevents new events without replay');
  if(!deferred.includes('--defer-concurrency')){
  await mutate('areal/plugin/hooks/configure',params);({thread}=await client.request('thread/start',{cwd:workspace}));const archived=await turn('archive',thread);const archivedPid=await descendant(archived.turn.id);const archiveResult=await mutate('areal/thread/archive',{threadId:thread.id});assert.equal(archiveResult.archived,true);await assertExited(archivedPid);const retained=(await client.request('thread/read',{threadId:thread.id,includeTurns:true})).thread;assert(retained.turns.some(t=>t.id===archived.turn.id));await assert.rejects(client.request('turn/start',{threadId:thread.id,input:[{type:'text',text:'must not resume'}]}));checks.push('archive cancels async descendants, executes End once, preserves cold history and rejects new Turns');
@@ -161,5 +184,5 @@ try{
  }
  passed=true;
 }catch(error){failure=error;}
-finally{for(const release of holds.values())release();client?.close();if(service){try{await cli(['service','stop','--json','--workspace',workspace,'--cancel']);}catch(error){passed=false;failure??=error;}}model.closeAllConnections();await new Promise(r=>model.close(r));}
+finally{for(const release of holds.values())release();client?.close();if(peerService){try{await cli(['service','stop','--json','--workspace',join(scratch,'peer-workspace'),'--cancel']);}catch(error){passed=false;failure??=error;}}if(service){try{await cli(['service','stop','--json','--workspace',workspace,'--cancel']);}catch(error){passed=false;failure??=error;}}model.closeAllConnections();await new Promise(r=>model.close(r));}
 const manifest={passed,checks,scratch,core:bin,coreSha256,coreUnchanged:createHash('sha256').update(await readFile(bin)).digest('hex')===coreSha256,sourceHead,sourceDiffSha256,sourceFiles,deferred,completeMatrix:deferred.length===0,failure:failure?.stack,scope:'actual Core/Runtime hooks with original package and deterministic local model',gaps:['real Codex binary/provider/native/package acceptance separate']};await writeFile(join(scratch,'manifest.json'),JSON.stringify(manifest,null,2));console.log(JSON.stringify(manifest,null,2));if(!passed)process.exitCode=1;

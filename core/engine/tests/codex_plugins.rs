@@ -75,6 +75,53 @@ async fn install(e: &Arc<Engine>, s: &Store) -> Value {
 fn reference(v: &Value) -> VersionRef {
     serde_json::from_value(json!({"id":v["id"],"revision":v["revision"]})).unwrap()
 }
+// Slow external Git transport must not hold the Engine's authority publication lock.
+#[tokio::test]
+async fn blocked_marketplace_download_does_not_block_disable() {
+    use tokio::io::AsyncWriteExt;
+    let t = fixture();
+    let state = tempfile::tempdir().unwrap();
+    let e = Engine::open(
+        state.path(),
+        Arc::new(Recorder(Default::default())),
+        Limits::default(),
+    )
+    .unwrap();
+    let s = Arc::new(Store::open(t.path().join("plugins"), t.path().into(), None).unwrap());
+    e.install_plugin_store(s.clone()).unwrap();
+    install(&e, &s).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/blocked.git", listener.local_addr().unwrap());
+    let (entered, waiting) = tokio::sync::oneshot::channel();
+    let (release, released) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let _ = entered.send(());
+        let _ = released.await;
+        let _ = socket
+            .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await;
+    });
+    let engine = e.clone();
+    let revision = s.list().unwrap().revision;
+    let download =
+        tokio::spawn(async move { engine.plugin_add_git_marketplace(url, None, revision).await });
+    tokio::time::timeout(std::time::Duration::from_secs(10), waiting)
+        .await
+        .unwrap()
+        .unwrap();
+    let disabled = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        e.plugin_configure("sample@local".into(), "user".into(), false, revision),
+    )
+    .await;
+    let _ = release.send(());
+    server.await.unwrap();
+    assert!(download.await.unwrap().is_err());
+    e.shutdown().await;
+    assert!(disabled.is_ok(), "disable waited behind remote download");
+    assert_eq!(disabled.unwrap().unwrap()["enabled"], false);
+}
 #[tokio::test]
 async fn default_catalog_snapshot_gate_restart_and_explicit_scope() {
     let t = fixture();

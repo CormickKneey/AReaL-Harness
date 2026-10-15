@@ -15,6 +15,16 @@ struct Owned {
     view: Generation,
     connection: Connections,
 }
+fn connection_failure_state(error: &anyhow::Error) -> &'static str {
+    if error
+        .chain()
+        .any(|e| e.is::<areal_mcp::CleanupUnconfirmed>())
+    {
+        "cleanupUnknown"
+    } else {
+        "failed"
+    }
+}
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Connector {
@@ -353,16 +363,10 @@ impl Engine {
     ) -> Result<areal_plugins::InstalledComponents> {
         let store = self.plugin_store()?;
         let id = id.to_owned();
-        tokio::task::spawn_blocking(move || {
-            store
-                .enabled_components()?
-                .into_iter()
-                .find(|c| c.id == id)
-                .ok_or_else(|| anyhow::anyhow!("plugin disabled or uninstalled"))
-        })
-        .await
-        .map_err(invalid)?
-        .map_err(invalid)
+        tokio::task::spawn_blocking(move || store.enabled_component(&id))
+            .await
+            .map_err(invalid)?
+            .map_err(invalid)
     }
     pub(crate) async fn check_plugin_mcp(&self, tool: &McpTool) -> anyhow::Result<()> {
         let owner = self
@@ -401,7 +405,17 @@ impl Engine {
         for o in owners.iter().filter(|o| o.view.plugin == id) {
             o.connection.revoke();
         }
-        let mut failed = false;
+        // Losing a failed startup/drain handle is not proof of process exit.
+        // A later Disconnect must retain the UNKNOWN gate instead of clearing it
+        // merely because there are no remaining owners to join.
+        let mut failed = self
+            .desktop
+            .plugin_mcp
+            .states
+            .read()
+            .unwrap()
+            .get(id)
+            .is_some_and(|state| state == "cleanupUnknown");
         let mut index = 0;
         while index < owners.len() {
             if owners[index].view.plugin == id {
@@ -430,11 +444,18 @@ impl Engine {
         let Some(store) = self.desktop.plugins.read().unwrap().store.clone() else {
             return Ok(());
         };
-        let components = tokio::task::spawn_blocking(move || store.enabled_components())
+        let current = tokio::task::spawn_blocking(move || store.enabled_revisions())
             .await
-            .map_err(invalid)?
-            .map_err(invalid)?;
-        let current: BTreeMap<_, _> = components.into_iter().map(|c| (c.id, c.digest)).collect();
+            .map_err(invalid)
+            .and_then(|result| result.map_err(invalid));
+        let current = match current {
+            Ok(current) => current,
+            Err(error) => {
+                self.plugin_hooks.revoke_disabled_packages(&BTreeMap::new());
+                return Err(error);
+            }
+        };
+        self.plugin_hooks.revoke_disabled_packages(&current);
         let owners: BTreeSet<_> = self
             .desktop
             .plugin_mcp
@@ -752,14 +773,7 @@ impl Engine {
                         );
                 }
             }
-            let state = if error
-                .chain()
-                .any(|e| e.to_string() == "MCP cleanup unconfirmed")
-            {
-                "cleanupUnknown"
-            } else {
-                "failed"
-            };
+            let state = connection_failure_state(&error);
             for server in eligible.keys() {
                 outcomes.insert(server.clone(), state.into());
             }
@@ -916,7 +930,6 @@ impl Engine {
             if has_failures { "partial" } else { "connected" }.into(),
         );
         self.spawn_mcp_forms(receiver);
-        self.watch_plugin_mcp();
         self.plugin_mcp_list().await
     }
     fn plugin_auth_key(&self, plugin: &str, server: &str, digest: &str) -> String {
@@ -1224,7 +1237,7 @@ fn wire_snapshot(store: &areal_plugins::Store) -> anyhow::Result<BTreeMap<String
     Ok(store.list()?.data.into_iter().filter(|p|p.installed).map(|p|(p.id.clone(),json!({"id":p.id,"digest":p.installed_digest,"enabled":p.enabled,"components":p.components}))).collect())
 }
 impl Engine {
-    fn watch_plugin_mcp(self: &Arc<Self>) {
+    pub(super) fn watch_plugin_state(self: &Arc<Self>) {
         if self
             .desktop
             .plugin_mcp
@@ -1237,7 +1250,9 @@ impl Engine {
         let cancel = self.shutdown.clone();
         self.tasks.spawn(async move{loop{
             tokio::select!{_=cancel.cancelled()=>break,_=tokio::time::sleep(Duration::from_millis(250))=>{}}
-            let Some(engine)=weak.upgrade()else{break;};if let Err(error)=engine.reconcile_plugin_connections().await{tracing::warn!(%error,"plugin MCP reconciliation failed closed");}
+            let Some(engine)=weak.upgrade()else{break;};if let Err(error)=engine.reconcile_plugin_connections().await{
+                tracing::warn!(%error,"plugin authority reconciliation failed closed");
+            }
         }});
     }
     pub(crate) async fn mcp_output_limit(&self, tool: &McpTool) -> Option<usize> {
@@ -1367,6 +1382,46 @@ impl Engine {
 #[cfg(test)]
 mod connector_input_tests {
     use super::*;
+    struct NoModel;
+    #[async_trait::async_trait]
+    impl crate::model::Model for NoModel {
+        fn name(&self) -> &str {
+            "unused"
+        }
+        async fn stream(
+            &self,
+            _: Vec<crate::model::Message>,
+        ) -> anyhow::Result<crate::model::ModelStream> {
+            unreachable!("cleanup acceptance never samples a model")
+        }
+    }
+    #[tokio::test]
+    async fn cleanup_failure_survives_context_and_blocks_retry_classification() {
+        let error = anyhow::Error::new(areal_mcp::CleanupUnconfirmed)
+            .context("required server failed during startup");
+        assert_eq!(connection_failure_state(&error), "cleanupUnknown");
+        assert_eq!(
+            connection_failure_state(&anyhow::anyhow!("connection refused")),
+            "failed"
+        );
+        let root = tempfile::tempdir().unwrap();
+        let engine = Engine::open(root.path(), Arc::new(NoModel), Limits::default()).unwrap();
+        engine.desktop.plugin_mcp.states.write().unwrap().insert(
+            "sample@local".into(),
+            connection_failure_state(&error).into(),
+        );
+        let disconnected = engine.revoke_plugin_mcp("sample@local").await;
+        let state = engine.desktop.plugin_mcp.states.read().unwrap()["sample@local"].clone();
+        engine.shutdown().await;
+        assert!(
+            disconnected.is_err(),
+            "disconnect without a cleanup handle falsely confirmed shutdown"
+        );
+        assert_eq!(
+            state, "cleanupUnknown",
+            "disconnect erased the reconnect gate"
+        );
+    }
     #[test]
     fn connector_transport_inputs_do_not_cross_accounts() {
         let first = Connector {

@@ -239,11 +239,10 @@ impl Engine {
             });
             self.persist(&candidate).await?;
             state.thread = candidate;
-            self.plugin_hooks
-                .invocations
-                .lock()
-                .unwrap()
-                .insert(invocation.clone(), (hook.plugin_id.clone(), token.clone()));
+            self.plugin_hooks.invocations.lock().unwrap().insert(
+                invocation.clone(),
+                (hook.plugin_id.clone(), hook.packaged, token.clone()),
+            );
             let engine = self.clone();
             let cell = cell.clone();
             let input = input.clone();

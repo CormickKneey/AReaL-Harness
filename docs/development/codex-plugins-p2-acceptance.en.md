@@ -67,6 +67,25 @@ Final frozen candidate: all three runs use Core SHA256 `fa0e40040ed61fb4d97f095b
 
 Idle hook checks now use the current desktop configuration; only an in-progress Turn supplies its frozen configuration. Research/nativeTaskAgent and external platform/provider gaps remain source or unaccepted evidence as described above.
 
+## 2026-10-15 design-review fix acceptance
+
+This batch fixes four design findings within the compatibility scope above; focused acceptance does not establish full protocol conformance.
+
+| Finding | Fix and acceptance |
+| --- | --- |
+| MCP cleanup state | Detect `CleanupUnconfirmed` by type in the error chain and retain `cleanupUnknown`. A later disconnect without a cleanup handle cannot clear the reconnect gate. Wrapped errors and the actual Engine disconnect path pass; this injects boundary state, not an OS cleanup failure. |
+| Cross-instance hook revocation | Each invocation checks shared enablement; polling cancels in-flight calls without requiring an MCP connection. Old invocations retain package ownership after an update removes hook definitions and remain revocable. Frozen definitions do not freeze authority. |
+| Refresh lock scope | Remote preparation does not hold the Engine refresh lock. Store retains cross-process CAS; publication uses one installation-state read, with draining outside the lock. Disable completes within a 2s acceptance window while an actual loopback Git download is held behind a barrier. |
+| Incremental refresh | State polling avoids package contents; parsed components are cached and calls validate their own package. Five refreshes of a 1 MiB asset perform one full read; same-size tampering remains rejected. Metadata traversal remains, without fixed latency or arbitrary same-UID directory-replacement isolation guarantees. |
+
+The four original assertion RED logs are `/private/tmp/plugin-review-{cleanup,revoke,lock,cache}-red.log`; the later-disconnect UNKNOWN regression is `plugin-review-cleanup-retention-red.log`. Package38 passes (`plugin-review-package-final.log`); all four Engine integration targets pass30 with no filters (`plugin-review-engine-frozen.log`), followed by a final15-check rerun of both MCP targets (`plugin-review-mcp-engine-accepted.log`). The two focused checks are in `plugin-review-revoke-frozen.log` and `plugin-review-cleanup-accepted.log`. All these logs are under `/private/tmp/`.
+
+MCP41 passes with2 existing ignores (`/private/tmp/plugin-review-mcp-final.log`): the live GitHub credential case was not run, and the other is a subprocess entry invoked by its parent test. The parent `cross_process_refresh_serializes` and Engine's `mcp_only_discovery_trust_and_revocation` both pass in this batch. Historical SIGKILL failures below remain recorded; their cause is still UNKNOWN. The workspace build passes with the known rust-objcopy LLVM layout warning; no toolchain changes were made.
+
+The first native attempt inside the outer tool sandbox failed with `sandbox_apply: Operation not permitted`. Subsequent native runs execute outside that outer sandbox while retaining the product Runtime sandbox. The final candidate's first full-matrix run failed its 5s model-readiness wait before upload (`/private/tmp/areal-plugin-hooks-jmCyOE/manifest.json`): preceding command-hook receipts succeeded and fixture cleanup interrupted the Turn. This fixture wait is now bounded at15s; product execution limits and behavioral assertions remain unchanged.
+
+Final frozen Core SHA256 `f0a2c3bb7ca26a101ee0ca6ee03b824c400cbacc8442c4fc7447293b9920be12`: the default full hooks matrix passes22 (`/private/tmp/areal-plugin-hooks-VbWmUS/manifest.json`, `completeMatrix:true`) and read-only isolation passes10 (`/private/tmp/areal-readonly-hooks-lhkkmD/manifest.json`). Both retain an unchanged binary; owned behavior/test source hashes match the final files. The new actual two-Core case confirms shared user-disable cleans idle descendants without a refresh on the original instance and rejects a frozen Stop hook in an active Turn. Native runs use a loopback model fixture; no new GUI, installed-package or real-provider acceptance is claimed. Public documents174, Rust formatting and diff checks pass; only these fixes are committed, without push.
+
 ## SIGKILL classification
 
 A historical service-schema invocation received kill9; direct shell redirection truncated its tracked output to0 bytes. Make now stages all three outputs on the same filesystem, requires successful generation and valid JSON objects, and replaces each destination atomically. Generation failures preserve all old files; three renames are not a cross-file transaction. The unchanged cached generator and standard Make both pass currently. The historical killer remains unconfirmed.
