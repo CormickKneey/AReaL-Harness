@@ -541,6 +541,190 @@ fn continuity_model(summary: &str) -> Arc<ContinuityModel> {
     })
 }
 
+struct ScreenshotContinuityModel {
+    requests: Mutex<Vec<Vec<Message>>>,
+}
+
+#[async_trait]
+impl Model for ScreenshotContinuityModel {
+    fn name(&self) -> &str {
+        "screenshot-continuity"
+    }
+    fn capabilities(&self) -> areal_engine::model::ModelCapabilities {
+        let mut capabilities = areal_engine::model::ModelCapabilities::text();
+        capabilities.input.push(areal_protocol::Modality::Image);
+        capabilities
+    }
+    async fn stream(&self, _: Vec<Message>) -> anyhow::Result<ModelStream> {
+        unreachable!()
+    }
+    async fn chat_for(
+        &self,
+        messages: Vec<Message>,
+        _: Vec<Value>,
+        purpose: RequestPurpose,
+    ) -> anyhow::Result<AgentStream> {
+        if purpose == RequestPurpose::Summary {
+            anyhow::bail!("model HTTP status 400 Bad Request");
+        }
+        self.requests.lock().unwrap().push(messages);
+        Ok(Box::pin(stream::iter([Ok(ModelEvent::text(
+            "observed implementation evidence ".repeat(180),
+        ))])))
+    }
+}
+
+#[tokio::test]
+async fn screenshot_request_survives_failed_summary_archival_and_restart() {
+    let data = tempfile::tempdir().unwrap();
+    let model = Arc::new(ScreenshotContinuityModel {
+        requests: Mutex::new(Vec::new()),
+    });
+    let limits = Limits {
+        context_window_bytes: 0,
+        context_recent_bytes: 256,
+        ..Limits::default()
+    };
+    let engine = Engine::open(data.path(), model.clone(), limits.clone()).unwrap();
+    let thread = engine.create("/workspace".into()).await.unwrap();
+    let initial = turn(&engine, &thread.id, "Summarize the project.").await;
+    assert_eq!(initial.turns.last().unwrap().status, TurnStatus::Completed);
+    let correction = "Fix the right-aligned user bubble and show a readable file size; do not summarize the project again.";
+    let input = vec![
+        Input::text(correction),
+        Input::Image {
+            url: "https://example.test/bubble.png".into(),
+            detail: None,
+        },
+        Input::Image {
+            url: "https://example.test/file-size.png".into(),
+            detail: None,
+        },
+    ];
+    engine.start(&thread.id, input.clone()).await.unwrap();
+    let done = engine.wait(&thread.id).await.unwrap();
+    assert_eq!(
+        done.turns.last().unwrap().status,
+        TurnStatus::Completed,
+        "{:?}",
+        done.turns.last().unwrap().error
+    );
+    engine.context_compact(thread.id.clone()).await.unwrap();
+    let compacted = engine.read(&thread.id, true).await.unwrap();
+    let checkpoint = compacted.context_checkpoint.as_ref().unwrap();
+    assert!(checkpoint.summary.starts_with("DEGRADED CONTEXT:"));
+    // 两张图加文字超过 8192 的原文配额，仍须完整保留最新请求。
+    assert_eq!(
+        serde_json::to_value(
+            &checkpoint
+                .retained_inputs
+                .as_ref()
+                .unwrap()
+                .last()
+                .unwrap()
+                .content
+        )
+        .unwrap(),
+        serde_json::to_value(&input).unwrap()
+    );
+    let record: Value = serde_json::from_slice(
+        &std::fs::read(data.path().join(format!("{}.json", thread.id))).unwrap(),
+    )
+    .unwrap();
+    assert!(record["thread"]["historyArchive"].is_object());
+    engine.shutdown().await;
+    drop(engine);
+
+    let engine = Engine::open(data.path(), model.clone(), limits).unwrap();
+    turn(&engine, &thread.id, "Continue the fixes.").await;
+    {
+        let requests = model.requests.lock().unwrap();
+        let correction_message = requests
+            .last()
+            .unwrap()
+            .iter()
+            .find(|m| m.role == "user" && m.text_content() == correction)
+            .unwrap();
+        assert_eq!(correction_message.content.len(), 3);
+    }
+    engine.context_compact(thread.id.clone()).await.unwrap();
+    turn(&engine, &thread.id, "Verify the fixes.").await;
+    {
+        let requests = model.requests.lock().unwrap();
+        let correction_message = requests
+            .last()
+            .unwrap()
+            .iter()
+            .find(|m| m.role == "user" && m.text_content().contains(correction))
+            .unwrap();
+        assert!(
+            correction_message
+                .text_content()
+                .contains("Historical attachments omitted")
+        );
+        assert!(
+            correction_message
+                .content
+                .iter()
+                .all(|p| matches!(p, areal_engine::model::ContentPart::Text(_)))
+        );
+    }
+    // 有损模型投影不改写权威原文及其附件。
+    let full = engine.read(&thread.id, true).await.unwrap();
+    assert!(full.turns.iter().flat_map(|t| &t.items).any(|item| {
+        matches!(item, areal_protocol::Item::UserMessage { content, .. }
+            if serde_json::to_value(content).unwrap() == serde_json::to_value(&input).unwrap())
+    }));
+    engine.shutdown().await;
+}
+
+#[tokio::test]
+async fn oversized_latest_screenshot_request_fails_instead_of_solving_an_old_task() {
+    let data = tempfile::tempdir().unwrap();
+    let model = Arc::new(ScreenshotContinuityModel {
+        requests: Mutex::new(Vec::new()),
+    });
+    let engine = Engine::open(
+        data.path(),
+        model.clone(),
+        Limits {
+            context_window_tokens: 9000,
+            context_output_reserve_tokens: 400,
+            context_recent_bytes: 256,
+            ..Limits::default()
+        },
+    )
+    .unwrap();
+    let thread = engine.create("/workspace".into()).await.unwrap();
+    turn(&engine, &thread.id, "Summarize the project.").await;
+    engine
+        .start(
+            &thread.id,
+            vec![
+                Input::text("Fix the user bubble and readable file size. ".repeat(100)),
+                Input::Image {
+                    url: "https://example.test/bubble.png".into(),
+                    detail: None,
+                },
+                Input::Image {
+                    url: "https://example.test/file-size.png".into(),
+                    detail: None,
+                },
+            ],
+        )
+        .await
+        .unwrap();
+    let result = engine.wait(&thread.id).await.unwrap();
+    let last = result.turns.last().unwrap();
+    assert_eq!(last.status, TurnStatus::Failed);
+    assert_eq!(
+        last.error.as_ref().unwrap().outcome.as_ref().unwrap().code,
+        "LLM_CONTEXT_WINDOW_EXCEEDED"
+    );
+    assert_eq!(model.requests.lock().unwrap().len(), 1);
+    engine.shutdown().await;
+}
+
 #[tokio::test]
 async fn user_revisions_survive_repeated_lossy_and_degraded_summaries_and_restart() {
     // 摘要既可能遗漏修订，也可能完全无效；两种情况下修订必须独立保留。

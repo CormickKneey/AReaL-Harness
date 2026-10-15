@@ -45,10 +45,19 @@ async fn sampling_parameters_reach_solve_and_summary_http_requests_without_dropp
     };
     let expected = json!({"reasoning_effort":"xhigh", "temperature":1.0,
         "top_p":0.95, "top_k":20, "min_p":0.0, "presence_penalty":0.0, "repetition_penalty":1.0});
-    for (options, purpose, limit) in [
-        (configured.clone(), RequestPurpose::Solve, 32000),
-        (configured, RequestPurpose::Summary, 16384),
-        (ModelOptions::default(), RequestPurpose::Solve, 0),
+    for (options, purpose, limit, has_sampling) in [
+        (configured.clone(), RequestPurpose::Solve, 32000, true),
+        (configured, RequestPurpose::Summary, 16384, true),
+        (ModelOptions::default(), RequestPurpose::Solve, 16384, false),
+        (
+            ModelOptions {
+                max_output_tokens: None,
+                ..Default::default()
+            },
+            RequestPurpose::Solve,
+            16384,
+            false,
+        ),
     ] {
         let audit_dir = tempfile::tempdir().unwrap();
         let model = HttpModel::new(
@@ -69,17 +78,13 @@ async fn sampling_parameters_reach_solve_and_summary_http_requests_without_dropp
         assert!(events.iter().all(Result::is_ok));
         let request = rx.recv().await.unwrap();
         for (field, value) in expected.as_object().unwrap() {
-            if limit == 0 {
-                assert!(request.get(field).is_none(), "{field}");
-            } else {
+            if has_sampling {
                 assert_eq!(&request[field], value, "{field}");
+            } else {
+                assert!(request.get(field).is_none(), "{field}");
             }
         }
-        if limit != 0 {
-            assert_eq!(request["max_completion_tokens"], limit);
-        } else {
-            assert!(request.get("max_completion_tokens").is_none());
-        }
+        assert_eq!(request["max_completion_tokens"], limit);
         let path = std::fs::read_dir(audit_dir.path())
             .unwrap()
             .find(|entry| {
@@ -332,6 +337,7 @@ async fn responses_adapter_preserves_multimodal_input_and_persists_output() {
                 let call = calls.fetch_add(1, Ordering::SeqCst);
                 assert_eq!(request["stream"], true);
                 assert_eq!(request["store"], false);
+                assert_eq!(request["max_output_tokens"], 16384);
                 let input = request["input"].as_array().unwrap();
                 let first_user = input.iter().position(|message| message["role"] == "user").unwrap();
                 let content = input[first_user]["content"].as_array().unwrap();

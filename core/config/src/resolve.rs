@@ -608,7 +608,7 @@ pub(crate) fn load_mode(
         ("limits.max_tool_buffer_bytes", "4194304"),
         ("limits.context_window_bytes", "0"),
         ("limits.context_compaction_enabled", "true"),
-        ("limits.context_window_tokens", "65536"),
+        ("limits.context_window_tokens", "131072"),
         ("limits.context_target_tokens", "0"),
         ("limits.context_output_reserve_tokens", "8192"),
         ("limits.context_recent_bytes", "0"),
@@ -779,6 +779,13 @@ pub(crate) fn load_mode(
                 .or_insert(Entry { value, source });
         }
     }
+    // 输出默认值最后补齐，避免遮住模型目录中的显式参数。
+    values
+        .entry("model.max_output_tokens".into())
+        .or_insert(Entry {
+            value: "16384".into(),
+            source: default.clone(),
+        });
     let prefix = format!("model.providers.{provider}");
     values.entry(format!("{prefix}.protocol")).or_insert(Entry {
         value: "chat-completions".into(),

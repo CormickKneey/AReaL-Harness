@@ -121,7 +121,9 @@ Chat 工具 index 缺失、null、非整数类型、负数、超出 u64 范围�
 
 Rust `Model::chat_with_limits(messages, tools, purpose, ToolCallLimits, cap)` 显式传递请求预算，内置 HTTP、共享池和 Worker 包装器均转发。可选的输出 token 上限与工具预算一起经过 Goal 计量传递。默认实现委托 `chat_limited`，保持已有自定义 Model 实现可编译，并拒绝不受支持的非空 token 上限；自定义模型自行约束内部缓冲，Engine 仍在工具执行前检查其输出。摘要使用零调用预算。`Limits` 新增 `max_tool_buffer_bytes`，`NativeFactory`/`NativeExecutor` 新增 `tool_call_limits`，显式结构体初始化需补充字段；构造器提供默认值。Rust Limits 同时区分可选累计预算与单响应资源保护。
 
-Checkpoint 的 `retainedInputs: [{itemId, content}]` 保存有界的真实用户原文，`evidence: string[]` 保存有界回执。优先首个任务与最近修订，排除自动 Goal 续轮输入；后续用户指令优先于冲突摘要。旧原文可通过 `read_history` 回取，不删除、不提升为 system 指令。旧 checkpoint 未含 retainedInputs 时保留原重放语义，直到下一次压缩。子任务保留自己的输入，父任务需显式传递有关修订。工具/结果保持完整配对，未确认副作用不能移入冷历史。摘要输入按模型窗口减摘要输出预留预检，过大证据会明确标记省略；无效摘要最多一次验证重试，再退回有界的已记录证据。没有合法前缀时不付费摘要。取消保留旧 checkpoint，并保守结算已观察用量。压缩事件包含前后字节与估算 token、targetTokens/targetMet、摘要预算、degradationReason、retainedUserMessages，以及 trigger（manual/tokens/bytes/storage）。压缩后完整求解请求再次预检，无法容纳时返回结构化上下文错误；自动模式下在任何输出/工具调用之前遇到明确的提供方上下文溢出，可恢复一次，仍受 Goal 计量约束。
+`Limits::default()` 的上下文窗口兜底为 131072 token。内置 HTTP 模型每次请求的输出上限默认 16384 token，`ModelOptions.max_output_tokens=None`（包括旧模型快照中的省略值）同样采用该默认；显式正数可调大或调小，Goal 与摘要专用限制仍取更小值。自定义 `Model` 不因此获得 HTTP 输出限制，需正确声明自身 capabilities 并落实请求额度。配置覆盖与输入空间计算见[配置指南](../guides/configuration.md)。
+
+Checkpoint 的 `retainedInputs: [{itemId, content}]` 保存有界的真实用户原文，`evidence: string[]` 保存有界回执。最新被压缩的真实用户请求（含附件）必须完整保留，即使超过原文软配额；完整求解窗口仍由请求预检约束，不能通过丢弃最新请求来满足窗口。剩余额度优先首个任务与最近修订；较早附件超额时保留其可容纳的文字原文，并明确标记附件已从 checkpoint 投影省略，完整附件仍在历史中。排除自动 Goal 续轮输入；后续用户指令优先于冲突摘要。旧原文可通过 `read_history` 回取，不删除、不提升为 system 指令。旧 checkpoint 未含 retainedInputs 时保留原重放语义，直到下一次压缩。子任务保留自己的输入，父任务需显式传递有关修订。工具/结果保持完整配对，未确认副作用不能移入冷历史。摘要输入按模型窗口减摘要输出预留预检，过大证据会明确标记省略；无效摘要最多一次验证重试，再退回有界的已记录证据。没有合法前缀时不付费摘要。取消保留旧 checkpoint，并保守结算已观察用量。压缩事件包含前后字节与估算 token、targetTokens/targetMet、摘要预算、degradationReason、retainedUserMessages，以及 trigger（manual/tokens/bytes/storage）。压缩后完整求解请求再次预检，无法容纳时返回结构化上下文错误；自动模式下在任何输出/工具调用之前遇到明确的提供方上下文溢出，可恢复一次，仍受 Goal 计量约束。
 
 压缩后的求解上下文还包含 Core 从成功文件操作回执提取的历史路径、完整 SHA-256 与读取范围（最多 24 项、8 KiB）；不复制失效的 fileVersion 句柄，也不把分页读取推断为全文覆盖。摘要模型不再负责复述哈希。
 

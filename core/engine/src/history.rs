@@ -324,24 +324,44 @@ pub(super) fn checkpoint_inputs(
     }
     let mut remaining = token_limit;
     let mut retained = Vec::new();
-    // 首个任务与最近修订优先；其余原文由历史工具读取，授权仍由 Core 状态持有。
-    let order = (0..inputs.len().min(1)).chain((1..inputs.len()).rev());
+    // 最新请求不能因附件占满保留配额而整条丢失；完整求解窗口仍由请求预检约束。
+    // 先保留最新输入，再考虑首问与较早修订，输出顺序仍与原始对话一致。
+    let latest = inputs.len().checked_sub(1);
+    let order = latest
+        .into_iter()
+        .chain((0..inputs.len()).filter(|i| Some(*i) != latest).take(1))
+        .chain((1..inputs.len()).rev().filter(|i| Some(*i) != latest));
     for index in order {
-        let message = Message {
-            role: "user".into(),
-            content: inputs[index]
+        let cost = |content: &[Input]| {
+            context::estimate_tokens(&[Message {
+                role: "user".into(),
+                content: content.iter().map(content_from_input).collect(),
+                tool_calls: Vec::new(),
+                tool_call_id: None,
+                provider_context: None,
+            }])
+        };
+        let mut tokens = cost(&inputs[index].content);
+        if Some(index) != latest && tokens > remaining {
+            // 较早附件可回取，但其文字修订不能随附件一起被丢弃；明确标记投影省略。
+            let mut text: Vec<_> = inputs[index]
                 .content
                 .iter()
-                .map(content_from_input)
-                .collect(),
-            tool_calls: Vec::new(),
-            tool_call_id: None,
-            provider_context: None,
-        };
-        let cost = context::estimate_tokens(&[message]);
-        if cost <= remaining {
+                .filter(|part| part.modality() == Modality::Text)
+                .cloned()
+                .collect();
+            if text.len() != inputs[index].content.len() {
+                text.push(Input::text("[Historical attachments omitted from this checkpoint projection; original content remains available through read_history.]"));
+                let text_tokens = cost(&text);
+                if text_tokens <= remaining {
+                    inputs[index].content = text;
+                    tokens = text_tokens;
+                }
+            }
+        }
+        if Some(index) == latest || tokens <= remaining {
             retained.push(index);
-            remaining -= cost;
+            remaining = remaining.saturating_sub(tokens);
         }
     }
     retained.sort_unstable();
