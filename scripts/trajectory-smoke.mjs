@@ -12,7 +12,7 @@ import { promisify } from "node:util";
 import { spawnNative } from "./native-child.mjs";
 
 const directory = await realpath(await mkdtemp(join(tmpdir(), "areal-trajectory-smoke-")));
-const binary = await realpath(resolve("target/debug/areal"));
+const binary = await realpath(resolve(process.env.AREAL_TEST_BIN_DIR ?? "target/debug", "areal"));
 const execute = promisify(execFile);
 const configPath = join(directory, "config.toml");
 const spool = join(directory, "spool");
