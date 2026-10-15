@@ -15,11 +15,11 @@
 | PermissionRequest 独立于 Pre、不突破权限 | 实际允许/拒绝路径，无 tool_use_id；部署/只读 gate 保留 | 本地通过；真实供应商/全部审批模式未验 |
 | 用户输入/steer 去重、Stop 同 Turn 多次继续 | 同 key 并发拒绝与成功仅执行一次；Stop 三次采样，active=false/true/true，无 Prompt 递归 | 本地通过；同连接 direct/queue steer 上传及同键去重也已通过 |
 | MCP handler 与真实人工等待 | 原始 stdio 连接、模型前 block；1秒预算等待人工1.4秒后继续；MRTR4项通过 | 本地通过；远程服务/HTTP上传条件沿用 P1/P3 缺口 |
-| 手动压缩 owner、Pre/Post/Start compact | 实际 MCP 三种事件各一次，真实 compaction owner | 本地通过；自动压缩/恢复/全部 attach 组合未全验 |
+| 压缩 owner、Pre/Post/Start compact 与恢复 | 手动 MCP 事件及真实 command 自动/手动压缩；确认 Core 重启后 resume 一次，重复同 Core attach 不重放，Fork 使用 fork | 本地生命周期矩阵11项通过；子任务恢复、clear/外部 supplied-history 恢复仍未验 |
 | UTF-8 spill、严格输出和已知失败 fail-open | head/tail 与完整保存文件可恢复；输出6项通过 | 本地通过；保留文件使用 Core 数据目录，未照搬 Codex OS temp 路径 |
 | 后台并发、安全点、清理后代、SessionEnd | Runtime56项通过；实际 Core21项包含普通命令释放后台 hook、下一 Turn 上下文、确认后代退出和 End 一次 | 另行同意只读子任务后默认完整矩阵21项通过；任意依赖循环不在承诺内 |
-| SubagentStart/Stop 和 agent_type | 真实普通只读子任务发出 Start/Stop，根 session_id 与子任务身份准确 | 限定 command 路径通过；自定义角色映射和只读 MCP 仍缺 |
-| 固定 Codex 二进制对照 | 真正 codex-cli0.162.1：UserPromptSubmit exit2→0模型请求；Stop→2请求/active=true | 两事件通过；仅自有本地 hook+loopback模型，非整包/全部事件对照 |
+| SubagentStart/Stop 和 agent_type | 普通可写/限定只读自定义 Profile 的身份与 matcher 通过；子任务压缩保留根 session_id、agent_id 和 agent_type | Profile 必须显式 allowPluginSkills；父任务限制与只读独立同意保持；只读 MCP 继续排除 |
+| 固定 Codex 二进制与 schema 对照 | 真正 codex-cli0.162.1 的两事件历史对照；新增全部12类真实 command 输入对照固定上游 schema | schema 通过，包含必要字段故障变体拒绝；整包/全部事件二进制差分仍未验 |
 | 管理提交人工等待与日志容量 | 真实 MRTR 上传外层持久提交 RED timeout→GREEN；近7.5MiB三请求响应 RED超限→GREEN重启/不重放 | 修复通过；实际同连接 hook steer 上传已通过 |
 | schema 生成与失败保护 | 标准 `make desktop-schemas` exit0；故障/非法JSON/成功发布5项通过 | 当前命令通过，历史 SIGKILL 原因 UNKNOWN |
 
@@ -32,6 +32,7 @@ cargo test --locked -p areal-plugins
 cargo test --locked -p areal-mcp
 cargo test --locked -p areal-engine --test codex_plugins --test plugin_hook_output --test plugin_mcp_runtime --test plugin_mcp_subscriptions
 AREAL_TEST_BIN_DIR=/absolute/bin-dir node scripts/plugin-hooks-smoke.mjs
+AREAL_TEST_BIN_DIR=/absolute/bin-dir node scripts/plugin-hooks-lifecycle-smoke.mjs
 AREAL_TEST_BIN_DIR=/absolute/bin-dir node scripts/plugin-readonly-hooks-smoke.mjs
 AREAL_CORE_BIN=/absolute/bin-dir/areal node clients/gui/scripts/plugin-p2-hooks-smoke.mjs
 make desktop-schemas
@@ -112,6 +113,22 @@ Runtime 从实际 backend 确认 `restrictedScopeIsolation`。即使部署是 fu
 
 真实 Core/Native 夹具覆盖实际只读子任务 Start/Stop 身份、已存在的兄弟标记、工作区/host/兄弟数据写入与网络拒绝、秘密缺失、私有 scratch/data 写入、过期/撤销/省略信任、确认重启后持久同意、受限 Profile，以及来源本可运行 hooks 的 Side。研究/nativeTaskAgent 排除通过共享源码条件检查；此夹具未创建这些 worker 模式。只读 MCP 完整兼容继续开放。
 
+`plugin-hooks-lifecycle-smoke.mjs` 默认执行完整矩阵；`--focus-child` 只执行子任务专项并记录 `completeMatrix:false`，不能作为全部12事件通过的证据。
+
+## 生命周期与自定义角色补充验收
+
+本轮从 `ef0f8edf` 在独立 `codex/plugins-acceptance` 工作树实现；主目录撤回插件集成的状态不变。Core 固定槽位、部署回执和 SHA256 见 [GitHub 补充验收](codex-plugins-p1-p3-acceptance.md#github-真实接入补充验收)。真实 Runtime 执行，模型使用 loopback 夹具；不新增桌面/安装包或真实模型供应商声明。
+
+`/private/tmp/areal-hooks-lifecycle-imX3bx/manifest.json` 默认完整矩阵11项通过，`completeMatrix:true`，Core `7d046b1c…` 运行期间不变：自动/手动压缩、同 Core 重复 attach 不重放、Fork、新 Core 首轮 resume 一次、真实 Interrupt、子任务自动压缩身份、自定义角色输入与 matcher、只读独立同意、默认关闭和父任务收窄。全部12类真实 command 事件均按固定上游 schema 验证，缺少必要字段的故障变体被拒绝；这不是全部事件的 Codex 二进制差分。原始 schema、许可证、NOTICE 与逐文件摘要保存在 [provenance](../../upstream/schemas/codex-hooks-0.162.1/provenance.json)，版本由 `upstream/pins.json` 绑定，测试离线执行。
+
+真实 RED `/private/tmp/plugin-hooks-child-red.log`（`ulH9PJ`）复现子任务 Pre/PostCompact 丢失 `agent_id`；修复后 GREEN 为 `/private/tmp/plugin-hooks-child-green.log`（`hu9KXv`，明确 `completeMatrix:false`，只作为子任务专项证据）。前两次新夹具因 portable 标识和错误的 AgentSpawn requestId 失败，不算产品 RED，日志 `plugin-hooks-lifecycle-red{,-v2}.log` 保留。较长子任务的本地模型等待发送 SSE 心跳，以免夹具自身触发网络 watchdog；产品超时不变。
+
+`AgentProfile.allowPluginSkills` 默认 false，false 不序列化，旧定义继续使用既有排除语义；部署使用不可变 Profile revision 选择加入。它不替代包/定义信任，也不能越过父任务范围或只读同意。输入角色和 matcher 来自同一受理配置，自动 Skill 发现的内部 Profile 仍标为 default；子任务压缩同样保留身份。
+
+Rust 验证：插件/MCP Engine 集成30、现有 agents/async_agents/admission_guards26、协议4及聚焦桌面子任务2项通过。workspace 构建与标准三份 schema 生成通过，生成差异仅新增可选 Profile 字段；历史 SIGKILL 原因仍 UNKNOWN。GitHub 真实9项单列在 P1/P3 补充记录中。
+
+既有默认完整 hooks22 项 `/private/tmp/areal-plugin-hooks-afiJDZ/manifest.json` 与只读隔离10 项 `/private/tmp/areal-readonly-hooks-ilbCZc/manifest.json` 均通过，同用上述固定 Core，运行期间未替换。最终核对六个行为源码文件与 GitHub/生命周期 manifest 摘要一致；Rust 格式、JS 语法和公共文档174项检查通过。子任务恢复及 clear/外部 supplied-history 仍未完成验收，不把根会话恢复结果扩展到这些路径。
+
 ## 关闭最终兼容的条件
 
-补齐自定义角色输入、自动压缩/恢复/attach、全部12事件原包对照、Windows/Linux 实际执行与包、真实 OAuth/HTTP上传/指定服务和 OpenAI 私有 catalog/sharing 合法条件。现有 [P1/P3 矩阵](codex-plugins-p1-p3-acceptance.md)中的开放项继续保留；本次未发布、签名、公证或 push。
+补齐 managed/profile/session hooks 配置层、原生文件工具完整输入映射、子任务恢复、clear/外部 supplied-history 恢复、只读 MCP、全部12事件原包二进制差分、Windows/Linux 实际执行与包、真实 OAuth/HTTP上传/其他指定服务和 OpenAI 私有 catalog/sharing 合法条件。现有 [P1/P3 矩阵](codex-plugins-p1-p3-acceptance.md)中的开放项继续保留；本次未发布、签名、公证或 push。

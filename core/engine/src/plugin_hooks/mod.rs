@@ -231,6 +231,18 @@ pub(super) fn bind_source(source: &areal_plugins::hook_sources::HookSource) -> V
         })
         .collect()
 }
+// 角色来自已受理的 Profile 快照；自动 Skill 发现的内部 Profile 不冒充用户角色。
+fn hook_agent_type(thread: &Thread) -> &str {
+    thread
+        .turns
+        .last()
+        .filter(|turn| turn.status == areal_protocol::TurnStatus::InProgress)
+        .and_then(|turn| turn.configuration.as_ref())
+        .or_else(|| thread.desktop.as_ref().map(|data| &data.configuration))
+        .and_then(|config| config.profile.as_ref())
+        .filter(|profile| profile.id != "areal-discovered-skills")
+        .map_or("default", |profile| profile.id.as_str())
+}
 /// One Session policy for both frozen admission and live authority checks.
 /// Read-only command consent applies only to ordinary child Sessions; it never
 /// turns Side, research, native workers or restricted Profiles into hook callers.

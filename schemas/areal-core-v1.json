@@ -170,6 +170,10 @@
           {
             "additionalProperties": false,
             "properties": {
+              "allowPluginSkills": {
+                "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                "type": "boolean"
+              },
               "allowThreadProcesses": {
                 "default": false,
                 "type": "boolean"
@@ -2393,6 +2397,10 @@
                           {
                             "additionalProperties": false,
                             "properties": {
+                              "allowPluginSkills": {
+                                "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                "type": "boolean"
+                              },
                               "allowThreadProcesses": {
                                 "default": false,
                                 "type": "boolean"
@@ -3556,6 +3564,10 @@
                 {
                   "additionalProperties": false,
                   "properties": {
+                    "allowPluginSkills": {
+                      "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                      "type": "boolean"
+                    },
                     "allowThreadProcesses": {
                       "default": false,
                       "type": "boolean"
@@ -5865,6 +5877,10 @@
                             {
                               "additionalProperties": false,
                               "properties": {
+                                "allowPluginSkills": {
+                                  "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                  "type": "boolean"
+                                },
                                 "allowThreadProcesses": {
                                   "default": false,
                                   "type": "boolean"
@@ -6858,6 +6874,10 @@
                                       {
                                         "additionalProperties": false,
                                         "properties": {
+                                          "allowPluginSkills": {
+                                            "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                            "type": "boolean"
+                                          },
                                           "allowThreadProcesses": {
                                             "default": false,
                                             "type": "boolean"
@@ -8055,6 +8075,10 @@
                               {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "allowPluginSkills": {
+                                    "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                    "type": "boolean"
+                                  },
                                   "allowThreadProcesses": {
                                     "default": false,
                                     "type": "boolean"
@@ -9270,6 +9294,10 @@
                         {
                           "additionalProperties": false,
                           "properties": {
+                            "allowPluginSkills": {
+                              "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                              "type": "boolean"
+                            },
                             "allowThreadProcesses": {
                               "default": false,
                               "type": "boolean"
@@ -10463,6 +10491,10 @@
                         {
                           "additionalProperties": false,
                           "properties": {
+                            "allowPluginSkills": {
+                              "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                              "type": "boolean"
+                            },
                             "allowThreadProcesses": {
                               "default": false,
                               "type": "boolean"
@@ -11605,6 +11637,10 @@
   "profile": {
     "additionalProperties": false,
     "properties": {
+      "allowPluginSkills": {
+        "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+        "type": "boolean"
+      },
       "allowThreadProcesses": {
         "default": false,
         "type": "boolean"
@@ -11992,6 +12028,10 @@
                     {
                       "additionalProperties": false,
                       "properties": {
+                        "allowPluginSkills": {
+                          "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                          "type": "boolean"
+                        },
                         "allowThreadProcesses": {
                           "default": false,
                           "type": "boolean"
@@ -20264,6 +20304,10 @@
                               {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "allowPluginSkills": {
+                                    "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                    "type": "boolean"
+                                  },
                                   "allowThreadProcesses": {
                                     "default": false,
                                     "type": "boolean"
@@ -21257,6 +21301,10 @@
                                         {
                                           "additionalProperties": false,
                                           "properties": {
+                                            "allowPluginSkills": {
+                                              "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                              "type": "boolean"
+                                            },
                                             "allowThreadProcesses": {
                                               "default": false,
                                               "type": "boolean"
@@ -22454,6 +22502,10 @@
                                 {
                                   "additionalProperties": false,
                                   "properties": {
+                                    "allowPluginSkills": {
+                                      "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                      "type": "boolean"
+                                    },
                                     "allowThreadProcesses": {
                                       "default": false,
                                       "type": "boolean"
@@ -24222,6 +24274,10 @@
                                 {
                                   "additionalProperties": false,
                                   "properties": {
+                                    "allowPluginSkills": {
+                                      "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                      "type": "boolean"
+                                    },
                                     "allowThreadProcesses": {
                                       "default": false,
                                       "type": "boolean"
@@ -25215,6 +25271,10 @@
                                           {
                                             "additionalProperties": false,
                                             "properties": {
+                                              "allowPluginSkills": {
+                                                "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                                "type": "boolean"
+                                              },
                                               "allowThreadProcesses": {
                                                 "default": false,
                                                 "type": "boolean"
@@ -26412,6 +26472,10 @@
                                   {
                                     "additionalProperties": false,
                                     "properties": {
+                                      "allowPluginSkills": {
+                                        "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                        "type": "boolean"
+                                      },
                                       "allowThreadProcesses": {
                                         "default": false,
                                         "type": "boolean"
@@ -27618,6 +27682,10 @@
                             {
                               "additionalProperties": false,
                               "properties": {
+                                "allowPluginSkills": {
+                                  "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                  "type": "boolean"
+                                },
                                 "allowThreadProcesses": {
                                   "default": false,
                                   "type": "boolean"
@@ -31252,6 +31320,10 @@
                               {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "allowPluginSkills": {
+                                    "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                    "type": "boolean"
+                                  },
                                   "allowThreadProcesses": {
                                     "default": false,
                                     "type": "boolean"
@@ -32245,6 +32317,10 @@
                                         {
                                           "additionalProperties": false,
                                           "properties": {
+                                            "allowPluginSkills": {
+                                              "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                              "type": "boolean"
+                                            },
                                             "allowThreadProcesses": {
                                               "default": false,
                                               "type": "boolean"
@@ -33442,6 +33518,10 @@
                                 {
                                   "additionalProperties": false,
                                   "properties": {
+                                    "allowPluginSkills": {
+                                      "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                      "type": "boolean"
+                                    },
                                     "allowThreadProcesses": {
                                       "default": false,
                                       "type": "boolean"
@@ -39345,6 +39425,10 @@
           "items": {
             "additionalProperties": false,
             "properties": {
+              "allowPluginSkills": {
+                "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                "type": "boolean"
+              },
               "allowThreadProcesses": {
                 "default": false,
                 "type": "boolean"
@@ -39484,6 +39568,10 @@
     "areal/profile/read": {
       "additionalProperties": false,
       "properties": {
+        "allowPluginSkills": {
+          "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+          "type": "boolean"
+        },
         "allowThreadProcesses": {
           "default": false,
           "type": "boolean"
@@ -40193,6 +40281,10 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                            "type": "boolean"
+                          },
                           "allowThreadProcesses": {
                             "default": false,
                             "type": "boolean"
@@ -40853,6 +40945,10 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                            "type": "boolean"
+                          },
                           "allowThreadProcesses": {
                             "default": false,
                             "type": "boolean"
@@ -41513,6 +41609,10 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                            "type": "boolean"
+                          },
                           "allowThreadProcesses": {
                             "default": false,
                             "type": "boolean"
@@ -42173,6 +42273,10 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                            "type": "boolean"
+                          },
                           "allowThreadProcesses": {
                             "default": false,
                             "type": "boolean"
@@ -42833,6 +42937,10 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                            "type": "boolean"
+                          },
                           "allowThreadProcesses": {
                             "default": false,
                             "type": "boolean"
@@ -43518,6 +43626,10 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                            "type": "boolean"
+                          },
                           "allowThreadProcesses": {
                             "default": false,
                             "type": "boolean"
@@ -45478,6 +45590,10 @@
                             {
                               "additionalProperties": false,
                               "properties": {
+                                "allowPluginSkills": {
+                                  "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                  "type": "boolean"
+                                },
                                 "allowThreadProcesses": {
                                   "default": false,
                                   "type": "boolean"
@@ -46471,6 +46587,10 @@
                                       {
                                         "additionalProperties": false,
                                         "properties": {
+                                          "allowPluginSkills": {
+                                            "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                            "type": "boolean"
+                                          },
                                           "allowThreadProcesses": {
                                             "default": false,
                                             "type": "boolean"
@@ -47668,6 +47788,10 @@
                               {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "allowPluginSkills": {
+                                    "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                    "type": "boolean"
+                                  },
                                   "allowThreadProcesses": {
                                     "default": false,
                                     "type": "boolean"
@@ -48871,6 +48995,10 @@
                         {
                           "additionalProperties": false,
                           "properties": {
+                            "allowPluginSkills": {
+                              "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                              "type": "boolean"
+                            },
                             "allowThreadProcesses": {
                               "default": false,
                               "type": "boolean"
@@ -53981,6 +54109,10 @@
             {
               "additionalProperties": false,
               "properties": {
+                "allowPluginSkills": {
+                  "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                  "type": "boolean"
+                },
                 "allowThreadProcesses": {
                   "default": false,
                   "type": "boolean"
@@ -54969,6 +55101,10 @@
                             {
                               "additionalProperties": false,
                               "properties": {
+                                "allowPluginSkills": {
+                                  "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                  "type": "boolean"
+                                },
                                 "allowThreadProcesses": {
                                   "default": false,
                                   "type": "boolean"
@@ -55962,6 +56098,10 @@
                                       {
                                         "additionalProperties": false,
                                         "properties": {
+                                          "allowPluginSkills": {
+                                            "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                            "type": "boolean"
+                                          },
                                           "allowThreadProcesses": {
                                             "default": false,
                                             "type": "boolean"
@@ -57159,6 +57299,10 @@
                               {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "allowPluginSkills": {
+                                    "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                    "type": "boolean"
+                                  },
                                   "allowThreadProcesses": {
                                     "default": false,
                                     "type": "boolean"
@@ -58370,6 +58514,10 @@
                 {
                   "additionalProperties": false,
                   "properties": {
+                    "allowPluginSkills": {
+                      "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                      "type": "boolean"
+                    },
                     "allowThreadProcesses": {
                       "default": false,
                       "type": "boolean"
@@ -59776,6 +59924,10 @@
                             {
                               "additionalProperties": false,
                               "properties": {
+                                "allowPluginSkills": {
+                                  "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                  "type": "boolean"
+                                },
                                 "allowThreadProcesses": {
                                   "default": false,
                                   "type": "boolean"
@@ -60769,6 +60921,10 @@
                                       {
                                         "additionalProperties": false,
                                         "properties": {
+                                          "allowPluginSkills": {
+                                            "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                            "type": "boolean"
+                                          },
                                           "allowThreadProcesses": {
                                             "default": false,
                                             "type": "boolean"
@@ -61966,6 +62122,10 @@
                               {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "allowPluginSkills": {
+                                    "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                    "type": "boolean"
+                                  },
                                   "allowThreadProcesses": {
                                     "default": false,
                                     "type": "boolean"
@@ -63717,6 +63877,10 @@
                             {
                               "additionalProperties": false,
                               "properties": {
+                                "allowPluginSkills": {
+                                  "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                  "type": "boolean"
+                                },
                                 "allowThreadProcesses": {
                                   "default": false,
                                   "type": "boolean"
@@ -64710,6 +64874,10 @@
                                       {
                                         "additionalProperties": false,
                                         "properties": {
+                                          "allowPluginSkills": {
+                                            "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                            "type": "boolean"
+                                          },
                                           "allowThreadProcesses": {
                                             "default": false,
                                             "type": "boolean"
@@ -65907,6 +66075,10 @@
                               {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "allowPluginSkills": {
+                                    "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                    "type": "boolean"
+                                  },
                                   "allowThreadProcesses": {
                                     "default": false,
                                     "type": "boolean"
@@ -67168,6 +67340,10 @@
                         {
                           "additionalProperties": false,
                           "properties": {
+                            "allowPluginSkills": {
+                              "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                              "type": "boolean"
+                            },
                             "allowThreadProcesses": {
                               "default": false,
                               "type": "boolean"
@@ -73402,6 +73578,10 @@
                               {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "allowPluginSkills": {
+                                    "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                    "type": "boolean"
+                                  },
                                   "allowThreadProcesses": {
                                     "default": false,
                                     "type": "boolean"
@@ -74395,6 +74575,10 @@
                                         {
                                           "additionalProperties": false,
                                           "properties": {
+                                            "allowPluginSkills": {
+                                              "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                              "type": "boolean"
+                                            },
                                             "allowThreadProcesses": {
                                               "default": false,
                                               "type": "boolean"
@@ -75592,6 +75776,10 @@
                                 {
                                   "additionalProperties": false,
                                   "properties": {
+                                    "allowPluginSkills": {
+                                      "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                      "type": "boolean"
+                                    },
                                     "allowThreadProcesses": {
                                       "default": false,
                                       "type": "boolean"
@@ -77348,6 +77536,10 @@
                             {
                               "additionalProperties": false,
                               "properties": {
+                                "allowPluginSkills": {
+                                  "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                  "type": "boolean"
+                                },
                                 "allowThreadProcesses": {
                                   "default": false,
                                   "type": "boolean"
@@ -78341,6 +78533,10 @@
                                       {
                                         "additionalProperties": false,
                                         "properties": {
+                                          "allowPluginSkills": {
+                                            "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                            "type": "boolean"
+                                          },
                                           "allowThreadProcesses": {
                                             "default": false,
                                             "type": "boolean"
@@ -79538,6 +79734,10 @@
                               {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "allowPluginSkills": {
+                                    "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                    "type": "boolean"
+                                  },
                                   "allowThreadProcesses": {
                                     "default": false,
                                     "type": "boolean"
@@ -81315,6 +81515,10 @@
                             {
                               "additionalProperties": false,
                               "properties": {
+                                "allowPluginSkills": {
+                                  "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                  "type": "boolean"
+                                },
                                 "allowThreadProcesses": {
                                   "default": false,
                                   "type": "boolean"
@@ -82308,6 +82512,10 @@
                                       {
                                         "additionalProperties": false,
                                         "properties": {
+                                          "allowPluginSkills": {
+                                            "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                            "type": "boolean"
+                                          },
                                           "allowThreadProcesses": {
                                             "default": false,
                                             "type": "boolean"
@@ -83505,6 +83713,10 @@
                               {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "allowPluginSkills": {
+                                    "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                    "type": "boolean"
+                                  },
                                   "allowThreadProcesses": {
                                     "default": false,
                                     "type": "boolean"
@@ -85290,6 +85502,10 @@
                             {
                               "additionalProperties": false,
                               "properties": {
+                                "allowPluginSkills": {
+                                  "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                  "type": "boolean"
+                                },
                                 "allowThreadProcesses": {
                                   "default": false,
                                   "type": "boolean"
@@ -86283,6 +86499,10 @@
                                       {
                                         "additionalProperties": false,
                                         "properties": {
+                                          "allowPluginSkills": {
+                                            "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                            "type": "boolean"
+                                          },
                                           "allowThreadProcesses": {
                                             "default": false,
                                             "type": "boolean"
@@ -87480,6 +87700,10 @@
                               {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "allowPluginSkills": {
+                                    "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                    "type": "boolean"
+                                  },
                                   "allowThreadProcesses": {
                                     "default": false,
                                     "type": "boolean"
@@ -88706,6 +88930,10 @@
                         {
                           "additionalProperties": false,
                           "properties": {
+                            "allowPluginSkills": {
+                              "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                              "type": "boolean"
+                            },
                             "allowThreadProcesses": {
                               "default": false,
                               "type": "boolean"
@@ -90635,6 +90863,10 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                            "type": "boolean"
+                          },
                           "allowThreadProcesses": {
                             "default": false,
                             "type": "boolean"
@@ -91628,6 +91860,10 @@
                                 {
                                   "additionalProperties": false,
                                   "properties": {
+                                    "allowPluginSkills": {
+                                      "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                                      "type": "boolean"
+                                    },
                                     "allowThreadProcesses": {
                                       "default": false,
                                       "type": "boolean"
@@ -92825,6 +93061,10 @@
                         {
                           "additionalProperties": false,
                           "properties": {
+                            "allowPluginSkills": {
+                              "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                              "type": "boolean"
+                            },
                             "allowThreadProcesses": {
                               "default": false,
                               "type": "boolean"
@@ -94028,6 +94268,10 @@
                   {
                     "additionalProperties": false,
                     "properties": {
+                      "allowPluginSkills": {
+                        "description": "显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。",
+                        "type": "boolean"
+                      },
                       "allowThreadProcesses": {
                         "default": false,
                         "type": "boolean"

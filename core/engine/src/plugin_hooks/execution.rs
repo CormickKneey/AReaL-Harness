@@ -33,16 +33,10 @@ impl Engine {
             );
         }
         if state.thread.parent_thread_id.is_some()
-            && !matches!(
-                event,
-                HookEvent::SessionStart
-                    | HookEvent::SessionEnd
-                    | HookEvent::PreCompact
-                    | HookEvent::PostCompact
-            )
+            && !matches!(event, HookEvent::SessionStart | HookEvent::SessionEnd)
         {
             input["agent_id"] = json!(cell.id);
-            input["agent_type"] = json!("default");
+            input["agent_type"] = json!(hook_agent_type(&state.thread));
             if event == HookEvent::SubagentStop {
                 input["agent_transcript_path"] = Value::Null;
             }

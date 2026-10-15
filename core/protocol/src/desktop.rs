@@ -240,6 +240,9 @@ pub struct Provider {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentProfile {
+    /// 显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub allow_plugin_skills: bool,
     pub id: String,
     pub revision: String,
     pub display_name: String,

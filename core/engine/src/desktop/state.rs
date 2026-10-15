@@ -169,12 +169,17 @@ impl Engine {
                 .unwrap_or_default();
             // 显式 target 是全新的普通配置选择；空对象表示当前部署默认模型。
             let config = if let Some(target) = &request.target {
-                engine.resolve_config(
+                let mut config = engine.resolve_config(
                     target.agent_profile.clone(),
                     target.model.clone(),
                     target.parameters.clone().unwrap_or_default(),
                     0,
-                )?
+                )?;
+                config.allow_plugin_skills = config
+                    .profile
+                    .as_ref()
+                    .is_some_and(|p| p.allow_plugin_skills);
+                config
             } else {
                 anchor_config
             };
@@ -592,7 +597,12 @@ impl Engine {
                 )?,
                 ..Default::default()
             };
-            data.configuration.allow_plugin_skills = allow_plugin_skills;
+            data.configuration.allow_plugin_skills = allow_plugin_skills
+                || data
+                    .configuration
+                    .profile
+                    .as_ref()
+                    .is_some_and(|p| p.allow_plugin_skills);
             if let Some(guard) = &request.admission_guard {
                 if !guard.ordinary_session {
                     return Err(invalid("ordinarySession must be true"));
@@ -772,8 +782,7 @@ impl Engine {
             if request.reset_model && request.model.is_some() {
                 return Err(invalid("model and resetModel cannot be used together"));
             }
-            let allow_plugin_skills =
-                request.agent_profile.is_none() && previous.allow_plugin_skills;
+            let inherited_plugin_scope = request.agent_profile.is_none();
             let mut configuration = engine.resolve_config(
                 request.agent_profile.or_else(|| {
                     previous.profile.as_ref().map(|p| VersionRef {
@@ -804,7 +813,12 @@ impl Engine {
                     "workflow-bound profiles can only be selected when creating a new thread",
                 ));
             }
-            configuration.allow_plugin_skills = allow_plugin_skills;
+            configuration.allow_plugin_skills = previous.allow_plugin_skills
+                && (inherited_plugin_scope
+                    || configuration
+                        .profile
+                        .as_ref()
+                        .is_some_and(|p| p.allow_plugin_skills));
             configuration.options = request.options.unwrap_or(previous.options);
             let selected_skills = match request.selected_skills {
                 Some(skills) if skills.is_empty() => None,

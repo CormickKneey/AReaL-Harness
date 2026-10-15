@@ -7,10 +7,11 @@ impl Engine {
     ) -> anyhow::Result<()> {
         self.drain_hook_results(cell, true).await?;
         if cell.hooks.child_start.swap(false, Ordering::AcqRel) {
+            let agent_type = hook_agent_type(&cell.state.lock().await.thread).to_owned();
             self.plugin_hook_event(
                 cell,
                 HookEvent::SubagentStart,
-                json!({"agent_type":"default"}),
+                json!({"agent_type":agent_type}),
                 cancel,
             )
             .await?;
@@ -108,7 +109,7 @@ impl Engine {
         };
         let mut input = json!({"stop_hook_active":cell.hooks.stop_active.load(Ordering::Acquire),"last_assistant_message":last});
         if event == HookEvent::SubagentStop {
-            input["agent_type"] = json!("default");
+            input["agent_type"] = json!(hook_agent_type(&cell.state.lock().await.thread));
         }
         let effects = self.plugin_hook_event(cell, event, input, cancel).await?;
         if effects.stop.is_some() || effects.continuation.is_empty() {

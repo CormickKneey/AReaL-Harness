@@ -50,6 +50,14 @@
 
 失败先保留再修复：上传明确拒绝卡 UNKNOWN、scope/challenge 交接、同 scope 被拒 token 恢复、GUI 重连丢失表单，以及 HTTP403 后丢失既有授权范围均有 RED/GREEN。最后一项以真实 HTTP 夹具验证 read → read write、取消重试、新绑定隔离和原 POST 不重放，8项便携认证检查通过。两处验收夹具错误也保留：内部 nullable 存储字段误作桌面请求；legacy 扩展资源 schema 误作标准 simple request。修正请求契约，没有放宽产品校验。
 
+## GitHub 真实接入补充验收
+
+独立工作树 `codex/plugins-acceptance` 从保留的 `ef0f8edf` 继续；主目录后续撤回插件集成的决定保持不变。固定槽位 `/Users/sailfish/CodeProject/AReaL-Harness/.local/dev-bin/plugins-acceptance` 的 Core SHA256 为 `7d046b1c31bf5d7eb01bd427432fd178b64ba33a6bcd5cf7cc3b5467fe0fbe4b`，部署回执 `/private/tmp/plugin-acceptance-deployment-candidate.json`，运行期间未替换。
+
+`/private/tmp/areal-plugin-github-L8ywBV/manifest.json` 记录9项通过：安装无执行、原始 Connector ID 保留且先明确映射、真实远端初始化、普通 Core Turn 单次只读 `get_me`、断开撤销连接、重连产生新世代、禁用后撤销与拒绝重连、确认 Core 重启后凭据引用/映射恢复，以及确认清理与凭据不进入磁盘/模型的检查。既有 `gh` 凭据仅在内存读取和受控子进程环境传递；没有 GitHub 写入。模型是本地确定性夹具，GitHub HTTP 服务与工具调用是真实的。初始同源码基线5项通过保留在 `/private/tmp/areal-plugin-github-CidiVn/manifest.json`。
+
+这关闭本宿主指定 GitHub Connector 的 bearer 凭据接入验收；不代表 GitHub OAuth 浏览器流程、其他托管 Connector、远程用户文件上传或完整 P1/P3 均通过。本轮标准 `make desktop-schemas` 已通过，历史失败不覆盖，详情及 hooks 的后续证据见 [P2 矩阵](codex-plugins-p2-acceptance.md)。固定路径的人工安全提示复用未取得用户观察，不能从功能成功推断；没有签名或防护设置变更。
+
 ## 历史失败与剩余边界
 
 - 首轮 Engine 重启探针与 OAuth 跨进程 fixture 明确收到 SIGKILL9，stdout/stderr 为空；两个 proxy fixture 只有子进程失败/空输出，未记录 signal。scope 修复后的最终候选使用原构建环境和标准测试命令，四项均通过；旧失败和诊断保留，原因仍 UNKNOWN，不能将其归因于 scope 修复。

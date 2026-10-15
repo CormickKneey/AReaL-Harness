@@ -50,6 +50,14 @@ Chooser and directory-confirmation responses are scripted. Real Main/Core/Runtim
 
 RED/GREEN preserves definite-rejection UNKNOWN, scope/challenge handoff, same-scope rejected-token recovery, GUI reconnect-owner failures and lost grants after HTTP403. The last real HTTP fixture checks read → read write, cancelled retry, binding isolation and no POST replay; all8 portable-auth checks pass. Two fixture contract errors are retained: internal stored nulls sent as desktop params and resource extensions sent as standard legacy schema. Fixtures were corrected without loosening production validation.
 
+## Supplemental real GitHub acceptance
+
+The isolated `codex/plugins-acceptance` worktree continues from retained `ef0f8edf`; the primary checkout's later plugin-integration reverts remain intact. Core SHA256 in the fixed slot `/Users/sailfish/CodeProject/AReaL-Harness/.local/dev-bin/plugins-acceptance` is `7d046b1c31bf5d7eb01bd427432fd178b64ba33a6bcd5cf7cc3b5467fe0fbe4b`, with deployment receipt `/private/tmp/plugin-acceptance-deployment-candidate.json` and no replacement during execution.
+
+`/private/tmp/areal-plugin-github-L8ywBV/manifest.json` records9 passes: inert installation, retained original Connector id requiring explicit mapping, real remote initialization, one read-only `get_me` through an ordinary Core Turn, disconnect revocation, a new generation on reconnect, disable revocation/reconnect denial, mapping/credential-reference recovery after confirmed Core restart, and confirmed cleanup with no credential in storage or model input. The existing `gh` credential is read only in memory and passed through the controlled child environment; no GitHub writes occur. The model is a deterministic local fixture; GitHub HTTP and the tool call are real. The initial same-source five-check baseline remains in `/private/tmp/areal-plugin-github-CidiVn/manifest.json`.
+
+This accepts this host's specified GitHub Connector with bearer credentials; it does not establish browser-based GitHub OAuth, other hosted Connectors, remote user-file uploads or complete P1/P3 conformance. Standard `make desktop-schemas` passes in this batch without overwriting historical failures; see the [P2 matrix](codex-plugins-p2-acceptance.en.md) for hook follow-up evidence. Human observation of security-prompt reuse at the fixed path was not obtained and cannot be inferred from functional success; signing and protection settings were not changed.
+
 ## Historical failures and unaccepted boundaries
 
 - Initial Engine restart and OAuth subprocesses explicitly received SIGKILL9 with empty output; proxy failures did not capture their signals. All four pass on the final candidate using the original build environment and standard tests. Historical failures remain recorded, with cause UNKNOWN; their recovery cannot be attributed to the scope repair.

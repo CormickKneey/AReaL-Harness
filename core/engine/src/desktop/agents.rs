@@ -101,8 +101,12 @@ impl Engine {
             config.tool_allowlist = previous.tool_allowlist.clone();
         }
         let parent_skills = self.effective_skill_refs(&previous, true);
-        config.allow_plugin_skills =
-            previous.allow_plugin_skills && request.agent_profile.is_none();
+        config.allow_plugin_skills = previous.allow_plugin_skills
+            && (request.agent_profile.is_none()
+                || config
+                    .profile
+                    .as_ref()
+                    .is_some_and(|p| p.allow_plugin_skills));
         config.plugin_skills = previous.plugin_skills.clone();
         if let Some(skills) = &request.skills {
             // An explicit empty list means "use no additional skills". It is

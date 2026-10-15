@@ -15,11 +15,11 @@ Candidate evidence captured 2026-10-14 against Codex0.162.1 / `092d3acd6bec3e3a1
 | PermissionRequest independent of Pre | Actual allow/deny without tool_use_id; deployment/read-only boundaries retained | Local pass; all policy modes/providers unaccepted |
 | User/steer deduplication and repeated Stop | Concurrent same-key success/rejection runs once; Stop samples three times with false/true/true, no synthetic Prompt | Local pass; actual direct/queue steer uploads pass |
 | MCP handler and real human waits | Original stdio handler blocks before model; 1s active budget survives 1.4s human wait; MRTR4 pass | Local pass; real remote/HTTP upload conditions remain P1/P3 gaps |
-| Manual compaction owner and Pre/Post/Start compact | Each real MCP event once under true compaction owner | Local pass; auto compact/resume/all attach combinations unaccepted |
+| Compaction owner, Pre/Post/Start compact and recovery | Manual MCP events plus actual command auto/manual compaction; confirmed Core restart emits resume once, same-Core attach does not replay, Fork uses fork | Local lifecycle matrix11 passes; child recovery and clear/external supplied-history recovery remains unaccepted |
 | UTF-8 spill, strict output, known fail-open | Both ends and retained full output; output6 pass | Local pass; retained files use Core data directory rather than Codex OS temp |
 | Background concurrency, safe points, descendants, End | Runtime56 pass; actual Core21 includes ordinary command releasing waiting async hook, next-Turn context, confirmed descendant exit and End once | Local default matrix21 pass with separately consented read-only child; arbitrary dependency cycles remain excluded |
-| SubagentStart/Stop and agent_type | Actual ordinary read-only child emits Start/Stop with root session_id and exact child identity | Limited command path passes; custom roles and read-only MCP incomplete |
-| Pinned Codex binary comparison | Actual0.162.1: Prompt exit2 makes0 model requests; Stop makes2 requests and active=true | Two events pass with owned hook/loopback model; no whole-package/all-event comparison |
+| SubagentStart/Stop and agent_type | Ordinary writable/limited read-only custom Profile identity and matchers pass; child compaction preserves root session_id, agent_id and agent_type | Profile explicitly opts in with allowPluginSkills; parent restriction and separate read-only consent remain; read-only MCP stays excluded |
+| Pinned Codex binary and schema comparison | Historical two-event binary comparison plus all12 actual command input types against pinned upstream schemas | Schemas pass with required-field fault rejection; whole-package/all-event binary differential remains unaccepted |
 | Human-wait journal and response budget | Real MRTR upload enclosing durable submission RED timeout→GREEN; near7.5MiB concurrent responses RED overflow→GREEN restart/no replay | Fixes pass; actual hook steer uploads pass |
 | Schema generation and failure preservation | Standard Make exit0;5 failure/invalid-JSON/success checks | Current command passes; historical SIGKILL cause UNKNOWN |
 
@@ -32,6 +32,7 @@ cargo test --locked -p areal-plugins
 cargo test --locked -p areal-mcp
 cargo test --locked -p areal-engine --test codex_plugins --test plugin_hook_output --test plugin_mcp_runtime --test plugin_mcp_subscriptions
 AREAL_TEST_BIN_DIR=/absolute/bin-dir node scripts/plugin-hooks-smoke.mjs
+AREAL_TEST_BIN_DIR=/absolute/bin-dir node scripts/plugin-hooks-lifecycle-smoke.mjs
 AREAL_TEST_BIN_DIR=/absolute/bin-dir node scripts/plugin-readonly-hooks-smoke.mjs
 AREAL_CORE_BIN=/absolute/bin-dir/areal node clients/gui/scripts/plugin-p2-hooks-smoke.mjs
 make desktop-schemas
@@ -112,6 +113,22 @@ Two concrete RED cases exposed data redirection: canonicalization turned a redir
 
 Real Core/Native fixtures cover the actual read-only child Start/Stop identities, existing sibling markers, forbidden workspace/host/sibling writes and network, secret absence, allowed private scratch/data writes, stale/revoked/omitted trust, persistence through confirmed restart, a disabled Profile, and Side from an otherwise eligible parent. Research/nativeTaskAgent exclusion is checked in the shared source predicate; this fixture does not create those worker modes. Full read-only MCP compatibility remains open.
 
+`plugin-hooks-lifecycle-smoke.mjs` defaults to the full matrix; `--focus-child` runs only child cases and records `completeMatrix:false`, which cannot establish all12 event types.
+
+## Supplemental lifecycle and custom-role acceptance
+
+This batch continues from `ef0f8edf` in isolated `codex/plugins-acceptance`; the primary checkout's plugin-integration reverts remain intact. See [GitHub supplemental acceptance](codex-plugins-p1-p3-acceptance.en.md#supplemental-real-github-acceptance) for the fixed Core slot, deployment receipt and SHA256. Runtime execution is real and the model is a loopback fixture; no new desktop/package or real-model-provider acceptance is claimed.
+
+`/private/tmp/areal-hooks-lifecycle-imX3bx/manifest.json` passes the default11-check matrix with `completeMatrix:true` and unchanged Core `7d046b1c…`: automatic/manual compaction, inert repeated same-Core attachment, Fork, one first-execution resume in a new Core, actual Interrupt, child compaction identity, custom-role inputs/matchers, separate read-only consent, default exclusion and parent narrowing. All12 actual command event types validate against pinned upstream schemas, and a missing-required-field fault is rejected. This is not a full-event Codex binary differential. Original schemas, license, NOTICE and file hashes are retained in [provenance](../../upstream/schemas/codex-hooks-0.162.1/provenance.json), bound by `upstream/pins.json` and used offline.
+
+Actual RED `/private/tmp/plugin-hooks-child-red.log` (`ulH9PJ`) reproduces missing child Pre/PostCompact `agent_id`; GREEN is `/private/tmp/plugin-hooks-child-green.log` (`hu9KXv`, explicitly `completeMatrix:false`, child-only evidence). The first two fixture failures involved a missing portable marker and an invalid AgentSpawn requestId; they are not product REDs and remain in `plugin-hooks-lifecycle-red{,-v2}.log`. The long-running child fixture sends SSE heartbeats while its model waits, avoiding a fixture-induced network watchdog; product timeouts remain unchanged.
+
+`AgentProfile.allowPluginSkills` defaults to false and false is not serialized, preserving existing definitions and exclusions. Deployment opts in through an immutable Profile revision. This does not replace package/definition trust, widen the parent boundary or bypass read-only consent. Input role and matcher use the same admitted configuration; the internal discovered-skills Profile remains default, and child compaction retains identity.
+
+Rust checks pass: plugin/MCP Engine integrations30, existing agents/async_agents/admission_guards26, protocol4 and focused desktop child2. Workspace build and standard three-schema generation pass; only the optional Profile field changes generated output. Historical SIGKILL cause remains UNKNOWN. The9 real GitHub checks are recorded separately in P1/P3.
+
+The existing default hooks22 matrix (`/private/tmp/areal-plugin-hooks-afiJDZ/manifest.json`) and read-only isolation10 (`/private/tmp/areal-readonly-hooks-ilbCZc/manifest.json`) both pass with the same unchanged fixed Core. Final checks match all six behavioral source files to the GitHub/lifecycle manifests; Rust formatting, JS syntax and public documents174 pass. Child-session recovery and clear/external supplied-history remain unaccepted; root-session recovery does not establish those paths.
+
 ## Closing full compatibility
 
-Complete custom role inputs, automatic compaction/resume/attach, all12 events against original packages, Windows/Linux execution and packages, real OAuth/HTTP uploads/services and authorized private OpenAI catalog/sharing. Open [P1/P3 requirements](codex-plugins-p1-p3-acceptance.en.md) remain; no release, signing, notarization or push occurs in this batch.
+Complete managed/profile/session hook layers, full native file-input mapping, child recovery and clear/external supplied-history recovery, read-only MCP, all12 events against original package binaries, Windows/Linux execution and packages, real OAuth/HTTP uploads/other specified services and authorized private OpenAI catalog/sharing. Open [P1/P3 requirements](codex-plugins-p1-p3-acceptance.en.md) remain; no release, signing, notarization or push occurs in this batch.
