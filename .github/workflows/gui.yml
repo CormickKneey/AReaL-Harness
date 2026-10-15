@@ -78,6 +78,8 @@ jobs:
           make gui-build 2>&1 | tee target/ci/gui/gui-build.log
       - name: Check registered desktop RPC routes
         run: cargo test --locked -p areal-app-server --lib desktop_registered_methods_have_dispatch_routes 2>&1 | tee target/ci/gui/rpc-routes.log
+      - name: Verify sanitized historical sessions
+        run: pnpm --dir clients/gui run test:history-compat 2>&1 | tee target/ci/gui/history-compat.log
       - name: Verify existing GUI workflow
         run: make gui-smoke 2>&1 | tee target/ci/gui/migration.log
       - name: Verify Composer workflow
@@ -104,6 +106,7 @@ jobs:
             target/ci/gui/
             /private/tmp/areal-gui-*/
             /private/tmp/ams-*/
+            /private/tmp/ahc-*/
             /private/tmp/areal-core-process-*/
             /private/tmp/areal-browser-*/
             /private/tmp/shared-browser-06-evidence-*/

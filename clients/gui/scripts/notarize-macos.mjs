@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import { parseArgs } from "node:util";
 import { fileURLToPath } from "node:url";
 import { join, resolve, dirname, basename, sep } from "node:path";
+import { homedir } from "node:os";
 import {
   existsSync,
   readFileSync,
@@ -110,6 +111,7 @@ function summary() {
     artifacts: state.artifacts,
     packagedGui: state.packagedGui,
     packagedModelSelection: state.packagedModelSelection,
+    historyPreflight: state.historyPreflight,
   };
 }
 function assertApp() {
@@ -135,6 +137,7 @@ async function main() {
       output: { type: "string" },
       identity: { type: "string" },
       "keychain-profile": { type: "string" },
+      "history-source": { type: "string" },
       resume: { type: "boolean" },
       "wait-seconds": { type: "string", default: "60" },
     },
@@ -145,6 +148,7 @@ async function main() {
         "  --app /absolute/AReaL\\ Harness.app --output /absolute/new-directory\n" +
         '  --identity "Developer ID Application: Name (TEAMID)" --keychain-profile profile\n' +
         "  [--wait-seconds 60]\n\n" +
+        "  [--history-source /absolute/areal-core] (default: installed GUI history)\n\n" +
         "Resume: --resume --output /absolute/existing-directory [--wait-seconds 60]\n" +
         "Identity/profile can also use CSC_NAME / APPLE_KEYCHAIN_PROFILE.\n" +
         "Requires macOS, Xcode notarytool, installed project dependencies and an existing\n" +
@@ -161,7 +165,10 @@ async function main() {
   const requestedOutput = resolve(options.output);
   if (options.resume) {
     assert.ok(
-      !options.app && !options.identity && !options["keychain-profile"],
+      !options.app &&
+        !options.identity &&
+        !options["keychain-profile"] &&
+        !options["history-source"],
       "Resume uses the saved app, identity and profile; do not provide replacements",
     );
     output = realpathSync(requestedOutput);
@@ -173,6 +180,11 @@ async function main() {
       state.phase,
       "preparing",
       "Signing was interrupted. Inspect logs and start with a new output directory.",
+    );
+    assert.equal(
+      state.historyPreflight?.passed,
+      true,
+      "Candidate has no pre-sign history acceptance; start a new signing run",
     );
     if (state.phase === "complete") {
       for (const [name, artifact] of Object.entries(state.artifacts)) {
@@ -213,12 +225,44 @@ async function main() {
       "Missing Electron framework",
     );
     const manifestRelative = "Contents/Resources/areal-core/manifest.json";
+    const inputManifestSha256 = hash(join(source, manifestRelative));
     const manifest = readJSON(join(source, manifestRelative));
     assert.equal(manifest.apiVersion, "areal.core.v1", "Missing Core bundle");
     assert.equal(
       manifest.platform,
       "darwin/arm64",
       "This command currently supports macOS arm64 packages",
+    );
+    // 在访问签名身份、Apple 或创建输出前，使用候选包验证私有历史副本。
+    const historySource = resolve(
+      options["history-source"] ||
+        join(homedir(), "Library/Application Support/AReaL Harness GUI/areal-core"),
+    );
+    const history = run(process.execPath, [
+      join(desktop, "scripts/history-copy-smoke.mjs"),
+      "--source",
+      historySource,
+      "--executable",
+      join(source, "Contents/MacOS/AReaL Harness GUI"),
+    ]);
+    const historyPreflight = JSON.parse(history.stdout.trim().split("\n").at(-1));
+    assert.equal(historyPreflight.passed, true, "History preflight failed");
+    const historyEvidence = readJSON(historyPreflight.evidence);
+    assert.equal(historyEvidence.passed, true);
+    assert.equal(
+      historyEvidence.coreSha256,
+      manifest.files["bin/areal"],
+      "History preflight used a different Core",
+    );
+    assert.equal(
+      hash(join(source, manifestRelative)),
+      inputManifestSha256,
+      "Input manifest changed during preflight",
+    );
+    assert.equal(
+      hash(join(source, "Contents/Resources/areal-core/bin/areal")),
+      historyEvidence.coreSha256,
+      "Core changed during preflight",
     );
     const identity = options.identity || process.env.CSC_NAME;
     const profile = options["keychain-profile"] || process.env.APPLE_KEYCHAIN_PROFILE;
@@ -262,7 +306,8 @@ async function main() {
       teamId,
       profile,
       coreSourceRevision: manifest.sourceRevision,
-      inputManifestSha256: hash(join(source, manifestRelative)),
+      inputManifestSha256,
+      historyPreflight,
       notarization: {},
       startedAt: new Date().toISOString(),
     };

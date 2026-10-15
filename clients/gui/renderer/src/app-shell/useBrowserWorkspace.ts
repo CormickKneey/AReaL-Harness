@@ -21,7 +21,7 @@ export function useBrowserWorkspace(services: PlatformServices, projectId: strin
   const [projection, setProjection] = useState<{ owner: string; value: Data }>({ owner, value: {} });
   const refreshRef = useRef<() => Promise<void>>(async () => {});
   useEffect(() => {
-    if (!projectId) return;
+    if (!projectId || !threadId) return;
     let alive = true, reading = false, again = false, subscribedWorkspace = "", lastValue = "";
     const refresh = async () => {
       if (!alive) return;
