@@ -579,8 +579,7 @@ button.composer-project:hover > svg,
 }
 .sidebar-resize::after { content: ""; position: absolute; inset: 0 8px 0 7px; }
 .sidebar-resize:hover::after, .sidebar-resize:focus-visible::after { background: var(--color-border-hover); }
-/* The Composer shell provides the focus boundary around its editable content. */
-.composer-dock [contenteditable="true"]:focus-visible {
+.composer-dock [contenteditable]:focus-visible {
   outline: none;
 }
 .composer-model-trigger { max-width: 220px; min-width: 0; height: 28px; padding: 4px 8px; gap: 4px; border-radius: 12.5px; font-size: var(--text-ui-caption); font-weight: 430; }
