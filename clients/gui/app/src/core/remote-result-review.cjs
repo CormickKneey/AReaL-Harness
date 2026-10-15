@@ -1,6 +1,6 @@
 "use strict";
 const { randomBytes, createCipheriv, createDecipheriv, createHash } = require("node:crypto");
-const { reviewTurnFiles } = require("../../../packages/workspace-git");
+const { reviewTurnFiles } = require("@areal/workspace-git");
 const LIMITS = Object.freeze({
     reviewPageBytes: 16 * 1024,
     reviewBodyBytes: 4 * 1024 * 1024,
@@ -139,7 +139,7 @@ class ResultReviews {
         this.authorize(connection, projectId);
         const ref = this.open(params.artifactRef);
         if (ref.kind !== "artifact" || params.offset >= ref.size) throw failure();
-        const { rasterInfo } = await import("../../../packages/remote/src/raster.mjs");
+        const { rasterInfo } = await import("@areal/remote/raster");
         this.authorize(connection, projectId);
         return this.observers.reviewThread(
             connection,
