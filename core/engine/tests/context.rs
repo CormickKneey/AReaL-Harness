@@ -861,6 +861,108 @@ async fn valid_8027_byte_summary_is_not_discarded_at_an_arbitrary_8000_byte_limi
 }
 
 #[tokio::test]
+async fn soft_target_below_request_floor_does_not_starve_small_user_revisions() {
+    let data = tempfile::tempdir().unwrap();
+    // 故意让摘要不记修订；用户原文的保留不能取决于摘要是否碰巧复述了要求。
+    let model = continuity_model("Earlier checks completed; continue from confirmed evidence.");
+    let limits = Limits {
+        context_window_bytes: 20000,
+        context_recent_bytes: 4096,
+        context_window_tokens: 40000,
+        context_output_reserve_tokens: 1000,
+        context_target_tokens: 1000,
+        ..Limits::default()
+    };
+    let engine = Engine::open(data.path(), model.clone(), limits.clone()).unwrap();
+    let thread = engine.create("/workspace".into()).await.unwrap();
+    let revisions = [
+        "Initial delivery: nonce=contract-87; preserve accepted.txt byte for byte.",
+        "Revision two: only repair alpha=true, beta=false, offset=17, retries=0; nonce is unchanged.",
+        "Revision three supersedes only offset: offset=23. The other fields, nonce and preservation requirement remain binding.",
+    ];
+    for revision in revisions {
+        assert_eq!(
+            turn(&engine, &thread.id, revision)
+                .await
+                .turns
+                .last()
+                .unwrap()
+                .status,
+            TurnStatus::Completed
+        );
+    }
+    for n in 0..6 {
+        let result = turn(
+            &engine,
+            &thread.id,
+            &format!("Check evidence batch {n}; keep the current revision for final delivery."),
+        )
+        .await;
+        assert_eq!(result.turns.last().unwrap().status, TurnStatus::Completed);
+        engine.context_compact(thread.id.clone()).await.unwrap();
+        let view = engine.context_read(&thread.id, 0, 32).await.unwrap();
+        let users: Vec<_> = view["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|message| message["role"] == "user")
+            .filter_map(|message| message["text"].as_str())
+            .collect();
+        for revision in revisions {
+            assert!(
+                users.contains(&revision),
+                "a soft target discarded a fitting user revision: {revision}"
+            );
+        }
+        assert!(
+            view["budget"]["estimatedInputTokens"].as_u64().unwrap()
+                <= view["budget"]["inputLimitTokens"].as_u64().unwrap()
+        );
+    }
+    assert!(
+        engine
+            .read(&thread.id, true)
+            .await
+            .unwrap()
+            .context_checkpoint
+            .unwrap()
+            .compactions
+            >= 4
+    );
+    engine.shutdown().await;
+    drop(engine);
+    let engine = Engine::open(data.path(), model.clone(), limits).unwrap();
+    assert_eq!(
+        turn(
+            &engine,
+            &thread.id,
+            "Resume and deliver the current revision."
+        )
+        .await
+        .turns
+        .last()
+        .unwrap()
+        .status,
+        TurnStatus::Completed
+    );
+    {
+        let requests = model.requests.lock().unwrap();
+        let (_, request) = requests
+            .iter()
+            .rev()
+            .find(|(purpose, _)| *purpose == RequestPurpose::Solve)
+            .unwrap();
+        let users: Vec<_> = request
+            .iter()
+            .filter(|m| m.role == "user")
+            .map(Message::text_content)
+            .collect();
+        assert_eq!(&users[..revisions.len()], &revisions);
+    }
+    engine.shutdown().await;
+}
+
+#[tokio::test]
 async fn expanding_summary_preserves_originals_without_committing_or_failing_a_fitting_turn() {
     let data = tempfile::tempdir().unwrap();
     let model = continuity_model(&"summary ".repeat(1500));

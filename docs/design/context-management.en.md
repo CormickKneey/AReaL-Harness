@@ -34,6 +34,8 @@ Allocate in this order, retaining original roles and chronology:
 3. Represent older material with one bounded checkpoint containing a summary, retrievable original references and execution receipts. Originals, evidence and summary share the remaining budget; prefer references for completed tool results.
 4. Never trim the latest request to satisfy the old soft quota. If mandatory content cannot fit, return `LLM_CONTEXT_WINDOW_EXCEEDED` instead of answering an older task.
 
+When the selected boundary's fixed instructions, recent complete rounds, latest request and valid summary already reach the soft token target, older text-only user revisions may still use the hard-window headroom within the existing byte allocation. This prevents the soft target from freezing revision capacity at zero. Historical attachments and optional execution evidence do not use this headroom. Chronology, hard preflight and newest-first selection under real capacity pressure remain unchanged. Summary guidance must not assume every older original is replayed separately; preserve unrevoked constraints and exact user-specified values.
+
 Initially retain the 60%-of-available-input compaction target as internal policy to provide headroom. When that target is unreachable but the hard window can still be met, record why and avoid repeated compaction without progress. Replan after model switches. Manual/disabled modes retain their explicit compaction and overflow boundaries.
 
 ## Compaction commits and failure
