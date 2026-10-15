@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { captureSmokeFailure } from './smoke-navigation.mjs';
+import { captureSmokeFailure, createProjectConversation } from './smoke-navigation.mjs';
 
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const sourceRoot = resolve(gui, '../..');
@@ -136,6 +136,7 @@ try {
   // Only the OS folder chooser is automated. Credential storage, IPC and Core stay real.
   await app.evaluate(({ dialog, BrowserWindow }, path) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] }); dialog.showMessageBox = async () => ({ response: 1 }); BrowserWindow.getAllWindows()[0].setSize(1440, 960); }, workspace);
   await page.evaluate(() => window.arealDesktop.chooseProject());
+  await createProjectConversation(page, 'workspace');
   const ready = await poll(state, s => s.projects[0]?.state?.connected, 'project connected'); projectId = ready.projects[0].id;
   if (await button('返回应用').isVisible()) await button('返回应用').click();
   await page.getByTestId('chat-input').waitFor();

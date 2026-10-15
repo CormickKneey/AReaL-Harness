@@ -30,7 +30,15 @@ import { SettingsSegmentedTabs } from "./SettingsSegmentedTabs.js";
 import { MessageResponse } from "../components/ai-elements/message.js";
 import { ResourceScope, CatalogEmpty, type ScopedProps } from "./ScopedSkillsSettings.js";
 import type { Data } from "../services.js";
-export function McpSettings({ project, action, scope: controlledScope, onScopeChange }: ScopedProps) {
+import { pluginSourceLabel, pluginMcpStateLabel, type PluginMcpResource } from "./pluginResources.js";
+export function McpSettings({
+  project, action, scope: controlledScope, onScopeChange,
+  pluginServers = [], onManagePlugin, onRefreshPlugins,
+}: ScopedProps & {
+  pluginServers?: PluginMcpResource[];
+  onManagePlugin?: (pluginId: string) => void;
+  onRefreshPlugins?: () => Promise<void>;
+}) {
   const [localScope, setLocalScope] = useState("user");
   const scope = controlledScope ?? localScope;
   const setScope = (value: string) => { setLocalScope(value); onScopeChange?.(value); };
@@ -88,9 +96,14 @@ export function McpSettings({ project, action, scope: controlledScope, onScopeCh
     setConfig(baseline.current.config);
     setError("");
   };
+  const source = `独立资源 · ${scope === "user" ? "用户" : "当前项目"}`;
+  const packageItems = pluginServers.filter((item) =>
+    `${item.serverId} ${pluginSourceLabel(item.owner)}`.toLowerCase().includes(query.toLowerCase()),
+  );
   const items = (state.loading ? [] : state.value?.data ?? []).filter((item: Data) =>
     [
       item.id,
+      source,
       item.config?.transport?.command,
       item.config?.transport?.url,
       ...(item.tools ?? []).map((tool: Data) => tool.name),
@@ -106,7 +119,7 @@ export function McpSettings({ project, action, scope: controlledScope, onScopeCh
           <div className="resource-catalog-bar">
             <ResourceScope value={scope} onChange={v=>{setScope(v);setQuery("");setError("");setMessage("");}} project={project} disabled={busy}/>
             <strong>
-              MCP <small>{state.value?.data?.length ?? 0}</small>
+              MCP <small>{(state.value?.data?.length ?? 0) + pluginServers.length}</small>
             </strong>
             <SettingsSearchInput
               value={query}
@@ -121,7 +134,7 @@ export function McpSettings({ project, action, scope: controlledScope, onScopeCh
             description={scope === "user" ? "供所有项目复用；连接开关仅影响当前项目。" : "仅用于当前项目。"}
             loading={state.loading}
             disabled={disabled}
-            onRefresh={() => void state.refresh()}
+            onRefresh={() => { void state.refresh(); void onRefreshPlugins?.(); }}
             onAdd={() => edit()}
             addLabel="新增 MCP"
           />
@@ -131,11 +144,12 @@ export function McpSettings({ project, action, scope: controlledScope, onScopeCh
           />
           <div className="settings-resource-list">
             {items.map((item: Data) => (
-              <article key={item.id}>
+              <article key={`standalone:${scope}:${item.id}`} aria-label={`${item.id} · ${source}`}>
                 <div className="resource-title">
                   <Plug size={20} />
                   <div>
                     <strong>{item.id}</strong>
+                    <p>{source}</p>
                     {/* MCP 启动命令／URL 单行截断，长命令看不到后半段；补完整值的原生 title。 */}
                     <p
                       title={`${item.config.transport?.type ?? ""} ${
@@ -213,8 +227,22 @@ export function McpSettings({ project, action, scope: controlledScope, onScopeCh
                 </details>
               </article>
             ))}
+            {packageItems.map((item) => (
+              <article key={item.key} aria-label={`${item.serverId} · ${pluginSourceLabel(item.owner)}`}>
+                <div className="resource-title">
+                  <Plug size={20} />
+                  <div>
+                    <strong>{item.serverId}</strong>
+                    <p>{pluginSourceLabel(item.owner)}</p>
+                    <p>{item.owner.enabled ? "当前项目已启用" : "当前项目已停用"}</p>
+                  </div>
+                  <SettingsBadge>{pluginMcpStateLabel(item.state)}</SettingsBadge>
+                  <Button variant="outline" onClick={() => onManagePlugin?.(item.owner.pluginId)}>管理插件</Button>
+                </div>
+              </article>
+            ))}
           </div>
-          {!state.loading && !items.length && (
+          {!state.loading && !items.length && !packageItems.length && (
             <CatalogEmpty kind="MCP 服务器" query={query} scope={scope} onAdd={()=>edit()}/>
           )}
 

@@ -20,6 +20,7 @@ import {
 } from "./common.js";
 import { MessageResponse } from "../components/ai-elements/message.js";
 import type { Action, Data } from "../services.js";
+import { pluginSourceLabel, type PluginSkillResource } from "./pluginResources.js";
 export type ScopedProps = {
   project?: Data;
   thread?: Data;
@@ -111,7 +112,14 @@ export function ScopedSkillsSettings({
   action,
   scope: controlledScope,
   onScopeChange,
-}: ScopedProps) {
+  pluginSkills = [],
+  onManagePlugin,
+  onRefreshPlugins,
+}: ScopedProps & {
+  pluginSkills?: PluginSkillResource[];
+  onManagePlugin?: (pluginId: string) => void;
+  onRefreshPlugins?: () => Promise<void>;
+}) {
   const [localScope, setLocalScope] = useState("user"),
     [query, setQuery] = useState(""),
     [draft, setDraft] = useState<Data | null>(null),
@@ -133,8 +141,13 @@ export function ScopedSkillsSettings({
       ...values,
     });
   const state = useResource(() => api("skills"), `${scope}:${project?.id}`);
+  const source = `独立资源 · ${scope === "user" ? "用户" : "当前项目"}`;
+  const packageItems = pluginSkills.filter((item) =>
+    `${item.name} ${item.id} ${item.description} ${pluginSourceLabel(item.owner)}`
+      .toLowerCase().includes(query.toLowerCase()),
+  );
   const items = (state.value?.data ?? []).filter((s: Data) =>
-    `${s.name} ${s.id} ${s.description}`
+    `${s.name} ${s.id} ${s.description} ${source}`
       .toLowerCase()
       .includes(query.toLowerCase()),
   );
@@ -172,7 +185,7 @@ export function ScopedSkillsSettings({
         <strong>
           技能{" "}
           <small>
-            {state.loading ? "…" : (state.value?.data?.length ?? 0)}
+            {state.loading ? "…" : (state.value?.data?.length ?? 0) + pluginSkills.length}
           </small>
         </strong>
         <SettingsSearchInput
@@ -192,7 +205,7 @@ export function ScopedSkillsSettings({
         }
         loading={state.loading}
         disabled={busy || state.loading}
-        onRefresh={() => void state.refresh()}
+        onRefresh={() => { void state.refresh(); void onRefreshPlugins?.(); }}
         onAdd={add}
         addLabel="新建技能"
       />
@@ -203,7 +216,7 @@ export function ScopedSkillsSettings({
       <div className="settings-resource-list">
         {!state.loading &&
           items.map((item: Data) => (
-            <article className="skill-resource-row" key={item.id}>
+            <article className="skill-resource-row" key={`standalone:${scope}:${item.id}`} aria-label={`${item.name || item.id} · ${source}`}>
               <button
                 className="resource-card"
                 aria-label={`查看技能 ${item.id}`}
@@ -224,6 +237,7 @@ export function ScopedSkillsSettings({
                 <BookOpen size={20} />
                 <span>
                   <strong>{item.name}</strong>
+                  <small>{source}</small>
                   <small title={item.description || item.error}>
                     {item.error || item.description || "查看技能内容"}
                   </small>
@@ -247,8 +261,22 @@ export function ScopedSkillsSettings({
               />
             </article>
           ))}
+        {packageItems.map((item) => (
+          <article className="skill-resource-row" key={item.key} aria-label={`${item.name} · ${pluginSourceLabel(item.owner)}`}>
+            <div className="resource-card">
+              <BookOpen size={20} />
+              <span>
+                <strong>{item.name}</strong>
+                <small>{pluginSourceLabel(item.owner)}</small>
+                <small title={item.description}>{item.description || item.id}</small>
+              </span>
+            </div>
+            <SettingsBadge>{item.owner.enabled ? "当前项目已启用" : "当前项目已停用"}</SettingsBadge>
+            <Button variant="outline" onClick={() => onManagePlugin?.(item.owner.pluginId)}>管理插件</Button>
+          </article>
+        ))}
       </div>
-      {!state.loading && !items.length && !state.error && (
+      {!state.loading && !items.length && !packageItems.length && !state.error && (
         <CatalogEmpty kind="技能" scope={scope} query={query} onAdd={add} />
       )}
       {selected && (

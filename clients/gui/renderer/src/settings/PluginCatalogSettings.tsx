@@ -1,5 +1,5 @@
 import { PluginHookSettings } from "./PluginHookSettings.js";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Package } from "lucide-react";
 import {PluginAuthConfiguration} from "./PluginAuthConfiguration.js";
 import { Button } from "../components/ui/button.js";
@@ -10,6 +10,7 @@ import { SettingsSearchInput } from "./SettingsSearchInput.js";
 import { SettingsSegmentedTabs } from "./SettingsSegmentedTabs.js";
 import { ResourceScope, type ScopedProps } from "./ScopedSkillsSettings.js";
 import type { Data } from "../services.js";
+import { pluginMcpStateLabel } from "./pluginResources.js";
 
 type PluginSkill = {
   id: string;
@@ -124,13 +125,22 @@ function failureText(error: PluginFailure | null) {
 /** 插件包状态归 Core；手工 Skill/MCP 设置仍使用各自原有入口。 */
 export type PluginCatalogProps = ScopedProps & {
   onOpenThread?: (projectId: string, threadId: string) => void;
+  apps?: (pluginId: string) => ReactNode;
 };
 export function PluginCatalogSettings({
   project,
   thread,
   action,
   onOpenThread,
-}: PluginCatalogProps) {
+  apps,
+  active: panelActive = true,
+  selectedPluginId,
+  onSelectPlugin,
+}: PluginCatalogProps & {
+  active?: boolean;
+  selectedPluginId: string | null;
+  onSelectPlugin: (id: string | null) => void;
+}) {
   const projectId = project?.id;
   const connected = !!project?.state?.connected;
   const [catalog, setCatalog] = useState<PluginList | null>(null);
@@ -161,7 +171,8 @@ export function PluginCatalogSettings({
   const [detail, setDetail] = useState<PluginDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState("");
-  const [selected, setSelected] = useState<string | null>(null);
+  const selected = selectedPluginId;
+  const setSelected = onSelectPlugin;
   const [hookSources,setHookSources]=useState<{id:string;digest:string;origin:string;enabled:boolean}[]>([]);
   const active = useRef(false);
   const mounted = useRef(true);
@@ -558,13 +569,16 @@ export function PluginCatalogSettings({
       )}
       <Feedback error={failureText(error)} message={message} />
       <Feedback error={readError} />
-      {!selected && hookSources.map(source=><details key={source.id} className="settings-section">
+      {!selected && hookSources.length > 0 && <details>
+        <summary>高级 · 独立钩子</summary>
+        {hookSources.map(source=><details key={source.id} className="settings-section">
         <summary>{source.id==='__hooks_user__'?'用户钩子':'项目钩子'} · {source.enabled?'全局开关已启用':'全局开关已停用'}</summary>
         <p className="text-ui-sm break-all">{source.origin}</p>
         <PluginHookSettings id={source.id} installedDigest={source.digest} disabled={disabled}
           api={api} refreshKey={catalog?.revision}
           onConfigure={params=>mutate("pluginHooksConfigure",params)} />
       </details>)}
+      </details>}
       {!selected && !adding && recoveryButton}
       {!selected && setupThreadId && onOpenThread && (
         <Button onClick={() => onOpenThread(projectId, setupThreadId)}>
@@ -619,7 +633,7 @@ export function PluginCatalogSettings({
       )}
       <div className="settings-resource-list">
         {items.map((item) => (
-          <article className="skill-resource-row" key={item.id}>
+          <article className="skill-resource-row" key={item.id} aria-label={`${item.displayName || item.name} · 插件 ${item.id}`}>
             <button
               className="resource-card"
               disabled={busy}
@@ -658,7 +672,7 @@ export function PluginCatalogSettings({
           </p>
         </div>
       )}
-      {adding && (
+      {panelActive && adding && (
         <SettingsDialog
           title="添加插件来源"
           description="选择本地目录或 Git marketplace。读取来源不会安装插件或启动服务器。"
@@ -737,7 +751,7 @@ export function PluginCatalogSettings({
           </form>
         </SettingsDialog>
       )}
-      {selected && (
+      {panelActive && selected && (
         <SettingsDialog
           title={detail?.displayName || detail?.name || selected}
           description={detail?.description || "查看插件内容、来源与可用能力。"}
@@ -943,6 +957,7 @@ export function PluginCatalogSettings({
                   onConfigure={(parameters) => mutate("pluginHooksConfigure", parameters)}
                   refreshKey={catalog?.revision} />
               )}
+              {detail.installed && apps?.(detail.id)}
               {detail.installed && (
                 <section aria-label="插件连接与认证">
                   <h3>MCP 连接</h3>
@@ -956,7 +971,7 @@ export function PluginCatalogSettings({
                         <strong>{row.id ?? row.serverId}</strong>
                         <span>
                           {" "}
-                          · {String(row.state ?? row.status ?? "未连接")}
+                          · {pluginMcpStateLabel(String(row.state ?? row.status ?? "disconnected"))}
                         </span>
                         {row.message && <p>{String(row.message)}</p>}
                         {row.config?.authentication && <p>{row.authenticationTiming === "ON_INSTALL" ? "此插件要求安装后认证。完成认证后再连接服务。" : "首次需要受保护功能时，请先完成认证。"}</p>}

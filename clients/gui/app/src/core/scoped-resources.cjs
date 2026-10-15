@@ -249,6 +249,16 @@ class ScopedResources {
       const connected = (await project.client.request("areal/mcp/list")).data
         .filter((m) => ["connected", "stale"].includes(m.state))
         .map((m) => m.id);
+      const connectedPlugins =
+        ["areal/plugin/mcp/list", "areal/plugin/connection"].every((method) =>
+          project.client.capabilities?.methods?.includes(method),
+        )
+          ? (await project.client.request("areal/plugin/mcp/list")).data
+              .filter((plugin) =>
+                plugin.trusted && ["connected", "partial"].includes(plugin.state),
+              )
+              .map(({ pluginId, installedDigest }) => ({ pluginId, installedDigest }))
+          : [];
       const result = await project.client.request("areal/server/drain", {
         strategy: "wait",
         timeoutMs: 5000,
@@ -264,6 +274,20 @@ class ScopedResources {
             id,
             expectedRevision: m.revision,
           });
+      }
+      for (const plugin of connectedPlugins) {
+        const restored = await this.backend.submit(project, "areal/plugin/connection", {
+          id: plugin.pluginId,
+          expectedDigest: plugin.installedDigest,
+          connect: true,
+        });
+        const current = restored.data.find((row) => row.pluginId === plugin.pluginId);
+        if (
+          current?.installedDigest !== plugin.installedDigest ||
+          !current.trusted ||
+          !["connected", "partial"].includes(current.state)
+        )
+          throw new Error(`插件 ${plugin.pluginId} 连接未恢复，请检查认证和连接状态`);
       }
       return project;
     } finally {

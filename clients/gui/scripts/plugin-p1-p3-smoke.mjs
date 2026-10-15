@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 import {createServer} from 'node:http';
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {captureSmokeFailure} from './smoke-navigation.mjs';
+import {captureSmokeFailure,createProjectConversation} from './smoke-navigation.mjs';
 const gui=resolve(dirname(fileURLToPath(import.meta.url)),'..'),require=createRequire(join(gui,'app/package.json'));
 const {_electron:electron}=require('playwright-core');
 const scratch=await mkdtemp('/private/tmp/areal-plugin-gui-'),workspace=join(scratch,'workspace'),userHome=join(scratch,'user');
@@ -84,7 +84,7 @@ app=await electron.launch({executablePath:require('electron'),args:[join(gui,'ap
 page=await app.firstWindow();page.setDefaultTimeout(20_000);page.on('pageerror',e=>errors.push(e.message));
 await page.getByTestId('areal-workbench').waitFor({timeout:120_000});await until(s=>s.connection?.state==='ready','desktop ready');
 await app.evaluate(({dialog,BrowserWindow},path)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[path]});dialog.showMessageBox=async()=>({response:1});BrowserWindow.getAllWindows()[0].setSize(1440,960);},workspace);
-await page.evaluate(()=>window.arealDesktop.chooseProject());await until(s=>s.projects[0]?.state?.connected,'chosen project connected');
+await page.evaluate(()=>window.arealDesktop.chooseProject());await createProjectConversation(page,'workspace');await until(s=>s.projects[0]?.state?.connected,'chosen project connected');
 if(await button('返回应用').isVisible())await button('返回应用').click();await page.getByTestId('chat-input').waitFor();
 const ready=await until(s=>s.projects[0]?.state?.connected,'project connected'),projectId=ready.projects[0].id;
 await settings();
@@ -98,9 +98,7 @@ assert.equal(await button('信任并连接').isEnabled(),false,'connect requires
 await page.getByText('我信任此已安装快照并允许启动其 MCP 服务器',{exact:true}).click();await button('信任并连接').click();
 let connectedApps;for(let n=0;n<120;n++){connectedApps=await call('manage',{projectId,operation:'mcpApps'});if(connectedApps.data.some(server=>server.tools.some(tool=>tool.name==='fixture.open')))break;await new Promise(r=>setTimeout(r,250));}assert(connectedApps.data.some(server=>server.tools.some(tool=>tool.name==='fixture.open')));
 checks.push('GUI explicitly trusts installed digest and connects actual portable stdio server');
-await page.getByRole('dialog').getByRole('button',{name:/关闭/}).first().click();
-await page.getByRole('tab',{name:'应用',exact:true}).click();
-await page.getByRole('button',{name:'Fixture App',exact:true}).first().click();
+await page.getByRole('dialog').getByRole('button',{name:'Fixture App',exact:true}).click();
 await page.getByTestId('chat-input').waitFor();
 const ownerThread=await page.getByTestId('areal-workbench').getAttribute('data-thread-id');assert(ownerThread);
 await page.waitForFunction(()=>document.querySelector('iframe[src^="areal-mcp://"]'));

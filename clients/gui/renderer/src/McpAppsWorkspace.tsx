@@ -22,7 +22,7 @@ import {
     type McpAppTool,
 } from "./settings/McpAppsSettings.js";
 import type { Action, Data } from "./services.js";
-export type McpWorkspaceServer = McpAppServer & { pluginId?: string; marketplace?: string };
+export type McpWorkspaceServer = McpAppServer & { pluginId?: string; marketplace?: string; installedDigest?: string };
 type FormRequest = {
     requestId: string;
     threadId: string;
@@ -238,11 +238,27 @@ export function useMcpAppsWorkspace({
             return;
         }
         const owner = await ensureThread(global);
+        const directory = await current.current.action("manage", {
+            operation: "mcpApps",
+            projectId: owner.projectId,
+            threadId: owner.threadId,
+        });
+        if (current.current.project?.id !== project.id || owner.projectId !== project.id)
+            throw Error("应用所属项目已变化，请重新打开。");
+        if (!Array.isArray(directory.data)) throw Error("应用目录格式无效");
+        const servers: McpWorkspaceServer[] = directory.data;
+        const connectedServer = servers.find((candidate) =>
+            candidate.serverId === server.serverId && candidate.pluginId === server.pluginId &&
+            candidate.installedDigest === server.installedDigest,
+        );
+        const connectedTool = connectedServer?.tools.find((candidate) => candidate.name === tool.name);
+        if (!connectedServer || !connectedTool)
+            throw Error("应用连接或插件版本已变化，请刷新后重新打开。");
         const app = await openMcpApp({
             ...owner,
-            serverId: server.serverId,
-            expectedGeneration: server.generation,
-            toolName: tool.name,
+            serverId: connectedServer.serverId,
+            expectedGeneration: connectedServer.generation,
+            toolName: connectedTool.name,
             ...(options.filePath ? { filePath: options.filePath } : {}),
             ...(options.deepLink ? { deepLink: options.deepLink } : {}),
             ...(options.arguments ? { arguments: options.arguments } : {}),
@@ -585,15 +601,20 @@ export function McpAppsHub({
     project,
     threadId,
     action,
+    pluginId,
 }: {
     workspace: ReturnType<typeof useMcpAppsWorkspace>;
     project?: Data;
     threadId: string;
     action: Action;
+    pluginId?: string;
 }) {
     const [selected, setSelected] = useState<string | null>(null),
         [feedback, setFeedback] = useState("");
-    const server = workspace.servers.find((server) => server.serverId === selected);
+    const servers = pluginId === undefined
+        ? workspace.servers
+        : workspace.servers.filter((server) => server.pluginId === pluginId);
+    const server = servers.find((server) => server.serverId === selected);
     const command = (request: Record<string, unknown>) => action("manage", request);
     const run = async (server: McpWorkspaceServer, tool: McpAppTool) => {
         setFeedback("");
@@ -629,11 +650,11 @@ export function McpAppsHub({
                 </button>
             </div>
             {workspace.error && <p role="alert">{workspace.error}</p>}
-            {!workspace.loading && !workspace.servers.length && (
+            {!workspace.loading && !servers.length && (
                 <p>没有可用应用。请先在插件详情中明确连接 MCP 服务器。</p>
             )}
             <McpAppEntrypoints
-                servers={workspace.servers}
+                servers={servers}
                 kind="global"
                 onOpen={(server, tool) =>
                     void workspace
@@ -648,7 +669,7 @@ export function McpAppsHub({
                     onChange={(event) => setSelected(event.target.value || null)}
                 >
                     <option value="">选择应用</option>
-                    {workspace.servers.map((server) => (
+                    {servers.map((server) => (
                         <option key={server.serverId} value={server.serverId}>
                             {server.title ?? server.serverId}
                         </option>

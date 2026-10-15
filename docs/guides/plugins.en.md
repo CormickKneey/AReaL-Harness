@@ -4,6 +4,16 @@
 
 Shared Core owns plugin installation and selection; GUI and CLI read the same state. Current scope covers local/Git marketplaces, pinned Git/npm packages, Skills/onboarding, trusted MCP connections and desktop Apps. GitHub is the first real Connector service. See [upstream pins](../../upstream/pins.json) and the [implementation/acceptance plan](../development/codex-plugins-plan.en.md).
 
+## Plugins, Skills, and MCP
+
+Settings → Plugins has three views: Plugins, Skills, and MCP. Plugins manages actual packages. Skills and MCP include standalone resources and installed package components, with their sources shown. Resources with the same name retain separate owner identities and configurations.
+
+Packages follow the OpenAI plugin layout. Portable packages use root `plugin.json`, `skills/`, and `mcp.json`, with OpenAI-specific settings under `extensions.com.openai`. Compatibility manifests retain their existing parsing rules. AReaL keeps installation, selection, authentication, and connections with their existing owners, without rewriting package declarations.
+
+Standalone skills retain their existing preview, creation, and scoped enable controls. Standalone MCP servers retain configuration and connection controls. The scope selector filters only standalone resources. Package components show the plugin's effective state for the current project. Manage Plugin opens the owning package detail and retains package selection, digest trust, authentication, and submission recovery. Package components cannot be modified through standalone resource commands. Listing a resource does not expand a chat's allowed skills or tools.
+
+Interactive apps and hooks remain in package details or existing workspace entrypoints. Users manage GitHub as a plugin. Connector remains an internal service mapping and credential binding.
+
 ## Discovery and installation
 
 Declare a local package in project/personal `.agents/plugins/marketplace.json`:
@@ -20,7 +30,7 @@ Declare a local package in project/personal `.agents/plugins/marketplace.json`:
 }
 ```
 
-Paths resolve against the marketplace root, not the catalog directory. GUI Settings → Plugins → Plugin packages can add another local root, inspect components and install. Installation binds the selected source and digest; changes after preview require refresh and renewed selection. Installation runs no scripts, MCP, hooks or setup.
+Paths resolve against the marketplace root, not the catalog directory. GUI Settings → Plugins → Plugins can add another local root, inspect components and install. Installation binds the selected source and digest; changes after preview require refresh and renewed selection. Installation runs no scripts, MCP, hooks or setup.
 
 CLI commands connect to an already running Core with its configuration:
 
@@ -53,6 +63,8 @@ Run Setup selects the packaged onboarding skill in an ordinary chat, with result
 
 Installed copies retain content identity; source edits do not change installed resources. Active Turns pin skill revisions; subsequent Turns use available versions. Disabling/uninstalling revokes subsequent reads while retaining historical packages and writable data. Explicit connection starts MCP. Active Turns retain their admitted generation; disable/uninstall revoke subsequent calls and reads. Unconfirmed process cleanup blocks reconnection. Hooks require separate current-definition trust; see the P2 section below.
 
+Applying standalone skill configuration to a new chat can restart Core. The desktop restores previously connected standalone MCP servers and trusted plugin MCP connections. Plugin restoration still requires the original installed digest. Failures do not replay tool calls. After creating a chat, an interactive app reads the current connection for the same plugin version before its first open request.
+
 Mutations require `requestId` and applicable `expectedRevision`; RPC installation additionally requires selected `source` and `expectedDigest`. Identical requests recover their prior result; reused keys with different parameters reject. Check Plugin Submission queries receipts after an unknown outcome without replay:
 
 ```sh
@@ -75,7 +87,7 @@ Codex marketplace/add accepts top-level sparsePaths. Nonempty paths use Git cone
 
 ## Desktop Apps and GitHub
 
-The Apps tab and global/thread/file entrypoints use the official MCP Apps AppBridge. Pages run under isolated origins in sandbox frames with no Node, product bridge or credentials. Calls bind project, Thread, package digest and connection generation, stay on the originating server, and use ordinary Core execution, approval and journal paths. Persisted Apps become stale after Core restart and must be reopened.
+Interactive apps in package details and global/thread/file entrypoints use the official MCP Apps AppBridge. A package detail shows only its own apps and app settings. Pages run under isolated origins in sandbox frames with no Node, product bridge or credentials. Calls bind project, Thread, package digest and connection generation, stay on the originating server, and use ordinary Core execution, approval and journal paths. Persisted Apps become stale after Core restart and must be reopened.
 
 `ui/message` adds typed text/resources to drafts while preserving unfinished human input; only `send:true` submits. Titles and `_meta` stay in UI/history; recursive `_meta` removal precedes model projection. Context is grouped by instance and can be updated/removed. Settings, mentions and form previews use advertised tools/resources, without guessed methods or endpoints.
 

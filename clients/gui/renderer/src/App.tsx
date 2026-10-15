@@ -1477,7 +1477,7 @@ function AppContent({ services }: { services: PlatformServices }) {
               ) : settingsTab === "用量" ? (
                 <UsageDashboard action={resourceAction} />
               ) : ["插件", "Skills", "MCP"].includes(settingsTab) ? (
-                <PluginsSettings key={`${project?.id}:${settingsTab}`} project={project} thread={thread} action={resourceAction} initialTab={settingsTab === "Skills" ? "skills" : settingsTab === "MCP" ? "mcp" : "catalog"} apps={<McpAppsHub workspace={mcpWorkspace} project={project} threadId={threadId} action={resourceAction}/>} onOpenThread={(pid, tid) => { updateSettingsOpen(false); void open(pid, tid); }}/>
+                <PluginsSettings key={`${project?.id}:${settingsTab}`} project={project} thread={thread} action={resourceAction} initialTab={settingsTab === "Skills" ? "skills" : settingsTab === "MCP" ? "mcp" : "catalog"} apps={(pluginId) => <McpAppsHub key={pluginId} pluginId={pluginId} workspace={mcpWorkspace} project={project} threadId={threadId} action={resourceAction}/>} onOpenThread={(pid, tid) => { updateSettingsOpen(false); void open(pid, tid); }}/>
               ) : !project ? (
                 <div className="settings-empty">
                   <p>请先打开项目，以读取当前项目的设置。</p>

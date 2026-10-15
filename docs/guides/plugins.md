@@ -4,6 +4,16 @@
 
 AReaL 的插件包由共享 Core 管理；GUI 与 CLI 读取同一安装与启用状态。支持本地/Git marketplace、Git 与 npm 来源、两种 manifest 中的 Skills，以及显式 onboarding；插件 MCP、Apps 和 GitHub Connector 通过现有 Core 执行边界接入。固定格式基线见 [upstream/pins.json](../../upstream/pins.json)，完整实施与验收见[任务计划](../development/codex-plugins-plan.md)。
 
+## 插件、Skills 与 MCP
+
+“设置 → 插件”提供插件、Skills、MCP 三个视图。插件视图管理真实插件包；Skills 和 MCP 视图同时展示独立资源与已安装包内的组件，并标明来源。同名资源按所有者区分，不复制配置或合并身份。
+
+插件沿用 OpenAI 的包结构。便携包使用根目录 `plugin.json`、`skills/` 和 `mcp.json`，OpenAI 专用设置位于 `extensions.com.openai`；兼容 manifest 仍按既有规则解析。安装、启用、认证与连接状态由 AReaL 的原有所有者管理，不写回包声明。
+
+独立技能保留原有查看、新建和范围启停入口；独立 MCP 保留配置编辑与连接入口。范围选择只筛选独立资源。包内组件显示当前项目的插件有效状态，“管理插件”打开所属插件详情，继续使用整包启停、摘要信任、认证和提交核对流程。包内组件不通过独立资源接口修改，目录展示不扩大当前聊天的有效技能或工具范围。
+
+交互应用和 Hooks 位于插件详情或已有工作区入口。GitHub 在用户界面中作为插件管理，Connector 仅保留为内部服务映射与凭据绑定。
+
 ## 发现与安装
 
 在工作区或个人目录的 `.agents/plugins/marketplace.json` 声明本地插件：
@@ -20,7 +30,7 @@ AReaL 的插件包由共享 Core 管理；GUI 与 CLI 读取同一安装与启�
 }
 ```
 
-路径相对 marketplace 根，不相对 `.agents/plugins` 文件所在目录。可在 GUI 的“设置 → 插件 → 插件包”添加其他本地 marketplace 根目录，查看组件并安装。安装固定已选来源和内容摘要；预览后源文件变化会拒绝安装，需要刷新后重新选择。安装不执行包中的脚本、MCP 或 hooks，也不自动运行 setup。
+路径相对 marketplace 根，不相对 `.agents/plugins` 文件所在目录。可在 GUI 的“设置 → 插件 → 插件”添加其他本地 marketplace 根目录，查看组件并安装。安装固定已选来源和内容摘要；预览后源文件变化会拒绝安装，需要刷新后重新选择。安装不执行包中的脚本、MCP 或 hooks，也不自动运行 setup。
 
 CLI 连接到已经运行的 Core，保持运行服务的配置：
 
@@ -53,6 +63,8 @@ Rust 嵌入式调用通过 `Engine::install_plugin_store` 接入插件。未配�
 
 安装副本按内容摘要保留，源目录编辑不改变已经安装的资源。活动 Turn 固定插件技能引用；后续 Turn 使用当前可用版本。停用和卸载立即阻止后续资源读取，保留旧包用于历史，不默认删除可写数据。活动 Turn 的工具 schema 和调用对象一起固定；升级为后续 Turn 建立新连接，旧连接等待已有调用和 App 排空。停用、卸载和显式断开撤销调用。清理未确认显示 UNKNOWN 并阻止重连；显式断开也清除自动重连信任。
 
+新会话应用独立技能配置时可能重启 Core。桌面恢复此前已连接的独立 MCP 和已信任的插件 MCP；插件恢复仍须匹配原安装摘要，失败不重放工具调用。交互应用在创建会话后重新读取同一插件版本的当前连接，再执行首次打开。
+
 Core 管理写入要求 `requestId` 与必要的 `expectedRevision`；RPC 安装还要求选中 `source` 和 `expectedDigest`。重复同键同参数查询原结果，异参数拒绝。界面遇到结果未知可“核对插件提交”，只读查询受理回执，不重新执行：
 
 ```sh
@@ -80,7 +92,7 @@ Codex `marketplace/add` 接受顶层 `sparsePaths`：非空列表使用 Git cone
 
 ## 桌面 Apps 与 GitHub
 
-“应用”标签页、全局/会话入口及匹配文件入口使用官方 MCP Apps AppBridge。插件页面运行在独立 origin 的沙箱框架内，不提供 Node、产品 bridge 或凭据。调用绑定项目、Thread、包摘要和连接版本；同服务器工具经普通 Core 执行、审批和日志路径调用。旧 App 在 Core 重启后失效，需要重新打开。
+插件详情中的交互应用、全局/会话入口及匹配文件入口使用官方 MCP Apps AppBridge。详情只展示所属插件的应用与应用设置。插件页面运行在独立 origin 的沙箱框架内，不提供 Node、产品 bridge 或凭据。调用绑定项目、Thread、包摘要和连接版本；同服务器工具经普通 Core 执行、审批和日志路径调用。旧 App 在 Core 重启后失效，需要重新打开。
 
 `ui/message` 可以将文本和资源添加到草稿，保留未发送的人类内容；只有 `send:true` 发起明确的新提交。标题和 `_meta` 留在历史/UI，递归剔除 `_meta` 后才进入模型。App 上下文按实例分组，可更新或移除。设置、mentions 和表单预览通过服务器声明的工具/资源处理；不猜测方法或地址。
 
