@@ -4,7 +4,10 @@ mod catalog;
 mod context;
 mod interactions;
 mod mcp;
+pub(crate) mod mcp_apps;
 mod media;
+mod plugin_mcp;
+mod plugins;
 mod processes;
 mod queue;
 mod retention;
@@ -25,12 +28,16 @@ pub(crate) use tools::definitions;
 pub use workflows::Workflow;
 
 pub(crate) struct Desktop {
+    plugins: std::sync::RwLock<plugins::Manager>,
+    plugin_refresh: Mutex<()>,
     configured_models: std::sync::RwLock<ConfiguredModels>,
     pub(crate) default_profile: std::sync::RwLock<Option<VersionRef>>,
     worker_model: std::sync::atomic::AtomicBool,
     submissions: submissions::Submissions,
     pub(crate) lifecycle: server::Lifecycle,
     pub(crate) mcp: mcp::Manager,
+    pub(crate) plugin_mcp: plugin_mcp::Manager,
+    pub(crate) mcp_apps: mcp_apps::Manager,
     catalog: std::sync::RwLock<catalog::Catalog>,
     catalog_write: Mutex<()>,
     creation: Mutex<()>,
@@ -39,11 +46,15 @@ pub(crate) struct Desktop {
 impl Desktop {
     pub fn open(root: &Path) -> anyhow::Result<Self> {
         Ok(Self {
+            plugins: Default::default(),
+            plugin_refresh: Mutex::new(()),
             configured_models: Default::default(),
             default_profile: Default::default(),
             worker_model: std::sync::atomic::AtomicBool::new(false),
             submissions: submissions::Submissions::open(root)?,
             mcp: mcp::Manager::open(root)?,
+            plugin_mcp: plugin_mcp::Manager::open(root)?,
+            mcp_apps: mcp_apps::Manager::open(root)?,
             lifecycle: Default::default(),
             catalog: std::sync::RwLock::new(catalog::Catalog::load(root)?),
             catalog_write: Mutex::new(()),

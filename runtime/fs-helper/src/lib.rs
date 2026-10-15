@@ -1,3 +1,5 @@
+mod import;
+pub use import::{ImportKind, ImportedEntry, ImportedSelection, import_selection};
 mod delivery;
 pub mod search;
 

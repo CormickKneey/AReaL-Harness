@@ -1,0 +1,24 @@
+[package]
+name = "areal-plugins"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+fs2.workspace = true
+rustix.workspace = true
+tempfile.workspace = true
+serde_yaml_ng = "0.10.0"
+reqwest = { workspace = true, features = ["blocking"] }
+base64.workspace = true
+tar = "0.4.46"
+flate2 = "1.1.10"
+node-semver = "2.2"
+libc.workspace = true
+regex = "1.12.3"
+toml_edit.workspace = true

@@ -45,9 +45,11 @@ async fn historical_plugin_data_survives_open_and_ordinary_writes_without_execut
     let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     let mut configuration = serde_json::to_value(EffectiveConfig::default()).unwrap();
     configuration["allowPluginSkills"] = json!(true);
-    configuration["pluginSkills"] =
-        json!([{"id":"HISTORICAL_PLUGIN_ONLY", "revision":"v1", "extra":{"preserve":true}}]);
-    let hooks = json!([{"id":"historical-hook", "event":"SessionStart", "delivered":false,
+    configuration["pluginSkills"] = json!([{"id":"HISTORICAL_PLUGIN_ONLY", "revision":"v1"}]);
+    let hooks = json!([{"id":"historical-hook", "event":"SessionStart", "delivered":true,
+        "pluginId":"historical-plugin", "packageDigest":"package",
+        "definitionDigest":"definition", "outcome":"completed", "asynchronous":false,
+        "turnId":null, "toolUseId":null, "operationId":null, "inspection":null,
         "output":{"text":"HISTORICAL_PLUGIN_ONLY", "nested":[1,false,null]}}]);
     let mut desktop = serde_json::to_value(DesktopState::default()).unwrap();
     desktop["configuration"] = configuration.clone();
@@ -104,15 +106,15 @@ async fn historical_plugin_data_survives_open_and_ordinary_writes_without_execut
 }
 
 #[test]
-fn compatibility_is_explicit_and_does_not_add_fields_to_ordinary_sessions() {
+fn plugin_defaults_deny_skill_access_and_unknown_fields_remain_rejected() {
     let plain = serde_json::to_value(EffectiveConfig::default()).unwrap();
-    assert!(plain.get("allowPluginSkills").is_none());
+    assert_eq!(plain["allowPluginSkills"], false);
     assert!(plain.get("pluginSkills").is_none());
     let mut invalid = plain;
     invalid["unrecognizedConfigurationField"] = json!(true);
     assert!(serde_json::from_value::<EffectiveConfig>(invalid).is_err());
     let mut desktop = serde_json::to_value(DesktopState::default()).unwrap();
-    assert!(desktop.get("hookRuns").is_none());
+    assert_eq!(desktop["hookRuns"], json!([]));
     desktop["unrecognizedDesktopField"] = json!([]);
     assert!(serde_json::from_value::<DesktopState>(desktop).is_err());
 }

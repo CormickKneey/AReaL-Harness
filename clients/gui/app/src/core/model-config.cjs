@@ -73,8 +73,8 @@ class ModelConfiguration {
     this.value = current;
     return current;
   }
-  async credential(value) {
-    if (typeof value !== 'string' || value.length > 16384 || /[\r\n]/.test(value)) throw new Error('API Key 格式无效');
+  async credential(value, { privateKey = false } = {}) {
+    if (typeof value !== 'string' || value.length > (privateKey ? 32768 : 16384) || value.includes('\0') || (!privateKey && /[\r\n]/.test(value))) throw new Error('凭据格式无效');
     if (!value.trim()) return undefined;
     if (!this.encryption?.isEncryptionAvailable() || this.encryption.getSelectedStorageBackend?.() === 'basic_text') throw new Error('系统安全存储不可用，API Key 未保存');
     const reference = `AREAL_CREDENTIAL_${randomUUID().replaceAll('-', '')}`;

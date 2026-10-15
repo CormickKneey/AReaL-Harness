@@ -61,6 +61,9 @@ impl Engine {
         } else {
             raw.clone()
         };
+        if raw.get("mcpResult").is_some() {
+            crate::desktop::mcp_apps::strip_meta(&mut baseline);
+        }
         let file_compacted = baseline != *raw;
         if let Some(argv) = argv {
             apply_output_view(&mut baseline, argv);
@@ -74,7 +77,10 @@ impl Engine {
         } else {
             None
         };
-        let needs_snapshot = bytes.len() > MAX_RESULT || baseline != *raw || candidate.is_some();
+        let needs_snapshot = raw.get("mcpResult").is_some()
+            || bytes.len() > MAX_RESULT
+            || baseline != *raw
+            || candidate.is_some();
         let readback_allowed = {
             let state = cell.state.lock().await;
             state
@@ -87,7 +93,7 @@ impl Engine {
         };
         let mut reason = "passthrough";
         let snapshot = if needs_snapshot && name != "read_tool_result" {
-            if !readback_allowed {
+            if !readback_allowed && raw.get("mcpResult").is_none() {
                 reason = "retrievalDisabled";
                 None
             } else if bytes.len() > MAX_SNAPSHOT {
@@ -118,7 +124,7 @@ impl Engine {
         });
         let mut value = baseline;
         // 折叠必须有持久原文；写入失败只退回有界原文，不重跑原来的操作。
-        if snapshot.is_none() && value != *raw {
+        if snapshot.is_none() && value != *raw && raw.get("mcpResult").is_none() {
             value = raw.clone();
         }
         if let Some(reference) = &reference {
@@ -205,7 +211,13 @@ impl Engine {
                 && format!("{:x}", Sha256::digest(&bytes)) == digest,
             "result snapshot failed integrity verification"
         );
-        let text = String::from_utf8(bytes)?;
+        let mut text = String::from_utf8(bytes)?;
+        if let Ok(mut value) = serde_json::from_str::<Value>(&text) {
+            if value.get("mcpResult").is_some() {
+                crate::desktop::mcp_apps::strip_meta(&mut value);
+                text = serde_json::to_string(&value)?;
+            }
+        }
         let offset = match args.get("after").filter(|v| !v.is_null()) {
             Some(cursor) => cursor
                 .as_str()

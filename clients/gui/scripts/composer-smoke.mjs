@@ -855,7 +855,10 @@ try {
       sourceFiles[path] = null; // Tracked deletions remain part of the source evidence.
     }
   }
-  const diff = execFileSync("git", ["diff", "--binary", "HEAD"], { cwd: root });
+  const diff = execFileSync("git", ["diff", "--binary", "HEAD"], {
+    cwd: root,
+    maxBuffer: 32 * 1024 * 1024,
+  });
   await writeFile(
     join(scratch, "manifest.json"),
     JSON.stringify(

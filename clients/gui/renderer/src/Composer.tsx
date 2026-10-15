@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { McpComposerAttachments, useMcpDraft } from "./McpComposerAttachments.js";
+import { readMcpDraft, consumeMcpDraft, clearMcpDraft } from "./mcp-app-draft.js";
 import { useApplicationPreferences } from "./settings/applicationPreferences.js";
 import { shouldSteer } from "./settings/applicationSettings.js";
 
@@ -55,6 +57,7 @@ export function Composer({
   onNew,
   onOpenTask,
   onSide,
+  onMcpMention,
 }: {
   project: Data;
   thread: Data;
@@ -64,9 +67,11 @@ export function Composer({
   onNew: () => void;
   onOpenTask?: (target: { projectId: string; taskId: string; runId: string }) => void;
   onSide?: (draft: string) => void;
+  onMcpMention?: () => void;
 }) {
   const prefs = useApplicationPreferences();
   const key = `areal-gui:draft:${project.id}:${thread.id}`;
+  const mcpDraft = useMcpDraft(key);
   const reviewKey = reviewCommentKey(project.id, thread.id);
   const reviewDraft = useReviewComments(reviewKey);
   const comments = attachedReviewComments(reviewDraft.draft);
@@ -140,6 +145,7 @@ export function Composer({
     setText("");
     setFiles([]);
     skills.clear();
+    clearMcpDraft(key);
     attachmentDrafts.delete(key);
     setAdmissionError("");
     localStorage.removeItem(key);
@@ -196,7 +202,7 @@ export function Composer({
       return;
     }
     if (queueEditor.edit) { await queueEditor.save(); return; }
-    if (disabled || annotationEditing || invalidAnnotation || sending.has(key) || (!submittedInput.text.trim() && !submittedInput.files.length && !comments.length && !skills.selected.length)) return;
+    if (disabled || annotationEditing || invalidAnnotation || sending.has(key) || (!submittedInput.text.trim() && !submittedInput.files.length && !comments.length && !skills.selected.length && !mcpDraft.length)) return;
     if (approvePlan && (!planReady || input.text.trim() || input.files.length || comments.length)) return;
     if (creatingGoal && (running || thread.parentThreadId || !submittedInput.text.trim())) return;
     setAdmissionError("");
@@ -249,6 +255,7 @@ export function Composer({
     } catch (cause) { setAdmissionError((cause as Error).message); } finally { markSending(key, false); }
   };
   const catalogActions: ComposerCatalogEntry[] = [
+    ...(onMcpMention ? [{value:"app-mention",label:"@ 应用引用",description:"搜索应用中的文件、工单或其他资源",icon:<ComposerMcpIcon/>,group:"功能" as const,run:onMcpMention}] : []),
     ...(onSide ? [{ value: "side", label: "侧边聊天", description: "在右侧讨论，不打断当前聊天", icon: <SideChatIcon />, group: "功能" as const, run: () => onSide("") }] : []),
     { value: "upload", label: "上传文件", description: "添加图片、文档或其他文件", icon: <AttachmentIcon />, group: "功能", run: () => upload.current?.click() },
     { value: "mcp", label: "MCP", description: "查看服务器与连接状态", icon: <ComposerMcpIcon />, group: "功能", run: () => setMcpOpen(true) },
@@ -343,7 +350,7 @@ export function Composer({
         submitTestId="chat-send-button"
         placeholder={archived ? "已归档任务只读" : creatingGoal ? "描述目标，明确可衡量的结果" : planActive ? "描述任务，生成计划…" : "随心输入"}
         disabled={disabled}
-        submitDisabled={disabled || (taskManagement && !!running) || annotationEditing || invalidAnnotation || (queueEditor.edit ? queueEditor.saveDisabled || (!input.text.trim() && !input.files.length && !queueEditor.edit.attachments.length) : creatingGoal ? !input.text.trim() || !!running : !input.text.trim() && !input.files.length && !comments.length && !skills.selected.length)}
+        submitDisabled={disabled || (taskManagement && !!running) || annotationEditing || invalidAnnotation || (queueEditor.edit ? queueEditor.saveDisabled || (!input.text.trim() && !input.files.length && !queueEditor.edit.attachments.length) : creatingGoal ? !input.text.trim() || !!running : !input.text.trim() && !input.files.length && !comments.length && !skills.selected.length && !mcpDraft.length)}
         submitting={busy}
         submitLabel={queueEditor.edit ? "保存排队消息" : creatingGoal ? "开始目标" : "发送"}
         enterSubmits={prefs.sendShortcut === "enter"}
@@ -351,6 +358,7 @@ export function Composer({
         composerCatalog={{ ...skills.catalog, entries: [...catalogActions, ...skills.catalog.entries].map(entry => ({ ...entry, disabled: entry.disabled || (!!queueEditor.edit && !["upload", "files", "mcp"].includes(entry.value)) })) }}
         onChange={(value) => {
           setText(value);
+          if(onMcpMention&&/(^|\s)@$/.test(value)&&!/(^|\s)@$/.test(text))onMcpMention();
           localStorage.setItem(key, value);
           localStorage.setItem(`${key}:version`, String(Number(localStorage.getItem(`${key}:version`) ?? 0) + 1));
         }}
@@ -376,6 +384,7 @@ export function Composer({
             {queueEditor.edit.attachments.map((part, index) => <ComposerQueueAttachment key={`${index}:${part.url}`} part={part} projectId={project.id} threadId={thread.id} action={readAction} disabled={disabled}
               onRemove={() => queueEditor.removeAttachment(index)} />)}
           </div>}
+          {!queueEditor.edit && <McpComposerAttachments draftKey={key} entries={mcpDraft} disabled={disabled}/> }
           <BrowserAnnotationAttachments files={files} disabled={disabled} onChange={setFiles} />
           {files.some(file => !isComposerFile(file) || !browserAnnotation(file)) ? (
             <div className="composer-attachments" data-testid="composer-attachments">
@@ -414,7 +423,7 @@ export function Composer({
         }
         onCancel={queueEditor.edit ? () => void queueEditor.cancel() : running ? stop : undefined}
         submitControl={queueEditor.edit ? <Button type="button" size="icon-md" aria-label="保存排队消息" data-testid="chat-send-button" disabled={disabled || queueEditor.saveDisabled || (!input.text.trim() && !input.files.length && !queueEditor.edit.attachments.length)}
-          className="composer-primary-action" onClick={() => void queueEditor.save()}><SendMessageIcon className="size-5" /></Button> : running && !input.text.trim() && !input.files.length && !comments.length && !skills.selected.length ? (
+          className="composer-primary-action" onClick={() => void queueEditor.save()}><SendMessageIcon className="size-5" /></Button> : running && !input.text.trim() && !input.files.length && !comments.length && !skills.selected.length && !mcpDraft.length ? (
           <ControlHintTooltip title="停止" shortcut="Esc">
             <Button type="button" variant="secondary" size="icon-md" className="composer-primary-action composer-stop-action" aria-label="停止"
               onClick={() => { stop(); api.current?.focus(); }}>
@@ -424,7 +433,7 @@ export function Composer({
         ) : running ? (
           <ControlHintTooltip title="发送" shortcut={prefs.sendShortcut === "enter" ? "Enter" : "⌘/Ctrl+Enter"}>
             <Button type="button" variant="composer" size="icon-md" aria-label="发送" data-testid="chat-send-button"
-              disabled={disabled || taskManagement || (!input.text.trim() && !input.files.length && !comments.length && !skills.selected.length)}
+              disabled={disabled || taskManagement || (!input.text.trim() && !input.files.length && !comments.length && !skills.selected.length && !mcpDraft.length)}
               onClick={event => void submit(api.current?.getMarkdown() ?? text, event.metaKey || event.ctrlKey)}>
               <SendMessageIcon className="size-5" />
             </Button>
@@ -451,10 +460,20 @@ export async function submitMessage(
   options: Data = {},
 ) {
   const reviewKey = reviewCommentKey(projectId, threadId);
-  const comments = attachedReviewComments(readReviewComments(reviewKey));
-  const skillContent = await composerSkillContent(options.skillAction ?? action, projectId, threadId, readComposerSkills(`areal-gui:draft:${projectId}:${threadId}`));
+  const comments = options.appMessage ? [] : attachedReviewComments(readReviewComments(reviewKey));
+  const key = `areal-gui:draft:${projectId}:${threadId}`;
+  const capturedMcp = options.appMessage ? [] : readMcpDraft(key);
+  const blocks = options.appMessage ? options.mcpContent ?? [] : capturedMcp.map((entry: Data) => entry.block);
+  const imageBlocks = blocks.filter((block: Data) => block.type === "image");
+  const imageFiles = imageBlocks.map((block: Data) => {
+    if (!/^image\/(png|jpeg|gif|webp)$/.test(block.mimeType) || typeof block.data !== "string" || block.data.length > 12 * 1024 * 1024) throw new Error("应用图片类型或大小不受支持。");
+    const bytes = Uint8Array.from(atob(block.data), character => character.charCodeAt(0));
+    return new File([bytes], typeof block._meta?.["openai/title"] === "string" ? block._meta["openai/title"] : "应用图片", {type:block.mimeType});
+  });
+  const skillContent = options.appMessage ? "" : await composerSkillContent(options.skillAction ?? action, projectId, threadId, readComposerSkills(`areal-gui:draft:${projectId}:${threadId}`));
   const input = composerInput(text, files);
-  const attachments = await uploadComposerFiles(action, projectId, threadId, input.files);
+  const attachments: Data[] = await uploadComposerFiles(action, projectId, threadId, [...input.files, ...imageFiles]);
+  imageBlocks.forEach((block: Data, index: number) => { if (block._meta) attachments[input.files.length + index]._meta = block._meta; });
   const annotationFeedback = input.files.flatMap((file, index) => {
     const note = browserAnnotation(file);
     return note ? [browserAnnotationText(note, attachments[index].url)] : [];
@@ -466,6 +485,7 @@ export async function submitMessage(
         threadId,
         text: feedback ? (input.text ? `${input.text}\n\n${feedback}` : feedback) : input.text,
         attachments,
+        ...(blocks.some((block: Data) => block.type !== "image") ? {mcpContent: blocks.filter((block: Data) => block.type !== "image")} : {}),
         expectedTurnId: options.expectedTurnId,
         enqueue: options.enqueue === true,
       });
@@ -480,6 +500,7 @@ export async function submitMessage(
   // Only explicit acceptance consumes the captured records. Unknown submissions
   // retain their exact IDs until the existing Core receipt is reconciled.
   consumeReviewComments(reviewKey, comments);
+  if (!options.appMessage) consumeMcpDraft(key, capturedMcp);
 }
 export function stageThreadDraft(projectId: string, threadId: string, text: string, files: ComposerDraftAttachment[]) {
   const key = `areal-gui:draft:${projectId}:${threadId}`;

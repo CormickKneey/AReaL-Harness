@@ -37,6 +37,7 @@ impl Engine {
             configuration.default_model_revision =
                 self.default_models.read().unwrap().current.clone();
         }
+        self.freeze_plugin_skills(&mut configuration);
         configuration
     }
 

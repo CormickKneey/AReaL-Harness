@@ -35,11 +35,12 @@ async function waitForProcessExit(pid) {
 }
 
 class ServiceConnection {
-  constructor(onState = () => {}, onClose = () => {}, onNotification = () => {}, onNotificationOpen = () => {}, onBrowserRequest = null, onBrowserCancel = null) {
+  constructor(onState = () => {}, onClose = () => {}, onNotification = () => {}, onNotificationOpen = () => {}, onBrowserRequest = null, onBrowserCancel = null, onMcpAppNotification = () => {}) {
     this.onNotification = onNotification;
     this.onNotificationOpen = onNotificationOpen;
     this.onBrowserRequest = onBrowserRequest;
     this.onBrowserCancel = onBrowserCancel;
+    this.onMcpAppNotification = onMcpAppNotification;
     this.onState = onState; this.onClose = onClose; this.pending = new Map(); this.nextId = 0;
   }
   async connect(metadata) {
@@ -51,6 +52,7 @@ class ServiceConnection {
     socket.on('message', bytes => {
       let message;
       try { message = JSON.parse(bytes.toString()); } catch { socket.terminate(); return; }
+      if (message.method === 'mcpAppNotification') { if (this.socket === socket) this.onMcpAppNotification?.(message.params); return; }
       if (message.method === 'notification') { this.onNotification(message.params); return; }
       if (message.method === 'notificationOpen') { this.onNotificationOpen(message.params); return; }
       if (message.method === 'state') { this.onState(message.params); return; }
@@ -141,7 +143,9 @@ class SharedCoreBackend {
     const connection = new ServiceConnection(packet => { if (this.connection === connection) this.accept(packet); }, () => { if (this.connection === connection) this.disconnected(); }, notice => { if (this.connection === connection) this.onNotification?.(notice); }, target => { if (this.connection === connection) this.onNotificationOpen?.(target); }, request => {
       if (this.connection !== connection || this.disposed) throw new Error('Browser host is disconnected');
       return this.onBrowserRequest?.(request) ?? Promise.reject(new Error('Browser host unavailable'));
-    }, request => { if (this.connection === connection) this.onBrowserCancel?.(request); });
+    }, request => { if (this.connection === connection) this.onBrowserCancel?.(request); }, event => {
+      if (this.connection === connection && !this.disposed) this.onMcpAppNotification?.(event);
+    });
     try { await connection.connect(metadata); }
     catch (e) { connection.close(); if (e.code === 'DISCONNECTED') return false; throw e; }
     if (this.disposed) { connection.close(); throw new Error('GUI 连接已关闭'); }

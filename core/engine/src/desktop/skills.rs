@@ -24,6 +24,9 @@ pub(super) struct Skill {
     pub location: SkillLocation,
     pub metadata: SkillMetadata,
     directory: Arc<File>,
+    pub plugin: Option<areal_plugins::InstalledSkill>,
+    package_directory: Option<Arc<File>>,
+    package_prefix: PathBuf,
 }
 
 pub(super) struct SkillPage {
@@ -66,7 +69,33 @@ impl Skill {
             location,
             metadata: result.0,
             directory: result.1,
+            plugin: None,
+            package_directory: None,
+            package_prefix: PathBuf::new(),
         })
+    }
+
+    pub fn load_plugin(info: areal_plugins::InstalledSkill) -> anyhow::Result<Self> {
+        let mut skill = Self::load(
+            SkillLocation {
+                id: info.id.clone(),
+                revision: info.revision.clone(),
+                root: info.root.clone(),
+                metadata: Some(SkillMetadata {
+                    name: info.name.clone(),
+                    description: info.description.clone(),
+                }),
+            },
+            Path::new("/"),
+        )?;
+        skill.package_prefix = info.root.strip_prefix(&info.package_root)?.to_path_buf();
+        skill.package_directory = Some(Arc::new(File::from(open(
+            &info.package_root,
+            READ_FLAGS | OFlags::DIRECTORY,
+            Mode::empty(),
+        )?)));
+        skill.plugin = Some(info);
+        Ok(skill)
     }
 
     pub async fn read(
@@ -75,8 +104,20 @@ impl Skill {
         offset: usize,
         max_bytes: usize,
     ) -> anyhow::Result<SkillPage> {
-        let directory = self.directory.clone();
-        let resource = resource.to_owned();
+        let (directory, resource) = if let Some(package) = &self.package_directory {
+            let mut path = self.package_prefix.clone();
+            for part in Path::new(resource).components() {
+                match part {
+                    Component::Normal(p) => path.push(p),
+                    Component::CurDir => {}
+                    Component::ParentDir => ensure!(path.pop(), "plugin resource escapes package"),
+                    _ => anyhow::bail!("plugin resource must be relative"),
+                }
+            }
+            (package.clone(), path.to_string_lossy().into_owned())
+        } else {
+            (self.directory.clone(), resource.to_owned())
+        };
         // 不在 Tokio 执行线程上做磁盘读取，也不跨 I/O 持有全局目录锁。
         tokio::task::spawn_blocking(move || read_resource(directory, &resource, offset, max_bytes))
             .await?

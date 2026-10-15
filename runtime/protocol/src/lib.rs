@@ -149,6 +149,26 @@ pub struct CreateScope {
     pub limits: LimitRequest,
 }
 
+/// Trusted connection-owner admission; the group identity is never caller supplied.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateParticipantScope {
+    pub authority_scope_id: String,
+    pub scope: CreateScope,
+    pub participation: ScopeParticipation,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum ScopeParticipation {
+    Task { admission_window_ms: u64 },
+    Hook { task_scope_id: String },
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RevokeOwner {

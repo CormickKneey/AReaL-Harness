@@ -274,8 +274,8 @@ impl Engine {
         }
     }
     pub(crate) async fn approval(
-        &self,
-        cell: &Cell,
+        self: &Arc<Self>,
+        cell: &Arc<Cell>,
         call_id: &str,
         tool: &str,
         arguments: &Value,
@@ -312,6 +312,19 @@ impl Engine {
                 "tool denied by permissions.deny",
             ));
         }
+        let plugin_prompt = match &backend {
+            Some(Backend::Mcp(tool)) => match tool.approval_mode() {
+                Some(areal_mcp::ApprovalMode::Prompt | areal_mcp::ApprovalMode::Approve) => true,
+                Some(areal_mcp::ApprovalMode::Writes) => !tool
+                    .metadata()
+                    .annotations
+                    .as_ref()
+                    .and_then(|a| a.read_only_hint)
+                    .unwrap_or(false),
+                _ => false,
+            },
+            _ => false,
+        };
         let (forced, restrictions) = {
             let state = cell.state.lock().await;
             let config = state
@@ -348,9 +361,24 @@ impl Engine {
             .any(|p| crate::permissions::matches_tool(p, tool));
         let browser_action = tool == "browser_v1";
         if forced
+            || plugin_prompt
             || ((action == "ask" || browser_action)
                 && (explicit_ask || !can_remember || !(session_allowed || project_allowed)))
         {
+            if !tool.starts_with("hook:") {
+                let (name, input) = crate::plugin_hooks::tool_input(tool, arguments);
+                let effects=self.plugin_hook_event(cell,areal_plugins::hooks::HookEvent::PermissionRequest,
+                    json!({"tool_name":name,"tool_input":input,"__areal_caller_admitted":backend.as_ref().is_some_and(|b|!matches!(b,Backend::Agent|Backend::Coordination|Backend::Core))}),cancel).await.map_err(|e|RuntimeError::new(ErrorCode::Unavailable,e.to_string()))?;
+                match effects.permission {
+                    Some(crate::plugin_hooks::output::PermissionDecision::Deny { reason }) => {
+                        return Err(RuntimeError::new(ErrorCode::PermissionDenied, reason));
+                    }
+                    Some(crate::plugin_hooks::output::PermissionDecision::Allow) if !forced => {
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+            }
             if self.interaction_mode(cell).await
                 != areal_protocol::tasks::InteractionMode::Interactive
             {

@@ -66,6 +66,9 @@ impl Manager {
             tools: std::sync::RwLock::new(BTreeMap::new()),
         })
     }
+    pub(super) fn contains_definition(&self, id: &str) -> bool {
+        self.records.read().unwrap().contains_key(id)
+    }
     pub fn tools(&self) -> Vec<areal_mcp::McpTool> {
         self.tools
             .read()
@@ -398,25 +401,28 @@ impl Engine {
         })
         .await
     }
-    pub(crate) async fn refresh_managed_tools(&self, cell: &Cell) -> anyhow::Result<()> {
-        let state = cell.state.lock().await;
-        let side = state.thread.is_side();
-        let side_workspace_read = state.thread.side_workspace_read();
-        let definitions = state.thread.dynamic_tools.clone();
-        drop(state);
+    pub(crate) fn managed_registry(
+        &self,
+        thread: &Thread,
+        research: bool,
+    ) -> anyhow::Result<crate::tools::Registry> {
+        let mut tools = self.desktop.mcp.tools();
+        let config = desktop(thread).configuration;
+        if !thread.is_side() && !research && config.allow_plugin_skills && !config.read_only {
+            tools.extend(self.desktop.plugin_mcp.tools());
+        }
         let registry = self
             .registry
             .clone()
-            .with_mcp(self.desktop.mcp.tools())?
-            .with_dynamic(&definitions)?;
-        cell.bindings.write().await.registry = if side {
-            registry.side_only(side_workspace_read)
-        } else if cell.research {
+            .with_mcp(tools)?
+            .with_dynamic(&thread.dynamic_tools)?;
+        Ok(if thread.is_side() {
+            registry.side_only(thread.side_workspace_read())
+        } else if research {
             registry.research_only()
         } else {
             registry
-        };
-        Ok(())
+        })
     }
 }
 

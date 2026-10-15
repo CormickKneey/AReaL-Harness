@@ -1,5 +1,6 @@
 //! 统一产品命令；子命令只装配已有入口，历史、工具循环和队列仍属于 Core。
 mod local;
+mod plugins;
 mod rpc;
 mod run;
 mod service;
@@ -43,6 +44,8 @@ enum Command {
         #[command(subcommand)]
         command: service::ServiceCommand,
     },
+    /// 管理共享 Core 的 Codex 插件包。
+    Plugin(plugins::Options),
     /// 复用本地服务并打开 Web；--json 只返回连接描述。
     Web {
         #[command(flatten)]
@@ -209,6 +212,7 @@ async fn main() {
             return;
         }
         Some(Command::Upgrade { check }) => upgrade::run(check).await,
+        Some(Command::Plugin(options)) => plugins::run(options).await,
         None => {
             let mut monitor = args
                 .interactive

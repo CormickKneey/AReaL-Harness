@@ -149,6 +149,9 @@ pub enum ThreadOwnership {
     },
 }
 pub const NOTIFICATIONS: &[&str] = &[
+    "areal/mcp/app/notification",
+    "areal/mcp/tool/result",
+    "areal/mcp/form/requested",
     "areal/goal/updated",
     "areal/goal/cleared",
     "thread/started",
@@ -238,6 +241,9 @@ pub struct Provider {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentProfile {
+    /// 显式 Profile 默认不继承插件；此项仍受父任务范围与逐定义信任约束。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub allow_plugin_skills: bool,
     pub id: String,
     pub revision: String,
     pub display_name: String,
@@ -281,20 +287,12 @@ pub struct ClientOptions {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EffectiveConfig {
-    /// Inert history from the experimental plugin build; never grants skill access.
-    #[serde(
-        default,
-        rename = "allowPluginSkills",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub historical_allow_plugin_skills: Option<bool>,
-    /// Opaque snapshots are retained without resolving or loading plugin resources.
-    #[serde(
-        default,
-        rename = "pluginSkills",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub historical_plugin_skills: Option<Vec<Value>>,
+    /// Core-owned scope marker; legacy snapshots conservatively keep explicit scope.
+    #[serde(default)]
+    pub allow_plugin_skills: bool,
+    /// None on live ordinary sessions; revisions are fixed at Turn/queue admission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin_skills: Option<Vec<VersionRef>>,
     /// 服务默认模型在提交时固定；不包含端点或凭据。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model_revision: Option<String>,
@@ -318,8 +316,8 @@ pub struct EffectiveConfig {
 impl Default for EffectiveConfig {
     fn default() -> Self {
         Self {
-            historical_allow_plugin_skills: None,
-            historical_plugin_skills: None,
+            allow_plugin_skills: false,
+            plugin_skills: None,
             default_model_revision: None,
             revision: 1,
             options: ClientOptions::default(),
@@ -424,9 +422,6 @@ pub struct PermissionGrant {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DesktopState {
-    /// Historical records only: opening a session never schedules or delivers these hooks.
-    #[serde(default, rename = "hookRuns", skip_serializing_if = "Option::is_none")]
-    pub historical_hook_runs: Option<Vec<Value>>,
     /// 只在读取活跃 Side 时由 Core 投影；历史快照不承载模型等待状态。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub side_capacity_status: Option<String>,
@@ -436,6 +431,10 @@ pub struct DesktopState {
     pub execution_policy: crate::delegation::ChildExecutionPolicy,
     #[serde(default)]
     pub permission_grants: Vec<PermissionGrant>,
+    /// Core-owned hook invocation receipts. Running entries recover as UNKNOWN,
+    /// never as instructions to execute the hook again.
+    #[serde(default)]
+    pub hook_runs: Vec<HookRun>,
     #[serde(default)]
     pub archived: bool,
     pub configuration: EffectiveConfig,
@@ -451,6 +450,24 @@ pub struct DesktopState {
     /// 自动绑定的 Profile Workflow；线程恢复时不会再次启动。
     #[serde(default)]
     pub workflow_run: Option<WorkflowRun>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct HookRun {
+    pub id: String,
+    pub plugin_id: String,
+    pub package_digest: String,
+    pub definition_digest: String,
+    pub event: String,
+    pub turn_id: Option<String>,
+    pub tool_use_id: Option<String>,
+    pub operation_id: Option<String>,
+    pub outcome: String,
+    pub asynchronous: bool,
+    pub delivered: bool,
+    pub output: serde_json::Value,
+    pub inspection: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
