@@ -297,6 +297,9 @@ impl Local {
         if let Some(path) = &args.workgroup_toolchain {
             command.arg("--workgroup-toolchain").arg(path);
         }
+        for path in &args.read_only_path {
+            command.arg("--read-only-path").arg(path.canonicalize()?);
+        }
         for path in &args.task_credential_command {
             command
                 .arg("--task-credential-command")

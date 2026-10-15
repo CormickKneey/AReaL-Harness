@@ -48,3 +48,9 @@ target/debug/areal -p 'Continue' --resume SESSION_ID --output-format json
 无双向应答通道的 CLI 提交使用 Core interactionMode=headless；问题立即返回 unavailable，需要人工审批的工具立即拒绝，模型可继续独立工作或报告 blocker。显式双向 stream-json 保留上述宿主控制协议；permission-mode=dontAsk 即使有双向通道也使用 headless。
 
 命令路由与旧命令迁移见[客户端指南](../guides/clients.md)。无子命令默认进入 TUI，非交互参数只属于 exec / -p；配置诊断使用 areal config，不依赖运行中的服务。
+
+## 原生消费者
+
+`areal exec --output-format stream-json --include-native-events` 额外输出 `{type:"areal_event",event:<Core 通知>}`。原生通知保留工具媒体和结构化错误，消费者须理解 Core 契约；媒体保存在这些记录中时，不因 Claude 文本投影无法表示而将原生执行判为失败。不加此显式开关时，既有严格投影行为保持不变。失败终态还保留原始可选 `error` 对象。
+
+可重复的 `--read-only-path PATH` 将可信公开输入目录传给 owned Runtime；该参数与 `--endpoint` 互斥，连接远程 Core 的 CLI 不能改变其部署权限。使用时须提供包含 Runtime helpers 的完整原生发行包。
