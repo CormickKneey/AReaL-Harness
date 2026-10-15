@@ -112,7 +112,7 @@ Core `permissions` 负责审批模式、规则优先级与精确请求记忆；C
 
 [权限架构提案](permissions.md)建议在上述分工下引入受限自动执行预设和 Core 授权代理：命令规则只决定是否询问，附加能力只授予具体操作，并继续受部署、Profile 与父任务上限约束。该提案待评审，尚未改变当前默认值或执行契约。
 
-`integrations/envarena` 是可选平台适配层，集中保存 EnvArena runner、专用打包/输入 smoke 脚本和单元测试。它消费独立 Core/Runtime 的公开入口，投影终止原因和收集制品，不维护模型循环；Core、Runtime、SDK、默认检查和独立发行包不反向依赖它。专用检查和 Linux zipapp 构建须显式选择，见[测试指南](../development/testing.md#可选平台适配器)。返回值契约见 [Core API](../api/core.md#结构化终止原因)。
+外部评测平台通过公开契约消费原生 CLI 和标准发布包。输入适配、终态结果投影、产物收集和平台部署由消费平台维护；Core、Runtime、SDK 和独立发行包不依赖平台适配器，见 [CLI 契约](../api/claude-cli.md)。
 
 模型目录的解析、校验、凭据状态诊断和受控文件写入归 `core/config`，`core/server` 在启动时装配为 Engine 的执行投影，并复用凭据解析规则。Clients 使用公开配置命令，不复制 TOML 解析或凭据规则；桌面安全存储只在可信适配器中提供密钥及注入来源信息，由 Core 返回凭据来源和就绪状态；Renderer 不读取密钥。“无需认证”复用共享文件中不配置凭据引用的语义，不建立另一份供应商配置。GUI 默认与 CLI 共用用户配置文件；独立服务登记目录由 `core/local-service` 选择，不改变配置查找，运行数据仍按 GUI 部署隔离。共享目录保存与安全重启分开，任务持有原模型快照；契约见[配置指南](../guides/configuration.md#gui-与-cli-共享模型目录)。
 

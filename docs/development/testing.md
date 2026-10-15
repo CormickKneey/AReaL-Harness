@@ -70,7 +70,6 @@ python3 scripts/native-agents-smoke.py --bin-dir target/debug --sandbox-profile 
 
 原生工具/Agent smoke 使用本地固定响应 HTTP 模型、统一 launcher 与临时工作区，无需外部模型。覆盖文件 CAS、搜索、验证 receipt、图像，以及不委派、单 Worker、同步等待、预算失败、父取消和默认异步；异步用例要求三个 Worker 请求结束前父任务继续推进，并检查主/子采样参数。流测试覆盖 length 同帧/尾帧 usage、EOF/取消、不重放 UNKNOWN、压缩后句柄与跨 Turn 边界。
 
-可选 `make envarena-smoke` 运行 `python3 integrations/envarena/arena-input-smoke.py --bin-dir target/debug`：通过真实 launcher、CLI、Core 和 Runtime 验证超过 2 MiB 的原始题面使用短启动输入，按需读取任务、清单、PNG 与 GIF 指定帧，图片实际进入本地模型请求，公开输入不可写且结束后完整性一致；直接超限的 CLI 输入在请求模型前产生结构化错误。此测试不使用真实模型评分。Engine 单元测试另行覆盖请求序列化字节边界，以及 WebSocket 增量可发送但完整回放超限时的拒绝。
 
 请求预算测试覆盖 Chat Completions 与 Responses 在最后一轮返回工具时的 `MAX_MODEL_ROUNDS` 分类，并检查零工具执行、无重试和原始预算审计；普通工具调用预算耗尽及非法 `index` 不应被误分类。桌面 CLI 验收同时检查对应的 `error_max_turns` 结果。Goal HTTP 回归同时验证输出 token 上限与工具数量/缓冲预算经过共享池后仍生效，失败请求的未知消费阻止后续重试和工具执行。
 
@@ -101,22 +100,13 @@ done
 
 `make capacity` 顺序执行，默认 verify 不包含容量测试。结果须注明硬件、构建模式、存储和模型替身，不能当作真实 LLM 吞吐。
 
-## 可选平台适配器
+## 平台接入边界
 
-EnvArena 适配器与专用脚本位于 `integrations/envarena/`；原 `scripts/package-arena.py`、`scripts/arena-input-smoke.py`、`scripts/fetch-arena-fixtures.py` 和 `scripts/tests/test_package_arena.py` 已移至该目录。普通 `make fmt`、`make lint`、`make script-test`、`make verify` 和 `make harness-smoke` 不加载适配器；它的测试没有删除，须显式执行：
-
-```sh
-make envarena-check  # 适配器 Ruff 格式/静态检查及全部离线单测
-make envarena-smoke  # 先构建独立产品，再运行真实本地输入 smoke
-```
-
-`make integration-boundaries` 是需要 Git checkout 的开发检查，随 `make script-test` 检查产品源码/依赖清单、发行与安装入口、默认 Make 依赖图和工作流；回归覆盖平台路径回流、递归 Make 间接调用及自动触发重新加入。通用 `id-arena` Rust 分配器不属于平台依赖。通用文件/图像、只读目录和请求预算仍由 Runtime、Engine 与原生工具测试覆盖。
-
-[Optional EnvArena adapter](../../.github/workflows/arena-package.yml) 仅支持 `workflow_dispatch` 手动构建 Linux musl zipapp、核验最终包与哈希固定的公开输入，再保存候选 artifact。它不是普通 PR 门禁、标准 OTLP 上报或独立发行包的依赖，也不访问 Arena 服务或发布 Registry。该完整包验收要求原生 Linux 容器能力，不能用本地单测代替。
+`make integration-boundaries` 需要 Git checkout，随 `make script-test` 执行，防止平台适配依赖进入产品源码、发行/安装入口、工作流和递归默认 Make 目标。通用 Rust `id-arena` 分配器不属于平台依赖。平台适配与生命周期验收由消费端维护；原生 CLI、Runtime、Engine 和工具测试覆盖公开契约。
 
 ## CI 与契约
 
-macOS 与 Linux 宿主检查使用同一矩阵定义，`fail-fast: false` 保证任一平台失败不取消另一平台的覆盖。macOS 使用 `make setup-node`，仅安装原生 smoke 和 SDK 所需的 Node 依赖；Linux `make setup` 继续安装全部锁定格式工具。原生验收在同一次子 Make 调用中运行 Runtime、Harness、桌面 API 和 Workgroup smoke，共用一次 workspace build。Docker 只复制所需 CLI/TUI/Web 客户端，GUI 不进入构建上下文。原生 Runtime 和 Harness 覆盖保持不变；EnvArena 专用检查通过上述显式入口运行。
+macOS 与 Linux 宿主检查使用同一矩阵定义，`fail-fast: false` 保证任一平台失败不取消另一平台的覆盖。macOS 使用 `make setup-node`，仅安装原生 smoke 和 SDK 所需的 Node 依赖；Linux `make setup` 继续安装全部锁定格式工具。原生验收在同一次子 Make 调用中运行 Runtime、Harness、桌面 API 和 Workgroup smoke，共用一次 workspace build。Docker 只复制所需 CLI/TUI/Web 客户端，GUI 不进入构建上下文。原生 Runtime 和 Harness 覆盖保持不变。
 
 `harness-smoke.mjs` 通过真实 Core/Runtime 和模型请求检查根/嵌套 `AGENTS.md` 的顺序、无关目录隔离、缺失文件、跨 Turn 刷新、32 KiB 边界、UTF-8 和符号链接拒绝。
 

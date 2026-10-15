@@ -41,7 +41,7 @@ The formula installs `bin`, `libexec`, LICENSE and the manifest, preserving Core
 
 ## Optional platform adapter package
 
-[Optional EnvArena adapter](../../.github/workflows/arena-package.yml) runs only through manual `workflow_dispatch`. It produces a Linux musl zipapp for the platform runner and verification artifacts; it does not publish to an Arena Registry or upload trajectories, and is not a prerequisite for standalone bundles or the installer above. Regular pull requests do not run it. Adapter scripts moved from `scripts/` to `integrations/envarena/`; see the [benchmark adapter guide](../benchmarks/README.en.md#arena-lazy-public-inputs) for commands and native Linux validation.
+External platforms consume standard native release bundles through the [CLI contract](../api/claude-cli.en.md). The legacy EnvArena Python zipapp and dedicated packaging workflow are no longer distributed.
 
 Do not require the optional adapter job in regular pull-request branch protection. Remove any existing required `Arena package` check in repository settings separately; workflow files do not change that setting.
 
