@@ -1,0 +1,289 @@
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+import { mkdtemp, mkdir, readFile, writeFile, cp, readdir, lstat } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
+import { createServer } from "node:http";
+import { parseArgs } from "node:util";
+import { captureSmokeFailure } from "./smoke-navigation.mjs";
+import { withSmokeDeadline } from "./smoke-deadline.mjs";
+
+// 沿用历史副本专项：只把来源作为输入，所有 Core 写入和清理均落在私有副本。
+const gui = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const require = createRequire(join(gui, "app/package.json"));
+const { _electron: electron } = require("playwright-core");
+const { ServiceConnection } = require(join(gui, "app/src/core/service-client.cjs"));
+const { values } = parseArgs({
+  options: { source: { type: "string" }, executable: { type: "string" } },
+});
+const source = resolve(values.source || join(gui, "scripts/fixtures/history-compat"));
+const fixtureMode = source === join(gui, "scripts/fixtures/history-compat");
+const executablePath = values.executable || process.env.AREAL_GUI_EXECUTABLE;
+const binary = executablePath
+  ? resolve(dirname(executablePath), "../Resources/areal-core/bin/areal")
+  : process.env.AREAL_CORE_BIN || resolve(gui, "../../target/debug/areal");
+const scratch = await mkdtemp("/private/tmp/ahc-");
+const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const hashes = new Map(),
+  copyHashes = new Map(),
+  sessions = new Map(),
+  checks = [];
+let app,
+  page,
+  failure,
+  copyUnchangedWhileOpen = false,
+  sourceUnchanged = false;
+let projectIndexHash;
+let modelRequests = 0;
+const server = createServer((_request, response) => {
+  modelRequests++;
+  response.writeHead(500).end("History observation must not invoke a model");
+});
+
+async function sourceBytes(relative) {
+  const path = join(source, relative);
+  assert.ok((await lstat(path)).isFile(), "History inputs must be regular files");
+  const bytes = await readFile(path);
+  hashes.set(relative, hash(bytes));
+  copyHashes.set(relative, hash(bytes));
+  return bytes;
+}
+
+function assertIdle(record) {
+  const thread = record.thread,
+    desktop = thread.desktop;
+  assert.equal(
+    thread.status.type,
+    "idle",
+    "Preflight requires idle history; no recovery work is executed",
+  );
+  assert.ok(
+    thread.turns.every((turn) => ["completed", "failed", "interrupted"].includes(turn.status)),
+    "History contains an unfinished turn",
+  );
+  assert.ok(
+    !thread.goals?.goal ||
+      ["completed", "failed", "budgetLimited"].includes(thread.goals.goal.status),
+    "History contains an unfinished goal",
+  );
+  assert.equal(desktop?.queue?.items?.length ?? 0, 0, "History contains queued work");
+  assert.ok(
+    !(desktop?.executions?.length || desktop?.processes?.length || desktop?.workflowRun),
+    "History contains managed execution state",
+  );
+  assert.ok(
+    (desktop?.hookRuns ?? []).every((run) => run.delivered && run.outcome !== "running"),
+    "History contains unsettled hooks",
+  );
+}
+
+async function unchanged(root, expected = hashes) {
+  for (const [relative, digest] of expected) {
+    if (hash(await readFile(join(root, relative))) !== digest) return false;
+  }
+  return true;
+}
+
+async function call(name, params) {
+  const result = await withSmokeDeadline(
+    `history ${name}`,
+    () =>
+      page.evaluate(({ name, params }) => window.arealDesktop.command(name, params), {
+        name,
+        params,
+      }),
+    120000,
+  );
+  assert.equal(result.ok, true, result.error?.message ?? JSON.stringify(result));
+  return result.value;
+}
+
+try {
+  await mkdir(join(scratch, "core"), { mode: 0o700 });
+  await mkdir(join(scratch, "user/.areal"), { recursive: true, mode: 0o700 });
+  assert.ok(
+    (await lstat(source)).isDirectory(),
+    "History source must be a directory, not a symlink",
+  );
+  const projects = JSON.parse(await sourceBytes("projects.json"));
+  projectIndexHash = hashes.get("projects.json");
+  hashes.delete("projects.json");
+  copyHashes.delete("projects.json");
+  assert.ok(Array.isArray(projects) && projects.length > 0, "History source has no projects");
+  const isolatedProjects = [];
+  for (const project of projects) {
+    assert.match(project.id, /^[a-f0-9]{24}$/, "Invalid project ID");
+    assert.ok(!sessions.has(project.id), "Duplicate project ID");
+    assert.ok(
+      (await lstat(join(source, project.id))).isDirectory(),
+      "Project must not be a symlink",
+    );
+    const state = join(project.id, "state"),
+      ids = [];
+    const workspace = fixtureMode ? join(scratch, "workspaces", project.id) : project.root;
+    if (fixtureMode) await mkdir(workspace, { recursive: true, mode: 0o700 });
+    assert.equal(typeof workspace, "string", "Project workspace is missing");
+    assert.ok(
+      (await lstat(join(source, state))).isDirectory(),
+      "State must be a directory, not a symlink",
+    );
+    await mkdir(join(scratch, "core", state), { recursive: true, mode: 0o700 });
+    for (const name of await readdir(join(source, state))) {
+      if (!name.endsWith(".json")) continue;
+      assert.match(name, /^[a-f0-9-]{36}\.json$/, "Invalid stored session filename");
+      const relative = join(state, name),
+        bytes = await sourceBytes(relative);
+      const record = JSON.parse(bytes);
+      assert.equal(record.thread.id, name.slice(0, -5), "History filename and thread ID differ");
+      assertIdle(record);
+      // 受控样本的占位工作区只在副本中填充；私有历史保留全部原始字节及 cwd。
+      let copied = bytes;
+      if (fixtureMode) {
+        record.thread.cwd = workspace;
+        copied = Buffer.from(JSON.stringify(record));
+        copyHashes.set(relative, hash(copied));
+      }
+      await writeFile(join(scratch, "core", relative), copied, { mode: 0o600 });
+      ids.push(record.thread.id);
+    }
+    assert.ok(ids.length > 0, "Project has no history sessions");
+    // 归档和附件仍由 Core 读取；不复制锁、服务登记、凭据或部署配置。
+    for (const directory of ["history", "blobs"]) {
+      const relative = join(state, directory);
+      try {
+        await lstat(join(source, relative));
+      } catch (error) {
+        if (error.code === "ENOENT") continue;
+        throw error;
+      }
+      await cp(join(source, relative), join(scratch, "core", relative), {
+        recursive: true,
+        filter: async (path) => {
+          const stat = await lstat(path);
+          assert.ok(!stat.isSymbolicLink(), "History resources must not contain symlinks");
+          if (stat.isFile())
+            await sourceBytes(join(relative, path.slice(join(source, relative).length + 1)));
+          return true;
+        },
+      });
+    }
+    isolatedProjects.push({ id: project.id, root: workspace });
+    sessions.set(project.id, ids);
+  }
+  // Core 校验会话工作区归属；私有副本沿用原路径，只观察、不执行任务。
+  await writeFile(join(scratch, "core/projects.json"), JSON.stringify(isolatedProjects), {
+    mode: 0o600,
+  });
+  assert.equal(
+    await unchanged(join(scratch, "core"), copyHashes),
+    true,
+    "Source changed during history copy",
+  );
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  await writeFile(
+    join(scratch, "user/.areal/config.toml"),
+    `schema_version=1\n[model]\ncatalog_version=1\nprovider="history-fixture"\nname="fixture"\n[model.providers.history-fixture]\nname="History fixture"\nendpoint="http://127.0.0.1:${server.address().port}/v1/chat/completions"\nprotocol="chat-completions"\napi_key_env="AREAL_HISTORY_FIXTURE_KEY"\nmodels=[{id="fixture",enabled=true}]\n`,
+    { mode: 0o600 },
+  );
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([key]) => !key.startsWith("AREAL_") && key !== "ELECTRON_RUN_AS_NODE",
+    ),
+  );
+  Object.assign(env, {
+    AREAL_GUI_USER_DATA: join(scratch, "electron"),
+    AREAL_CORE_HOME: join(scratch, "core"),
+    AREAL_CORE_USER_HOME: join(scratch, "user"),
+    AREAL_HARNESS_SERVICE_HOME: join(scratch, "registry"),
+    AREAL_HISTORY_FIXTURE_KEY: "fixture-key",
+  });
+  if (!executablePath) env.AREAL_CORE_BIN = binary;
+  app = await electron.launch({
+    ...(executablePath ? { executablePath, args: [] } : { args: [join(gui, "app")] }),
+    env,
+    timeout: 120000,
+  });
+  page = await app.firstWindow();
+  page.setDefaultTimeout(30000);
+  await page.getByTestId("areal-workbench").waitFor({ timeout: 120000 });
+  for (const project of isolatedProjects) {
+    await call("connect", { projectId: project.id });
+    for (const id of sessions.get(project.id))
+      await call("open", { projectId: project.id, threadId: id });
+    const snapshot = await page.evaluate(() => window.arealDesktop.snapshot());
+    const restored = snapshot.projects.find((value) => value.id === project.id);
+    assert.equal(restored.state.connected, true);
+    assert.equal(restored.error, null);
+    for (const id of sessions.get(project.id))
+      assert.ok(restored.state.threads[id], "Existing session was not restored");
+    checks.push({
+      projectId: project.id,
+      sessions: sessions.get(project.id).length,
+      connected: true,
+    });
+  }
+  copyUnchangedWhileOpen = await unchanged(join(scratch, "core"), copyHashes);
+  assert.equal(
+    copyUnchangedWhileOpen,
+    true,
+    "Opening history must not rewrite snapshots or archived resources",
+  );
+  assert.equal(
+    hash(await readFile(join(source, "projects.json"))),
+    projectIndexHash,
+    "Source project index changed",
+  );
+  assert.equal(modelRequests, 0, "History observation replayed a model request");
+} catch (error) {
+  failure = { message: error.message, stack: error.stack };
+  if (page) await captureSmokeFailure(page, scratch, error);
+} finally {
+  if (app)
+    await app.close().catch((error) => {
+      failure ??= { cleanup: error.message };
+    });
+  try {
+    const meta = JSON.parse(await readFile(join(scratch, "core/service.json"), "utf8"));
+    const connection = new ServiceConnection();
+    try {
+      await connection.connect(meta);
+      await connection.request("hello", { protocol: meta.protocol, identity: meta.identity });
+      await connection.request("stopService", { protocol: meta.protocol, forUpdate: true }, true);
+    } finally {
+      connection.close();
+    }
+  } catch (error) {
+    if (error.code !== "ENOENT") failure ??= { cleanup: error.message };
+  }
+  await new Promise((resolve) => server.close(resolve));
+  try {
+    sourceUnchanged =
+      (await unchanged(source)) &&
+      (!projectIndexHash ||
+        hash(await readFile(join(source, "projects.json"))) === projectIndexHash);
+  } catch (error) {
+    failure ??= { message: error.message };
+  }
+  if (!sourceUnchanged || modelRequests !== 0)
+    failure ??= { message: "Source changed or a model request was replayed" };
+  const report = {
+    passed: !failure,
+    sourceMode: fixtureMode ? "sanitized-fixture" : "local-copy",
+    source,
+    executablePath: executablePath || "development Electron",
+    coreSha256: hash(await readFile(binary)),
+    checks,
+    historyFiles: [...sessions.values()].reduce((count, ids) => count + ids.length, 0),
+    copyUnchangedWhileOpen,
+    sourceUnchanged,
+    modelRequests,
+    cleanupNote:
+      "Only copied services stopped; drain may update copied queue revisions after observation",
+    failure,
+  };
+  const evidence = join(scratch, "manifest.json");
+  await writeFile(evidence, JSON.stringify(report, null, 2), { mode: 0o600 });
+  console.log(JSON.stringify({ passed: report.passed, evidence }));
+  process.exitCode = failure ? 1 : 0;
+}
