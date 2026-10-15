@@ -500,6 +500,55 @@ try {
     "real paged Core Skill read (multibyte >8192 bytes) reaches model request; two-tier real model/effort selection reaches provider",
   );
   await checkComposition(`areal-gui:draft:${pid}:${tid}`, "chat");
+  // Use native typing: fill() uses the editor bridge and repairs the selection itself.
+  for (const theme of ["dark", "light"]) {
+    await button("设置").click();
+    await button("外观").click();
+    await button(theme === "dark" ? "深色" : "浅色").click();
+    await page.waitForFunction(
+      (theme) => document.documentElement.classList.contains(`theme-areal-${theme}`) &&
+        document.documentElement.classList.contains("dark") === (theme === "dark"),
+      theme,
+    );
+    await button("返回应用").click();
+    const requestCount = received.length;
+    await input().focus();
+    await page.keyboard.type(`Enter caret ${theme}`);
+    await input().press("Enter");
+    await until(
+      (s) => received.length > requestCount &&
+        current(s).turns.at(-1)?.status === "completed" && !s.projects[0].pending.length,
+      `${theme}: Enter send completed`,
+    );
+    await page.waitForFunction(() => {
+      const element = document.querySelector('[data-testid="chat-input"]');
+      return element?.getAttribute("contenteditable") === "true" && element.textContent === "";
+    });
+    const caret = await input().evaluate((element) => {
+      const selection = getSelection();
+      const paragraph = element.firstElementChild;
+      return {
+        focused: document.activeElement === element,
+        collapsed: selection?.isCollapsed,
+        inParagraph: !!paragraph && paragraph.contains(selection?.anchorNode),
+      };
+    });
+    const frame = `enter-caret-${theme}.png`;
+    await page.screenshot({ path: join(scratch, frame), caret: "initial", scale: "css" });
+    frames.push(frame);
+    assert.deepEqual(
+      caret,
+      { focused: true, collapsed: true, inParagraph: true },
+      `${theme}: cleared editor caret stays in its text line`,
+    );
+    await page.keyboard.type("next draft");
+    assert.equal(await input().textContent(), "next draft", `${theme}: typing continues after Enter`);
+    await input().press(process.platform === "darwin" ? "Meta+a" : "Control+a");
+    await input().press("Backspace");
+  }
+  checks.push(
+    "native Enter clears accepted messages and restores a line-sized caret in light/dark; subsequent typing remains usable",
+  );
   // 已有聊天发送前读取失败不丢标签或正文，不发缺失技能请求。
   await chooseFirst();
   await input().fill("技能失败保留草稿");
