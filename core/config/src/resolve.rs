@@ -612,7 +612,7 @@ pub(crate) fn load_mode(
         ("limits.context_target_tokens", "0"),
         ("limits.context_output_reserve_tokens", "8192"),
         ("limits.context_recent_bytes", "0"),
-        ("limits.context_recent_tokens", "8192"),
+        ("limits.context_recent_tokens", "0"),
         ("limits.context_mode", "auto"),
         ("model.max_retries", "2"),
         ("model.max_request_bytes", "16777216"),

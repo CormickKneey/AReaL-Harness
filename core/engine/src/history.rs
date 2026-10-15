@@ -298,23 +298,35 @@ pub(super) fn checkpoint_evidence(items: &[&Item], end: usize) -> Vec<String> {
 pub(super) fn checkpoint_inputs(
     thread: &Thread,
     count: usize,
-    token_limit: usize,
 ) -> Vec<areal_protocol::ContextInput> {
-    let mut inputs = thread
+    let prefix: Vec<_> = thread
+        .turns
+        .iter()
+        .flat_map(|t| &t.items)
+        .take(count)
+        .collect();
+    let prefix_ids: HashSet<_> = prefix.iter().map(|item| item.id()).collect();
+    // 冷历史恢复后以权威原文重新排序，不能把旧检查点漏掉的首问追加到最新修订之后。
+    let mut inputs: Vec<_> = thread
         .context_checkpoint
         .as_ref()
-        .and_then(|c| c.retained_inputs.clone())
-        .unwrap_or_default();
+        .and_then(|c| c.retained_inputs.as_ref())
+        .into_iter()
+        .flatten()
+        .filter(|input| !prefix_ids.contains(input.item_id.as_str()))
+        .cloned()
+        .collect();
     let automatic: HashSet<_> = thread
         .turns
         .iter()
         .filter(|t| t.goal.as_ref().is_some_and(|g| g.origin == "continuation"))
         .filter_map(|t| t.items.first().map(Item::id))
         .collect();
-    for item in thread.turns.iter().flat_map(|t| &t.items).take(count) {
+    let mut seen: HashSet<_> = inputs.iter().map(|input| input.item_id.clone()).collect();
+    for item in prefix {
         if let Item::UserMessage { id, content } = item
             && !automatic.contains(id.as_str())
-            && !inputs.iter().any(|i| i.item_id == *id)
+            && seen.insert(id.clone())
         {
             inputs.push(areal_protocol::ContextInput {
                 item_id: id.clone(),
@@ -322,50 +334,7 @@ pub(super) fn checkpoint_inputs(
             });
         }
     }
-    let mut remaining = token_limit;
-    let mut retained = Vec::new();
-    // 最新请求不能因附件占满保留配额而整条丢失；完整求解窗口仍由请求预检约束。
-    // 先保留最新输入，再考虑首问与较早修订，输出顺序仍与原始对话一致。
-    let latest = inputs.len().checked_sub(1);
-    let order = latest
-        .into_iter()
-        .chain((0..inputs.len()).filter(|i| Some(*i) != latest).take(1))
-        .chain((1..inputs.len()).rev().filter(|i| Some(*i) != latest));
-    for index in order {
-        let cost = |content: &[Input]| {
-            context::estimate_tokens(&[Message {
-                role: "user".into(),
-                content: content.iter().map(content_from_input).collect(),
-                tool_calls: Vec::new(),
-                tool_call_id: None,
-                provider_context: None,
-            }])
-        };
-        let mut tokens = cost(&inputs[index].content);
-        if Some(index) != latest && tokens > remaining {
-            // 较早附件可回取，但其文字修订不能随附件一起被丢弃；明确标记投影省略。
-            let mut text: Vec<_> = inputs[index]
-                .content
-                .iter()
-                .filter(|part| part.modality() == Modality::Text)
-                .cloned()
-                .collect();
-            if text.len() != inputs[index].content.len() {
-                text.push(Input::text("[Historical attachments omitted from this checkpoint projection; original content remains available through read_history.]"));
-                let text_tokens = cost(&text);
-                if text_tokens <= remaining {
-                    inputs[index].content = text;
-                    tokens = text_tokens;
-                }
-            }
-        }
-        if Some(index) == latest || tokens <= remaining {
-            retained.push(index);
-            remaining = remaining.saturating_sub(tokens);
-        }
-    }
-    retained.sort_unstable();
-    retained.into_iter().map(|i| inputs[i].clone()).collect()
+    inputs
 }
 
 pub(super) fn logical_history(thread: &Thread, store: &store::Store) -> anyhow::Result<Thread> {
@@ -985,5 +954,61 @@ mod file_view_tests {
         malformed = raw;
         malformed["lines"][0]["text"] = json!("no newline");
         assert!(compact_file_text(&malformed.to_string()).is_none());
+    }
+}
+
+#[cfg(test)]
+mod checkpoint_input_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn hydrated_originals_restore_order_and_media_after_a_sparse_checkpoint() {
+        let data = tempfile::tempdir().unwrap();
+        let engine = Engine::open(
+            data.path(),
+            Arc::new(model::UnconfiguredModel),
+            Limits::default(),
+        )
+        .unwrap();
+        let mut thread = engine.create("/workspace".into()).await.unwrap();
+        let latest = vec![
+            Input::text("Latest correction"),
+            Input::Image {
+                url: "https://example.test/current.png".into(),
+                detail: None,
+            },
+        ];
+        thread.turns.push(
+            serde_json::from_value(json!({"id":"turn","status":"completed","items":[
+                {"type":"userMessage","id":"initial","content":[Input::text("Old question")]},
+                {"type":"userMessage","id":"latest","content":latest}
+            ]}))
+            .unwrap(),
+        );
+        thread.context_checkpoint = Some(areal_protocol::ContextCheckpoint {
+            through_item_id: "latest".into(),
+            summary: "Historical summary".into(),
+            compactions: 1,
+            total_duration_ms: 0,
+            usage: Default::default(),
+            evidence: Vec::new(),
+            retained_inputs: Some(vec![areal_protocol::ContextInput {
+                item_id: "latest".into(),
+                content: vec![Input::text("Latest correction")],
+            }]),
+        });
+        let retained = checkpoint_inputs(&thread, 2);
+        assert_eq!(
+            retained
+                .iter()
+                .map(|input| input.item_id.as_str())
+                .collect::<Vec<_>>(),
+            ["initial", "latest"]
+        );
+        assert_eq!(
+            serde_json::to_value(&retained[1].content).unwrap(),
+            serde_json::to_value(latest).unwrap()
+        );
+        engine.shutdown().await;
     }
 }

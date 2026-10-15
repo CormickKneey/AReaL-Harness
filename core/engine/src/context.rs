@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashMap;
 
 const SUMMARY_LIMIT: usize = 16 * 1024;
 
@@ -76,31 +77,144 @@ pub(crate) fn context_overflow(reason: &str, tokens: usize, limit: usize) -> any
     ).into()
 }
 
-fn checkpoint_retention(
-    thread: &Thread,
-    count: usize,
-    input_limit: usize,
-) -> (Vec<areal_protocol::ContextInput>, Vec<String>) {
-    let available = if input_limit == 0 { 32768 } else { input_limit };
-    let inputs = crate::history::checkpoint_inputs(thread, count, (available / 4).min(8192));
-    let items: Vec<_> = thread.turns.iter().flat_map(|t| &t.items).collect();
-    let mut candidates = thread
-        .context_checkpoint
-        .as_ref()
-        .map(|c| c.evidence.clone())
-        .unwrap_or_default();
-    candidates.extend(crate::history::checkpoint_evidence(&items, count));
-    let mut remaining = (available / 4).min(8192);
-    let mut evidence = Vec::new();
-    for text in candidates.into_iter().rev() {
-        let tokens = text_tokens(&text) + 16;
-        if tokens <= remaining && !evidence.contains(&text) {
-            remaining -= tokens;
-            evidence.push(text);
+#[derive(Debug, thiserror::Error)]
+#[error("context compaction failed: {0}; previous checkpoint retained")]
+pub(crate) struct CompactionFailure(pub &'static str);
+
+pub(crate) fn request_tokens(messages: &[Message], tools: &[Value]) -> anyhow::Result<usize> {
+    // 协议封套保留固定余量，求解预检与压缩候选共用这一计量入口。
+    Ok(estimate_tokens(messages)
+        .saturating_add(text_tokens(&serde_json::to_string(tools)?))
+        .saturating_add(512))
+}
+
+// 分配器以真正的历史投影为基线；用户原文、证据和摘要共享剩余空间。
+struct ContextPlan<'a> {
+    budget: &'a ContextBudget,
+    overhead_tokens: usize,
+    byte_target: Option<usize>,
+    store: &'a store::Store,
+}
+impl ContextPlan<'_> {
+    fn checkpoint(
+        &self,
+        thread: &Thread,
+        count: usize,
+        summary: &str,
+        retain_optional: bool,
+    ) -> anyhow::Result<(areal_protocol::ContextCheckpoint, usize, usize)> {
+        let Self {
+            budget,
+            overhead_tokens,
+            byte_target,
+            store,
+        } = *self;
+        let items: Vec<_> = thread.turns.iter().flat_map(|t| &t.items).collect();
+        let inputs = crate::history::checkpoint_inputs(thread, count);
+        let latest = crate::history::checkpoint_inputs(thread, items.len())
+            .last()
+            .map(|input| input.item_id.clone());
+        let mandatory = inputs
+            .last()
+            .filter(|input| Some(&input.item_id) == latest.as_ref());
+        let mut checkpoint = areal_protocol::ContextCheckpoint {
+            through_item_id: items[count - 1].id().to_owned(),
+            summary: summary.to_owned(),
+            retained_inputs: Some(mandatory.cloned().into_iter().collect()),
+            evidence: Vec::new(),
+            usage: Default::default(),
+            total_duration_ms: 0,
+            compactions: 0,
+        };
+        let mut projection = thread.clone();
+        projection.context_checkpoint = Some(checkpoint.clone());
+        let projected = history(&projection, store)?;
+        let mut tokens = estimate_tokens(&projected).saturating_add(overhead_tokens);
+        let mut bytes = message_bytes(&projected);
+        // 软目标不能丢弃最新请求，也不能截断已通过验证的摘要。
+        if !retain_optional {
+            return Ok((checkpoint, tokens, bytes));
         }
+        let allocation_limit = if budget.window == 0 {
+            usize::MAX
+        } else {
+            budget.target.max(tokens).min(budget.input_limit)
+        };
+        let byte_limit = byte_target.map_or(usize::MAX, |limit| limit.max(bytes));
+        let input_message = |content: &[Input]| Message {
+            role: "user".into(),
+            content: content.iter().map(content_from_input).collect(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+            provider_context: None,
+        };
+        let mut retained = mandatory.cloned().into_iter().collect::<Vec<_>>();
+        for input in inputs
+            .iter()
+            .rev()
+            .filter(|input| mandatory.is_none_or(|m| m.item_id != input.item_id))
+        {
+            let mut input = input.clone();
+            let mut message = input_message(&input.content);
+            let fits = |message: &Message| {
+                tokens.saturating_add(estimate_tokens(std::slice::from_ref(message)))
+                    <= allocation_limit
+                    && bytes.saturating_add(message_bytes(std::slice::from_ref(message)))
+                        <= byte_limit
+            };
+            if !fits(&message) {
+                let mut text: Vec<_> = input
+                    .content
+                    .iter()
+                    .filter(|p| p.modality() == Modality::Text)
+                    .cloned()
+                    .collect();
+                if text.len() == input.content.len() {
+                    continue;
+                }
+                text.push(Input::text("[Historical attachments omitted from this checkpoint projection; original content remains available through read_history.]"));
+                message = input_message(&text);
+                if !fits(&message) {
+                    continue;
+                }
+                input.content = text;
+            }
+            tokens = tokens.saturating_add(estimate_tokens(std::slice::from_ref(&message)));
+            bytes = bytes.saturating_add(message_bytes(&[message]));
+            retained.push(input);
+        }
+        // 只按最近程度分配，输出仍按权威历史排序；首问不再享有特殊额度。
+        let positions: HashMap<_, _> = inputs
+            .iter()
+            .enumerate()
+            .map(|(index, input)| (input.item_id.as_str(), index))
+            .collect();
+        retained.sort_by_key(|input| positions[input.item_id.as_str()]);
+        checkpoint.retained_inputs = Some(retained);
+        let mut candidates = thread
+            .context_checkpoint
+            .as_ref()
+            .map(|c| c.evidence.clone())
+            .unwrap_or_default();
+        candidates.extend(crate::history::checkpoint_evidence(&items, count));
+        for text in candidates.into_iter().rev() {
+            if checkpoint.evidence.contains(&text) {
+                continue;
+            }
+            let message = Message::text("assistant", &text);
+            let cost = estimate_tokens(std::slice::from_ref(&message));
+            let size = message_bytes(&[message]);
+            if tokens.saturating_add(cost) <= allocation_limit
+                && bytes.saturating_add(size) <= byte_limit
+            {
+                tokens += cost;
+                bytes += size;
+                checkpoint.evidence.push(text);
+            }
+        }
+        checkpoint.evidence.reverse();
+        Ok((checkpoint, tokens, bytes))
     }
-    evidence.reverse();
-    (inputs, evidence)
 }
 
 // Responses 适配器只发送原生调用，不能把兼容 Chat 的包装再计一次。
@@ -259,6 +373,63 @@ fn fit_summary_input(input: &mut [Message], input_limit: usize) -> anyhow::Resul
 }
 
 impl Engine {
+    pub(crate) fn request_prefix(
+        &self,
+        cell: &Cell,
+        configuration: &areal_protocol::desktop::EffectiveConfig,
+        instructions: Option<&str>,
+    ) -> Vec<Message> {
+        let mut prefix = Vec::new();
+        if let Some(instructions) = instructions {
+            prefix.push(Message::text("system", instructions));
+        }
+        if self.extensions.agents.is_none()
+            && !cell.research
+            && self.limits.max_children_per_turn > 0
+            && self.limits.max_agent_depth > 0
+        {
+            let allowed = |name: &str| {
+                configuration
+                    .tool_allowlist
+                    .as_ref()
+                    .is_none_or(|names| names.iter().any(|n| n == name))
+            };
+            if cell.depth > 0 && allowed("agent_report") {
+                prefix.push(Message::text("system", agents::CHILD_INSTRUCTIONS));
+            }
+            if cell.depth < self.limits.max_agent_depth
+                && allowed("agent_spawn")
+                && !configuration.read_only
+            {
+                prefix.push(Message::text("system", agents::INSTRUCTIONS));
+            }
+        }
+        prefix
+    }
+
+    pub(crate) async fn recorded_context_overhead(
+        &self,
+        cell: &Cell,
+        thread: &Thread,
+    ) -> anyhow::Result<usize> {
+        let configuration = thread
+            .turns
+            .last()
+            .and_then(|t| t.configuration.clone())
+            .unwrap_or_default();
+        let tools = self
+            .visible_tools(cell, &configuration, thread.desktop.is_some())
+            .await;
+        let instructions = thread
+            .turns
+            .last()
+            .and_then(|t| t.instruction_snapshot.as_deref());
+        request_tokens(
+            &self.request_prefix(cell, &configuration, instructions),
+            &tools,
+        )
+    }
+
     pub(crate) async fn project_instructions(
         self: &Arc<Self>,
         cell: &Arc<Cell>,
@@ -551,23 +722,67 @@ impl Engine {
                 }
             }
         }
+        let unresolved = items.iter().position(|item| {
+            matches!(
+                item,
+                Item::DynamicToolCall {
+                    status: areal_protocol::ToolStatus::InProgress,
+                    ..
+                }
+            ) || matches!(item, Item::DynamicToolCall { execution, .. } if execution.outcome == areal_protocol::ToolOutcome::Unknown)
+        });
+        if let Some(unresolved) = unresolved {
+            boundaries.retain(|(cut, _, _)| *cut <= unresolved);
+        }
         // 先模拟实际历史投影，避免只压缩原始任务（该任务本来就会保留）。
         // 保留区过大时在同一组合法边界内缩短保留；不拆分工具调用与结果。
         let mut selected = None;
         // 字节触发也需要压缩余量；仅满足 token 目标会在小窗口下反复摘要。
-        let byte_target =
-            byte_trigger.then_some(self.limits.context_window_bytes.saturating_mul(3) / 4);
+        let byte_target = Some(if byte_trigger {
+            self.limits.context_window_bytes.saturating_mul(3) / 4
+        } else {
+            before_bytes.saturating_sub(64)
+        });
         let mut best_saving = 0;
-        let mut probe = logical_snapshot.clone();
+        let planner = ContextPlan {
+            budget: &budget,
+            overhead_tokens,
+            byte_target,
+            store: &self.store,
+        };
+        // 用共享预算定位保留最多近期完整轮次的边界，最多进行对数次投影。
+        let mut low = 0;
+        let mut high = boundaries.len();
+        while low < high {
+            let middle = low + (high - low) / 2;
+            let (_, tokens, bytes) =
+                planner.checkpoint(&logical_snapshot, boundaries[middle].0, "", false)?;
+            if (budget.window == 0 || tokens.saturating_add(1024) <= budget.target)
+                && byte_target.is_none_or(|target| bytes.saturating_add(1024) <= target)
+            {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        let automatic = low
+            .checked_sub(1)
+            .and_then(|index| boundaries.get(index))
+            .or(boundaries.first());
         // 先检查近期保留边界，再检查最大可压缩前缀；不逐项重建长历史，
         // 避免大量工具轮次下 O(rounds × history) 的投影成本。
-        let preferred = boundaries.iter().find(|(_, bytes, tokens)| {
-            if self.limits.context_recent_bytes > 0 {
-                *bytes >= self.limits.context_recent_bytes
+        let preferred =
+            if self.limits.context_recent_bytes > 0 || self.limits.context_recent_tokens > 0 {
+                boundaries.iter().find(|(_, bytes, tokens)| {
+                    if self.limits.context_recent_bytes > 0 {
+                        *bytes >= self.limits.context_recent_bytes
+                    } else {
+                        *tokens >= self.limits.context_recent_tokens
+                    }
+                })
             } else {
-                *tokens >= self.limits.context_recent_tokens
-            }
-        });
+                automatic
+            };
         let deepest = boundaries.first();
         let mut candidates: Vec<usize> = preferred
             .into_iter()
@@ -579,32 +794,16 @@ impl Engine {
         if budget.target > 0
             && items.len() > previous
             && matches!(items.last(), Some(Item::DynamicToolCall { status, .. }) if *status != areal_protocol::ToolStatus::InProgress)
-            && !items[previous..].iter().any(|item| {
-                matches!(
-                    item,
-                    Item::DynamicToolCall {
-                        status: areal_protocol::ToolStatus::InProgress,
-                        ..
-                    }
-                )
-            })
+            && unresolved.is_none()
         {
             candidates.push(items.len());
         }
         for cut in &candidates {
-            let (retained_inputs, evidence) =
-                checkpoint_retention(&logical_snapshot, *cut, budget.input_limit);
-            probe.context_checkpoint = Some(areal_protocol::ContextCheckpoint {
-                retained_inputs: Some(retained_inputs),
-                evidence,
-                through_item_id: items[*cut - 1].id().to_owned(),
-                summary: String::new(),
-                usage: Default::default(),
-                total_duration_ms: 0,
-                compactions: 0,
-            });
-            let projected = history(&probe, &self.store)?;
-            let projected_bytes = message_bytes(&projected);
+            let (_, projected_tokens, projected_bytes) =
+                planner.checkpoint(&logical_snapshot, *cut, "", false)?;
+            if budget.window > 0 && projected_tokens > budget.input_limit {
+                continue;
+            }
             let saving = before_bytes.saturating_sub(projected_bytes);
             if saving < 1024 {
                 if storage_trigger && Some(*cut) == deepest.map(|v| v.0) {
@@ -628,8 +827,7 @@ impl Engine {
                 selected = Some((*cut, summary_budget, writing_target));
                 best_saving = saving;
             }
-            let projected_tokens = estimate_tokens(&projected) + overhead_tokens;
-            if projected_tokens.saturating_add(4096) <= budget.target
+            if projected_tokens <= budget.target
                 && byte_target
                     .is_none_or(|target| projected_bytes.saturating_add(writing_target) <= target)
             {
@@ -681,13 +879,15 @@ impl Engine {
             let started = tokio::time::Instant::now();
             let mut usage = areal_protocol::ModelUsage::default();
             let mut accepted = None;
+            let storage_only = storage_trigger && !token_trigger && !byte_trigger && !force;
             let mut attempt = 0;
             let mut network_retries: usize = 0;
             let mut request_reserved = false;
             // 只有存储压力时使用已记录证据，不为不可回放的推理再次付费摘要。
-            while attempt < 2 && !(storage_trigger && !token_trigger && !byte_trigger && !force) {
+            while attempt < 2 && !storage_only {
                 let mut summary = String::new();
                 let mut summary_too_large = false;
+                let mut validation_failed = false;
                 let mut attempt_usage = areal_protocol::ModelUsage::default();
                 let mut rejected_tools = Vec::new();
                 let mut request = trajectory::Operation::new(
@@ -777,13 +977,15 @@ impl Engine {
                                     .usage.get_or_insert_with(Default::default).add_assign(&value);
                             },
                             ModelEvent::ToolCall(call) => {
+                                validation_failed = true;
                                 rejected_tools.push(json!({"name":call.name,"arguments":tools::prefix(&call.arguments,4096)}));
                                 anyhow::bail!("context summary must be text without tools");
                             }
                             ModelEvent::Activity | ModelEvent::ProviderContext(_) | ModelEvent::ReasoningDelta { .. } => {}
-                            ModelEvent::Binary { .. } => anyhow::bail!("context summary must be text"),
+                            ModelEvent::Binary { .. } => { validation_failed = true; anyhow::bail!("context summary must be text"); },
                         }
                     }
+                    validation_failed = summary_too_large || !valid_summary(&summary);
                     anyhow::ensure!(!summary_too_large, "context summary exceeds 16 KiB");
                     anyhow::ensure!(valid_summary(&summary), "model returned an empty or tool-shaped context summary");
                     Ok(())
@@ -825,20 +1027,23 @@ impl Engine {
                     }
                     continue;
                 }
+                if !validation_failed {
+                    return Err(error.context(CompactionFailure("summary request failed")));
+                }
                 attempt += 1;
                 network_retries = 0;
                 request_reserved = false;
                 input.push(Message::text("system", "Internal compaction retry, not a user task. The summary was rejected. Return only a shorter checkpoint, without tool calls or executable markup. Use fewer than 500 words and 4000 UTF-8 bytes. Prioritize exact interfaces, remaining work and observed validation over narrative. Keep unfinished work and verification status explicit."));
             }
             let generated_summary_bytes = accepted.as_ref().map(String::len);
-            let mut degradation_reason = accepted.is_none().then_some("summary_unavailable");
-            let mut summary = accepted
-                .unwrap_or_else(|| retained_evidence(&prefix, SUMMARY_LIMIT.min(summary_budget)));
+            let degradation_reason = storage_only.then_some("storage_archive");
+            let summary = if storage_only {
+                retained_evidence(&prefix, SUMMARY_LIMIT.min(summary_budget))
+            } else {
+                accepted.ok_or_else(|| anyhow::anyhow!(CompactionFailure("summary validation exhausted")))?
+            };
             if summary.len() > summary_budget {
-                // 一次本地证据回退，避免重新付费摘要或持久化膨胀后的历史。
-                degradation_reason = Some("insufficient_net_saving");
-                summary = retained_evidence(&prefix, summary_budget.min(SUMMARY_LIMIT));
-                summary = tools::prefix(&summary, summary_budget).to_owned();
+                return Err(anyhow::anyhow!(CompactionFailure("summary exceeds net saving budget")));
             }
             trajectory::record_text(&tracing::Span::current(), "gen_ai.output.messages", "assistant", &summary);
             let mut state = cell.state.lock().await;
@@ -851,30 +1056,32 @@ impl Engine {
                 .map(|checkpoint| checkpoint.usage.clone())
                 .unwrap_or_default();
             cumulative_usage.add_assign(&usage);
-            let (retained_inputs, evidence) = checkpoint_retention(&logical_snapshot, cut, budget.input_limit);
-            candidate.context_checkpoint = Some(areal_protocol::ContextCheckpoint {
-                retained_inputs: Some(retained_inputs),
-                evidence,
-                through_item_id: boundary,
-                summary,
-                total_duration_ms: started.elapsed().as_millis() as u64
-                    + snapshot
-                        .context_checkpoint
-                        .as_ref()
-                        .map_or(0, |checkpoint| checkpoint.total_duration_ms),
-                usage: cumulative_usage,
-                compactions: snapshot
-                    .context_checkpoint
-                    .as_ref()
-                    .map_or(1, |checkpoint| checkpoint.compactions + 1),
-            });
+            // 只允许追加历史；期间另一次压缩或历史前缀变化会使此候选失效。
+            anyhow::ensure!(state.thread.context_checkpoint.as_ref().map(|c| &c.through_item_id)
+                == snapshot.context_checkpoint.as_ref().map(|c| &c.through_item_id), "context checkpoint changed during summary");
+            let current = self.store.hydrate(candidate.clone()).await?;
+            let current = crate::history::logical_history(&current, &self.store)?;
+            let current_items: Vec<_> = current.turns.iter().flat_map(|t| &t.items).collect();
+            anyhow::ensure!(current_items.len() >= cut && current_items[..cut].iter().zip(&items[..cut])
+                .all(|(now, old)| serde_json::to_value(now).ok() == serde_json::to_value(old).ok()),
+                "context prefix changed during summary");
+            let (mut checkpoint, _, _) = planner.checkpoint(&current, cut, &summary, true)?;
+            anyhow::ensure!(checkpoint.through_item_id == boundary, "context boundary changed during summary");
+            checkpoint.total_duration_ms = started.elapsed().as_millis() as u64
+                + snapshot.context_checkpoint.as_ref().map_or(0, |c| c.total_duration_ms);
+            checkpoint.usage = cumulative_usage;
+            checkpoint.compactions = snapshot.context_checkpoint.as_ref().map_or(1, |c| c.compactions + 1);
+            candidate.context_checkpoint = Some(checkpoint);
             let after_history = history(&candidate, &self.store)?;
             let after_bytes = message_bytes(&after_history);
             let after_tokens = estimate_tokens(&after_history) + overhead_tokens;
+            if budget.window > 0 && after_tokens > budget.input_limit {
+                return Err(context_overflow("compaction candidate cannot fit the full request", after_tokens, budget.input_limit));
+            }
             anyhow::ensure!(
                 after_bytes < commit_before_bytes
                     || (storage_trigger && (budget.window == 0 || after_tokens < budget.input_limit)),
-                "context compaction did not reduce input size"
+                CompactionFailure("candidate did not reduce input size")
             );
             let metrics = json!({"threadId":state.thread.id,"beforeBytes":commit_before_bytes,"summaryInputBytes":before_bytes,"afterBytes":after_bytes,"beforeEstimatedTokens":estimated_tokens,"afterEstimatedTokens":after_tokens,"targetTokens":budget.target,"targetMet":budget.target == 0 || after_tokens <= budget.target,"trigger":if force {"manual"} else if token_trigger {"tokens"} else if byte_trigger {"bytes"} else {"storage"},"wholeLatestRound":cut == items.len(),"summaryBytes":candidate.context_checkpoint.as_ref().map(|c|c.summary.len()),"generatedSummaryBytes":generated_summary_bytes,"summaryBudgetBytes":summary_budget,"degradationReason":degradation_reason,"retainedUserMessages":after_history.iter().filter(|m|m.role == "user").count(),"durationMs":started.elapsed().as_millis() as u64,"usage":usage});
             let mut audit = metrics.clone();
@@ -898,18 +1105,26 @@ impl Engine {
             Ok(())
         }.instrument(span).await;
         operation.finish(result.as_ref().err().map(|_| "compaction_failed"));
+        if let Err(error) = &result {
+            // 即使候选未提交，已观察到的摘要消费也必须持久化到原 Thread。
+            self.persist(&cell.state.lock().await.thread).await?;
+            cell.emit("areal/context/compactionFailed", json!({"threadId":snapshot.id,
+                "code":"LLM_CONTEXT_COMPACTION_FAILED","reason":error.to_string(),
+                "checkpointPreserved":true,"windowTokens":budget.window,"outputReserveTokens":budget.reserve,
+                "inputLimitTokens":budget.input_limit,"beforeEstimatedTokens":estimated_tokens}));
+        }
         result
     }
 }
 
-// A failed summarizer cannot invent a successful narrative. Retain labeled raw
-// evidence, with the original user task still replayed verbatim by history().
+// 仅存储归档使用确定性历史摘录，不用它替代失败的模型摘要。
 fn retained_evidence(thread: &Thread, budget: usize) -> String {
     let mut result = String::from(
-        "DEGRADED CONTEXT: no usable summary fits the compaction budget. Older details were omitted; the full event archive is retained. Reinspect files and rerun necessary checks before claiming completion. Do not replay unconfirmed operations. Recent evidence follows (excerpts, not a completeness claim).\n",
+        "STORAGE ARCHIVE: non-replayable history was archived without a model summary. Originals remain available through read_history. The following are historical excerpts, not a completeness claim or permission to replay operations.\n",
     );
     if let Some(checkpoint) = &thread.context_checkpoint
         && !checkpoint.summary.starts_with("DEGRADED CONTEXT:")
+        && !checkpoint.summary.starts_with("STORAGE ARCHIVE:")
     {
         result.push_str("Previous checkpoint excerpt: ");
         result.push_str(tools::prefix(&checkpoint.summary, budget / 4));
@@ -954,6 +1169,63 @@ fn retained_evidence(thread: &Thread, budget: usize) -> String {
 #[cfg(test)]
 mod budget_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn legacy_checkpoint_covering_unknown_effect_cannot_archive_a_new_tool_tail() {
+        let data = tempfile::tempdir().unwrap();
+        struct NoSummary;
+        #[async_trait::async_trait]
+        impl model::Model for NoSummary {
+            fn name(&self) -> &str {
+                "no-summary"
+            }
+            async fn stream(&self, _: Vec<Message>) -> anyhow::Result<model::ModelStream> {
+                panic!("an unresolved effect must prevent summarization");
+            }
+        }
+        let engine = Engine::open(data.path(), Arc::new(NoSummary), Limits::default()).unwrap();
+        let thread = engine.create("/workspace".into()).await.unwrap();
+        let cell = engine.raw_cell(&thread.id).await.unwrap();
+        let call = |id: &str, outcome: &str| {
+            json!({"type":"dynamicToolCall","id":id,"tool":"fixture","arguments":{},"status":"failed","success":false,"callId":id,
+            "execution":{"runtimeEpoch":"fixture","scopeId":"scope","operationId":id,"outcome":outcome}})
+        };
+        {
+            let mut state = cell.state.lock().await;
+            state.thread.turns.push(serde_json::from_value(json!({"id":"turn","status":"completed","items":[
+                {"type":"userMessage","id":"input","content":[Input::text("Inspect the uncertain effect")]},
+                {"type":"agentMessage","id":"first","text":""}, call("unknown", "unknown"),
+                {"type":"agentMessage","id":"second","text":""}, call("settled", "failed")
+            ]})).unwrap());
+            state.thread.context_checkpoint = Some(areal_protocol::ContextCheckpoint {
+                through_item_id: "unknown".into(),
+                summary: "Legacy checkpoint".into(),
+                compactions: 1,
+                total_duration_ms: 0,
+                usage: Default::default(),
+                evidence: Vec::new(),
+                retained_inputs: Some(vec![areal_protocol::ContextInput {
+                    item_id: "input".into(),
+                    content: vec![Input::text("Inspect the uncertain effect")],
+                }]),
+            });
+        }
+        // 无合法前缀时不调用模型，也不越过旧 UNKNOWN 继续归档。
+        engine.context_compact(thread.id.clone()).await.unwrap();
+        let state = cell.state.lock().await;
+        assert_eq!(
+            state
+                .thread
+                .context_checkpoint
+                .as_ref()
+                .unwrap()
+                .through_item_id,
+            "unknown"
+        );
+        assert!(state.thread.history_archive.is_none());
+        drop(state);
+        engine.shutdown().await;
+    }
 
     #[tokio::test]
     async fn idle_compaction_trace_matches_fitted_model_input_and_thread_identity() {

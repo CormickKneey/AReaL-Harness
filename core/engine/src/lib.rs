@@ -105,7 +105,7 @@ impl Default for Limits {
             context_window_bytes: 0,
             context_compaction_enabled: true,
             context_auto_compaction: true,
-            context_recent_tokens: 8192,
+            context_recent_tokens: 0,
             context_window_tokens: 128 * 1024,
             context_target_tokens: 0,
             context_output_reserve_tokens: 8 * 1024,

@@ -1,23 +1,21 @@
 [中文](context-management.md) | **English**
 
-# Context management simplification proposal
+# Context management
 
-This page proposes a budget and compaction refactor. The [Core contract](../api/core.en.md) and [configuration guide](../guides/configuration.en.md) describe implemented behavior. The 131072-token fallback window, 16384-token default HTTP output cap and full retention of the latest compacted user request are implemented. The unified allocator and failure commit rules below remain proposed.
+Core owns request budgeting, compaction and durable history. The [Core contract](../api/core.en.md) defines the public projection; the [configuration guide](../guides/configuration.en.md) describes settings. The fallback window is 131072 tokens and default HTTP output cap is 16384 tokens.
 
 ## Problem and goal
 
-Solve windows, recent originals, checkpoint inputs, evidence, summary input and summary output currently have separate budgets. Retained inputs and evidence each have an internal soft quota of min(8192, available input window / 4). These local budgets do not establish whether the final request is complete, and prioritizing the initial question can displace subsequent corrections. A larger window only delays this failure; retention policy must address it.
-
-Core should allocate tokens for each complete request, always retaining the latest real user request and unresolved tool operations. Older material can be summarized or retrieved. Durable history remains independent of model projection trimming.
+One allocator plans complete requests, retaining the latest real user request and unresolved tool operations. Older material can be summarized or retrieved. Durable history is independent of model projection trimming. A larger window does not replace retention policy.
 
 ## Configuration consolidation
 
-| Setting | Proposed behavior |
+| Setting | Behavior |
 |---|---|
 | `model.context_window_tokens` | Common setting declaring the actual window; global fallback is 131072 tokens |
 | `model.max_output_tokens` | Common setting; overridable per-model HTTP request default of 16384, strictly positive |
 | `context.mode` | Keep auto / manual / disabled |
-| `context.target_tokens`, `context.recent_tokens` | Move to compatibility handling; automatic policy covers normal use, while explicit legacy values remain effective and retain source diagnostics |
+| `context.target_tokens`, `context.recent_tokens` | Automatic target/recent defaults are 0; positive legacy values remain compatibility boundary preferences with source diagnostics |
 | `context.output_reserve_tokens` | Keep as an advanced minimum reserve; normal use reserves the output cap automatically |
 | Legacy token / byte fields | Continue parsing with existing semantics; remove from common examples without silently ignoring explicit values |
 | Internal input and evidence quotas | Remove the two independent fixed quotas and allocate from the complete request budget |
@@ -46,14 +44,15 @@ Summary request failures such as HTTP 400 preserve the previous checkpoint and o
 
 Continue only if the previous projection can fit the current request; otherwise report both summary failure and insufficient window. Check history boundaries and new steer before committing; replan if they changed. Store still writes immutable archive segments before snapshot references, without replaying execution effects.
 
-## Implementation stages
+## Module responsibilities
 
-| Stage | Location | Deliverable |
-|---|---|---|
-| Request retention and defaults | `core/engine/src/history.rs`, `model.rs`, `lib.rs`, `core/config/src/resolve.rs` | Mandatory latest request, 128k / 16k defaults and explicit parameter precedence; implemented |
-| Unified planning | `core/engine/src/context.rs`, `history.rs` and existing solve entry points | One plan drives splitting, checkpoint assembly and final preflight; remove independent input/evidence quotas and initial-question priority |
-| Transactional compaction | Existing `compact_context` and Store commit paths | Commit validated candidates only, preserve state on summary failure, check concurrent steer |
-| Configuration and diagnostics | `core/config`, `core/server`, public protocol and Clients projections | Adapt legacy fields; show window, reserve, full input estimate, compaction reason and failure classification; synchronize types, SDKs and bilingual documentation |
+| Module | Responsibility |
+|---|---|
+| `core/engine/src/context.rs`, `history.rs` | One allocator and chronological projections, original retrieval, complete round boundaries and validated candidates |
+| `core/engine/src/generation.rs` | Build actual live context, share accounting, preflight and rebuild after compaction or steer |
+| `core/engine/src/desktop/context.rs` | Recorded-instruction/current-tool budget diagnostics and manual compaction |
+| `core/config`, `core/server` | Defaults, explicit parameter precedence and legacy configuration compatibility |
+| `core/protocol`, desktop schema | Public failure notification and budget projection; Clients consume Core diagnostics |
 
 Preserve Clients → Core → Runtime ownership. GUI displays Core budgets and outcomes without trimming authoritative history itself. Read old checkpoints compatibly and generate the new projection at the next successful compaction; do not bulk-rewrite user sessions.
 

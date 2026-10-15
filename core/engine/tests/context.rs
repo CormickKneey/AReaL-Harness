@@ -141,7 +141,12 @@ async fn many_compactions_keep_hot_snapshot_small_and_restore_every_original() {
         .as_ref()
         .unwrap();
     assert!(retained.len() < 24);
-    assert_eq!(retained[0].item_id, full.turns[0].items[0].id());
+    // 原文留在磁盘；首问不再占用永久保留额度。
+    assert!(
+        retained
+            .iter()
+            .all(|input| input.item_id != full.turns[0].items[0].id())
+    );
     assert_eq!(full.turns.len(), 48);
     assert!(full.history_archive.is_none());
     engine.shutdown().await;
@@ -543,6 +548,8 @@ fn continuity_model(summary: &str) -> Arc<ContinuityModel> {
 
 struct ScreenshotContinuityModel {
     requests: Mutex<Vec<Vec<Message>>>,
+    summaries: std::sync::atomic::AtomicUsize,
+    fail_summary: std::sync::atomic::AtomicBool,
 }
 
 #[async_trait]
@@ -565,7 +572,14 @@ impl Model for ScreenshotContinuityModel {
         purpose: RequestPurpose,
     ) -> anyhow::Result<AgentStream> {
         if purpose == RequestPurpose::Summary {
-            anyhow::bail!("model HTTP status 400 Bad Request");
+            self.summaries
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if self.fail_summary.load(std::sync::atomic::Ordering::SeqCst) {
+                anyhow::bail!("model HTTP status 400 Bad Request");
+            }
+            return Ok(Box::pin(stream::iter([Ok(ModelEvent::text(
+                "Retain the latest GUI repairs and verify them.",
+            ))])));
         }
         self.requests.lock().unwrap().push(messages);
         Ok(Box::pin(stream::iter([Ok(ModelEvent::text(
@@ -575,10 +589,12 @@ impl Model for ScreenshotContinuityModel {
 }
 
 #[tokio::test]
-async fn screenshot_request_survives_failed_summary_archival_and_restart() {
+async fn screenshot_request_survives_failed_summary_then_successful_archival_and_restart() {
     let data = tempfile::tempdir().unwrap();
     let model = Arc::new(ScreenshotContinuityModel {
         requests: Mutex::new(Vec::new()),
+        summaries: std::sync::atomic::AtomicUsize::new(0),
+        fail_summary: std::sync::atomic::AtomicBool::new(true),
     });
     let limits = Limits {
         context_window_bytes: 0,
@@ -609,11 +625,28 @@ async fn screenshot_request_survives_failed_summary_archival_and_restart() {
         "{:?}",
         done.turns.last().unwrap().error
     );
+    let before = serde_json::to_value(engine.read(&thread.id, true).await.unwrap()).unwrap();
+    assert!(engine.context_compact(thread.id.clone()).await.is_err());
+    assert_eq!(
+        model.summaries.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "HTTP 400 is not a summary validation retry"
+    );
+    assert_eq!(
+        before,
+        serde_json::to_value(engine.read(&thread.id, true).await.unwrap()).unwrap()
+    );
+    model
+        .fail_summary
+        .store(false, std::sync::atomic::Ordering::SeqCst);
     engine.context_compact(thread.id.clone()).await.unwrap();
     let compacted = engine.read(&thread.id, true).await.unwrap();
     let checkpoint = compacted.context_checkpoint.as_ref().unwrap();
-    assert!(checkpoint.summary.starts_with("DEGRADED CONTEXT:"));
-    // 两张图加文字超过 8192 的原文配额，仍须完整保留最新请求。
+    assert_eq!(
+        checkpoint.summary,
+        "Retain the latest GUI repairs and verify them."
+    );
+    // 两张图加文字超过旧的 8192 固定配额，仍完整保留。
     assert_eq!(
         serde_json::to_value(
             &checkpoint
@@ -657,19 +690,24 @@ async fn screenshot_request_survives_failed_summary_archival_and_restart() {
             .iter()
             .find(|m| m.role == "user" && m.text_content().contains(correction))
             .unwrap();
-        assert!(
-            correction_message
-                .text_content()
-                .contains("Historical attachments omitted")
-        );
-        assert!(
-            correction_message
-                .content
-                .iter()
-                .all(|p| matches!(p, areal_engine::model::ContentPart::Text(_)))
-        );
+        assert_eq!(correction_message.content.len(), 3);
     }
-    // 有损模型投影不改写权威原文及其附件。
+    let before_failure =
+        serde_json::to_value(engine.read(&thread.id, true).await.unwrap()).unwrap();
+    model
+        .fail_summary
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let attempts = model.summaries.load(std::sync::atomic::Ordering::SeqCst);
+    assert!(engine.context_compact(thread.id.clone()).await.is_err());
+    assert_eq!(
+        model.summaries.load(std::sync::atomic::Ordering::SeqCst),
+        attempts + 1
+    );
+    assert_eq!(
+        before_failure,
+        serde_json::to_value(engine.read(&thread.id, true).await.unwrap()).unwrap()
+    );
+    // 模型投影不改写权威原文及其附件。
     let full = engine.read(&thread.id, true).await.unwrap();
     assert!(full.turns.iter().flat_map(|t| &t.items).any(|item| {
         matches!(item, areal_protocol::Item::UserMessage { content, .. }
@@ -683,6 +721,8 @@ async fn oversized_latest_screenshot_request_fails_instead_of_solving_an_old_tas
     let data = tempfile::tempdir().unwrap();
     let model = Arc::new(ScreenshotContinuityModel {
         requests: Mutex::new(Vec::new()),
+        summaries: std::sync::atomic::AtomicUsize::new(0),
+        fail_summary: std::sync::atomic::AtomicBool::new(true),
     });
     let engine = Engine::open(
         data.path(),
@@ -726,7 +766,7 @@ async fn oversized_latest_screenshot_request_fails_instead_of_solving_an_old_tas
 }
 
 #[tokio::test]
-async fn user_revisions_survive_repeated_lossy_and_degraded_summaries_and_restart() {
+async fn user_revisions_survive_lossy_summaries_or_preserved_originals_and_restart() {
     // 摘要既可能遗漏修订，也可能完全无效；两种情况下修订必须独立保留。
     for summary in ["Old task is complete. No scope correction.", ""] {
         let data = tempfile::tempdir().unwrap();
@@ -751,18 +791,10 @@ async fn user_revisions_survive_repeated_lossy_and_degraded_summaries_and_restar
             assert_eq!(t.turns.last().unwrap().status, TurnStatus::Completed);
         }
         let state = engine.read(&thread.id, true).await.unwrap();
-        assert!(state.context_checkpoint.as_ref().unwrap().compactions >= 2);
         if summary.is_empty() {
-            assert_eq!(
-                state
-                    .context_checkpoint
-                    .as_ref()
-                    .unwrap()
-                    .summary
-                    .matches("DEGRADED CONTEXT:")
-                    .count(),
-                1
-            );
+            assert!(state.context_checkpoint.is_none());
+        } else {
+            assert!(state.context_checkpoint.as_ref().unwrap().compactions >= 2);
         }
         engine.shutdown().await;
         drop(engine);
@@ -829,7 +861,7 @@ async fn valid_8027_byte_summary_is_not_discarded_at_an_arbitrary_8000_byte_limi
 }
 
 #[tokio::test]
-async fn expanding_summary_falls_back_without_losing_user_input_or_failing_the_turn() {
+async fn expanding_summary_preserves_originals_without_committing_or_failing_a_fitting_turn() {
     let data = tempfile::tempdir().unwrap();
     let model = continuity_model(&"summary ".repeat(1500));
     let engine = Engine::open(
@@ -852,13 +884,7 @@ async fn expanding_summary_falls_back_without_losing_user_input_or_failing_the_t
         assert_eq!(state.turns.last().unwrap().status, TurnStatus::Completed);
     }
     let state = engine.read(&thread.id, true).await.unwrap();
-    assert!(
-        state
-            .context_checkpoint
-            .unwrap()
-            .summary
-            .starts_with("DEGRADED CONTEXT:")
-    );
+    assert!(state.context_checkpoint.is_none());
     assert!(
         model
             .requests
@@ -1298,4 +1324,110 @@ async fn cancelled_compaction_preserves_already_observed_turn_usage_across_resta
         after.turns.last().unwrap().usage
     );
     restored.shutdown().await;
+}
+
+#[tokio::test]
+async fn failed_summary_stops_an_oversized_request_without_rewriting_the_checkpoint() {
+    let data = tempfile::tempdir().unwrap();
+    let model = Arc::new(ScreenshotContinuityModel {
+        requests: Mutex::new(Vec::new()),
+        summaries: std::sync::atomic::AtomicUsize::new(0),
+        fail_summary: std::sync::atomic::AtomicBool::new(true),
+    });
+    let engine = Engine::open(
+        data.path(),
+        model.clone(),
+        Limits {
+            context_window_tokens: 6000,
+            context_output_reserve_tokens: 400,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let thread = engine.create("/workspace".into()).await.unwrap();
+    let mut failed = None;
+    for index in 0..8 {
+        let prompt = format!("Current GUI correction {index}; preserve this exact scope.");
+        let result = turn(&engine, &thread.id, &prompt).await;
+        if result.turns.last().unwrap().status == TurnStatus::Failed {
+            failed = Some((result, prompt));
+            break;
+        }
+    }
+    let (result, prompt) = failed.expect("growing context must stop after the summary fails");
+    let error = result.turns.last().unwrap().error.as_ref().unwrap();
+    assert_eq!(
+        error.outcome.as_ref().unwrap().code,
+        "LLM_CONTEXT_WINDOW_EXCEEDED"
+    );
+    assert!(result.context_checkpoint.is_none());
+    assert_eq!(model.summaries.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert!(model.requests.lock().unwrap().iter().all(|messages| {
+        !messages
+            .iter()
+            .any(|m| m.role == "user" && m.text_content() == prompt)
+    }));
+    assert!(result.turns.last().unwrap().items.iter().any(|item|
+        matches!(item, areal_protocol::Item::UserMessage { content, .. } if content[0].as_text() == prompt)));
+    engine.shutdown().await;
+}
+
+#[tokio::test]
+async fn shared_budget_prioritizes_new_corrections_over_the_initial_question() {
+    let data = tempfile::tempdir().unwrap();
+    let model = continuity_model(
+        "Preserve the newest correction; earlier project descriptions are obsolete.",
+    );
+    let engine = Engine::open(
+        data.path(),
+        model.clone(),
+        Limits {
+            context_window_tokens: 30000,
+            context_output_reserve_tokens: 1000,
+            context_target_tokens: 6000,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let thread = engine.create("/workspace".into()).await.unwrap();
+    let initial = format!(
+        "OBSOLETE INITIAL PROJECT SUMMARY {}",
+        "old background details ".repeat(300)
+    );
+    turn(&engine, &thread.id, &initial).await;
+    for index in 0..8 {
+        let current = format!(
+            "Correction {index}: only repair current GUI scope. {}",
+            "exact revised requirement ".repeat(60)
+        );
+        let done = turn(&engine, &thread.id, &current).await;
+        assert_eq!(done.turns.last().unwrap().status, TurnStatus::Completed);
+    }
+    engine.context_compact(thread.id.clone()).await.unwrap();
+    let view = engine.context_read(&thread.id, 0, 32).await.unwrap();
+    assert_eq!(view["budget"]["retentionStrategy"], "automatic");
+    assert!(
+        view["budget"]["estimatedInputTokens"].as_u64().unwrap()
+            > view["budget"]["historyEstimatedTokens"].as_u64().unwrap()
+    );
+    assert!(
+        view["budget"]["estimatedInputTokens"].as_u64().unwrap()
+            <= view["budget"]["inputLimitTokens"].as_u64().unwrap()
+    );
+    let state = engine.read(&thread.id, true).await.unwrap();
+    let checkpoint = state.context_checkpoint.as_ref().unwrap();
+    let retained = checkpoint.retained_inputs.as_ref().unwrap();
+    assert!(retained.iter().all(|input| {
+        input
+            .content
+            .iter()
+            .all(|p| !p.as_text().contains("OBSOLETE INITIAL"))
+    }));
+    assert!(view["data"].as_array().unwrap().iter().any(|message| {
+        message["text"]
+            .as_str()
+            .is_some_and(|text| text.contains("Correction 7:"))
+    }));
+    assert!(state.turns[0].items.iter().any(|item| matches!(item, areal_protocol::Item::UserMessage { content, .. } if content[0].as_text() == initial)));
+    engine.shutdown().await;
 }

@@ -76,7 +76,6 @@ endpoint = "https://model.example.com/v1/responses"
 api_key_env = "AREAL_API_KEY"
 [context]
 mode = "auto"
-recent_tokens = 8192
 # target_tokens = 0                 # 0: automatic target
 # output_reserve_tokens = 8192
 
@@ -120,7 +119,13 @@ endpoint 是完整 HTTP(S) 请求 URL；Core 只支持 `chat-completions` / `res
 
 `model.context_window_tokens` 声明当前模型的窗口（1–2000000），Provider/模型默认参数及 `parameters.contextWindowTokens` 同样支持。Core 不按模型名称猜测；未配置时使用旧全局字段的 131072（128k）token 兜底，诊断区分模型元数据与兜底。输出预留取 `context.output_reserve_tokens`（默认 8192）与当前模型输出上限的较大值；默认 HTTP 模型因此预留 16384 token，完整输入最多为 114688 token（其中还需容纳动态指令与工具 schema）。显式窗口和输出配置优先，省略字段采用新默认；不会按供应商名称推测实际能力，小窗口模型应同时调低输出上限和必要的预留。每次求解请求在发送前检查完整消息、动态指令和工具 schema 是否落在窗口减预留以内。估算按 ASCII 约 3 字节/token、非 ASCII 约 2 token/字符及媒体代理成本计算；已结算完整输入用量（含缓存）加 10% 余量校准追加历史，压缩后重置。估计不等于供应商 tokenizer 精确计数。
 
-`context.target_tokens=0` 自动选择可用输入窗口的 60%；正数必须小于输入上限。`context.recent_tokens` 默认 8192。Core 按完整组压缩，保留工具/结果配对及未确认副作用。用户原文保留软配额为 min(8192, 可用输入窗口 / 4) 个估算 token；这是内部策略，不能通过 `context.recent_tokens` 调整。最新被压缩的真实用户请求（含附件）完整保留，即使超过软配额，仍受完整请求窗口预检约束。剩余额度优先首个任务与较近修订；较早附件超额时，可保留容得下的文字并标记附件省略。证据另有同等软配额。旧原文仍在磁盘，可通过 `read_history` 查回。摘要只是可出错的历史证据。摘要请求也先预检；过大证据会显式标记省略并缩短。不可缩减的求解请求报 `LLM_CONTEXT_WINDOW_EXCEEDED`。自动模式下，提供方在任何输出/工具调用之前返回明确的上下文溢出错误时，最多压缩恢复一次，仍受 Goal 计量约束；不重放工具副作用。
+常规使用只需设置模型窗口、输出上限和 `context.mode`。`context.target_tokens=0` 自动选择可用输入窗口的 60%；正数必须小于输入上限。`context.recent_tokens` 默认改为 0（自动），正数和旧 `context_recent_bytes` 仍作为兼容边界偏好，诊断保留配置来源；常用示例不再固定近期额度。Core 使用同一完整请求预算分配近期完整轮次、用户原文、摘要和历史证据，删除用户原文/证据各自的固定 8192 软配额，也不再永久优先首问。最新真实用户请求及附件必须完整保留；其他原文从近到远分配，旧附件超额时可保留其文字并明确标记附件省略。未完成或 UNKNOWN 工具操作不得纳入压缩前缀。旧原文与完整附件仍在磁盘，可通过 `read_history` 查回。
+
+求解先构造实际动态提示，再用共享计量入口计算固定指令、完整历史、工具 schema 和协议余量；压缩候选与最终请求使用同一预算。候选须净缩减、满足完整输入硬上限、保持前缀身份及工具配对，才原子提交。摘要等待期间的新 steer 被纳入重新规划，求解重建实际请求后再次预检。目标不能达到但硬上限可满足时，事件中 `targetMet=false`，不为软目标无限压缩。
+
+摘要请求独立预检并有 16 KiB 文本资源保护。HTTP 400 等永久请求错误不作为摘要验证错误重试；已收到但空、过长或包含工具调用的摘要最多验证重试一次。请求失败、验证耗尽或无法净缩减时保留原 checkpoint 与历史，不提交降级摘要；已观察用量仍持久保存。原完整请求仍能容纳时继续，否则返回 `LLM_CONTEXT_WINDOW_EXCEEDED` 并保留摘要失败原因。仅存储滚动可直接归档不可回放的推理并保留历史摘录，不用它替代失败的模型摘要。取消与 Goal 未知消费不允许继续。具体分配与迁移规则见[上下文管理](../design/context-management.md)。
+
+`areal/context/read` 的 `budget` 提供窗口、输出预留/上限、历史估算、含已记录指令与当前工具的输入估算、窗口来源及保留策略；它是下一次请求的历史投影诊断，不包含尚未构造的动态控制。`areal/context/compactionFailed` 提供失败分类与 `checkpointPreserved=true`，不表示整个 Turn 必然失败。自动模式下，提供方在任何输出/工具调用之前返回明确的上下文溢出错误时，最多压缩恢复一次，仍受 Goal 计量约束，不重放工具副作用。
 
 `context.mode` 可为 `auto`（默认）、`manual`（仅显式压缩）或 `disabled`（自动/手动均关闭）。后两者在请求超限时停止。Schema 1 与旧 `[limits]` 显式值仍可使用：`context_compaction_enabled=false` 对应 disabled；`context_window_bytes` 与 `context_recent_bytes` 作为旧字节保护选项保留，默认均为 0。旧 `context_window_tokens=0` 只关闭全局 token 兜底，模型窗口优先。不要同时配置新旧别名，或同时配置旧压缩开关与 `context.mode`，冲突会拒绝。关闭委派可设置资源中的子任务数/深度为 0；显式开启研究扩展时需要非零子任务限额。
 

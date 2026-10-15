@@ -21,12 +21,16 @@ impl Engine {
                     .unwrap_or_default(),
             )
             .ok();
+        let overhead = self
+            .recorded_context_overhead(&cell, &thread)
+            .await
+            .map_err(invalid)?;
+        let messages = history(&thread, &self.store).map_err(invalid)?;
         let budget = model.as_ref().and_then(|model| {
             crate::context::ContextBudget::resolve(&self.limits, model.as_ref()).ok().map(|budget| {
-                json!({"windowTokens":budget.window,"outputReserveTokens":budget.reserve,"inputLimitTokens":budget.input_limit,"targetTokens":budget.target,"windowSource":if model.capabilities().context_window_tokens.is_some(){"model"}else{"fallback"}})
+                json!({"windowTokens":budget.window,"outputReserveTokens":budget.reserve,"inputLimitTokens":budget.input_limit,"targetTokens":budget.target,"outputLimitTokens":model.capabilities().max_output_tokens,"historyEstimatedTokens":crate::context::estimate_tokens(&messages),"estimatedInputTokens":crate::context::estimate_tokens(&messages).saturating_add(overhead),"estimateScope":"historyWithRecordedInstructionsAndCurrentTools","retentionStrategy":if self.limits.context_recent_tokens > 0 || self.limits.context_recent_bytes > 0 {"legacyRecentBoundary"}else{"automatic"},"windowSource":if model.capabilities().context_window_tokens.is_some(){"model"}else{"fallback"}})
             })
         });
-        let messages = history(&thread, &self.store).map_err(invalid)?;
         if offset > messages.len() {
             return Err(invalid("context offset exceeds message count"));
         }
@@ -49,7 +53,9 @@ impl Engine {
             drop(admission);
             let result=async {
                 let _permit=tokio::select!{_=engine.shutdown.cancelled()=>return Err(invalid("compaction cancelled")),p=engine.permits.acquire()=>p.map_err(invalid)?};
-                engine.compact_context(&cell,&engine.shutdown,0,None,true).await.map_err(invalid)
+                let thread = cell.state.lock().await.thread.clone();
+                let overhead = engine.recorded_context_overhead(&cell, &thread).await.map_err(invalid)?;
+                engine.compact_context(&cell,&engine.shutdown,overhead,None,true).await.map_err(invalid)
             }.await;
             cell.state.lock().await.compacting=false;
             engine.goals.request(&cell.id);

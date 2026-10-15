@@ -625,6 +625,50 @@
       ],
       "type": "object"
     },
+    "areal/context/compactionFailed": {
+      "additionalProperties": true,
+      "properties": {
+        "beforeEstimatedTokens": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "checkpointPreserved": {
+          "type": "boolean"
+        },
+        "code": {
+          "const": "LLM_CONTEXT_COMPACTION_FAILED"
+        },
+        "inputLimitTokens": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "outputReserveTokens": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "windowTokens": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "beforeEstimatedTokens",
+        "checkpointPreserved",
+        "code",
+        "inputLimitTokens",
+        "outputReserveTokens",
+        "reason",
+        "threadId",
+        "windowTokens"
+      ],
+      "type": "object"
+    },
     "areal/goal/cleared": {
       "additionalProperties": true,
       "properties": {
@@ -27923,6 +27967,81 @@
     "areal/context/compact": {
       "additionalProperties": true,
       "properties": {
+        "budget": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "properties": {
+                "estimateScope": {
+                  "const": "historyWithRecordedInstructionsAndCurrentTools"
+                },
+                "estimatedInputTokens": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "historyEstimatedTokens": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "inputLimitTokens": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "outputLimitTokens": {
+                  "anyOf": [
+                    {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "outputReserveTokens": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "retentionStrategy": {
+                  "enum": [
+                    "automatic",
+                    "legacyRecentBoundary"
+                  ]
+                },
+                "targetTokens": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "windowSource": {
+                  "enum": [
+                    "model",
+                    "fallback"
+                  ]
+                },
+                "windowTokens": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "estimateScope",
+                "estimatedInputTokens",
+                "historyEstimatedTokens",
+                "inputLimitTokens",
+                "outputLimitTokens",
+                "outputReserveTokens",
+                "retentionStrategy",
+                "targetTokens",
+                "windowSource",
+                "windowTokens"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "checkpoint": {
           "anyOf": [
             {
@@ -28256,6 +28375,7 @@
         }
       },
       "required": [
+        "budget",
         "checkpoint",
         "data",
         "instructionSnapshot",
@@ -28270,6 +28390,81 @@
     "areal/context/read": {
       "additionalProperties": true,
       "properties": {
+        "budget": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "properties": {
+                "estimateScope": {
+                  "const": "historyWithRecordedInstructionsAndCurrentTools"
+                },
+                "estimatedInputTokens": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "historyEstimatedTokens": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "inputLimitTokens": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "outputLimitTokens": {
+                  "anyOf": [
+                    {
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "outputReserveTokens": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "retentionStrategy": {
+                  "enum": [
+                    "automatic",
+                    "legacyRecentBoundary"
+                  ]
+                },
+                "targetTokens": {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "windowSource": {
+                  "enum": [
+                    "model",
+                    "fallback"
+                  ]
+                },
+                "windowTokens": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "estimateScope",
+                "estimatedInputTokens",
+                "historyEstimatedTokens",
+                "inputLimitTokens",
+                "outputLimitTokens",
+                "outputReserveTokens",
+                "retentionStrategy",
+                "targetTokens",
+                "windowSource",
+                "windowTokens"
+              ],
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "checkpoint": {
           "anyOf": [
             {
@@ -28603,6 +28798,7 @@
         }
       },
       "required": [
+        "budget",
         "checkpoint",
         "data",
         "instructionSnapshot",

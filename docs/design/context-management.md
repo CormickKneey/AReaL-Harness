@@ -1,23 +1,21 @@
 **中文** | [English](context-management.en.md)
 
-# 上下文管理简化方案
+# 上下文管理
 
-本文描述待实施的预算与压缩重构。已实现行为以 [Core 契约](../api/core.md)和[配置指南](../guides/configuration.md)为准。窗口兜底 131072 token、HTTP 请求输出默认 16384 token，以及最新被压缩用户请求的完整保留已实现；下面的统一分配器与失败提交规则仍是方案。
+Core 负责完整请求预算、压缩与持久历史。[Core 契约](../api/core.md)定义公开投影，[配置指南](../guides/configuration.md)说明配置。窗口兜底为 131072 token，HTTP 请求输出默认 16384 token。
 
 ## 问题与目标
 
-当前求解窗口、近期原文、checkpoint 用户原文、证据、摘要输入及摘要输出分别使用预算。用户原文和证据还各自使用 min(8192, 可用输入窗口 / 4) 的内部软配额。多个局部预算不能说明最终请求是否完整，也容易让首问挤掉后续修订。提高窗口只能延后触发，不能替代保留策略。
-
-目标是由 Core 对每次完整请求统一分配 token，始终保留最新真实用户请求与未完成工具操作；较早材料按需要压缩或回取。持久历史继续独立保存，不随模型投影裁剪。
+一个分配器对每次完整请求规划预算，保留最新真实用户请求与未完成工具操作；较早材料按需要压缩或回取。持久历史独立保存，不随模型投影裁剪。提高窗口不能替代保留策略。
 
 ## 配置收敛
 
-| 配置 | 目标行为 |
+| 配置 | 行为 |
 |---|---|
 | `model.context_window_tokens` | 常用配置；声明实际窗口，缺省由全局 131072 token 兜底 |
 | `model.max_output_tokens` | 常用配置；单次 HTTP 请求默认 16384，可按模型覆盖，必须为正数 |
 | `context.mode` | 保留 auto / manual / disabled |
-| `context.target_tokens`、`context.recent_tokens` | 迁入兼容适配层；自动策略覆盖常规使用，显式旧值仍参与规划并报告来源 |
+| `context.target_tokens`、`context.recent_tokens` | 目标与近期默认均为 0（自动）；显式正数保留为兼容边界偏好并报告来源 |
 | `context.output_reserve_tokens` | 保留为高级预留下限；常规使用由输出上限自动预留 |
 | 旧 token / byte 字段 | 继续解析并维持现有语义；停止在常用示例中推广，不能静默忽略显式值 |
 | 用户原文与证据内部配额 | 删除两份独立的固定配额，消耗同一个完整请求预算 |
@@ -46,16 +44,17 @@ HTTP 400 等摘要请求失败时保留旧 checkpoint 和原文，不自动提�
 
 旧投影仍可容纳当前请求时可以继续；否则停止并报告摘要失败和窗口不足。提交前检查历史边界与新 steer 是否变化，变化时重新规划，不能覆盖新请求。归档提交仍由 Store 保证先写不可变分段，再写快照引用；不重放执行副作用。
 
-## 代码落点与实施顺序
+## 模块职责
 
-| 阶段 | 落点 | 交付 |
-|---|---|---|
-| 请求保留与默认值 | `core/engine/src/history.rs`、`model.rs`、`lib.rs`，`core/config/src/resolve.rs` | 最新请求强制保留；128k / 16k 缺省；显式参数优先；已实现 |
-| 统一规划 | `core/engine/src/context.rs`、`history.rs` 与现有求解入口 | 用一个规划结果驱动切分、checkpoint 装配和最终预检，移除原文/证据独立配额与首问优先 |
-| 事务式压缩 | 现有 `compact_context` 与 Store 提交路径 | 候选完整校验后提交；摘要失败保持旧状态；并发 steer 校验 |
-| 配置与诊断收敛 | `core/config`、`core/server`，公开协议与 Clients 投影 | 旧字段兼容适配；显示窗口、输出预留、完整输入估算、压缩原因与失败分类；同步类型、SDK 和双语文档 |
+| 模块 | 职责 |
+|---|---|
+| `core/engine/src/context.rs`、`history.rs` | 共享分配器、按原文时间顺序投影、原文回取、完整轮次边界与候选校验 |
+| `core/engine/src/generation.rs` | 构造实际动态提示、共享计量、预检，在压缩或 steer 后重建请求 |
+| `core/engine/src/desktop/context.rs` | 已记录指令/当前工具预算诊断与手动压缩 |
+| `core/config`、`core/server` | 默认值、显式参数优先级与旧配置兼容 |
+| `core/protocol`、桌面 schema | 公开失败通知与预算投影；Clients 消费 Core 诊断 |
 
-重构继续遵循 Clients → Core → Runtime；GUI 只显示 Core 的预算与结果，不另行裁剪权威历史。读取旧 checkpoint 保持兼容，下一次成功压缩再生成新投影，不批量改写用户会话。
+实现遵循 Clients → Core → Runtime；GUI 只显示 Core 的预算与结果，不另行裁剪权威历史。读取旧 checkpoint 保持兼容，下一次成功压缩再生成新投影，不批量改写用户会话。
 
 ## 验收
 

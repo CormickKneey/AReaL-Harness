@@ -29,7 +29,6 @@ api_key_env = "COMPANY_MODEL_API_KEY"
 
 [context]
 mode = "auto"
-recent_tokens = 8192
 # target_tokens = 0                 # 0：自动目标
 # output_reserve_tokens = 8192
 

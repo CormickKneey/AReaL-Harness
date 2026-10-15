@@ -431,6 +431,7 @@ fn defaults_and_home_do_not_create_files_or_read_project_config() {
     assert_eq!(c.data_dir, other.join("state"));
     assert_eq!(c.model_concurrency, 32);
     assert_eq!(c.context_window_tokens, 131072);
+    assert_eq!(c.context_recent_tokens, 0);
     assert_eq!(c.model.max_output_tokens, Some(16384));
     assert!(matches!(
         c.sources["model.max_output_tokens"],
