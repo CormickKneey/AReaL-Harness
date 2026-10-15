@@ -89,6 +89,8 @@ Responses 摘要通过可选 `reasoning_summary` / `reasoningSummary` 显式开�
 这是新增的 Item 类型和通知，客户端须识别或忽略 `reasoning`，Rust 的 `Item` / `ModelEvent` 穷尽匹配需增加对应分支，`ModelOptions` / `ModelParameters` / `SelectedModelConfig` 新增可选摘要字段。字段见 [Core schema](../../schemas/areal-core-v1.json)，本地客户端显示行为见[客户端指南](../guides/clients.md)。
 
 <a id="recovery"></a>
+统一委派的结算回执若已通过工具结果完整提供给当前模型请求，Core 不因自动汇总再次出现相同回执而额外请求一次最终答复。比较只忽略等待标记与剩余工具额度；执行身份、状态、资源清退、正文、验证、制品和交付事实仍须一致。新结果、失败、未知状态或未完成交付继续走原有收尾检查，不重放工具。
+
 ## 执行与恢复
 
 工具只在完整模型流终态后执行。dynamicToolCall 保留原始 arguments、有效参数 effectiveArguments、callId、execution 后端与 running/succeeded/failed/cancelled/unknown。本地工具另记 epoch/scope/operationId；外部工具不伪造 Runtime 事实。hooks 和插件嵌套操作分别 journal，成功写入不因外层失败抹掉。
@@ -133,7 +135,7 @@ Checkpoint 的 `retainedInputs: [{itemId, content}]` 与 `evidence: string[]` �
 
 `limits.context_compaction_enabled=false` 时自动阈值超限使 Turn 失败，显式 `areal/context/compact` 返回错误，不写入 checkpoint；配置见[上下文限额](../guides/configuration.md#模型与限额)。
 
-模型审计写入 `data_dir/model-requests/*.json` 与 `requests.jsonl`，记录 solve/summary、参数、请求体摘要/大小、attempt、usage、stopReason、耗时与有限响应形状，不记录 header、endpoint 或 prompt。`usageObserved=true` 表示收到可解析的完整用量事件（包括 0）；缺失/false 不能视为已知零。length 终态仍收集同帧/尾帧 usage，等待受期限和取消限制，随后判定截断并禁止执行工具。
+CLI 默认模型与 GUI/桌面目录选定的供应商模型共用审计链路，覆盖求解、摘要及子 Agent 请求；通过 Core 发起的请求保留 thread/turn 关联。模型审计写入 `data_dir/model-requests/*.json` 与 `requests.jsonl`，记录 solve/summary、参数、请求体摘要/大小、attempt、usage、stopReason、耗时与有限响应形状，不记录 header、endpoint 或 prompt。`usageObserved=true` 表示收到可解析的完整用量事件（包括 0）；缺失/false 不能视为已知零。length 终态仍收集同帧/尾帧 usage，等待受期限和取消限制，随后判定截断并禁止执行工具。
 
 SSE 流式 Provider 错误另写入 `data_dir/model-requests/errors/<requestId>.json`，普通审计的 `errorDetailFile` 指向该文件。目录 0700、文件 0600，保存错误对象原文（包括未进入白名单的 code/type/message）；序列化原文超过 16 KiB 时保存 UTF-8 安全截取的 `rawJsonPrefix` 并标记 `truncated=true`。这些私有排障制品可能包含上游回显内容，不进入 `requests.jsonl`、TurnOutcome 或遥测；旧请求未保存的原文无法回取。
 

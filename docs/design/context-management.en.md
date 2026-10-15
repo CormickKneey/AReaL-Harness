@@ -25,7 +25,7 @@ Do not add a retained-input quota setting. Common settings are window, output an
 
 ## Unified planning for complete requests
 
-For window W, reserve R is the larger of the request output cap and explicit reserve floor. Available input is W − R, giving default HTTP requests 114688 tokens for the entire input. Planning and sending share message construction and accounting, including live instructions, tool schemas, media and protocol envelopes. Preserve full provider input-usage calibration and conservative headroom for media estimates.
+For window W, reserve R is the larger of the request output cap and explicit reserve floor. Available input is W − R, giving default HTTP requests 114688 tokens for the entire input. Planning and sending share message construction and accounting, including live instructions, tool schemas, media and protocol envelopes. Preserve full provider input-usage calibration and conservative headroom for media estimates. Compaction also obeys the same raw conservative estimate used by final preflight: smaller historical usage cannot bypass the hard window gate, while larger actual usage can still trigger earlier compaction.
 
 Allocate in this order, retaining original roles and chronology:
 

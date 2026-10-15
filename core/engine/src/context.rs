@@ -640,8 +640,10 @@ impl Engine {
         let (messages, _) =
             observations::project(&snapshot, &self.store, &self.limits, model.as_ref())?;
         let before_bytes = message_bytes(&messages);
-        let estimated_tokens =
-            calibrated(estimate_tokens(&messages) + overhead_tokens, previous_usage);
+        let raw_estimate = estimate_tokens(&messages).saturating_add(overhead_tokens);
+        // 最终请求预检使用保守原始估算；较小的历史 usage 不能让压缩跳过同一道硬门禁。
+        // 较大的实际用量仍提前触发压缩，避免低估真实 tokenizer。
+        let estimated_tokens = raw_estimate.max(calibrated(raw_estimate, previous_usage));
         let token_trigger = budget.window > 0 && estimated_tokens >= budget.input_limit;
         let byte_trigger =
             self.limits.context_window_bytes > 0 && before_bytes > self.limits.context_window_bytes;

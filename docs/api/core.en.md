@@ -89,6 +89,8 @@ Reasoning counts toward the existing Turn text output byte limit. It is separate
 This adds an Item variant and notifications. Clients must recognize or ignore `reasoning`; exhaustive Rust `Item` / `ModelEvent` matches need corresponding branches. `ModelOptions` / `ModelParameters` / `SelectedModelConfig` gain an optional summary field. See the [Core schema](../../schemas/areal-core-v1.json) and [client guide](../guides/clients.en.md).
 
 <a id="recovery"></a>
+When a unified-delegation settlement receipt was already fully provided through tool results in the current model request, Core does not require another final response merely because automatic settlement repeats it. Comparison ignores only wait metadata and remaining tool-call allowance; execution identity, state, cleanup, text, verification, artifact and delivery facts must match. New results, failures, unknown state and incomplete delivery retain the existing finalization checks; no tools are replayed.
+
 ## Execution and recovery
 
 Tools execute only after complete model-stream termination. dynamicToolCall retains original arguments, effectiveArguments, callId, execution backend and running/succeeded/failed/cancelled/unknown outcomes. Local tools also record epoch/scope/operationId; external tools do not invent Runtime facts. Hooks and nested plugin operations have separate journals; outer failure does not erase confirmed writes.
@@ -133,7 +135,7 @@ When byte pressure triggers compaction with an explicit token target, boundary s
 
 With `limits.context_compaction_enabled=false`, exceeding an automatic threshold fails the Turn and explicit `areal/context/compact` returns an error without writing a checkpoint. See [context limits](../guides/configuration.en.md#models-and-limits).
 
-Model audits in `data_dir/model-requests/*.json` and `requests.jsonl` record solve/summary, parameters, body digest/size, attempts, usage, stopReason, duration and bounded response shape, without headers, endpoints or prompts. `usageObserved=true` means a complete parseable usage event was received, including zero; missing/false is not known zero. A length termination still collects same-frame/tail usage within deadlines and cancellation, then marks truncation and prevents tool execution.
+The CLI default model and providers selected from the GUI/desktop catalog share the same audit path for solve, summary and child-Agent requests; Core-owned requests retain thread/turn correlation. Model audits in `data_dir/model-requests/*.json` and `requests.jsonl` record solve/summary, parameters, body digest/size, attempts, usage, stopReason, duration and bounded response shape, without headers, endpoints or prompts. `usageObserved=true` means a complete parseable usage event was received, including zero; missing/false is not known zero. A length termination still collects same-frame/tail usage within deadlines and cancellation, then marks truncation and prevents tool execution.
 
 SSE streaming Provider errors also write `data_dir/model-requests/errors/<requestId>.json`, referenced by `errorDetailFile` in the ordinary audit. The directory is 0700 and files are 0600. They contain the original error object, including code/type/message values outside the classification allowlist. Serialized content over 16 KiB is stored as a UTF-8-safe `rawJsonPrefix` with `truncated=true`. These private diagnostic artifacts may contain upstream echoed content; they are excluded from `requests.jsonl`, TurnOutcome and telemetry. Original content discarded by older versions cannot be recovered.
 

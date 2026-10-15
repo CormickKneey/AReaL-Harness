@@ -6,28 +6,28 @@ use std::{
 
 const MAX_TRACKED: usize = 4096;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+// XNU 的 proc_info_private.h 固定了该 ABI；libc 尚未提供对应绑定。
+// 唯一 ID 查询不要求同用户权限，exec setuid 程序时仍可核对同一进程及父身份。
+// https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/proc_info_private.h
+const PROC_PIDUNIQIDENTIFIERINFO: i32 = 17;
+#[repr(C)]
 struct Identity {
-    seconds: u64,
-    micros: u64,
+    executable_uuid: [u8; 16],
+    unique_id: u64,
+    parent_unique_id: u64,
+    id_version: i32,
+    original_parent_id_version: i32,
+    reserved: [u64; 2],
 }
+const _: () = assert!(std::mem::size_of::<Identity>() == 56);
 
-impl Identity {
-    fn from(info: &libc::proc_bsdinfo) -> Self {
-        Self {
-            seconds: info.pbi_start_tvsec,
-            micros: info.pbi_start_tvusec,
-        }
-    }
-}
-
-fn inspect(pid: i32) -> io::Result<Option<libc::proc_bsdinfo>> {
-    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
+fn inspect(pid: i32) -> io::Result<Option<Identity>> {
+    let mut info = std::mem::MaybeUninit::<Identity>::uninit();
     let size = std::mem::size_of_val(&info) as i32;
     let read = unsafe {
         libc::proc_pidinfo(
             pid,
-            libc::PROC_PIDTBSDINFO,
+            PROC_PIDUNIQIDENTIFIERINFO,
             0,
             info.as_mut_ptr().cast(),
             size,
@@ -74,14 +74,14 @@ fn children(pid: i32) -> io::Result<Vec<i32>> {
 }
 
 pub struct Descendants {
-    known: HashMap<i32, Identity>,
+    known: HashMap<i32, u64>,
 }
 
 impl Descendants {
     pub fn new(leader: i32) -> io::Result<Self> {
         let mut known = HashMap::new();
         if let Some(info) = inspect(leader)? {
-            known.insert(leader, Identity::from(&info));
+            known.insert(leader, info.unique_id);
         }
         Ok(Self { known })
     }
@@ -97,23 +97,23 @@ impl Descendants {
                 self.known.remove(&pid);
                 continue;
             };
-            if self.known.get(&pid) != Some(&Identity::from(&info)) {
+            if self.known.get(&pid) != Some(&info.unique_id) {
                 self.known.remove(&pid);
                 continue;
             }
             let child_pids = children(pid)?;
-            if inspect(pid)?.as_ref().map(Identity::from) != self.known.get(&pid).copied() {
+            if inspect(pid)?.map(|info| info.unique_id) != self.known.get(&pid).copied() {
                 continue;
             }
             for child in child_pids {
                 if let Some(info) = inspect(child)? {
-                    if info.pbi_ppid != pid as u32 {
+                    if Some(&info.parent_unique_id) != self.known.get(&pid) {
                         continue;
                     }
                     if self.known.len() >= MAX_TRACKED && !self.known.contains_key(&child) {
                         return Err(io::Error::other("descendant tracking capacity exceeded"));
                     }
-                    self.known.insert(child, Identity::from(&info));
+                    self.known.insert(child, info.unique_id);
                     pending.push_back(child);
                 }
             }
@@ -124,7 +124,7 @@ impl Descendants {
     fn signal(&self) -> io::Result<()> {
         for (&pid, identity) in &self.known {
             if let Some(info) = inspect(pid)?
-                && Identity::from(&info) == *identity
+                && info.unique_id == *identity
                 && unsafe { libc::kill(pid, libc::SIGKILL) } < 0
             {
                 let error = io::Error::last_os_error();
@@ -170,7 +170,7 @@ mod tests {
             .unwrap();
         let pid = child.id() as i32;
         let mut descendants = Descendants::new(pid).unwrap();
-        descendants.known.get_mut(&pid).unwrap().seconds += 1;
+        *descendants.known.get_mut(&pid).unwrap() += 1;
         descendants.signal().unwrap();
         descendants.finish().await.unwrap();
         let survived = child.try_wait().unwrap().is_none();
