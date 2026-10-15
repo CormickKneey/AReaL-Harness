@@ -181,7 +181,7 @@ impl Model for OversizedSummary {
 }
 
 #[tokio::test]
-async fn oversized_goal_summary_drains_usage_before_retry_or_fallback() {
+async fn oversized_goal_summary_drains_usage_before_retry_or_preserving_the_checkpoint() {
     for always_oversized in [false, true] {
         let dir = tempfile::tempdir().unwrap();
         let model = Arc::new(OversizedSummary {
@@ -211,12 +211,13 @@ async fn oversized_goal_summary_drains_usage_before_retry_or_fallback() {
                 .iter()
                 .all(|turn| turn.status == areal_protocol::TurnStatus::Completed)
         );
-        let checkpoint = history.context_checkpoint.as_ref().unwrap();
-        assert!(checkpoint.summary.len() <= 16 * 1024);
-        assert_eq!(
-            checkpoint.summary.starts_with("DEGRADED CONTEXT:"),
-            always_oversized
-        );
+        if always_oversized {
+            assert!(history.context_checkpoint.is_none());
+        } else {
+            let checkpoint = history.context_checkpoint.as_ref().unwrap();
+            assert!(checkpoint.summary.len() <= 16 * 1024);
+            assert!(!checkpoint.summary.starts_with("DEGRADED CONTEXT:"));
+        }
         engine.shutdown().await;
     }
 }

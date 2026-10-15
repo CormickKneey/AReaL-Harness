@@ -395,7 +395,7 @@ fn model_and_execution_budgets_are_validated_and_preserve_sources() {
     assert_eq!(c.max_tool_calls, 512);
     assert_eq!(c.context_window_bytes, 0);
     assert_eq!(c.context_recent_bytes, 0);
-    assert_eq!(c.context_window_tokens, 65536);
+    assert_eq!(c.context_window_tokens, 131072);
     assert_eq!(c.context_output_reserve_tokens, 8192);
     set(&mut i, "AREAL_HARNESS_REASONING_EFFORT", "high");
     assert_eq!(
@@ -430,6 +430,13 @@ fn defaults_and_home_do_not_create_files_or_read_project_config() {
     let c = load_config(&i).unwrap();
     assert_eq!(c.data_dir, other.join("state"));
     assert_eq!(c.model_concurrency, 32);
+    assert_eq!(c.context_window_tokens, 131072);
+    assert_eq!(c.context_recent_tokens, 0);
+    assert_eq!(c.model.max_output_tokens, Some(16384));
+    assert!(matches!(
+        c.sources["model.max_output_tokens"],
+        ConfigSource::Default
+    ));
     assert!(c.config_file.is_none());
     assert!(!other.exists());
     i.homedir = None;
@@ -437,6 +444,59 @@ fn defaults_and_home_do_not_create_files_or_read_project_config() {
     assert_eq!(failure(&i).kind, ConfigErrorKind::MissingValue);
     set(&mut i, "AREAL_HARNESS_HOME", "relative");
     assert_eq!(failure(&i).kind, ConfigErrorKind::InvalidValue);
+}
+
+#[test]
+fn output_default_preserves_provider_model_global_and_environment_overrides() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut i = inputs(temp.path());
+    let config = |global: &str, models: &str| {
+        format!(
+            "schema_version=2\n[model]\nprovider='company'\n{global}\n[model.providers.company]\nendpoint='http://127.0.0.1:9/v1/responses'\nprotocol='responses'\nparameters={{max_output_tokens=32768,context_window_tokens=262144}}\nmodels={models}\n"
+        )
+    };
+    write(&mut i, &config("", "[]"));
+    let provider = load_config(&i).unwrap();
+    assert_eq!(provider.model.max_output_tokens, Some(32768));
+    assert_eq!(provider.model.context_window_tokens, Some(262144));
+    assert!(matches!(
+        provider.sources["model.max_output_tokens"],
+        ConfigSource::File { .. }
+    ));
+    let models = "[{id='fixture',parameters={max_output_tokens=49152}}]";
+    write(&mut i, &config("", models));
+    assert_eq!(
+        load_config(&i).unwrap().model.max_output_tokens,
+        Some(49152)
+    );
+    write(&mut i, &config("max_output_tokens=65536", models));
+    assert_eq!(
+        load_config(&i).unwrap().model.max_output_tokens,
+        Some(65536)
+    );
+    set(&mut i, "AREAL_HARNESS_MAX_OUTPUT_TOKENS", "8192");
+    let environment = load_config(&i).unwrap();
+    assert_eq!(environment.model.max_output_tokens, Some(8192));
+    assert!(matches!(
+        environment.sources["model.max_output_tokens"],
+        ConfigSource::Env { .. }
+    ));
+}
+
+#[test]
+fn small_model_window_requires_an_output_cap_that_leaves_input_space() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut i = inputs(temp.path());
+    write(
+        &mut i,
+        "schema_version=2\n[model]\ncontext_window_tokens=16384\n",
+    );
+    assert_eq!(failure(&i).kind, ConfigErrorKind::InvalidValue);
+    write(
+        &mut i,
+        "schema_version=2\n[model]\ncontext_window_tokens=16384\nmax_output_tokens=4096\n",
+    );
+    assert_eq!(load_config(&i).unwrap().model.max_output_tokens, Some(4096));
 }
 
 #[test]

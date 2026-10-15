@@ -160,6 +160,7 @@ pub const NOTIFICATIONS: &[&str] = &[
     "areal/agent/spawned",
     "areal/item/agentMedia/available",
     "areal/context/compacted",
+    "areal/context/compactionFailed",
     "areal/model/completionDiscarded",
     "areal/model/watchdogRetry",
     "areal/tool/cancelled",

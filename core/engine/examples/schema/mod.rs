@@ -58,8 +58,11 @@ pub fn projections() -> (Value, Value) {
     let status = object(
         json!({"configuration":nullable(object(json!({"modelRevision":string,"restartRequired":boolean,"error":nullable(string.clone())}))),"apiVersion":{"const":API_VERSION},"stateVersion":number,"productVersion":string,"draining":boolean,"closed":boolean,"acceptingWork":boolean,"activeTasks":number,"activeGoals":array(string.clone()),"pendingQueueItems":number,"activeTurns":array(object(json!({"threadId":string,"turnId":string}))),"resources":array(object(json!({"threadId":string,"id":string,"state":string,"epoch":string}))),"unresolvedTools":array(object(json!({"threadId":string,"itemId":string}))),"compactions":array(string.clone()),"workgroups":array(group_entry.clone()),"runtime":nullable(any_object.clone()),"capacity":object(json!({"threads":number,"maxThreads":number,"activeTurns":number,"maxActiveTurns":number,"historyBytesPerThread":number,"blobBytes":number})),"restartSafe":boolean}),
     );
+    let context_budget = object(
+        json!({"windowTokens":number,"outputReserveTokens":number,"inputLimitTokens":number,"targetTokens":number,"windowSource":{"enum":["model","fallback"]},"outputLimitTokens":nullable(number.clone()),"historyEstimatedTokens":number,"estimatedInputTokens":number,"estimateScope":{"const":"historyWithRecordedInstructionsAndCurrentTools"},"retentionStrategy":{"enum":["automatic","legacyRecentBoundary"]}}),
+    );
     let context = object(
-        json!({"threadId":string,"view":{"const":"historyProjectionForNextRequest"},"systemInstructionsIncluded":boolean,"instructionSnapshot":nullable(string.clone()),"checkpoint":nullable(schema::<ContextCheckpoint>()),"offset":number,"nextOffset":nullable(number.clone()),"data":array(object(json!({"role":string,"text":string,"toolCalls":array(any_object.clone()),"toolCallId":nullable(string.clone()),"opaqueProviderContextOmitted":boolean,"media":array(string.clone())})))}),
+        json!({"budget":nullable(context_budget),"threadId":string,"view":{"const":"historyProjectionForNextRequest"},"systemInstructionsIncluded":boolean,"instructionSnapshot":nullable(string.clone()),"checkpoint":nullable(schema::<ContextCheckpoint>()),"offset":number,"nextOffset":nullable(number.clone()),"data":array(object(json!({"role":string,"text":string,"toolCalls":array(any_object.clone()),"toolCallId":nullable(string.clone()),"opaqueProviderContextOmitted":boolean,"media":array(string.clone())})))}),
     );
     let mut responses = serde_json::Map::new();
     let mut insert = |names: &[&str], value: Value| {
@@ -476,6 +479,7 @@ pub fn projections() -> (Value, Value) {
         "item/reasoning/summaryTextDelta".into(),
         object(json!({"threadId":string,"turnId":string,"itemId":string,"summaryIndex":{"type":"integer","minimum":0},"delta":string})),
     );
+    notifications.insert("areal/context/compactionFailed".into(), object(json!({"threadId":string,"code":{"const":"LLM_CONTEXT_COMPACTION_FAILED"},"reason":string,"checkpointPreserved":boolean,"windowTokens":number,"outputReserveTokens":number,"inputLimitTokens":number,"beforeEstimatedTokens":number})));
     notifications.insert("areal/context/compacted".into(),object(json!({"threadId":string,"beforeBytes":number,"afterBytes":number,"durationMs":number,"usage":nullable(schema::<ModelUsage>())})));
     notifications.insert(
         "areal/model/completionDiscarded".into(),
