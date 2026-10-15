@@ -6,7 +6,6 @@ import re
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
-OPTIONAL_WORKFLOW = ".github/workflows/arena-package.yml"
 DEFAULT_TARGETS = (
     "build",
     "release",
@@ -48,7 +47,7 @@ def product_file(name):
         "package-lock.json",
         "Dockerfile",
         "tests/e2e/docker/Dockerfile",
-    } or (name.startswith(".github/workflows/") and name != OPTIONAL_WORKFLOW)
+    } or name.startswith(".github/workflows/")
 
 
 def check_files(root, names):
@@ -63,14 +62,6 @@ def check_files(root, names):
             if ADAPTER_REFERENCE.search(text):
                 errors.append(f"{name}:{line}: independent product references an optional adapter")
     return errors
-
-
-def check_workflow(text):
-    # 明确选择手动工作流；不把 push/PR/workflow_call 重新加入默认依赖链。
-    trigger = re.search(r"(?ms)^on:\s*\n(.*?)(?=^\S|\Z)", text)
-    if trigger is None or trigger.group(1).strip() != "workflow_dispatch:":
-        return [f"{OPTIONAL_WORKFLOW}: optional adapter must use workflow_dispatch only"]
-    return []
 
 
 def check_make(root):
@@ -101,9 +92,6 @@ def main():
         .split("\0")
     )
     errors = check_files(ROOT, [name for name in names if name])
-    workflow = ROOT / OPTIONAL_WORKFLOW
-    if workflow.is_file():
-        errors += check_workflow(workflow.read_text())
     errors += check_make(ROOT)
     if errors:
         raise SystemExit("\n".join(errors))

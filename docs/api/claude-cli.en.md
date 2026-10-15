@@ -48,3 +48,9 @@ Per-run MCP supports stdio or HTTP Bearer only. `--task-credential-command` may 
 CLI submissions without a bidirectional response channel use Core interactionMode=headless: questions immediately return unavailable and tools requiring human approval are denied, allowing independent work or a blocker report. Explicit bidirectional stream-json retains the host control protocol above; permission-mode=dontAsk selects headless even with that channel.
 
 See the [client guide](../guides/clients.en.md) for command routing and migration. With no subcommand, areal opens the TUI. Noninteractive options belong to exec / -p; areal config runs diagnostics without a running service.
+
+## Native consumers
+
+`areal exec --output-format stream-json --include-native-events` additionally emits `{type:"areal_event",event:<Core notification>}` records. Native notifications preserve tool media and structured errors; the consumer must understand the Core contract. Media retained in these records does not fail the native run merely because the Claude text projection cannot represent it. Without this explicit flag, the existing strict projection behavior is preserved. Failed terminal results also retain the original optional `error` object.
+
+Repeatable `--read-only-path PATH` forwards trusted public input roots to the owned Runtime. It conflicts with `--endpoint`: a CLI attaching to a remote Core cannot change its deployment permissions. The complete native release, including Runtime helpers, is required.

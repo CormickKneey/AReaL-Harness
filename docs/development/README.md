@@ -44,7 +44,6 @@ make build
 | 原生集成 | `make verify-harness`，包含常规回归 |
 | 统一委派集成 | `make unified-execution-smoke`：真实 Runtime 的并行候选组合、交付回执、父任务权限、取消与恢复；已包含在 `make harness-smoke` / `make verify-native`；Linux CI 在允许 Bubblewrap user namespaces 的受控容器中执行，`make verify` 保持跨平台常规回归 |
 | CI 原生增量 | `make verify-native`，仅运行原生后端与 Harness 集成 smoke |
-| 可选 EnvArena 适配器 | `make envarena-check` / `make envarena-smoke`；不属于默认检查 |
 | 容量 | `make capacity`，独立运行 |
 | 仅文档 | `python3 scripts/check-docs.py`，同时核对命令与实现 |
 
@@ -52,7 +51,7 @@ make build
 
 需要从固定产物路径测试时，先构建并部署同一构建的 Core 与 Runtime，再设置绝对路径：`scripts/smoke.mjs`、`scripts/trajectory-smoke.mjs`、`scripts/trajectory-semantics-smoke.mjs` 和 `scripts/local-service-smoke.mjs` 使用 `AREAL_TEST_BIN_DIR`；`scripts/tui-local-smoke.py` 使用 `AREAL_TEST_BIN` 指定 `areal` 文件；GUI 源码测试使用 `AREAL_CORE_BIN`。按需直接运行对应脚本，测试期间保持产物不变；这些变量不改变安装包测试入口，也不授予终端安全软件的执行许可。
 
-`make integration-boundaries` 检查产品、发行入口和默认 Make 依赖图不加载可选平台适配器；它也随 `make script-test` 执行。适配器 Python 源码的格式、静态检查和单元测试由 `make envarena-check` 单独维护。
+`make integration-boundaries` 检查产品、发行入口和默认 Make 依赖图不加载可选平台适配器；它也随 `make script-test` 执行。
 
 测试范围见[测试指南](testing.md)。附加参数使用 `make tui ARGS='--prompt hello'`。`make release` 输出至 `target/release`，`make docs` 生成 Rust API 文档。
 

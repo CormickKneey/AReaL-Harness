@@ -19,7 +19,7 @@ endif
 	capacity capacity-primitives capacity-core perf runtime test-runtime runtime-smoke verify-runtime \
 	cordis-pin update-cordis sdk-test harness harness-smoke verify-harness \
 	setup setup-node sdk-build script-test launcher-test workgroup-smoke unified-execution-smoke capacity-workgroup local-service-smoke \
-	verify-native integration-boundaries envarena-check envarena-smoke
+	verify-native integration-boundaries
 
 help: ## 显示常用操作（默认目标）
 	@printf '%s\n' '用法：make <target> [ARGS="..."]' ''
@@ -124,14 +124,6 @@ script-test: integration-boundaries ## 无需产品二进制的脚本、Web 投�
 	node --test clients/gui/scripts/smoke-deadline.test.mjs
 	python3 -m unittest discover -s scripts/tests
 	python3 tests/perf/perf.py self-test
-
-envarena-check: ## 可选 EnvArena 适配器的格式、静态与离线单元检查
-	uv run --locked --only-group dev ruff format --check integrations/envarena
-	uv run --locked --only-group dev ruff check integrations/envarena
-	python3 -m unittest discover -s integrations/envarena
-
-envarena-smoke: build ## 可选 EnvArena 输入交付的真实 CLI/Core/Runtime 本地回归
-	python3 integrations/envarena/arena-input-smoke.py --bin-dir target/debug $(ARGS)
 
 harness: ## 通过可信独立启动器启动工具 Harness；ARGS 指定工作区与数据目录
 	python3 scripts/launch.py $(ARGS)

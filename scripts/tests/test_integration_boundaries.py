@@ -14,14 +14,6 @@ spec.loader.exec_module(boundaries)
 
 
 class IntegrationBoundaryTests(unittest.TestCase):
-    def test_manual_adapter_workflow_rejects_automatic_triggers(self):
-        self.assertEqual(boundaries.check_workflow("on:\n  workflow_dispatch:\njobs:\n"), [])
-        for event in ("pull_request", "push", "workflow_call", "schedule"):
-            with self.subTest(event=event):
-                self.assertTrue(
-                    boundaries.check_workflow(f"on:\n  workflow_dispatch:\n  {event}:\njobs:\n")
-                )
-
     def test_core_import_cargo_path_and_release_workflow_are_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
