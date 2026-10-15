@@ -3,6 +3,7 @@ import { Button } from "./components/ui/button.js";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "./components/ui/popover.js";
 import { DraftAttachment } from "./MessageAttachment.js";
 import { SentAttachment } from "./MessageAttachment.js";
+import { isComposerFile, type ComposerDraftAttachment } from "./ComposerAttachments.js";
 import {
     attachBrowserAnnotation,
     browserAnnotation,
@@ -16,11 +17,11 @@ export function BrowserAnnotationAttachments({
     disabled,
     onChange,
 }: {
-    files: File[];
+    files: ComposerDraftAttachment[];
     disabled: boolean;
-    onChange: (files: File[]) => void;
+    onChange: (files: ComposerDraftAttachment[]) => void;
 }) {
-    const selected = files.filter((file) => browserAnnotation(file));
+    const selected = files.filter(isComposerFile).filter((file) => browserAnnotation(file));
     if (!selected.length) return null;
     return (
         <div

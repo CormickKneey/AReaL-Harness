@@ -7,7 +7,7 @@ import { ComposerPlanMode } from "./ComposerPlanMode.js";
 import { FileTree, AttachmentIcon, GoalIcon, PlanModeIcon as Lightbulb } from "./interfaceIcons.js";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ChatPromptEditor } from "./prompt-editor/ChatPromptEditor.js";
-import { ComposerAttachment, composerPaste } from "./ComposerAttachments.js";
+import { ComposerAttachment, composerInput, composerPaste, isComposerFile, type ComposerDraftAttachment } from "./ComposerAttachments.js";
 import { useComposerSkills, transferComposerSkills, clearComposerSkills } from "./ComposerSkills.js";
 import { ComposerMcpIcon } from "./ComposerIcons.js";
 import { ComposerMcp } from "./ComposerMcp.js";
@@ -68,7 +68,8 @@ export function DraftComposer({
     window.addEventListener("areal-draft-change", refreshDraft);
     return () => window.removeEventListener("areal-draft-change", refreshDraft);
   }, [key]);
-  const [files, setFiles] = useState<File[]>(() => attachmentDrafts.get(key) ?? []);
+  const [files, setFiles] = useState<ComposerDraftAttachment[]>(() => attachmentDrafts.get(key) ?? []);
+  const input = composerInput(text, files);
   const [permission, setPermission] = useState<PermissionMode>(() => localStorage.getItem(`${key}:permission`) === "ask" ? "ask" : "auto");
   const [plan, setPlan] = useState(() => localStorage.getItem(`${key}:plan`) === "true");
   const [profileSelection, setProfileSelection] = useState(() => localStorage.getItem(`${key}:profile`) ?? "");
@@ -145,7 +146,8 @@ export function DraftComposer({
     void onOpen(project.id, outcome.threadId);
   }, [unknown, project.pending.length, project.outcomes]);
   const submit = async (value: string) => {
-    if (disabled || sending.has(key) || (!value.trim() && !files.length && !comments.length && !skills.selected.length) || (goalMode && !value.trim())) return;
+    const submittedInput = composerInput(value, files);
+    if (disabled || sending.has(key) || (!submittedInput.text.trim() && !submittedInput.files.length && !comments.length && !skills.selected.length) || (goalMode && !submittedInput.text.trim())) return;
     markSending(key, true);
     setDraftError("");
     let targetKey: string | undefined;
@@ -184,9 +186,9 @@ export function DraftComposer({
       }
       if (goalMode) {
         const latest = await action("manage", { projectId: owner.id, threadId: result.threadId, operation: "goal" });
-        await action("manage", { projectId: owner.id, threadId: result.threadId, operation: "goalCreate", objective: value, expectedRevision: latest.revision ?? 0, inferLimits: true });
+        await action("manage", { projectId: owner.id, threadId: result.threadId, operation: "goalCreate", objective: submittedInput.text, expectedRevision: latest.revision ?? 0, inferLimits: true });
         localStorage.removeItem(`${targetKey}:goal`);
-        // 目标只消费正文；技能、文件和评论仍保留在已创建聊天中。
+        attachmentDrafts.set(targetKey, submittedInput.files);
       } else {
         await submitMessage(action, owner.id, result.threadId, value, files, { skillAction: readAction });
         attachmentDrafts.delete(targetKey);
@@ -257,7 +259,7 @@ export function DraftComposer({
         submitTestId="chat-send-button"
         placeholder={goalMode ? "描述目标，明确可衡量的结果" : plan ? "描述任务，生成计划…" : "随心输入"}
         disabled={disabled}
-        submitDisabled={disabled || (goalMode ? !text.trim() : !text.trim() && !files.length && !comments.length && !skills.selected.length)}
+        submitDisabled={disabled || (goalMode ? !input.text.trim() : !input.text.trim() && !input.files.length && !comments.length && !skills.selected.length)}
         submitting={busy}
         submitLabel={goalMode ? "开始目标" : "发送"}
         enterSubmits={prefs.sendShortcut === "enter"}
@@ -283,9 +285,9 @@ export function DraftComposer({
           <>{skills.tags}<ReviewCommentAttachment comments={comments} disabled={disabled} onRemove={() => detachReviewComments(reviewKey)} />
           {files.length ? (
             <div className="composer-attachments" data-testid="composer-attachments">
-              {files.map((file, i) => <ComposerAttachment disabled={disabled} key={`${file.name}-${file.lastModified}-${i}`} file={file}
+              {files.map((file, i) => <ComposerAttachment disabled={disabled} key={isComposerFile(file) ? `${file.name}-${file.lastModified}-${i}` : `pasted-text-${i}`} file={file}
                 onRemove={() => setFiles((current) => current.filter((_, at) => at !== i))}
-                onExpand={content => { api.current?.appendText(`${text.trim() ? "\n\n" : ""}${content}`); setFiles(current => current.filter(item => item !== file)); }} />)}
+                onExpand={content => { api.current?.appendText(`${text.length ? "\n\n" : ""}${content}`); setFiles(current => current.filter(item => item !== file)); }} />)}
             </div>
           ) : null}</>
         }

@@ -1,4 +1,4 @@
-import { captureSmokeFailure, resizeConversation } from "./smoke-navigation.mjs";
+import { captureSmokeFailure, resizeConversation, selectConversation } from "./smoke-navigation.mjs";
 import assert from "node:assert/strict";
 
 import { createRequire } from "node:module";
@@ -112,6 +112,7 @@ let app,
 const errors = [],
   frames = [],
   checks = [];
+const pasteEvidence = { uploadedFile: null, folded: [] };
 const button = (name) => page.getByRole("button", { name, exact: true });
 const state = () => page.evaluate(() => window.arealDesktop.snapshot());
 async function call(name, params) {
@@ -126,7 +127,7 @@ async function until(predicate, label) {
   const end = Date.now() + 30000;
   while (Date.now() < end) {
     const s = await state();
-    if (predicate(s)) return s;
+    if (await predicate(s)) return s;
     await new Promise((r) => setTimeout(r, 80));
   }
   throw Error("Timeout: " + label);
@@ -499,6 +500,138 @@ try {
   checks.push(
     "real paged Core Skill read (multibyte >8192 bytes) reaches model request; two-tier real model/effort selection reaches provider",
   );
+  const pasteUploads = (await call("media", {
+    projectId: pid, threadId: tid, operation: "list",
+  })).uploads;
+  for (const [label, text, body = "", newDraft = false] of [
+    ["over-200-characters", "折叠正文开始\n" + "粘贴正文".repeat(60) + "\n折叠正文结束", "保留已有正文"],
+    ["five-lines", "第一行\n第二行\n第三行\n第四行\n第五行"],
+    ["new-draft-five-lines", "新聊天第一行\n第二行\n第三行\n第四行\n第五行", "", true],
+  ]) {
+    if (newDraft) {
+      await button("新聊天").click();
+      await page.waitForFunction(() =>
+        !document.querySelector('[data-testid="areal-workbench"]')?.dataset.threadId,
+      );
+      await input().waitFor();
+    }
+    let pasteTid = newDraft ? null : tid;
+    const pasteThread = (s) => s.projects[0].state.threads[pasteTid];
+    assert.equal(
+      await page.getByText("model does not support File input", { exact: true }).count(),
+      0,
+      `${label}: no preceding File refusal can satisfy this attempt`,
+    );
+    const expectedText = body ? `${body}\n\n${text}` : text;
+    await input().fill(body);
+    await input().evaluate((element, value) => {
+      const clipboardData = new DataTransfer();
+      clipboardData.setData("text/plain", value);
+      element.dispatchEvent(new ClipboardEvent("paste", {
+        clipboardData, bubbles: true, cancelable: true,
+      }));
+    }, text);
+    await page.getByRole("button", { name: "在文本框中显示 ›" }).waitFor();
+    assert.equal(await input().textContent(), body, `${label}: pasted text stays folded`);
+    await shot(`03b-folded-${label}`);
+    const beforePaste = {
+      requests: received.length,
+      turns: pasteThread(await state())?.turns.length ?? 0,
+      uploads: newDraft ? [] : pasteUploads,
+    };
+    const evidence = { label, expectedText, before: beforePaste };
+    pasteEvidence.folded.push(evidence);
+    await button("发送").click();
+    const accepted = await until(
+      async (s) => {
+        if (newDraft) pasteTid = await page.getByTestId("areal-workbench").getAttribute("data-thread-id");
+        const refusal = await page.getByText("model does not support File input", { exact: true }).count();
+        if (refusal) {
+          evidence.observed = {
+            error: "model does not support File input",
+            draft: await input().textContent(),
+            turns: pasteThread(s)?.turns.length ?? 0,
+            modelRequests: received.slice(beforePaste.requests),
+            uploads: pasteTid ? (await call("media", {
+              projectId: pid, threadId: pasteTid, operation: "list",
+            })).uploads : [],
+          };
+          assert.fail(`${label}: folded clipboard text was sent as File; expected exact Text input`);
+        }
+        return received.length === beforePaste.requests + 1 &&
+          pasteThread(s)?.turns.length === beforePaste.turns + 1 &&
+          pasteThread(s)?.turns.at(-1)?.status === "completed" && !s.projects[0].pending.length;
+      },
+      `${label}: folded paste direct Send completes as Text`,
+    );
+    const turn = pasteThread(accepted).turns.at(-1);
+    const userMessages = turn.items.filter((item) => item.type === "userMessage");
+    assert.equal(userMessages.length, 1);
+    assert.deepEqual(
+      userMessages[0].content.map((part) => ({ type: part.type, text: part.text })),
+      [{ type: "text", text: expectedText }],
+      `${label}: Core accepted text contains every pasted character and no File part`,
+    );
+    const modelMessage = received.at(-1).messages.filter((message) => message.role === "user"
+      && !(typeof message.content === "string" && message.content.startsWith("AReaL runtime context (not a user request):"))).at(-1);
+    assert.equal(modelMessage.content, expectedText, `${label}: actual model request preserves exact text`);
+    assert.deepEqual(
+      (await call("media", { projectId: pid, threadId: pasteTid, operation: "list" })).uploads,
+      beforePaste.uploads,
+      `${label}: folded text creates no Core upload`,
+    );
+    await page.waitForFunction(() =>
+      document.querySelector('[data-testid="chat-input"]')?.textContent === "" &&
+      !document.querySelector('[data-testid="composer-attachment"]'),
+    );
+    evidence.observed = { threadId: pasteTid, turn, modelMessage };
+    checks.push(`${label}: folded direct UI Send reaches completed Core history and model as exact Text without upload`);
+    if (newDraft) await selectConversation(page, tid);
+  }
+  const uploadedText = "真正通过文件选择器上传的文本，不是剪贴板正文。";
+  const fileDraft = "真实文件拒绝时保留正文";
+  const beforeFile = {
+    requests: received.length,
+    turns: current(await state()).turns.length,
+    uploads: (await call("media", { projectId: pid, threadId: tid, operation: "list" })).uploads,
+  };
+  await input().fill(fileDraft);
+  await page.locator("input[type=file]").setInputFiles({
+    name: "粘贴的文本.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from(uploadedText),
+  });
+  await button("发送").click();
+  await page.getByText("model does not support File input", { exact: true }).first().waitFor();
+  assert.equal(received.length, beforeFile.requests, "a real text file remains File input");
+  assert.equal(current(await state()).turns.length, beforeFile.turns);
+  assert.equal(await input().textContent(), fileDraft);
+  await button("移除附件 粘贴的文本.txt").waitFor();
+  const uploadedFiles = (await call("media", {
+    projectId: pid, threadId: tid, operation: "list",
+  })).uploads;
+  const uploadedFile = uploadedFiles.find((file) =>
+    !beforeFile.uploads.some((previous) => previous.uri === file.uri),
+  );
+  assert.equal(uploadedFiles.length, beforeFile.uploads.length + 1);
+  assert.equal(uploadedFile.mimeType, "text/plain");
+  assert.equal(uploadedFile.sizeBytes, Buffer.byteLength(uploadedText));
+  const uploadedContent = await page.evaluate(async (params) => {
+    const result = await window.arealDesktop.command("media", params);
+    if (!result.ok) throw Error(result.error.message);
+    return new TextDecoder().decode(result.value.bytes);
+  }, { projectId: pid, threadId: tid, operation: "read", uri: uploadedFile.uri });
+  assert.equal(uploadedContent, uploadedText);
+  pasteEvidence.uploadedFile = { ...uploadedFile, text: uploadedText, refusedAs: "File" };
+  await shot("03a-uploaded-text-file-refused");
+  await button("移除附件 粘贴的文本.txt").click();
+  checks.push("real text/plain picker file keeps File modality, uploaded bytes and draft on Core refusal");
+  await sendAndWait();
+  await until((s) => current(s).turns.at(-1)?.status === "completed" && !s.projects[0].pending.length,
+    "explicit text retry after removing the real file");
+  await page.waitForFunction(() => document.querySelector('[data-testid="chat-input"]')?.textContent === "");
+  assert.equal(current(await state()).turns.at(-1).items.find(item => item.type === "userMessage").content[0].text, fileDraft);
+  checks.push("removing the genuine file permits an explicit Text retry and clears the accepted draft");
   await checkComposition(`areal-gui:draft:${pid}:${tid}`, "chat");
   // Use native typing: fill() uses the editor bridge and repairs the selection itself.
   for (const theme of ["dark", "light"]) {
@@ -598,7 +731,15 @@ try {
   await input().fill("/goal");
   await page.getByRole("option", { name: /设置目标/ }).waitFor();
   await input().press("Enter");
-  await input().fill("完成 Composer 检查");
+  const foldedGoal = "完成\nComposer\n检查\n保持\n折叠";
+  await input().fill("");
+  await input().evaluate((element, text) => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", text);
+    element.dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
+  }, foldedGoal);
+  await button("移除附件 粘贴的文本.txt").waitFor();
+  assert.equal(await input().textContent(), "");
   await button("开始目标").click();
   await until(
     (s) => Object.values(s.projects[0].state.threads).some((t) => t.goals?.goal),
@@ -609,13 +750,15 @@ try {
   const goalTid = await page
     .locator("[data-testid=areal-workbench]")
     .getAttribute("data-thread-id");
+  assert.equal((await state()).projects[0].state.threads[goalTid].goals.goal.objective, foldedGoal);
+  assert.equal(await button("移除附件 粘贴的文本.txt").count(), 0);
   await until(
     (s) => s.projects[0].state.threads[goalTid]?.goals?.goal?.status !== "active",
     "goal settles without progress",
   );
   await shot("04-inline-goal");
   checks.push(
-    "new draft inline Goal uses Core creation; objective consumed while skills and file remain unsent",
+    "new draft inline Goal consumes folded Text as the exact objective while skills and genuine file remain unsent",
   );
   await resizeConversation(app, page, 720, 760);
   await openCatalog();
@@ -693,6 +836,7 @@ try {
   }
   server.closeAllConnections();
   await new Promise((r) => server.close(r));
+  await writeFile(join(scratch, "paste-evidence.json"), JSON.stringify(pasteEvidence, null, 2));
   const sourceFiles = {};
   for (const path of execFileSync(
     "git",

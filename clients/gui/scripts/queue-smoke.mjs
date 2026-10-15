@@ -332,6 +332,7 @@ try {
     attachments: [{ type: "image", url: media.uri }],
   });
   const configBefore = JSON.stringify(pending(await state())[0].configuration);
+  const retainedInputBefore = pending(await state())[0].input.slice(1);
   await input().fill("原未发送草稿");
   await page.locator("input[type=file]").setInputFiles({
     name: "original.txt",
@@ -372,9 +373,23 @@ try {
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 960));
   await button("展开侧栏").click();
   await input().fill("3 已编辑");
+  const uploadsBeforeQueuedPaste = (await call("media", {
+    projectId: pid, threadId: tid, operation: "list",
+  })).uploads;
+  await input().evaluate((element, text) => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", text);
+    element.dispatchEvent(new ClipboardEvent("paste", {
+      clipboardData, bubbles: true, cancelable: true,
+    }));
+  }, "第一行\n第二行\n第三行\n第四行\n第五行");
+  await page.getByRole("button", { name: "在文本框中显示 ›", exact: true }).waitFor();
+  assert.equal(await input().textContent(), "3 已编辑", "queued pasted text stays folded");
+  assert.equal(await page.getByTestId("composer-attachment").count(), 1);
+  const expectedEditedText = "3 已编辑\n\n第一行\n第二行\n第三行\n第四行\n第五行";
   await button("保存").click();
   await until(
-    (s) => pending(s)[0]?.input[0]?.text === "3 已编辑" && !queue(s).paused,
+    (s) => pending(s)[0]?.input[0]?.text === expectedEditedText && !queue(s).paused,
     "save original position and resume",
   );
   assert.equal(await input().textContent(), "原未发送草稿");
@@ -384,6 +399,19 @@ try {
   assert.equal(edited.id, first.id);
   assert.equal(JSON.stringify(edited.configuration), configBefore);
   assert.equal(edited.input[1].url, media.uri);
+  assert.deepEqual(
+    edited.input,
+    [{ type: "text", text: expectedEditedText, text_elements: [] }, ...retainedInputBefore],
+    "queued save keeps exact pasted Text and existing media without adding File input",
+  );
+  assert.deepEqual(
+    (await call("media", { projectId: pid, threadId: tid, operation: "list" })).uploads,
+    uploadsBeforeQueuedPaste,
+    "folded queued text creates no Core upload",
+  );
+  checks.push(
+    "queued UI Save includes folded five-line paste as exact Text and retains existing media without upload",
+  );
   await startEdit("1");
   await input().fill("不保存的修改");
   await button("取消").click();
@@ -555,7 +583,7 @@ try {
   checks.push(
     "atomic queued-to-steer reaches active Turn exactly once; lost accepted response reconciles one durable transfer",
   );
-  await row("3 已编辑\n[附件]")
+  await row(`${expectedEditedText}\n[附件]`)
     .getByRole("button", { name: /删除排队消息/ })
     .click();
   await until((s) => pending(s).length === 0, "empty queue");

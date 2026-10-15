@@ -17,7 +17,7 @@ import { goalContinuationLabel } from "./conversationPresentation.js";
 import { GoalIcon as Target, PlanModeIcon as Lightbulb } from "./interfaceIcons.js";
 import { FileTree, ArchiveChatIcon, SendMessageIcon, StopIcon, SideChatIcon } from "./interfaceIcons.js";
 import { ConversationComposer } from "./ConversationComposer.js";
-import { ComposerAttachment, composerPaste } from "./ComposerAttachments.js";
+import { ComposerAttachment, composerInput, composerPaste, isComposerFile, type ComposerDraftAttachment } from "./ComposerAttachments.js";
 import { useComposerSkills, composerSkillContent, readComposerSkills } from "./ComposerSkills.js";
 import { ComposerMcpIcon } from "./ComposerIcons.js";
 import { ComposerMcp } from "./ComposerMcp.js";
@@ -31,7 +31,7 @@ import type { LexicalChatInputHandle } from "./LexicalChatInput.js";
 import type { Data, Action } from "./services.js";
 // Draft attachments and in-flight UI admission survive task navigation. These are
 // unsent client inputs only; Core remains authoritative for acceptance/outcomes.
-export const attachmentDrafts = new Map<string, File[]>();
+export const attachmentDrafts = new Map<string, ComposerDraftAttachment[]>();
 export const attachmentErrors = new Map<string, string>();
 export const sending = new Set<string>();
 const sendListeners = new Set<() => void>();
@@ -84,9 +84,10 @@ export function Composer({
     api.current?.focus();
   };
   const busy = useSyncExternalStore(subscribeSending, () => sending.has(key));
-  const [files, setFiles] = useState<File[]>(() => attachmentDrafts.get(key) ?? []);
+  const [files, setFiles] = useState<ComposerDraftAttachment[]>(() => attachmentDrafts.get(key) ?? []);
+  const input = composerInput(text, files);
   const annotationEditing = useBrowserAnnotationEditing(key);
-  const invalidAnnotation = files.some(file => browserAnnotation(file)?.comment.trim() === "");
+  const invalidAnnotation = input.files.some(file => browserAnnotation(file)?.comment.trim() === "");
   const [admissionError, setAdmissionError] = useState(() => attachmentErrors.get(key) ?? "");
   useEffect(() => {
     attachmentDrafts.set(key, files);
@@ -126,6 +127,14 @@ export function Composer({
   const planActive = permissionMode(config ?? {}) === "plan";
   const executionPermission = planActive ? permissionMode({ ...config, readOnly: false, options: planModeOptions(false, config?.options) }) : permissionMode(config ?? {});
   const planReady = canExecutePlan(config ?? {}, thread, project.state?.queues?.[thread.id]);
+  const clearText = () => {
+    api.current?.clear();
+    setText("");
+    const remaining = files.filter(isComposerFile);
+    setFiles(remaining);
+    attachmentDrafts.set(key, remaining);
+    localStorage.removeItem(key);
+  };
   const clear = () => {
     api.current?.clear();
     setText("");
@@ -167,28 +176,29 @@ export function Composer({
     localStorage.removeItem(`${key}:pending-goal`);
     if (outcome.accepted === false) setDeliveryError(outcome.message || "原轮次已结束，内容已保留，请检查后发送。");
     else if (wasGoal) {
-      api.current?.clear(); setText(""); localStorage.removeItem(key); changeGoalMode(false);
+      clearText(); changeGoalMode(false);
     } else clear();
   }, [unknown, pending, project.outcomes]);
   useEffect(() => {
     if (thread.goals?.goal && goalMode) changeGoalMode(false);
   }, [thread.goals?.goal?.id]);
   const submit = async (value: string, invert = false, approvePlan = false) => {
-    const sideCommand = /^\/side(?:\s|$)/i.exec(value);
-    if (sideCommand && (!onSide || files.length)) {
-      setDeliveryError(files.length ? "旁路首问仅接受文本；附件仍保留在主草稿。" : "当前会话不支持旁路讨论。");
+    const submittedInput = composerInput(value, files);
+    const sideCommand = /^\/side(?:\s|$)/i.exec(submittedInput.text);
+    if (sideCommand && (!onSide || submittedInput.files.length)) {
+      setDeliveryError(submittedInput.files.length ? "旁路首问仅接受文本；附件仍保留在主草稿。" : "当前会话不支持旁路讨论。");
       return;
     }
     if (sideCommand && onSide) {
-      const question = value.slice(sideCommand[0].length);
+      const question = submittedInput.text.slice(sideCommand[0].length);
       onSide(question);
-      api.current?.clear(); setText(""); localStorage.removeItem(key);
+      clearText();
       return;
     }
     if (queueEditor.edit) { await queueEditor.save(); return; }
-    if (disabled || annotationEditing || invalidAnnotation || sending.has(key) || (!value.trim() && !files.length && !comments.length && !skills.selected.length)) return;
-    if (approvePlan && (!planReady || text.trim() || files.length || comments.length)) return;
-    if (creatingGoal && (running || thread.parentThreadId || !value.trim())) return;
+    if (disabled || annotationEditing || invalidAnnotation || sending.has(key) || (!submittedInput.text.trim() && !submittedInput.files.length && !comments.length && !skills.selected.length)) return;
+    if (approvePlan && (!planReady || input.text.trim() || input.files.length || comments.length)) return;
+    if (creatingGoal && (running || thread.parentThreadId || !submittedInput.text.trim())) return;
     setAdmissionError("");
     markSending(key, true);
     setGoalError("");
@@ -196,9 +206,8 @@ export function Composer({
     try {
       if (creatingGoal) {
         await action("manage", { projectId: project.id, threadId: thread.id, operation: "goalCreate",
-          expectedRevision: thread.goals?.revision ?? 0, objective: value, inferLimits: true });
-        // Goal consumes only its objective; attachments and comments remain unsent.
-        api.current?.clear(); setText(""); localStorage.removeItem(key);
+          expectedRevision: thread.goals?.revision ?? 0, objective: submittedInput.text, inferLimits: true });
+        clearText();
         changeGoalMode(false);
         return;
       }
@@ -290,7 +299,7 @@ export function Composer({
       )}
       {planReady && !queueEditor.edit && <section className="flex items-center justify-between gap-3 px-3 py-2 text-ui-sm" aria-label="计划确认">
         <span className="text-foreground-subtle">计划已完成。批准后将以自动编辑模式执行。</span>
-        <Button size="sm" disabled={disabled || !!text.trim() || !!files.length || !!comments.length} onClick={() => void submit("按上方已确认的计划执行。", false, true)}>批准并执行</Button>
+        <Button size="sm" disabled={disabled || !!input.text.trim() || !!input.files.length || !!comments.length} onClick={() => void submit("按上方已确认的计划执行。", false, true)}>批准并执行</Button>
       </section>}
       <div className="composer-input-stack">
       <div ref={setMenuAnchor} className="composer-menu-anchor" />
@@ -334,7 +343,7 @@ export function Composer({
         submitTestId="chat-send-button"
         placeholder={archived ? "已归档任务只读" : creatingGoal ? "描述目标，明确可衡量的结果" : planActive ? "描述任务，生成计划…" : "随心输入"}
         disabled={disabled}
-        submitDisabled={disabled || (taskManagement && !!running) || annotationEditing || invalidAnnotation || (queueEditor.edit ? queueEditor.saveDisabled || (!text.trim() && !files.length && !queueEditor.edit.attachments.length) : creatingGoal ? !text.trim() || !!running : !text.trim() && !files.length && !comments.length && !skills.selected.length)}
+        submitDisabled={disabled || (taskManagement && !!running) || annotationEditing || invalidAnnotation || (queueEditor.edit ? queueEditor.saveDisabled || (!input.text.trim() && !input.files.length && !queueEditor.edit.attachments.length) : creatingGoal ? !input.text.trim() || !!running : !input.text.trim() && !input.files.length && !comments.length && !skills.selected.length)}
         submitting={busy}
         submitLabel={queueEditor.edit ? "保存排队消息" : creatingGoal ? "开始目标" : "发送"}
         enterSubmits={prefs.sendShortcut === "enter"}
@@ -358,7 +367,7 @@ export function Composer({
           <>{queueEditor.edit && <div className="composer-queue-edit-banner" aria-label="编辑排队消息">
             <span>{queueEditor.edit.phase === "opening" ? "等待确认暂停队列" : "编辑排队消息"}</span>
             <Button type="button" size="sm" variant="ghost" disabled={queueEditor.busy || !!queueEditor.edit.unknown || pending} onClick={() => void queueEditor.cancel()}>取消</Button>
-            <Button type="button" size="sm" disabled={queueEditor.saveDisabled || (!text.trim() && !files.length && !queueEditor.edit.attachments.length)} onClick={() => void queueEditor.save()}>保存</Button>
+            <Button type="button" size="sm" disabled={queueEditor.saveDisabled || (!input.text.trim() && !input.files.length && !queueEditor.edit.attachments.length)} onClick={() => void queueEditor.save()}>保存</Button>
           </div>}
           {queueEditor.feedback && <p role="alert" className="composer-queue-feedback">{queueEditor.feedback}</p>}
           {queueEditor.edit?.unknown && <Button type="button" size="sm" disabled={queueEditor.busy || !project.state?.connected} onClick={() => void queueEditor.reconcile()}>核对编辑操作</Button>}
@@ -368,11 +377,11 @@ export function Composer({
               onRemove={() => queueEditor.removeAttachment(index)} />)}
           </div>}
           <BrowserAnnotationAttachments files={files} disabled={disabled} onChange={setFiles} />
-          {files.some(file => !browserAnnotation(file)) ? (
+          {files.some(file => !isComposerFile(file) || !browserAnnotation(file)) ? (
             <div className="composer-attachments" data-testid="composer-attachments">
-              {files.filter(file => !browserAnnotation(file)).map((file, i) => <ComposerAttachment disabled={disabled} key={`${file.name}-${file.lastModified}-${i}`} file={file}
+              {files.filter(file => !isComposerFile(file) || !browserAnnotation(file)).map((file, i) => <ComposerAttachment disabled={disabled} key={isComposerFile(file) ? `${file.name}-${file.lastModified}-${i}` : `pasted-text-${i}`} file={file}
                 onRemove={() => setFiles((current) => current.filter(item => item !== file))}
-                onExpand={content => { api.current?.appendText(`${text.trim() ? "\n\n" : ""}${content}`); setFiles(current => current.filter(item => item !== file)); }} />)}
+                onExpand={content => { api.current?.appendText(`${text.length ? "\n\n" : ""}${content}`); setFiles(current => current.filter(item => item !== file)); }} />)}
             </div>
           ) : null}</>
         }
@@ -404,8 +413,8 @@ export function Composer({
           </div>}</>
         }
         onCancel={queueEditor.edit ? () => void queueEditor.cancel() : running ? stop : undefined}
-        submitControl={queueEditor.edit ? <Button type="button" size="icon-md" aria-label="保存排队消息" data-testid="chat-send-button" disabled={disabled || queueEditor.saveDisabled || (!text.trim() && !files.length && !queueEditor.edit.attachments.length)}
-          className="composer-primary-action" onClick={() => void queueEditor.save()}><SendMessageIcon className="size-5" /></Button> : running && !text.trim() && !files.length && !comments.length && !skills.selected.length ? (
+        submitControl={queueEditor.edit ? <Button type="button" size="icon-md" aria-label="保存排队消息" data-testid="chat-send-button" disabled={disabled || queueEditor.saveDisabled || (!input.text.trim() && !input.files.length && !queueEditor.edit.attachments.length)}
+          className="composer-primary-action" onClick={() => void queueEditor.save()}><SendMessageIcon className="size-5" /></Button> : running && !input.text.trim() && !input.files.length && !comments.length && !skills.selected.length ? (
           <ControlHintTooltip title="停止" shortcut="Esc">
             <Button type="button" variant="secondary" size="icon-md" className="composer-primary-action composer-stop-action" aria-label="停止"
               onClick={() => { stop(); api.current?.focus(); }}>
@@ -415,7 +424,7 @@ export function Composer({
         ) : running ? (
           <ControlHintTooltip title="发送" shortcut={prefs.sendShortcut === "enter" ? "Enter" : "⌘/Ctrl+Enter"}>
             <Button type="button" variant="composer" size="icon-md" aria-label="发送" data-testid="chat-send-button"
-              disabled={disabled || taskManagement || (!text.trim() && !files.length && !comments.length && !skills.selected.length)}
+              disabled={disabled || taskManagement || (!input.text.trim() && !input.files.length && !comments.length && !skills.selected.length)}
               onClick={event => void submit(api.current?.getMarkdown() ?? text, event.metaKey || event.ctrlKey)}>
               <SendMessageIcon className="size-5" />
             </Button>
@@ -438,14 +447,15 @@ export async function submitMessage(
   projectId: string,
   threadId: string,
   text: string,
-  files: File[],
+  files: ComposerDraftAttachment[],
   options: Data = {},
 ) {
   const reviewKey = reviewCommentKey(projectId, threadId);
   const comments = attachedReviewComments(readReviewComments(reviewKey));
   const skillContent = await composerSkillContent(options.skillAction ?? action, projectId, threadId, readComposerSkills(`areal-gui:draft:${projectId}:${threadId}`));
-  const attachments = await uploadComposerFiles(action, projectId, threadId, files);
-  const annotationFeedback = files.flatMap((file, index) => {
+  const input = composerInput(text, files);
+  const attachments = await uploadComposerFiles(action, projectId, threadId, input.files);
+  const annotationFeedback = input.files.flatMap((file, index) => {
     const note = browserAnnotation(file);
     return note ? [browserAnnotationText(note, attachments[index].url)] : [];
   }).join("\n\n");
@@ -454,7 +464,7 @@ export async function submitMessage(
     await action(options.steer ? "steer" : "send", {
         projectId,
         threadId,
-        text: feedback ? (text ? `${text}\n\n${feedback}` : feedback) : text,
+        text: feedback ? (input.text ? `${input.text}\n\n${feedback}` : feedback) : input.text,
         attachments,
         expectedTurnId: options.expectedTurnId,
         enqueue: options.enqueue === true,
@@ -471,7 +481,7 @@ export async function submitMessage(
   // retain their exact IDs until the existing Core receipt is reconciled.
   consumeReviewComments(reviewKey, comments);
 }
-export function stageThreadDraft(projectId: string, threadId: string, text: string, files: File[]) {
+export function stageThreadDraft(projectId: string, threadId: string, text: string, files: ComposerDraftAttachment[]) {
   const key = `areal-gui:draft:${projectId}:${threadId}`;
   localStorage.setItem(key, text);
   attachmentDrafts.set(key, files);
