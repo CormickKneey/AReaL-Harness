@@ -29,7 +29,7 @@
   padding-bottom: 8px;
   caret-color: var(--color-foreground);
   font-size: var(--text-ui-lg);
-  line-height: max(24px, calc(var(--ui-font-size) + 10px));
+  line-height: max(22px, calc(var(--ui-font-size) + 8px));
 }
 .composer-editor textarea { field-sizing: content; }
 .composer-toolbar { display: flex; align-items: center; gap: var(--spacing-inline); min-width: 0; min-height: 32px; }
