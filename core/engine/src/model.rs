@@ -633,7 +633,7 @@ impl Default for ModelOptions {
             min_p: None,
             presence_penalty: None,
             repetition_penalty: None,
-            max_output_tokens: None,
+            max_output_tokens: Some(16 * 1024),
             context_window_tokens: None,
             max_request_bytes: 16 * 1024 * 1024,
             max_retries: 2,
@@ -686,7 +686,11 @@ impl HttpModel {
         self
     }
 
-    pub fn with_options(mut self, options: ModelOptions) -> Result<Self> {
+    pub fn with_options(mut self, mut options: ModelOptions) -> Result<Self> {
+        // 稀疏目录参数与旧快照中的省略值沿用统一默认，不交给供应商隐式决定。
+        options.max_output_tokens = options
+            .max_output_tokens
+            .or(ModelOptions::default().max_output_tokens);
         anyhow::ensure!(
             !options.responses_websocket || self.protocol == ModelProtocol::Responses,
             "responses_websocket requires responses protocol"

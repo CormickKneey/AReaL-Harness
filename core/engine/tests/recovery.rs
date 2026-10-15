@@ -168,7 +168,7 @@ async fn retry_discards_only_failed_completion_and_never_executes_its_calls() {
     engine.shutdown().await;
 }
 #[tokio::test]
-async fn malformed_summary_retries_then_uses_labeled_evidence_without_executing_tools() {
+async fn malformed_summary_retries_then_preserves_originals_without_executing_tools() {
     let data = tempfile::tempdir().unwrap();
     let model = Arc::new(Recovery {
         requests: AtomicUsize::new(0),
@@ -205,12 +205,20 @@ async fn malformed_summary_retries_then_uses_labeled_evidence_without_executing_
     }
     let t = engine.read(&t.id, true).await.unwrap();
     assert_eq!(model.summaries.load(Ordering::SeqCst), 2);
-    assert!(
-        t.context_checkpoint
-            .unwrap()
-            .summary
-            .contains("DEGRADED CONTEXT")
-    );
+    assert!(t.context_checkpoint.is_none());
+    let prompts: Vec<_> = t
+        .turns
+        .iter()
+        .flat_map(|turn| &turn.items)
+        .filter_map(|item| {
+            if let Item::UserMessage { content, .. } = item {
+                Some(content.iter().map(Input::as_text).collect::<String>())
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(prompts, ["Original task", "Continue", "Verify"]);
     assert!(
         !t.turns
             .iter()

@@ -14,8 +14,9 @@ listen = "127.0.0.1:4500"
 # reasoning_effort = "xhigh"
 # 仅选择 responses 且模型支持摘要时启用。
 # reasoning_summary = "auto"
-# max_output_tokens = 8192
-# 按所选模型的实际窗口设置；不按模型名称猜测。
+# 默认 16k；可按模型显式调大或调小。
+# max_output_tokens = 16384
+# 默认窗口兜底 128k；按模型实际能力覆盖，不按名称猜测。
 # context_window_tokens = 131072
 max_retries = 2
 provider = "company"
@@ -28,7 +29,6 @@ api_key_env = "COMPANY_MODEL_API_KEY"
 
 [context]
 mode = "auto"
-recent_tokens = 8192
 # target_tokens = 0                 # 0：自动目标
 # output_reserve_tokens = 8192
 

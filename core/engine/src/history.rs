@@ -298,23 +298,35 @@ pub(super) fn checkpoint_evidence(items: &[&Item], end: usize) -> Vec<String> {
 pub(super) fn checkpoint_inputs(
     thread: &Thread,
     count: usize,
-    token_limit: usize,
 ) -> Vec<areal_protocol::ContextInput> {
-    let mut inputs = thread
+    let prefix: Vec<_> = thread
+        .turns
+        .iter()
+        .flat_map(|t| &t.items)
+        .take(count)
+        .collect();
+    let prefix_ids: HashSet<_> = prefix.iter().map(|item| item.id()).collect();
+    // 冷历史恢复后以权威原文重新排序，不能把旧检查点漏掉的首问追加到最新修订之后。
+    let mut inputs: Vec<_> = thread
         .context_checkpoint
         .as_ref()
-        .and_then(|c| c.retained_inputs.clone())
-        .unwrap_or_default();
+        .and_then(|c| c.retained_inputs.as_ref())
+        .into_iter()
+        .flatten()
+        .filter(|input| !prefix_ids.contains(input.item_id.as_str()))
+        .cloned()
+        .collect();
     let automatic: HashSet<_> = thread
         .turns
         .iter()
         .filter(|t| t.goal.as_ref().is_some_and(|g| g.origin == "continuation"))
         .filter_map(|t| t.items.first().map(Item::id))
         .collect();
-    for item in thread.turns.iter().flat_map(|t| &t.items).take(count) {
+    let mut seen: HashSet<_> = inputs.iter().map(|input| input.item_id.clone()).collect();
+    for item in prefix {
         if let Item::UserMessage { id, content } = item
             && !automatic.contains(id.as_str())
-            && !inputs.iter().any(|i| i.item_id == *id)
+            && seen.insert(id.clone())
         {
             inputs.push(areal_protocol::ContextInput {
                 item_id: id.clone(),
@@ -322,30 +334,7 @@ pub(super) fn checkpoint_inputs(
             });
         }
     }
-    let mut remaining = token_limit;
-    let mut retained = Vec::new();
-    // 首个任务与最近修订优先；其余原文由历史工具读取，授权仍由 Core 状态持有。
-    let order = (0..inputs.len().min(1)).chain((1..inputs.len()).rev());
-    for index in order {
-        let message = Message {
-            role: "user".into(),
-            content: inputs[index]
-                .content
-                .iter()
-                .map(content_from_input)
-                .collect(),
-            tool_calls: Vec::new(),
-            tool_call_id: None,
-            provider_context: None,
-        };
-        let cost = context::estimate_tokens(&[message]);
-        if cost <= remaining {
-            retained.push(index);
-            remaining -= cost;
-        }
-    }
-    retained.sort_unstable();
-    retained.into_iter().map(|i| inputs[i].clone()).collect()
+    inputs
 }
 
 pub(super) fn logical_history(thread: &Thread, store: &store::Store) -> anyhow::Result<Thread> {
@@ -965,5 +954,61 @@ mod file_view_tests {
         malformed = raw;
         malformed["lines"][0]["text"] = json!("no newline");
         assert!(compact_file_text(&malformed.to_string()).is_none());
+    }
+}
+
+#[cfg(test)]
+mod checkpoint_input_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn hydrated_originals_restore_order_and_media_after_a_sparse_checkpoint() {
+        let data = tempfile::tempdir().unwrap();
+        let engine = Engine::open(
+            data.path(),
+            Arc::new(model::UnconfiguredModel),
+            Limits::default(),
+        )
+        .unwrap();
+        let mut thread = engine.create("/workspace".into()).await.unwrap();
+        let latest = vec![
+            Input::text("Latest correction"),
+            Input::Image {
+                url: "https://example.test/current.png".into(),
+                detail: None,
+            },
+        ];
+        thread.turns.push(
+            serde_json::from_value(json!({"id":"turn","status":"completed","items":[
+                {"type":"userMessage","id":"initial","content":[Input::text("Old question")]},
+                {"type":"userMessage","id":"latest","content":latest}
+            ]}))
+            .unwrap(),
+        );
+        thread.context_checkpoint = Some(areal_protocol::ContextCheckpoint {
+            through_item_id: "latest".into(),
+            summary: "Historical summary".into(),
+            compactions: 1,
+            total_duration_ms: 0,
+            usage: Default::default(),
+            evidence: Vec::new(),
+            retained_inputs: Some(vec![areal_protocol::ContextInput {
+                item_id: "latest".into(),
+                content: vec![Input::text("Latest correction")],
+            }]),
+        });
+        let retained = checkpoint_inputs(&thread, 2);
+        assert_eq!(
+            retained
+                .iter()
+                .map(|input| input.item_id.as_str())
+                .collect::<Vec<_>>(),
+            ["initial", "latest"]
+        );
+        assert_eq!(
+            serde_json::to_value(&retained[1].content).unwrap(),
+            serde_json::to_value(latest).unwrap()
+        );
+        engine.shutdown().await;
     }
 }

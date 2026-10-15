@@ -1384,7 +1384,7 @@ export function LexicalChatInput({
     <ContentEditable
       // mention node 使用固定行高的 inline-flex chip，普通正文如果继承浏览器 normal line-height，
       // 在 token 后继续输入文字时会按不同 line box 计算基线；这里显式收口正文行高。
-      className="min-h-10 max-h-40 overflow-y-auto text-ui-base leading-5 text-foreground outline-none"
+      className="lexical-chat-input min-h-10 max-h-40 overflow-y-auto text-ui-base leading-5 text-foreground outline-none"
       tabIndex={0}
       data-testid={inputTestId}
       aria-label={placeholder || "消息输入"}

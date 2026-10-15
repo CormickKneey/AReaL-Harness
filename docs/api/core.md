@@ -113,7 +113,15 @@ Chat 工具 index 缺失、null、非整数类型、负数、超出 u64 范围�
 
 Rust `Model::chat_with_limits(messages, tools, purpose, ToolCallLimits, cap)` 显式传递请求预算，内置 HTTP、共享池和 Worker 包装器均转发。可选的输出 token 上限与工具预算一起经过 Goal 计量传递。默认实现委托 `chat_limited`，保持已有自定义 Model 实现可编译，并拒绝不受支持的非空 token 上限；自定义模型自行约束内部缓冲，Engine 仍在工具执行前检查其输出。摘要使用零调用预算。`Limits` 新增 `max_tool_buffer_bytes`，`NativeFactory`/`NativeExecutor` 新增 `tool_call_limits`，显式结构体初始化需补充字段；构造器提供默认值。Rust Limits 同时区分可选累计预算与单响应资源保护。
 
-Checkpoint 的 `retainedInputs: [{itemId, content}]` 保存有界的真实用户原文，`evidence: string[]` 保存有界回执。优先首个任务与最近修订，排除自动 Goal 续轮输入；后续用户指令优先于冲突摘要。旧原文可通过 `read_history` 回取，不删除、不提升为 system 指令。旧 checkpoint 未含 retainedInputs 时保留原重放语义，直到下一次压缩。子任务保留自己的输入，父任务需显式传递有关修订。工具/结果保持完整配对，未确认副作用不能移入冷历史。摘要输入按模型窗口减摘要输出预留预检，过大证据会明确标记省略；无效摘要最多一次验证重试，再退回有界的已记录证据。没有合法前缀时不付费摘要。取消保留旧 checkpoint，并保守结算已观察用量。压缩事件包含前后字节与估算 token、targetTokens/targetMet、摘要预算、degradationReason、retainedUserMessages，以及 trigger（manual/tokens/bytes/storage）。压缩后完整求解请求再次预检，无法容纳时返回结构化上下文错误；自动模式下在任何输出/工具调用之前遇到明确的提供方上下文溢出，可恢复一次，仍受 Goal 计量约束。
+`Limits::default()` 的上下文窗口兜底为 131072 token。内置 HTTP 模型每次请求的输出上限默认 16384 token，`ModelOptions.max_output_tokens=None`（包括旧模型快照中的省略值）同样采用该默认；显式正数可调大或调小，Goal 与摘要专用限制仍取更小值。自定义 `Model` 不因此获得 HTTP 输出限制，需正确声明自身 capabilities 并落实请求额度。配置覆盖与输入空间计算见[配置指南](../guides/configuration.md)。
+
+Checkpoint 的 `retainedInputs: [{itemId, content}]` 与 `evidence: string[]` 是完整请求预算内的原文和历史回执投影，不另设固定额度。最新真实用户请求在前缀内时完整保留，其他输入优先较近修订；首问不享有永久优先。输出仍按权威原文顺序排列，旧附件超额时保留可容纳的文字并明确标记附件省略，完整原文通过 `read_history` 回取。自动 Goal 续轮不是新用户要求。旧 checkpoint 未含 retainedInputs 时保留原重放语义，直到下一次成功压缩；不批量改写用户历史。摘要是可出错的历史证据，不能覆盖后续用户指令。
+
+压缩使用与实际求解相同的完整输入计量，按完整工具轮次切分，未完成或 UNKNOWN 副作用不得进入前缀。候选须通过净缩减、完整输入硬上限、前缀身份和工具配对校验后才原子提交。摘要等待期间的新 steer 会参与重新规划；实际求解仍重建请求并预检。摘要输入预检会显式标记证据省略，摘要文本最多 16 KiB。仅已收到但不合格的摘要允许一次验证重试；HTTP 400 等永久请求错误直接失败。失败或取消保留旧 checkpoint，不提交降级摘要，已观察用量仍持久保存。只有存储滚动可使用历史摘录归档不可回放记录，不用于摘要失败回退。旧投影可容纳当前完整请求时允许继续，超限则报 `LLM_CONTEXT_WINDOW_EXCEEDED` 并保留摘要失败原因；计量与取消错误不能绕过。没有可缩小的合法前缀时不付费摘要。
+
+`areal/context/compacted` 保留前后字节、估算 token、targetTokens/targetMet、摘要预算、degradationReason、retainedUserMessages、trigger（manual/tokens/bytes/storage）与用量；`degradationReason=storage_archive` 只标识未调用摘要器的存储归档。新增 `areal/context/compactionFailed {threadId,code:"LLM_CONTEXT_COMPACTION_FAILED",reason,checkpointPreserved:true,windowTokens,outputReserveTokens,inputLimitTokens,beforeEstimatedTokens}`，并登记于 capabilities 和 JSON Schema。它表示候选没有提交，不等同于 Turn 失败。
+
+`areal/context/read` 的 `budget` 新增 `outputLimitTokens`（自定义模型可为 null）、`historyEstimatedTokens`、`estimatedInputTokens`、`estimateScope:"historyWithRecordedInstructionsAndCurrentTools"` 与 `retentionStrategy:"automatic"|"legacyRecentBoundary"`，保留窗口、输出预留、输入上限、目标与窗口来源。估算包含已记录固定指令与当前工具，不声称包含下一次尚未构造的动态提示。求解与手动压缩复用固定指令装配和计量入口，最终求解额外计入实际动态提示。自动模式在任何输出/工具调用之前遇到明确提供方上下文溢出时，可恢复一次，仍受 Goal 计量约束。
 
 压缩后的求解上下文还包含 Core 从成功文件操作回执提取的历史路径、完整 SHA-256 与读取范围（最多 24 项、8 KiB）；不复制失效的 fileVersion 句柄，也不把分页读取推断为全文覆盖。摘要模型不再负责复述哈希。
 

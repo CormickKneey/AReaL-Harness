@@ -16,6 +16,7 @@ import { mermaid } from '@streamdown/mermaid';
 import { cn } from '../lib/utils.js';
 import { MessageCodeBlock } from './message-code-block.js';
 import { useCodePreferences } from '../../settings/preferences.js';
+import { useReducedMotion } from '../../settings/applicationPreferences.js';
 import { MarkdownBlockquote } from './markdown-blockquote.js';
 import { MarkdownListItem, MarkdownOrderedList, MarkdownUnorderedList } from './markdown-list.js';
 import { MarkdownTable, MarkdownTableBody, MarkdownTableCell, MarkdownTableHead, MarkdownTableHeader, MarkdownTableRow } from './markdown-table.js';
@@ -32,6 +33,8 @@ function relativeFileLinks() {
     };
 }
 const plugins = { cjk, math: createMathPlugin(), mermaid };
+// 中文连续文本也逐字淡入；限制排队时长，避免突发大段输出拖慢实际阅读。
+const streamAnimation = { animation: 'fadeIn', duration: 360, easing: 'ease-out', sep: 'char', stagger: 12, maxBacklogMs: 80 } as const;
 class MarkdownBoundary extends Component<{
     children: ReactNode;
     text: string;
@@ -53,6 +56,7 @@ export const MessageResponse = memo(function MessageResponse({ children, streami
     className?: string;
 }) {
     const { fontSizePx } = useCodePreferences();
+    const reducedMotion = useReducedMotion();
     const remarkPlugins = useMemo(() => preserveLineBreaks
         ? [...Object.values(defaultRemarkPlugins), ...(fileLinks ? [relativeFileLinks] : []), remarkBreaks]
         : fileLinks ? [relativeFileLinks] : undefined, [fileLinks, preserveLineBreaks]);
@@ -86,5 +90,5 @@ export const MessageResponse = memo(function MessageResponse({ children, streami
         blockquote: MarkdownBlockquote, li: MarkdownListItem, ol: MarkdownOrderedList, ul: MarkdownUnorderedList,
         table: MarkdownTable, tbody: MarkdownTableBody, td: MarkdownTableCell, th: MarkdownTableHead, thead: MarkdownTableHeader, tr: MarkdownTableRow,
     }), [streaming, theme, onOpenExternalUrl, onOpenFileLink, fontSizePx]);
-    return <MarkdownBoundary key={streaming ? 'streaming' : `static:${children.length}`} text={children}><Streamdown key={theme} className={cn('size-full text-ui-base leading-[1.75] tracking-wide [&>*:first-child]:mt-0 [&>*:last-child]:mb-0', className)} mode={streaming ? 'streaming' : 'static'} components={components} parseIncompleteMarkdown={streaming} remarkPlugins={remarkPlugins} plugins={plugins} controls={STREAMDOWN_CONTROLS} linkSafety={{ enabled: false }} animated={false} isAnimating={false}>{children}</Streamdown></MarkdownBoundary>;
+    return <MarkdownBoundary key={streaming ? 'streaming' : `static:${children.length}`} text={children}><Streamdown key={theme} className={cn('size-full text-ui-base leading-[1.75] tracking-wide [&>*:first-child]:mt-0 [&>*:last-child]:mb-0', className)} mode={streaming ? 'streaming' : 'static'} components={components} parseIncompleteMarkdown={streaming} remarkPlugins={remarkPlugins} plugins={plugins} controls={STREAMDOWN_CONTROLS} linkSafety={{ enabled: false }} animated={streaming && !reducedMotion ? streamAnimation : false} isAnimating={streaming}>{children}</Streamdown></MarkdownBoundary>;
 });

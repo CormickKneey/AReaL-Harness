@@ -1068,7 +1068,12 @@ async fn fork_is_durable_idle_and_replays_plain_text_prefix() {
     }
     let dir = tempfile::tempdir().unwrap();
     let model = Arc::new(TextModel(Mutex::new(Vec::new())));
-    let engine = Engine::open(dir.path(), model.clone(), Limits::default()).unwrap();
+    // 显式收紧软目标，让该用例覆盖跨继承边界的本地压缩，不依赖产品默认窗口。
+    let limits = Limits {
+        context_target_tokens: 20_000,
+        ..Limits::default()
+    };
+    let engine = Engine::open(dir.path(), model.clone(), limits.clone()).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let stop = CancellationToken::new();
@@ -1391,7 +1396,7 @@ async fn fork_is_durable_idle_and_replays_plain_text_prefix() {
             .iter()
             .filter(|entry| entry["text"]
                 .as_str()
-                .is_some_and(|text| text.starts_with("first ")))
+                .is_some_and(|text| text.starts_with("local-4 ")))
             .count(),
         1
     );
@@ -1409,7 +1414,7 @@ async fn fork_is_durable_idle_and_replays_plain_text_prefix() {
         assert_eq!(
             continued
                 .iter()
-                .filter(|message| message.text_content().starts_with("first "))
+                .filter(|message| message.text_content().starts_with("local-4 "))
                 .count(),
             1
         );
@@ -1442,7 +1447,7 @@ async fn fork_is_durable_idle_and_replays_plain_text_prefix() {
             .iter()
             .filter(|entry| entry["text"]
                 .as_str()
-                .is_some_and(|text| text.starts_with("first ")))
+                .is_some_and(|text| text == "after compact"))
             .count(),
         1
     );
@@ -1579,12 +1584,13 @@ async fn fork_is_durable_idle_and_replays_plain_text_prefix() {
     server.await.unwrap().unwrap();
     engine.shutdown().await;
     drop(engine);
-    let restored = Engine::open(dir.path(), model, Limits::default()).unwrap();
+    let restored = Engine::open(dir.path(), model, limits).unwrap();
     let receipt = restored
         .find_request("trusted-embedded-host", "fork-key")
         .await
         .unwrap();
     assert_eq!(receipt["data"][0]["result"]["threadId"], fork_id);
+    // 归档后的热投影只显示继承块；最新本地请求应从持久原文核验。
     let inherited = restored.context_read(fork_id, 0, 32).await.unwrap();
     let texts = inherited["data"].to_string();
     assert!(texts.contains("first"), "{texts}");
@@ -1597,6 +1603,20 @@ async fn fork_is_durable_idle_and_replays_plain_text_prefix() {
             .filter(|entry| entry["text"]
                 .as_str()
                 .is_some_and(|text| text.starts_with("first ")))
+            .count(),
+        1
+    );
+    let original = restored.read(fork_id, true).await.unwrap();
+    assert!(original.context_checkpoint.is_some());
+    assert_eq!(
+        original
+            .turns
+            .iter()
+            .flat_map(|turn| &turn.items)
+            .filter(|item| {
+                matches!(item, areal_protocol::Item::UserMessage { content, .. }
+                if content.len() == 1 && content[0].as_text() == "after compact")
+            })
             .count(),
         1
     );
