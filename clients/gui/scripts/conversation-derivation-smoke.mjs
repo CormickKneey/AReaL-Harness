@@ -95,6 +95,37 @@ async function showSideConversation() {
     await input.waitFor();
   }
 }
+async function selectMessageExcerpt(body, excerpt) {
+  const selected = await body.evaluate((element, text) => {
+    // 流式动画会把文字拆进多个 span；选区按完整正文定位，再映射到原生 Range。
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    let node;
+    while ((node = walker.nextNode())) nodes.push(node);
+    const start = nodes.map(node => node.textContent).join("").indexOf(text);
+    if (start < 0 || !text.length) throw Error("source excerpt missing");
+    const end = start + text.length;
+    const range = document.createRange();
+    let offset = 0, started = false;
+    for (const node of nodes) {
+      const next = offset + node.textContent.length;
+      if (!started && start < next) {
+        range.setStart(node, start - offset);
+        started = true;
+      }
+      if (started && end <= next) {
+        range.setEnd(node, end - offset);
+        break;
+      }
+      offset = next;
+    }
+    const selection = window.getSelection();
+    selection.removeAllRanges(); selection.addRange(range);
+    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    return selection.toString();
+  }, excerpt);
+  assert.equal(selected, excerpt, "native selection preserves the complete source excerpt across text nodes");
+}
 async function until(predicate, label) {
   const end = Date.now() + 45000;
   while (Date.now() < end) {
@@ -475,22 +506,8 @@ try {
   checks.push("AC30: source run_command entered the real Core/Runtime process and remains held while Side begins");
   await shot("04-source-tool-running.png");
   // 通过真实消息选区界面选择首个持久轮次中的 Unicode 子串。
-  const selectSideExcerpt = async () => page.evaluate(({ turnId, excerpt }) => {
-    const turn = document.querySelector(`[data-turn-id="${CSS.escape(turnId)}"]`);
-    const body = turn?.querySelector("[data-side-item-id] .conversation-markdown");
-    if (!body) throw Error("source message body missing");
-    const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
-    let node;
-    while ((node = walker.nextNode())) {
-      const index = node.textContent.indexOf(excerpt);
-      if (index < 0) continue;
-      const range = document.createRange(); range.setStart(node, index); range.setEnd(node, index + excerpt.length);
-      const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
-      body.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-      return;
-    }
-    throw Error("Unicode selection was not in one persisted text node");
-  }, { turnId: anchorTurnId, excerpt: unicodeExcerpt });
+  const selectSideExcerpt = () => selectMessageExcerpt(
+    page.locator(`[data-turn-id="${anchorTurnId}"] [data-side-item-id] .conversation-markdown`).first(), unicodeExcerpt);
   await selectSideExcerpt();
   const sideTrigger = page.getByRole("button", { name: "在旁路中询问所选内容" });
   await sideTrigger.waitFor();
@@ -836,21 +853,9 @@ try {
   await until(s => heldResponses.has(capacitySourceQuestion)
     && s.projects[0]?.state?.threads?.[sourceThreadId]?.turns?.at(-1)?.status === "inProgress", "source owns the single model slot");
   const streamingTurnId = (await state()).projects[0].state.threads[sourceThreadId].turns.at(-1).id;
-  await page.locator(`[data-turn-id="${streamingTurnId}"] .assistant-message .conversation-markdown`).getByText(streamExcerpt, { exact: true }).waitFor();
-  await page.evaluate(({ turnId, excerpt }) => {
-    const body = document.querySelector(`[data-turn-id="${CSS.escape(turnId)}"] .assistant-message .conversation-markdown`);
-    const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
-    let node;
-    while ((node = walker.nextNode())) {
-      const start = node.textContent.indexOf(excerpt);
-      if (start < 0) continue;
-      const range = document.createRange(); range.setStart(node, start); range.setEnd(node, start + excerpt.length);
-      const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
-      body.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-      return;
-    }
-    throw Error("streamed source text missing");
-  }, { turnId: streamingTurnId, excerpt: streamExcerpt });
+  const streamingBody = page.locator(`[data-turn-id="${streamingTurnId}"] .assistant-message .conversation-markdown`);
+  await streamingBody.getByText(streamExcerpt, { exact: true }).waitFor();
+  await selectMessageExcerpt(streamingBody, streamExcerpt);
   await page.getByRole("button", { name: "在旁路中询问所选内容" }).click();
   await openSideContext(sidePane);
   await sidePane.locator("blockquote.notice").filter({ hasText: "用户引文，来源未确认" }).waitFor();

@@ -9,10 +9,12 @@ import { SideChatPane } from "../SideChatPane.js";
 import { Button } from "../components/ui/button.js";
 import { Feedback } from "../components/ui/feedback.js";
 import { TooltipProvider } from "../components/ui/tooltip.js";
+import { MessageResponse } from "../components/ai-elements/message.js";
+import { TurnExecution } from "../TurnExecution.js";
 import type { LexicalChatInputHandle } from "../LexicalChatInput.js";
 import type { Action, CommandName } from "../services.js";
 import { tokenGroups } from "./catalog.js";
-import { useAppearance } from "../settings/applicationPreferences.js";
+import { setApplicationPreferences, useAppearance } from "../settings/applicationPreferences.js";
 
 const project = {
   id: "design-preview", root: "/preview", pending: [],
@@ -27,6 +29,33 @@ const approval = { requestId: "preview-approval", threadId: "main", tool: "fs_cr
 const states = { ready: "可操作", busy: "提交中", failed: "明确失败", unknown: "结果待核对" } as const;
 type PreviewState = keyof typeof states;
 
+const motionText = "流式文字沿用当前主题，新内容柔和显现，已经读过的内容保持稳定。\n\nStreaming text stays readable as each new fragment arrives.\n\n- 支持**加粗**和 `行内代码`\n- 保留中文、English 与换行";
+function ChatMotionPreview({ dark }: { dark: boolean }) {
+  const [length, setLength] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  useEffect(() => {
+    if (!playing) return;
+    let cursor = 0;
+    setLength(0);
+    const timer = setInterval(() => {
+      cursor = Math.min(cursor + 8, motionText.length);
+      setLength(cursor);
+      if (cursor === motionText.length) setPlaying(false);
+    }, 120);
+    return () => clearInterval(timer);
+  }, [playing]);
+  return <section className="design-preview-panel" aria-label="聊天动效预览">
+    <h2>流式输出与等待状态</h2>
+    <TurnExecution items={[]} turn={{ id: "preview-turn", status: "inProgress", items: [] }} project={project} threadId="main" renderItem={() => null} />
+    <div className="design-preview-actions">
+      <Button variant="outline" disabled={playing} onClick={() => setPlaying(true)}>播放流式输出</Button>
+      <Button variant="ghost" disabled={playing} onClick={() => setLength(value => Math.min(value + 8, motionText.length))}>追加片段</Button>
+      <Button variant="ghost" disabled={playing} onClick={() => setLength(motionText.length)}>完成输出</Button>
+    </div>
+    <div data-testid="preview-stream"><MessageResponse className="conversation-markdown" preserveLineBreaks streaming={length > 0 && length < motionText.length} theme={dark ? "dark" : "light"}>{motionText.slice(0, length)}</MessageResponse></div>
+  </section>;
+}
+
 function Preview() {
   const [dark, setDark] = useState(false);
   const [fontSize, setFontSize] = useState("14");
@@ -34,9 +63,11 @@ function Preview() {
   const [state, setState] = useState<PreviewState>("ready");
   const [text, setText] = useState("");
   const [message, setMessage] = useState("");
+  const [reducedMotion, setReducedMotion] = useState(true);
   const [values, setValues] = useState<Record<string, string>>({});
   const api = useRef<LexicalChatInputHandle | null>(null);
   useAppearance(dark);
+  useLayoutEffect(() => { setApplicationPreferences({ reducedMotion: reducedMotion ? "on" : "off" }); }, [reducedMotion]);
   useEffect(() => { document.querySelector(".design-preview")?.scrollTo(0, 0); }, []);
   useLayoutEffect(() => {
     const root = document.documentElement;
@@ -45,7 +76,6 @@ function Preview() {
     root.classList.toggle("theme-areal-dark", dark);
     root.style.colorScheme = dark ? "dark" : "light";
     root.style.setProperty("--ui-font-size", `${fontSize}px`);
-    root.dataset.reducedMotion = "true";
     const css = getComputedStyle(root);
     setValues(Object.fromEntries(tokenGroups.flatMap(group => group.tokens.map(([name]) => [name, css.getPropertyValue(name).trim()]))));
   }, [dark, fontSize]);
@@ -66,6 +96,7 @@ function Preview() {
       <label>字号<select aria-label="字号" value={fontSize} onChange={event => setFontSize(event.target.value)}><option value="14">14</option><option value="18">18</option></select></label>
       <label>面板宽度<select aria-label="面板宽度" value={width} onChange={event => setWidth(event.target.value)}><option value="wide">宽面板</option><option value="narrow">窄面板</option></select></label>
       <label>状态<select aria-label="状态" value={state} onChange={event => { setState(event.target.value as PreviewState); setMessage(""); }}>{Object.entries(states).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+      <label>减少动态效果<input type="checkbox" checked={reducedMotion} onChange={event => setReducedMotion(event.target.checked)} /></label>
     </header>
     <section className="design-preview-panel" aria-label="公共控件">
       <h2>按钮与反馈</h2><div className="design-preview-actions"><Button>主要动作</Button><Button variant="outline">次要动作</Button><Button variant="ghost">辅助动作</Button><Button disabled>不可用</Button></div>
@@ -82,6 +113,7 @@ function Preview() {
       </div>
       <Feedback message={message} />
     </section>
+    <ChatMotionPreview dark={dark} />
     <section className="design-preview-panel" aria-label="审批预览">
       <h2>审批卡片</h2><ApprovalRequest key={state} item={approval} projectId="design-preview" action={action} />
     </section>

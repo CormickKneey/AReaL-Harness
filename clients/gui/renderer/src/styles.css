@@ -1,6 +1,7 @@
 @import "katex/dist/katex.min.css";
 @import "tailwindcss" source(".");
 @import "tw-animate-css";
+@import "streamdown/styles.css";
 
 
 @import "@xterm/xterm/css/xterm.css";
@@ -80,6 +81,15 @@ body {
   margin: 0;
   overflow: hidden;
   font-weight: var(--ui-font-weight);
+}
+
+/* 原生插入点跟随当前主题；输入框的空行不借用外层容器的高度。 */
+:where(input, textarea, [contenteditable="true"]) {
+  caret-color: var(--color-foreground);
+}
+.lexical-chat-input > p {
+  font: inherit;
+  line-height: inherit;
 }
 
 /* 中文模板描述按单字断行会拆开“简报”等词组，并把标点挤到下一行。
@@ -986,6 +996,14 @@ body {
   }
 }
 
+/* 上游的积压限制是软上限；大块中文或恢复快照也必须及时可读。 */
+[data-sd-animate] {
+  animation-delay: min(var(--sd-delay, 0ms), 80ms);
+}
+[data-sd-animate-marker]::marker {
+  animation-delay: min(var(--sd-marker-delay, 0ms), 80ms);
+}
+
 [data-zcode-stream-animate="true"] {
   animation: zcode-stream-text-in 900ms cubic-bezier(0.16, 1, 0.3, 1)
     var(--zcode-stream-animation-delay, 0ms) both;
@@ -1035,6 +1053,8 @@ body {
 }
 
 @scope (:root[data-reduced-motion="true"]) {
+  [data-sd-animate],
+  [data-sd-animate-marker]::marker,
   [data-zcode-stream-animate="true"],
   [data-zcode-stream-marker-animate="true"]::marker,
   [data-zcode-tool-stream-animate="true"],

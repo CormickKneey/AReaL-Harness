@@ -1697,13 +1697,12 @@ button.composer-project:hover > svg,
 .provider-status-dot.enabled { background: #d68712; }
 
 .turn-activity { margin: 8px 0 12px; color: var(--color-foreground-subtle); font-size: var(--text-ui-sm); }
-/* Text shimmer expresses waiting, never fabricated reasoning content. */
+/* 重复色带的首尾同相位，让等待状态连续滚动；明暗都使用当前主题文字色。 */
 .turn-thinking { display: inline-block; color: var(--color-foreground-subtle); }
 @supports (background-clip: text) {
-  .turn-thinking { background: linear-gradient(90deg, var(--color-foreground-subtle) 35%, color-mix(in srgb, white 75%, transparent) 45%, color-mix(in srgb, white 75%, transparent) 50%, var(--color-foreground-subtle) 60%); background-size: 200% 100%; background-position: 125% 0; background-clip: text; color: transparent; animation: turn-thinking-shimmer 2.4s linear infinite; }
+  .turn-thinking { background: linear-gradient(90deg, var(--color-foreground-subtle) 0%, var(--color-foreground) 25%, var(--color-foreground-subtle) 50%, var(--color-foreground) 75%, var(--color-foreground-subtle) 100%); background-size: 200% 100%; background-position: 100% 0; background-clip: text; color: transparent; animation: turn-thinking-shimmer 1.8s linear infinite; }
 }
-/* Continuous sweep; both endpoints place the highlight outside the text. */
-@keyframes turn-thinking-shimmer { from { background-position: 125% 0; } to { background-position: -35% 0; } }
+@keyframes turn-thinking-shimmer { from { background-position: 100% 0; } to { background-position: 0% 0; } }
 @scope (:root[data-reduced-motion="true"]) { .turn-thinking { animation: none; background: none; color: var(--color-foreground-subtle); } }
 
 /* Only the timeline scrolls during execution. The composer never participates in auto-scroll. */

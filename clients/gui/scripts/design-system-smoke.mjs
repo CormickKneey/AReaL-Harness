@@ -80,6 +80,18 @@ try {
       assert.equal(measured.sideInfo.fontSize, `${Number(sample.font) - 3}px`);
     }
     assert.equal(measured.composer.fontSize, `${Number(sample.font) + 2}px`);
+    await input.fill("第一行 First line");
+    await input.press("Shift+Enter");
+    const caret = await input.evaluate(element => {
+      const style = getComputedStyle(element), paragraph = getComputedStyle(element.firstElementChild);
+      return { color: style.color, caret: style.caretColor, font: style.fontSize, paragraphFont: paragraph.fontSize,
+        line: style.lineHeight, paragraphLine: paragraph.lineHeight, text: element.innerText };
+    });
+    assert.equal(caret.caret, caret.color, "caret follows light/dark foreground after newline");
+    assert.equal(caret.paragraphFont, caret.font, "empty line retains editor typography");
+    assert.equal(caret.paragraphLine, caret.line);
+    assert.ok(parseFloat(caret.line) <= parseFloat(caret.font) + 8, "caret line does not stretch to editor height");
+    await input.fill("保留这份草稿 Keep this draft");
     samples.push({ ...sample, measured });
     await page.locator(".design-preview").evaluate(element => element.scrollTo(0, 0));
     await page.screenshot({ path: join(scratch, `${sample.theme}-${sample.font}-${sample.width}.png`), fullPage: true, animations: "disabled" });
@@ -88,6 +100,76 @@ try {
     }
   }
   checks.push("light/dark and wide/narrow production components; semantic typography and layout");
+  checks.push("newline caret follows theme and editor typography at both font sizes");
+  const motion = page.getByRole("region", { name: "聊天动效预览", exact: true });
+  const stream = page.getByTestId("preview-stream");
+  const waiting = motion.locator(".turn-thinking");
+  await page.getByRole("checkbox", { name: "减少动态效果", exact: true }).uncheck();
+  for (const theme of ["light", "dark"]) {
+    await page.getByLabel("主题", { exact: true }).selectOption(theme);
+    await page.waitForFunction(() => document.documentElement.dataset.reducedMotion === "false");
+    await motion.getByRole("button", { name: "追加片段", exact: true }).click();
+    await stream.locator("[data-sd-animate]").first().waitFor();
+    await page.waitForFunction(() => [...document.querySelectorAll('[data-testid="preview-stream"] [data-sd-animate]')].every(element => getComputedStyle(element).opacity === "1"));
+    const priorText = await stream.innerText();
+    await motion.getByRole("button", { name: "追加片段", exact: true }).click();
+    assert.ok((await stream.innerText()).startsWith(priorText), "append retains earlier Chinese text");
+    const animation = await stream.locator("[data-sd-animate]").evaluateAll(elements => ({
+      priorVisible: getComputedStyle(elements[0]).opacity === "1",
+      lastDuration: parseFloat(getComputedStyle(elements.at(-1)).animationDuration),
+      maxDelay: Math.max(...elements.map(element => parseFloat(getComputedStyle(element).animationDelay))),
+    }));
+    assert.equal(animation.priorVisible, true, "new chunks must not fade previously read text again");
+    assert.ok(animation.lastDuration > 0, "new Chinese text fades in");
+    assert.ok(animation.maxDelay <= 0.08, "burst text does not create a long typing queue");
+    // 对真实文字逐段截图，捕获高光离开文字后出现的视觉停顿。
+    const duration = await waiting.evaluate(element => {
+      const animation = element.getAnimations()[0];
+      animation.pause();
+      return Number(animation.effect.getTiming().duration);
+    });
+    const sweep = [], frames = [];
+    for (const fraction of [0, 0.1, 0.25, 0.5, 0.75, 0.9, 0.999999, 1]) {
+      await waiting.evaluate((element, time) => { element.getAnimations()[0].currentTime = time; }, duration * fraction);
+      const frame = await waiting.screenshot({ animations: "allow" });
+      frames.push(frame.toString("base64"));
+      sweep.push({ fraction, sha256: createHash("sha256").update(frame).digest("hex") });
+    }
+    for (let index = 1; index < 6; index++) assert.notEqual(sweep[index].sha256, sweep[index - 1].sha256, "waiting highlight remains visibly moving throughout the cycle");
+    const seamDifference = await page.evaluate(async ({ first, last }) => {
+      const pixels = async source => {
+        const image = new Image();
+        image.src = `data:image/png;base64,${source}`;
+        await image.decode();
+        const canvas = document.createElement("canvas");
+        canvas.width = image.width; canvas.height = image.height;
+        const context = canvas.getContext("2d");
+        context.drawImage(image, 0, 0);
+        return context.getImageData(0, 0, image.width, image.height).data;
+      };
+      const a = await pixels(first), b = await pixels(last);
+      return a.reduce((sum, value, index) => sum + Math.abs(value - b[index]), 0) / a.length;
+    }, { first: frames[0], last: frames[6] });
+    // 背景定位的小数舍入可影响抗锯齿，允许每通道不足一个色阶的平均差异。
+    assert.ok(seamDifference < 1, `waiting sweep has no visible seam: ${seamDifference}`);
+    assert.equal(sweep[0].sha256, sweep[7].sha256, "waiting highlight repeats at the same phase");
+    await waiting.evaluate(element => element.getAnimations()[0].play());
+    await motion.screenshot({ path: join(scratch, `${theme}-chat-motion.png`), animations: "disabled" });
+    samples.push({ theme, animation, sweep, seamDifference });
+  }
+  checks.push("Chinese streaming append preserves earlier text, bounds fade delay, and uses a continuous themed waiting sweep");
+  await motion.getByRole("button", { name: "完成输出", exact: true }).click();
+  assert.equal(await stream.locator("[data-sd-animate]").count(), 0, "completed Markdown has no streaming animation wrappers");
+  assert.ok((await stream.innerText()).includes("Streaming text stays readable"));
+  assert.equal(await stream.locator("li").count(), 2);
+  assert.equal(await stream.locator("strong").innerText(), "加粗");
+  await page.getByRole("checkbox", { name: "减少动态效果", exact: true }).check();
+  await page.waitForFunction(() => document.documentElement.dataset.reducedMotion === "true");
+  assert.equal(await waiting.evaluate(element => element.getAnimations().length), 0);
+  await motion.getByRole("button", { name: "播放流式输出", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="preview-stream"]').textContent.includes("流式文字"));
+  assert.equal(await stream.locator("[data-sd-animate]").count(), 0, "reduced motion shows streamed content immediately");
+  checks.push("completed Markdown retains formatting; reduced motion disables streaming and waiting effects");
   await page.getByLabel("状态", { exact: true }).selectOption("busy");
   assert.equal(await input.getAttribute("contenteditable"), "false");
   await page.getByRole("region", { name: "工具审批", exact: true }).getByRole("button", { name: "允许一次", exact: true }).click();
