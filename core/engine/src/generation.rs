@@ -140,7 +140,7 @@ impl Engine {
         let mut media_output_bytes = 0;
         let mut tool_count = 0;
         let mut completion_retries = 0;
-        let mut recovery_hint = None;
+        let mut recovery_hint: Option<String> = None;
         let mut output_handoff = false;
         let mut previous_usage = None;
         let mut preflight_compactions = 0;
@@ -267,15 +267,17 @@ impl Engine {
             let goal_instructions = self.goal_instructions(cell).await?;
             let (
                 messages,
+                live_context,
+                request_estimate,
                 thread_id,
                 session_id,
                 turn_id,
                 turn_number,
-                fixed_tokens,
+                overhead,
                 checkpoint_before,
                 history_tail_before,
             ) = {
-                let mut state = cell.state.lock().await;
+                let state = cell.state.lock().await;
                 let (mut messages, observation_audit) = observations::project(
                     &state.thread,
                     &self.store,
@@ -285,8 +287,8 @@ impl Engine {
                 if let Some(audit) = observation_audit {
                     self.store.save_audit(audit).await?;
                 }
-                // 每次请求的动态提示必须与其输出一起保留，后续只追加。
-                // 删除旧提示会破坏 encrypted reasoning 所对应的原始上下文。
+                let history_tokens = context::estimate_tokens(&messages);
+                // 已发送提示仍与其输出一起保留；未接受的新提示不能先挡住已结算尾轮的压缩边界。
                 let mut live_context = Vec::new();
                 if let Some(browser) = browser_instructions {
                     live_context.push(Message::text("system", browser));
@@ -360,8 +362,8 @@ impl Engine {
                 if let Some(hint) = self.agent_budget_hint(cell) {
                     live_context.insert(0, Message::text("system", hint));
                 }
-                if let Some(hint) = recovery_hint.take() {
-                    live_context.push(Message::text("user", hint));
+                if let Some(hint) = &recovery_hint {
+                    live_context.push(Message::text("user", hint.clone()));
                 }
                 // 仅新记录使用专用角色；旧 system 快照保持原投影，避免改写恢复历史。
                 for message in &mut live_context {
@@ -391,6 +393,97 @@ impl Engine {
                             .is_some_and(|old| old == message)
                     })
                 });
+                messages.extend(live_context.iter().cloned());
+                let request_estimate = context::request_tokens(&messages, &tool_definitions)?;
+                // 与最终预检共用完整请求：包括新提示、固定前缀、工具及协议封套，不重复计算历史。
+                let overhead = request_estimate.saturating_sub(history_tokens);
+                let checkpoint_before = state
+                    .thread
+                    .context_checkpoint
+                    .as_ref()
+                    .map(|c| c.through_item_id.clone());
+                let thread_id = state.thread.id.clone();
+                let session_id = state.thread.session_id.clone();
+                let turn_id = state.thread.turns.last().unwrap().id.clone();
+                (
+                    messages,
+                    live_context,
+                    request_estimate,
+                    thread_id,
+                    session_id,
+                    turn_id,
+                    state.thread.turns.len() as u64
+                        + state
+                            .thread
+                            .history_archive
+                            .as_ref()
+                            .map_or(0, |a| a.completed_turns),
+                    overhead,
+                    checkpoint_before,
+                    state
+                        .thread
+                        .turns
+                        .iter()
+                        .flat_map(|t| &t.items)
+                        .last()
+                        .map(|i| i.id().to_owned()),
+                )
+            };
+            let context_budget = context::ContextBudget::resolve(&self.limits, model.as_ref())?;
+            let mut compaction_failure = None;
+            if side_thread_id.is_none() && preflight_compactions < 2 {
+                let result = self
+                    .compact_context(cell, cancel, overhead, previous_usage, false)
+                    .await;
+                if let Err(error) = result {
+                    if error.downcast_ref::<context::CompactionFailure>().is_none() {
+                        return Err(error);
+                    }
+                    compaction_failure = Some(error);
+                }
+            }
+            {
+                let mut state = cell.state.lock().await;
+                let history_tail_after = state
+                    .thread
+                    .turns
+                    .iter()
+                    .flat_map(|t| &t.items)
+                    .last()
+                    .map(|i| i.id().to_owned());
+                let checkpoint_after = state
+                    .thread
+                    .context_checkpoint
+                    .as_ref()
+                    .map(|c| c.through_item_id.clone());
+                if checkpoint_after != checkpoint_before
+                    || history_tail_after != history_tail_before
+                {
+                    preflight_compactions += 1;
+                    previous_usage = None;
+                    model_rounds -= 1;
+                    continue 'restart;
+                }
+                // 在同一提交锁下核对组装所基于的历史并完成硬预检；steer 不能插到旧提示之前。
+                if context_budget.window > 0 && request_estimate > context_budget.input_limit {
+                    if let Some(error) = compaction_failure {
+                        return Err(context::context_overflow(
+                            "summary failed and the original full request cannot fit",
+                            request_estimate,
+                            context_budget.input_limit,
+                        )
+                        .context(error));
+                    }
+                    return Err(context::context_overflow(
+                        "full request does not fit after compaction; inspect fixed instructions, tools and retained inputs",
+                        request_estimate,
+                        context_budget.input_limit,
+                    ));
+                }
+                if let Some(error) = compaction_failure {
+                    // 仅摘要失败可沿用仍能容纳的旧投影；存储、计量和取消错误不能绕过。
+                    tracing::warn!(error = %error, "keeping previous checkpoint after failed compaction");
+                }
                 if !live_context.is_empty() {
                     let mut candidate = state.thread.clone();
                     let context = Item::ModelContext {
@@ -405,103 +498,13 @@ impl Engine {
                         .push(context.clone());
                     self.persist(&candidate).await?;
                     state.thread = candidate;
-                    let turn_id = &state.thread.turns.last().unwrap().id;
-                    emit_item(cell, "item/started", &state.thread.id, turn_id, &context);
-                    emit_item(cell, "item/completed", &state.thread.id, turn_id, &context);
+                    emit_item(cell, "item/started", &thread_id, &turn_id, &context);
+                    emit_item(cell, "item/completed", &thread_id, &turn_id, &context);
                 }
-                messages.extend(live_context);
-                let fixed_tokens = context::estimate_tokens(&messages).saturating_sub(
-                    context::estimate_tokens(&history(&state.thread, &self.store)?),
-                );
-                let checkpoint_before = state
-                    .thread
-                    .context_checkpoint
-                    .as_ref()
-                    .map(|c| c.through_item_id.clone());
-                let thread_id = state.thread.id.clone();
-                let session_id = state.thread.session_id.clone();
-                let turn_id = state.thread.turns.last().unwrap().id.clone();
-                (
-                    messages,
-                    thread_id,
-                    session_id,
-                    turn_id,
-                    state.thread.turns.len() as u64
-                        + state
-                            .thread
-                            .history_archive
-                            .as_ref()
-                            .map_or(0, |a| a.completed_turns),
-                    fixed_tokens,
-                    checkpoint_before,
-                    state
-                        .thread
-                        .turns
-                        .iter()
-                        .flat_map(|t| &t.items)
-                        .last()
-                        .map(|i| i.id().to_owned()),
-                )
-            };
-            let request_estimate = context::request_tokens(&messages, &tool_definitions)?;
-            let overhead = fixed_tokens
-                + context::text_tokens(&serde_json::to_string(&tool_definitions)?)
-                + 512;
-            let context_budget = context::ContextBudget::resolve(&self.limits, model.as_ref())?;
-            if side_thread_id.is_none() && preflight_compactions < 2 {
-                let result = self
-                    .compact_context(cell, cancel, overhead, previous_usage, false)
-                    .await;
-                if let Err(error) = result {
-                    if error.downcast_ref::<context::CompactionFailure>().is_none() {
-                        return Err(error);
-                    }
-                    if context_budget.window > 0 && request_estimate > context_budget.input_limit {
-                        return Err(context::context_overflow(
-                            "summary failed and the original full request cannot fit",
-                            request_estimate,
-                            context_budget.input_limit,
-                        )
-                        .context(error));
-                    }
-                    // 仅摘要失败可沿用仍能容纳的旧投影；存储、计量和取消错误不能绕过。
-                    tracing::warn!(error = %error, "keeping previous checkpoint after failed compaction");
-                }
-                let history_tail_after = cell
-                    .state
-                    .lock()
-                    .await
-                    .thread
-                    .turns
-                    .iter()
-                    .flat_map(|t| &t.items)
-                    .last()
-                    .map(|i| i.id().to_owned());
-                let checkpoint_after = cell
-                    .state
-                    .lock()
-                    .await
-                    .thread
-                    .context_checkpoint
-                    .as_ref()
-                    .map(|c| c.through_item_id.clone());
-                if checkpoint_after != checkpoint_before
-                    || history_tail_after != history_tail_before
-                {
-                    preflight_compactions += 1;
-                    previous_usage = None;
-                    model_rounds -= 1;
-                    continue 'restart;
-                }
-            }
-            if context_budget.window > 0 && request_estimate > context_budget.input_limit {
-                return Err(context::context_overflow(
-                    "full request does not fit after compaction; inspect fixed instructions, tools and retained inputs",
-                    request_estimate,
-                    context_budget.input_limit,
-                ));
             }
             preflight_compactions = 0;
+            // 本地重建未发送请求时不消费一次性恢复提示，也不增加求解轮数。
+            recovery_hint = None;
             let tools_enabled = !final_round && !output_handoff && !tool_definitions.is_empty();
             let tool_limits = model::ToolCallLimits {
                 max_calls: if tools_enabled {

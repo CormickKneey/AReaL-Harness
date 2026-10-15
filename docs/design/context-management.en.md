@@ -40,6 +40,8 @@ Initially retain the 60%-of-available-input compaction target as internal policy
 
 ## Compaction commits and failure
 
+Solve assembles the full request without persisting its new controls, then reserves the estimated difference between the request and its history projection for compaction planning. Unsent controls cannot become the tail item, so completed tool rounds remain eligible for whole-round compaction. Rebuild after compaction or steer changes history; under the commit lock, revalidate the original history boundary and pass hard preflight before appending controls. Recovery hints survive until acceptance, and rebuilding consumes no additional solve round. Summary calls retain existing accounting, cancellation and retry limits. Controls and reasoning context from sent requests remain unchanged.
+
 Compaction builds, validates and atomically commits a candidate. Before replacing the previous checkpoint, the candidate must cover a valid settled prefix, preserve the latest request and tool pairing, reduce context size and pass complete solve-request preflight. Summaries remain historical evidence with lower priority than new user instructions.
 
 Summary request failures such as HTTP 400 preserve the previous checkpoint and originals, without committing a degraded summary that loses meaning. Only received but malformed summaries use the existing bounded validation repair. Do not repeat identical permanently invalid HTTP requests as validation retries. Transient network recovery retains cancellation, watchdog and Goal accounting constraints.

@@ -125,6 +125,8 @@ Checkpoint 的 `retainedInputs: [{itemId, content}]` 与 `evidence: string[]` �
 
 压缩使用与实际求解相同的完整输入计量，按完整工具轮次切分，未完成或 UNKNOWN 副作用不得进入前缀。候选须通过净缩减、完整输入硬上限、前缀身份和工具配对校验后才原子提交。摘要等待期间的新 steer 会参与重新规划；实际求解仍重建请求并预检。摘要输入预检会显式标记证据省略，摘要文本最多 16 KiB。仅已收到但不合格的摘要允许一次验证重试；HTTP 400 等永久请求错误直接失败。失败或取消保留旧 checkpoint，不提交降级摘要，已观察用量仍持久保存。只有存储滚动可使用历史摘录归档不可回放记录，不用于摘要失败回退。旧投影可容纳当前完整请求时允许继续，超限则报 `LLM_CONTEXT_WINDOW_EXCEEDED` 并保留摘要失败原因；计量与取消错误不能绕过。没有可缩小的合法前缀时不付费摘要。
 
+每次请求先在内存组装完整动态提示，按完整请求与历史投影的估算差预留附加开销，再规划压缩；未被预检接受的新提示不写入历史，避免挡住已完成工具尾轮的安全切点。压缩或历史变化后重建请求；提交锁内重新核验历史边界、执行硬预检并持久化接受的提示，防止与新 steer 错序。恢复提示在接受请求前保留，本地重建不增加求解轮数；真实摘要请求仍正常计量。已发送提示、工具事实、窗口和执行预算不改写。
+
 `areal/context/compacted` 保留前后字节、估算 token、targetTokens/targetMet、摘要预算、degradationReason、retainedUserMessages、trigger（manual/tokens/bytes/storage）与用量；`degradationReason=storage_archive` 只标识未调用摘要器的存储归档。新增 `areal/context/compactionFailed {threadId,code:"LLM_CONTEXT_COMPACTION_FAILED",reason,checkpointPreserved:true,windowTokens,outputReserveTokens,inputLimitTokens,beforeEstimatedTokens}`，并登记于 capabilities 和 JSON Schema。它表示候选没有提交，不等同于 Turn 失败。
 
 `areal/context/read` 的 `budget` 新增 `outputLimitTokens`（自定义模型可为 null）、`historyEstimatedTokens`、`estimatedInputTokens`、`estimateScope:"historyWithRecordedInstructionsAndCurrentTools"` 与 `retentionStrategy:"automatic"|"legacyRecentBoundary"`，保留窗口、输出预留、输入上限、目标与窗口来源。估算包含已记录固定指令与当前工具，不声称包含下一次尚未构造的动态提示。求解与手动压缩复用固定指令装配和计量入口，最终求解额外计入实际动态提示。自动模式在任何输出/工具调用之前遇到明确提供方上下文溢出时，可恢复一次，仍受 Goal 计量约束。
