@@ -32,6 +32,8 @@ input 为有序 text/image/audio/file 等内容，UTF-8 文本合计最多 1 MiB
 
 可选 `admissionGuard: {ordinarySession: true}` 要求指定 `turnId` 在 Core 获得 Thread → Tasks 锁时仍是活动 Turn，且当前所有权属于普通会话；锁持续到队列持久化和取消完成。目标已结束/更换或属于 Task、Goal、协调者/子会话时，在任何队列、Goal 或取消操作前返回冲突（-32009）；`ordinarySession: false` 无效（-32602）。能力标志为 `features.turnInterruptAdmissionGuard`，依赖此保证的客户端在缺失时必须拒绝停止。省略 guard 保留旧行为，包括历史终态 Turn 可暂停队列。返回成功仅表示取消已受理，客户端仍需等待原 Turn 的 terminal 事件；该方法没有提交收据。
 
+上下文压缩可能将活动 Turn 的前缀移入冷历史，因此 `turn/started` / `turn/completed` 的 `turn.items` 不能视为完整历史替换。客户端按稳定 Item ID 合并已观察条目，更新同 ID 内容与阶段，追加新条目，并保留事件中省略的旧条目及其顺序；已有 Turn 的重复开始回执不能覆盖已显示消息或把终态回退为运行中。`areal/model/completionDiscarded` 才显式移除指定的未提交模型响应。`thread/read(includeTurns:true)`、`thread/resume` 和 `areal/thread/observe` 还原冷历史，作为可替换本地投影的权威完整基线。压缩、正常完成、停止和失败均不应隐藏已保留的用户输入、steer 或 Agent 回复。
+
 ### 结构化终止原因
 
 `Turn.error` 保留 `message`，增加可选 `outcome:{code,class,source,details?}`。Core 在错误产生处保留类型，在 Turn 结算时生成 outcome；`turn/completed`、`thread/read`、持久化及重启恢复使用同一对象。旧记录没有 outcome 时按原样读取；消费者不能通过 message 猜测分类。Rust 构造旧 `TurnError` 时需填写 `outcome: None`。

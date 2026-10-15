@@ -738,7 +738,22 @@ function event(message) {
   } else if (message.method === "turn/started" || message.method === "turn/completed") {
     const index = thread.turns.findIndex((turn) => turn.id === p.turn.id);
     if (index === -1) thread.turns.push(p.turn);
-    else thread.turns[index] = p.turn;
+    else {
+      const old = thread.turns[index];
+      // 开始回执可能晚于流式事件，不能用旧文本覆盖已存在的轮次。
+      if (p.turn.status === "inProgress") return;
+      // 压缩只移走热历史前缀；Turn 事件中省略的消息仍需保留展示。
+      const items = [...old.items];
+      const positions = new Map(items.map((item, at) => [item.id, at]));
+      for (const item of p.turn.items) {
+        const at = positions.get(item.id);
+        if (at === undefined) {
+          positions.set(item.id, items.length);
+          items.push(item);
+        } else items[at] = item;
+      }
+      thread.turns[index] = { ...old, ...p.turn, items };
+    }
   } else {
     const turn = thread.turns.find((turn) => turn.id === p.turnId);
     if (!turn) return;

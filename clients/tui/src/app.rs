@@ -2413,11 +2413,8 @@ impl App {
             return;
         };
         let status = turn.status.clone();
-        if thread.turns.iter().any(|t| {
-            t.id == turn.id
-                && t.status != TurnStatus::InProgress
-                && status == TurnStatus::InProgress
-        }) {
+        // 开始回执可能晚于流式事件，不能用旧文本覆盖已存在的轮次。
+        if status == TurnStatus::InProgress && thread.turns.iter().any(|t| t.id == turn.id) {
             return;
         }
         if self.selected.as_deref() == Some(id) {
@@ -2448,7 +2445,22 @@ impl App {
                 .failed(&turn.id);
         }
         if let Some(old) = thread.turns.iter_mut().find(|t| t.id == turn.id) {
-            *old = turn;
+            // 压缩后的事件只带热历史尾部；保留已观察条目，并按 ID 更新最新内容。
+            let mut items = std::mem::take(&mut old.items);
+            let mut positions: BTreeMap<_, _> = items
+                .iter()
+                .enumerate()
+                .map(|(index, item)| (item.id().to_owned(), index))
+                .collect();
+            for item in &turn.items {
+                if let Some(index) = positions.get(item.id()) {
+                    items[*index] = item.clone();
+                } else {
+                    positions.insert(item.id().to_owned(), items.len());
+                    items.push(item.clone());
+                }
+            }
+            *old = Turn { items, ..turn };
         } else {
             thread.turns.push(turn);
         }
@@ -2585,6 +2597,58 @@ pub(crate) mod tests {
     }
     pub fn blocked_goal() -> areal_protocol::goals::Goal {
         serde_json::from_value(json!({"id":"goal","threadId":"root","objective":"inspect","status":"blocked","reason":"usageUnknown","tokenBudget":null,"maxTurns":10,"maxActiveSeconds":100,"usage":{"inputTokens":0,"cachedInputTokens":0,"outputTokens":0,"tokensUsed":0,"reservedTokens":500,"unknownRequests":1,"timeUsedSeconds":1.0,"turnsStarted":1,"accountingComplete":false},"activeTurnId":null,"settling":false,"waitingForInput":false,"waitingForCapacity":false,"report":null,"reportTurnId":null,"unreportedTurns":0})).unwrap()
+    }
+    #[test]
+    fn compacted_turn_updates_preserve_user_and_agent_history() {
+        for status in ["completed", "interrupted", "failed"] {
+            let mut app = App::new(Preferences::default());
+            app.selected = Some("root".into());
+            let mut original = thread("root", None);
+            original.turns[0] = serde_json::from_value(json!({
+                "id":"turn", "status":"inProgress", "items":[
+                    {"id":"user","type":"userMessage","content":[{"type":"text","text":"原始提问"}]},
+                    {"id":"early","type":"agentMessage","text":"先检查实现","phase":"commentary"},
+                    {"id":"steer","type":"userMessage","content":[{"type":"text","text":"补充要求"}]},
+                    {"id":"reply","type":"agentMessage","text":"回复前缀"}
+                ]
+            })).unwrap();
+            app.snapshot(original.clone());
+            let mut stale_start = original.turns[0].clone();
+            if let Item::AgentMessage { text, .. } = &mut stale_start.items[3] {
+                text.clear();
+            }
+            app.receive_turn("root", stale_start);
+            assert_eq!(
+                serde_json::to_value(&app.current().unwrap().turns[0].items).unwrap(),
+                serde_json::to_value(&original.turns[0].items).unwrap(),
+                "重复开始回执不能覆盖流式正文"
+            );
+            let terminal: Turn = serde_json::from_value(json!({
+                "id":"turn", "status":status, "durationMs":3210, "items":[
+                    {"id":"reply","type":"agentMessage","text":"完整回复","phase":"final_answer"}
+                ]
+            }))
+            .unwrap();
+            for _ in 0..2 {
+                app.receive_turn("root", terminal.clone());
+                let turn = &app.current().unwrap().turns[0];
+                assert_eq!(turn.items.len(), 4, "{status}");
+                assert_eq!(turn.duration_ms, Some(3210));
+                for (old, current) in original.turns[0].items.iter().zip(&turn.items) {
+                    assert_eq!(old.id(), current.id());
+                }
+                assert_eq!(
+                    serde_json::to_value(&turn.items[3]).unwrap()["text"],
+                    "完整回复"
+                );
+            }
+            app.receive_turn("root", original.turns[0].clone());
+            assert_ne!(
+                app.current().unwrap().turns[0].status,
+                TurnStatus::InProgress
+            );
+            assert_eq!(app.current().unwrap().turns[0].items.len(), 4);
+        }
     }
     #[test]
     fn trajectory_notice_is_once_and_never_replaces_configuration_or_history() {
