@@ -96,6 +96,20 @@ impl std::fmt::Debug for PrivateErrorDetail {
     }
 }
 
+fn private_error_detail(value: &Value) -> Value {
+    let encoded = value.to_string();
+    // 上游原文只供本机私有制品使用；先有界截取，禁止进入协议分类与 tracing。
+    if encoded.len() <= 16 * 1024 {
+        json!({"error":value,"truncated":false})
+    } else {
+        let mut end = 16 * 1024;
+        while !encoded.is_char_boundary(end) {
+            end -= 1;
+        }
+        json!({"rawJsonPrefix":&encoded[..end],"truncated":true,"originalBytes":encoded.len()})
+    }
+}
+
 impl StreamError {
     fn from_value(value: &Value, event_type: &'static str) -> Self {
         fn label(value: &Value) -> Option<String> {
@@ -125,17 +139,7 @@ impl StreamError {
                 _ => None,
             }
         }
-        let encoded = value.to_string();
-        // 上游原文只供本机私有制品使用；先有界截取，禁止进入协议分类与 tracing。
-        let private_detail = if encoded.len() <= 16 * 1024 {
-            json!({"error":value,"truncated":false})
-        } else {
-            let mut end = 16 * 1024;
-            while !encoded.is_char_boundary(end) {
-                end -= 1;
-            }
-            json!({"rawJsonPrefix":&encoded[..end],"truncated":true,"originalBytes":encoded.len()})
-        };
+        let private_detail = private_error_detail(value);
         Self {
             event_type,
             code: label(&value["code"]),
@@ -1102,11 +1106,13 @@ impl Model for HttpModel {
                 continue;
             }
             break result.map_err(|error| {
+                let error = error.without_url();
+                audit.save_transport_error(&error, "request");
                 let error = if error.is_builder() {
                     anyhow::anyhow!("invalid model HTTP request")
                 } else {
                     let timed_out = error.is_timeout();
-                    tracing::warn!(connect = error.is_connect(), timeout = timed_out, error = %error.without_url(), "model request transport failure");
+                    tracing::warn!(connect = error.is_connect(), timeout = timed_out, error = %error, "model request transport failure");
                     anyhow::Error::new(if timed_out { ModelFailure::ResponseTimeout } else { ModelFailure::Transport })
                 };
                 audit.value["outcome"] = json!("failed");
@@ -1219,12 +1225,18 @@ impl Model for HttpModel {
                                 }
                                 parts
                             }
-                            Some(Err(error)) => Err(match &decoder {
-                                Decoder::Chat(chat) if chat.truncated => ModelFailure::Truncated,
-                                _ if error.is_timeout() => ModelFailure::ResponseTimeout,
-                                _ => ModelFailure::Transport,
+                            Some(Err(error)) => {
+                                let error = error.without_url();
+                                audit.save_transport_error(&error, "responseBody");
+                                Err(match &decoder {
+                                    Decoder::Chat(chat) if chat.truncated => {
+                                        ModelFailure::Truncated
+                                    }
+                                    _ if error.is_timeout() => ModelFailure::ResponseTimeout,
+                                    _ => ModelFailure::Transport,
+                                }
+                                .into())
                             }
-                            .into()),
                             None => decoder.finish(),
                         }
                     };

@@ -4,14 +4,13 @@ import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-const execute = promisify(execFile);
 
 // 真实 Core/Runtime 和桌面连接；只在外部模型边界使用确定性 fixture。
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(join(gui, 'app/package.json'));
 const { CoreBackend } = require('../app/src/core/backend.cjs');
+// 与产品共用 macOS 原生启动桥，独立 CLI 仍读取自己的真实配置和服务状态。
+const { executeCore: execute } = require('../app/src/core/core-process.cjs');
 const scratch = await mkdtemp('/private/tmp/areal-connection-');
 const workspace = join(scratch, 'workspace');
 const home = join(scratch, 'desktop');

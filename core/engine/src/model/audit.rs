@@ -123,6 +123,15 @@ impl Audit {
             tracing::warn!("could not save private model error detail");
         }
     }
+    pub fn save_transport_error(&mut self, error: &reqwest::Error, phase: &'static str) {
+        // 调用方先移除 URL；底层连接原因仅进入同一份有界、私有错误文件。
+        self.save_error_detail(&private_error_detail(&json!({
+            "kind":"httpTransport", "phase":phase,
+            "timedOut":error.is_timeout(), "connect":error.is_connect(),
+            "body":error.is_body(), "decode":error.is_decode(),
+            "diagnostic":format!("{error:?}")
+        })));
+    }
     fn save(&self) {
         if let Some(path) = &self.path {
             let result = (|| -> std::io::Result<()> {
@@ -176,6 +185,80 @@ impl Drop for Audit {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[tokio::test]
+    async fn transport_failures_keep_private_phase_and_cause_without_url_or_public_leaks() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for phase in ["request", "responseBody"] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = format!(
+                "http://{}/responses?private-query-marker",
+                listener.local_addr().unwrap()
+            );
+            let server = tokio::spawn(async move {
+                let (mut connection, _) = listener.accept().await.unwrap();
+                let mut received = Vec::new();
+                while !received.windows(4).any(|window| window == b"\r\n\r\n") {
+                    let mut bytes = [0; 1024];
+                    let count = connection.read(&mut bytes).await.unwrap();
+                    assert!(count > 0);
+                    received.extend_from_slice(&bytes[..count]);
+                }
+                if phase == "responseBody" {
+                    connection.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 9999\r\nConnection: close\r\n\r\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"r\"}}\n\n").await.unwrap();
+                }
+                connection.shutdown().await.unwrap();
+            });
+            let directory = tempfile::tempdir().unwrap();
+            let mut http = HttpModel::with_protocol(
+                endpoint,
+                "fixture".into(),
+                None,
+                ModelProtocol::Responses,
+            )
+            .unwrap()
+            .with_audit_directory(directory.path().to_owned())
+            .with_options(ModelOptions {
+                max_retries: 0,
+                ..Default::default()
+            })
+            .unwrap();
+            // 该 TCP fixture 必须直连；不改变产品对用户代理配置的处理。
+            http.client = reqwest::Client::builder().no_proxy().build().unwrap();
+            let response = http
+                .chat(vec![Message::text("user", "private-input-marker")], vec![])
+                .await;
+            if phase == "request" {
+                assert!(response.is_err());
+            } else {
+                let events = response.unwrap().collect::<Vec<_>>().await;
+                assert!(events.iter().any(Result::is_err));
+            }
+            server.await.unwrap();
+            let journal = std::fs::read_to_string(directory.path().join("requests.jsonl")).unwrap();
+            let row: Value = serde_json::from_str(journal.lines().last().unwrap()).unwrap();
+            assert_eq!(row["outcome"], "failed");
+            let path = Path::new(row["errorDetailFile"].as_str().unwrap());
+            assert_eq!(
+                std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+            let raw = std::fs::read_to_string(path).unwrap();
+            let detail: Value = serde_json::from_str(&raw).unwrap();
+            assert_eq!(detail["error"]["kind"], "httpTransport");
+            assert_eq!(detail["error"]["phase"], phase);
+            assert!(!detail["error"]["diagnostic"].as_str().unwrap().is_empty());
+            assert!(!raw.contains("private-query-marker"));
+            for private in [
+                "private-input-marker",
+                "private-query-marker",
+                "httpTransport",
+                "diagnostic",
+            ] {
+                assert!(!journal.contains(private));
+            }
+        }
+    }
 
     #[test]
     fn provider_error_is_private_and_not_copied_into_audit() {

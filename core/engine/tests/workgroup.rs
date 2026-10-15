@@ -577,7 +577,7 @@ async fn independent_tasks_overlap_dependencies_use_integrated_head_and_artifact
         Duration::from_secs(3),
     )
     .await;
-    assert_eq!(record.status, "completed");
+    assert_eq!(record.status, "completed", "{record:#?}");
     assert_eq!(fixture.peak.load(Ordering::SeqCst), 2);
     let events = fixture.events.lock().unwrap();
     assert!(

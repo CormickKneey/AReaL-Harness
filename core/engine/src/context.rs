@@ -142,6 +142,13 @@ impl ContextPlan<'_> {
         } else {
             budget.target.max(tokens).min(budget.input_limit)
         };
+        // 固定指令、最新请求和有效摘要已超过软目标时，不能把原文额度冻结为零。
+        // 只让较早的文本修订使用硬窗口余量；附件与可选执行证据仍受原软目标约束。
+        let user_text_limit = if budget.window > 0 && tokens >= budget.target {
+            budget.input_limit
+        } else {
+            allocation_limit
+        };
         let byte_limit = byte_target.map_or(usize::MAX, |limit| limit.max(bytes));
         let input_message = |content: &[Input]| Message {
             role: "user".into(),
@@ -159,8 +166,16 @@ impl ContextPlan<'_> {
             let mut input = input.clone();
             let mut message = input_message(&input.content);
             let fits = |message: &Message| {
-                tokens.saturating_add(estimate_tokens(std::slice::from_ref(message)))
-                    <= allocation_limit
+                let limit = if message
+                    .content
+                    .iter()
+                    .all(|part| matches!(part, model::ContentPart::Text(_)))
+                {
+                    user_text_limit
+                } else {
+                    allocation_limit
+                };
+                tokens.saturating_add(estimate_tokens(std::slice::from_ref(message))) <= limit
                     && bytes.saturating_add(message_bytes(std::slice::from_ref(message)))
                         <= byte_limit
             };
@@ -640,8 +655,10 @@ impl Engine {
         let (messages, _) =
             observations::project(&snapshot, &self.store, &self.limits, model.as_ref())?;
         let before_bytes = message_bytes(&messages);
-        let estimated_tokens =
-            calibrated(estimate_tokens(&messages) + overhead_tokens, previous_usage);
+        let raw_estimate = estimate_tokens(&messages).saturating_add(overhead_tokens);
+        // 最终请求预检使用保守原始估算；较小的历史 usage 不能让压缩跳过同一道硬门禁。
+        // 较大的实际用量仍提前触发压缩，避免低估真实 tokenizer。
+        let estimated_tokens = raw_estimate.max(calibrated(raw_estimate, previous_usage));
         let token_trigger = budget.window > 0 && estimated_tokens >= budget.input_limit;
         let byte_trigger =
             self.limits.context_window_bytes > 0 && before_bytes > self.limits.context_window_bytes;
@@ -890,7 +907,7 @@ impl Engine {
             let mut input = summary_input(&history(&prefix, &self.store)?);
             if writing_target < 8000 {
                 // 这是写作目标而非硬截断；原有净缩减验证仍决定能否保存摘要。
-                input[0] = Message::text("system", format!("{}\nSummary writing target: {writing_target} UTF-8 bytes. Compress completed background into one sentence; prioritize current state, unresolved failures and the next action. Original user instructions and exact file receipts are retained separately, so do not copy their full lists. This tighter target supersedes the general length guidance above.", include_str!("summary-instructions.md")));
+                input[0] = Message::text("system", format!("{}\nSummary writing target: {writing_target} UTF-8 bytes. Compress completed background into one sentence; prioritize binding user constraints, current state, unresolved failures and the next action. Core may separately retain selected original user messages and file receipts; do not assume every older requirement will be replayed. This tighter target supersedes the general length guidance above.", include_str!("summary-instructions.md")));
             }
             trajectory::record_messages(&tracing::Span::current(), "gen_ai.input.messages", &input);
             let started = tokio::time::Instant::now();

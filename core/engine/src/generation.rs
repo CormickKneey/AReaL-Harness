@@ -2,6 +2,50 @@
 
 use super::*;
 
+// 已完整交给本次请求的结算回执，不应仅因自动汇总重复出现而使有效最终答复失效。
+// 只忽略等待与调用额度元数据；制品、交付、错误或正文有变化时仍须再次交给模型。
+fn execution_receipts_observed(messages: &[model::Message], reports: &[Value]) -> bool {
+    let normalize = |mut value: Value| -> Option<Value> {
+        if value["timedOut"] == true {
+            return None;
+        }
+        let object = value.as_object_mut()?;
+        object.remove("remainingToolCalls");
+        object.remove("timedOut");
+        Some(value)
+    };
+    if reports.is_empty()
+        || reports.iter().any(|report| {
+            !report["executionId"].is_string()
+                || report["status"] != "completed"
+                || report["settled"] != true
+                || report["resourcesReleased"] != true
+                || !report["error"].is_null()
+                || !matches!(
+                    report["delivery"]["status"].as_str(),
+                    Some("applied" | "notRequired")
+                )
+        })
+    {
+        return false;
+    }
+    let received: Vec<_> = messages
+        .iter()
+        .filter(|message| message.role == "tool")
+        .filter_map(|message| serde_json::from_str::<Value>(&message.text_content()).ok())
+        .flat_map(
+            |value| match value.get("completed").and_then(Value::as_array) {
+                Some(values) => values.clone(),
+                None => vec![value],
+            },
+        )
+        .filter_map(normalize)
+        .collect();
+    reports
+        .iter()
+        .all(|report| normalize(report.clone()).is_some_and(|value| received.contains(&value)))
+}
+
 /// 取消后只排空流以结算尾部用量；不执行工具，不伪造缺失用量。
 pub(crate) async fn settle_cancelled_stream(
     stream: &mut model::ModelStream,
@@ -737,9 +781,13 @@ impl Engine {
                                     reports = self.settle_generation_groups(cell) => reports?,
                                 };
                                 if reports != group_results {
+                                    let already_observed =
+                                        execution_receipts_observed(&messages, &reports);
                                     group_results = reports;
-                                    complete_item(cell, &thread_id, &turn_id, &item_id).await;
-                                    continue 'restart;
+                                    if !already_observed {
+                                        complete_item(cell, &thread_id, &turn_id, &item_id).await;
+                                        continue 'restart;
+                                    }
                                 }
                             }
                             if !blocked_report
@@ -1371,5 +1419,71 @@ mod cancellation_usage_tests {
                 assert_eq!(models[1]["areal.model.response.accepted"], "true", "{mode}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod receipt_tests {
+    use super::*;
+
+    fn report() -> Value {
+        json!({"executionId":"execution-fixture","status":"completed","settled":true,
+            "resourcesReleased":true,"error":null,"delivery":{"status":"applied","head":"head-one"},
+            "text":"Verified delivery","artifact":{"head":"head-one"},"timedOut":false})
+    }
+    fn message(value: &Value) -> model::Message {
+        model::Message::text("tool", value.to_string())
+    }
+    #[test]
+    fn delivered_receipts_can_be_observed_individually_or_in_wait_any() {
+        let expected = report();
+        let mut received = expected.clone();
+        received.as_object_mut().unwrap().remove("timedOut");
+        received["remainingToolCalls"] = json!(12);
+        assert!(execution_receipts_observed(
+            &[message(&received)],
+            std::slice::from_ref(&expected)
+        ));
+        assert!(execution_receipts_observed(
+            &[message(
+                &json!({"completed":[received],"pending":[],"timedOut":false})
+            )],
+            &[expected]
+        ));
+    }
+    #[test]
+    fn new_changed_failed_or_unreleased_evidence_still_requires_the_model() {
+        let old = report();
+        for change in [
+            json!({"text":"A new verification result"}),
+            json!({"status":"failed"}),
+            json!({"error":"cleanup failed"}),
+            json!({"resourcesReleased":false}),
+            json!({"settled":false}),
+            json!({"artifact":{"head":"head-two"}}),
+            json!({"delivery":{"status":"awaitingDelivery"}}),
+            json!({"executionId":"another-execution"}),
+        ] {
+            let mut changed = old.clone();
+            changed
+                .as_object_mut()
+                .unwrap()
+                .extend(change.as_object().unwrap().clone());
+            assert!(!execution_receipts_observed(&[message(&old)], &[changed]));
+        }
+        let mut timed_out = old.clone();
+        timed_out["timedOut"] = json!(true);
+        assert!(!execution_receipts_observed(
+            &[message(&timed_out)],
+            std::slice::from_ref(&old)
+        ));
+        assert!(!execution_receipts_observed(
+            &[model::Message::text("user", old.to_string())],
+            std::slice::from_ref(&old)
+        ));
+        assert!(!execution_receipts_observed(
+            &[message(&old)],
+            &[old.clone(), json!({"executionId":"unseen"})]
+        ));
     }
 }
