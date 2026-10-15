@@ -48,7 +48,8 @@ class DesktopService {
     return { sequence: ++this.sequence, snapshot: this.backend.snapshot(), service: {
       connected: true, cancelStop: true, clients: this.clients.size, busy: this.backend.hasWork({ includePausedQueues: false }),
       activeCommands: this.inflight, providerUpdating: !!this.backend.providerUpdating,
-      starting: this.backend.starting.size, pid: process.pid,
+      starting: this.backend.starting.size, pid: process.pid, lifecycleVersion: 1, stopReport: this.stopReport ?? null,
+      targets: [...this.backend.projects].map(([projectId, p]) => ({ projectId, serviceId: p.service?.serviceId ?? null, generation: p.service?.generation ?? null })),
       browserCore: Object.fromEntries([...this.backend.projects].map(([id, project]) =>
         [id, project.service?.serviceId ?? null])),
       // Authenticated desktop Main uses actual active Core listeners to deny
@@ -134,21 +135,27 @@ class DesktopService {
     this.backend.analytics.sample({ time: now, focused: active });
   }
   async stop({ cancel = false } = {}) {
-    if (this.stopping || this.inflight || (!cancel && this.backend.hasWork({ includePausedQueues: false })) || this.backend.providerUpdating || this.backend.starting.size) throw new Error('后台仍有任务、可执行的排队消息或操作，完成或暂停队列后重试');
+    const { desktopBlockers, blockerMessage } = require('./lifecycle.cjs');
+    const guards = desktopBlockers({ activeCommands: this.inflight, providerUpdating: this.backend.providerUpdating, starting: this.backend.starting.size }, false);
+    if (this.stopping || guards.length || (!cancel && this.backend.hasWork({ includePausedQueues: false })))
+      throw Object.assign(new Error(this.stopping ? '后台服务正在停止' : guards.length ? blockerMessage(guards) : '后台仍有任务，请完成后重试'),
+        { code: 'LIFECYCLE_BLOCKED' });
     this.stopping = true; // Block new admissions before asynchronous status checks.
     try {
-      if (cancel) {
-        // 强制停止只由可信 Main 在用户确认后调用；Core 先结算活动轮次，
-        // 未确认的模型或工具结果继续保留为 UNKNOWN。
-        for (const project of this.backend.projects.values()) if (project.client?.ready)
-          await project.client.request('areal/server/drain', { strategy: 'cancel', timeoutMs: 30_000 }, { timeoutMs: 35_000 });
+      if (!cancel) {
+        const projects = await inspectResources(this.backend);
+        if (projects.some(p => !p.restartSafe)) throw blocked('Core 仍有活动工作或未结算资源。\n' + summary(projects));
       }
-      const projects = await inspectResources(this.backend);
-      if (projects.some(p => !p.restartSafe)) throw blocked('Core 仍有活动任务或终端。请打开“检查后台资源…”处理。\n' + summary(projects));
-      await this.backend.shutdown({ requireSafe: true });
+      await this.backend.shutdown({ requireSafe: true, cancel });
       await this.backend.library?.writes;
       await Promise.all(this.backend.saves?.values() ?? []);
-    } catch (error) { this.stopping = false; throw error; }
+    } catch (error) {
+      this.stopReport = error.lifecycle ?? (this.backend.closing
+        ? { phase: 'incomplete', projects: this.backend.stopOutcomes ?? [] } : null);
+      this.stopping = false;
+      if (this.server) this.schedule();
+      throw error;
+    }
   }
   async receive(socket, bytes) {
     let message;
@@ -156,6 +163,9 @@ class DesktopService {
     const { id, method, params } = message ?? {};
     if (!Number.isSafeInteger(id) || typeof method !== 'string') { socket.close(1008); return; }
     try {
+      if (this.stopReport && ['command', 'addProject', 'remoteControl'].includes(method)
+        && !(method === 'command' && require('./lifecycle.cjs').isRecoveryCommand(params?.name, params?.request)))
+        throw Object.assign(new Error('后台停止尚未完成，仅允许检查和显式恢复'), { code: 'LIFECYCLE_INCOMPLETE', lifecycle: this.stopReport });
       if (this.stopping) throw Object.assign(new Error('后台服务正在停止'), { code: 'SERVICE_STOPPING' });
       if (this.recovering) throw blocked('正在处理后台资源，请稍后重试');
       if (method === 'hello') {
@@ -175,6 +185,12 @@ class DesktopService {
       if (method === 'stopService') {
         if (params?.protocol !== PROTOCOL) throw new Error('后台服务协议不兼容');
         if (params?.forUpdate && this.clients.size > 1) throw new Error('请先退出其他连接此后台服务的 GUI，再停止后台或安装更新');
+        if (params?.expectedTargets !== undefined) {
+          const { isDeepStrictEqual } = require('node:util');
+          const { targets } = require('./lifecycle.cjs');
+          const current = targets([...this.backend.projects].map(([projectId, p]) => ({ projectId, serviceId: p.service?.serviceId, generation: p.service?.generation })));
+          if (!isDeepStrictEqual(params.expectedTargets, current)) throw Object.assign(new Error('后台实例或项目范围已变化，请重新确认'), { code: 'CONFIRMATION_STALE' });
+        } else if (params?.cancel === true) throw Object.assign(new Error('取消缺少已确认的后台目标'), { code: 'CONFIRMATION_STALE' });
         await this.stop({ cancel: params?.cancel === true }); this.send(socket, { id, result: { stopped: true, cancelled: params?.cancel === true } });
         setImmediate(() => this.onStop()); return;
       }
@@ -317,7 +333,7 @@ class DesktopService {
       const message = error.code === 'SIDEBAR_SAVE_FAILED'
         ? '侧栏整理未能保存，原有布局已保留。请检查存储位置和写入权限后重试。'
         : error.message;
-      this.send(socket, { id, error: { ...desktopError(error), message: this.backend.providers.redact(message) } });
+      this.send(socket, { id, error: { ...desktopError(error), ...(error.lifecycle ? { lifecycle: error.lifecycle } : {}), message: this.backend.providers.redact(message) } });
     }
   }
   close() {

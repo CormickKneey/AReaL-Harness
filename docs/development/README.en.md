@@ -49,6 +49,8 @@ Binary-only changes automatically restart an idle shared service, so manual rest
 
 The unified delegation smoke defaults to `target/debug`; set `AREAL_UNIFIED_BIN_DIR` to the complete installed bundle’s `bin` directory and `AREAL_UNIFIED_EVIDENCE_DIR` to retain full Core/Runtime stderr. Independent workers always use the native sandbox. Linux requires working Bubblewrap user/mount/PID namespaces; workers do not inherit the parent launcher’s full-access mode.
 
+To test from a fixed artifact path, build and deploy Core and Runtime from the same build, then set absolute paths: `scripts/smoke.mjs`, `scripts/trajectory-smoke.mjs`, `scripts/trajectory-semantics-smoke.mjs`, and `scripts/local-service-smoke.mjs` use `AREAL_TEST_BIN_DIR`; `scripts/tui-local-smoke.py` uses `AREAL_TEST_BIN` for the `areal` executable; GUI source tests use `AREAL_CORE_BIN`. Run the relevant scripts directly and keep artifacts unchanged during testing. These variables do not change packaged-app test entry points or grant endpoint-security execution approval.
+
 `make integration-boundaries` checks that the product, release entry points and default Make dependency graph do not load optional platform adapters; `make script-test` includes it.
 
 See [testing](testing.en.md) for coverage. Pass arguments with `make tui ARGS='--prompt hello'`. `make release` writes to `target/release`; `make docs` generates Rust API documentation.

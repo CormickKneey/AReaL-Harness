@@ -875,7 +875,13 @@ function EditablePlugin({ editable }: { editable: boolean }) {
   const [editor] = useLexicalComposerContext();
 
   useEffect(() => {
+    const restoreSelection =
+      editable && !editor.isEditable() &&
+      editor.getRootElement() === document.activeElement;
     editor.setEditable(editable);
+    // Clearing while read-only skips Lexical's DOM selection reconciliation.
+    // Restore the text-line caret only when this editor still owns focus.
+    if (restoreSelection) editor.focus();
   }, [editor, editable]);
 
   return null;

@@ -12,7 +12,7 @@ type Project = { projectId: string; root: string; started: boolean; restartSafe?
   unresolvedTools?: number; compactions?: number; workgroups?: number;
   queues?: { threadId: string; paused: boolean; pending: number; running: number }[];
   pendingRequests?: { threadId?: string; awaitingResponse: boolean }[] };
-type Status = { connected: boolean; clients: number; busy: boolean; activeCommands: number; starting: number; providerUpdating: boolean; projects: Project[] };
+type Status = { canStop?: boolean; connected: boolean; clients: number; busy: boolean; activeCommands: number; starting: number; providerUpdating: boolean; projects: Project[] };
 
 export function ServiceStatusSettings({ connected, action, onConnect, onOpen, onTask }: {
   connected: boolean; action: Action; onConnect: () => Promise<void>;
@@ -42,7 +42,7 @@ export function ServiceStatusSettings({ connected, action, onConnect, onOpen, on
     void poll();
     return () => { live = false; generation.current++; clearTimeout(timer); };
   }, [read]);
-  const blocked = !status || status.busy || status.providerUpdating || status.starting > 0 || status.projects.some(p => p.started && !p.restartSafe);
+  const blocked = status?.canStop !== true;
   const run = async (operation: "stopService" | "recoverResources" | "connect") => {
     if (locked.current) return;
     locked.current = true; setBusy(true); setActionError(""); setNotice("");
@@ -66,7 +66,7 @@ export function ServiceStatusSettings({ connected, action, onConnect, onOpen, on
       action={<Button variant="outline" size="sm" disabled={busy} onClick={() => void read()}>刷新后台状态</Button>}>
       <SettingsGroupCard>
         <SettingsRow label={connected ? "后台已连接" : "后台未连接"} description={connected && status ? `${status.clients} 个客户端连接 · ${status.activeCommands} 个处理中请求` : "可以显式连接后台，恢复任务历史。刷新此页不会启动后台。"}
-          control={connected ? <Button variant="outline" size="sm" disabled={busy || !!readError || blocked} onClick={() => void run("stopService")}>停止后台服务</Button> : <Button size="sm" disabled={busy} onClick={() => void run("connect")}>连接后台</Button>} />
+          control={connected ? <Button variant="outline" size="sm" disabled={busy || !!readError} onClick={() => void run("stopService")}>停止后台服务</Button> : <Button size="sm" disabled={busy} onClick={() => void run("connect")}>连接后台</Button>} />
         <SettingsRow label="资源检查与恢复" description="当前资源通过 Runtime 关闭。旧 Runtime 的清理确认仍需在系统对话框中核实，不改写历史执行结果。"
           control={<Button variant="outline" size="sm" disabled={busy || !connected || !!readError || !status} onClick={() => void run("recoverResources")}>检查并处理资源</Button>} />
       </SettingsGroupCard>
@@ -75,7 +75,7 @@ export function ServiceStatusSettings({ connected, action, onConnect, onOpen, on
       {notice && <p role="status">{notice}</p>}
       {readError && <p role="alert" className="text-destructive">{readError}</p>}
       {actionError && <p role="alert" className="text-destructive">{actionError}</p>}
-      {connected && status && <p className="settings-section-desc">{blocked ? "还有执行或资源需要处理，完成后再停止。" : "检查时未发现停止阻塞；确认停止时会重新检查。"} 已暂停的待发送消息会保留。</p>}
+      {connected && status && <p className="settings-section-desc">{blocked ? "还有执行或资源需要处理，完成后再停止。" : "检查时未发现停止阻塞；确认停止时会重新检查。"} 普通停止仍会保护暂停队列中的待发消息；可在恢复对话框中明确取消后台执行，输入会保留。</p>}
       {status?.providerUpdating && <p role="status">模型配置正在更新。</p>}
       {!!status?.starting && <p role="status">{status.starting} 个工作区正在启动。</p>}
     </SettingsSection>

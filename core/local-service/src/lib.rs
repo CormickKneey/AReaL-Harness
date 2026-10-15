@@ -6,6 +6,7 @@ pub mod storage;
 
 pub use client::{
     bind, browser_login_url, ensure, list, probe, reconnect, restart, rpc, select, status, stop,
+    stop_with_generation,
 };
 pub use spec::{LaunchSpec, LocalArgs, parse_agent_profile};
 

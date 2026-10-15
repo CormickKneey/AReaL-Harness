@@ -133,7 +133,7 @@ for (const server of [collector, model]) {
 }
 function launch(prompt, extra = []) {
   const child = spawnNative(
-    resolve("target/debug/areal"),
+    resolve(process.env.AREAL_TEST_BIN_DIR ?? "target/debug", "areal"),
     [
       "exec",
       "--config",

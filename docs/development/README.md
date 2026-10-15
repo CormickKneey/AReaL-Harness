@@ -49,6 +49,8 @@ make build
 
 统一委派冒烟默认使用 `target/debug`；可用 `AREAL_UNIFIED_BIN_DIR` 指定完整安装包的 `bin` 目录，用 `AREAL_UNIFIED_EVIDENCE_DIR` 保存完整 Core/Runtime stderr。独立 worker 始终使用 native 沙箱；Linux 需要可运行的 Bubblewrap 与 user/mount/PID namespaces，不继承父启动器的 full-access 模式。
 
+需要从固定产物路径测试时，先构建并部署同一构建的 Core 与 Runtime，再设置绝对路径：`scripts/smoke.mjs`、`scripts/trajectory-smoke.mjs`、`scripts/trajectory-semantics-smoke.mjs` 和 `scripts/local-service-smoke.mjs` 使用 `AREAL_TEST_BIN_DIR`；`scripts/tui-local-smoke.py` 使用 `AREAL_TEST_BIN` 指定 `areal` 文件；GUI 源码测试使用 `AREAL_CORE_BIN`。按需直接运行对应脚本，测试期间保持产物不变；这些变量不改变安装包测试入口，也不授予终端安全软件的执行许可。
+
 `make integration-boundaries` 检查产品、发行入口和默认 Make 依赖图不加载可选平台适配器；它也随 `make script-test` 执行。
 
 测试范围见[测试指南](testing.md)。附加参数使用 `make tui ARGS='--prompt hello'`。`make release` 输出至 `target/release`，`make docs` 生成 Rust API 文档。

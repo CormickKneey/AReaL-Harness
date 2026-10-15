@@ -9,6 +9,7 @@ import { join, resolve } from "node:path";
 import { once } from "node:events";
 import { connect } from "../examples/desktop-api/client.mjs";
 
+const binDir = resolve(process.env.AREAL_TEST_BIN_DIR ?? "target/debug");
 const directory = await mkdtemp(join(tmpdir(), "areal-smoke-"));
 const children = new Set();
 const requests = [];
@@ -79,7 +80,7 @@ model.listen(0, "127.0.0.1");
 await once(model, "listening");
 function launch(binary, args, env = {}) {
   return track(
-    spawnNative(resolve("target/debug", binary), args, {
+    spawnNative(resolve(binDir, binary), args, {
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...fixtureEnv, ...env },
     }),
@@ -201,7 +202,7 @@ try {
       "python3",
       [
         "scripts/tui-pty-smoke.py",
-        resolve("target/debug/areal"),
+        resolve(binDir, "areal"),
         "--endpoint",
         server.endpoint,
         "--auth-file",

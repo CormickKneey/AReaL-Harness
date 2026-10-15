@@ -2,6 +2,7 @@ import { useRef, useState, useEffect } from "react";
 import type { RefObject } from "react";
 import type { Action, Data } from "./services.js";
 import type { LexicalChatInputHandle } from "./LexicalChatInput.js";
+import { composerInput, type ComposerDraftAttachment } from "./ComposerAttachments.js";
 
 type QueueEdit = {
   id: string;
@@ -35,9 +36,9 @@ export function useComposerQueueEdit({
   action: Action;
   readAction: Action;
   api: RefObject<LexicalChatInputHandle | null>;
-  draftFiles: Map<string, File[]>;
+  draftFiles: Map<string, ComposerDraftAttachment[]>;
   setText: (text: string) => void;
-  setFiles: (files: File[]) => void;
+  setFiles: (files: ComposerDraftAttachment[]) => void;
   setGoalMode: (enabled: boolean) => void;
   uploadFiles: (files: File[]) => Promise<Data[]>;
   inFlight: boolean;
@@ -231,10 +232,11 @@ export function useComposerQueueEdit({
     const record = { ...edit, phase: "saving" as const };
     saveRecord(record);
     try {
-      const additions = await uploadFiles(draftFiles.get(draftKey) ?? []);
+      const input = composerInput(localStorage.getItem(draftKey) ?? "", draftFiles.get(draftKey) ?? []);
+      const additions = await uploadFiles(input.files);
       const updated = await mutation(record, "update", {
         queueItemId: record.id,
-        text: localStorage.getItem(draftKey) ?? "",
+        text: input.text,
         attachments: additions,
         retainedInput: record.attachments,
       });

@@ -211,6 +211,13 @@ try {
   await app.evaluate(({webContents}, id) => webContents.fromId(id).executeJavaScript(`document.getElementById('heading').outerHTML='<h1 id="heading">ANNOTATION_HEADING</h1>'`), nativeId);
   checks.push("Post-freeze DOM replacement is rejected before element identity projection; region-only screenshot evidence remains available");
   await page.getByTestId("chat-input").fill("保留我的正文");
+  const foldedAnnotationText = "折叠标注第一行\n第二行\n第三行\n第四行\n第五行";
+  await page.getByTestId("chat-input").evaluate((element, text) => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", text);
+    element.dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
+  }, foldedAnnotationText);
+  await page.getByRole("button", { name: "移除附件 粘贴的文本.txt", exact: true }).waitFor();
   await page.getByRole("button", { name: "批注", exact: true }).click();
   const region = page.getByRole("region", { name: "冻结截图区域标注" });
   await region.waitFor();
@@ -348,10 +355,14 @@ try {
     return thread?.turns?.at(-1)?.status === "completed" ? thread : null;
   }, "accepted Core history");
   facts.history = history;
+  const annotationUserText = history.turns.at(-1).items.find(item => item.type === "userMessage")
+    .content.find(part => part.type === "text").text;
+  assert.ok(annotationUserText.startsWith(`保留我的正文\n\n${foldedAnnotationText}\n\n`), "folded text before image annotations keeps its exact body prefix");
   const modelBody = await until(() => requests.at(-1), "model request");
   const serialized = JSON.stringify(modelBody);
   assert.match(serialized, /ANNOTATION_COMMENT_1/);
   assert.match(serialized, /ANNOTATION_COMMENT_2_EDITED/);
+  assert.match(serialized, /折叠标注第一行/);
   const images = modelBody.messages.flatMap((m) =>
     Array.isArray(m.content) ? m.content.filter((p) => p.type === "image_url") : [],
   );
@@ -366,6 +377,7 @@ try {
     facts.draftImageHashes,
     "Core model receives the exact PNG bytes reviewed in Composer",
   );
+  checks.push("folded Text before annotated PNGs preserves exact body, original File identity and image URL pairing");
   assert.equal(posts, 0, "annotation never clicks the page button");
   await page.getByRole("button", { name: "已发送 2 条标注", exact: true }).click();
   await page.getByText("ANNOTATION_COMMENT_2_EDITED", { exact: true }).waitFor();

@@ -44,7 +44,7 @@ macOS GUI 后台自动读取系统静态 HTTP、HTTPS 和 SOCKS 代理，供 Cor
 
 新一次发送或调整方向会清除上一操作的界面错误提示；本次失败仍显示原因并保留草稿，受理结果未知的消息不会自动重发。
 
-图片显示缩略图，UTF-8 文本附件可通过“在文本框中显示”追加到正文。超过 200 字符或至少 5 行的粘贴折叠为文本卡片，展开上限为 1 MiB；文件与技能删除不影响正文。目标模式在原输入区编写，创建目标只消费正文，其余附件继续保留。`pnpm --dir clients/gui run test:composer` 使用隔离 Electron/Core/Runtime 验证这些路径。
+图片显示缩略图，UTF-8 文本附件可通过“在文本框中显示”追加到正文。超过 200 字符或至少 5 行的粘贴折叠为文本卡片，展开上限为 1 MiB。折叠仅改变展示，直接发送或保存排队消息时仍按正文处理，不上传为文件；通过选择器或剪贴板附加的真实文件仍按文件处理。文件与技能删除不影响正文。目标模式在原输入区编写，创建目标消费正文及折叠文本，其余附件继续保留。`pnpm --dir clients/gui run test:composer` 使用隔离 Electron/Core/Runtime 验证这些路径。
 
 右侧 Panel 的网页、终端和文件共用顶层标签栏；每个网页标签绑定一个原生 Page，可通过 `+ → 浏览器` 或 `⌘T`（Windows/Linux 为 `Ctrl+T`）继续新建。切换标签保留各页的网址、历史与控制状态；关闭网页标签释放该页，隐藏 Panel 不关闭网页。页面列表由 Main 的权威快照同步，Agent 新建或弹出的页面也显示为独立标签；browser use 仍按 `pageId` 和原有审批／人工接管规则执行。此布局不提升原有每 Workspace 4 页、每窗口 8 个原生页面的资源上限。
 
@@ -82,7 +82,7 @@ Browser 工具在每次新用户请求中先 `describe`，再重新观察，拒�
 
 macOS 桌面适配器通过系统 `/usr/bin/python3` 保留可信 Core 命令的父进程，与 Runtime 的原生启动方式一致。命令参数、环境和标准输入输出保持原样；超时、取消和强杀作用于真实 Core 子进程，适配器或桥退出时清理其仍运行的直接子进程。该路径不重放写入，也不终止 Core 已建立的持久服务。`pnpm --dir clients/gui run test:core-process` 验证信号退出、超时升级、取消、输出上限及进程清理。
 
-Renderer 仅通过窄 preload IPC 访问桌面适配器。独立适配器使用 `areal service ensure/restart/stop --json` 连接 Core，不直接管理持久 Core 服务的 PID。退出 GUI 断开界面并结算 GUI 拥有的终端，Core Turn/Goal 和已配置的定时任务继续执行；重新打开按权威快照恢复，不自动重放提交。停止后台服务是显式操作，忙碌时拒绝安全停止；启动恢复对话框提供“取消任务并重启”，二次确认后先调用 Core `areal/server/drain` 的 `cancel` 策略，再执行正常资源检查和后台退出。旧后台尚不支持取消参数时，Main 使用旧后台仍持有的本机 Core 管理连接完成取消，再请求旧后台安全退出；多个 GUI 连接或后台操作未完成时仍拒绝，结果未确认时不自动重发。
+Renderer 仅通过窄 preload IPC 访问桌面适配器。独立适配器使用 `areal service ensure/restart/stop --json` 连接 Core，不直接管理持久 Core 服务的 PID。退出 GUI 断开界面并结算 GUI 拥有的终端，Core Turn/Goal 和已配置的定时任务继续执行；重新打开按权威快照恢复，不自动重放提交。停止后台服务是显式操作，忙碌时拒绝安全停止；启动恢复对话框提供“取消任务并重启”，即使没有活动轮次，只要仍有活动目标、后台任务或排队消息，也可使用此入口。二次确认后通过公共 `areal service stop --cancel` 完成 Core 取消、执行资源结算和宿主退出，保留待发输入。旧后台尚不支持取消参数时，Main 使用旧后台仍持有的本机 Core 管理连接完成取消，再请求旧后台安全退出；多个 GUI 连接或后台操作未完成时仍拒绝，结果未确认时不自动重发。
 
 Core 观察连接意外关闭时，项目连接所有者以 500ms 起步、最长 30s 的退避重试，通过 `service status --instance` 发现兼容的运行中实例，并用原子 `areal/thread/observe` 恢复 Thread/Task 快照、订阅和通知基线。观察恢复不重绑工具宿主；用户显式认领原生页时，才读取权威状态并在 Thread 空闲时尝试 `thread/resume` 绑定，仍受 Core 宿主冲突检查约束。恢复不重新提交任务、不同步 Provider/MCP 配置，也不执行配置 revision 屏障。旧连接的消息与异步结果失去投影写入资格。显式停止、适配器关闭、停止中的 Core 或部署指纹不兼容会阻止自动恢复；重新连接需显式操作。
 
@@ -109,6 +109,10 @@ pnpm --dir clients/gui run sign:mac --app "/absolute/new-package/package/mac-arm
 构建候选包时，可用 `AREAL_GUI_CORE_BUNDLE=/absolute/core-bundle` 复用已冻结的 Core bundle；打包仍校验内嵌组件哈希，正式发布只接受 `release` Core。该设置仅影响打包输入。
 
 `make gui-smoke` 使用真实 Electron/Core/Runtime 和确定性本地 HTTP 模型，原生沙箱保持启用；项目选择对话框注入临时工作区，测试目录隔离。本地模型请求直连 loopback，测试保留并合并已有 `NO_PROXY` / `no_proxy` 条目。截图及 `manifest.json` 留在命令打印的临时目录，清单记录运行前后的 Core 二进制校验和及失败原因。安装包测试可设置 `AREAL_GUI_EXECUTABLE=/absolute/App.app/Contents/MacOS/AReaL\ Harness\ GUI`，此时不使用外部 Core 路径。实际账号登录、付费模型、其他操作系统和签名安装分发须单独验收。
+
+启动恢复、更新恢复与菜单停止共用生命周期观察和停止流程。普通停止仍保护包含 pending 输入的暂停 Queue；明确取消会保留输入与安排，并将 cancel 意图传到最终公共服务宿主。确认后项目范围或 Core generation 变化会要求重新确认；多项目部分退出或未知结果不会显示成恢复正常。`pnpm --dir clients/gui run test:lifecycle` 验证真实 Core 的 Queue 保留、安全退出，以及隔离 Electron 的菜单取消、重开和不兼容启动恢复；原生对话框由 fixture 应答，不进行更新下载或安装。
+
+缺少 `cancelStop` 的旧后台只在明确 busy 拒绝后使用兼容取消。取消前，可信 Main 将原启用安排的工作区、任务、时间与运行身份写入私有 `legacy-schedule-recovery.json`；旧 Core 自行暂停或安全停止前临时暂停安排后，新后台先确认旧进程退出，再核对任务修订号，仅恢复安排，不恢复已暂停 Run。未知提交不自动重发，任务变化或恢复失败保留记录并提示人工核对。专项 `test:lifecycle:legacy` 需要 `AREAL_CORE_BIN` 和 `AREAL_LEGACY_CORE_BIN` 分别指向已核对的新旧 Core；使用归档旧 adapter 源码、当前 renderer/依赖与隔离数据，不安装或发布版本。可用 `AREAL_LEGACY_PAUSE_UNKNOWN=1` 注入暂停回执丢失。
 
 Core 构建完成后再启动使用该二进制的桌面 smoke，验收期间不重新链接它。模型专项等待保存完成及 Core 的模型选择状态，再进行下一步操作；GUI CI 运行该专项并上传其日志、截图和 manifest。Core 模型配置子进程失败时，后台服务日志保留操作、退出码、signal 和超时分类，不记录密钥或完整环境。
 

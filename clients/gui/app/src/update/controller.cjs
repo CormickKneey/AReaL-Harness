@@ -54,10 +54,14 @@ function createUpdater({ updater, config, version, platform = process.platform, 
         return state();
       }
       installing = false;
-      if (error.code === 'CORE_RESOURCES') {
-        set('deferred', `后台资源尚未清理：${error.message}。处理后将自动重试。`);
+      if (error.submissionUnknown) {
+        set('error', '后台停止结果待核对，不会自动重试。' + error.message);
+        return state();
+      }
+      if (['CORE_RESOURCES', 'CORE_BUSY', 'LIFECYCLE_BLOCKED', 'LIFECYCLE_INCOMPLETE', 'CONFIRMATION_STALE'].includes(error.code)) {
+        set('deferred', `后台尚未就绪：${error.message}。处理后将自动重试。`);
         if (!onState) {
-          const answer = await notify?.({ type: 'warning', message: '需要先处理后台资源', detail: error.message,
+          const answer = await notify?.({ type: 'warning', message: '需要先处理后台状态', detail: error.message,
             buttons: ['稍后', '检查后台资源'], defaultId: 0, cancelId: 0 });
           if (answer?.response === 1) await recoverInstall?.();
         }

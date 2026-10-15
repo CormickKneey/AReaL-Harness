@@ -49,9 +49,9 @@ async function connectService(backend, operation, args, environment, project, da
   return { descriptor, token: principal.token };
 }
 
-async function stopService(backend, project) {
+async function stopService(backend, project, { cancel = false } = {}) {
   if (!project.service) return;
-  const result = await request(backend, ['stop', '--instance', project.service.serviceId]);
+  const result = await request(backend, ['stop', '--instance', project.service.serviceId, '--expected-generation', project.service.generation, ...(cancel ? ['--cancel'] : [])]);
   if (result.state !== 'stopped') throw new Error('Core 服务停止结果尚未确认');
   project.service = null;
   clearTimeout(project.reconnectTimer);

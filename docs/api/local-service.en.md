@@ -94,6 +94,8 @@ TUI rediscovers after disconnection and can start a new generation after crash c
 
 ## Web and Desktop integration
 
+`areal service stop --expected-generation <generation>` checks the target generation under the startup lock and refuses to stop a replacement instance. GUI cancellation confirmation binds the original Desktop, project scope and Core generations; the final public host stop retains the cancel intent. Partial stops and unknown responses remain recovery states, without claiming rollback or replaying mutations. Clients confirm registration withdrawal and original-process exit.
+
 - `areal web` reads authFile in the trusted local client, verifies service identity, obtains a one-time code and opens `/ui` to exchange it automatically for an independent HttpOnly cookie. The page never receives the long-lived token. Browsers never launch processes, read authFile or access the control socket. Run `areal web` again after link/session expiry, restart or port changes; manual token login remains a fallback. `--json` only discovers the service and does not mint codes. Rust callers can use `browser_login_url(&Service)` to obtain the one-time URL; never log it or forward it to untrusted pages. See [browser login](desktop.en.md#browser-auth) for endpoints and lifetimes.
 - Desktop Main executes `areal service ensure --json` with an argument array, checks `protocolVersion`, reads authFile in Main and establishes the authenticated connection. Expose only filtered application operations/state to Renderer, never the full descriptor or token.
 - Rediscover and compare generation before initialize/initialized and thread/resume. Query request/read or authoritative state before deciding to retry; never replay accepted operations automatically.

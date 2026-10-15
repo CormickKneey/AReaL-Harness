@@ -100,10 +100,10 @@ class ServiceConnection {
 // GUI-local connection/projection only. Control intent lives in GUI userData;
 // shared Core history and execution state remain owned by the service.
 class SharedCoreBackend {
-  constructor({ app, onChange = () => {}, onNotification, onNotificationOpen, recoverIncompatible, ...options }) {
+  constructor({ app, onChange = () => {}, onNotification, onNotificationOpen, recoverIncompatible, onRecoveryAttention, ...options }) {
     this.onNotification = onNotification;
     this.onNotificationOpen = onNotificationOpen;
-    this.recoverIncompatible = recoverIncompatible; this.app = app; this.options = options; this.home = options.home; this.onChange = onChange;
+    this.recoverIncompatible = recoverIncompatible; this.onRecoveryAttention = onRecoveryAttention; this.app = app; this.options = options; this.home = options.home; this.onChange = onChange;
     this.value = { library: { projects: {}, threads: {}, projectOrder: [], settings: {} }, projects: [] };
     this.status = { connected: false }; this.sequence = -1;
     this.connectionState = { state: 'connecting' }; this.revision = 0;
@@ -123,7 +123,7 @@ class SharedCoreBackend {
   snapshot() { return { ...this.value, revision: ++this.revision, connection: this.connectionState }; }
   accept(packet) {
     if (!packet || packet.sequence <= this.sequence) return;
-    this.sequence = packet.sequence; this.value = packet.snapshot; this.status = packet.service; this.connectionState = { state: 'ready' }; this.onChange();
+    this.sequence = packet.sequence; this.value = packet.snapshot; this.status = packet.service; this.connectionState = packet.service.stopReport ? { state: 'unavailable', message: '后台停止尚未完成，请检查后台状态' } : { state: 'ready' }; this.onChange();
   }
   disconnected() {
     this.onBrowserDisconnected?.();
@@ -170,7 +170,7 @@ class SharedCoreBackend {
       return false;
     }
     if (this.lastActivity) void connection.request('activity', this.lastActivity).catch(() => {});
-    this.metadata = metadata;
+    this.metadata = metadata; this.exitConfirmation = null;
     return true;
   }
   get controlPath() { return join(this.app.getPath('userData'), 'service-control.json'); }
@@ -205,7 +205,17 @@ class SharedCoreBackend {
     }
     if (this.connecting) return this.connecting;
     this.connectionState = { state: 'connecting' };
-    this.connecting = this.initialize().then(async () => { await rm(this.controlPath, { force: true }); this.controlState = null; }).catch(error => {
+    this.connecting = this.initialize().then(async () => {
+      const { restoreLegacySchedules } = require('./legacy-service-cancel.cjs');
+      let attention;
+      try { ({ attention } = await restoreLegacySchedules({ connection: this.connection, home: this.home, metadata: this.metadata })); }
+      catch (error) { attention = [`安排恢复尚未完成，恢复记录已保留：${error.message}`]; }
+      if (attention.length) {
+        if (this.onRecoveryAttention) await this.onRecoveryAttention(attention);
+        else console.warn(attention.join('\n'));
+      }
+      await rm(this.controlPath, { force: true }); this.controlState = null;
+    }).catch(error => {
       this.connectionState = { state: 'unavailable', message: error.message };
       this.onChange(); throw error;
     }).finally(() => { this.connecting = null; });
@@ -297,15 +307,24 @@ class SharedCoreBackend {
     if (connection !== this.connection || !this.status.connected) throw new Error('后台连接已变化，请刷新状态');
     // Only public lifecycle observations cross the renderer boundary, never the
     // service descriptor, authentication token or resource command arguments.
-    return { connected: service.connected, clients: service.clients, busy: service.busy,
+    const { recoveryView } = require('./lifecycle.cjs');
+    const visibleProjects = projects.map(({ serviceId, generation, lifecycle, ...project }) => project);
+    return { canStop: recoveryView(service, projects).ifIdle, connected: service.connected, clients: service.clients, busy: service.busy,
       activeCommands: service.activeCommands, starting: service.starting, providerUpdating: service.providerUpdating,
       projects: snapshot.projects.map(project => ({ projectId: project.id, root: project.root,
         started: projects.some(item => item.projectId === project.id),
-        ...projects.find(item => item.projectId === project.id),
+        ...visibleProjects.find(item => item.projectId === project.id),
       })),
     };
   }
-  async stopService(forUpdate = false) {
+  get serviceExited() { return !!this.exitConfirmation && this.exitConfirmation === this.metadata; }
+  async observeLifecycle(forUpdate = true) {
+    if (this.serviceExited) return { ifIdle: true, exited: true, blockers: [] };
+    if (!this.status.connected) return { ifIdle: false, blockers: ['disconnected'] };
+    const { DesktopLifecycle } = require('./lifecycle.cjs');
+    return new DesktopLifecycle({ connection: this.connection, metadata: this.metadata, home: this.home, forUpdate }).observe();
+  }
+  async stopService(forUpdate = false, options = {}) {
     if (!this.status.connected) throw new Error('后台尚未连接，请先重新连接后台');
     const metadata = this.metadata, connection = this.connection;
     // Persist intent before the write: a missing response or GUI restart must
@@ -313,11 +332,18 @@ class SharedCoreBackend {
     if (!forUpdate) await this.saveControl('unconfirmed');
     let accepted = false;
     try {
-      const result = await connection.request('stopService', { protocol: PROTOCOL, forUpdate }, true);
+      const { DesktopLifecycle } = require('./lifecycle.cjs');
+      const lifecycle = new DesktopLifecycle({ connection, metadata, home: this.home,
+        notify: options.notify, forUpdate: true });
+      const result = await lifecycle.stop({ mode: options.cancel ? 'cancel' : 'ifIdle', observed: options.observed });
+      if (result.kind === 'dismissed') {
+        if (!forUpdate) { await rm(this.controlPath, { force: true }); this.controlState = null; }
+        return result;
+      }
       if (result?.stopped !== true) throw Object.assign(new Error('停止结果未确认，请核查后台状态；不会自动重发。'), { submissionUnknown: true });
       accepted = true;
       this.guiTerminals.clear(); // Safe service shutdown has already settled all resources.
-      if (metadata) await waitForServiceProcessExit(this.home, metadata);
+      this.exitConfirmation = metadata;
       if (!forUpdate) await this.saveControl('stopped');
       if (this.connection === connection) { this.stoppedConnection = connection; this.disconnected(); }
       return result;
@@ -368,4 +394,4 @@ class SharedCoreBackend {
     })();
   }
 }
-module.exports = { SharedCoreBackend, ServiceConnection, waitForServiceExit };
+module.exports = { SharedCoreBackend, ServiceConnection, waitForServiceExit, waitForServiceProcessExit };

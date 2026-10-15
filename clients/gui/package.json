@@ -14,6 +14,8 @@
     "package": "node scripts/package.mjs",
     "verify": "node scripts/verify-public.mjs && node scripts/design-system-audit.mjs && node --test scripts/side-restore.test.mjs scripts/operation-contract.test.cjs scripts/side-model-intent.test.mjs scripts/startup-recovery.test.mjs scripts/system-proxy.test.mjs scripts/history.test.mjs",
     "test:task-conversation": "node scripts/task-conversation-smoke.mjs",
+    "test:lifecycle": "node scripts/startup-recovery-smoke.mjs && node scripts/lifecycle-smoke.mjs",
+    "test:lifecycle:legacy": "node scripts/legacy-lifecycle-smoke.mjs",
     "test:queue": "node scripts/queue-smoke.mjs",
     "test:interactions": "node scripts/interaction-smoke.mjs",
     "test:composer": "node scripts/composer-smoke.mjs",

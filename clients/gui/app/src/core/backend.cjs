@@ -1131,6 +1131,11 @@ class CoreBackend {
   }
 
   async command(name, request, context = {}) {
+    if (this.closing && require('./lifecycle.cjs').isRecoveryCommand(name, request)) {
+      const project = this.projects.get(request.projectId);
+      if (!project?.service || !project.client?.ready) throw new Error('原 Core 已断开，不能确认核查目标');
+      return manage(this, project, request);
+    }
     if (this.closing) throw new Error('应用正在退出');
     if (name === 'analytics') return this.analytics.command(request);
     // 后台只读状态不占任务或配置准入；参数仍由轨迹能力校验。
@@ -1336,24 +1341,37 @@ class CoreBackend {
         || (item.status === 'pending' && (includePausedQueues || queue.paused !== true)))));
   }
 
-  async shutdown({ requireSafe = true } = {}) {
+  async shutdown({ requireSafe = true, cancel = false } = {}) {
     if (!requireSafe) return this.disconnect();
     // 先检查全部已连接实例；真正停机仍由 Core 的公共服务接口关准入并结算。
     for (const project of this.projects.values()) {
       if (project.service && !project.client?.ready) throw new Error('Core 连接未恢复，不能安全停止');
-      if (project.client?.ready && !restartSafe(await project.client.request('areal/server/status'))) {
+      if (!cancel && project.client?.ready && !restartSafe(await project.client.request('areal/server/status'))) {
         throw Object.assign(new Error('Core 仍有活动任务或终端，请先处理后台资源'), { code: 'CORE_RESOURCES' });
       }
     }
     this.closing = true;
+    const active = [...this.projects].filter(([, p]) => p.service).map(([projectId, p]) => ({
+      projectId, serviceId: p.service.serviceId, generation: p.service.generation, phase: 'notAttempted',
+    }));
+    const outcomes = [...(this.stopOutcomes ?? []).filter(p => p.phase === 'exited'
+      && !active.some(a => a.projectId === p.projectId)), ...active];
+    this.stopOutcomes = outcomes;
     try {
       await Promise.allSettled([...this.starting.values()]);
-      for (const project of this.projects.values()) {
-        await stopService(this, project);
+      for (const [projectId, project] of this.projects) {
+        if (!project.service) continue;
+        const outcome = active.find(p => p.projectId === projectId);
+        if (outcome) outcome.phase = 'unknown';
+        await stopService(this, project, { cancel });
+        if (outcome) outcome.phase = 'exited';
         project.taskNotificationMonitor?.stop();
       }
       await this.disconnect();
-    } catch (error) { this.closing = false; throw error; }
+    } catch (error) {
+      error.lifecycle = { phase: 'incomplete', projects: outcomes };
+      throw error;
+    }
   }
 
   async disconnect() {

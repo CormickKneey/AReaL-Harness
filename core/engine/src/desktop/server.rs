@@ -13,6 +13,41 @@ impl Default for Lifecycle {
         }
     }
 }
+fn lifecycle_assessment(status: &Value, unsettled_groups: bool) -> Value {
+    let mut settlement = Vec::new();
+    for (field, code) in [
+        ("activeTurns", "activeTurn"),
+        ("resources", "resource"),
+        ("unresolvedTools", "uninspectedUnknown"),
+        ("compactions", "compaction"),
+    ] {
+        let count = status[field].as_array().map_or(0, Vec::len);
+        if count > 0 {
+            settlement.push(json!({"code":code,"count":count}));
+        }
+    }
+    if unsettled_groups {
+        settlement.push(json!({"code":"workgroup","count":1}));
+    }
+    let mut idle = settlement.clone();
+    let goals = status["activeGoals"].as_array().map_or(0, Vec::len) as u64;
+    for (code, count) in [
+        ("activeGoal", goals),
+        (
+            "queuedMessage",
+            status["pendingQueueItems"].as_u64().unwrap_or(0),
+        ),
+        ("activeTask", status["activeTasks"].as_u64().unwrap_or(0)),
+    ] {
+        if count > 0 {
+            idle.push(json!({"code":code,"count":count}));
+        }
+    }
+    json!({"version":1,"admission":if status["closed"] == true {"closed"}
+        else if status["draining"] == true {"draining"} else {"open"},
+        "ifIdle":{"allowed":idle.is_empty(),"reasons":idle},
+        "settled":{"allowed":settlement.is_empty(),"reasons":settlement}})
+}
 impl Engine {
     pub(crate) fn accepting_work(&self) -> bool {
         !self.is_closed() && !self.desktop.lifecycle.draining.load(Ordering::Acquire)
@@ -104,7 +139,10 @@ impl Engine {
                 groups.push(group);
             }
         }
-        json!({"configuration":self.configuration_status.read().unwrap().clone(),"activeTasks":active_tasks,"activeGoals":active_goals,"pendingQueueItems":pending_queue_items,"compactions":compacting,"workgroups":groups,"apiVersion":API_VERSION,"stateVersion":crate::store::STATE_VERSION,"productVersion":env!("CARGO_PKG_VERSION"),"draining":self.desktop.lifecycle.draining.load(Ordering::Acquire),"closed":self.is_closed(),"acceptingWork":self.accepting_work(),"activeTurns":active,"resources":resources,"unresolvedTools":unknown,"runtime":runtime,"capacity":{"threads":cells.len(),"maxThreads":self.limits.max_threads,"activeTurns":self.limits.max_active_turns-self.active_turns.available_permits(),"maxActiveTurns":self.limits.max_active_turns,"historyBytesPerThread":self.limits.max_history_bytes,"blobBytes":512*1024*1024u64},"restartSafe":active.is_empty()&&resources.is_empty()&&unknown.is_empty()&&compacting.is_empty()&&!unsettled})
+        let mut status = json!({"configuration":self.configuration_status.read().unwrap().clone(),"activeTasks":active_tasks,"activeGoals":active_goals,"pendingQueueItems":pending_queue_items,"compactions":compacting,"workgroups":groups,"apiVersion":API_VERSION,"stateVersion":crate::store::STATE_VERSION,"productVersion":env!("CARGO_PKG_VERSION"),"draining":self.desktop.lifecycle.draining.load(Ordering::Acquire),"closed":self.is_closed(),"acceptingWork":self.accepting_work(),"activeTurns":active,"resources":resources,"unresolvedTools":unknown,"runtime":runtime,"capacity":{"threads":cells.len(),"maxThreads":self.limits.max_threads,"activeTurns":self.limits.max_active_turns-self.active_turns.available_permits(),"maxActiveTurns":self.limits.max_active_turns,"historyBytesPerThread":self.limits.max_history_bytes,"blobBytes":512*1024*1024u64}});
+        status["lifecycle"] = lifecycle_assessment(&status, unsettled);
+        status["restartSafe"] = status["lifecycle"]["settled"]["allowed"].clone();
+        status
     }
     pub async fn drain(self: &Arc<Self>, strategy: String, timeout_ms: u64) -> Result<Value> {
         if !matches!(strategy.as_str(), "wait" | "cancel" | "ifIdle") || timeout_ms > 60000 {
@@ -118,11 +156,7 @@ impl Engine {
             let _guard = engine.desktop.lifecycle.gate.lock().await;
             if strategy == "ifIdle" {
                 let status = engine.server_status().await;
-                if status["restartSafe"] != true
-                    || status["activeGoals"] != json!([])
-                    || status["pendingQueueItems"] != 0
-                    || status["activeTasks"] != 0
-                {
+                if status["lifecycle"]["ifIdle"]["allowed"] != true {
                     return Err(invalid(
                         "service is busy; wait for work to settle or stop with --cancel",
                     ));

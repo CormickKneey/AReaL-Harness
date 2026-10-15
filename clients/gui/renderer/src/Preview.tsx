@@ -9,6 +9,7 @@ import { Button } from "./components/ui/button.js";
 import type { PlatformServices, Data } from "./services.js";
 import { BrowserRegionAnnotation, type RegionDraft } from "./BrowserRegionAnnotation.js";
 import { attachmentDrafts, sending, stageThreadDraft } from "./Composer.js";
+import { isComposerFile } from "./ComposerAttachments.js";
 import { attachBrowserAnnotation, browserAnnotation, setBrowserAnnotationEditing } from "./browserAnnotations.js";
 import { BrowserVerificationCard } from "./BrowserVerificationCard.js";
 import "./BrowserFileHandoff.css";
@@ -47,7 +48,7 @@ export function Preview({
 }) {
   const owner = `${projectId}:${threadId}:${pageId}`;
   const draftKey = `areal-gui:draft:${projectId}:${threadId}`;
-  const stagedAnnotations = (attachmentDrafts.get(draftKey) ?? []).flatMap(file => { const note = browserAnnotation(file); return note ? [note] : []; });
+  const stagedAnnotations = (attachmentDrafts.get(draftKey) ?? []).filter(isComposerFile).flatMap(file => { const note = browserAnnotation(file); return note ? [note] : []; });
   const [url, setUrl] = useState(locations.get(owner)?.url ?? state.url ?? "");
   const [error, setError] = useState("");
   const [responsive, setResponsive] = useState(false);

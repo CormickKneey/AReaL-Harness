@@ -3,7 +3,6 @@
 const { app, BrowserWindow, Menu, dialog, ipcMain, protocol, nativeTheme, WebContentsView, shell, powerMonitor, Notification } = require('electron');
 const { readFile, realpath, writeFile } = require('node:fs/promises');
 const { join, resolve, extname, sep } = require('node:path');
-const { createResourceRecovery } = require('./resource-recovery.cjs');
 const { setupUpdater } = require('../update/electron.cjs');
 const { showCoreNotification } = require('./notifications.cjs');
 const { MenuBar } = require('./menu-bar.cjs');
@@ -12,7 +11,7 @@ const { validateCommand, validatePreview, desktopError } = require('@areal/workb
 const { CorePreview } = require('./preview.cjs');
 const { configureUserData, serviceOptions } = require('./service-config.cjs');
 const { SharedCoreBackend } = require('./service-client.cjs');
-const { recoverStartupService } = require('./startup-recovery.cjs');
+const { recoverStartupService, recoverConnectedService } = require('./startup-recovery.cjs');
 const { loadThemes, engineCss, panelCss } = require('../themes');
 
 app.setName('AReaL Harness GUI');
@@ -140,6 +139,8 @@ app.whenReady().then(async () => {
   backend = new SharedCoreBackend({ app, ...serviceOptions(app), onChange: publish,
     onNotification: notice => showCoreNotification(Notification, window, notice, openNotificationTarget),
     onNotificationOpen: openNotificationTarget,
+    onRecoveryAttention: attention => dialog.showMessageBox(window, { type: 'warning', message: '定时安排需要核对',
+      detail: attention.join('\n\n') + '\n\n可打开原任务核对安排。应用不会恢复已暂停的 Run 或自动重发未知操作。', buttons: ['打开应用后核对'], defaultId: 0, cancelId: 0 }),
     recoverIncompatible: (metadata, home) => recoverStartupService({ metadata, home, notify: options => dialog.showMessageBox(window, options) }) });
   backend.onBrowserDisconnected = () => preview?.revokeAll();
   backend.onBrowserCancel = request => preview?.cancelRead(request);
@@ -296,11 +297,10 @@ app.whenReady().then(async () => {
     catch (error) { return { ok: false, error: desktopError(error) }; }
   });
   let recoveryPending = 0;
-  const hasUpdateWork = () => recoveryPending > 0 || backend.hasWork() || backend.activeCommands > 0 || backend.providerUpdating || backend.starting.size > 0;
-  const nativeRecoverResources = createResourceRecovery({ backend, notify: options => dialog.showMessageBox(window, options) });
+  const hasUpdateWork = async () => recoveryPending > 0 || !(await backend.observeLifecycle()).ifIdle;
   const recoverResources = async () => {
     recoveryPending++;
-    try { await nativeRecoverResources(); }
+    try { await recoverConnectedService({ backend, notify: options => dialog.showMessageBox(window, options), purpose: 'update', forUpdate: true }); }
     finally {
       recoveryPending--;
       if (recoveryPending === 0 && updates?.state().status === 'deferred') void updates.install();
@@ -309,19 +309,17 @@ app.whenReady().then(async () => {
   updates = setupUpdater({ recoverInstall: recoverResources, hasWork: hasUpdateWork,
     onState: state => { if (window && !window.isDestroyed()) window.webContents.send('areal-core:update-changed', state); },
     prepareInstall: async () => {
-    if (quitting || hasUpdateWork()) throw new Error('仍有活动任务，请完成后重试');
+    if (quitting || await hasUpdateWork()) throw Object.assign(new Error('仍有活动任务或操作，请检查后台状态'), { code: 'LIFECYCLE_BLOCKED' });
     quitting = true;
-    try { await backend.stopService(true); preview?.dispose(); await backend.shutdown(); exitReady = true; }
+    try { if (!backend.serviceExited) await backend.stopService(true); preview?.dispose(); await backend.shutdown(); exitReady = true; }
     catch (error) { quitting = false; throw error; }
   } });
   ipcMain.handle('areal-core:update-state', event => { trusted(event); return updates.state(); });
   ipcMain.handle('areal-core:update-download', event => { trusted(event); void updates.download(); return updates.state(); });
   ipcMain.handle('areal-core:update-recover-resources', async event => { trusted(event); await recoverResources(); return updates.state(); });
-  const requestStopService = async () => {
-    const answer = await dialog.showMessageBox(window, { type: 'question', message: '停止共享后台服务？', detail: '所有连接此服务的 GUI 都会断开。只有没有活动任务、可执行的排队消息和终端时才能停止。已暂停的待发送消息会保留。', buttons: ['取消', '停止后台服务'], defaultId: 0, cancelId: 0 });
-    if (answer.response !== 1) return { canceled: true };
-    return backend.stopService();
-  };
+  const requestStopService = () => recoverConnectedService({ backend,
+    notify: options => dialog.showMessageBox(window, options), purpose: 'stop' });
+
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: 'AReaL Harness', submenu: [{ role: 'about' }, { label: '检查更新…', click: () => { void updates.check(true); } }, { label: '检查后台资源…', click: () => { void recoverResources(); } }, { label: '停止后台 Core 服务…', click: async () => {
       try { await requestStopService(); } catch (error) { await dialog.showMessageBox(window, { type: 'warning', message: '后台服务未停止', detail: error.message }); }

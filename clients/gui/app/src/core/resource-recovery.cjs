@@ -1,9 +1,8 @@
 'use strict';
 const { randomUUID } = require('node:crypto');
 const blocked = message => Object.assign(new Error(message), { code: 'CORE_RESOURCES' });
-// Mirror the public CLI's ifIdle preflight, not only resource cleanup safety.
-const restartSafe = status => status.restartSafe === true && !(status.activeGoals?.length)
-  && !(status.pendingQueueItems ?? 0) && !(status.activeTasks ?? 0);
+const { coreLifecycle } = require('./lifecycle.cjs');
+const restartSafe = status => coreLifecycle(status).ifIdle.allowed;
 
 // Observe every connected Workspace before touching any of them. No drain here:
 // drain closes Core admission and cannot be undone by the GUI.
@@ -44,7 +43,8 @@ async function inspectResources(backend, { includeTasks = false } = {}) {
         cursors.add(after);
       } while (after);
     }
-    projects.push({ projectId, root: project.root, restartSafe: restartSafe(status), resources,
+    projects.push({ projectId, root: project.root, serviceId: project.service?.serviceId, generation: project.service?.generation,
+      lifecycle: coreLifecycle(status), restartSafe: restartSafe(status), resources,
       activeTurns: status.activeTurns?.length ?? 0, unresolvedTools: status.unresolvedTools?.length ?? 0,
       compactions: status.compactions?.length ?? 0,
       workgroups: (status.workgroups ?? []).filter(g => g.status === 'running' || !g.cleanupConfirmed).length,
