@@ -1,0 +1,62 @@
+{
+  "version": 14,
+  "thread": {
+    "id": "22222222-2222-4222-8222-222222222222",
+    "sessionId": "11111111-1111-4111-8111-111111111111",
+    "parentThreadId": "11111111-1111-4111-8111-111111111111",
+    "preview": "Synthetic settled child",
+    "modelProvider": "fixture",
+    "createdAt": 1,
+    "updatedAt": 1,
+    "status": {
+      "type": "idle"
+    },
+    "cwd": "/history-compat-fixture",
+    "cliVersion": "0.1.4",
+    "source": "cli",
+    "ephemeral": false,
+    "desktop": {
+      "configuration": {
+        "revision": 1,
+        "model": null,
+        "provider": null,
+        "profile": null
+      },
+      "plan": {
+        "revision": 0,
+        "steps": []
+      },
+      "loadedSkills": {},
+      "queue": {
+        "revision": 1,
+        "paused": true,
+        "pauseReason": "serverDraining",
+        "items": []
+      },
+      "interactionRevision": 0,
+      "interactions": [],
+      "receipts": [],
+      "uploads": []
+    },
+    "turns": [
+      {
+        "id": "settled-child-turn",
+        "status": "completed",
+        "error": null,
+        "items": [
+          {
+            "type": "agentMessage",
+            "id": "historical-fixture-message",
+            "text": "HISTORY_COMPAT_FIXTURE"
+          }
+        ],
+        "configuration": {
+          "revision": 1,
+          "model": null,
+          "provider": null,
+          "profile": null
+        }
+      }
+    ]
+  }
+}

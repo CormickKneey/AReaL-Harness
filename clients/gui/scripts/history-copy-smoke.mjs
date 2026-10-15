@@ -69,7 +69,7 @@ function assertIdle(record) {
   );
   assert.equal(desktop?.queue?.items?.length ?? 0, 0, "History contains queued work");
   assert.ok(
-    !(desktop?.executions?.length || desktop?.processes?.length || desktop?.workflowRun),
+    !(desktop?.processes?.length || desktop?.workflowRun),
     "History contains managed execution state",
   );
   assert.ok(
@@ -120,7 +120,8 @@ try {
       "Project must not be a symlink",
     );
     const state = join(project.id, "state"),
-      ids = [];
+      ids = [],
+      records = new Map();
     const workspace = fixtureMode ? join(scratch, "workspaces", project.id) : project.root;
     if (fixtureMode) await mkdir(workspace, { recursive: true, mode: 0o700 });
     assert.equal(typeof workspace, "string", "Project workspace is missing");
@@ -137,6 +138,7 @@ try {
       const record = JSON.parse(bytes);
       assert.equal(record.thread.id, name.slice(0, -5), "History filename and thread ID differ");
       assertIdle(record);
+      records.set(record.thread.id, record.thread);
       // 受控样本的占位工作区只在副本中填充；私有历史保留全部原始字节及 cwd。
       let copied = bytes;
       if (fixtureMode) {
@@ -146,6 +148,19 @@ try {
       }
       await writeFile(join(scratch, "core", relative), copied, { mode: 0o600 });
       ids.push(record.thread.id);
+    }
+    // 已完成的子会话引用是历史；只有同项目内可核对的终态目标才可观察。
+    for (const thread of records.values()) {
+      for (const record of thread.desktop?.executions ?? []) {
+        const execution = record.execution;
+        assert.equal(execution?.kind, "thread", "History contains unresolved managed execution");
+        const target = records.get(execution.threadId);
+        const turn = target?.turns.find((value) => value.id === execution.turnId);
+        assert.ok(
+          turn && ["completed", "failed", "interrupted"].includes(turn.status),
+          "History execution target is missing or unfinished",
+        );
+      }
     }
     assert.ok(ids.length > 0, "Project has no history sessions");
     // 归档和附件仍由 Core 读取；不复制锁、服务登记、凭据或部署配置。
