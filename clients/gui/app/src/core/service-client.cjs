@@ -7,6 +7,7 @@ const WebSocket = require('ws');
 const { PROTOCOL, encodeMedia, decodeMedia } = require('./service-protocol.cjs');
 const { serviceIdentity } = require('./service-config.cjs');
 const { inspectCoreCapabilities } = require('./core-capabilities.cjs');
+const { desktopExecutables } = require('./desktop-executables.cjs');
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function waitForServiceExit(home, metadata) {
@@ -235,12 +236,13 @@ class SharedCoreBackend {
     const env = { ...process.env, AREAL_BACKEND: 'areal', AREAL_CORE_HOME: this.home };
     delete env.ELECTRON_RUN_AS_NODE;
     const args = this.app.isPackaged ? ['--areal-core-service'] : [this.app.getAppPath(), '--areal-core-service'];
+    const executable = desktopExecutables({ packaged: this.app.isPackaged }).service;
     try {
       let launchError, retryLaunch = false;
       const launch = () => {
         if (this.disposed) throw new Error('GUI 连接已关闭');
         retryLaunch = false;
-        const child = spawn(process.execPath, args, { detached: true, stdio: ['ignore', log.fd, log.fd], env, windowsHide: true });
+        const child = spawn(executable, args, { detached: true, stdio: ['ignore', log.fd, log.fd], env, windowsHide: true });
         child.once('error', e => { launchError = e; });
         child.once('exit', code => { retryLaunch = code === 0; }); child.unref();
       };

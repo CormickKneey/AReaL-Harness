@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { stageCoreApp } from "./stage-app.mjs";
+import { stageMacOSService } from "./stage-macos-service.mjs";
 const gui = fileURLToPath(new URL("..", import.meta.url));
 const root = resolve(gui, "../..");
 const require = createRequire(join(gui, "app/package.json"));
@@ -100,6 +101,7 @@ await build({
   },
 });
 const app = join(output, "package/mac-arm64/AReaL Harness GUI.app");
+const backgroundService = await stageMacOSService(app);
 if (release) {
   const native = require("yaml").parse(await readFile(join(app, "Contents/Resources/app-update.yml"), "utf8"));
   assert.equal(native.provider, "generic");
@@ -131,6 +133,7 @@ await writeFile(
       app,
       archive,
       dependencies,
+      backgroundService,
       builder: {
         node: process.version,
         executable: process.execPath,

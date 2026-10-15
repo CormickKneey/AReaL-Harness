@@ -82,7 +82,11 @@ Browser 工具在每次新用户请求中先 `describe`，再重新观察，拒�
 
 macOS 桌面适配器通过系统 `/usr/bin/python3` 保留可信 Core 命令的父进程，与 Runtime 的原生启动方式一致。命令参数、环境和标准输入输出保持原样；超时、取消和强杀作用于真实 Core 子进程，适配器或桥退出时清理其仍运行的直接子进程。该路径不重放写入，也不终止 Core 已建立的持久服务。`pnpm --dir clients/gui run test:core-process` 验证信号退出、超时升级、取消、输出上限及进程清理。
 
-Renderer 仅通过窄 preload IPC 访问桌面适配器。独立适配器使用 `areal service ensure/restart/stop --json` 连接 Core，不直接管理持久 Core 服务的 PID。退出 GUI 断开界面并结算 GUI 拥有的终端，Core Turn/Goal 和已配置的定时任务继续执行；重新打开按权威快照恢复，不自动重放提交。停止后台服务是显式操作，忙碌时拒绝安全停止；启动恢复对话框提供“取消任务并重启”，即使没有活动轮次，只要仍有活动目标、后台任务或排队消息，也可使用此入口。二次确认后通过公共 `areal service stop --cancel` 完成 Core 取消、执行资源结算和宿主退出，保留待发输入。旧后台尚不支持取消参数时，Main 使用旧后台仍持有的本机 Core 管理连接完成取消，再请求旧后台安全退出；多个 GUI 连接或后台操作未完成时仍拒绝，结果未确认时不自动重发。
+Renderer 仅通过窄 preload IPC 访问桌面适配器。独立适配器使用 `areal service ensure/restart/stop --json` 连接 Core，不直接管理持久 Core 服务的 PID。退出 GUI 断开界面并结算 GUI 拥有的终端，Core Turn/Goal 和已配置的定时任务继续执行；重新打开按权威快照恢复，不自动重放提交。
+
+停止后台服务是显式操作，忙碌时拒绝安全停止；启动恢复对话框提供“取消任务并重启”，即使没有活动轮次，只要仍有活动目标、后台任务或排队消息，也可使用此入口。二次确认后通过公共 `areal service stop --cancel` 完成 Core 取消、执行资源结算和宿主退出，保留待发输入。旧后台尚不支持取消参数时，Main 使用旧后台仍持有的本机 Core 管理连接完成取消，再请求旧后台安全退出；多个 GUI 连接或后台操作未完成时仍拒绝，结果未确认时不自动重发。
+
+macOS 安装包将后台放在独立应用身份的 `AReaL Harness Service.app` 中，前台退出后 Finder 重开只启动前台并复用原后台与 Core；后台通知使用主应用入口打开界面。前后台共享同一安装包资源、配置、凭据名称和数据目录。`verify` 包含身份与路径回归；指定 `AREAL_GUI_EXECUTABLE` 运行 `node --test clients/gui/scripts/macos-service.test.mjs` 可额外检查包内后台入口的真实启动与安全停止，Finder 重开仍需原生安装验收。
 
 Core 观察连接意外关闭时，项目连接所有者以 500ms 起步、最长 30s 的退避重试，通过 `service status --instance` 发现兼容的运行中实例，并用原子 `areal/thread/observe` 恢复 Thread/Task 快照、订阅和通知基线。观察恢复不重绑工具宿主；用户显式认领原生页时，才读取权威状态并在 Thread 空闲时尝试 `thread/resume` 绑定，仍受 Core 宿主冲突检查约束。恢复不重新提交任务、不同步 Provider/MCP 配置，也不执行配置 revision 屏障。旧连接的消息与异步结果失去投影写入资格。显式停止、适配器关闭、停止中的 Core 或部署指纹不兼容会阻止自动恢复；重新连接需显式操作。
 

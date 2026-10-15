@@ -96,6 +96,8 @@ Main owns native previews by project/Thread, with at most eight native Pages per
 
 The adapter retains credential encryption, subscription forwarding, and mobile pairing, without another Agent loop. The subscription transport's local capability and fixed loopback port persist in a mode-0600 file under a private directory; upstream account/API credentials use OS secure storage. Adapter exit interrupts active forwarded HTTP responses. Stable transport identity supports subsequent requests, not uninterrupted streams through crashes. Normal GUI exit retains the adapter.
 
+The macOS package gives `AReaL Harness Service.app` a separate application identity. Reopening from Finder after foreground exit starts the GUI and reuses the existing adapter and Core; background notifications launch the main application entry. Both processes share package resources, configuration, credential service name and data directories. `verify` covers identity and path regressions. Set `AREAL_GUI_EXECUTABLE` when running `node --test clients/gui/scripts/macos-service.test.mjs` to also verify actual packaged background startup and safe shutdown; Finder reopening still requires native installed-app acceptance.
+
 The registry defaults to `~/.areal/gui/<GUI data directory digest>` to keep macOS Unix socket paths short. The GUI isolates registration through `AREAL_HARNESS_SERVICE_HOME`, preserving Core's default configuration location. CLI clients must explicitly use the GUI's `AREAL_HARNESS_SERVICE_HOME` and instance descriptor to reach the same instance; shared configuration does not imply shared runtime data. Authentication descriptors never enter the renderer. See [shared local services](../../docs/api/local-service.en.md).
 
 ## Candidate builds and package acceptance
