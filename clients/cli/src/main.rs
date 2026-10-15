@@ -103,6 +103,10 @@ struct Cli {
     verbose: bool,
     #[arg(long)]
     include_partial_messages: bool,
+    /// 同时输出原生 Core 通知，保留工具媒体及结构化终态供原生消费者使用。
+    #[arg(long)]
+    include_native_events: bool,
+
     #[arg(short = 'r', long)]
     resume: Option<String>,
     #[arg(long)]
@@ -145,6 +149,9 @@ struct Cli {
     permissions: Option<String>,
     #[arg(long, conflicts_with = "endpoint")]
     scratch: Option<PathBuf>,
+    /// 可信宿主声明的只读公开输入，不扩大工作区或 scratch 的写权限。
+    #[arg(long, conflicts_with = "endpoint")]
+    read_only_path: Vec<PathBuf>,
     #[arg(long, conflicts_with = "endpoint")]
     allow_write: bool,
     #[arg(long, conflicts_with = "endpoint")]
@@ -294,6 +301,44 @@ fn service_result(result: Result<()>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_consumers_can_bind_readonly_inputs_without_remote_escalation() {
+        let parsed = MultitoolCli::try_parse_from([
+            "areal",
+            "exec",
+            "--output-format",
+            "stream-json",
+            "--include-native-events",
+            "--read-only-path",
+            "/inputs/task",
+            "--read-only-path",
+            "/inputs/assets",
+        ])
+        .unwrap();
+        let Some(Command::Exec(cli)) = parsed.command else {
+            panic!("expected exec");
+        };
+        assert!(cli.include_native_events);
+        assert_eq!(
+            cli.read_only_path,
+            vec![
+                PathBuf::from("/inputs/task"),
+                PathBuf::from("/inputs/assets")
+            ]
+        );
+        assert!(
+            MultitoolCli::try_parse_from([
+                "areal",
+                "exec",
+                "--endpoint",
+                "ws://localhost",
+                "--read-only-path",
+                "/inputs"
+            ])
+            .is_err()
+        );
+    }
 
     #[test]
     fn unified_routes_have_valid_help_without_starting_services() {

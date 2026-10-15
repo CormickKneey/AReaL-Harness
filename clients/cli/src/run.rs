@@ -149,6 +149,10 @@ fn input(value: &Value, session: &str) -> Result<Value> {
 }
 pub async fn execute(args: &Cli) -> Result<i32> {
     ensure!(
+        !args.include_native_events || args.output_format == "stream-json",
+        "--include-native-events requires --output-format stream-json"
+    );
+    ensure!(
         args.resume.is_none() || args.agent.is_none(),
         "--agent cannot be used when resuming a thread"
     );
@@ -395,6 +399,7 @@ async fn execute_connected(args: &Cli, local: &local::Local) -> Result<(i32, Vec
                  }
                  event=rpc.events.recv()=>{
                   let event=event.context("Core event stream disconnected; no successful result can be inferred")?;let p=&event["params"];let method=event["method"].as_str().unwrap_or("");
+                  if args.include_native_events && event.get("id").is_none() { emit(&json!({"type":"areal_event","event":event}))?; }
                   if event.get("id").is_some(){rpc.send(json!({"id":event["id"],"error":{"code":-32601,"message":"CLI has no ambient tool host"}})).await?;continue;}
                   if method=="areal/interaction/requested" {let r=&p["interaction"];if r["threadId"]!=session{continue;}let id=r["requestId"].as_str().context("invalid interaction")?.to_owned();
                    if eof||args.input_format!="stream-json"||args.output_format!="stream-json"||args.permission_mode=="dontAsk"{failed=true;rpc.call("turn/interrupt",json!({"threadId":session,"turnId":r["turnId"]})).await?;continue;}
@@ -410,14 +415,15 @@ async fn execute_connected(args: &Cli, local: &local::Local) -> Result<(i32, Vec
                   if method=="item/started"&&item["type"]=="dynamicToolCall"&&stream&&args.verbose{emit(&json!({"type":"assistant","uuid":item["id"],"session_id":session,"parent_tool_use_id":null,"message":{"id":item["id"],"type":"message","role":"assistant","model":model,"content":[{"type":"tool_use","id":item["callId"],"name":item["tool"],"input":item["arguments"]}]}}))?;}
                   if method=="item/completed"&&item["type"]=="agentMessage"{if stream&&args.include_partial_messages{for e in [json!({"type":"content_block_stop","index":0}),json!({"type":"message_stop"})]{emit(&json!({"type":"stream_event","uuid":key(),"session_id":session,"parent_tool_use_id":null,"event":e}))?;}}
         if stream&&args.verbose{emit(&json!({"type":"assistant","uuid":item["id"],"session_id":session,"parent_tool_use_id":null,"message":{"id":item["id"],"type":"message","role":"assistant","model":model,"content":[{"type":"text","text":item["text"]}]}}))?;}}
-                  if method=="item/completed"&&item["type"]=="dynamicToolCall"&&item["contentItems"].as_array().is_some_and(|items|items.iter().any(|c|c["type"]!="inputText")){failed=true;}
-                  if method=="item/completed"&&item["type"]=="dynamicToolCall"&&stream&&args.verbose{let contents=item["contentItems"].as_array().map(|items|items.iter().map(|c|{if c["type"]=="inputText"{json!({"type":"text","text":c["text"]})}else{failed=true;json!({"type":"text","text":"UNSUPPORTED_CLI_MEDIA: read media through authenticated Core API"})}}).collect::<Vec<_>>()).unwrap_or_default();emit(&json!({"type":"user","uuid":key(),"session_id":session,"parent_tool_use_id":null,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":item["callId"],"is_error":item["success"]!=true,"content":contents}]}}))?;}
+                  if !args.include_native_events&&method=="item/completed"&&item["type"]=="dynamicToolCall"&&item["contentItems"].as_array().is_some_and(|items|items.iter().any(|c|c["type"]!="inputText")){failed=true;}
+                  if method=="item/completed"&&item["type"]=="dynamicToolCall"&&stream&&args.verbose{let contents=item["contentItems"].as_array().map(|items|items.iter().map(|c|{if c["type"]=="inputText"{json!({"type":"text","text":c["text"]})}else{if !args.include_native_events {failed=true;}json!({"type":"text","text":if args.include_native_events {"Media retained in native Core event"} else {"UNSUPPORTED_CLI_MEDIA: read media through authenticated Core API"}})}}).collect::<Vec<_>>()).unwrap_or_default();emit(&json!({"type":"user","uuid":key(),"session_id":session,"parent_tool_use_id":null,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":item["callId"],"is_error":item["success"]!=true,"content":contents}]}}))?;}
                   if method=="turn/completed"{
                    let t=&p["turn"];let success=t["status"]=="completed"&&!failed;failed|=!success;outstanding=outstanding.saturating_sub(1);active=None;pending.clear();
                    let text=t["items"].as_array().unwrap().iter().filter(|i|i["type"]=="agentMessage").filter_map(|i|i["text"].as_str()).collect::<Vec<_>>().join("\n");
                    let subtype=if success{"success"}else if t["error"]["message"].as_str().is_some_and(|m|m.contains("MAX_MODEL_ROUNDS")){"error_max_turns"}else{"error_during_execution"};
                    let mut result=json!({"type":"result","subtype":subtype,"is_error":!success,"session_id":session,"uuid":key(),"duration_ms":started.get(turn).map(|v|v.elapsed().as_millis()),"num_turns":rounds.get(turn).copied().unwrap_or(0),"stop_reason":null});
                    if success {result["result"]=json!(text);} else {result["errors"]=json!([t["error"]["message"].as_str().unwrap_or(if t["status"]=="interrupted"{"Turn interrupted"}else{"Turn failed or output could not be represented"})]);}
+                   if !t["error"].is_null(){result["error"]=t["error"].clone();}
                    if !t["usage"].is_null(){let u=&t["usage"];result["usage"]=json!({"input_tokens":u["inputTokens"],"output_tokens":u["outputTokens"],"cache_read_input_tokens":u["cachedInputTokens"]});}
                    if failed||terminating||outstanding==0{
                     terminal_results.push(result);

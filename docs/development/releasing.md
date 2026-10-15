@@ -41,7 +41,7 @@ Homebrew formula 安装 `bin`、`libexec`、LICENSE 和 manifest，避免改变 
 
 ## 可选平台适配包
 
-[Optional EnvArena adapter](../../.github/workflows/arena-package.yml) 仅由 `workflow_dispatch` 手动触发，生成平台 runner 的 Linux musl zipapp 和验收 artifact；不发布 Arena Registry、不上传轨迹，也不是上述独立发行包或安装器的前置条件。普通 PR 不运行此工作流。专用脚本已从 `scripts/` 移至 `integrations/envarena/`，命令和原生 Linux 验收见[评测适配指南](../benchmarks/README.md#arena-按需公开输入)。
+外部平台通过 [CLI 契约](../api/claude-cli.md) 消费标准原生发布包。旧 EnvArena Python zipapp 及专用打包工作流不再分发。
 
 维护仓库保护规则时，不要将可选适配器 job 设为普通 PR 的必需检查；若已有旧 `Arena package` 必需规则，需在仓库设置中移除。该设置独立于工作流文件。
 
