@@ -5,7 +5,8 @@
   "license": "Apache-2.0",
   "type": "module",
   "exports": {
-    ".": "./src/channel.mjs"
+    ".": "./src/channel.mjs",
+    "./raster": "./src/raster.mjs"
   },
   "dependencies": {
     "@chainsafe/libp2p-noise": "16.1.3",

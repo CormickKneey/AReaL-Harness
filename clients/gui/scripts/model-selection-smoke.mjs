@@ -25,7 +25,7 @@ const server = createServer(async (request, response) => {
 });
 await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 const config = join(userHome, ".areal", "config.toml");
-await writeFile(config, `schema_version=1\n[model]\ncatalog_version=1\nprovider="areal_openai"\nname="unavailable-account-model"\n` + ["theta", "arena"].map(id => `\n[model.providers.${id}]\nname="${id}"\nendpoint="http://127.0.0.1:${server.address().port}/v1/chat/completions"\nprotocol="chat-completions"\napi_key_env="AREAL_CREDENTIAL_MISSING_${id}"\nmodels=[{id="${id}-model",enabled=true}]\n`).join(""));
+await writeFile(config, `schema_version=1\n[model]\ncatalog_version=1\nprovider="theta"\nname="theta-model"\n` + ["theta", "arena"].map(id => `\n[model.providers.${id}]\nname="${id}"\nendpoint="http://127.0.0.1:${server.address().port}/v1/chat/completions"\nprotocol="chat-completions"\napi_key_env="AREAL_CREDENTIAL_MISSING_${id}"\nmodels=[{id="${id}-model",enabled=true}]\n`).join(""));
 await writeFile(config, (await readFile(config, "utf8")) + `\n[model.providers.env]\nname="env"\nenabled=false\nendpoint="http://127.0.0.1:${server.address().port}/v1/chat/completions"\nprotocol="chat-completions"\napi_key_env="AREAL_CREDENTIAL_fixture_env"\nmodels=[{id="env-model",enabled=true}]\n`);
 const env = { ...process.env, AREAL_GUI_USER_DATA: join(scratch, "electron"),
   AREAL_CORE_HOME: join(scratch, "core"), AREAL_CORE_USER_HOME: userHome,
@@ -59,7 +59,16 @@ async function until(predicate, label) {
   while (Date.now() < deadline) { const snapshot = await state(); if (predicate(snapshot)) return snapshot; await new Promise(resolve => setTimeout(resolve, 80)); }
   throw new Error(`Timeout: ${label}`);
 }
-try {
+async function stopService() {
+  const { ServiceConnection } = require("../app/src/core/service-client.cjs");
+  const connection = new ServiceConnection();
+  try {
+    const metadata = JSON.parse(await readFile(join(scratch, "core/service.json"), "utf8"));
+    await connection.connect(metadata);
+    await connection.request("stopService", { protocol: metadata.protocol }, true);
+  } finally { connection.close(); }
+}
+async function launch() {
   app = await electron.launch({ executablePath: process.env.AREAL_GUI_EXECUTABLE || require("electron"), args: process.env.AREAL_GUI_EXECUTABLE ? [] : [join(gui, "app")], env, timeout: 120000 });
   page = await app.firstWindow(); page.setDefaultTimeout(15000);
   page.on("pageerror", error => errors.push(error.message));
@@ -70,13 +79,21 @@ try {
     dialog.showMessageBox = async () => ({ response: 1 });
     BrowserWindow.getAllWindows()[0].setSize(1440, 960);
   }, workspace);
+}
+try {
+  await launch();
   await page.evaluate(() => window.arealDesktop.chooseProject());
   await createProjectConversation(page, "workspace");
-  const ready = await until(s => s.projects[0]?.state?.connected && s.projects[0].models.length === 2, "unavailable Core catalog");
+  const ready = await until(s => s.projects[0]?.state?.connected && s.projects[0].models.length === 3, "unavailable Core catalog");
   const projectId = ready.projects[0].id;
-  assert.ok(ready.projects[0].models.every(m => m.available === false && m.credentialState === "unavailable"));
+  assert.ok(ready.projects[0].models.every(m => m.available === false), "the default alias and named entries must all reject unavailable models");
+  assert.ok(ready.projects[0].models.filter(m => m.providerId).every(m => m.credentialState === "unavailable"));
+  assert.equal(await button("发送").isDisabled(), true, "a missing default credential cannot enable sending");
   assert.equal(await button("模型").isEnabled(), true, "missing credentials must not disable the model configuration entry");
   await button("模型").click();
+  const defaultOption = page.getByRole("radio", { name: /默认模型/ });
+  assert.equal(await defaultOption.isDisabled(), true);
+  assert.match(await defaultOption.innerText(), /模型不可用/);
   for (const id of ["theta", "arena"]) {
     const option = page.getByRole("radio", { name: new RegExp(`${id}-model`) });
     await option.waitFor(); assert.equal(await option.isDisabled(), true);
@@ -86,9 +103,9 @@ try {
   await page.screenshot({ path: join(scratch, "unavailable-models.png"), animations: "disabled" });
   await button("配置模型").click();
   await page.getByRole("heading", { name: "模型设置", exact: true }).waitFor();
-  checks.push("Core unavailable models remain visible with credential reasons and an active settings entry");
+  checks.push("a missing default-provider credential permits Core connection and model settings without an upstream request");
   await page.locator(".provider-catalog-row").filter({ hasText: "theta" }).click();
-  const providerStatus = page.getByRole("status", { name: "供应商状态", exact: true });
+  let providerStatus = page.getByRole("status", { name: "供应商状态", exact: true });
   await providerStatus.waitFor();
   assert.match(await providerStatus.innerText(), /缺少凭据/);
 
@@ -117,6 +134,23 @@ try {
   await until(s => Object.values(s.projects[0].state.threads).some(t => t.turns?.at(-1)?.status === "completed"), "model turn completes");
   assert.deepEqual(requests, [{ model: "theta-model", authenticated: true, authorizationPresent: true }]);
   assert.equal((await state()).projects[0].configurations[Object.keys((await state()).projects[0].state.threads)[0]]?.model?.providerId, "theta", "the newly created Core task uses the chosen model");
+  // 重启本次隔离后台，证明凭据从安全存储恢复，而非沿用旧进程的内存。
+  await app.close(); app = undefined;
+  await stopService();
+  await launch();
+  providerStatus = page.getByRole("status", { name: "供应商状态", exact: true });
+  await until(s => s.projects[0]?.state?.connected && s.projects[0].models.some(m => m.providerId === "theta" && m.available === true), "saved default credential survives a cold reopen");
+  const reopened = await call("providers", { operation: "list" });
+  assert.equal(reopened.defaultModel.providerId, "theta");
+  assert.equal(reopened.credentialSources.theta, "stored");
+  assert.equal(reopened.credentialStates.theta, "available");
+  assert.equal(requests.length, 1, "reopening does not replay the completed request");
+  await page.screenshot({ path: join(scratch, "reopened-default-credential.png"), animations: "disabled" });
+  checks.push("the default provider's saved credential survives a cold GUI/backend reopen without replaying a request");
+  // 默认凭据恢复已验收；后续启停用例沿用无全局默认项的独立目录前置条件。
+  const withoutDefault = await call("providers", { operation: "default", model: null, expectedRevision: reopened.revision });
+  await call("providers", { operation: "apply", expectedRevision: withoutDefault.revision });
+  await until(s => s.projects[0].models.length === 2, "explicit default cleared for catalog enablement checks");
   await button("模型").click(); await button("选择模型").click();
   assert.equal(await page.getByRole("radio", { name: /arena-model/ }).isDisabled(), true);
   await button("配置模型").click();
@@ -272,14 +306,11 @@ try {
     // 先断开 GUI，避免设置页的刷新请求与安全停止竞争。
     await app.close().catch(error => cleanupFailure("close GUI", error));
     try {
-      const { ServiceConnection } = require("../app/src/core/service-client.cjs");
-      const connection = new ServiceConnection();
-      try { const metadata = JSON.parse(await readFile(join(scratch, "core/service.json"), "utf8")); await connection.connect(metadata); await connection.request("stopService", { protocol: metadata.protocol }, true); }
-      finally { connection.close(); }
+      await stopService();
     } catch (error) { cleanupFailure("stop service", error); }
   }
   server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
-  const files = ["scripts/model-selection-smoke.mjs", "renderer/src/settings/ModelSettings.tsx", "renderer/src/settings/UnsavedChanges.tsx", "renderer/src/settings/SettingsWorkspace.tsx", "renderer/src/i18n/IntlProvider.tsx", "app/src/core/model-config.cjs", "app/src/core/providers.cjs", "../../core/config/src/models.rs", "../../core/config/src/lib.rs", "../../core/server/src/lib.rs", "renderer/src/ComposerModelMenu.tsx", "renderer/src/Composer.tsx", "renderer/src/DraftComposer.tsx", "renderer/src/workbench.css"];
+  const files = ["scripts/model-selection-smoke.mjs", "renderer/src/settings/ModelSettings.tsx", "renderer/src/settings/UnsavedChanges.tsx", "renderer/src/settings/SettingsWorkspace.tsx", "renderer/src/i18n/IntlProvider.tsx", "app/src/core/model-config.cjs", "app/src/core/providers.cjs", "../../core/config/src/models.rs", "../../core/config/src/lib.rs", "../../core/local-service/src/spec.rs", "../../core/engine/src/desktop/server.rs", "../../core/server/src/lib.rs", "renderer/src/ComposerModelMenu.tsx", "renderer/src/Composer.tsx", "renderer/src/DraftComposer.tsx", "renderer/src/workbench.css"];
   const hashes = Object.fromEntries(await Promise.all(files.map(async file => [file, createHash("sha256").update(await readFile(join(gui, file))).digest("hex")])));
   const coreUnchanged = createHash("sha256").update(await readFile(coreBinary)).digest("hex") === coreSha256;
   if (!coreUnchanged) { errors.push("Core binary changed during acceptance"); passed = false; process.exitCode = 1; }

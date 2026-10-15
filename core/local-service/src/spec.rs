@@ -225,8 +225,8 @@ impl LaunchSpec {
                 ..Default::default()
             },
         };
+        // 共享服务与 launcher 的管理模式一致；缺少模型凭据不能阻止连接和设置恢复。
         let config = areal_config::load_management_config(&inputs)?;
-        config.credential(&inputs)?;
         let root = crate::home()?;
         let workspace_key = storage::digest(workspace.as_os_str().as_encoded_bytes());
         let mapping = root

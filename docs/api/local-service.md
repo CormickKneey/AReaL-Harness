@@ -68,13 +68,17 @@ target/debug/areal service bind --workspace /absolute/workspace \
 
 首次绑定会持有 Core 数据锁并检查历史 Thread 的 cwd 都位于该工作区，再写入 `service-workspace` 绑定文件；不复制历史。工作区默认映射保存在 home 的 `workspaces/`。已绑定的数据不能换工作区；混合历史需先单独整理。数据和服务登记须位于工作区外，写模式的可信二进制也须在工作区外。
 
-兼容性将部署身份与默认模型版本分开。模型热更新完整校验 TOML，失败时保留旧配置。限额、权限、运行时预算、部署清单/工具扩展/Workgroup policy 和二进制内容仍保留重启边界。模型凭据值不写入摘要或登记；服务继承首次启动的环境。模型版本在等待热更新 3 秒后仍不一致时，客户端尝试安全重启；普通加载错误直接返回具体原因。旧服务缺失新凭据时会标记 `restartRequired=true`，客户端配置解析已校验当前环境的凭据后，可通过空闲重启继承它。忙碌服务保留原 generation 和任务，待结算后重试；不会自动取消。仅轮换同名凭据值或修改其他环境仍需显式重启。运行中的 Provider/Thread 配置仍由 Core 管理，不属于客户端窗口状态。
+兼容性将部署身份与默认模型版本分开。模型热更新完整校验 TOML，失败时保留旧配置。限额、权限、运行时预算、部署清单/工具扩展/Workgroup policy 和二进制内容仍保留重启边界。模型凭据值不写入摘要或登记；服务继承首次启动的环境。模型版本在等待热更新 3 秒后仍不一致时，客户端尝试安全重启；普通加载错误直接返回具体原因。旧服务缺失新凭据时会标记 `restartRequired=true`，客户端在当前环境中提供凭据后，可通过空闲重启继承它。忙碌服务保留原 generation 和任务，待结算后重试；不会自动取消。仅轮换同名凭据值或修改其他环境仍需显式重启。运行中的 Provider/Thread 配置仍由 Core 管理，不属于客户端窗口状态。
+
+共享服务使用管理模式启动：默认模型凭据缺失、为空或不满足 HTTP header 格式时，Core 仍可连接，模型目录将其标记为不可用。该模型的执行返回 `MODEL_CREDENTIAL_UNAVAILABLE`，不发送匿名请求、不切换模型。GUI 可进入设置补填密钥并保存应用；凭据通过可信启动环境提供，安全重启后生效。配置语法、模型地址和协议等其他校验仍然保留。
 
 ### 派生会话与数据兼容性
 
 `areal/capabilities.features.conversationDerivationV1` 默认返回 `preview:false`、实际方法集合、Fork 边界、`sharedCurrent`、可用的 Side `workspaceAccess` 和有效限额，无需开发环境开关。客户端按当前连接的公开能力启用创建入口。
 
 该 feature 的 `historyBytes` 是 Engine 的派生快照上限（配置 `max_history_bytes` 与 64 MiB 的较小值，配置为 0 时使用 64 MiB）。`limits` 返回 `maxThreads`、`maxActiveTurns`、`maxSideTurnsPerSource`、`maxSideTurnsPerDeployment`、`maxSideModelRounds`、`maxSideToolCalls`、`maxSideTurnSeconds`；值来自此服务实际 Engine 配置，Side 工具上限还取非零全局工具预算的较小值。它们是部署上限而非当前可用余量，单轮配置仍可进一步收窄；共享 Core 对全部窗口统一准入。`readOnly` 仅在当前 Runtime 满足原生只读边界时公布，客户端不得静默替换为 `none`。完整方法及恢复契约见[桌面 API](desktop.md#side-chat)。
+
+实验插件构建写入的 `hookRuns`、`allowPluginSkills` 和 `pluginSkills` 仅作为不执行的历史字段保留。读取空闲会话不会为兼容处理改写文件；后续正常保存保留这些字段的值，不恢复 Hook、加载插件 Skill 或授予插件权限。其他未知字段继续严格校验。
 
 Store 当前写入版本、`areal/server/status.stateVersion` 与发行 `manifest.json.stateVersion` 均为 14；API 仍为 `areal.core.v1`，服务发现协议仍为 1。无派生元数据的旧记录可读取并在下一次写入升级；Fork/Side 记录必须具有受支持的会话版本和版本 14 的权限语义，不能仅降低记录版本来交给旧二进制。服务重启不重放创建或首问，结果不确定时先查 `areal/request/read`。能力声明不替代各平台原生权限验证、安装包或真实供应商的独立验收。
 

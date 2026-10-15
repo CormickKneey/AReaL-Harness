@@ -205,7 +205,7 @@ impl Engine {
         let efforts = ["none", "minimal", "low", "medium", "high", "xhigh"];
         let model = self.default_model();
         if !model.name().is_empty() {
-            data.push(json!({"providerId":null,"providerRevision":null,"modelId":model.name(),"transport":model.provider(),"reasoningEffortOptions":if matches!(model.provider(), "openai.responses" | "openai.chat_completions") {efforts.to_vec()} else {vec![]},"input":model.capabilities().input,"output":model.capabilities().output,"contextWindowTokens":model.capabilities().context_window_tokens,"effectiveContextWindowTokens":model.capabilities().context_window_tokens.unwrap_or(self.limits.context_window_tokens)}));
+            data.push(json!({"providerId":null,"providerRevision":null,"modelId":model.name(),"available":model.check_work().is_ok(),"transport":model.provider(),"reasoningEffortOptions":if matches!(model.provider(), "openai.responses" | "openai.chat_completions") {efforts.to_vec()} else {vec![]},"input":model.capabilities().input,"output":model.capabilities().output,"contextWindowTokens":model.capabilities().context_window_tokens,"effectiveContextWindowTokens":model.capabilities().context_window_tokens.unwrap_or(self.limits.context_window_tokens)}));
         }
         for p in self.desktop.catalog.read().unwrap().providers.values() {
             for name in &p.models {

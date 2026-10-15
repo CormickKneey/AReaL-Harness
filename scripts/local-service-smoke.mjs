@@ -65,8 +65,14 @@ const model = createServer(async (req, res) => {
     res.end(
       `data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`,
     );
-  if (text === "hang") held.push(finish);
-  else finish();
+  if (text === "hang") {
+    held.push(finish);
+    // watchdog 或取消关闭的响应不能继续占用待释放队列。
+    res.once("close", () => {
+      const index = held.indexOf(finish);
+      if (index >= 0) held.splice(index, 1);
+    });
+  } else finish();
 });
 model.listen(0, "127.0.0.1");
 await once(model, "listening");
@@ -498,7 +504,8 @@ try {
     const { configuration } = await restored.call("areal/server/status", {});
     return configuration.restartRequired && configuration.error;
   });
-  await rejected(() => ensure(), /credential must be set/);
+  // 缺密钥允许解析管理连接；忙碌服务仍不可被重启或替换。
+  await rejected(() => ensure(), /service is busy/);
   env.TEST_MODEL_ROTATED_KEY = "fixture-rotated-key";
   await rejected(() => ensure(), /service is busy/);
   assert.equal((await restored.call("areal/server/status", {})).acceptingWork, true);
@@ -506,6 +513,8 @@ try {
     (await cli(["service", "status", "--workspace", workspace])).generation,
     current.generation,
   );
+  // 慢速宿主可能已触发流重试，等待当前仍连接的响应再释放。
+  await until(() => held.length > 0);
   held.shift()();
   await until(async () => (await restored.call("areal/server/status", {})).restartSafe);
   const beforeCredentialRestart = current;

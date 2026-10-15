@@ -280,6 +280,20 @@ pub struct ClientOptions {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EffectiveConfig {
+    /// Inert history from the experimental plugin build; never grants skill access.
+    #[serde(
+        default,
+        rename = "allowPluginSkills",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub historical_allow_plugin_skills: Option<bool>,
+    /// Opaque snapshots are retained without resolving or loading plugin resources.
+    #[serde(
+        default,
+        rename = "pluginSkills",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub historical_plugin_skills: Option<Vec<Value>>,
     /// 服务默认模型在提交时固定；不包含端点或凭据。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_model_revision: Option<String>,
@@ -303,6 +317,8 @@ pub struct EffectiveConfig {
 impl Default for EffectiveConfig {
     fn default() -> Self {
         Self {
+            historical_allow_plugin_skills: None,
+            historical_plugin_skills: None,
             default_model_revision: None,
             revision: 1,
             options: ClientOptions::default(),
@@ -407,6 +423,9 @@ pub struct PermissionGrant {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DesktopState {
+    /// Historical records only: opening a session never schedules or delivers these hooks.
+    #[serde(default, rename = "hookRuns", skip_serializing_if = "Option::is_none")]
+    pub historical_hook_runs: Option<Vec<Value>>,
     /// 只在读取活跃 Side 时由 Core 投影；历史快照不承载模型等待状态。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub side_capacity_status: Option<String>,

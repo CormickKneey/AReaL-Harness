@@ -300,7 +300,7 @@ export function DraftComposer({
           value={effectiveModel} disabled={modelSelectionDisabled}
           effort={effort} onEffortChange={value => { const next = { ...efforts, [effectiveModel]: value }; setEfforts(next); localStorage.setItem(`${key}:efforts`, JSON.stringify(next)); }}
           options={[
-            ...(chosenProfile?.model ? [{ value: "", label: `预设模型：${chosenProfile.model.modelId}`, efforts: currentModel?.reasoningEffortOptions, unavailableReason: currentModel?.available === false ? composerModelOption(currentModel).unavailableReason : undefined }] : hasDefaultModel ? [{ value: "", label: "默认模型", efforts: currentModel?.reasoningEffortOptions }] : []),
+            ...(chosenProfile?.model ? [{ value: "", label: `预设模型：${chosenProfile.model.modelId}`, efforts: currentModel?.reasoningEffortOptions, unavailableReason: currentModel?.available === false ? composerModelOption(currentModel).unavailableReason : undefined }] : hasDefaultModel ? [{ value: "", label: "默认模型", efforts: currentModel?.reasoningEffortOptions, unavailableReason: currentModel?.available === false ? composerModelOption(currentModel).unavailableReason : undefined }] : []),
             ...project.models.filter((model: Data) => model.providerId)
               .map(composerModelOption),
           ]}

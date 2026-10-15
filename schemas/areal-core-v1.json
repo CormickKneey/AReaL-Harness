@@ -3,6 +3,13 @@
   "effectiveConfig": {
     "additionalProperties": false,
     "properties": {
+      "allowPluginSkills": {
+        "description": "Inert history from the experimental plugin build; never grants skill access.",
+        "type": [
+          "boolean",
+          "null"
+        ]
+      },
       "defaultModelRevision": {
         "description": "服务默认模型在提交时固定；不包含端点或凭据。",
         "type": [
@@ -136,6 +143,14 @@
           }
         },
         "type": "object"
+      },
+      "pluginSkills": {
+        "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+        "items": true,
+        "type": [
+          "array",
+          "null"
+        ]
       },
       "profile": {
         "anyOf": [
@@ -2195,6 +2210,13 @@
                   "configuration": {
                     "additionalProperties": false,
                     "properties": {
+                      "allowPluginSkills": {
+                        "description": "Inert history from the experimental plugin build; never grants skill access.",
+                        "type": [
+                          "boolean",
+                          "null"
+                        ]
+                      },
                       "defaultModelRevision": {
                         "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                         "type": [
@@ -2328,6 +2350,14 @@
                           }
                         },
                         "type": "object"
+                      },
+                      "pluginSkills": {
+                        "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                        "items": true,
+                        "type": [
+                          "array",
+                          "null"
+                        ]
                       },
                       "profile": {
                         "anyOf": [
@@ -3327,6 +3357,13 @@
         "configuration": {
           "additionalProperties": false,
           "properties": {
+            "allowPluginSkills": {
+              "description": "Inert history from the experimental plugin build; never grants skill access.",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
             "defaultModelRevision": {
               "description": "服务默认模型在提交时固定；不包含端点或凭据。",
               "type": [
@@ -3460,6 +3497,14 @@
                 }
               },
               "type": "object"
+            },
+            "pluginSkills": {
+              "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+              "items": true,
+              "type": [
+                "array",
+                "null"
+              ]
             },
             "profile": {
               "anyOf": [
@@ -5599,6 +5644,13 @@
                     "configuration": {
                       "additionalProperties": false,
                       "properties": {
+                        "allowPluginSkills": {
+                          "description": "Inert history from the experimental plugin build; never grants skill access.",
+                          "type": [
+                            "boolean",
+                            "null"
+                          ]
+                        },
                         "defaultModelRevision": {
                           "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                           "type": [
@@ -5732,6 +5784,14 @@
                             }
                           },
                           "type": "object"
+                        },
+                        "pluginSkills": {
+                          "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                          "items": true,
+                          "type": [
+                            "array",
+                            "null"
+                          ]
                         },
                         "profile": {
                           "anyOf": [
@@ -6181,6 +6241,14 @@
                       },
                       "type": "array"
                     },
+                    "hookRuns": {
+                      "description": "Historical records only: opening a session never schedules or delivers these hooks.",
+                      "items": true,
+                      "type": [
+                        "array",
+                        "null"
+                      ]
+                    },
                     "interactionRevision": {
                       "format": "uint64",
                       "minimum": 0,
@@ -6493,6 +6561,13 @@
                               "configuration": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "allowPluginSkills": {
+                                    "description": "Inert history from the experimental plugin build; never grants skill access.",
+                                    "type": [
+                                      "boolean",
+                                      "null"
+                                    ]
+                                  },
                                   "defaultModelRevision": {
                                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                                     "type": [
@@ -6626,6 +6701,14 @@
                                       }
                                     },
                                     "type": "object"
+                                  },
+                                  "pluginSkills": {
+                                    "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                                    "items": true,
+                                    "type": [
+                                      "array",
+                                      "null"
+                                    ]
                                   },
                                   "profile": {
                                     "anyOf": [
@@ -7659,6 +7742,13 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "description": "Inert history from the experimental plugin build; never grants skill access.",
+                            "type": [
+                              "boolean",
+                              "null"
+                            ]
+                          },
                           "defaultModelRevision": {
                             "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                             "type": [
@@ -7792,6 +7882,14 @@
                               }
                             },
                             "type": "object"
+                          },
+                          "pluginSkills": {
+                            "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                            "items": true,
+                            "type": [
+                              "array",
+                              "null"
+                            ]
                           },
                           "profile": {
                             "anyOf": [
@@ -8843,6 +8941,13 @@
                 {
                   "additionalProperties": false,
                   "properties": {
+                    "allowPluginSkills": {
+                      "description": "Inert history from the experimental plugin build; never grants skill access.",
+                      "type": [
+                        "boolean",
+                        "null"
+                      ]
+                    },
                     "defaultModelRevision": {
                       "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                       "type": [
@@ -8976,6 +9081,14 @@
                         }
                       },
                       "type": "object"
+                    },
+                    "pluginSkills": {
+                      "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                      "items": true,
+                      "type": [
+                        "array",
+                        "null"
+                      ]
                     },
                     "profile": {
                       "anyOf": [
@@ -10005,6 +10118,13 @@
                 {
                   "additionalProperties": false,
                   "properties": {
+                    "allowPluginSkills": {
+                      "description": "Inert history from the experimental plugin build; never grants skill access.",
+                      "type": [
+                        "boolean",
+                        "null"
+                      ]
+                    },
                     "defaultModelRevision": {
                       "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                       "type": [
@@ -10138,6 +10258,14 @@
                         }
                       },
                       "type": "object"
+                    },
+                    "pluginSkills": {
+                      "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                      "items": true,
+                      "type": [
+                        "array",
+                        "null"
+                      ]
                     },
                     "profile": {
                       "anyOf": [
@@ -11503,6 +11631,13 @@
             "configuration": {
               "additionalProperties": false,
               "properties": {
+                "allowPluginSkills": {
+                  "description": "Inert history from the experimental plugin build; never grants skill access.",
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
                 "defaultModelRevision": {
                   "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                   "type": [
@@ -11636,6 +11771,14 @@
                     }
                   },
                   "type": "object"
+                },
+                "pluginSkills": {
+                  "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                  "items": true,
+                  "type": [
+                    "array",
+                    "null"
+                  ]
                 },
                 "profile": {
                   "anyOf": [
@@ -18972,6 +19115,13 @@
                       "configuration": {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "description": "Inert history from the experimental plugin build; never grants skill access.",
+                            "type": [
+                              "boolean",
+                              "null"
+                            ]
+                          },
                           "defaultModelRevision": {
                             "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                             "type": [
@@ -19105,6 +19255,14 @@
                               }
                             },
                             "type": "object"
+                          },
+                          "pluginSkills": {
+                            "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                            "items": true,
+                            "type": [
+                              "array",
+                              "null"
+                            ]
                           },
                           "profile": {
                             "anyOf": [
@@ -19554,6 +19712,14 @@
                         },
                         "type": "array"
                       },
+                      "hookRuns": {
+                        "description": "Historical records only: opening a session never schedules or delivers these hooks.",
+                        "items": true,
+                        "type": [
+                          "array",
+                          "null"
+                        ]
+                      },
                       "interactionRevision": {
                         "format": "uint64",
                         "minimum": 0,
@@ -19866,6 +20032,13 @@
                                 "configuration": {
                                   "additionalProperties": false,
                                   "properties": {
+                                    "allowPluginSkills": {
+                                      "description": "Inert history from the experimental plugin build; never grants skill access.",
+                                      "type": [
+                                        "boolean",
+                                        "null"
+                                      ]
+                                    },
                                     "defaultModelRevision": {
                                       "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                                       "type": [
@@ -19999,6 +20172,14 @@
                                         }
                                       },
                                       "type": "object"
+                                    },
+                                    "pluginSkills": {
+                                      "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                                      "items": true,
+                                      "type": [
+                                        "array",
+                                        "null"
+                                      ]
                                     },
                                     "profile": {
                                       "anyOf": [
@@ -21032,6 +21213,13 @@
                         {
                           "additionalProperties": false,
                           "properties": {
+                            "allowPluginSkills": {
+                              "description": "Inert history from the experimental plugin build; never grants skill access.",
+                              "type": [
+                                "boolean",
+                                "null"
+                              ]
+                            },
                             "defaultModelRevision": {
                               "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                               "type": [
@@ -21165,6 +21353,14 @@
                                 }
                               },
                               "type": "object"
+                            },
+                            "pluginSkills": {
+                              "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                              "items": true,
+                              "type": [
+                                "array",
+                                "null"
+                              ]
                             },
                             "profile": {
                               "anyOf": [
@@ -22766,6 +22962,13 @@
                         "configuration": {
                           "additionalProperties": false,
                           "properties": {
+                            "allowPluginSkills": {
+                              "description": "Inert history from the experimental plugin build; never grants skill access.",
+                              "type": [
+                                "boolean",
+                                "null"
+                              ]
+                            },
                             "defaultModelRevision": {
                               "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                               "type": [
@@ -22899,6 +23102,14 @@
                                 }
                               },
                               "type": "object"
+                            },
+                            "pluginSkills": {
+                              "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                              "items": true,
+                              "type": [
+                                "array",
+                                "null"
+                              ]
                             },
                             "profile": {
                               "anyOf": [
@@ -23348,6 +23559,14 @@
                           },
                           "type": "array"
                         },
+                        "hookRuns": {
+                          "description": "Historical records only: opening a session never schedules or delivers these hooks.",
+                          "items": true,
+                          "type": [
+                            "array",
+                            "null"
+                          ]
+                        },
                         "interactionRevision": {
                           "format": "uint64",
                           "minimum": 0,
@@ -23660,6 +23879,13 @@
                                   "configuration": {
                                     "additionalProperties": false,
                                     "properties": {
+                                      "allowPluginSkills": {
+                                        "description": "Inert history from the experimental plugin build; never grants skill access.",
+                                        "type": [
+                                          "boolean",
+                                          "null"
+                                        ]
+                                      },
                                       "defaultModelRevision": {
                                         "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                                         "type": [
@@ -23793,6 +24019,14 @@
                                           }
                                         },
                                         "type": "object"
+                                      },
+                                      "pluginSkills": {
+                                        "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                                        "items": true,
+                                        "type": [
+                                          "array",
+                                          "null"
+                                        ]
                                       },
                                       "profile": {
                                         "anyOf": [
@@ -24826,6 +25060,13 @@
                           {
                             "additionalProperties": false,
                             "properties": {
+                              "allowPluginSkills": {
+                                "description": "Inert history from the experimental plugin build; never grants skill access.",
+                                "type": [
+                                  "boolean",
+                                  "null"
+                                ]
+                              },
                               "defaultModelRevision": {
                                 "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                                 "type": [
@@ -24959,6 +25200,14 @@
                                   }
                                 },
                                 "type": "object"
+                              },
+                              "pluginSkills": {
+                                "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                                "items": true,
+                                "type": [
+                                  "array",
+                                  "null"
+                                ]
                               },
                               "profile": {
                                 "anyOf": [
@@ -26001,6 +26250,13 @@
                     {
                       "additionalProperties": false,
                       "properties": {
+                        "allowPluginSkills": {
+                          "description": "Inert history from the experimental plugin build; never grants skill access.",
+                          "type": [
+                            "boolean",
+                            "null"
+                          ]
+                        },
                         "defaultModelRevision": {
                           "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                           "type": [
@@ -26134,6 +26390,14 @@
                             }
                           },
                           "type": "object"
+                        },
+                        "pluginSkills": {
+                          "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                          "items": true,
+                          "type": [
+                            "array",
+                            "null"
+                          ]
                         },
                         "profile": {
                           "anyOf": [
@@ -29592,6 +29856,13 @@
                       "configuration": {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "description": "Inert history from the experimental plugin build; never grants skill access.",
+                            "type": [
+                              "boolean",
+                              "null"
+                            ]
+                          },
                           "defaultModelRevision": {
                             "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                             "type": [
@@ -29725,6 +29996,14 @@
                               }
                             },
                             "type": "object"
+                          },
+                          "pluginSkills": {
+                            "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                            "items": true,
+                            "type": [
+                              "array",
+                              "null"
+                            ]
                           },
                           "profile": {
                             "anyOf": [
@@ -30174,6 +30453,14 @@
                         },
                         "type": "array"
                       },
+                      "hookRuns": {
+                        "description": "Historical records only: opening a session never schedules or delivers these hooks.",
+                        "items": true,
+                        "type": [
+                          "array",
+                          "null"
+                        ]
+                      },
                       "interactionRevision": {
                         "format": "uint64",
                         "minimum": 0,
@@ -30486,6 +30773,13 @@
                                 "configuration": {
                                   "additionalProperties": false,
                                   "properties": {
+                                    "allowPluginSkills": {
+                                      "description": "Inert history from the experimental plugin build; never grants skill access.",
+                                      "type": [
+                                        "boolean",
+                                        "null"
+                                      ]
+                                    },
                                     "defaultModelRevision": {
                                       "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                                       "type": [
@@ -30619,6 +30913,14 @@
                                         }
                                       },
                                       "type": "object"
+                                    },
+                                    "pluginSkills": {
+                                      "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                                      "items": true,
+                                      "type": [
+                                        "array",
+                                        "null"
+                                      ]
                                     },
                                     "profile": {
                                       "anyOf": [
@@ -31652,6 +31954,13 @@
                         {
                           "additionalProperties": false,
                           "properties": {
+                            "allowPluginSkills": {
+                              "description": "Inert history from the experimental plugin build; never grants skill access.",
+                              "type": [
+                                "boolean",
+                                "null"
+                              ]
+                            },
                             "defaultModelRevision": {
                               "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                               "type": [
@@ -31785,6 +32094,14 @@
                                 }
                               },
                               "type": "object"
+                            },
+                            "pluginSkills": {
+                              "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                              "items": true,
+                              "type": [
+                                "array",
+                                "null"
+                              ]
                             },
                             "profile": {
                               "anyOf": [
@@ -38372,6 +38689,13 @@
               "configuration": {
                 "additionalProperties": false,
                 "properties": {
+                  "allowPluginSkills": {
+                    "description": "Inert history from the experimental plugin build; never grants skill access.",
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
                   "defaultModelRevision": {
                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                     "type": [
@@ -38505,6 +38829,14 @@
                       }
                     },
                     "type": "object"
+                  },
+                  "pluginSkills": {
+                    "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                    "items": true,
+                    "type": [
+                      "array",
+                      "null"
+                    ]
                   },
                   "profile": {
                     "anyOf": [
@@ -39001,6 +39333,13 @@
               "configuration": {
                 "additionalProperties": false,
                 "properties": {
+                  "allowPluginSkills": {
+                    "description": "Inert history from the experimental plugin build; never grants skill access.",
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
                   "defaultModelRevision": {
                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                     "type": [
@@ -39134,6 +39473,14 @@
                       }
                     },
                     "type": "object"
+                  },
+                  "pluginSkills": {
+                    "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                    "items": true,
+                    "type": [
+                      "array",
+                      "null"
+                    ]
                   },
                   "profile": {
                     "anyOf": [
@@ -39630,6 +39977,13 @@
               "configuration": {
                 "additionalProperties": false,
                 "properties": {
+                  "allowPluginSkills": {
+                    "description": "Inert history from the experimental plugin build; never grants skill access.",
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
                   "defaultModelRevision": {
                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                     "type": [
@@ -39763,6 +40117,14 @@
                       }
                     },
                     "type": "object"
+                  },
+                  "pluginSkills": {
+                    "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                    "items": true,
+                    "type": [
+                      "array",
+                      "null"
+                    ]
                   },
                   "profile": {
                     "anyOf": [
@@ -40259,6 +40621,13 @@
               "configuration": {
                 "additionalProperties": false,
                 "properties": {
+                  "allowPluginSkills": {
+                    "description": "Inert history from the experimental plugin build; never grants skill access.",
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
                   "defaultModelRevision": {
                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                     "type": [
@@ -40392,6 +40761,14 @@
                       }
                     },
                     "type": "object"
+                  },
+                  "pluginSkills": {
+                    "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                    "items": true,
+                    "type": [
+                      "array",
+                      "null"
+                    ]
                   },
                   "profile": {
                     "anyOf": [
@@ -40888,6 +41265,13 @@
               "configuration": {
                 "additionalProperties": false,
                 "properties": {
+                  "allowPluginSkills": {
+                    "description": "Inert history from the experimental plugin build; never grants skill access.",
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
                   "defaultModelRevision": {
                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                     "type": [
@@ -41021,6 +41405,14 @@
                       }
                     },
                     "type": "object"
+                  },
+                  "pluginSkills": {
+                    "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                    "items": true,
+                    "type": [
+                      "array",
+                      "null"
+                    ]
                   },
                   "profile": {
                     "anyOf": [
@@ -41542,6 +41934,13 @@
               "configuration": {
                 "additionalProperties": false,
                 "properties": {
+                  "allowPluginSkills": {
+                    "description": "Inert history from the experimental plugin build; never grants skill access.",
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
                   "defaultModelRevision": {
                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                     "type": [
@@ -41675,6 +42074,14 @@
                       }
                     },
                     "type": "object"
+                  },
+                  "pluginSkills": {
+                    "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                    "items": true,
+                    "type": [
+                      "array",
+                      "null"
+                    ]
                   },
                   "profile": {
                     "anyOf": [
@@ -43468,6 +43875,13 @@
                     "configuration": {
                       "additionalProperties": false,
                       "properties": {
+                        "allowPluginSkills": {
+                          "description": "Inert history from the experimental plugin build; never grants skill access.",
+                          "type": [
+                            "boolean",
+                            "null"
+                          ]
+                        },
                         "defaultModelRevision": {
                           "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                           "type": [
@@ -43601,6 +44015,14 @@
                             }
                           },
                           "type": "object"
+                        },
+                        "pluginSkills": {
+                          "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                          "items": true,
+                          "type": [
+                            "array",
+                            "null"
+                          ]
                         },
                         "profile": {
                           "anyOf": [
@@ -44050,6 +44472,14 @@
                       },
                       "type": "array"
                     },
+                    "hookRuns": {
+                      "description": "Historical records only: opening a session never schedules or delivers these hooks.",
+                      "items": true,
+                      "type": [
+                        "array",
+                        "null"
+                      ]
+                    },
                     "interactionRevision": {
                       "format": "uint64",
                       "minimum": 0,
@@ -44362,6 +44792,13 @@
                               "configuration": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "allowPluginSkills": {
+                                    "description": "Inert history from the experimental plugin build; never grants skill access.",
+                                    "type": [
+                                      "boolean",
+                                      "null"
+                                    ]
+                                  },
                                   "defaultModelRevision": {
                                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                                     "type": [
@@ -44495,6 +44932,14 @@
                                       }
                                     },
                                     "type": "object"
+                                  },
+                                  "pluginSkills": {
+                                    "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                                    "items": true,
+                                    "type": [
+                                      "array",
+                                      "null"
+                                    ]
                                   },
                                   "profile": {
                                     "anyOf": [
@@ -45528,6 +45973,13 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "description": "Inert history from the experimental plugin build; never grants skill access.",
+                            "type": [
+                              "boolean",
+                              "null"
+                            ]
+                          },
                           "defaultModelRevision": {
                             "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                             "type": [
@@ -45661,6 +46113,14 @@
                               }
                             },
                             "type": "object"
+                          },
+                          "pluginSkills": {
+                            "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                            "items": true,
+                            "type": [
+                              "array",
+                              "null"
+                            ]
                           },
                           "profile": {
                             "anyOf": [
@@ -46700,6 +47160,13 @@
                 {
                   "additionalProperties": false,
                   "properties": {
+                    "allowPluginSkills": {
+                      "description": "Inert history from the experimental plugin build; never grants skill access.",
+                      "type": [
+                        "boolean",
+                        "null"
+                      ]
+                    },
                     "defaultModelRevision": {
                       "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                       "type": [
@@ -46833,6 +47300,14 @@
                         }
                       },
                       "type": "object"
+                    },
+                    "pluginSkills": {
+                      "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                      "items": true,
+                      "type": [
+                        "array",
+                        "null"
+                      ]
                     },
                     "profile": {
                       "anyOf": [
@@ -51779,6 +52254,13 @@
     "areal/thread/configure": {
       "additionalProperties": false,
       "properties": {
+        "allowPluginSkills": {
+          "description": "Inert history from the experimental plugin build; never grants skill access.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
         "defaultModelRevision": {
           "description": "服务默认模型在提交时固定；不包含端点或凭据。",
           "type": [
@@ -51912,6 +52394,14 @@
             }
           },
           "type": "object"
+        },
+        "pluginSkills": {
+          "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+          "items": true,
+          "type": [
+            "array",
+            "null"
+          ]
         },
         "profile": {
           "anyOf": [
@@ -52736,6 +53226,13 @@
                     "configuration": {
                       "additionalProperties": false,
                       "properties": {
+                        "allowPluginSkills": {
+                          "description": "Inert history from the experimental plugin build; never grants skill access.",
+                          "type": [
+                            "boolean",
+                            "null"
+                          ]
+                        },
                         "defaultModelRevision": {
                           "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                           "type": [
@@ -52869,6 +53366,14 @@
                             }
                           },
                           "type": "object"
+                        },
+                        "pluginSkills": {
+                          "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                          "items": true,
+                          "type": [
+                            "array",
+                            "null"
+                          ]
                         },
                         "profile": {
                           "anyOf": [
@@ -53318,6 +53823,14 @@
                       },
                       "type": "array"
                     },
+                    "hookRuns": {
+                      "description": "Historical records only: opening a session never schedules or delivers these hooks.",
+                      "items": true,
+                      "type": [
+                        "array",
+                        "null"
+                      ]
+                    },
                     "interactionRevision": {
                       "format": "uint64",
                       "minimum": 0,
@@ -53630,6 +54143,13 @@
                               "configuration": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "allowPluginSkills": {
+                                    "description": "Inert history from the experimental plugin build; never grants skill access.",
+                                    "type": [
+                                      "boolean",
+                                      "null"
+                                    ]
+                                  },
                                   "defaultModelRevision": {
                                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                                     "type": [
@@ -53763,6 +54283,14 @@
                                       }
                                     },
                                     "type": "object"
+                                  },
+                                  "pluginSkills": {
+                                    "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                                    "items": true,
+                                    "type": [
+                                      "array",
+                                      "null"
+                                    ]
                                   },
                                   "profile": {
                                     "anyOf": [
@@ -54796,6 +55324,13 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "description": "Inert history from the experimental plugin build; never grants skill access.",
+                            "type": [
+                              "boolean",
+                              "null"
+                            ]
+                          },
                           "defaultModelRevision": {
                             "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                             "type": [
@@ -54929,6 +55464,14 @@
                               }
                             },
                             "type": "object"
+                          },
+                          "pluginSkills": {
+                            "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                            "items": true,
+                            "type": [
+                              "array",
+                              "null"
+                            ]
                           },
                           "profile": {
                             "anyOf": [
@@ -55976,6 +56519,13 @@
         "configuration": {
           "additionalProperties": false,
           "properties": {
+            "allowPluginSkills": {
+              "description": "Inert history from the experimental plugin build; never grants skill access.",
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
             "defaultModelRevision": {
               "description": "服务默认模型在提交时固定；不包含端点或凭据。",
               "type": [
@@ -56109,6 +56659,14 @@
                 }
               },
               "type": "object"
+            },
+            "pluginSkills": {
+              "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+              "items": true,
+              "type": [
+                "array",
+                "null"
+              ]
             },
             "profile": {
               "anyOf": [
@@ -57348,6 +57906,13 @@
                     "configuration": {
                       "additionalProperties": false,
                       "properties": {
+                        "allowPluginSkills": {
+                          "description": "Inert history from the experimental plugin build; never grants skill access.",
+                          "type": [
+                            "boolean",
+                            "null"
+                          ]
+                        },
                         "defaultModelRevision": {
                           "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                           "type": [
@@ -57481,6 +58046,14 @@
                             }
                           },
                           "type": "object"
+                        },
+                        "pluginSkills": {
+                          "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                          "items": true,
+                          "type": [
+                            "array",
+                            "null"
+                          ]
                         },
                         "profile": {
                           "anyOf": [
@@ -57930,6 +58503,14 @@
                       },
                       "type": "array"
                     },
+                    "hookRuns": {
+                      "description": "Historical records only: opening a session never schedules or delivers these hooks.",
+                      "items": true,
+                      "type": [
+                        "array",
+                        "null"
+                      ]
+                    },
                     "interactionRevision": {
                       "format": "uint64",
                       "minimum": 0,
@@ -58242,6 +58823,13 @@
                               "configuration": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "allowPluginSkills": {
+                                    "description": "Inert history from the experimental plugin build; never grants skill access.",
+                                    "type": [
+                                      "boolean",
+                                      "null"
+                                    ]
+                                  },
                                   "defaultModelRevision": {
                                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                                     "type": [
@@ -58375,6 +58963,14 @@
                                       }
                                     },
                                     "type": "object"
+                                  },
+                                  "pluginSkills": {
+                                    "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                                    "items": true,
+                                    "type": [
+                                      "array",
+                                      "null"
+                                    ]
                                   },
                                   "profile": {
                                     "anyOf": [
@@ -59408,6 +60004,13 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "description": "Inert history from the experimental plugin build; never grants skill access.",
+                            "type": [
+                              "boolean",
+                              "null"
+                            ]
+                          },
                           "defaultModelRevision": {
                             "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                             "type": [
@@ -59541,6 +60144,14 @@
                               }
                             },
                             "type": "object"
+                          },
+                          "pluginSkills": {
+                            "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                            "items": true,
+                            "type": [
+                              "array",
+                              "null"
+                            ]
                           },
                           "profile": {
                             "anyOf": [
@@ -61125,6 +61736,13 @@
                     "configuration": {
                       "additionalProperties": false,
                       "properties": {
+                        "allowPluginSkills": {
+                          "description": "Inert history from the experimental plugin build; never grants skill access.",
+                          "type": [
+                            "boolean",
+                            "null"
+                          ]
+                        },
                         "defaultModelRevision": {
                           "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                           "type": [
@@ -61258,6 +61876,14 @@
                             }
                           },
                           "type": "object"
+                        },
+                        "pluginSkills": {
+                          "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                          "items": true,
+                          "type": [
+                            "array",
+                            "null"
+                          ]
                         },
                         "profile": {
                           "anyOf": [
@@ -61707,6 +62333,14 @@
                       },
                       "type": "array"
                     },
+                    "hookRuns": {
+                      "description": "Historical records only: opening a session never schedules or delivers these hooks.",
+                      "items": true,
+                      "type": [
+                        "array",
+                        "null"
+                      ]
+                    },
                     "interactionRevision": {
                       "format": "uint64",
                       "minimum": 0,
@@ -62019,6 +62653,13 @@
                               "configuration": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "allowPluginSkills": {
+                                    "description": "Inert history from the experimental plugin build; never grants skill access.",
+                                    "type": [
+                                      "boolean",
+                                      "null"
+                                    ]
+                                  },
                                   "defaultModelRevision": {
                                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                                     "type": [
@@ -62152,6 +62793,14 @@
                                       }
                                     },
                                     "type": "object"
+                                  },
+                                  "pluginSkills": {
+                                    "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                                    "items": true,
+                                    "type": [
+                                      "array",
+                                      "null"
+                                    ]
                                   },
                                   "profile": {
                                     "anyOf": [
@@ -63185,6 +63834,13 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "description": "Inert history from the experimental plugin build; never grants skill access.",
+                            "type": [
+                              "boolean",
+                              "null"
+                            ]
+                          },
                           "defaultModelRevision": {
                             "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                             "type": [
@@ -63318,6 +63974,14 @@
                               }
                             },
                             "type": "object"
+                          },
+                          "pluginSkills": {
+                            "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                            "items": true,
+                            "type": [
+                              "array",
+                              "null"
+                            ]
                           },
                           "profile": {
                             "anyOf": [
@@ -64415,6 +65079,13 @@
                 {
                   "additionalProperties": false,
                   "properties": {
+                    "allowPluginSkills": {
+                      "description": "Inert history from the experimental plugin build; never grants skill access.",
+                      "type": [
+                        "boolean",
+                        "null"
+                      ]
+                    },
                     "defaultModelRevision": {
                       "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                       "type": [
@@ -64548,6 +65219,14 @@
                         }
                       },
                       "type": "object"
+                    },
+                    "pluginSkills": {
+                      "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                      "items": true,
+                      "type": [
+                        "array",
+                        "null"
+                      ]
                     },
                     "profile": {
                       "anyOf": [
@@ -70615,6 +71294,13 @@
                       "configuration": {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "description": "Inert history from the experimental plugin build; never grants skill access.",
+                            "type": [
+                              "boolean",
+                              "null"
+                            ]
+                          },
                           "defaultModelRevision": {
                             "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                             "type": [
@@ -70748,6 +71434,14 @@
                               }
                             },
                             "type": "object"
+                          },
+                          "pluginSkills": {
+                            "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                            "items": true,
+                            "type": [
+                              "array",
+                              "null"
+                            ]
                           },
                           "profile": {
                             "anyOf": [
@@ -71197,6 +71891,14 @@
                         },
                         "type": "array"
                       },
+                      "hookRuns": {
+                        "description": "Historical records only: opening a session never schedules or delivers these hooks.",
+                        "items": true,
+                        "type": [
+                          "array",
+                          "null"
+                        ]
+                      },
                       "interactionRevision": {
                         "format": "uint64",
                         "minimum": 0,
@@ -71509,6 +72211,13 @@
                                 "configuration": {
                                   "additionalProperties": false,
                                   "properties": {
+                                    "allowPluginSkills": {
+                                      "description": "Inert history from the experimental plugin build; never grants skill access.",
+                                      "type": [
+                                        "boolean",
+                                        "null"
+                                      ]
+                                    },
                                     "defaultModelRevision": {
                                       "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                                       "type": [
@@ -71642,6 +72351,14 @@
                                         }
                                       },
                                       "type": "object"
+                                    },
+                                    "pluginSkills": {
+                                      "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                                      "items": true,
+                                      "type": [
+                                        "array",
+                                        "null"
+                                      ]
                                     },
                                     "profile": {
                                       "anyOf": [
@@ -72675,6 +73392,13 @@
                         {
                           "additionalProperties": false,
                           "properties": {
+                            "allowPluginSkills": {
+                              "description": "Inert history from the experimental plugin build; never grants skill access.",
+                              "type": [
+                                "boolean",
+                                "null"
+                              ]
+                            },
                             "defaultModelRevision": {
                               "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                               "type": [
@@ -72808,6 +73532,14 @@
                                 }
                               },
                               "type": "object"
+                            },
+                            "pluginSkills": {
+                              "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                              "items": true,
+                              "type": [
+                                "array",
+                                "null"
+                              ]
                             },
                             "profile": {
                               "anyOf": [
@@ -74397,6 +75129,13 @@
                     "configuration": {
                       "additionalProperties": false,
                       "properties": {
+                        "allowPluginSkills": {
+                          "description": "Inert history from the experimental plugin build; never grants skill access.",
+                          "type": [
+                            "boolean",
+                            "null"
+                          ]
+                        },
                         "defaultModelRevision": {
                           "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                           "type": [
@@ -74530,6 +75269,14 @@
                             }
                           },
                           "type": "object"
+                        },
+                        "pluginSkills": {
+                          "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                          "items": true,
+                          "type": [
+                            "array",
+                            "null"
+                          ]
                         },
                         "profile": {
                           "anyOf": [
@@ -74979,6 +75726,14 @@
                       },
                       "type": "array"
                     },
+                    "hookRuns": {
+                      "description": "Historical records only: opening a session never schedules or delivers these hooks.",
+                      "items": true,
+                      "type": [
+                        "array",
+                        "null"
+                      ]
+                    },
                     "interactionRevision": {
                       "format": "uint64",
                       "minimum": 0,
@@ -75291,6 +76046,13 @@
                               "configuration": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "allowPluginSkills": {
+                                    "description": "Inert history from the experimental plugin build; never grants skill access.",
+                                    "type": [
+                                      "boolean",
+                                      "null"
+                                    ]
+                                  },
                                   "defaultModelRevision": {
                                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                                     "type": [
@@ -75424,6 +76186,14 @@
                                       }
                                     },
                                     "type": "object"
+                                  },
+                                  "pluginSkills": {
+                                    "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                                    "items": true,
+                                    "type": [
+                                      "array",
+                                      "null"
+                                    ]
                                   },
                                   "profile": {
                                     "anyOf": [
@@ -76457,6 +77227,13 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "description": "Inert history from the experimental plugin build; never grants skill access.",
+                            "type": [
+                              "boolean",
+                              "null"
+                            ]
+                          },
                           "defaultModelRevision": {
                             "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                             "type": [
@@ -76590,6 +77367,14 @@
                               }
                             },
                             "type": "object"
+                          },
+                          "pluginSkills": {
+                            "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                            "items": true,
+                            "type": [
+                              "array",
+                              "null"
+                            ]
                           },
                           "profile": {
                             "anyOf": [
@@ -78200,6 +78985,13 @@
                     "configuration": {
                       "additionalProperties": false,
                       "properties": {
+                        "allowPluginSkills": {
+                          "description": "Inert history from the experimental plugin build; never grants skill access.",
+                          "type": [
+                            "boolean",
+                            "null"
+                          ]
+                        },
                         "defaultModelRevision": {
                           "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                           "type": [
@@ -78333,6 +79125,14 @@
                             }
                           },
                           "type": "object"
+                        },
+                        "pluginSkills": {
+                          "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                          "items": true,
+                          "type": [
+                            "array",
+                            "null"
+                          ]
                         },
                         "profile": {
                           "anyOf": [
@@ -78782,6 +79582,14 @@
                       },
                       "type": "array"
                     },
+                    "hookRuns": {
+                      "description": "Historical records only: opening a session never schedules or delivers these hooks.",
+                      "items": true,
+                      "type": [
+                        "array",
+                        "null"
+                      ]
+                    },
                     "interactionRevision": {
                       "format": "uint64",
                       "minimum": 0,
@@ -79094,6 +79902,13 @@
                               "configuration": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "allowPluginSkills": {
+                                    "description": "Inert history from the experimental plugin build; never grants skill access.",
+                                    "type": [
+                                      "boolean",
+                                      "null"
+                                    ]
+                                  },
                                   "defaultModelRevision": {
                                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                                     "type": [
@@ -79227,6 +80042,14 @@
                                       }
                                     },
                                     "type": "object"
+                                  },
+                                  "pluginSkills": {
+                                    "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                                    "items": true,
+                                    "type": [
+                                      "array",
+                                      "null"
+                                    ]
                                   },
                                   "profile": {
                                     "anyOf": [
@@ -80260,6 +81083,13 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "description": "Inert history from the experimental plugin build; never grants skill access.",
+                            "type": [
+                              "boolean",
+                              "null"
+                            ]
+                          },
                           "defaultModelRevision": {
                             "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                             "type": [
@@ -80393,6 +81223,14 @@
                               }
                             },
                             "type": "object"
+                          },
+                          "pluginSkills": {
+                            "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                            "items": true,
+                            "type": [
+                              "array",
+                              "null"
+                            ]
                           },
                           "profile": {
                             "anyOf": [
@@ -82011,6 +82849,13 @@
                     "configuration": {
                       "additionalProperties": false,
                       "properties": {
+                        "allowPluginSkills": {
+                          "description": "Inert history from the experimental plugin build; never grants skill access.",
+                          "type": [
+                            "boolean",
+                            "null"
+                          ]
+                        },
                         "defaultModelRevision": {
                           "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                           "type": [
@@ -82144,6 +82989,14 @@
                             }
                           },
                           "type": "object"
+                        },
+                        "pluginSkills": {
+                          "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                          "items": true,
+                          "type": [
+                            "array",
+                            "null"
+                          ]
                         },
                         "profile": {
                           "anyOf": [
@@ -82593,6 +83446,14 @@
                       },
                       "type": "array"
                     },
+                    "hookRuns": {
+                      "description": "Historical records only: opening a session never schedules or delivers these hooks.",
+                      "items": true,
+                      "type": [
+                        "array",
+                        "null"
+                      ]
+                    },
                     "interactionRevision": {
                       "format": "uint64",
                       "minimum": 0,
@@ -82905,6 +83766,13 @@
                               "configuration": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "allowPluginSkills": {
+                                    "description": "Inert history from the experimental plugin build; never grants skill access.",
+                                    "type": [
+                                      "boolean",
+                                      "null"
+                                    ]
+                                  },
                                   "defaultModelRevision": {
                                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                                     "type": [
@@ -83038,6 +83906,14 @@
                                       }
                                     },
                                     "type": "object"
+                                  },
+                                  "pluginSkills": {
+                                    "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                                    "items": true,
+                                    "type": [
+                                      "array",
+                                      "null"
+                                    ]
                                   },
                                   "profile": {
                                     "anyOf": [
@@ -84071,6 +84947,13 @@
                       {
                         "additionalProperties": false,
                         "properties": {
+                          "allowPluginSkills": {
+                            "description": "Inert history from the experimental plugin build; never grants skill access.",
+                            "type": [
+                              "boolean",
+                              "null"
+                            ]
+                          },
                           "defaultModelRevision": {
                             "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                             "type": [
@@ -84204,6 +85087,14 @@
                               }
                             },
                             "type": "object"
+                          },
+                          "pluginSkills": {
+                            "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                            "items": true,
+                            "type": [
+                              "array",
+                              "null"
+                            ]
                           },
                           "profile": {
                             "anyOf": [
@@ -85266,6 +86157,13 @@
                 {
                   "additionalProperties": false,
                   "properties": {
+                    "allowPluginSkills": {
+                      "description": "Inert history from the experimental plugin build; never grants skill access.",
+                      "type": [
+                        "boolean",
+                        "null"
+                      ]
+                    },
                     "defaultModelRevision": {
                       "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                       "type": [
@@ -85399,6 +86297,14 @@
                         }
                       },
                       "type": "object"
+                    },
+                    "pluginSkills": {
+                      "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                      "items": true,
+                      "type": [
+                        "array",
+                        "null"
+                      ]
                     },
                     "profile": {
                       "anyOf": [
@@ -87161,6 +88067,13 @@
               "configuration": {
                 "additionalProperties": false,
                 "properties": {
+                  "allowPluginSkills": {
+                    "description": "Inert history from the experimental plugin build; never grants skill access.",
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
                   "defaultModelRevision": {
                     "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                     "type": [
@@ -87294,6 +88207,14 @@
                       }
                     },
                     "type": "object"
+                  },
+                  "pluginSkills": {
+                    "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                    "items": true,
+                    "type": [
+                      "array",
+                      "null"
+                    ]
                   },
                   "profile": {
                     "anyOf": [
@@ -87743,6 +88664,14 @@
                 },
                 "type": "array"
               },
+              "hookRuns": {
+                "description": "Historical records only: opening a session never schedules or delivers these hooks.",
+                "items": true,
+                "type": [
+                  "array",
+                  "null"
+                ]
+              },
               "interactionRevision": {
                 "format": "uint64",
                 "minimum": 0,
@@ -88055,6 +88984,13 @@
                         "configuration": {
                           "additionalProperties": false,
                           "properties": {
+                            "allowPluginSkills": {
+                              "description": "Inert history from the experimental plugin build; never grants skill access.",
+                              "type": [
+                                "boolean",
+                                "null"
+                              ]
+                            },
                             "defaultModelRevision": {
                               "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                               "type": [
@@ -88188,6 +89124,14 @@
                                 }
                               },
                               "type": "object"
+                            },
+                            "pluginSkills": {
+                              "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                              "items": true,
+                              "type": [
+                                "array",
+                                "null"
+                              ]
                             },
                             "profile": {
                               "anyOf": [
@@ -89221,6 +90165,13 @@
                 {
                   "additionalProperties": false,
                   "properties": {
+                    "allowPluginSkills": {
+                      "description": "Inert history from the experimental plugin build; never grants skill access.",
+                      "type": [
+                        "boolean",
+                        "null"
+                      ]
+                    },
                     "defaultModelRevision": {
                       "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                       "type": [
@@ -89354,6 +90305,14 @@
                         }
                       },
                       "type": "object"
+                    },
+                    "pluginSkills": {
+                      "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                      "items": true,
+                      "type": [
+                        "array",
+                        "null"
+                      ]
                     },
                     "profile": {
                       "anyOf": [
@@ -90393,6 +91352,13 @@
           {
             "additionalProperties": false,
             "properties": {
+              "allowPluginSkills": {
+                "description": "Inert history from the experimental plugin build; never grants skill access.",
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
               "defaultModelRevision": {
                 "description": "服务默认模型在提交时固定；不包含端点或凭据。",
                 "type": [
@@ -90526,6 +91492,14 @@
                   }
                 },
                 "type": "object"
+              },
+              "pluginSkills": {
+                "description": "Opaque snapshots are retained without resolving or loading plugin resources.",
+                "items": true,
+                "type": [
+                  "array",
+                  "null"
+                ]
               },
               "profile": {
                 "anyOf": [

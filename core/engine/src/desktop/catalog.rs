@@ -528,6 +528,8 @@ impl Engine {
         };
         drop(configured);
         let configuration = EffectiveConfig {
+            historical_allow_plugin_skills: None,
+            historical_plugin_skills: None,
             default_model_revision: None,
             options: ClientOptions::default(),
             selected_skills: None,
