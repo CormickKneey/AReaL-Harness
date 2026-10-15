@@ -46,6 +46,8 @@ Goal 模式由 `core/engine/src/goals` 管理持久目标、请求账本与跨 T
 
 交互式 TUI 与 Web 启动入口连接到同一部署服务；宿主独立于窗口存活，Store 保持单写者锁。Desktop Main 可直接复用发现与控制入口，见[本地服务契约](../api/local-service.md)。
 
+Core 的生命周期判定区分普通停止准入与取消后的执行结算。Desktop 仅叠加自身连接和在途操作条件，可信 Main 的共用生命周期入口负责观察、确认范围及原实例退出核验；启动恢复、更新和菜单停止复用此入口。取消意图贯穿公共服务宿主，Queue 输入持久保留；部分停止和未知回执保持恢复状态，不由客户端推断全局回滚。接口见[桌面 API](../api/desktop.md)。
+
 Task Mode 由 `core/engine/src/task_mode` 管理 Task/TaskRun、定时触发、独立 Channel 和 worker。它复用 Goal 账本与 Thread 准入，通信状态由 Core 持有；Inbox 是授权问题的查询投影。TaskRun worker 可跨协调 Turn，在独立 Session 中执行，仍由 Core 负责取消和结算。接口见 [Task 契约](../api/tasks.md)。
 
 定时任务管理界面复用普通 Messages 与 Composer，直接复用普通会话的 TaskResourcesPopover；ConversationStatusCard 增加任务描述与状态概要，不建立固定右栏。宿主 task-draft 在同一管理 Thread 中解释 Agent 回复并校验保存；Core 历史保持原样，界面只读取解码后的显示投影。创建收据和逐轮修改收据阻止重复处理；执行限制不由 Renderer 的权限菜单解除。管理 Thread 与执行 Thread 分离。定时 Task 的根 Thread 只定位执行环境；每个 Run 新建会话并冻结配置。Core 持有触发、离线补执行和忙碌跳过，经认证桌面 Host 通过 prepare/ready 提供配置及工具。暂停安排只影响后续触发，停止或恢复通过 Run 控制，审批超时保留受阻执行。

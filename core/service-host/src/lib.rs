@@ -238,10 +238,15 @@ async fn control(
                 if !cancel {
                     let status = rpc(service, "areal/server/status", json!({})).await?;
                     ensure!(
-                        status["restartSafe"] == true
-                            && status["activeGoals"] == json!([])
-                            && status["pendingQueueItems"] == 0
-                            && status["activeTasks"].as_u64().unwrap_or(0) == 0,
+                        if status.get("lifecycle").is_some() {
+                            status["lifecycle"]["version"] == 1
+                                && status["lifecycle"]["ifIdle"]["allowed"] == true
+                        } else {
+                            status["restartSafe"] == true
+                                && status["activeGoals"] == json!([])
+                                && status["pendingQueueItems"] == 0
+                                && status["activeTasks"].as_u64().unwrap_or(0) == 0
+                        },
                         "service is busy; wait for work to settle or stop with --cancel"
                     );
                 }

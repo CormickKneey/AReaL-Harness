@@ -93,7 +93,7 @@ async fn ensure_inner(
                 }
             }
         }
-        stop_unlocked(&spec.home, &spec.service_id, restart.unwrap_or(false)).await
+        stop_unlocked(&spec.home, &spec.service_id, restart.unwrap_or(false), None).await
             .with_context(|| format!("configuration requires a restart; wait for background work to finish, or run `{} --cancel` to explicitly cancel it", spec.restart_command()))?;
         if !reconnect {
             eprintln!("Restarting local service with the updated configuration");
@@ -355,11 +355,34 @@ pub async fn list(root: &Path) -> Result<Vec<Service>> {
 pub async fn stop(root: &Path, id: &str, cancel: bool) -> Result<Service> {
     let directory = storage::registry(root, id)?;
     let _startup = startup_lock(&directory).await?;
-    stop_unlocked(root, id, cancel).await
+    stop_unlocked(root, id, cancel, None).await
 }
 
-async fn stop_unlocked(root: &Path, id: &str, cancel: bool) -> Result<Service> {
+/// 在同一启动锁内校验已确认实例，不能取消换代后的服务。
+pub async fn stop_with_generation(
+    root: &Path,
+    id: &str,
+    cancel: bool,
+    generation: &str,
+) -> Result<Service> {
+    let directory = storage::registry(root, id)?;
+    let _startup = startup_lock(&directory).await?;
+    stop_unlocked(root, id, cancel, Some(generation)).await
+}
+
+async fn stop_unlocked(
+    root: &Path,
+    id: &str,
+    cancel: bool,
+    expected_generation: Option<&str>,
+) -> Result<Service> {
     let mut service = status_unlocked(root, id).await?;
+    if let Some(expected) = expected_generation {
+        ensure!(
+            service.identity.generation == expected,
+            "service generation changed; confirm the current instance before stopping"
+        );
+    }
     if service.state == State::Stopped {
         return Ok(service);
     }

@@ -94,6 +94,8 @@ TUI 断线会重新发现服务，故障清理完成后可启动新 generation�
 
 ## Web 与 Desktop 接入
 
+`areal service stop --expected-generation <generation>` 在启动锁内核对目标换代身份，失配时拒绝停止替代实例。GUI 的取消确认绑定原 Desktop、项目范围和 Core generation；最终公共宿主停止保持同一 cancel 意图。部分停止或未知回执保持恢复状态，不报告全局回滚、不自动重发；客户端须确认原实例登记撤回和进程退出。
+
 - `areal web` 在可信本地客户端读取 authFile，校验服务身份后申请一次性登录码，打开 `/ui` 自动换取独立 HttpOnly Cookie；长期 token 不交给网页。浏览器不启动进程、不读 authFile，也不访问控制 socket。链接过期、会话过期、重启或端口变化后重新运行 `areal web`；手工 token 登录保留为兜底。`--json` 只发现、不签发登录码。Rust 调用方可用 `browser_login_url(&Service)` 获取一次性 URL，不得记录或转发到不可信页面。接口与有效期见[浏览器登录](desktop.md#browser-auth)。
 - Desktop Main 用参数数组执行 `areal service ensure --json`，校验 `protocolVersion`，在 Main 读取 authFile 建立认证连接；只向 Renderer 暴露经过筛选的应用操作和状态。不要把完整服务描述或 token 交给 Renderer。
 - 重连重新发现并比较 generation，然后 initialize/initialized 和 thread/resume。先查 request/read 或权威状态再决定重试，不自动重放已提交操作。

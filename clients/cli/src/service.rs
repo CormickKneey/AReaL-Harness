@@ -51,6 +51,9 @@ pub enum ServiceCommand {
         target: ServiceTarget,
         #[arg(long)]
         cancel: bool,
+        /// 仅停止已确认的 generation；实例换代时拒绝。
+        #[arg(long)]
+        expected_generation: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -86,9 +89,20 @@ pub async fn execute(command: ServiceCommand) -> Result<()> {
         ServiceCommand::Status { target, .. } => serde_json::to_value(
             areal_local_service::status(&root, &target.resolve(&root).await?).await?,
         )?,
-        ServiceCommand::Stop { target, cancel, .. } => serde_json::to_value(
-            areal_local_service::stop(&root, &target.resolve(&root).await?, cancel).await?,
-        )?,
+        ServiceCommand::Stop {
+            target,
+            cancel,
+            expected_generation,
+            ..
+        } => {
+            let id = target.resolve(&root).await?;
+            let service = if let Some(generation) = expected_generation {
+                areal_local_service::stop_with_generation(&root, &id, cancel, &generation).await?
+            } else {
+                areal_local_service::stop(&root, &id, cancel).await?
+            };
+            serde_json::to_value(service)?
+        }
         ServiceCommand::Restart { local, cancel, .. } => serde_json::to_value(
             areal_local_service::restart(&LaunchSpec::resolve(&local)?, cancel).await?,
         )?,
