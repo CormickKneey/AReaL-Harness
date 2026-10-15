@@ -99,7 +99,20 @@ export class CoreTaskModel {
     if (method === 'turn/started' || method === 'turn/completed') {
       const index = turns.findIndex(turn => turn.id === params.turn.id);
       if (index < 0) turns.push(params.turn);
-      else turns[index] = { ...turns[index], ...params.turn, modelRetry: undefined };
+      else {
+        const old = turns[index];
+        // 开始回执可能晚于流式事件，不能用旧文本覆盖已存在的轮次。
+        if (params.turn.status === 'inProgress') return;
+        // 压缩后的 Turn 事件只带热历史尾部，省略条目不代表删除；完整读取才替换基线。
+        const items = [...old.items ?? []];
+        const positions = new Map(items.map((item, at) => [item.id, at]));
+        for (const item of params.turn.items ?? []) {
+          const at = positions.get(item.id);
+          if (at === undefined) { positions.set(item.id, items.length); items.push(item); }
+          else items[at] = item;
+        }
+        turns[index] = { ...old, ...params.turn, items, modelRetry: undefined };
+      }
     } else {
       const index = turns.findIndex(turn => turn.id === params.turnId);
       if (index < 0) return;

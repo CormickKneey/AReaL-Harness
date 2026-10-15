@@ -1,0 +1,93 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { CoreTaskModel } from "../packages/workbench/client/core-model.js";
+
+const user = (id, text) => ({ id, type: "userMessage", content: [{ type: "text", text }] });
+const agent = (id, text, phase = "commentary") => ({ id, type: "agentMessage", text, phase });
+function fixture() {
+  const model = new CoreTaskModel();
+  const previous = {
+    id: "previous",
+    status: "completed",
+    items: [user("old-user", "第一轮"), agent("old-agent", "第一轮回复", "final_answer")],
+  };
+  const items = [
+    {
+      ...user("user", "原始提问"),
+      content: [...user("user", "原始提问").content, { type: "image", url: "areal-blob:fixture" }],
+    },
+    agent("early", "先检查已有实现"),
+    { id: "tool", type: "dynamicToolCall", tool: "fs_read", status: "completed", success: true },
+    user("steer", "补充要求"),
+    agent("reply", "回复前缀"),
+  ];
+  model.replace({ id: "thread", turns: [previous, { id: "turn", status: "inProgress", items }] });
+  const event = (method, params = {}) =>
+    model.event(method, { threadId: "thread", turnId: "turn", ...params });
+  const turn = () => model.state.threads.thread.turns.at(-1);
+  return { model, previous, items, event, turn };
+}
+
+for (const status of ["completed", "interrupted", "failed"]) {
+  test(`compacted ${status} turn preserves user, steer, attachments and earlier agent messages`, () => {
+    const { model, previous, items, event, turn } = fixture();
+    event("areal/context/compacted");
+    const reply = agent("reply", "回复前缀与完整结尾", "final_answer");
+    const media = {
+      id: "media",
+      type: "agentMedia",
+      modality: "image",
+      media: { uri: "areal-blob:generated" },
+    };
+    const terminal = {
+      id: "turn",
+      status,
+      durationMs: 3210,
+      error: status === "failed" ? { message: "fixture failure" } : null,
+      items: [reply, media],
+    };
+    event("turn/completed", { turn: terminal });
+    assert.deepEqual(turn().items, [...items.slice(0, -1), reply, media]);
+    assert.equal(turn().status, status);
+    assert.equal(turn().durationMs, 3210);
+    assert.deepEqual(turn().error, terminal.error);
+    assert.deepEqual(model.state.threads.thread.turns[0], previous);
+    event("turn/completed", { turn: terminal });
+    assert.deepEqual(turn().items, [...items.slice(0, -1), reply, media], "重复终态不重复消息");
+    event("turn/started", { turn: { id: "turn", status: "inProgress", items: [items[0]] } });
+    assert.equal(turn().status, status, "迟到的开始回执不能回退终态");
+    assert.deepEqual(turn().items, [...items.slice(0, -1), reply, media]);
+  });
+}
+
+test("empty terminal suffix and repeated start preserve streamed messages", () => {
+  const { event, turn, items } = fixture();
+  event("turn/started", {
+    turn: { id: "turn", status: "inProgress", items: [items[0], agent("reply", "")] },
+  });
+  assert.deepEqual(turn().items, items);
+  event("turn/completed", { turn: { id: "turn", status: "interrupted", items: [] } });
+  assert.deepEqual(turn().items, items);
+});
+
+test("discarded model response stays removed across compaction and terminal updates", () => {
+  const { model, event, turn, items } = fixture();
+  event("areal/model/completionDiscarded", { itemIds: ["reply"] });
+  const replacement = agent("replacement", "重试后的完整回复", "final_answer");
+  event("item/started", { item: agent("replacement", "") });
+  event("item/agentMessage/delta", { itemId: "replacement", delta: replacement.text });
+  event("item/completed", { item: replacement });
+  event("turn/completed", { turn: { id: "turn", status: "completed", items: [replacement] } });
+  const expected = [...items.slice(0, -1), replacement];
+  assert.deepEqual(turn().items, expected);
+  const snapshot = structuredClone(model.state.threads.thread);
+  const recovered = new CoreTaskModel();
+  recovered.replace(snapshot);
+  assert.deepEqual(recovered.state.threads.thread.turns.at(-1).items, expected);
+  // 完整读取是权威基线，不能把已丢弃的流式文本从本地缓存重新拼回。
+  model.replace({
+    ...snapshot,
+    turns: [snapshot.turns[0], { ...turn(), items: [items[0], replacement] }],
+  });
+  assert.deepEqual(turn().items, [items[0], replacement]);
+});

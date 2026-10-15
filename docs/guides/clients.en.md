@@ -63,6 +63,8 @@ Web uses a neutral workbench layout: a collapsible 240px sidebar, a task heading
 
 The Web client owns appearance and navigation; task, permission, and execution state come from Core.
 
+Web and TUI retain displayed user inputs, follow-up instructions, and Agent replies after context compaction. Completion, interruption, and failure merge the message suffix carried by the event; refreshing or reconnecting restores complete history from Core. See the [Core API](../api/core.en.md#transport-and-sessions) for merge rules.
+
 TUI headers and Web show YOLO/ASK_PERMISSIONS and Core remains authoritative. TUI approvals show effective arguments; ↑/↓ selects deny/allow once/remember session/project, Enter submits, Esc denies and PgUp/PgDn scrolls arguments. Deny is selected initially. Web provides equivalent buttons. Forced approvals only offer single-use answers. `/permissions` displays mode, source and memory; `/permissions clear-session` or `clear-project` revokes remembered grants. See [configuration](configuration.en.md#permissions). `--prompt`/`--input-file` cannot answer interactive requests: they interrupt and return an error asking for interactive TUI/Web.
 
 ## TUI controls

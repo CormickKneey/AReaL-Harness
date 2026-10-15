@@ -204,6 +204,43 @@ function emit(client, method, params) {
   );
 }
 
+for (const status of ["completed", "interrupted", "failed"]) {
+  test(`compacted ${status} turn keeps every user and agent bubble`, () => {
+    const c = client();
+    const items = [
+      { id: "user", type: "userMessage", content: [{ type: "text", text: "原始提问" }] },
+      { id: "early", type: "agentMessage", text: "先检查实现", phase: "commentary" },
+      { id: "steer", type: "userMessage", content: [{ type: "text", text: "补充要求" }] },
+      { id: "answer", type: "agentMessage", text: "回复前缀" },
+    ];
+    c.run(`thread.turns[0].items = ${JSON.stringify(items)}; render()`);
+    emit(c, "areal/context/compacted", {});
+    const answer = { ...items.at(-1), text: "完整回复", phase: "final_answer" };
+    const terminal = { id: "turn", status, items: [answer] };
+    emit(c, "turn/completed", { turn: terminal });
+    const expected = [...items.slice(0, -1), answer];
+    assert.deepEqual(JSON.parse(c.run("JSON.stringify(thread.turns[0].items)")), expected);
+    assert.equal(c.get("history").children.length, 5, "四条消息和一条终态均可展示");
+    emit(c, "turn/completed", { turn: terminal });
+    emit(c, "turn/started", { turn: { id: "turn", status: "inProgress", items: [items[0]] } });
+    assert.equal(c.run("thread.turns[0].status"), status);
+    assert.deepEqual(JSON.parse(c.run("JSON.stringify(thread.turns[0].items)")), expected);
+  });
+}
+
+test("a repeated start receipt cannot overwrite the running agent text", () => {
+  const c = client();
+  emit(c, "item/agentMessage/delta", { itemId: "answer", delta: "已展示的回复" });
+  emit(c, "turn/started", {
+    turn: {
+      id: "turn",
+      status: "inProgress",
+      items: [{ id: "answer", type: "agentMessage", text: "" }],
+    },
+  });
+  assert.equal(c.run("thread.turns[0].items[0].text"), "已展示的回复");
+});
+
 test("waiting, thinking and body stay separate; refresh replaces the baseline and discard removes it", () => {
   const c = client();
   assert.match(c.get("progress").textContent, /正在等待模型回复/);

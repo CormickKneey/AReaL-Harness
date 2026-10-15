@@ -63,6 +63,8 @@ Web 采用中性灰工作台布局：240px 可收起侧栏、任务标题与视�
 
 外观与导航由 Web 客户端维护，任务、权限和执行状态以 Core 返回的数据为准。
 
+Web 与 TUI 在上下文压缩后仍保留已显示的用户输入、追加说明和 Agent 回复。轮次完成、停止或失败只合并事件携带的消息尾部；刷新或重连再从 Core 恢复完整历史。合并规则见 [Core API](../api/core.md#传输与会话)。
+
 TUI 顶部和 Web 显示 YOLO/ASK_PERMISSIONS，以 Core 状态为准。TUI 审批展示有效参数，↑/↓ 选择拒绝/允许一次/记住会话/项目，Enter 回答，Esc 拒绝，PgUp/PgDn 阅读参数；初始选中拒绝。Web 提供对应按钮。强制审批只提供单次回答。`/permissions` 查看模式、来源和记忆；`/permissions clear-session` 或 `clear-project` 撤销记忆。详见[配置](configuration.md#permissions)。`--prompt`/`--input-file` 无交互应答通道，遇到请求会中断并提示使用交互式 TUI/Web。
 
 ## TUI 操作
