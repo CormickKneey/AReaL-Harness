@@ -337,11 +337,31 @@ try {
       process.kill(launcher, "SIGKILL");
     }
     for (const pid of processes) await dead(pid);
-    lifecycleChecks.push({ fault: `${victim}-killed`, descendantsExited: processes });
+    const lifecycleCheck = { fault: `${victim}-killed`, descendantsExited: processes };
+    lifecycleChecks.push(lifecycleCheck);
     await faultStatus(current, "stopped");
     const previous = current;
-    current = await ensure();
+    // 恢复期间并发查询发现状态，探测不能临时抢走新宿主的实例锁。
+    const [replacement, ...statuses] = await Promise.all([
+      ensure(),
+      ...Array.from({ length: 3 }, () =>
+        cli(["service", "status", "--instance", previous.serviceId]),
+      ),
+    ]);
+    current = replacement;
     assert.notEqual(current.generation, previous.generation);
+    for (const status of statuses) {
+      assert.equal(status.serviceId, current.serviceId);
+      if (status.generation === previous.generation) assert.equal(status.state, "stopped");
+      else {
+        assert.equal(status.generation, current.generation);
+        assert.equal(status.state, "ready");
+      }
+    }
+    lifecycleCheck.concurrentStatuses = statuses.map(({ generation, state }) => ({
+      generation,
+      state,
+    }));
   }
   if (process.platform === "darwin") {
     setPhase("launcher-bridge-killed");

@@ -357,12 +357,12 @@ async fn finish(
     }
 }
 
-struct Terminal(Option<libc::termios>, bool);
+struct Terminal(Option<libc::termios>, bool, Option<libc::pid_t>);
 
 impl Terminal {
     fn capture(args: &Args) -> Self {
         if !args.tui || unsafe { libc::isatty(libc::STDIN_FILENO) } != 1 {
-            return Self(None, false);
+            return Self(None, false, None);
         }
         let mut saved = std::mem::MaybeUninit::uninit();
         let state = if unsafe { libc::tcgetattr(libc::STDIN_FILENO, saved.as_mut_ptr()) } == 0 {
@@ -373,12 +373,63 @@ impl Terminal {
         Self(
             state,
             args.prompt.is_none() && args.goal.is_none() && args.input_file.is_none(),
+            if cfg!(target_os = "macos") {
+                let foreground = unsafe { libc::tcgetpgrp(libc::STDIN_FILENO) };
+                (foreground > 0 && foreground == unsafe { libc::getpgrp() }).then_some(foreground)
+            } else {
+                None
+            },
         )
+    }
+
+    fn configure(&self, command: &mut TrustedCommand) {
+        if self.2.is_some() {
+            // 可信桥使用独立进程组；在实际 TUI 读取前交出终端，避免 SIGTTIN 启动竞态。
+            unsafe {
+                command.pre_exec(|| foreground_group(libc::getpgrp()));
+            }
+        }
+    }
+
+    fn restore_foreground(&mut self) -> std::io::Result<()> {
+        if let Some(group) = self.2 {
+            foreground_group(group)?;
+            self.2 = None;
+        }
+        Ok(())
+    }
+}
+
+fn foreground_group(group: libc::pid_t) -> std::io::Result<()> {
+    // 当前进程交接期间可能位于后台；仅屏蔽本线程 SIGTTOU，不能改动全局信号策略。
+    unsafe {
+        let mut blocked = std::mem::zeroed();
+        let mut previous = std::mem::zeroed();
+        libc::sigemptyset(&mut blocked);
+        libc::sigaddset(&mut blocked, libc::SIGTTOU);
+        let error = libc::pthread_sigmask(libc::SIG_BLOCK, &blocked, &mut previous);
+        if error != 0 {
+            return Err(std::io::Error::from_raw_os_error(error));
+        }
+        let result = if libc::tcsetpgrp(libc::STDIN_FILENO, group) == 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        };
+        let error = libc::pthread_sigmask(libc::SIG_SETMASK, &previous, std::ptr::null_mut());
+        result?;
+        if error != 0 {
+            return Err(std::io::Error::from_raw_os_error(error));
+        }
+        Ok(())
     }
 }
 
 impl Drop for Terminal {
     fn drop(&mut self) {
+        if let Err(error) = self.restore_foreground() {
+            eprintln!("Could not restore terminal foreground ownership: {error}");
+        }
         if let Some(state) = &self.0 {
             unsafe {
                 libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, state);
@@ -804,10 +855,12 @@ async fn supervise(
             last_log_cleanup = Instant::now();
         }
     }
-    let _terminal = Terminal::capture(args);
+    let mut terminal = Terminal::capture(args);
     let mut tui = if args.tui {
         let meta: serde_json::Value = serde_json::from_slice(&fs::read(metadata)?)?;
-        let mut command = tokio::process::Command::new(binary);
+        // owned TUI 与 Core 使用同一可信父进程、真实 PID 和退出回执路径。
+        let mut command = TrustedCommand::supervised(binary, &[])?;
+        terminal.configure(&mut command);
         command.args(tui_trajectory_args(args));
         command
             .arg("--endpoint")
@@ -850,7 +903,7 @@ async fn supervise(
         if let Some(value) = &args.initial_prompt {
             command.arg("--").arg(value);
         }
-        Some(Child::direct(command.spawn().context("start TUI")?))
+        Some(command.spawn().await.context("start TUI")?)
     } else {
         None
     };
@@ -878,6 +931,9 @@ async fn supervise(
         let status = finish(&mut child, 10, true, false).await?;
         ensure!(status.success(), "TUI exited with {status}");
     }
+    terminal
+        .restore_foreground()
+        .context("restore terminal foreground ownership")?;
     Ok(false)
 }
 

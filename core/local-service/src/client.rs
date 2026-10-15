@@ -44,7 +44,7 @@ async fn ensure_inner(
     std::fs::create_dir_all(data)?;
     let host_lock = data.join("service.lock");
     if !storage::available(&host_lock)? {
-        let service = status(&spec.home, &spec.service_id).await
+        let service = status_unlocked(&spec.home, &spec.service_id).await
             .context("service has an active owner but cannot be reached; inspect its log, do not start a second Core")?;
         ensure!(
             Some(&service.identity.workspace) == spec.args.workspace.as_ref(),
@@ -147,8 +147,15 @@ async fn ensure_inner(
                 diagnostic.chars().take(4000).collect::<String>()
             );
         }
-        if let Ok(service) = status(&spec.home, &spec.service_id).await
+        // 启动门已由本客户端持有；只询问控制端点，不能用独占锁探测抢在新宿主前取锁。
+        if let Ok(service) = request(
+            &spec.home,
+            &spec.service_id,
+            Request::Status { version: VERSION },
+        )
+        .await
             && service.state == State::Ready
+            && probe(&service).await.is_ok()
         {
             check_compatible(spec, &service, &directory)?;
             // 后台 wait 回收同进程内退出的子进程；客户端退出不会发送终止信号。
@@ -287,6 +294,13 @@ pub async fn request(root: &Path, id: &str, request: Request) -> Result<Service>
 
 pub async fn status(root: &Path, id: &str) -> Result<Service> {
     let directory = storage::registry(root, id)?;
+    // 外部状态探测与启动串行，避免暂持实例锁时被新宿主误认成另一个 owner。
+    let _startup = startup_lock(&directory).await?;
+    status_unlocked(root, id).await
+}
+
+async fn status_unlocked(root: &Path, id: &str) -> Result<Service> {
+    let directory = storage::registry(root, id)?;
     let mut record: Service = storage::read(&directory.join("service.json"))?;
     ensure!(
         record.identity.service_id == id && record.identity.protocol_version == VERSION,
@@ -345,7 +359,7 @@ pub async fn stop(root: &Path, id: &str, cancel: bool) -> Result<Service> {
 }
 
 async fn stop_unlocked(root: &Path, id: &str, cancel: bool) -> Result<Service> {
-    let mut service = status(root, id).await?;
+    let mut service = status_unlocked(root, id).await?;
     if service.state == State::Stopped {
         return Ok(service);
     }
@@ -543,6 +557,69 @@ pub async fn bind(root: &Path, workspace: &Path, data: &Path) -> Result<PathBuf>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn status_waits_for_startup_without_claiming_the_instance_lease() {
+        let root = tempfile::tempdir_in("/tmp").unwrap();
+        let id = "a".repeat(24);
+        let directory = storage::registry(root.path(), &id).unwrap();
+        storage::private_dir(&directory).unwrap();
+        let data = root.path().join("data");
+        storage::private_dir(&data).unwrap();
+        let service = Service {
+            identity: Identity {
+                protocol_version: VERSION,
+                service_id: id.clone(),
+                generation: "old-generation".into(),
+                workspace: root.path().join("workspace"),
+                data_dir: data.clone(),
+                config_fingerprint: "fixture".into(),
+            },
+            endpoint: "ws://127.0.0.1:1".into(),
+            web_url: "http://127.0.0.1:1/ui".into(),
+            auth_file: data.join("auth.json"),
+            log_file: directory.join("host.log"),
+            core_pid: 1,
+            host_pid: 2,
+            state: State::Stopping,
+        };
+        storage::write(&directory.join("service.json"), &service).unwrap();
+        let startup = startup_lock(&directory).await.unwrap();
+        let mut pending = Box::pin(status(root.path(), &id));
+        // 受控交错：新宿主尚未取得实例锁，status 必须等待启动门，不能抢锁。
+        assert!(futures_util::poll!(pending.as_mut()).is_pending());
+        let owner = storage::open_private(&data.join("service.lock"), true).unwrap();
+        owner.try_lock_exclusive().unwrap();
+        let listener = tokio::net::UnixListener::bind(directory.join("control.sock")).unwrap();
+        let expected = service.clone();
+        let host = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut line = String::new();
+            BufReader::new(&mut socket)
+                .read_line(&mut line)
+                .await
+                .unwrap();
+            assert!(matches!(
+                serde_json::from_str::<Request>(&line).unwrap(),
+                Request::Status { .. }
+            ));
+            let mut bytes = serde_json::to_vec(&Response::Ok {
+                service: Box::new(expected),
+            })
+            .unwrap();
+            bytes.push(b'\n');
+            socket.write_all(&bytes).await.unwrap();
+        });
+        drop(startup);
+        let observed = timeout(Duration::from_secs(5), pending)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(observed.identity, service.identity);
+        assert_eq!(observed.state, State::Stopping);
+        assert!(!storage::available(&data.join("service.lock")).unwrap());
+        host.await.unwrap();
+    }
 
     #[test]
     fn model_restart_preserves_nonrecoverable_reload_errors() {

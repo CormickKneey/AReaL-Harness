@@ -4,6 +4,11 @@ import os
 import json
 import subprocess
 import sys
+import fcntl
+import pty
+import select
+import termios
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tests"))
@@ -32,6 +37,70 @@ assert sys.argv[6:] == ['--resume=thread-id', '--prompt=-hello with spaces']
 print('fixture reply')
 """,
         )
+
+    def test_owned_tui_preserves_native_parent_foreground_and_terminal_restore(self):
+        for exit_code in [0, 3]:
+            with self.subTest(exit_code=exit_code):
+                self.check_owned_terminal(exit_code)
+
+    def check_owned_terminal(self, exit_code):
+        report = self.root / f"terminal-owner-{exit_code}.json"
+        restored = self.root / f"terminal-restored-{exit_code}"
+        self.fixture(
+            "interactive",
+            f"""
+import subprocess
+if sys.platform == 'darwin':
+    parent = subprocess.check_output(['/bin/ps', '-p', str(os.getppid()), '-o', 'comm='], text=True).strip()
+    assert 'python' in Path(parent).name.lower(), parent
+assert os.getpgrp() == os.tcgetpgrp(0), 'TUI is outside the terminal foreground group'
+print('terminal-ready', flush=True)
+assert sys.stdin.readline() == 'terminal-fixture\\n'
+Path({str(report)!r}).write_text(json.dumps({{'pid':os.getpid(),'parent':os.getppid(),'group':os.getpgrp()}}))
+sys.exit({exit_code})
+""",
+        )
+        master, slave = pty.openpty()
+        self.addCleanup(os.close, master)
+        self.addCleanup(os.close, slave)
+
+        def own_terminal():
+            os.setsid()
+            fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
+        wrapper = f"""
+import os,subprocess,sys,termios
+from pathlib import Path
+foreground = os.tcgetpgrp(0)
+result = subprocess.call(sys.argv[1:])
+assert os.tcgetpgrp(0) == foreground, 'launcher did not restore terminal foreground ownership'
+assert termios.tcgetattr(0)[3] & termios.ICANON, 'launcher left terminal in raw mode'
+Path({str(restored)!r}).write_text(str(foreground))
+sys.exit(result)
+"""
+        child = subprocess.Popen(
+            [sys.executable, "-I", "-S", "-c", wrapper, *self.command],
+            stdin=slave,
+            stdout=slave,
+            stderr=slave,
+            preexec_fn=own_terminal,
+        )
+        self.children.append(child)
+        output = bytearray()
+        sent = False
+        deadline = time.monotonic() + 10
+        while child.poll() is None and time.monotonic() < deadline:
+            if select.select([master], [], [], 0.05)[0]:
+                output.extend(os.read(master, 65536))
+            if not sent and b"terminal-ready" in output:
+                os.write(master, b"terminal-fixture\n")
+                sent = True
+        # launcher 对客户端失败统一返回 1；归还终端必须用独立回执验证。
+        self.assertEqual(child.poll(), 0 if exit_code == 0 else 1, output.decode(errors="replace"))
+        self.assertTrue(restored.exists(), output.decode(errors="replace"))
+        self.assertTrue(sent)
+        self.assertTrue(report.exists(), output.decode(errors="replace"))
+        self.assert_reaped()
 
     def test_preflight_reports_exit_status_and_empty_stderr(self):
         dispatcher = self.bin / "areal"
