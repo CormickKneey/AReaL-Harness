@@ -35,6 +35,8 @@ Composer 和队列 smoke 共用 `clients/gui/scripts/smoke-navigation.mjs` 的�
 
 模型选择 smoke 中，只有“应用模型配置”后的设置操作结算检查使用 180 秒期限，覆盖现有 150 秒应用 IPC、后续配置读取和界面结算。其它页面动作仍使用默认 15 秒。测试只提交一次应用，等待返回入口恢复后继续核对实际 Core 模型目录和请求，不用固定 sleep 或重放应用掩盖失败。
 
+桌面连接 smoke 的独立 CLI 配置读取、服务停止和状态查询复用产品 `executeCore` 启动桥；macOS 保留系统 Python 作为原生 Core 的实际父进程，测试不以 Node 直接启动替代产品入口。断线后仍检查原 Turn、订阅和请求计数，不重放提交。
+
 ## 使用统计历史同步
 
 `node --test scripts/analytics-history.test.cjs` 使用真实 `CoreClient` 和本地 WebSocket 协议 fixture，验证独立只读历史连接的 4 MiB 帧限制不会关闭项目主连接，以及启动时模型尚未连接、身份切换、历史去重、部分缓存、握手/RPC 超时和主连接关闭后的清理与部分历史告警。统计连接只进行初始化、能力握手和 `thread/read`，沿用客户端默认请求期限；同一项目只运行一次同步。大历史失败仍显示部分同步，不能据此认为完整历史已同步；该测试不替代真实 Core、原生 GUI、安装包或供应商验收。
