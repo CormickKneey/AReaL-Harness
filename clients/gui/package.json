@@ -62,7 +62,7 @@
     "design:dev": "pnpm --filter @areal/gui-renderer design:dev",
     "design:build": "pnpm --filter @areal/gui-renderer design:build",
     "test:design": "node scripts/design-system-smoke.mjs",
-    "verify:design": "node scripts/design-system-audit.mjs",
+    "verify:design": "node --test scripts/design-system-catalog.test.mjs && node scripts/design-system-audit.mjs",
     "test:regressions": "node --test scripts/browser-observation-privacy.test.cjs scripts/trajectory-polling.test.mjs scripts/builder-download.test.mjs",
     "test:proxy": "node --test scripts/system-proxy.test.mjs",
     "test:plugins": "node scripts/plugin-p0-smoke.mjs",

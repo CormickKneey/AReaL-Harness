@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "id": "conversation-flow",
+  "intent": "让后续对话页面引用统一的信息层级、完成收敛、展开选择和阅读位置规则；先固定动态复验输入",
+  "pattern": "P-CONVERSATION",
+  "target": "renderer/src/design-system/ConversationTimelinePreview.tsx",
+  "runtime": "component-preview",
+  "reference": {
+    "kind": "existing-code",
+    "path": "renderer/src/Messages.tsx",
+    "visualTarget": null
+  },
+  "rules": [
+    "CONV-OWNER-01",
+    "CONV-INPUT-01",
+    "CONV-CONTENT-01",
+    "CONV-GROUP-01",
+    "CONV-DISCLOSURE-01",
+    "CONV-READ-01",
+    "CONV-RESOURCE-01"
+  ],
+  "slots": {
+    "timeline": ["Messages", "TurnExecution", "ToolEvent", "CollapsibleText"],
+    "composer": ["ConversationComposer"],
+    "context": ["ToolEvent"]
+  },
+  "states": [
+    {
+      "id": "ready",
+      "condition": "已有合成历史，当前未执行；新消息尚未接受",
+      "expected": "保留历史身份和未发送输入；建议文字不进入已受理历史"
+    },
+    {
+      "id": "busy",
+      "condition": "接受一条新消息，依次投影短过程、具名工具运行/结果与正文增量",
+      "expected": "工具状态取自投影而非正文自述；过程和当前正文可分辨，保留事件顺序"
+    },
+    {
+      "id": "failed",
+      "condition": "独立投影明确失败的轮次或工具",
+      "expected": "失败、原始输出及适用动作可发现，不用final或收敛掩盖失败"
+    },
+    {
+      "id": "unknown",
+      "condition": "独立投影已提交但结果待核对的工具",
+      "expected": "保留原身份和核对入口；展开、刷新或返回最新不重新提交"
+    },
+    {
+      "id": "reading-history",
+      "condition": "目标助手正文仍增长，实际向上滚动至同一可见旧段落；至少两个后续增量",
+      "expected": "任务仍执行而阅读保持历史；记录可见锚点及正文变化，不仅比较scrollTop"
+    },
+    {
+      "id": "following-latest",
+      "condition": "显式返回最新；分别观察滚动过渡与实际到达，再推进至少两个正文增量",
+      "expected": "实际到达后继续跟随；不因点击成功或一次尺寸变化就判定到达"
+    },
+    {
+      "id": "tool-details",
+      "condition": "运行中人工展开具名工具，追加结果；完成后打开原父组及同一工具详情",
+      "expected": "默认与人工选择分开；相同身份的详情选择保留，新组不继承另一组状态"
+    },
+    {
+      "id": "completed",
+      "condition": "正常完成且有明确final，原始过程与活动已结算；另列未结算资源反例",
+      "expected": "常规过程默认进入可展开总组，final独立；原文顺序保留，异常和未结算资源可发现"
+    }
+  ],
+  "conditions": {
+    "themes": ["light", "dark"],
+    "fontSizes": [14, 18],
+    "widthModes": ["wide", "narrow"],
+    "reducedMotion": [true, false]
+  },
+  "invariants": [
+    "这些是观察检查点的组合，不是新建的Core状态枚举；执行、内容和阅读状态分别拥有",
+    "业务页面可填消息内容、真实资源和合法动作，不能另定分组、展开默认值、滚动阈值或主题数值",
+    "采用既有生产组件处理输入投影，不直接设置期望的follow/open结果，不新建历史store或页面DSL",
+    "合成工具投影仅验收renderer，真实执行另需Core/Runtime证据",
+    "参考数值0.5px不是产品容差；同状态比较需记录内容、字体、宽度、主题、DPR和运动条件",
+    "参考工具轮次、文字补采和完成帧独立关联，不拼成无缺口旅程"
+  ],
+  "evidence": {
+    "status": "pending",
+    "artifacts": [],
+    "gaps": [
+      "当前target仍是整份live/completed切换的静态预览；本合同是其动态扩展输入，不代表槽位已全部挂载或检查点已到达",
+      "Codex参考仅关闭列明观察；运行中人工工具展开跨完成保留是产品选择，仍需实现复验",
+      "尚无本题的动态生产组件运行、同状态视觉比较或真实桌面验收",
+      "conditions是后续代表条件范围，不是已运行矩阵；无正式Base冻结或用户视觉批准"
+    ]
+  }
+}

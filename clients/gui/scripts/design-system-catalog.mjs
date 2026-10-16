@@ -58,12 +58,22 @@ export async function verifyDesignCatalog({ write = false, root = guiRoot } = {}
   list(registry.patterns, "patterns");
   unique(registry.patterns.map(item => item.id), "pattern ids");
   const patterns = new Map(registry.patterns.map(item => [item.id, item]));
+  let rules = 0;
   for (const pattern of registry.patterns) {
     assert.ok(/^P-[A-Z]+$/.test(pattern.id), `invalid pattern id: ${pattern.id}`);
     for (const key of ["intent", "variation", "acceptance"]) assert.ok(text(pattern[key]), `${pattern.id}: missing ${key}`);
     for (const key of ["components", "slots", "states"]) unique(pattern[key], `${pattern.id}.${key}`);
     for (const id of pattern.components) assert.ok(components.has(id), `${pattern.id}: unknown component ${id}`);
     await source(root, pattern.reference);
+    if (pattern.rules !== undefined || pattern.ruleSource !== undefined) {
+      unique(pattern.rules, `${pattern.id}.rules`);
+      rules += pattern.rules.length;
+      const document = await source(root, pattern.ruleSource);
+      for (const id of pattern.rules) {
+        assert.ok(/^[A-Z]+(?:-[A-Z]+)+-\d{2}$/.test(id), `${pattern.id}: invalid rule id ${id}`);
+        assert.equal(document.split(`\`${id}\`：`).length - 1, 1, `${pattern.id}: rule ${id} needs one canonical definition`);
+      }
+    }
   }
   const base = registry.baseCandidate;
   assert.ok(base && text(base.id) && /^\d+\.\d+\.\d+$/.test(base.version), "baseCandidate needs id/version");
@@ -89,6 +99,11 @@ export async function verifyDesignCatalog({ write = false, root = guiRoot } = {}
     const pattern = patterns.get(surface.pattern);
     assert.ok(pattern, `${path}: unknown pattern ${surface.pattern}`);
     await source(root, surface.target);
+    if (pattern.rules !== undefined || surface.rules !== undefined) {
+      unique(surface.rules, `${path}.rules`);
+      for (const id of surface.rules) assert.ok(pattern.rules?.includes(id), `${path}: unknown rule ${id}`);
+      for (const id of pattern.rules ?? []) assert.ok(surface.rules.includes(id), `${path}: missing required rule ${id}`);
+    }
     assert.ok(["existing-code", "screenshot", "figma"].includes(surface.reference?.kind), `${path}: missing reference kind`);
     if (surface.reference.kind === "existing-code") await source(root, surface.reference.path);
     else assert.ok(text(surface.reference.visualTarget), `${path}: missing selected visual target`);
@@ -138,7 +153,7 @@ export async function verifyDesignCatalog({ write = false, root = guiRoot } = {}
     else stale.push(path);
   }
   assert.equal(stale.length, 0, `Design catalog is stale: ${stale.join(", ")}. Run pnpm --dir clients/gui design:sync; do not edit generated blocks.`);
-  return { components: components.size, patterns: patterns.size, tokens: tokenNames.length, surfaces: surfaces.length, outputs: outputs.size };
+  return { components: components.size, patterns: patterns.size, tokens: tokenNames.length, surfaces: surfaces.length, rules, outputs: outputs.size };
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   assert.ok(process.argv.slice(2).every(arg => ["--write", "--check"].includes(arg)), "usage: design-system-catalog.mjs [--write|--check]");

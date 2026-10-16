@@ -6,7 +6,7 @@
 
 ## 两类数据
 
-[registry.json](registry.json) 是系统级目录，拥有 Token 角色、组件 ID、模式 ID 和最低状态合同；不存数值副本。[surfaces/settings-controls.json](surfaces/settings-controls.json) 是当前预览的页面级合同，引用同一目录。[设置迁移合同](surfaces/settings-reflow.json)与[内容/决策合同](surfaces/decision-transfer.json)演示新内容对已有组合的引用。修改规范或增加公共组件时维护目录；普通页面变更维护所属合同，不复制全系统规则。
+[registry.json](registry.json) 是系统级目录，拥有 Token 角色、组件 ID、模式 ID 和最低状态合同；不存数值副本。[surfaces/settings-controls.json](surfaces/settings-controls.json) 是当前预览的页面级合同，引用同一目录。[设置迁移合同](surfaces/settings-reflow.json)与[内容/决策合同](surfaces/decision-transfer.json)演示新内容对已有组合的引用。[对话信息流合同](surfaces/conversation-flow.json)固定下一轮动态扩展的规则引用和检查点，目标目前仍为静态预览，运行证据保持pending。修改规范或增加公共组件时维护目录；普通页面变更维护所属合同，不复制全系统规则。
 
 ## 页面合同字段
 
@@ -17,11 +17,14 @@
 | pattern | 页面组合模式 | 必须在 registry 中 |
 | target / runtime | 实现入口与 component-preview / desktop / remote 边界 | 路径存在、runtime 合法；不代表已运行 |
 | reference | 已有生产参考，或选定 screenshot / figma 视觉目标 | 代码路径存在；视觉引用必须明确，不能用 nearby option 替代 |
+| rules（模式声明时必需） | 引用模式要求的全部规则ID；语义只在模式的ruleSource文档中维护 | ID无遗漏或虚构，规范有唯一定义；不证明JSX遵守 |
 | slots | 页面各槽位所用组件 ID | 模式槽位完整、ID 已登记；不是 JSX 执行器 |
 | states | 每个状态的到达条件及可观察结果 | 模式必需状态不能缺；实际交互由独立验收确认 |
 | conditions | 主题、字号、宽窄与 reduced-motion | 声明本次适用条件，不意味着跑过所有组合 |
 | invariants | 跨状态保持的约束 | 非空，语义由评审核对 |
 | evidence | pending / captured / compared、artifacts 与 gaps | 非 pending 需路径、SHA-256 和状态；元数据完整不等于视觉通过 |
+
+模式的`ruleSource`与`rules`在registry中成对登记；文档用单个`规则ID`后接中文冒号定义正文。页面合同完整引用ID，不复制规则文字。states可以是多条独立状态轴的验收检查点，不能据此新增Core枚举或全局状态机。
 
 所有路径相对 `clients/gui/`，截图等本地材料的路径仅放本地证据副本；公开合同保留稳定来源、采纳结论与缺口。当前样例明确标记 pending，不能作为 Codex 对齐或 AReaL 运行通过证明。
 

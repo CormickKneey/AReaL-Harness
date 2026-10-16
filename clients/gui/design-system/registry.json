@@ -324,10 +324,24 @@
         "ready",
         "busy",
         "failed",
-        "unknown"
+        "unknown",
+        "reading-history",
+        "following-latest",
+        "tool-details",
+        "completed"
       ],
       "variation": "消息类型、工具结果、合法动作与上下文",
-      "acceptance": "权威状态、内容层级与阅读意图独立；按信息流合同验收完成收敛、人工展开和返回最新；未知提交不重放"
+      "acceptance": "权威状态、内容层级与阅读意图独立；按信息流合同验收完成收敛、人工展开和返回最新；未知提交不重放",
+      "ruleSource": "design-system/patterns.md",
+      "rules": [
+        "CONV-OWNER-01",
+        "CONV-INPUT-01",
+        "CONV-CONTENT-01",
+        "CONV-GROUP-01",
+        "CONV-DISCLOSURE-01",
+        "CONV-READ-01",
+        "CONV-RESOURCE-01"
+      ]
     },
     {
       "id": "P-DECISION",
