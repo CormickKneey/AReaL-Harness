@@ -8,7 +8,7 @@
 | --- | --- | --- | --- |
 | P-SETTINGS 修改偏好或配置 | SettingsPage + SettingsSection + SettingsGroupCard + SettingsRow；[参考](../renderer/src/settings/DisplaySettings.tsx) | 分组、字段、文案与现有控件类型 | 标签/控件对齐，窄窗换行，值和反馈真实 |
 | P-RESOURCES 查找并管理资源 | SettingsSection + ActionButton + Feedback；[参考](../renderer/src/settings/PluginCenter.tsx) | 搜索、筛选、资源状态与详情 | 安装/连接状态分开；列表和详情职责清楚 |
-| P-CONVERSATION 阅读并推进任务 | Messages + TurnExecution + ToolEvent + ConversationComposer；[参考](../renderer/src/design-system/ConversationTimelinePreview.tsx) | 消息类型、工具结果、合法动作与上下文 | 草稿保留；过程与最终结果边界清楚；未知提交不重放 |
+| P-CONVERSATION 阅读并推进任务 | Messages + TurnExecution + ToolEvent + ConversationComposer；[参考](../renderer/src/design-system/ConversationTimelinePreview.tsx) | 消息类型、工具结果、合法动作与上下文 | 权威状态、内容层级与阅读意图独立；按信息流合同验收完成收敛、人工展开和返回最新；未知提交不重放 |
 | P-DECISION 回答或批准请求 | DecisionCard + ApprovalRequest + Feedback；[参考](../renderer/src/ApprovalRequest.tsx) | 请求正文及已有决策动作 | 关键参数可核对，动作和结果可达 |
 | P-DETAIL 阅读或编辑详情 | SettingsDialog + SettingsDisclosure + Feedback；[参考](../renderer/src/settings/common.tsx) | 表单字段、正文及受控 footer | 返回/关闭路径和焦点恢复；不叠多层弹窗 |
 | P-STATUS 了解状态并恢复 | Feedback + EmptySettings；[参考](../renderer/src/settings/ServiceStatusSettings.tsx) | 状态说明、必要详情及可行恢复入口 | 离线/失败/未知区分，静默刷新保留已确认内容 |
@@ -37,6 +37,39 @@ P-RESOURCES 尚无统一公共列表封装；registry 中的组件列表是可�
 `SET-CONTENT-01`：标签、说明、值和反馈沿用生产语义角色，行高随内容增长。控件尺寸的唯一规则见 [DESIGN_SYSTEM.md](../DESIGN_SYSTEM.md#按交互类型选择控件)，页面不自行选择紧凑档。选项过长时由共享 Select 的截断和完整菜单承担，不为页面另造控件。参考与本产品组合不同的布局需要有界内容验证后决定采纳或保留；单次参考截图不覆盖现有共享规则。
 
 [设置迁移题](exercises/settings-reflow.md)固定内容和反证，用于探索这两条规则；题目不自行创建新设计值。
+
+## 对话信息流
+
+以下是 P-CONVERSATION 的目标合同。参考依据见[信息流观察](references.md#对话信息流的动态观察)，复验题见[动态信息流题](exercises/conversation-flow.md)。该模式尚未准入 Base候选0.1.2；规则更新不表示现有生产组件已完成迁移或动态验收。
+
+`CONV-OWNER-01`：执行、内容展示和阅读意图分别拥有状态，不合成一个页面大枚举。
+
+| 事实 | 所有者 | 决定什么 |
+| --- | --- | --- |
+| 等待、执行、需确认、完成、失败与未知 | 原 Core/Runtime 权威投影 | 状态反馈与合法动作；不由文字、动画或折叠推断成功 |
+| 用户消息、过程、工具、最终回答与资源入口 | Messages / TurnExecution / ToolEvent | 保留身份、顺序与语义层级，组合展示而不改写原始历史 |
+| 跟随最新、回看历史、手动展开与返回 | Messages 既有本地阅读所有者及所属详情组件 | 滚动与展开选择；不提交、恢复或重放执行 |
+
+`CONV-INPUT-01`：若存在预测指令或建议，它属于未发送输入；出现建议不等于用户提交。采集回复增长时排除 Composer、用户提示和预测建议。业务页不得因建议自动提交或把建议插入已受理消息历史；不据本条规则新增预测功能。
+
+`CONV-CONTENT-01`：按 Core 的消息身份、顺序及 commentary / final_answer 展示。当前正文增量完整可读；工具开始、运行、结束与结果分别表达，不能用模型正文中的“已执行”冒充工具回执，也不能用命令等待代替正文增长证据。
+
+`CONV-GROUP-01`：本轮过程与最终回答是不同层级。正常完成且已有明确最终回答时，目标默认将过程文字和常规工具活动收入可展开的过程总组，最终回答独立可读；展开后保持原文与活动顺序。总组→活动摘要→具体命令输出各有明确身份与展开入口，不强制每条内容都套三层。需确认、失败、未知或尚在运行的资源应保持可发现的状态与合法动作，不能只因 final 出现就当作已结算内容隐藏。
+
+`CONV-DISCLOSURE-01`：默认展开状态和用户选择分别记录。在同一组/详情身份存续期间，不用无关增量或刷新重置人工选择；父组收起与子项展开值分别处理，重新打开父组应恢复其仍存续的详情状态。跨轮次或新总组不得继承不属于它的展开状态。这是本产品验收约束，不能仅凭一次参考的完成总组截图声称已验证。
+
+`CONV-READ-01`：跟随最新时，新内容可推进视口；用户主动向上阅读后，后续正文增长应保留其阅读锚点。展开、折叠及完成收敛改变内容高度时，区分布局引起的scrollTop调整与读者离开最新的动作，不因一次尺寸变化擅自恢复跟随。返回最新是显式阅读动作；等待可观察到的到达条件后才称跟随已恢复，点击返回成功不等于滚动动画已经结束。实现阈值与坐标留在原阅读所有者，不由页面按截图硬编码。
+
+`CONV-RESOURCE-01`：图片、网页来源、子代理等保留对应内容的轻量入口与真实状态；打开和返回应保持父聊天身份与阅读上下文。活动列表随主对话滚动，具体命令输出可沿用既有有界阅读器。网页摘要或引用不能当作独立网页面板已打开，子代理完成也不替代父任务完成。
+
+### 当前实现差异
+
+| 所有者 | 当前源码事实 | 迁移/验收缺口 |
+| --- | --- | --- |
+| Messages | 带phase的短commentary直接显示，过程总组主要用于legacy回复 | 与CONV-GROUP-01目标不同；后续在共享所有者迁移，不能由页面包一层CSS隐藏 |
+| TurnExecution / ToolEvent | 已有局部展开、图片与子对话入口 | 需在同身份增量、父组收敛及返回时复验人工选择与可达性 |
+| ConversationTimelinePreview | 切换整份live/completed fixture，并关闭回复占位 | 不证明接受消息→逐项追加→完成，也不证明真实聊天的阅读占位行为 |
+| Messages阅读逻辑 | 已有跟随、历史阅读和返回最新所有者 | 当前规范更新不代表动态题或真实桌面路径已通过 |
 
 ## 按钮与表面
 
