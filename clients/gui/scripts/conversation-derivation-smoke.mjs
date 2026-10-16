@@ -351,6 +351,10 @@ try {
   await page.getByRole("menuitem", { name: "新建项目", exact: true }).click();
   await until(s => s.projects[0]?.state?.connected, "project connection");
   projectId = (await state()).projects[0].id;
+  // 新草稿需显式选择目录中的模型，再开始本专项的来源对话。
+  await page.getByRole("button", { name: "模型", exact: true }).click();
+  await page.getByRole("radio", { name: "fixture", exact: true }).and(page.locator('[data-model-value="fixture/fixture"]')).click();
+  await page.keyboard.press("Escape");
   // 共享后台独立运行；在真实连接的返回边界记录 Core 已确认的创建键。
   await app.evaluate(({ app }, connectionPath) => {
     const read = process.getBuiltinModule("module").createRequire(app.getAppPath() + "/package.json");
@@ -412,22 +416,34 @@ try {
   await anchor.getByRole("button", { name: "从此轮创建聊天分支", exact: true }).click();
   let forkDialog = page.getByRole("dialog", { name: "从这里创建聊天分支", exact: true });
   await forkDialog.waitFor();
-  assert.equal(await forkDialog.getByText("在当前工作树中创建", { exact: true }).count(), 1);
+  assert.equal(await forkDialog.getByText("在当前工作区中创建", { exact: true }).count(), 1);
   assert.equal(await forkDialog.getByText("在新工作树中创建", { exact: true }).count(), 0);
-  const selectedTarget = await forkDialog.getByLabel("分支目标配置").inputValue();
+  assert.equal(await forkDialog.getByRole("button").count(), 1);
+  assert.equal(await forkDialog.locator("select, details, [data-slot=popover-description]").count(), 0);
+  await page.waitForFunction(() => {
+    const dialog = document.querySelector(".fork-target-dialog");
+    if (!dialog) return false;
+    const rect = dialog.getBoundingClientRect();
+    return Math.abs(rect.x + rect.width / 2 - innerWidth / 2) <= 1
+      && Math.abs(rect.y + rect.height / 2 - innerHeight / 2) <= 1;
+  });
+  await shot("01-fork-actions.png");
+  await page.keyboard.press("Escape");
+  await forkDialog.waitFor({ state: "hidden" });
+  await anchor.getByRole("button", { name: "从此轮创建聊天分支", exact: true }).click();
+  await forkDialog.waitFor();
+  await page.getByTestId("chat-input").click();
+  await forkDialog.waitFor({ state: "hidden" });
+  await anchor.getByRole("button", { name: "从此轮创建聊天分支", exact: true }).click();
+  await forkDialog.waitFor();
   await app.evaluate(() => { globalThis.__scfRejectNext = "workflow"; });
   await forkDialog.getByRole("button", { name: "创建分支", exact: true }).click();
   await forkDialog.getByRole("alert").filter({ hasText: "PROFILE_NOT_SUPPORTED" }).waitFor();
-  assert.equal(await forkDialog.getByLabel("分支目标配置").inputValue(), selectedTarget);
+  assert.equal(await forkDialog.getByRole("button", { name: "创建分支", exact: true }).isEnabled(), true);
   assert.equal(requests.length, beforeCreation.modelRequests);
   assert.equal(Object.keys((await state()).projects[0].state.threads).length, 1);
   await shot("01a-fork-config-refusal.png");
-  checks.push("AC15/61: actual Core rejects an outbound automatic Workflow target; Fork dialog preserves chosen config without a target or model request");
-  const confirmation = await forkDialog.innerText();
-  assert.match(confirmation, /共享当前工作区/);
-  assert.match(confirmation, /文件不会回滚/);
-  events.push({ confirmation });
-  assert.equal(await forkDialog.getByLabel("分支目标配置").inputValue(), "inherit");
+  checks.push("AC15/61: compact Fork offers one inherited-config action, dismisses via Escape/outside click, and preserves retry after actual Core Workflow rejection without a target or model request");
   await app.evaluate(() => { globalThis.__scfLoseNextForkResponse = true; });
   await forkDialog.getByRole("button", { name: "创建分支", exact: true }).click();
   await forkDialog.getByRole("button", { name: "核对受理结果", exact: true }).waitFor();
@@ -438,7 +454,8 @@ try {
   assert.equal(requests.length, beforeCreation.modelRequests);
   assert.equal(Object.keys((await state()).projects[0].state.threads).length, 2);
   await shot("01b-fork-response-unknown.png");
-  await forkDialog.getByRole("button", { name: "取消", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await forkDialog.waitFor({ state: "hidden" });
   await selectConversation(page, lostResult.resultThreadId);
   checks.push("AC27: discarded GUI response after a real committed Fork shows reconciliation instead of resend; exactly one idle target exists and manual navigation opens it");
   await page.locator(".messages .message-column").waitFor();
@@ -972,8 +989,9 @@ try {
   assert.equal(await page.getByTestId("chat-input").innerText(), unknownDraft);
   await shot("10-unknown-source-refusal.png");
   await page.getByRole("menuitem", { name: "在此轮之前分支", exact: true }).click();
-  await forkDialog.getByText(/此轮之前冻结历史/).waitFor();
-  await forkDialog.getByRole("button", { name: "取消", exact: true }).click();
+  await forkDialog.getByRole("button", { name: "创建分支", exact: true }).waitFor();
+  await page.keyboard.press("Escape");
+  await forkDialog.waitFor({ state: "hidden" });
   assert.equal(requests.length, preRestart.requests);
   checks.push("AC21: real restarted Core restores persisted UNKNOWN; GUI disables the unsafe boundary, offers source inspection, retains the draft and leaves the earlier boundary available without execution");
   await selectConversation(page, rawThreadId);
@@ -995,7 +1013,8 @@ try {
     await shot("11-corrupt-history-refusal.png");
     events.push({ corruptSnapshotFixture: { path: snapshotPath, error: await forkDialog.getByRole("alert").innerText(), restored: true } });
   } finally { await writeFile(snapshotPath, validSnapshotBytes); }
-  await forkDialog.getByRole("button", { name: "取消", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await forkDialog.waitFor({ state: "hidden" });
   checks.push("AC11: actual frozen-history corruption is refused in the Fork dialog without a target or execution; source draft survives and original snapshot bytes are restored");
   assert.deepEqual(pageErrors, []);
   passed = true;
@@ -1048,6 +1067,7 @@ try {
     windowBounds, videoPath, videoSegments: [{ path: videoPath, process: "initial Electron run", continuous: true },
       { path: restartVideoPath, process: "restarted Electron run", continuous: true }],
     framePredicates: {
+      "01-fork-actions.png": "compact Fork with one current-workspace action and no explanation, target configuration or cancel button",
       "01-source.png": "two completed source Turns with persisted head and future",
       "01a-fork-config-refusal.png": "real Core Workflow rejection stays in the Fork dialog without a target or model request",
       "01b-fork-response-unknown.png": "one real committed Fork survives lost GUI response; dialog offers receipt reconciliation and no resend",

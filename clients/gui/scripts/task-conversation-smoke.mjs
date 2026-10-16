@@ -29,6 +29,7 @@ const blockedOnce=new Set();
 const text=message=>typeof message.content==='string'?message.content:(message.content??[]).map(part=>part.text??'').join('\n');
 const model=createServer(async(request,response)=>{
  try {
+  assert.equal(request.headers.authorization,'Bearer task-fixture-key','every scheduled model request carries its configured credential');
   let raw='';for await(const chunk of request)raw+=chunk;
   const body=JSON.parse(raw),messages=body.messages??[];
   modelRequests.push(body);
@@ -74,10 +75,10 @@ const model=createServer(async(request,response)=>{
  }catch(error){errors.push(error.stack);response.destroy(error);}
 });
 await new Promise(resolve=>model.listen(0,'127.0.0.1',resolve));
-await writeFile(join(userHome,'.areal/config.toml'),`schema_version=1\n[model]\nprovider="fixture"\nname="fixture"\n[model.providers.fixture]\nprotocol="chat-completions"\nendpoint="http://127.0.0.1:${model.address().port}/v1/chat/completions"\n[permissions]\nmode="YOLO"\nask=["fs_create"]\n`);
+await writeFile(join(userHome,'.areal/config.toml'),`schema_version=1\n[model]\nprovider="fixture"\nname="fixture"\n[model.providers.fixture]\nprotocol="chat-completions"\napi_key_env="AREAL_CREDENTIAL_task_fixture"\nendpoint="http://127.0.0.1:${model.address().port}/v1/chat/completions"\n[permissions]\nmode="YOLO"\nask=["fs_create"]\n`);
 const deployment=join(scratch,'desktop.json');
 await writeFile(deployment,JSON.stringify({profiles:[{id:'standard',revision:'v1',displayName:'Fixture',instructions:'Complete the requested fixture.',approvalTools:['fs_create']}]}));
-const env={...process.env,AREAL_GUI_USER_DATA:join(scratch,'electron'),AREAL_CORE_HOME:join(scratch,'core'),AREAL_CORE_USER_HOME:userHome,AREAL_HARNESS_SERVICE_HOME:join(scratch,'registry'),AREAL_CORE_DESKTOP_CONFIG:deployment,AREAL_CORE_BIN:binary};
+const env={...process.env,AREAL_GUI_USER_DATA:join(scratch,'electron'),AREAL_CORE_HOME:join(scratch,'core'),AREAL_CORE_USER_HOME:userHome,AREAL_HARNESS_SERVICE_HOME:join(scratch,'registry'),AREAL_CORE_DESKTOP_CONFIG:deployment,AREAL_CORE_BIN:binary,AREAL_CREDENTIAL_task_fixture:'task-fixture-key'};
 for(const key of ['AREAL_CORE_WORKSPACE','AREAL_CORE_CONFIG','AREAL_HARNESS_HOME','AREAL_HARNESS_CONFIG'])delete env[key];
 let app,page,pid,workspacePid,taskCwd,passed=false;
 async function until(fn,label,timeout=60000){const end=Date.now()+timeout;while(Date.now()<end){const value=await fn();if(value)return value;await new Promise(resolve=>setTimeout(resolve,150));}throw Error(`Timeout: ${label}`);}

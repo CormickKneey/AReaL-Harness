@@ -155,7 +155,7 @@ class CoreBackend {
         instanceId: live?.service?.serviceId ?? null, connectionGeneration: live?.connectionGeneration ?? 0 },
         state: state && live.resourceInitializing ? {...state, connected:false} : state,
         pending: (live?.pending ?? []).filter(entry => !isRemoteControl(entry)).map(entry => ({ ...entry, awaitingResponse: this.awaitingResponses.has(entry) })), outcomes: live?.outcomes ?? {}, models: this.providers.catalog(live?.models ?? [], live), profiles: live?.profiles ?? [],
-        configurations: live?.configurations ?? {},
+        defaultProfile: live?.resourceProfile ?? this.defaultProfile ?? null, configurations: live?.configurations ?? {},
         summaries: live?.summaries ?? [], summariesLoaded: live?.summariesLoaded === true, error: live?.error ?? null };
     }) };
   }

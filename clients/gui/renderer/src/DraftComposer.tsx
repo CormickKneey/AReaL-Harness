@@ -1,4 +1,4 @@
-import { profileKey } from "./ProfileDetails.js";
+import { resolveDraftProfile } from "./ProfileDetails.js";
 import { useApplicationPreferences } from "./settings/applicationPreferences.js";
 import { ComposerModelMenu, composerModelOption } from "./ComposerModelMenu.js";
 import { ComposerPermissionMenu } from "./ComposerPermissionMenu.js";
@@ -74,15 +74,13 @@ export function DraftComposer({
   const [permission, setPermission] = useState<PermissionMode>(() => localStorage.getItem(`${key}:permission`) === "ask" ? "ask" : "auto");
   const [plan, setPlan] = useState(() => localStorage.getItem(`${key}:plan`) === "true");
   const [profileSelection, setProfileSelection] = useState(() => localStorage.getItem(`${key}:profile`) ?? "");
-  const chosenProfile = profileSelection
-    ? project.profiles.find((p: Data) => profileKey(p) === profileSelection)
-    : project.profiles.find((p: Data) => p.id === "areal-standard") ?? project.profiles[0];
+  const chosenProfile = resolveDraftProfile(project, profileSelection);
   const [menuAnchor, setMenuAnchor] = useState<HTMLDivElement | null>(null);
   const [mcpOpen, setMcpOpen] = useState(false);
   const [goalMode, setGoalMode] = useState(() => localStorage.getItem(`${key}:goal`) === "true");
   const changeGoalMode = (enabled: boolean) => { setGoalMode(enabled); localStorage.setItem(`${key}:goal`, String(enabled)); api.current?.focus(); };
   const [efforts, setEfforts] = useState<Record<string, string>>(() => localStorage.getItem(`${key}:model`) !== null ? JSON.parse(localStorage.getItem(`${key}:efforts`) ?? "{}") : {});
-  const unavailableProfile = !!profileSelection && !chosenProfile;
+  const unavailableProfile = !!(profileSelection || project.defaultProfile) && !chosenProfile;
   const setPlanMode = (enabled: boolean) => { setPlan(enabled); localStorage.setItem(`${key}:plan`, String(enabled)); };
   const [model, setModel] = useState<string | null>(() => localStorage.getItem(`${key}:model`));
   const modelValue = (item: Data) => `${item.providerId ?? ""}/${item.modelId}`;
@@ -152,10 +150,8 @@ export function DraftComposer({
     let creationAttempted = false;
     try {
       const owner = prepareProject ? await prepareProject() : project;
-      const profile = profileSelection
-        ? owner.profiles.find((p: Data) => profileKey(p) === profileSelection)
-        : owner.profiles.find((p: Data) => p.id === "areal-standard") ?? owner.profiles[0];
-      if (profileSelection && !profile) throw new Error("当前任务配置不可用，输入已保留。");
+      const profile = resolveDraftProfile(owner, profileSelection);
+      if ((profileSelection || owner.defaultProfile) && !profile) throw new Error("当前任务配置不可用，输入已保留。");
       const chosenModel = owner.models.find((item: Data) => modelValue(item) === effectiveModel);
       if (!chosenModel || chosenModel.available === false || chosenModel.modelId !== currentModel?.modelId) {
         throw new Error("所选模型已不可用，输入已保留，请重新选择模型。");
@@ -171,7 +167,7 @@ export function DraftComposer({
       const result = await action("create", {
         projectId: owner.id,
         parameters: { ...currentModel.parameters, ...(effort ? { reasoningEffort: effort } : {}) },
-        ...(profile
+        ...(profileSelection && profile
           ? { profile: { id: profile.id, revision: profile.revision } }
           : {}),
         ...(chosenModel.providerId
@@ -187,8 +183,12 @@ export function DraftComposer({
       // Show the accepted task immediately, including while the first model request waits.
       if (mounted.current) void onOpen(owner.id, result.threadId);
       // Configure before the first turn; on failure the accepted task keeps its draft for explicit retry.
-      if (!profile?.readOnly && (permission !== "auto" || plan)) {
-        await action("configure", { projectId: owner.id, threadId: result.threadId, options: planModeOptions(plan, permissionOptions(permission)) });
+      if (permission !== "auto" || plan) {
+        const accepted = await readAction("manage", { projectId: owner.id, threadId: result.threadId, operation: "inspect" });
+        if (!accepted.configuration) throw new Error("无法读取新会话配置，输入已保留。");
+        if (!accepted.configuration.profile?.readOnly) {
+          await action("configure", { projectId: owner.id, threadId: result.threadId, options: planModeOptions(plan, permissionOptions(permission)) });
+        }
       }
       if (goalMode) {
         const latest = await action("manage", { projectId: owner.id, threadId: result.threadId, operation: "goal" });

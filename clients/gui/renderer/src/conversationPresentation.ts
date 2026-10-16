@@ -24,6 +24,7 @@ const specificActions: Readonly<Record<string, string>> = {
   agent_wait: "等待子智能体", agent_wait_any: "等待子智能体",
 };
 function toolAction(item: Data): string {
+  if (item.status === "completed" && item.success === true && item.contentItems?.some((part: Data) => part.type === "arealMedia" && part.modality === "image" && part.media?.uri)) return "查看图片";
   if (Object.hasOwn(specificActions, item.tool)) return specificActions[item.tool];
   const { kind } = toolPresentation(item);
   return kind === "tool" && item.tool ? `调用 ${item.tool}` : categoryLabels[kind];

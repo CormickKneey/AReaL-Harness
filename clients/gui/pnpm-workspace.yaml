@@ -4,6 +4,8 @@ packages:
   - packages/*
 
 verifyDepsBeforeRun: error
+# Keep installs and verification on the same layout in local shells and CI.
+enableGlobalVirtualStore: false
 allowBuilds:
   '@google/genai': false
   electron: true

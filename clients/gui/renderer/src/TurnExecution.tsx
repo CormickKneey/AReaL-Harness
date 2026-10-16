@@ -28,6 +28,8 @@ export function TurnExecution({ items, turn, project, threadId, renderItem, acti
     ? toolPresentation(currentTool).detail : undefined;
   const unconfirmed = tools.some(item => toolPresentation(item).status === "结果待确认");
   const rows = timelineItems(items);
+  const featured = (item: Data) => !!spawnedAgent(item) || item.type === "dynamicToolCall" && item.status === "completed" && item.success === true &&
+    item.contentItems?.some((part: Data) => part.type === "arealMedia" && part.modality === "image" && part.media?.uri);
   const reasoningCount = items.filter(item => item.type === "reasoning").length;
   const counts = [reasoningCount && `${reasoningCount} 段思考`, tools.length && `${tools.length} 项活动`].filter(Boolean).join(" · ");
   const hasDetails = rows.length > 0;
@@ -58,8 +60,8 @@ export function TurnExecution({ items, turn, project, threadId, renderItem, acti
     </button> : running ? <div className="execution-summary">{statusLabel}</div> : null);
   return <div className="turn-execution" data-testid="turn-execution">
     {heading}
-    <div id={id} className={direct ? "execution-details execution-single" : "execution-details"} data-expanded={expanded} data-agent-entries={rows.some(item => !!spawnedAgent(item)) || undefined} data-activity-list={rows.length > 1}>
-      {rows.map(item => <div key={item.id} className="execution-row" hidden={!expanded && !spawnedAgent(item)}>{item.type === "reasoningGroup"
+    <div id={id} className={direct ? "execution-details execution-single" : "execution-details"} data-expanded={expanded} data-featured-entries={rows.some(featured) || undefined} data-activity-list={rows.length > 1}>
+      {rows.map(item => <div key={item.id} className="execution-row" hidden={!expanded && !featured(item)}>{item.type === "reasoningGroup"
         ? <ReasoningGroup items={item.items} activity={singleReasoning && running ? label : undefined} animate={singleReasoning && running && canAnimate} />
         : renderItem(item, { animate: canAnimate && expanded, onDisclosureChange })}</div>)}
     </div>

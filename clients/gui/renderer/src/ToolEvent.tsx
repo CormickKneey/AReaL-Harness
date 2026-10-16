@@ -1,7 +1,8 @@
 // Adapted from ZCode ToolSummaryRow / ToolLayout; Codex reference guides presentation.
 // Core owns all outcomes.
 import { useEffect, useId, useState } from "react";
-import { AgentAvatar, agentName, spawnedAgent } from "./AgentIdentity.js";
+import { AgentAvatar, agentName, agentStatus, spawnedAgent } from "./AgentIdentity.js";
+import { ImageIcon } from "lucide-react";
 import { ActivityIcon } from "./ActivityIcon.js";
 import { toolPresentation } from "./conversationPresentation.js";
 import { CommandDetails } from "./CommandDetails.js";
@@ -12,20 +13,27 @@ import { DiffViewer } from "./components/ui/diff-viewer.js";
 import { MessageActions } from "./MessageActions.js";
 import { SentAttachment } from "./MessageAttachment.js";
 import type { Action, Data } from "./services.js";
-export function ToolEvent({ item, onFile, onAgent, turnId, readTurnReview, action, projectId, threadId, animate = false, onDisclosureChange }: {
+export function ToolEvent({ item, onFile, onAgent, agents, turnId, readTurnReview, action, projectId, threadId, animate = false, onDisclosureChange }: {
   animate?: boolean; onDisclosureChange?: (open: boolean) => void;
-  item: Data; onAgent?: (id: string) => void; onFile?: (path: string) => void; turnId?: string;
+  item: Data; onAgent?: (id: string) => void; agents?: Data; onFile?: (path: string) => void; turnId?: string;
   readTurnReview?: (turnId: string, itemId?: string) => Promise<Data>;
   action?: Action; projectId?: string; threadId?: string;
 }) {
   const [open, setOpen] = useState(false);
   const toggle = () => { const next = !open; setOpen(next); onDisclosureChange?.(next); };
   const [diffOpen, setDiffOpen] = useState(false);
+  const [imagesOpen, setImagesOpen] = useState(false);
   const [review, setReview] = useState<{ itemId: string; diff?: string; file?: { path: string; additions: number; deletions: number; beforeText: string; afterText: string }; error?: string }>();
   const recordId = useId();
   const diffId = useId();
+  const imagesId = useId();
   const view = toolPresentation(item);
   const childId = onAgent && spawnedAgent(item);
+  const child = childId && agents?.[childId];
+  const ownedChild = child?.id === childId && child?.parentThreadId === threadId ? child : undefined;
+  const childTitle = ownedChild?.preview || (childId ? agentName(childId) : "");
+  const images: Data[] = item.status === "completed" && item.success === true
+    ? (item.contentItems ?? []).filter((part: Data) => part.type === "arealMedia" && part.modality === "image" && part.media?.uri) : [];
   const isCommand = ["run_command", "verify_command", "read_process", "terminate_process"].includes(item.tool);
   const file = onFile && !view.failed && !view.running ? verifiedFileReceipts([item]).values().next().value : undefined;
   const readOnly = item.tool === "fs_read";
@@ -47,7 +55,12 @@ export function ToolEvent({ item, onFile, onAgent, turnId, readTurnReview, actio
   return (
     <div className="tool-event" data-tool-id={item.id} data-tool-status={view.status}>
       {childId ? <div className="agent-spawn-row">
-        <button type="button" className="agent-spawn-link" aria-label={`打开 ${childId} 子对话`} title={agentName(childId)} onClick={() => onAgent?.(childId)}><AgentAvatar id={childId} size={14} /><span>已创建 1 个智能体</span></button>
+        <button type="button" className="agent-spawn-link" aria-label={`打开 ${childId} 子对话`} title={childTitle} onClick={() => onAgent?.(childId)}><AgentAvatar id={childId} size={14} /><span className="agent-spawn-title">{childTitle}</span><span className="agent-spawn-status">{agentStatus(ownedChild?.turns?.at(-1)?.status)}</span></button>
+        <button type="button" className="agent-spawn-record" aria-label="查看工具原始记录" aria-expanded={open} aria-controls={recordId} onClick={toggle}><ActivityIcon kind="chevron" size={14} className={open ? "tool-chevron open" : "tool-chevron"} /></button>
+      </div> : images.length && action && projectId && threadId ? <div className="tool-summary-row tool-image-row">
+        <button type="button" className="tool-summary-row" aria-expanded={imagesOpen} aria-controls={imagesId} onClick={() => { setImagesOpen(!imagesOpen); onDisclosureChange?.(!imagesOpen); }}>
+          <ImageIcon size={16} aria-hidden="true" /><span>已查看 {images.length} 张图片</span><ActivityIcon kind="chevron" size={14} className={imagesOpen ? "tool-chevron open" : "tool-chevron"} />
+        </button>
         <button type="button" className="agent-spawn-record" aria-label="查看工具原始记录" aria-expanded={open} aria-controls={recordId} onClick={toggle}><ActivityIcon kind="chevron" size={14} className={open ? "tool-chevron open" : "tool-chevron"} /></button>
       </div> : file ? <div className="tool-summary-row tool-file-row">
         <ActivityIcon kind={readOnly ? "read" : "edit"} />
@@ -77,6 +90,9 @@ export function ToolEvent({ item, onFile, onAgent, turnId, readTurnReview, actio
         </span>
         <ActivityIcon kind="chevron" size={14} className={open ? "tool-chevron open" : "tool-chevron"} />
       </button>}
+      {images.length > 0 && action && projectId && threadId && <div id={imagesId} className="tool-image-preview" hidden={!imagesOpen}>
+        {imagesOpen && images.map(part => <SentAttachment key={part.media.uri} part={{ type: "image", uri: part.media.uri, name: "工具图片" }} projectId={projectId} threadId={threadId} action={action} />)}
+      </div>}
       {file && diffOpen && current && !current.error && <div className="tool-file-diff" id={diffId} role="region" aria-label="本次文件更改">
         <div className="tool-file-diff-header">
           <Button variant="ghost" className="tool-file-link" aria-label={`打开 ${file.path}`} title={file.path} onClick={() => onFile?.(file.path)}>{file.path.split("/").at(-1)}</Button>
@@ -93,7 +109,7 @@ export function ToolEvent({ item, onFile, onAgent, turnId, readTurnReview, actio
           <div className="tool-event-heading tool-record-heading"><span>{item.tool}</span><ToolCallDuration item={item} /></div>
             <pre aria-label="工具参数">{JSON.stringify(item.arguments, null, 2)}</pre>
             <pre aria-label="工具结果">{(item.contentItems ?? []).map((c: Data) => c.text ?? "").join("\n") || (view.running ? "等待工具输出…" : "无文本输出")}</pre>
-            {action && projectId && threadId && (item.contentItems ?? []).filter((c: Data) => c.type === 'arealMedia' && c.modality === 'image').map((c: Data) =>
+            {!images.length && action && projectId && threadId && (item.contentItems ?? []).filter((c: Data) => c.type === 'arealMedia' && c.modality === 'image').map((c: Data) =>
               <SentAttachment key={c.media.uri} part={{ type: 'image', uri: c.media.uri, name: '页面截图' }} projectId={projectId} threadId={threadId} action={action} />)}
             {item.execution?.exitCode != null && <small>退出码 {item.execution.exitCode}</small>}
         </div>

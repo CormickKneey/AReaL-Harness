@@ -1,3 +1,4 @@
+import { SettingsDisclosure } from "./SettingsDisclosure.js";
 import { useEffect, useState } from "react";
 import { Button } from "../components/ui/button.js";
 import { Input } from "../components/ui/input.js";
@@ -60,8 +61,7 @@ export function PluginAuthConfiguration({ pluginId, server, digest, disabled, co
       else {setMessage("认证配置已确认保存。");onSaved();}
     } catch (cause) {setError((cause as Error).message);} finally {setBusy(false);}
   };
-  return <details>
-    <summary>认证配置</summary>
+  return <SettingsDisclosure title={<> 认证配置 </>}>
     <p>先断开插件。凭据通过系统安全存储保存，插件只收到认证所需的请求凭据。</p>
     {requirements.clientSecret && <label>OAuth 客户端秘密<Input type="password" autoComplete="new-password" value={clientSecret} disabled={blocked} onChange={event=>setClientSecret(event.target.value)} /></label>}
     {requirements.privateKey && <>
@@ -76,5 +76,5 @@ export function PluginAuthConfiguration({ pluginId, server, digest, disabled, co
     <Feedback error={error} message={message} />
     <Button variant="outline" disabled={blocked || (requirements.clientSecret && !clientSecret) || (requirements.privateKey && !privateKeyPem) || (requirements.apiKey && !apiKey)} onClick={()=>void save()}>保存认证配置</Button>
     {pendingId && <Button variant="outline" disabled={busy} onClick={()=>void recover()}>核对认证配置提交</Button>}
-  </details>;
+  </SettingsDisclosure>;
 }

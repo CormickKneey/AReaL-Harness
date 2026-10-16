@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { BookOpen, Check, MoreHorizontal, Plus, Settings } from "lucide-react";
+import { BookOpen, Check, MoreHorizontal } from "lucide-react";
 import { Button } from "../components/ui/button.js";
 import { Switch } from "../components/ui/switch.js";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu.js";
@@ -133,7 +133,7 @@ export function PluginSkillsPage({ action, projects, project, packageSkills, sel
   }));
   if (selected) return <article className="plugin-detail-page" data-testid="skill-detail-page">
     <header className="plugin-detail-header"><span className="plugin-resource-icon"><BookOpen size={28} /></span><div><h1>{selected.name}</h1><p>{selected.description}</p></div><div className="plugin-detail-actions">
-      {selected.pluginId && <Button variant="outline" onClick={() => onManagePlugin(selected.pluginId!)}><Settings size={15} />管理插件</Button>}
+      {selected.pluginId && <Button variant="outline" onClick={() => onManagePlugin(selected.pluginId!)}>管理插件</Button>}
       <Button disabled={busy || !selected.enabled || !!selected.error} onClick={() => void startDraft(selected)}>试用</Button>
       <DropdownMenu><DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label="更多 Skill 操作"><MoreHorizontal size={18} /></Button>} /><DropdownMenuContent align="end"><DropdownMenuItem onClick={() => void navigator.clipboard.writeText(selected.id)}>复制 Skill 标识</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
     </div></header>
@@ -167,13 +167,13 @@ export function PluginSkillsPage({ action, projects, project, packageSkills, sel
     </section>;
   };
   if (compact) return <section className="plugin-skills plugin-skills-compact">
-    <div className="plugin-skills-toolbar"><h2>已安装 <small>{all.length}</small></h2>{search}<Button disabled={createBusy} onClick={onCreate}><Plus size={15} />创建 Skill</Button></div>
+    <div className="plugin-skills-toolbar"><h2>已安装 <small>{all.length}</small></h2>{search}<Button disabled={createBusy} onClick={onCreate}>创建 Skill</Button></div>
     <Feedback error={error} message={message} />
     <div className="plugin-row-list">{visible.map(row)}</div>
     {!visible.length && <div className="resource-empty"><BookOpen size={28} /><strong>{query ? "没有匹配的 Skill" : "尚未安装 Skills"}</strong><p>{query ? "试试其他名称或关键词。" : "创建可复用的 Skill，或从插件市场安装。"}</p></div>}
   </section>;
   return <section className="plugin-skills plugin-skills-workspace">
-    <header className="plugin-center-header plugin-skills-header"><div><h1>Skills</h1><p>为不同任务添加可复用的专业能力。</p></div><div className="plugin-center-toolbar">{search}<Button disabled={createBusy} onClick={onCreate} title={`在${project?.name || "所选项目"}中创建 Skill`}><Plus size={14} />创建 Skill</Button></div></header>
+    <header className="plugin-center-header plugin-skills-header"><div><h1>Skills</h1><p>为不同任务添加可复用的专业能力。</p></div><div className="plugin-center-toolbar">{search}<Button disabled={createBusy} onClick={onCreate} title={`在${project?.name || "所选项目"}中创建 Skill`}>创建 Skill</Button></div></header>
     <Feedback error={error} message={message} />
     <div className="plugin-skill-section-heading"><h2>已安装 <small>{all.length}</small></h2></div>
     {preview(visible, "installed", "已安装 Skills")}

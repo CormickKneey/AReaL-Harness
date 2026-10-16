@@ -41,7 +41,7 @@ const scheduledTokenLimit = (task: Data, reason: string) => task.mode === "sched
 const runReason = (reason: string, task: Data) => scheduledTokenLimit(task, reason)
   ? "周期任务剩余 Token 预算不足。单次运行不能突破任务总预算；如需更多额度，请创建新的周期任务。"
   : goalBudgetMessage(reason) ?? runReasons[reason] ?? reason;
-type Props = { projects: Data[]; connected: boolean; initialProjectId?: string; defaultProjectId?: string; action: Action; onOpenThread: (projectId: string, id: string) => void };
+type Props = { projects: Data[]; connected: boolean; initialProjectId?: string; defaultProjectId?: string; action: Action; onOpenThread: (projectId: string, id: string) => void; onOpenModelSettings: () => void };
 const taskKey = (task: Data) => `${task.projectId}:${task.id}`;
 const projectLabel = (project: Data) => project.name ?? project.root?.split(/[\\/]/).pop() ?? "项目";
 
@@ -162,7 +162,7 @@ export function ChannelQuestion({ row, projectId, action, disabled, onReplied, s
   </article>;
 }
 
-export function TaskCenter({ projects, connected, initialProjectId, defaultProjectId, action, onOpenThread, navigation, target, renderConversation, renderResources }: Props & { navigation: ReactNode; renderConversation: TaskConversationRenderer; renderResources: (project: Data, thread: Data, task: Data, history: ReactNode) => ReactNode; target?: { projectId: string; taskId: string; runId?: string; questionId?: string } }) {
+export function TaskCenter({ projects, connected, initialProjectId, defaultProjectId, action, onOpenThread, onOpenModelSettings, navigation, target, renderConversation, renderResources }: Props & { navigation: ReactNode; renderConversation: TaskConversationRenderer; renderResources: (project: Data, thread: Data, task: Data, history: ReactNode) => ReactNode; target?: { projectId: string; taskId: string; runId?: string; questionId?: string } }) {
   const layout = useRef<HTMLElement>(null);
   const [narrow, setNarrow] = useState(false);
   useLayoutEffect(() => {
@@ -376,7 +376,7 @@ export function TaskCenter({ projects, connected, initialProjectId, defaultProje
         {moreAvailable && <Button variant="ghost" disabled={!connected || loading} onClick={() => void refresh(true)}>展开显示</Button>}
       </div>
     </div>
-    {creating && <TaskDraft key={`new:${draftProjectId ?? "global"}`} projects={projects} initialProjectId={draftProjectId} action={action} initialText={initialText} disabled={!connected} onClose={() => setCreating(false)} onCreated={createdTask} renderConversation={renderConversation} />}
+    {creating && <TaskDraft key={`new:${draftProjectId ?? "global"}`} projects={projects} initialProjectId={draftProjectId} action={action} initialText={initialText} disabled={!connected} onClose={() => setCreating(false)} onCreated={createdTask} onOpenModelSettings={onOpenModelSettings} renderConversation={renderConversation} />}
     {!detailOpen && <main className="task-welcome"><div className="task-welcome-intro"><span className="task-clock"><CalendarClock size={44}/></span><h2>安排任务</h2><p>AReaL 可以帮你处理持续性任务，让你无需亲力亲为。</p></div><div className="task-examples">{([
       [GitPullRequest,"检查仓库进展","检查我指定仓库的公开提交与 PR，整理进展和待处理事项。"],
       [ListChecks,"整理每日计划","回顾我提供的计划，整理当天待办和需要关注的事项。"],
@@ -386,7 +386,7 @@ export function TaskCenter({ projects, connected, initialProjectId, defaultProje
       [Activity,"跟踪产品变化","检查我指定产品的公开更新，列出需要关注的变化。"],
     ] as const).map(([Icon,title,description]) => <button key={title} onClick={() => beginCreate(description)} disabled={!connected}><span><Icon size={24}/></span><div><h3>{title}</h3><p>{description}</p></div></button>)}</div></main>}
 
-    {task && project && !creating && <TaskDraft key={selected} projects={projects} initialProjectId={project.id} task={task} action={action} disabled={disabled} onClose={closeDetails} onCreated={updatedTask} renderConversation={renderConversation} renderResources={(owner, thread) => renderResources(owner, thread, {...task, displayStatus: task.paused || task.cancelled || finished(task) ? taskStatus(task) : "已开启"}, runHistory)} />}
+    {task && project && !creating && <TaskDraft key={selected} projects={projects} initialProjectId={project.id} task={task} action={action} disabled={disabled} onClose={closeDetails} onCreated={updatedTask} onOpenModelSettings={onOpenModelSettings} renderConversation={renderConversation} renderResources={(owner, thread) => renderResources(owner, thread, {...task, displayStatus: task.paused || task.cancelled || finished(task) ? taskStatus(task) : "已开启"}, runHistory)} />}
 
     </div>
 

@@ -1,3 +1,4 @@
+import { SettingsDisclosure } from "./SettingsDisclosure.js";
 import { useRef, useState } from "react";
 import type { TrajectoryStatus } from "@areal/workbench/desktop-contract";
 import { Button } from "../components/ui/button.js";
@@ -82,7 +83,7 @@ export function TrajectorySettings({
         <div className="settings-sections" aria-label="数据飞轮状态">
             <SettingsSection
                 title="轨迹上传"
-                description="轨迹由后台异步上传；此页可见且连接正常时，每 2.5 秒自动更新状态。"
+                description="后台自动上传，状态定期更新。"
                 action={
                     <Button
                         size="sm"
@@ -96,7 +97,7 @@ export function TrajectorySettings({
             >
                 {!connected && (
                     <p role="status" className="settings-section-desc">
-                        后台适配器未连接，请在“后台服务”中连接后读取状态。
+                        后台未连接
                     </p>
                 )}
                 <p role="status" className="settings-section-desc">
@@ -121,7 +122,7 @@ export function TrajectorySettings({
                             label="当前文件配置"
                             description={
                                 status.enabled
-                                    ? "已启用轨迹导出；运行中的 Core 需使用此配置并完成重启。"
+                                    ? "配置已启用导出。"
                                     : "轨迹导出已关闭。"
                             }
                             control={<SettingsBadge>{stateLabels[status.state]}</SettingsBadge>}
@@ -131,7 +132,7 @@ export function TrajectorySettings({
                             description={
                                 status.worker_running
                                     ? "后台上传进程正在运行。"
-                                    : "未检测到上传进程；刷新状态不会启动它。"
+                                    : "刷新不会启动上传进程。"
                             }
                             control={<span>{status.worker_running ? "运行中" : "未运行"}</span>}
                         />
@@ -141,18 +142,6 @@ export function TrajectorySettings({
                             description={
                                 <span className="break-all">{status.endpoint || "尚未配置"}</span>
                             }
-                        />
-                        {status.configPath && (
-                            <SettingsRow
-                                label="配置文件"
-                                control={null}
-                                description={<span className="break-all">{status.configPath}</span>}
-                            />
-                        )}
-                        <SettingsRow
-                            label="本地上传缓存"
-                            control={null}
-                            description={<span className="break-all">{status.spool_dir}</span>}
                         />
                     </SettingsGroupCard>
                 )}
@@ -214,12 +203,7 @@ export function TrajectorySettings({
                                         {status.queue.dropped_oversize}
                                     </span>
                                 }
-                                description="达到容量或批次大小限制时可能缺失轨迹，已淘汰或丢弃的数据无法通过重试恢复。"
-                            />
-                            <SettingsRow
-                                label="重试与缓冲限制"
-                                control={null}
-                                description={`最多重试 ${status.limits.max_retries} 次 · 上传间隔 ${status.limits.upload_interval_ms} ms · 内存上限 ${size(status.limits.max_memory_bytes)}`}
+                                description="已淘汰或丢弃的数据无法重试恢复。"
                             />
                             <SettingsRow
                                 label="最近失败原因"
@@ -234,14 +218,14 @@ export function TrajectorySettings({
                     </SettingsSection>
                     <SettingsSection
                         title="模型调用耗时"
-                        description={`最近 ${status.model_call_summary?.records_considered ?? status.records.length} 条记录中的模型调用耗时；含请求准备、网络、模型调用内排队和重试，非纯服务端推理时间。`}
+                        description={`最近 ${status.model_call_summary?.records_considered ?? status.records.length} 条记录；包含请求准备、网络、排队与重试耗时。`}
                     >
                         {status.model_call_summary ? (
                             <SettingsGroupCard>
                                 <SettingsRow
                                     label="有耗时记录的模型调用"
                                     control={<span>{status.model_call_summary.model_calls}</span>}
-                                    description="仅汇总最近最多 100 条上传记录，非完整历史；同一调用的上传重试不重复计入。缺失耗时保持未知。"
+                                    description="最近最多 100 条；重试不重复计数，缺失耗时保持未知。"
                                 />
                                 <SettingsRow
                                     label="调用耗时总和 / 平均 / 最大"
@@ -345,10 +329,23 @@ export function TrajectorySettings({
                     </SettingsSection>
                 </>
             )}
-            <SettingsSection
-                title="启用与修改"
-                description="在用户配置中设置通用 OTLP 上传地址与认证引用。"
-            >
+            <SettingsDisclosure title="上传配置与限制">
+                {status && <SettingsGroupCard>
+                        {status.configPath && (
+                            <SettingsRow
+                                label="配置文件"
+                                control={null}
+                                description={<span className="break-all">{status.configPath}</span>}
+                            />
+                        )}
+                        <SettingsRow
+                            label="本地上传缓存"
+                            control={null}
+                            description={<span className="break-all">{status.spool_dir}</span>}
+                        />
+                    <SettingsRow label="重试与缓冲限制" control={null} description={`最多重试 ${status.limits.max_retries} 次 · 上传间隔 ${status.limits.upload_interval_ms} ms · 内存上限 ${size(status.limits.max_memory_bytes)}`} />
+                </SettingsGroupCard>}
+                <p className="settings-section-desc">启用导出需要更新配置并重启后台。</p>
                 <p className="settings-section-desc">
                     编辑本页显示的配置文件中的 <code>[trajectory]</code>，设置开关、
                     <code>endpoint</code> 和凭据引用。修改后执行{" "}
@@ -356,7 +353,7 @@ export function TrajectorySettings({
                     应用上传控制，并安全重启已运行的 Core 服务以装配采集参数。
                     凭据由配置与环境管理，本页不显示凭据内容。
                 </p>
-            </SettingsSection>
+            </SettingsDisclosure>
         </div>
     );
 }

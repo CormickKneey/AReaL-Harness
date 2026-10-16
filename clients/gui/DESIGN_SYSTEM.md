@@ -2,6 +2,42 @@
 
 本指南供客户端开发使用，默认中文。设计数值归生产 CSS，组件变体归现有公共组件；新增功能按角色组合，不复制另一套样式。执行、权限、历史和草稿继续由原业务所有者管理。
 
+## 设置与管理界面的交互规范
+
+本节是新增、修改和评审客户端 UI 必须遵循的约束。设置页通过外框表达功能分组，行内展示简短名称和当前状态，控件按交互语义选择；不能只统一圆角而保留错误的交互。
+
+### 按功能分组并保持对齐
+
+- 使用 `SettingsSection` 标记功能组、`SettingsGroupCard` 的外框包住相关设置；同组行以细分隔线连接。一个卡片只表达一个功能关系，不按实现模块机械堆叠信息。
+- 使用 `SettingsRow`：名称和必要的一行说明在左，当前值与控件在右；同组的内容边缘、控件右边缘保持一致。窄窗口空间不足时，控件移到说明下方，不截断或挤出边界。
+- 对普通用户无帮助的完整目录、实例编号与实现说明移入明确的详情入口。主页面保留完成当前操作所需的信息。
+
+### 按交互类型选择控件
+
+| 用户意图 | 控件 | 规则与现有所有者 |
+|---|---|---|
+| 点击执行一次操作、打开管理界面 | 文字按钮 | 复用 `Button` / `ActionButton`，如“导入”“更改”“查看”“管理空间”；默认不加装饰图标，不做成开关 |
+| 开启 / 关闭一个状态 | 左右滑动开关 | 复用 `Switch` / `SettingsSwitch`；以真实状态驱动，操作中禁用并显示简短反馈，失败后保留或恢复已确认状态 |
+| 三个及以上候选值中选择一个 | 下拉按钮与菜单 | 复用 `Select`；收起时显示当前值和右侧小箭头，展开后显示候选项与选中标记；不把选项摊成一排按钮 |
+| 两个互斥值中选择一个 | 并排的两个选项 | 复用 `SettingsSegmentedTabs`，如“底部 / 右侧”；全部可见，选中项高亮，不再套下拉菜单 |
+
+此处“多项选择”指多个候选值的单选，不等于一次选择多个值。真正允许多值选择时沿用支持复选语义的现有控件，不能假装成单选菜单。导航 Tab 与设置值选择也不能混为一谈。
+
+同一流程的先后步骤不能伪装成二选一。不能为了外观给单向维护操作添加虚假的“开启”入口：只有后端同时支持开启与关闭，并且能读取实际状态时，才使用可双向操作的开关。关闭服务、清理资源等操作继续使用已有确认与拒绝规则，视觉切换不替代权威执行结果。
+
+### 用状态反馈代替大段操作说明
+
+- 常驻信息以简短名称、当前值和必要的一行说明为限。普通开关不配“开启 / 关闭”文字按钮，不在控件下堆叠连接、恢复和实现流程说明。
+- 操作后就近显示“已开启”“已关闭”“处理中”或明确错误；结果未知必须显示“待确认”，不能把断开连接当作后台已停止。状态不能只依赖颜色。
+- 影响其他窗口、暂停新工作、不可逆清理等必要后果放在所属操作的确认或管理面板里，简短说明；不能为追求简洁隐藏实际影响。
+- 普通操作按钮采用紧凑圆角矩形、轻填充和克制的边框；危险操作通过文字及语义色区别。尺寸、圆角和明暗填充由公共 Token 及组件变体统一管理。图标仅用于有明确识别价值的独立图标操作，不给每个文字按钮机械配图标。
+
+### 不使用左侧三角展开符号
+
+客户端界面禁止使用左侧三角作为展开 / 折叠入口，包括原生 `details/summary` 的默认三角标记和手写的同类符号。优先使用“查看详情”按钮打开已有详情面板或对话框；确需原地展开时使用明确的“展开 / 收起”文字按钮并保留键盘与 `aria-expanded` / `aria-controls` 语义。不能只隐藏标记而留下无提示、不可访问的交互。下拉选择控件右侧的小箭头不属于此禁用项。
+
+评审时必须确认：功能分组合理、控件语义正确、反馈来自真实结果、没有冗长常驻说明或左侧三角、明暗与窄窗口均可用。新公共状态必须进入现有组件预览，不另外建立平行规范。
+
 ## Token 选择
 
 基础定义见 [styles.css](renderer/src/styles.css)，用户外观覆盖由 [applicationSettings.ts](renderer/src/settings/applicationSettings.ts) 和 [applicationPreferences.ts](renderer/src/settings/applicationPreferences.ts) 提供。以下目录描述用途，不复制数值；预览使用同一外观路径并显示当前计算值。
@@ -16,10 +52,11 @@
 | 公共行高 | `--line-height-ui`、`--line-height-ui-sm` | 决策正文与紧凑说明，随 UI 字号增长 |
 | 文字层级 | `--color-foreground`、`--color-foreground-subtle/subtlest` | 主内容、说明、低强调信息；不能只用颜色表达状态 |
 | 表面 | `--color-background`、`--color-composer`、`--color-composer-catalog` | 页面、输入区、相关浮层；明暗由主题提供 |
+| 按钮填充 | `--color-button-surface`、`--color-button-hover` | 普通操作与下拉按钮的默认 / 悬停表面 |
 | 边框与错误 | `--color-border`、`--color-destructive` | 边界与错误反馈 |
 | 控件尺寸 | `--spacing-control` 及 `--spacing-control-xs/sm/lg/form`，对应 Tailwind 的 `h-control-*` | 根据控件用途选尺寸，跟随用户字号 |
 | 间距 | `--spacing-inline/field/section/panel` | 相邻内容、内容块、分区与面板；具体组合可以使用这些角色的倍数 |
-| 圆角 | `--radius-control/overlay/composer/panel/dialog` | 按表面角色选择，不能为“看起来差不多”任意互换 |
+| 圆角 | `--radius-button/control/overlay/composer/panel/dialog` | 按表面角色选择，不能为“看起来差不多”任意互换 |
 | 内嵌与动作形状 | `--radius-inset`、`--radius-pill` | 表面内的预览内容、胶囊或圆形动作 |
 | 焦点与动效 | `--focus-width/offset`、`--motion-fast/normal/slow` | 复用 focus-visible、ui-control/ui-popup；遵守 reduced motion |
 
@@ -29,7 +66,10 @@ Tailwind 的 `text-ui-sm`、`rounded-overlay` 等直接消费同一套 Token。�
 
 | 所有者 | 使用方式 | 业务边界 |
 |---|---|---|
-| [Button](renderer/src/components/ui/button.tsx) | 复用 default/outline/secondary/ghost/destructive/warning/link；选择既有 size | 是否可操作由调用方决定 |
+| [Button](renderer/src/components/ui/button.tsx) | 复用 default/outline/secondary/ghost/destructive/destructive-subtle/warning/link；选择既有 size | 是否可操作由调用方决定 |
+| [ActionButton](renderer/src/components/ui/action-button.tsx) | 紧凑文字操作；图标可选，pending 保留标签并禁止重复点击 | 只表达状态，不拥有业务请求或结果 |
+| [Switch](renderer/src/components/ui/switch.tsx)、[Select](renderer/src/components/ui/select.tsx)、[SettingsSegmentedTabs](renderer/src/settings/SettingsSegmentedTabs.tsx) | 按上述交互规则选择，不互相替代 | 实际值与提交结果归调用方 |
+| [SettingsSelect](renderer/src/settings/SettingsPageParts.tsx)、[SettingsDisclosure](renderer/src/settings/SettingsDisclosure.tsx) | 设置值自动按两个候选 / 多个候选选择公共控件；详情使用“展开 / 收起”，不显示三角 | 值、请求、权限和草稿归调用方；详情保留原生展开语义 |
 | Button `variant="composer"` | 主和 Side 发送外观，共用禁用及文本角色；一般配合 `size="icon-md"` | 不决定 send、enqueue、steer 或清理草稿 |
 | [ConversationComposer](renderer/src/ConversationComposer.tsx) | 主与 Side 的编辑器、工具栏及模型目录入口 | 调用方拥有输入、提交、配置和能力 |
 | [ComposerSurface](renderer/src/prompt-editor/ComposerSurface.tsx) | editor/toolbar/context/overlay 插槽；样式在组件旁 [ComposerSurface.css](renderer/src/prompt-editor/ComposerSurface.css) | 只拥有布局；紧凑状态保持编辑器挂载 |
@@ -53,9 +93,11 @@ Tailwind 的 `text-ui-sm`、`rounded-overlay` 等直接消费同一套 Token。�
 
 已发送消息在共享 `Messages` 中应用此规则，主聊天、Side 与 Remote 复用同一展示路径。验收至少覆盖长/短文本、连续长段落、Markdown、明暗、窄宽面板、字号变化、展开再收起，以及原文复制。生产组件预览与脚本见下文；它们不代替真实服务或安装包验收。
 
+对话时间线以 Core 的 `commentary` / `final_answer` 为边界，不按文字内容猜测思考或工具事件。短过程文字直接展示，长过程使用六行预览；当前流式正文与最终回答完整展示。工具摘要仅折叠活动，不连同带阶段的过程文字整体折叠；展开列表随主对话滚动，只有具体命令输出限高。成功图片结果、可打开的子对话保留轻量入口，原始记录按需查看；文件变更默认展示紧凑摘要，行数继续取自 Core 本轮比较。`design-system.html?conversation` 提供同一生产组件的隔离预览，不连接用户 Core。
+
 ## 新增功能的四步
 
-1. 选择一个相近的生产组件或组合。新的工具结果卡片可以复用卡片结构、Button 与 Feedback。
+1. 先遵循本指南的[设置与管理界面的交互规范](#设置与管理界面的交互规范)，再选择一个相近的生产组件或组合。新的工具结果卡片可以复用卡片结构、Button 与 Feedback。
 2. 按角色选择 Token 和已有变体；多个实际消费者需要同一新角色时，在现有所有者补齐。
 3. 新公共状态加入预览；仅业务组合变化时检查该组合，不重复维护所有基础控件。
 4. 运行类型/构建和相关设计检查。修改交互、IME、权限或提交时追加相应真实桌面路径。

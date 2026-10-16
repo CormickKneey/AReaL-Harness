@@ -95,7 +95,7 @@ async fn serve(
             json!({"client_id":"fixture-registered","redirect_uris":req["redirect_uris"],"token_endpoint_auth_method":"none"})
         }
         "/scope-token" => {
-            json!({"access_token":"fixture-read-token","refresh_token":"fixture-read-refresh","token_type":"Bearer","expires_in":3600,"scope":"read"})
+            json!({"access_token":"fixture-read-token","refresh_token":"fixture-read-refresh","token_type":"Bearer","expires_in":3600,"scope":if body.contains("client_id=fixture-empty"){""}else{"read"}})
         }
         "/rotating-token" => {
             json!({"access_token":if body.contains("grant_type=refresh_token"){"fixture-new-token"}else{"fixture-old-token"},"refresh_token":"fixture-refresh","token_type":"Bearer","expires_in":3600})
@@ -998,5 +998,138 @@ async fn rejected_http_scope_upgrade_preserves_proven_grants_across_cancel_only_
     );
     drop(calls);
     connections.shutdown().await.unwrap();
+    task.abort();
+}
+
+#[tokio::test]
+async fn cached_oauth_restores_only_existing_binding_without_starting_consent() {
+    let (s, task) = fixture().await;
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("cached-auth");
+    let cfg = config(
+        &s,
+        temp.path(),
+        json!({"type":"oauth","client":{"mode":"dcr"},"authorizationServerBase":s.base,"authorizationUrl":format!("{}/authorize",s.base),"tokenUrl":format!("{}/scope-token",s.base),"registrationUrl":format!("{}/register",s.base),"defaultScopes":[],"baseScopes":["read"]}),
+    );
+    let policy = cfg.servers["server"].auth_policy().unwrap();
+    let endpoint = format!("{}/mcp", s.base);
+    let host = HostAuthConfiguration {
+        account_id: "fixture-account".into(),
+        ..Default::default()
+    };
+    let manager = AuthManager::new(root.clone(), "fixture").unwrap();
+    assert!(
+        manager
+            .cached_credential("digest-one", &endpoint, policy, &host)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(manager.status("digest-one").await.is_none());
+    assert!(
+        !s.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(path, _, _)| path == "/register"
+                || path == "/authorize"
+                || path == "/scope-token")
+    );
+    let status = manager
+        .start_with_options("digest-one", &endpoint, policy, None, &host)
+        .await
+        .unwrap();
+    complete(&manager, "digest-one", status, &s.base).await;
+    drop(manager);
+    let before = s.calls.lock().unwrap().len();
+    let restored = AuthManager::new(root.clone(), "fixture").unwrap();
+    assert!(
+        restored
+            .cached_credential("digest-one", &endpoint, policy, &host)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(matches!(
+        restored.status("digest-one").await,
+        Some(AuthStatus::Ready)
+    ));
+    read_mcp(&cfg, &restored, "digest-one", temp.path()).await;
+    assert!(
+        !s.calls.lock().unwrap()[before..]
+            .iter()
+            .any(|(path, _, _)| path == "/register"
+                || path == "/authorize"
+                || path == "/scope-token")
+    );
+    restored.cancel("digest-one").await;
+    assert!(
+        restored
+            .cached_credential("digest-one", &endpoint, policy, &host)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(matches!(
+        restored.status("digest-one").await,
+        Some(AuthStatus::Cancelled)
+    ));
+    let changed_account = HostAuthConfiguration {
+        account_id: "other-account".into(),
+        ..Default::default()
+    };
+    let fresh = AuthManager::new(root, "fixture").unwrap();
+    assert!(
+        fresh
+            .cached_credential("digest-one", &endpoint, policy, &changed_account)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        fresh
+            .cached_credential("digest-two", &endpoint, policy, &host)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        !s.calls.lock().unwrap()[before..]
+            .iter()
+            .any(|(path, _, _)| path == "/register"
+                || path == "/authorize"
+                || path == "/scope-token")
+    );
+    let empty_cfg = config(
+        &s,
+        temp.path(),
+        json!({"type":"oauth","client":{"mode":"provided","clientId":"fixture-empty"},"oidcConfigurationUrl":format!("{}/oidc",s.base),"tokenUrl":format!("{}/scope-token",s.base)}),
+    );
+    let empty_policy = empty_cfg.servers["server"].auth_policy().unwrap();
+    let manager = AuthManager::new(temp.path().join("empty-scoped-app"), "fixture").unwrap();
+    let status = manager
+        .start_with_options("empty-app", &endpoint, empty_policy, None, &host)
+        .await
+        .unwrap();
+    complete(&manager, "empty-app", status, &s.base).await;
+    drop(manager);
+    let before = s.calls.lock().unwrap().len();
+    let restored = AuthManager::new(temp.path().join("empty-scoped-app"), "fixture").unwrap();
+    assert!(
+        restored
+            .cached_credential("empty-app", &endpoint, empty_policy, &host)
+            .await
+            .unwrap()
+            .is_some(),
+        "advertised optional scopes must not discard an existing empty-scope app grant"
+    );
+    read_mcp(&empty_cfg, &restored, "empty-app", temp.path()).await;
+    assert!(
+        !s.calls.lock().unwrap()[before..]
+            .iter()
+            .any(|(path, _, _)| path == "/register"
+                || path == "/authorize"
+                || path == "/scope-token")
+    );
     task.abort();
 }

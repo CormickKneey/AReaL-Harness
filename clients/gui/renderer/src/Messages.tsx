@@ -193,7 +193,11 @@ export function Messages({
     updateReading();
   };
   const renderAgentMessage = (entry: Data, turn: Data, deferActions = false) => !entry.text?.trim() ? null : <div className={`assistant-message${deferActions ? " assistant-message-final" : ""}`} data-message-phase={entry.phase ?? "legacy"} data-side-item-id={entry.id} key={entry.id}>
-    <MessageResponse className="conversation-markdown" preserveLineBreaks streaming={turn.status === "inProgress"} theme={dark ? "dark" : "light"} onOpenExternalUrl={onLink} onOpenFileLink={onFile}>{entry.text}</MessageResponse>
+    {entry.phase === "commentary" && (turn.status !== "inProgress" || entry.id !== turn.items?.findLast((item: Data) => ["agentMessage", "dynamicToolCall", "userMessage", "agentMedia"].includes(item.type))?.id)
+      ? <CollapsibleText onExpandedChange={() => { follow.current = false; releaseResponseSpace(); rememberReading(); }}>
+        <MessageResponse className="conversation-markdown" preserveLineBreaks theme={dark ? "dark" : "light"} onOpenExternalUrl={onLink} onOpenFileLink={onFile}>{entry.text}</MessageResponse>
+      </CollapsibleText>
+      : <MessageResponse className="conversation-markdown" preserveLineBreaks streaming={turn.status === "inProgress"} theme={dark ? "dark" : "light"} onOpenExternalUrl={onLink} onOpenFileLink={onFile}>{entry.text}</MessageResponse>}
     {!deferActions && entry.phase !== "commentary" && turn.status !== "inProgress" && <MessageActions text={entry.text} />}
   </div>;
   useLayoutEffect(() => {
@@ -427,14 +431,14 @@ export function Messages({
               return <TurnExecution key={item.id} active={index === segments.length - 1} items={item.items} turn={turn} project={project} threadId={thread.id}
                 hasTurnSummary={group.progress && turn.status === "completed" && hasReadingSummary}
                 renderItem={(entry: Data, disclosure) => {
-                  if (entry.type === "dynamicToolCall") return <div data-side-item-id={entry.id} key={entry.id}><ToolEvent item={entry} {...disclosure} onFile={onFile} onAgent={isInherited ? undefined : onAgent} turnId={turn.id} action={action} projectId={project.id} threadId={thread.id} readTurnReview={turn.status === "completed" ? readTurnReview : undefined} /></div>;
+                  if (entry.type === "dynamicToolCall") return <div data-side-item-id={entry.id} key={entry.id}><ToolEvent item={entry} {...disclosure} onFile={onFile} onAgent={isInherited ? undefined : onAgent} agents={isInherited ? undefined : project.state?.threads} turnId={turn.id} action={action} projectId={project.id} threadId={thread.id} readTurnReview={turn.status === "completed" ? readTurnReview : undefined} /></div>;
                   if (entry.type === "modelContext") return null;
                   return <details className="tool-call" key={entry.id}><summary>{entry.type}</summary><pre>{JSON.stringify(entry, null, 2)}</pre></details>;
                 }} />;
             });
             return <Fragment key={group.id}>
               {turn.status === "interrupted" && groupIndex === stopHeaderIndex && stopHeading}
-              {group.progress ? <TurnProgress summaryAvailable={turn.status === "completed" && hasReadingSummary}
+              {group.progress && legacyReply ? <TurnProgress summaryAvailable={turn.status === "completed" && hasReadingSummary}
                 label={(groupIndex === firstProgress ? completedTimeLabel(turn) : undefined) ?? (legacyReply ? "早前消息与活动" : "本轮过程")}
                 settled={turn.status === "completed" && hasReadingSummary && !outcome.unfinished}
                 {...outcome}>{contents}</TurnProgress> : contents}
@@ -445,6 +449,7 @@ export function Messages({
             })}
             {!isInherited && (turn.items ?? []).filter((item: Data) => item.type === "dynamicToolCall").map((item: Data) =>
               <UnknownToolInspection key={`${project.id}:${thread.id}:${item.id}`} item={item} project={project} thread={thread} action={action} />)}
+            {hasFinal && turn.status === "completed" && completedTimeLabel(turn) && <p className="turn-timing">{completedTimeLabel(turn)}</p>}
             <TurnFileSummary turn={turn} readTurnReview={readTurnReview} onFile={onFile} onReview={onReview} />
             {responseMessage && turn.status !== "inProgress" && <MessageActions text={responseMessage.text}><TurnHookStats turn={turn} />{forkControls}{responseActions?.(responseMessage)}</MessageActions>}
             {canFork && forkError?.turnId === turn.id && <p role="alert" className="notice">{forkError?.message}</p>}

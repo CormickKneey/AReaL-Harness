@@ -1,3 +1,5 @@
+import { SettingsDisclosure } from "./SettingsDisclosure.js";
+import { SettingsSelect } from "./SettingsPageParts.js";
 import { useRef, useState } from "react";
 import type { Action } from "../services.js";
 import { Button } from "../components/ui/button.js";
@@ -69,9 +71,9 @@ export function HooksSettings({ action, connected, onConnect }: { action: Action
   });
   const disabled = busy || !connected || state.loading || !!state.error;
   return <div className="settings-sections" aria-label="钩子管理">
-    <p className="settings-section-desc">在工具执行前、成功后或失败后运行命令。钩子按顺序执行，修改后需重启后台。命令不会隐式经过 shell。</p>
+    <p className="settings-section-desc">按顺序运行工具事件命令，修改后重启后台生效。</p>
     <Feedback error={draft ? undefined : error || state.error} message={notice} />
-    <SettingsSection title="来自配置" description={value?.path ?? "读取 Core 配置来源…"} action={<div className="flex gap-2">
+    <SettingsSection title="工具钩子" action={<div className="flex gap-2">
       <Button variant="outline" size="sm" disabled={busy || !connected} onClick={() => void state.refresh()}>刷新钩子</Button>
       <Button size="sm" disabled={disabled || !value || !!draft || value.hooks.length >= 64} onClick={() => edit(-1)}>添加钩子</Button>
     </div>}>
@@ -86,20 +88,24 @@ export function HooksSettings({ action, connected, onConnect }: { action: Action
         {value && !value.hooks.length && <p className="p-4 settings-section-desc">尚未配置钩子。</p>}
       </SettingsGroupCard>
     </SettingsSection>
-    <SettingsSection title="配置生效" description="重启会断开共享后台的所有窗口；正在执行的任务、终端或未确认操作会阻止停止。保存本身不会中断执行。"
+    <SettingsSection title="配置生效" description="保存不会中断执行；应用时需重启共享后台。"
       action={<Button variant="outline" size="sm" disabled={busy || !!draft || !value} onClick={() => void apply()}>{connected ? "重启后台并应用" : "连接后台并应用"}</Button>}>
       <SettingsGroupCard>{value?.projects.map(p => <SettingsRow key={p.projectId} label={p.root.split(/[\\/]/).at(-1) || p.root}
-        description={p.root} control={<span>{!connected || !p.connected ? "下次启动加载" : p.applied ? "已加载当前配置" : "待重启应用"}</span>} />)}</SettingsGroupCard>
+        control={<span>{!connected || !p.connected ? "下次启动加载" : p.applied ? "已加载当前配置" : "待重启应用"}</span>} />)}</SettingsGroupCard>
     </SettingsSection>
-    <p className="settings-section-desc">本页管理 Core 扩展配置中的钩子；不会自动导入项目文件或插件中的其他格式。</p>
+    <SettingsDisclosure title="配置详情">
+      <p className="settings-section-desc break-all">{value?.path ?? "正在读取配置来源…"}</p>
+      <p className="settings-section-desc">管理 Core 扩展钩子，不自动导入项目或插件中的其他格式。命令直接执行，不经过 shell。</p>
+      <p className="settings-section-desc">重启会断开所有窗口；运行中的任务、终端或待确认操作可能阻止停止。</p>
+    </SettingsDisclosure>
     {draft && <SettingsDialog title={draft.index < 0 ? "添加钩子" : "编辑钩子"} description="命令接收一行事件 JSON，并返回钩子响应。保存时由 Core 校验完整扩展配置。" busy={busy} onClose={() => update(null)}>
       <form onSubmit={e => { e.preventDefault(); void save(); }} className="grid gap-3">
         <Feedback error={error || state.error} />
         {state.error && <Button type="button" variant="outline" disabled={busy || !connected} onClick={() => void state.refresh()}>重新读取钩子配置</Button>}
         <label>钩子名称<Input aria-label="钩子名称" required disabled={busy} value={draft.name} onChange={e => update({ ...draft, name: e.target.value })} /></label>
-        <label>触发事件<select aria-label="触发事件" disabled={busy} value={draft.event} onChange={e => update({ ...draft, event: e.target.value })}>
+        <div className="settings-choice-field">触发事件<SettingsSelect aria-label="触发事件" disabled={busy} value={draft.event} onValueChange={selectedValue => update({ ...draft, event: selectedValue })}>
           <option value="PreToolUse">工具执行前</option><option value="PostToolUse">工具成功后</option><option value="PostToolUseFailure">工具失败后</option>
-        </select></label>
+        </SettingsSelect></div>
         <label>匹配工具<Input aria-label="匹配工具" required disabled={busy} value={draft.matcher} onChange={e => update({ ...draft, matcher: e.target.value })} /></label>
         <label>命令参数（JSON 数组）<textarea aria-label="命令参数（JSON 数组）" className="w-full min-h-32 font-mono" disabled={busy} value={draft.argv} onChange={e => update({ ...draft, argv: e.target.value })} /></label>
         <label>超时（毫秒）<Input type="number" aria-label="超时（毫秒）" required disabled={busy} value={draft.timeout} onChange={e => update({ ...draft, timeout: e.target.value })} /></label>

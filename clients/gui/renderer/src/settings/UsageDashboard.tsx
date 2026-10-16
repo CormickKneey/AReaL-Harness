@@ -1,9 +1,11 @@
+import { ActionButton } from "../components/ui/action-button.js";
+import { SettingsSelect } from "./SettingsPageParts.js";
+import { SettingsDisclosure } from "./SettingsDisclosure.js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
   Clock3,
   Flame,
-  RefreshCw,
   Sparkles,
   Zap,
 } from "lucide-react";
@@ -137,19 +139,11 @@ export function UsageDashboard({ action }: { action: Action }) {
             <span />
             本机记录 · 所有工作区
           </span>
-          <p>每天的投入与消耗，在这里一目了然。</p>
+
         </div>
-        <button
-          className="usage-refresh"
-          disabled={busy || data.syncing}
-          onClick={() => void refresh(true)}
-        >
-          <RefreshCw
-            size={15}
-            className={busy || data.syncing ? "animate-spin" : ""}
-          />
+        <ActionButton pending={busy || data.syncing} onClick={() => void refresh(true)}>
           {busy || data.syncing ? "同步中…" : "同步历史"}
-        </button>
+        </ActionButton>
       </div>
       {(error || data.error) && (
         <div className="usage-error" role="alert">
@@ -214,21 +208,17 @@ export function UsageDashboard({ action }: { action: Action }) {
             <h2>使用活跃度</h2>
             <p>颜色越深，当天使用时间越长</p>
           </div>
-          <select
-            aria-label="统计年份"
-            value={year}
-            onChange={(e) => {
-              const y = Number(e.target.value);
+          <SettingsSelect aria-label="统计年份" value={year} onValueChange={selectedValue => {
+              const y = Number(selectedValue);
               setYear(y);
               setSelected(y === currentYear ? data.today : `${y}-12-31`);
-            }}
-          >
+            }}>
             {years.map((y) => (
               <option key={y} value={y}>
                 {y} 年
               </option>
             ))}
-          </select>
+          </SettingsSelect>
         </div>
         <div className="usage-calendar-scroll">
           <div className="usage-calendar">
@@ -387,8 +377,7 @@ export function UsageDashboard({ action }: { action: Action }) {
           </div>
         )}
       </section>
-      <details className="usage-method">
-        <summary>统计口径与数据范围</summary>
+      <SettingsDisclosure className="usage-method" title={<> 统计口径与数据范围 </>}>
         <p>
           使用时间从 {new Date(data.since).toLocaleDateString("zh-CN")}{" "}
           开始记录，仅累计应用在前台且系统空闲不超过 5
@@ -407,7 +396,7 @@ export function UsageDashboard({ action }: { action: Action }) {
           {number(data.undatedSkills)}{" "}
           次调用日期未知。数据仅保存在本机，不上传统计服务。
         </p>
-      </details>
+      </SettingsDisclosure>
     </div>
   );
 }

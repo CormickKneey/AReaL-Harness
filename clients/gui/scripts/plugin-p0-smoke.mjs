@@ -41,18 +41,25 @@ async function pluginState(predicate,label){const end=Date.now()+30_000;while(Da
 const row=(await call('manage',{projectId:await page.getByTestId('areal-workbench').getAttribute('data-project-id'),operation:'plugins'})).data.find(x=>x.id==='hello@gui-p0');
 if(predicate(row))return row;await new Promise(r=>setTimeout(r,75));}throw Error('timeout: '+label);}
 async function settings(){await page.getByRole('navigation',{name:'应用导航',exact:true}).getByRole('button',{name:'插件',exact:true}).click();await page.getByRole('tablist',{name:'市场范围',exact:true}).getByRole('tab',{name:'个人',exact:true}).click();await page.getByRole('button',{name:'查看插件 hello@gui-p0',exact:true}).click();}
+const { builtinSkill, BUILTIN_SKILL_ID } = require('../app/src/core/builtin-skills.cjs');
+// Provision verified product bytes once; this runner tests plugins, not concurrent first-run cache creation.
+await builtinSkill(join(scratch, 'core'), BUILTIN_SKILL_ID);
 try{
 app=await electron.launch({executablePath:require('electron'),args:[join(gui,'app')],env,timeout:120_000});
 page=await app.firstWindow();page.setDefaultTimeout(20_000);page.on('pageerror',e=>errors.push(e.message));
 await page.getByTestId('areal-workbench').waitFor({timeout:120_000});await until(s=>s.connection?.state==='ready','desktop ready');
 await app.evaluate(({dialog,BrowserWindow},path)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[path]});dialog.showMessageBox=async()=>({response:1});BrowserWindow.getAllWindows()[0].setSize(1440,960);},workspace);
 await page.evaluate(()=>window.arealDesktop.chooseProject());await createProjectConversation(page,'workspace');
-const ready=await until(s=>s.projects[0]?.state?.connected,'project connected'),projectId=ready.projects[0].id;
+const ready=await until(s=>s.projects.find(p=>p.root===workspace)?.state?.connected,'project connected'),projectId=ready.projects.find(p=>p.root===workspace).id;
 await settings();
-await button('解析并预览来源').click();
+await page.getByRole('heading',{name:'尚未安装',exact:true}).waitFor();
+assert.equal(await page.getByText('已安装 Skills（0）',{exact:true}).count(),0);
+await button('查看详情').focus();await page.keyboard.press('Enter');await button('收起详情').waitFor();await page.keyboard.press('Enter');assert.equal(await button('查看详情').evaluate(el=>el===document.activeElement),true);
+await page.screenshot({path:join(scratch,'uninstalled-plugin.png'),animations:'disabled'});
+await button('核对来源并安装').click();
 await page.getByRole('checkbox',{name:'我已核对以上来源、版本和内容摘要',exact:true}).check();
 await button('安装到用户').click();
-await button('卸载插件').waitFor();assert.equal(requests.length,0,'installation cannot run setup/model');
+await page.getByRole('heading',{name:'已安装',exact:true}).waitFor();assert.equal(requests.length,0,'installation cannot run setup/model');
 checks.push('GUI discovers unmodified package and installs through Core without model execution');
 await page.screenshot({path:join(scratch,'installed-plugin.png'),animations:'disabled'});
 // Lose a completed response only at the Main-to-renderer boundary. Core executes unchanged.
@@ -71,21 +78,21 @@ checks.push('explicit setup enters ordinary accessible chat with packaged skill 
 checks.push('GUI recovers completed setup after injected Main-to-renderer response loss using real Core receipt without replay');
 await page.screenshot({path:join(scratch,'setup-chat.png'),animations:'disabled'});
 await settings();
-await button('在用户范围停用').click();await pluginState(r=>r?.enabled===false,'disable committed');
+await button('管理启用范围').click();await button('在用户范围停用').click();await pluginState(r=>r?.enabled===false,'disable committed');
 const current=await call('manage',{projectId,operation:'plugins'});
 assert.equal(current.data.find(x=>x.id==='hello@gui-p0').enabled,false);
 checks.push('GUI disable reaches same Core state');
 await button('在用户范围启用').click();await pluginState(r=>r?.enabled===true,'enable committed');
-await button('卸载插件').click();await pluginState(r=>r?.installed===false,'uninstall committed');
-const removed=await call('manage',{projectId,operation:'plugins'});assert.equal(removed.data.find(x=>x.id==='hello@gui-p0').installed,false);
+await button('更多插件操作').click();await page.getByRole('menuitem',{name:'卸载插件',exact:true}).click();await pluginState(r=>!r?.installed,'uninstall committed');
+const removed=await call('manage',{projectId,operation:'plugins'});assert.equal(removed.data.some(x=>x.id==='hello@gui-p0'&&x.installed),false);
 checks.push('GUI enable/uninstall completes through management receipts');
 assert.deepEqual(errors,[]);passed=true;
 }catch(e){failure={message:e.message,stack:e.stack};process.exitCode=1;if(page)await captureSmokeFailure(page,scratch,e);}
 finally{
 if(app){
 await app.close().catch(e=>errors.push('close GUI: '+e.message));
-try{const {ServiceConnection}=require('../app/src/core/service-client.cjs');const connection=new ServiceConnection();
-try{const metadata=JSON.parse(await readFile(join(scratch,'core/service.json'),'utf8'));await connection.connect(metadata);await connection.request('stopService',{protocol:metadata.protocol},true);}
+try{const {ServiceConnection,waitForServiceExit}=require('../app/src/core/service-client.cjs');const connection=new ServiceConnection();
+try{const metadata=JSON.parse(await readFile(join(scratch,'core/service.json'),'utf8'));await connection.connect(metadata);await connection.request('stopService',{protocol:metadata.protocol},true);await waitForServiceExit(join(scratch,'core'),metadata);}
 finally{connection.close();}}
 catch(e){errors.push('stop service: '+e.message);}
 }

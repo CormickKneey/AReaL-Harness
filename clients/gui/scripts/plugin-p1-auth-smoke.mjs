@@ -118,7 +118,7 @@ const vaultPath = join(scratch, 'core', 'provider-credentials.json');
 const mappingPath = () => join(scratch, 'core', projectId, 'state', 'desktop', 'plugin-auth-configurations.json');
 async function mapping() { try { return JSON.parse(await readFile(mappingPath(), 'utf8')); } catch (e) { if (e.code === 'ENOENT') return {}; throw e; } }
 async function openAuth() {
-  const summary = page.locator('summary').filter({ hasText: /^认证配置$/ });
+  const summary = page.locator('summary').filter({ hasText: /认证配置/ });
   if (!await summary.evaluate(el => el.parentElement.open)) await summary.click();
   return page.getByLabel('API 凭据', { exact: true });
 }
@@ -127,6 +127,9 @@ async function publicBoundary() {
   for (const operation of ['plugins', 'pluginMcp', 'mcpApps']) await call(operation);
   await call('plugin', { id: pluginId });
 }
+const { builtinSkill, BUILTIN_SKILL_ID } = require('../app/src/core/builtin-skills.cjs');
+// Provision verified product bytes once; this runner tests plugins, not concurrent first-run cache creation.
+await builtinSkill(join(scratch, 'core'), BUILTIN_SKILL_ID);
 try {
   app = await electron.launch({ executablePath: require('electron'), args: [join(gui, 'app')], env, timeout: 120_000 });
   page = await app.firstWindow(); page.setDefaultTimeout(20_000);
@@ -137,17 +140,17 @@ try {
   await app.evaluate(({ dialog, BrowserWindow }, path) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] }); dialog.showMessageBox = async () => ({ response: 1 }); BrowserWindow.getAllWindows()[0].setSize(1440, 960); }, workspace);
   await page.evaluate(() => window.arealDesktop.chooseProject());
   await createProjectConversation(page, 'workspace');
-  const ready = await poll(state, s => s.projects[0]?.state?.connected, 'project connected'); projectId = ready.projects[0].id;
+  const ready = await poll(state, s => s.projects.find(p=>p.root===workspace)?.state?.connected, 'project connected'); projectId = ready.projects.find(p=>p.root===workspace).id;
   if (await button('返回应用').isVisible()) await button('返回应用').click();
   await page.getByTestId('chat-input').waitFor();
-  await button('设置').click();
-  await page.getByLabel('集成', { exact: true }).getByRole('button', { name: '插件', exact: true }).click();
-  await page.getByRole('heading', { name: '插件', exact: true }).waitFor();
+  await page.getByRole('navigation', { name: '应用导航', exact: true }).getByRole('button', { name: '插件', exact: true }).click();
+  await page.getByRole('tablist', { name: '市场范围', exact: true }).getByRole('tab', { name: '个人', exact: true }).click();
   await button('查看插件 ' + pluginId).click();
+  await button('核对来源并安装').click();
+  await page.getByRole('checkbox', { name: '我已核对以上来源、版本和内容摘要', exact: true }).waitFor();
   assert.equal(await button('安装到用户').isEnabled(), false);
-  await button('解析并预览来源').click();
   await page.getByText('我已核对以上来源、版本和内容摘要', { exact: true }).click();
-  await button('安装到用户').click(); await button('卸载插件').waitFor();
+  await button('安装到用户').click(); await page.getByRole('heading', { name: '需要认证', exact: true }).waitFor();
   const detail = await call('plugin', { id: pluginId });
   // The management read returns the plugin itself, unlike list responses' data array.
   const digest = detail.installedDigest; assert.equal(typeof digest, 'string'); assert(digest.length > 0);
@@ -194,8 +197,9 @@ try {
   await button('启用认证').click();
   await poll(() => call('pluginAuth', { id: pluginId, server: serverId, authOperation: 'status' }), s => s?.status === 'ready', 'explicit GUI enable reaches ready');
   assert.equal(wire.length, 0, 'API-key enable does not start MCP');
+  await button('审阅并连接').click();
   assert.equal(await button('信任并连接').isEnabled(), false);
-  await page.getByText('我信任此已安装快照并允许启动其 MCP 服务器', { exact: true }).click();
+  await page.getByText('我信任当前安装快照，并允许启动其 MCP 服务。', { exact: true }).click();
   await button('信任并连接').click();
   await poll(() => call('mcpApps'), v => v.data.some(s => s.pluginId === pluginId && s.tools.some(t => t.name === 'fixture.authenticated')), 'authenticated discovery');
   assert.equal(wire.filter(e => e.method === 'initialize').length, 1, 'single initialize, no automatic authentication replay');
@@ -204,9 +208,10 @@ try {
   checks.push('GUI explicit enable then trust/connect sends declared bearer to actual local HTTP MCP initialize and tool discovery');
 
   const connectedIdentity = await coreIdentity();
-  await (await openAuth()).fill(sentinel); await button('保存认证配置').click();
-  await page.getByText('请先断开插件，再更改认证配置', { exact: true }).waitFor();
-  assert.equal(await (await openAuth()).inputValue(), '');
+  assert.equal(await button('保存认证配置').count(), 0, 'connected view does not offer credential mutation');
+  const mainConnected = await raw('pluginAuthCredential', { id: pluginId, server: serverId, expectedDigest: digest, credentials: { apiKey: sentinel }, configuration: {}, requestId: randomUUID() });
+  assert.equal(mainConnected.ok, false, 'Main independently rejects connected credential mutation');
+  assert.match(JSON.stringify(mainConnected), /请先断开插件/);
   const coreConnected = await raw('pluginAuthConfigure', { id: pluginId, server: serverId, expectedDigest: digest, configuration: references, requestId: randomUUID() });
   assert.equal(coreConnected.ok, false, 'Core independently rejects connected configuration');
   assert.match(JSON.stringify(coreConnected), /disconnect plugin before changing authentication configuration/);
@@ -215,7 +220,7 @@ try {
   await publicBoundary(); assert.equal(modelRequests, 0);
   checks.push('GUI/Main and Core connected guards reject configuration changes without vault write, mapping write or Core restart');
   await page.screenshot({ path: join(scratch, 'native-api-key-connected.png'), animations: 'disabled' });
-  await button('断开连接').click();
+  await button('断开并撤销信任').click();
   await poll(() => call('mcpApps'), v => !v.data.some(s => s.pluginId === pluginId), 'disconnect removes authenticated server');
   assert.deepEqual(errors, []); passed = true;
 } catch (e) {
@@ -225,8 +230,8 @@ try {
   if (app) {
     await app.close().catch(e => errors.push('close GUI: ' + redacted(e.message)));
     try {
-      const { ServiceConnection } = require('../app/src/core/service-client.cjs'); const connection = new ServiceConnection();
-      try { const metadata = JSON.parse(await readFile(join(scratch, 'core', 'service.json'), 'utf8')); await connection.connect(metadata); await connection.request('stopService', { protocol: metadata.protocol }, true); } finally { connection.close(); }
+      const { ServiceConnection, waitForServiceExit } = require('../app/src/core/service-client.cjs'); const connection = new ServiceConnection();
+      try { const metadata = JSON.parse(await readFile(join(scratch, 'core', 'service.json'), 'utf8')); await connection.connect(metadata); await connection.request('stopService', { protocol: metadata.protocol }, true); await waitForServiceExit(join(scratch, 'core'), metadata); } finally { connection.close(); }
     } catch (e) { errors.push('stop service: ' + redacted(e.message)); }
   }
   fixture.closeAllConnections(); await new Promise(r => fixture.close(r));

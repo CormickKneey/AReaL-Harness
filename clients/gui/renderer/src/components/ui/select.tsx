@@ -22,7 +22,7 @@ const selectTriggerVariants = cva(
         outline:
           "border-border bg-transparent text-foreground hover:bg-input/50 hover:text-foreground aria-expanded:bg-selected aria-expanded:text-foreground",
         secondary:
-          "border-transparent bg-secondary text-foreground hover:bg-secondary-hover aria-expanded:bg-secondary aria-expanded:text-foreground",
+          "border-border bg-button-surface text-foreground hover:bg-button-hover aria-expanded:bg-button-hover aria-expanded:text-foreground",
         ghost:
           "border-transparent bg-transparent text-foreground hover:bg-hover hover:text-foreground aria-expanded:bg-hover aria-expanded:text-foreground",
         destructive:
@@ -30,10 +30,10 @@ const selectTriggerVariants = cva(
       },
       size: {
         xs: "h-control-xs rounded-sm pl-2 pr-1 text-ui-base [&_svg:not([class*='size-'])]:size-2.5",
-        sm: "h-control-sm rounded-control pl-2 pr-1 text-ui-base/relaxed [&_svg:not([class*='size-'])]:size-3",
+        sm: "h-control-sm rounded-button pl-2 pr-1.5 text-ui-caption/relaxed [&_svg:not([class*='size-'])]:size-3",
         default:
-          "h-control rounded-control pl-2 pr-1 text-ui-base/relaxed [&_svg:not([class*='size-'])]:size-3.5",
-        lg: "h-control-lg rounded-overlay pl-3 pr-2 text-ui-base [&_svg:not([class*='size-'])]:size-4",
+          "h-control rounded-button pl-2 pr-1.5 text-ui-caption/relaxed [&_svg:not([class*='size-'])]:size-3.5",
+        lg: "h-control-lg rounded-button pl-3 pr-2 text-ui-base [&_svg:not([class*='size-'])]:size-4",
       },
     },
     defaultVariants: {
@@ -81,7 +81,7 @@ function SelectTrigger({
       {children}
       <SelectPrimitive.Icon>
         {indicator ?? (
-          <ChevronDownIcon className="pointer-events-none size-3.5 text-foreground-subtle" />
+          <ChevronDownIcon className="pointer-events-none size-3 text-foreground-subtle" />
         )}
       </SelectPrimitive.Icon>
     </SelectPrimitive.Trigger>
@@ -95,7 +95,7 @@ function SelectContent({
   return <SelectPrimitive.Portal>
     <SelectPrimitive.Positioner align={align} alignItemWithTrigger={alignItemWithTrigger} sideOffset={4} className="z-(--layer-popover) outline-none">
       <SelectPrimitive.Popup data-slot="select-content" className={cn(
-        "ui-popup min-w-(--anchor-width) max-w-(--available-width) overflow-hidden rounded-overlay border border-popover-border bg-menu p-1 text-foreground shadow-overlay outline-none [app-region:no-drag]", className,
+        "ui-popup min-w-(--anchor-width) max-w-(--available-width) overflow-hidden rounded-panel border border-popover-border bg-menu p-1 text-foreground shadow-overlay outline-none [app-region:no-drag]", className,
       )} {...props}>
         <SelectPrimitive.List className="flex max-h-(--available-height) flex-col gap-0.5 overflow-y-auto outline-none">{children}</SelectPrimitive.List>
       </SelectPrimitive.Popup>
@@ -124,7 +124,7 @@ const SelectItem = React.forwardRef<React.ElementRef<typeof SelectPrimitive.Item
         ref={ref}
         data-slot="select-item"
         className={cn(
-          "relative flex min-h-control w-full cursor-default items-center gap-2 rounded-control px-2 py-1 text-ui-base/relaxed text-foreground outline-hidden select-none data-[highlighted]:bg-menu-hover data-[highlighted]:text-foreground data-[disabled]:pointer-events-none data-[disabled]:text-foreground-subtlest data-[disabled]:opacity-100 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
+          "relative flex min-h-control-sm w-full cursor-default items-center gap-2 rounded-button pl-2 pr-7 py-1 text-ui-caption/relaxed text-foreground outline-hidden select-none data-[highlighted]:bg-menu-hover data-[highlighted]:text-foreground data-[disabled]:pointer-events-none data-[disabled]:text-foreground-subtlest data-[disabled]:opacity-100 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
           className,
         )}
         {...props}

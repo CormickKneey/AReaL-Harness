@@ -142,10 +142,12 @@ impl AuthorizedCredential {
 }
 struct Entry {
     id: u64,
-    status: AuthStatus,
+    public_status: Option<AuthStatus>,
     cancel: CancellationToken,
     credential: Option<AuthorizedCredential>,
 }
+static NEXT_FLOW: AtomicU64 = AtomicU64::new(1);
+
 #[derive(Clone)]
 pub struct AuthManager {
     root: PathBuf,
@@ -177,14 +179,14 @@ impl AuthManager {
         })
     }
     pub async fn status(&self, name: &str) -> Option<AuthStatus> {
-        self.entries.lock().await.get(name).map(|e| {
+        self.entries.lock().await.get(name).and_then(|e| {
             if e.credential
                 .as_ref()
                 .is_some_and(|c| c.failed.load(std::sync::atomic::Ordering::Acquire))
             {
-                AuthStatus::Failed
+                Some(AuthStatus::Failed)
             } else {
-                e.status.clone()
+                e.public_status.clone()
             }
         })
     }
@@ -192,7 +194,7 @@ impl AuthManager {
         if let Some(e) = self.entries.lock().await.get_mut(name) {
             e.cancel.cancel();
             e.credential = None;
-            e.status = AuthStatus::Cancelled;
+            e.public_status = Some(AuthStatus::Cancelled);
         }
     }
     pub async fn ready_credential(&self, name: &str) -> Result<AuthorizedCredential> {
@@ -205,6 +207,86 @@ impl AuthManager {
                 !c.cancelled.is_cancelled() && !c.failed.load(std::sync::atomic::Ordering::Acquire)
             })
             .ok_or_else(|| anyhow::anyhow!("MCP authentication is not ready"))
+    }
+    pub async fn cached_credential(
+        &self,
+        name: &str,
+        endpoint: &str,
+        policy: &AuthPolicy,
+        host: &HostAuthConfiguration,
+    ) -> Result<Option<AuthorizedCredential>> {
+        let id = NEXT_FLOW.fetch_add(1, Ordering::Relaxed);
+        let cancel = CancellationToken::new();
+        {
+            let mut entries = self.entries.lock().await;
+            if let Some(entry) = entries.get(name) {
+                return Ok(entry.credential.clone().filter(|credential| {
+                    !credential.cancelled.is_cancelled()
+                        && !credential.failed.load(Ordering::Acquire)
+                }));
+            }
+            if !policy.is_supported() || policy.mode() == "api_key" {
+                return Ok(None);
+            }
+            transport::validate_host(policy, host)?;
+            entries.insert(
+                name.into(),
+                Entry {
+                    id,
+                    public_status: None,
+                    cancel: cancel.clone(),
+                    credential: None,
+                },
+            );
+        }
+        let prepared = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Ok(None),
+            result = tokio::time::timeout(
+                Duration::from_secs(60),
+                self.prepare(name, endpoint, policy, None, None, host, PreparationIntent::CachedOnly)
+                    .with_subscriber(tracing::subscriber::NoSubscriber::default()),
+            ) => result
+                .map_err(|_| anyhow::anyhow!("MCP credential recovery timed out"))
+                .and_then(|result| result),
+        };
+        let mut entries = self.entries.lock().await;
+        if cancel.is_cancelled()
+            || !entries
+                .get(name)
+                .is_some_and(|entry| entry.id == id && entry.public_status.is_none())
+        {
+            return Ok(None);
+        }
+        match prepared {
+            Ok(Prepared::Ready(manager, store)) => {
+                let credential = AuthorizedCredential {
+                    endpoint: endpoint.into(),
+                    manager: Some(Arc::new(manager)),
+                    store: Some(store),
+                    fixed_header: None,
+                    rejected_token: Arc::default(),
+                    failed: Arc::default(),
+                    cancelled: cancel,
+                };
+                let entry = entries.get_mut(name).unwrap();
+                entry.public_status = Some(AuthStatus::Ready);
+                entry.credential = Some(credential.clone());
+                Ok(Some(credential))
+            }
+            Ok(Prepared::Unavailable) => {
+                entries.remove(name);
+                Ok(None)
+            }
+            Ok(_) => {
+                entries.remove(name);
+                Err(anyhow::anyhow!("invalid cached authentication state"))
+            }
+            Err(_) => {
+                entries.remove(name);
+                Err(anyhow::anyhow!("MCP credential recovery failed"))
+            }
+        }
     }
     pub async fn start(
         &self,
@@ -232,7 +314,6 @@ impl AuthManager {
     ) -> Result<AuthStatus> {
         // Validate host-only credentials before cancelling an existing flow.
         transport::validate_host(policy, host)?;
-        static NEXT_FLOW: AtomicU64 = AtomicU64::new(1);
         let id = NEXT_FLOW.fetch_add(1, Ordering::Relaxed);
         let cancel = CancellationToken::new();
         let rejected = {
@@ -248,28 +329,29 @@ impl AuthManager {
                 name.into(),
                 Entry {
                     id,
-                    status: AuthStatus::Pending {
+                    public_status: Some(AuthStatus::Pending {
                         authorization_url: String::new(),
-                    },
+                    }),
                     cancel: cancel.clone(),
                     credential: None,
                 },
             );
             rejected
         };
-        let prepared = tokio::select! {biased;_ = cancel.cancelled()=>return Ok(AuthStatus::Cancelled),r=tokio::time::timeout(Duration::from_secs(60),self.prepare(name,endpoint,policy,challenge,rejected,host).with_subscriber(tracing::subscriber::NoSubscriber::default()))=>r.map_err(|_|anyhow::anyhow!("MCP authentication setup timed out")).and_then(|r|r)};
+        let prepared = tokio::select! {biased;_ = cancel.cancelled()=>return Ok(AuthStatus::Cancelled),r=tokio::time::timeout(Duration::from_secs(60),self.prepare(name,endpoint,policy,challenge,rejected,host,PreparationIntent::Interactive).with_subscriber(tracing::subscriber::NoSubscriber::default()))=>r.map_err(|_|anyhow::anyhow!("MCP authentication setup timed out")).and_then(|r|r)};
         let prepared = match prepared {
             Ok(p) => p,
             Err(_) => {
                 let mut entries = self.entries.lock().await;
                 if !cancel.is_cancelled() && entries.get(name).is_some_and(|e| e.id == id) {
-                    entries.get_mut(name).unwrap().status = AuthStatus::Failed;
+                    entries.get_mut(name).unwrap().public_status = Some(AuthStatus::Failed);
                 }
                 return Err(anyhow::anyhow!("MCP authentication setup failed"));
             }
         };
         let endpoint = endpoint.to_owned();
         match prepared {
+            Prepared::Unavailable => Err(anyhow::anyhow!("MCP authentication is not ready")),
             Prepared::Fixed(header) => {
                 let credential = AuthorizedCredential {
                     endpoint,
@@ -285,7 +367,7 @@ impl AuthManager {
                     return Ok(AuthStatus::Cancelled);
                 }
                 let e = entries.get_mut(name).unwrap();
-                e.status = AuthStatus::Ready;
+                e.public_status = Some(AuthStatus::Ready);
                 e.credential = Some(credential);
                 Ok(AuthStatus::Ready)
             }
@@ -304,7 +386,7 @@ impl AuthManager {
                     return Ok(AuthStatus::Cancelled);
                 }
                 let e = entries.get_mut(name).unwrap();
-                e.status = AuthStatus::Ready;
+                e.public_status = Some(AuthStatus::Ready);
                 e.credential = Some(credential);
                 Ok(AuthStatus::Ready)
             }
@@ -317,7 +399,7 @@ impl AuthManager {
                     if cancel.is_cancelled() || !entries.get(name).is_some_and(|e| e.id == id) {
                         return Ok(AuthStatus::Cancelled);
                     }
-                    entries.get_mut(name).unwrap().status = status.clone();
+                    entries.get_mut(name).unwrap().public_status = Some(status.clone());
                 }
                 let entries = self.entries.clone();
                 let name = name.to_owned();
@@ -340,9 +422,9 @@ impl AuthManager {
                             failed: Arc::default(),
                             cancelled: cancel,
                         });
-                        entry.status = AuthStatus::Ready;
+                        entry.public_status = Some(AuthStatus::Ready);
                     } else {
-                        entry.status = AuthStatus::Failed;
+                        entry.public_status = Some(AuthStatus::Failed);
                     }
                 });
                 Ok(status)
@@ -357,6 +439,7 @@ impl AuthManager {
         challenge: Option<&str>,
         rejected: Option<String>,
         host: &HostAuthConfiguration,
+        intent: PreparationIntent,
     ) -> Result<Prepared> {
         ensure!(
             !policy.unsupported,
@@ -371,6 +454,9 @@ impl AuthManager {
             "invalid MCP endpoint"
         );
         if policy.mode() == "api_key" {
+            if matches!(intent, PreparationIntent::CachedOnly) {
+                return Ok(Prepared::Unavailable);
+            }
             return Ok(Prepared::Fixed(transport::api_key_header(policy, host)?));
         }
         let (mut manager, metadata, mut scopes, resource_identity, refresh_scope_boundary) =
@@ -424,6 +510,10 @@ impl AuthManager {
             .as_ref()
             .map(|saved| saved.granted_scopes.clone())
             .unwrap_or_default();
+        if matches!(intent, PreparationIntent::CachedOnly) {
+            scopes = policy.scopes.clone();
+            refresh_scope_boundary.set(Some(granted_scopes.clone()))?;
+        }
         if challenge.is_some() {
             scopes.extend(granted_scopes.iter().cloned());
             scopes.sort();
@@ -476,6 +566,9 @@ impl AuthManager {
                 Err(AuthError::AuthorizationRequired | AuthError::TokenRefreshRejected(_)) => {}
                 Err(_) => return Err(anyhow::anyhow!("OAuth refresh failed")),
             }
+        }
+        if matches!(intent, PreparationIntent::CachedOnly) {
+            return Ok(Prepared::Unavailable);
         }
         store.invalidate().await?;
         let mut redirect = url::Url::parse(
@@ -565,7 +658,13 @@ impl AuthManager {
         Ok(Prepared::Pending(session, listener, store.clone()))
     }
 }
+enum PreparationIntent {
+    CachedOnly,
+    Interactive,
+}
+
 enum Prepared {
+    Unavailable,
     Fixed(
         (
             reqwest_mcp::header::HeaderName,

@@ -6,12 +6,20 @@ import "./preview.css";
 import { ConversationComposer } from "../ConversationComposer.js";
 import { ApprovalRequest } from "../ApprovalRequest.js";
 import { SideChatPane } from "../SideChatPane.js";
+import { RefreshIcon } from "../interfaceIcons.js";
+import { ActionButton } from "../components/ui/action-button.js";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select.js";
+import { Switch } from "../components/ui/switch.js";
+import { SettingsSegmentedTabs } from "../settings/SettingsSegmentedTabs.js";
+import { SettingsDisclosure } from "../settings/SettingsDisclosure.js";
+import { SettingsGroupCard, SettingsRow, SettingsSelect } from "../settings/SettingsPageParts.js";
 import { Button } from "../components/ui/button.js";
 import { Feedback } from "../components/ui/feedback.js";
 import { TooltipProvider } from "../components/ui/tooltip.js";
 import { MessageResponse } from "../components/ai-elements/message.js";
 import { TurnExecution } from "../TurnExecution.js";
 import { Messages } from "../Messages.js";
+import { ConversationTimelinePreview } from "./ConversationTimelinePreview.js";
 import type { LexicalChatInputHandle } from "../LexicalChatInput.js";
 import type { Action, CommandName } from "../services.js";
 import { tokenGroups } from "./catalog.js";
@@ -70,6 +78,9 @@ function Preview() {
   const [width, setWidth] = useState("wide");
   const [state, setState] = useState<PreviewState>("ready");
   const [text, setText] = useState("");
+  const [closeBehavior, setCloseBehavior] = useState<string | null>("shortcut");
+  const [showPanel, setShowPanel] = useState(true);
+  const [panelLocation, setPanelLocation] = useState<"bottom" | "right">("bottom");
   const [message, setMessage] = useState("");
   const [reducedMotion, setReducedMotion] = useState(true);
   const [values, setValues] = useState<Record<string, string>>({});
@@ -97,7 +108,7 @@ function Preview() {
     return {};
   }) as Action;
   const disabled = state === "busy" || state === "unknown";
-  return <main className="design-preview" data-width={width}>
+  return <main className="design-preview" data-width={width} data-view={new URLSearchParams(window.location.search).has("conversation") ? "conversation" : undefined}>
     <header className="design-preview-header">
       <div><h1>客户端设计系统</h1><p>生产组件与语义 Token · 本地预览</p></div>
       <label>主题<select aria-label="主题" value={dark ? "dark" : "light"} onChange={event => setDark(event.target.value === "dark")}><option value="light">明亮</option><option value="dark">深色</option></select></label>
@@ -107,7 +118,32 @@ function Preview() {
       <label>减少动态效果<input type="checkbox" checked={reducedMotion} onChange={event => setReducedMotion(event.target.checked)} /></label>
     </header>
     <section className="design-preview-panel" aria-label="公共控件">
-      <h2>按钮与反馈</h2><div className="design-preview-actions"><Button>主要动作</Button><Button variant="outline">次要动作</Button><Button variant="ghost">辅助动作</Button><Button disabled>不可用</Button></div>
+      <h2>设置控件 · 按交互选择</h2>
+      <p className="text-ui-sm text-foreground-subtle">执行操作用按钮，开启或关闭用开关，多项选择用下拉，仅两个选项直接并排选择。</p>
+      <SettingsGroupCard>
+        <SettingsRow label="导入配置" description="点击后执行一次操作；普通操作直接显示文字。" control={<ActionButton onClick={() => setMessage("导入入口仅作组件预览。")}>导入</ActionButton>} />
+        <SettingsRow label="聊天存储位置" description="项目外聊天的默认位置。" control={<ActionButton onClick={() => setMessage("目录选择仅作组件预览。")}>更改</ActionButton>} />
+        <SettingsRow label="显示底部面板" description="开或关：切换后立即更新，用左右滑动的开关表示状态。" control={<Switch size="sm" aria-label="显示底部面板" checked={showPanel} onCheckedChange={setShowPanel} />} />
+        <SettingsRow label="默认终端位置" description="只有两个互斥选项：直接展示两个选项，选中项保持高亮。" control={<SettingsSegmentedTabs ariaLabel="默认终端位置" items={[{value: "bottom", label: "底部"}, {value: "right", label: "右侧"}]} value={panelLocation} onValueChange={setPanelLocation} />} />
+        <SettingsRow label="关闭窗口前确认" description="三个及以上选项：下拉按钮显示当前值，展开后选择。" control={
+          <SettingsSelect aria-label="关闭窗口前确认" value={closeBehavior ?? "never"} onValueChange={setCloseBehavior}>
+            <option value="never">从不</option><option value="shortcut">仅关闭快捷键</option><option value="always">始终</option>
+          </SettingsSelect>} />
+        <SettingsRow label="开源许可" description="查看随应用分发的第三方声明。" control={<ActionButton onClick={() => setMessage("许可入口仅作组件预览。")}>查看</ActionButton>} />
+      </SettingsGroupCard>
+      <SettingsDisclosure title="高级设置详情"><p>原地展开保留明确的展开 / 收起动作和键盘语义。</p></SettingsDisclosure>
+      <h3>样式与状态</h3>
+      <div className="design-preview-actions" aria-label="按钮样式与状态">
+        <Button size="sm">主要操作</Button>
+        <ActionButton>普通操作</ActionButton>
+        <Button size="sm" variant="outline">描边操作</Button>
+        <Button size="sm" variant="ghost">辅助操作</Button>
+        <ActionButton variant="destructive-subtle">停止服务</ActionButton>
+        <Button size="sm" variant="destructive">删除</Button>
+        <ActionButton disabled>不可用</ActionButton>
+        <ActionButton pending={state === "busy"} onClick={() => setMessage("状态已刷新。")}>刷新状态</ActionButton>
+        <Button size="icon-sm" variant="ghost" aria-label="刷新预览" onClick={() => setMessage("状态已刷新。 ")}><RefreshIcon /></Button>
+      </div>
       <Feedback error={state === "failed" ? "操作未受理，请检查后重试。" : undefined} message={state === "unknown" ? "结果待核对，保留当前内容。" : "反馈跟随所属组件，错误与等待保持不同含义。"} />
     </section>
     <section className="design-preview-panel" aria-label="Composer 预览">
@@ -122,6 +158,7 @@ function Preview() {
       <Feedback message={message} />
     </section>
     <ChatMotionPreview dark={dark} />
+    <ConversationTimelinePreview dark={dark} />
     <section className="design-preview-panel design-preview-messages" aria-label="长文本预览">
       <h2>已发送消息 · 渐进展示</h2>
       <Messages project={project} thread={messagePreview} action={action} dark={dark} reserveResponseSpace={false}

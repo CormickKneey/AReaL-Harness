@@ -676,12 +676,26 @@ impl Engine {
             }
             if let Some(policy) = config.auth_policy() {
                 let credential = if policy.is_supported() {
-                    self.desktop
-                        .plugin_mcp
-                        .auth
-                        .ready_credential(&self.plugin_auth_key(&id, server, &component.digest))
-                        .await
-                        .ok()
+                    match self.plugin_auth_snapshot(&id, server, &component.digest) {
+                        Ok((auth_key, host)) => {
+                            let auth = &self.desktop.plugin_mcp.auth;
+                            let credential = if let Some(endpoint) = config.endpoint() {
+                                auth.cached_credential(&auth_key, endpoint, policy, &host)
+                                    .await
+                                    .ok()
+                                    .flatten()
+                            } else {
+                                None
+                            };
+                            if self.plugin_auth_key(&id, server, &component.digest) != auth_key {
+                                auth.cancel(&auth_key).await;
+                                None
+                            } else {
+                                credential
+                            }
+                        }
+                        Err(_) => None,
+                    }
                 } else {
                     None
                 };

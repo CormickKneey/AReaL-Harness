@@ -1,3 +1,4 @@
+import { SettingsDisclosure } from "./SettingsDisclosure.js";
 import { useSettingsOperation } from "./useSettingsOperation.js";
 import { useDraftBlocker, useGuardedNavigation } from "./UnsavedChanges.js";
 import { useEffect, useRef, useState } from "react";
@@ -212,8 +213,7 @@ export function McpSettings({
                   />
                 </div>
                 {item.error && <Feedback error={item.error} />}
-                <details className="mt-3">
-                  <summary>工具 · {item.tools?.length ?? 0}</summary>
+                <SettingsDisclosure className="mt-3" title={<> 工具 · {item.tools?.length ?? 0} </>}>
                   {item.tools?.length ? (
                     item.tools.map((tool: Data) => (
                       <div className="settings-tool" key={tool.name}>
@@ -226,7 +226,7 @@ export function McpSettings({
                       尚无可用工具，连接成功后刷新查看。
                     </p>
                   )}
-                </details>
+                </SettingsDisclosure>
               </article>
             ))}
             {packageItems.map((item) => (

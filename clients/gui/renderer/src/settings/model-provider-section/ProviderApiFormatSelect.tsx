@@ -1,15 +1,6 @@
 export type ProviderApiType = "chatCompletions" | "responses";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../../components/ui/select.js";
+import { SettingsSelect } from "../SettingsPageParts.js";
 import { useZCodeIntl } from "../../i18n/IntlProvider.js";
-const TID_MODEL_PROVIDER_API_FORMAT_TRIGGER = "provider-api-format";
-const TID_MODEL_PROVIDER_API_FORMAT_ITEM = "provider-api-format-item";
-const testId = (...parts: string[]) => parts.join(":");
 
 const PROVIDER_CONNECTION_API_FORMATS: readonly ProviderApiType[] = [
   "chatCompletions",
@@ -54,28 +45,10 @@ export function ProviderApiFormatSelect({
   const { intl } = useZCodeIntl();
 
   return (
-    <Select<ProviderApiType> value={value}
-      items={apiFormatOptions.map(format => ({ value: format, label: resolveProviderConnectionApiFormatDisplayLabel(intl, format) }))}
-      onValueChange={nextValue => { if (nextValue !== null) onChange(nextValue); }}>
-      <SelectTrigger
-        id={triggerId} aria-label="API 格式"
-        data-testid={TID_MODEL_PROVIDER_API_FORMAT_TRIGGER}
-        size="lg"
-        className="w-full justify-between"
-      >
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent align="start">
-        {apiFormatOptions.map((format) => (
-          <SelectItem
-            key={format}
-            value={format}
-            data-testid={testId(TID_MODEL_PROVIDER_API_FORMAT_ITEM, format)}
-          >
-            {resolveProviderConnectionApiFormatDisplayLabel(intl, format)}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+    <div id={triggerId}>
+      <SettingsSelect aria-label="API 格式" value={value} onValueChange={next => onChange(next as ProviderApiType)}>
+        {apiFormatOptions.map(format => <option key={format} value={format}>{intl.formatMessage({id: PROVIDER_CONNECTION_API_FORMAT_TITLE_IDS[format]})}</option>)}
+      </SettingsSelect>
+    </div>
   );
 }

@@ -51,11 +51,25 @@ const checks = [], errors = [];
 const stoppedServices = [];
 const button = name => page.getByRole("button", { name, exact: true });
 async function saveProvider() {
-  await button("保存").click();
-  await button("返回应用").click({ trial: true, timeout: 180_000 });
-  assert.equal(await button("保存").isDisabled(), true, "save settles with a clean draft without a persistent saved banner");
-  assert.equal(await button("应用模型配置").count(), 0);
+  const before = await call("providers", { operation: "list" });
+  for (let attempt = 0; attempt < 4; attempt++) {
+    await button("保存").click();
+    await button("返回应用").click({ trial: true, timeout: 180_000 });
+    if (await button("保存").isDisabled()) {
+      assert.equal(await button("应用模型配置").count(), 0);
+      return;
+    }
+    const rejected = page.getByText("任务或操作正在进行，完成后再保存；修改仍保留。", { exact: true });
+    assert.equal(await rejected.isVisible(), true, "failed saves must identify a known pre-submission busy rejection");
+    const after = await call("providers", { operation: "list" });
+    assert.equal(after.revision, before.revision, "busy refusal must not commit the provider draft");
+    assert.deepEqual(after.data, before.data);
+    assert.equal(after.pendingApply, false);
+    checks.push("known busy refusal retains the uncommitted provider draft and unchanged authoritative catalog before explicit UI retry");
+  }
+  assert.fail("provider remained busy after four explicit UI attempts");
 }
+
 const state = () => page.evaluate(() => window.arealDesktop.snapshot());
 const fixtureProject = snapshot => snapshot.projects.find(project => project.root === workspace);
 async function call(name, params) {
@@ -73,7 +87,15 @@ async function stopService() {
   const metadata = JSON.parse(await readFile(join(scratch, "core/service.json"), "utf8"));
   try {
     await connection.connect(metadata);
-    await connection.request("stopService", { protocol: metadata.protocol }, true);
+    const drainDeadline = Date.now() + 15000;
+    for (;;) {
+      try { await connection.request("stopService", { protocol: metadata.protocol }, true); break; }
+      catch (error) {
+        // A known busy rejection has not submitted a stop; let this fixture's requests drain.
+        if (!/请等待已提交操作完成/.test(error.message) || Date.now() >= drainDeadline) throw error;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+    }
   } finally { connection.close(); }
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
@@ -121,13 +143,23 @@ async function verifyModelDefaults(projectId) {
     await page.getByRole("heading", { name: "模型设置", exact: true }).waitFor();
   };
   const setDefault = async (name, reference = { providerId: provider.id, modelId: name === "Alpha" ? "alpha-default" : "beta-default" }) => {
-    await page.getByRole("combobox", { name: "新会话默认模型", exact: true }).click();
-    await page.getByRole("option", { name, exact: true }).click();
+    await button("会话配置").click();
+    await page.waitForFunction(() => {
+      const menu = document.querySelector('[role="combobox"][aria-label="新会话默认模型"]');
+      const tabs = document.querySelector('[role="tablist"][aria-label="新会话默认模型"]');
+      return (menu && !menu.disabled) || (tabs && [...tabs.querySelectorAll('[role="tab"]')].some(tab => !tab.disabled));
+    });
+    const defaultMenu = page.getByRole("combobox", { name: "新会话默认模型", exact: true });
+    if (await defaultMenu.count()) {
+      await defaultMenu.click();
+      await page.getByRole("option", { name, exact: true }).click();
+    } else await page.getByRole("tablist", { name: "新会话默认模型", exact: true }).getByRole("tab", { name, exact: true }).click();
     await button("返回应用").click({ trial: true, timeout: 180000 });
     const configured = await call("providers", { operation: "list" });
     assert.deepEqual(configured.defaultModel, reference);
     assert.equal(configured.pendingApply, false);
-    assert.equal((await page.getByRole("combobox", { name: "新会话默认模型", exact: true }).innerText()).trim(), name, "default picker shows the model name rather than its internal reference");
+    if (await defaultMenu.count()) assert.equal((await defaultMenu.innerText()).trim(), name, "default picker shows the model name rather than its internal reference");
+    else assert.equal(await page.getByRole("tablist", { name: "新会话默认模型", exact: true }).getByRole("tab", { name, exact: true }).getAttribute("aria-selected"), "true");
   };
   const chooseModel = async name => {
     await button("模型").click(); await button("选择模型").click();
@@ -245,7 +277,20 @@ try {
   }
   assert.equal(requests.length, 0, "unavailable entries cannot send a model request");
   await page.screenshot({ path: join(scratch, "unavailable-models.png"), animations: "disabled" });
-  await button("配置模型").click();
+  await page.keyboard.press("Escape");
+  await button("定时任务").click();
+  const taskDraftKey = `areal-gui:task-draft:${projectId}`;
+  const taskDescription = "保留凭据修复前的任务描述";
+  await page.evaluate(({ key, text }) => localStorage.setItem(key, JSON.stringify({ draftId: crypto.randomUUID(), location: { kind: "independent" }, text })), { key: taskDraftKey, text: taskDescription });
+  await button("新建自动化").click();
+  await page.getByRole("alert").filter({ hasText: "模型凭据不可用" }).waitFor();
+  assert.equal(await page.getByTestId("chat-input").count(), 0);
+  assert.equal(requests.length, 0, "a rejected task configuration cannot issue a model request");
+  const rejectedDraft = await page.evaluate(key => JSON.parse(localStorage.getItem(key)), taskDraftKey);
+  assert.ok(rejectedDraft.ownerId);
+  assert.equal(rejectedDraft.threadId, undefined);
+  await page.screenshot({ path: join(scratch, "scheduled-model-recovery.png"), animations: "disabled" });
+  await button("打开模型设置").click();
   await page.getByRole("heading", { name: "模型设置", exact: true }).waitFor();
   checks.push("a missing default-provider credential permits Core connection and model settings without an upstream request");
   await page.locator(".provider-catalog-row").filter({ hasText: "theta" }).click();
@@ -257,17 +302,64 @@ try {
   assert.equal(await page.getByRole("status", { name: "模型 theta-model 状态", exact: true }).count(), 0, "compact model rows show the name only");
   assert.equal(await page.getByText("帮助", { exact: true }).count(), 0);
   assert.equal(await page.getByText("凭据来源", { exact: true }).count(), 0);
-  assert.equal(await page.getByTestId("provider-base-url").isVisible(), true, "endpoint is visible without expanding advanced settings");
+  assert.equal(await page.getByRole("tab", { name: "模型", exact: true }).getAttribute("aria-selected"), "true");
+  assert.equal(await page.getByRole("combobox", { name: "新会话默认模型", exact: true }).count(), 0, "global default belongs to session settings");
+  const search = page.getByRole("searchbox", { name: "搜索模型名称或 ID", exact: true });
+  const modelRow = page.locator(".provider-model-row").filter({ hasText: "theta-model" });
+  assert.ok((await search.boundingBox()).y < (await modelRow.boundingBox()).y, "search precedes results");
+  await search.fill("absent-model");
+  await page.getByText("没有匹配的模型", { exact: true }).waitFor();
+  await search.fill("");
+  await page.getByRole("button", { name: "模型 theta-model 更多操作", exact: true }).click();
+  await page.getByRole("menuitem", { name: "编辑模型 theta-model", exact: true }).click();
+  let editor = page.getByRole("dialog", { name: "编辑模型", exact: true });
+  await editor.waitFor();
+  const box = await editor.boundingBox();
+  assert.ok(Math.abs(box.x + box.width / 2 - (await page.evaluate(() => innerWidth)) / 2) < 3, "model editor is a centered dialog");
+  await editor.getByRole("textbox", { name: "显示名称", exact: true }).fill("Discarded name");
+  await editor.getByRole("button", { name: "取消", exact: true }).click();
+  await page.getByRole("button", { name: "放弃修改", exact: true }).click();
+  assert.equal(await page.getByText("Discarded name", { exact: true }).count(), 0);
+  await page.getByRole("button", { name: "模型 theta-model 更多操作", exact: true }).click();
+  await page.getByRole("menuitem", { name: "编辑模型 theta-model", exact: true }).click();
+  editor = page.getByRole("dialog", { name: "编辑模型", exact: true });
+  await editor.getByRole("spinbutton", { name: "模型温度", exact: true }).fill("0.3");
+  await page.screenshot({ path: join(scratch, "model-editor-dialog.png"), animations: "disabled" });
+  await editor.getByRole("button", { name: "保存模型", exact: true }).click();
+  await page.getByRole("tab", { name: "连接配置", exact: true }).click();
+  assert.equal(await page.getByTestId("provider-base-url").isVisible(), true, "connection tab exposes endpoint");
+  await page.getByRole("tab", { name: "模型", exact: true }).click();
+  assert.equal(await button("保存").isEnabled(), true, "tab switches preserve provider draft");
+  await page.screenshot({ path: join(scratch, "model-settings-models.png"), animations: "disabled" });
+  checks.push("provider model search precedes results, centered editor discards edits, and tabs preserve the provider draft");
+  await page.getByRole("tab", { name: "连接配置", exact: true }).click();
   await page.getByRole("textbox", { name: "API Key", exact: true }).fill("fixture-key");
   assert.match(await providerStatus.innerText(), /缺少凭据/, "unsaved credentials cannot claim readiness");
   await saveProvider();
   const saved = await call("providers", { operation: "list" });
   assert.equal(saved.credentialStates.theta, "available");
+  assert.equal(saved.data.find(p => p.id === "theta").models[0].parameters.temperature, 0.3, "model dialog changes persist through the provider save");
   assert.equal(saved.credentialSources.theta, "stored");
   assert.equal(saved.pendingApply, false, "save confirms persistence and Core synchronization");
   await until(s => fixtureProject(s).models.some(m => m.available === true), "single save makes model available in Core");
   await page.screenshot({ path: join(scratch, "saved-model-configuration.png"), animations: "disabled" });
   await button("返回应用").click();
+  await button("定时任务").click();
+  await button("新建自动化").click();
+  await page.getByTestId("chat-input").waitFor();
+  await page.waitForFunction(() => document.querySelector('[data-testid="chat-input"]')?.getAttribute("contenteditable") === "true");
+  const recoveredDraft = await page.evaluate(key => JSON.parse(localStorage.getItem(key)), taskDraftKey);
+  assert.equal(recoveredDraft.draftId, rejectedDraft.draftId);
+  assert.equal(recoveredDraft.ownerId, rejectedDraft.ownerId);
+  assert.equal(recoveredDraft.location.cwd, rejectedDraft.location.cwd);
+  assert.ok(recoveredDraft.threadId);
+  assert.equal((await page.getByTestId("chat-input").textContent()).trim(), taskDescription);
+  assert.equal(requests.length, 0, "repairing credentials and reopening the same task draft cannot replay or send input");
+  await page.screenshot({ path: join(scratch, "scheduled-model-recovered.png"), animations: "disabled" });
+  checks.push("scheduled creation explains unavailable credentials, opens model settings, and restores the same independent draft after a saved-key repair without sending input");
+  await button("关闭创建对话").click();
+  await button("首页").click();
+  await createProjectConversation(page, "workspace");
   await button("模型").click(); await button("选择模型").click();
   await page.getByRole("radio", { name: "theta-model", exact: true }).click();
   await page.keyboard.press("Escape");
@@ -302,6 +394,7 @@ try {
   checks.push("single save confirms persistence/Core readiness; user chooses a model in the existing Composer and Core executes it");
   // 启用开关、凭据与配置应用分别验收；两个可用模型之间必须能实际切换。
   await page.locator(".provider-catalog-row").filter({ hasText: "arena" }).click();
+  await page.getByRole("tab", { name: "连接配置", exact: true }).click();
   await page.getByRole("textbox", { name: "API Key", exact: true }).fill("fixture-key");
   // 真实 Core 完成保存/同步后暂留回执，稳定覆盖目录已刷新但设置操作尚未结算的窗口。
   await app.evaluate(({ app }) => {
@@ -341,9 +434,9 @@ try {
   assert.deepEqual(requests.at(-1), { model: "arena-model", authenticated: true, authorizationPresent: true });
   await button("模型").click(); await button("配置模型").click();
   await page.locator(".provider-catalog-row").filter({ hasText: "arena" }).click();
+  await page.getByRole("tab", { name: "连接配置", exact: true }).click();
   // 无需认证是同一 Core 文件的编辑；不能继续发送已退役的保存凭据。
-  await page.getByRole("combobox", { name: "认证方式", exact: true }).click();
-  await page.getByRole("option", { name: "无需认证", exact: true }).click();
+  await page.getByRole("tablist", { name: "认证方式", exact: true }).getByRole("tab", { name: "无需认证", exact: true }).click();
   assert.match(await providerStatus.innerText(), /可用/);
   await saveProvider();
   const noAuth = await call("providers", { operation: "list" });
@@ -357,13 +450,11 @@ try {
   assert.equal(shared.credentialSources.arena, "none");
   assert.equal(shared.data.find(p => p.id === "arena").apiKeyEnv, undefined);
   assert.equal((await readFile(config, "utf8")).includes("fixture-key"), false);
-  await page.getByRole("combobox", { name: "认证方式", exact: true }).click();
-  await page.getByRole("option", { name: "API Key", exact: true }).click();
+  await page.getByRole("tablist", { name: "认证方式", exact: true }).getByRole("tab", { name: "API Key", exact: true }).click();
   await button("保存").click();
   await page.getByText("请填写 API Key，或保留已配置的凭据环境变量。", { exact: true }).waitFor();
   assert.equal((await call("providers", { operation: "list" })).revision, noAuth.revision, "an empty API Key mode must fail without modifying shared no-auth configuration");
-  await page.getByRole("combobox", { name: "认证方式", exact: true }).click();
-  await page.getByRole("option", { name: "无需认证", exact: true }).click();
+  await page.getByRole("tablist", { name: "认证方式", exact: true }).getByRole("tab", { name: "无需认证", exact: true }).click();
   await page.screenshot({ path: join(scratch, "no-auth-pending.png"), animations: "disabled" });
 
 
@@ -384,6 +475,7 @@ try {
   await button("模型").click(); await button("配置模型").click();
   await page.locator(".provider-catalog-row").filter({ hasText: /^env/ }).click();
   assert.match(await providerStatus.innerText(), /已停用/);
+  await page.getByRole("tab", { name: "连接配置", exact: true }).click();
   await page.getByRole("textbox", { name: "API Key", exact: true }).fill("");
   await page.getByRole("switch", { name: "启用供应商", exact: true }).click();
   await saveProvider();
@@ -456,6 +548,7 @@ try {
   }
   server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   const files = ["scripts/model-selection-smoke.mjs", "renderer/src/settings/ModelSettings.tsx", "renderer/src/settings/UnsavedChanges.tsx", "renderer/src/settings/SettingsWorkspace.tsx", "renderer/src/i18n/IntlProvider.tsx", "app/src/core/model-config.cjs", "app/src/core/providers.cjs", "app/src/core/backend.cjs", "../../core/config/src/models.rs", "../../core/config/src/lib.rs", "../../core/local-service/src/spec.rs", "../../core/engine/src/desktop/server.rs", "../../core/engine/src/desktop/catalog.rs", "../../core/engine/src/desktop/state.rs", "../../core/engine/src/default_model.rs", "../../core/server/src/lib.rs", "../../core/server/src/reload.rs", "renderer/src/ComposerModelMenu.tsx", "renderer/src/Composer.tsx", "renderer/src/ConversationComposer.tsx", "renderer/src/DraftComposer.tsx", "renderer/src/ProjectlessDraft.tsx", "renderer/src/WorktreeStarter.tsx", "renderer/src/workbench.css"];
+  files.push("renderer/src/settings/NewSessionModelSetting.tsx", "renderer/src/settings/ModelSettings.css", "renderer/src/settings/ModelEditor.tsx", "renderer/src/TaskDraft.tsx", "renderer/src/TaskCenter.tsx", "renderer/src/App.tsx");
   const hashes = Object.fromEntries(await Promise.all(files.map(async file => [file, createHash("sha256").update(await readFile(join(gui, file))).digest("hex")])));
   const coreUnchanged = createHash("sha256").update(await readFile(coreBinary)).digest("hex") === coreSha256;
   await writeFile(join(scratch, "model-requests.json"), JSON.stringify(modelRequests, null, 2));

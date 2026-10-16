@@ -16,9 +16,9 @@ type SavedDraft = { draftId: string; location: DraftLocation; ownerId?: string; 
 const starts = new Map<string, Promise<SavedDraft>>();
 
 /** Task management owns admission/recovery only. Messages and Composer belong to the normal conversation. */
-export function TaskDraft({ projects, initialProjectId, task, action, disabled, onCreated, onClose, initialText = "", renderConversation, renderResources }: {
+export function TaskDraft({ projects, initialProjectId, task, action, disabled, onCreated, onClose, onOpenModelSettings, initialText = "", renderConversation, renderResources }: {
   projects: Data[]; initialProjectId?: string; task?: Data; action: Action; disabled: boolean;
-  onCreated: (task: Data, projectId: string) => void; onClose: () => void; initialText?: string;
+  onCreated: (task: Data, projectId: string) => void; onClose: () => void; onOpenModelSettings: () => void; initialText?: string;
   renderConversation: TaskConversationRenderer; renderResources?: (project: Data, thread: Data) => ReactNode;
 }) {
   const storageKey = task ? `areal-gui:task-edit:${initialProjectId}:${task.id}` : `areal-gui:task-draft:${initialProjectId ?? "global"}`;
@@ -147,6 +147,7 @@ export function TaskDraft({ projects, initialProjectId, task, action, disabled, 
     return () => { live = false; clearInterval(timer); };
   }, [action, saved.threadId, project?.id, project?.state?.connected, disabled, retry]);
   const thread = view?.thread;
+  const credentialUnavailable = !saved.threadId && !saved.pending && /^(?:MODEL_)?CREDENTIAL_UNAVAILABLE(?::|$)/.test(error);
   const empty = thread && !thread.turns?.length;
   const welcome = <div className="task-create-welcome"><CalendarClock size={36}/><h2>让 Agent 定时帮你完成任务</h2><p>告诉我需要做什么、什么时候执行。</p><div className="task-examples">{[
     ["行业动态日报", "每天上午 9 点，整理 AI 行业动态并附上原始来源。"],
@@ -160,7 +161,7 @@ export function TaskDraft({ projects, initialProjectId, task, action, disabled, 
   return <main className="task-conversation" aria-label={task ? "定时任务会话" : "新建定时任务"}>
     <header><h2>{task?.objective ?? "新建任务"}</h2>{task && project && thread && renderResources?.(project, thread)}
       <Button size="icon-sm" variant="ghost" aria-label={task ? "关闭任务详情" : "关闭创建对话"} onClick={onClose}><X size={16}/></Button></header>
-    {(error || readError || view?.error) && <p role="alert" className="task-plan-note task-draft-error">{error || readError || view?.error}</p>}
+    {(error || readError || view?.error) && <p role="alert" className="task-plan-note task-draft-error">{credentialUnavailable ? <>模型凭据不可用。请在模型设置中补充 API Key 并保存，或选择可用的新会话默认模型。完成后重试，或从“定时任务”重新打开“新建任务”。<Button variant="ghost" onClick={onOpenModelSettings}>打开模型设置</Button></> : error || readError || view?.error}</p>}
     {saved.pending && <p role="status" className="task-plan-note">{saving ? "正在保存任务安排…" : "提交结果尚未确认，请核对当前任务；不会自动重复提交。"}{!saving && <Button variant="ghost" disabled={!project?.state?.connected} onClick={() => {void action("reconcile", {projectId: project!.id}).then(result => {if (saved.pending === "start" && result.outcomes?.[saved.draftId]?.accepted) {persist({pending:undefined});setStartRequested(true);setRetry(n => n + 1);}}).catch(cause => setError(cause.message));}}>核对受理状态</Button>}</p>}
     {!thread && <div className="task-conversation-pending">
       <div role="status">{opening || startRequested && !disabled && !saved.threadId && !saved.pending ? "正在打开会话…" : task || saved.threadId || saved.pending ? "正在读取会话…" : error ? "会话打开失败，请重试。" : "等待连接后台…"}{!saved.pending && !opening && (error || saved.threadId) && <Button variant="ghost" disabled={disabled} onClick={() => {setStartRequested(true);setRetry(n => n + 1);}}>{saved.threadId ? "重新读取" : "重试"}</Button>}</div>

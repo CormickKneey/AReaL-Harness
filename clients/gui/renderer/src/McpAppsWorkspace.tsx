@@ -1,3 +1,5 @@
+import { Button } from "./components/ui/button.js";
+import { SettingsSelect } from "./settings/SettingsPageParts.js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { McpUiHostContext } from "@modelcontextprotocol/ext-apps/app-bridge";
@@ -614,7 +616,9 @@ export function McpAppsHub({
     const servers = pluginId === undefined
         ? workspace.servers
         : workspace.servers.filter((server) => server.pluginId === pluginId);
-    const server = servers.find((server) => server.serverId === selected);
+    const settingsServers = servers.filter(server => server.capabilities?.["openai/settings"]);
+    const hasEntrypoint = servers.some(server => server.tools.some(tool => entrypoint(tool, "global")));
+    const server = settingsServers.find((server) => server.serverId === selected);
     const command = (request: Record<string, unknown>) => action("manage", request);
     const run = async (server: McpWorkspaceServer, tool: McpAppTool) => {
         setFeedback("");
@@ -641,13 +645,12 @@ export function McpAppsHub({
                 .join("\n") || "操作已完成",
         );
     };
+    if (pluginId !== undefined && !workspace.error && !hasEntrypoint && !settingsServers.length) return null;
     return (
-        <section aria-label="插件应用">
+        <section aria-label="插件应用" className="plugin-apps-hub">
             <div>
                 <h3>已连接应用</h3>
-                <button disabled={workspace.loading} onClick={() => void workspace.refresh()}>
-                    刷新应用
-                </button>
+                <Button variant="outline" disabled={workspace.loading} onClick={() => void workspace.refresh()}>刷新应用</Button>
             </div>
             {workspace.error && <p role="alert">{workspace.error}</p>}
             {!workspace.loading && !servers.length && (
@@ -662,20 +665,17 @@ export function McpAppsHub({
                         .catch((cause) => setFeedback(cause.message))
                 }
             />
-            <label>
-                应用设置
-                <select
-                    value={selected ?? ""}
-                    onChange={(event) => setSelected(event.target.value || null)}
-                >
+            {settingsServers.length === 1 && !server && <Button variant="outline" onClick={() => setSelected(settingsServers[0].serverId)}>打开应用设置</Button>}
+            {settingsServers.length > 1 && <label>应用设置
+                <SettingsSelect aria-label="应用设置" value={selected ?? ""} onValueChange={value => setSelected(value || null)}>
                     <option value="">选择应用</option>
-                    {servers.map((server) => (
+                    {settingsServers.map((server) => (
                         <option key={server.serverId} value={server.serverId}>
                             {server.title ?? server.serverId}
                         </option>
                     ))}
-                </select>
-            </label>
+                </SettingsSelect>
+            </label>}
             {server &&
                 (!threadId ? (
                     <button

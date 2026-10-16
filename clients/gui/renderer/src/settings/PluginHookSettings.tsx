@@ -1,3 +1,4 @@
+import { SettingsDisclosure } from "./SettingsDisclosure.js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../components/ui/button.js";
 import { Feedback } from "./common.js";
@@ -110,7 +111,8 @@ export function PluginHookSettings({ id, installedDigest, disabled, api, onConfi
       if (generation.current === request) setBusy(false);
     }
   };
-  return <section aria-label="插件钩子" className="space-y-3">
+  if (current && current.definitions.length === 0 && current.diagnostics.length === 0 && !error) return null;
+  return <section aria-label="插件钩子" className="plugin-detail-resources space-y-3">
     <div className="flex items-center justify-between gap-2">
       <h4>插件钩子</h4>
       <Button variant="outline" size="sm" disabled={disabled || busy || loading} onClick={() => void refresh()}>刷新钩子</Button>
@@ -118,10 +120,10 @@ export function PluginHookSettings({ id, installedDigest, disabled, api, onConfi
     <p className="text-foreground-subtle text-ui-sm">钩子可运行 shell 命令或调用已连接的 MCP 工具。安装、启用插件或连接 MCP 均不会授予钩子信任。</p>
     <Feedback error={error} message={loading ? "正在读取当前安装包的钩子…" : undefined} />
     {current && <>
-      <dl className="text-ui-sm space-y-1">
+      <SettingsDisclosure title="钩子摘要"><dl className="text-ui-sm space-y-1">
         <dt>已安装包摘要</dt><dd className="break-all font-mono">{current.installedDigest}</dd>
         <dt>当前定义摘要</dt><dd className="break-all font-mono">{current.definitionDigest}</dd>
-      </dl>
+      </dl></SettingsDisclosure>
       {current.diagnostics.map((diagnostic, index) => <p className="text-ui-sm" key={index}>{diagnostic}</p>)}
       {current.definitions.length === 0 ? <p>当前安装包没有可执行的钩子定义。</p> : <>
         <ul className="space-y-3">
@@ -134,7 +136,7 @@ export function PluginHookSettings({ id, installedDigest, disabled, api, onConfi
             <pre className="whitespace-pre-wrap break-all text-ui-sm">{definition.handler.type === "command"
               ? String(definition.handler.command ?? "") : JSON.stringify(definition.handler, null, 2)}</pre>
             {typeof definition.handler.command_windows === "string" && <p className="whitespace-pre-wrap break-all text-ui-sm">Windows 命令：{definition.handler.command_windows}</p>}
-            <details><summary className="text-ui-sm">完整定义</summary><pre className="whitespace-pre-wrap break-all text-ui-sm">{JSON.stringify(definition, null, 2)}</pre></details>
+            <SettingsDisclosure title={<> 完整定义 </>}><pre className="whitespace-pre-wrap break-all text-ui-sm">{JSON.stringify(definition, null, 2)}</pre></SettingsDisclosure>
           </li>)}
         </ul>
         <label className="flex items-start gap-2 text-ui-sm">

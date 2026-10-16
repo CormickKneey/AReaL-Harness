@@ -8,14 +8,14 @@ export const tokenGroups = [
   { title: "表面与反馈", tokens: [
     ["--color-background", "页面背景"], ["--color-composer", "输入表面"],
     ["--color-foreground", "主要文字"], ["--color-foreground-subtle", "次要文字"],
-    ["--color-border", "分隔与边框"], ["--color-destructive", "错误反馈"],
+    ["--color-border", "分隔与边框"], ["--color-button-surface", "次要按钮"], ["--color-button-hover", "按钮悬停"], ["--color-destructive", "错误反馈"],
   ] },
   { title: "尺寸与间距", tokens: [
     ["--spacing-control", "标准控件"], ["--spacing-control-sm", "紧凑控件"],
     ["--spacing-inline", "相邻内容"], ["--spacing-field", "内容块"], ["--spacing-section", "分区"],
   ] },
   { title: "形状与动效", tokens: [
-    ["--radius-control", "控件"], ["--radius-overlay", "浮层和决策卡片"],
+    ["--radius-control", "控件"], ["--radius-button", "操作按钮与下拉触发器"], ["--radius-overlay", "浮层和决策卡片"],
     ["--radius-composer", "输入区"], ["--motion-fast", "控件反馈"], ["--focus-width", "焦点描边"],
     ["--radius-inset", "表面内的预览内容"], ["--radius-pill", "胶囊或圆形动作"],
   ] },

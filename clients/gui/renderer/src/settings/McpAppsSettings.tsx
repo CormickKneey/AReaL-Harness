@@ -1,3 +1,6 @@
+import { SettingsSelect, SettingsGroupCard, SettingsRow, SettingsSwitch } from "./SettingsPageParts.js";
+import { ActionButton } from "../components/ui/action-button.js";
+import { Input } from "../components/ui/input.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 import { McpAppIcon } from "../McpAppIcon.js";
@@ -244,79 +247,42 @@ export function McpAppsSettings({
             <h3>{server.title ?? server.serverId}</h3>
             {error && <p role="alert">{error}</p>}
             {groups.map((group, index) => (
-                <fieldset key={index} disabled={busy}>
-                    <legend>{group.title}</legend>
+                <fieldset key={index} disabled={busy} className="m-0 border-0 p-0">
+                    <legend className="settings-section-heading">{group.title}</legend>
+                    <SettingsGroupCard>
                     {group.items.map((item, index) => {
                         if (item.kind === "tool") {
                             const tool = server.tools.find((tool) => tool.name === item.tool)!;
-                            return (
-                                <button
-                                    key={index}
-                                    type="button"
-                                    onClick={() => {
-                                        setBusy(true);
-                                        void onTool(server, tool)
-                                            .catch(() => setError("操作未完成，请重试。"))
-                                            .finally(() => setBusy(false));
-                                    }}
-                                >
-                                    {toolTitle(tool)}
-                                </button>
-                            );
+                            return <SettingsRow key={index} label={toolTitle(tool)} control={
+                                <ActionButton aria-label={`运行 ${toolTitle(tool)}`} disabled={busy} onClick={() => {
+                                    setBusy(true);
+                                    void onTool(server, tool).catch(() => setError("操作未完成，请重试。"))
+                                        .finally(() => setBusy(false));
+                                }}>运行</ActionButton>
+                            } />;
                         }
                         const name = item.property,
                             field = data!.schema.properties[name],
                             value = values[name];
                         return (
-                            <label key={name} style={{ display: "block", marginBlock: 12 }}>
-                                {field.title}
-                                {field.description && (
-                                    <small style={{ display: "block" }}>{field.description}</small>
-                                )}
-                                {field.type === "boolean" ? (
-                                    <input
-                                        type="checkbox"
-                                        checked={value === true}
-                                        onChange={(e) =>
-                                            setValues({ ...values, [name]: e.target.checked })
-                                        }
-                                    />
-                                ) : field.type === "string" && field.enum ? (
-                                    <select
-                                        value={String(value)}
-                                        onChange={(e) =>
-                                            setValues({ ...values, [name]: e.target.value })
-                                        }
-                                    >
-                                        {field.enum.map((option) => (
-                                            <option key={option}>{option}</option>
-                                        ))}
-                                    </select>
-                                ) : (
-                                    <input
-                                        type={field.type === "string" ? "text" : "number"}
-                                        value={String(value ?? "")}
-                                        onChange={(e) =>
-                                            setValues({
-                                                ...values,
-                                                [name]:
-                                                    field.type === "string"
-                                                        ? e.target.value
-                                                        : e.target.value === ""
-                                                          ? ""
-                                                          : Number(e.target.value),
-                                            })
-                                        }
-                                    />
-                                )}
-                            </label>
+                            <SettingsRow key={name} label={field.title} description={field.description} control={
+                                field.type === "boolean" ? <SettingsSwitch aria-label={field.title} disabled={busy} checked={value === true}
+                                    onCheckedChange={checked => setValues({...values, [name]: checked})} />
+                                : field.type === "string" && field.enum ? <SettingsSelect aria-label={field.title} disabled={busy} value={String(value)}
+                                    onValueChange={selectedValue => setValues({...values, [name]: selectedValue})}>
+                                    {field.enum.map(option => <option key={option} value={option}>{option}</option>)}
+                                  </SettingsSelect>
+                                : <Input aria-label={field.title} disabled={busy} type={field.type === "string" ? "text" : "number"} value={String(value ?? "")}
+                                    onChange={event => setValues({...values, [name]: field.type === "string" ? event.target.value : event.target.value === "" ? "" : Number(event.target.value)})} />
+                            } />
                         );
                     })}
+                    </SettingsGroupCard>
                 </fieldset>
             ))}
-            <button disabled={busy || !data} onClick={() => void save()}>
+            <ActionButton pending={busy} disabled={!data} onClick={() => void save()}>
                 {busy ? "处理中…" : "保存设置"}
-            </button>
+            </ActionButton>
         </section>
     );
 }

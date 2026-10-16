@@ -4,7 +4,7 @@ import { GitPane } from "./GitPane.js";
 import { PluginCenter } from "./settings/PluginCenter.js";
 import type { ResourceDraftSeed } from "./settings/PluginSkillsPage.js";
 import { readComposerSkills, type ComposerSkill } from "./ComposerSkills.js";
-import { profileKey } from "./ProfileDetails.js";
+import { profileKey, resolveDraftProfile } from "./ProfileDetails.js";
 import { useMcpAppsWorkspace, McpAppsHub, McpMentionsPicker } from "./McpAppsWorkspace.js";
 import { McpAppEntrypoints } from "./settings/McpAppsSettings.js";
 import { UsageDashboard } from "./settings/UsageDashboard.js";
@@ -33,7 +33,7 @@ import { Cpu, Server, Smartphone, Database } from "lucide-react"; // 恢复 Inbo
 import * as React from "react";
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { DismissIcon as X } from "./interfaceIcons.js";
-import { BottomPanelIcon, LeaveProjectIcon, NewProjectIcon, ProjectFolderIcon, ProjectNewChatIcon, ProjectOpenFolderIcon, SidePanelIcon, SidebarToggleIcon, TaskSummaryIcon } from "./homeChromeIcons.js";
+import { LeaveProjectIcon, NewProjectIcon, ProjectFolderIcon, ProjectNewChatIcon, ProjectOpenFolderIcon, SidePanelIcon, SidebarToggleIcon, TaskSummaryIcon } from "./homeChromeIcons.js";
 import { UpdateIndicator } from "./UpdateIndicator.js";
 import { call, type PlatformServices, type Snapshot, type Data, type Action, type PreparedCreator } from "./services.js";
 import { MemoTaskItem } from "./TaskListItem.js";
@@ -205,7 +205,7 @@ export function App({ services }: { services: PlatformServices }) {
 }
 function AppContent({ services }: { services: PlatformServices }) {
   const requestNavigation = useGuardedNavigation();
-  const { terminalLocation, showBottomPanelControl } = useApplicationPreferences();
+  const { terminalLocation } = useApplicationPreferences();
   const [snapshot, updateSnapshot] = useState<Snapshot>({ projects: [], connection: { state: "connecting" } });
   const [themeReady, setThemeReady] = useState(false);
   const [trajectoryAttention, setTrajectoryAttention] = useState(false);
@@ -299,7 +299,7 @@ function AppContent({ services }: { services: PlatformServices }) {
   const toggleSidebarGroup = (id: string) => setCollapsedProjects(current => ({ ...current, [id]: !current[id] }));
   const [projectVisibleCounts, setProjectVisibleCounts] = useState<Record<string, number>>({});
   const [rename, setRename] = useState<Data | null>(null);
-  const [forkIntent, setForkIntent] = useState<{ projectId: string; sourceThreadId: string; turnId: string; boundary: "before" | "after"; title: string; models: Data[]; profiles: Data[]; route: string; anchor?: HTMLElement; resolve: () => void } | null>(null);
+  const [forkIntent, setForkIntent] = useState<{ projectId: string; sourceThreadId: string; turnId: string; boundary: "before" | "after"; route: string; anchor?: HTMLElement; resolve: () => void } | null>(null);
   const [renameText, setRenameText] = useState("");
   useEffect(() => {
     const unsubscribe = services.onState(setSnapshot);
@@ -1201,7 +1201,7 @@ function AppContent({ services }: { services: PlatformServices }) {
     const sourceThreadId = thread.id;
     const route = `${owner}:${sourceThreadId}`;
     return new Promise(resolve => setForkIntent({ projectId: owner, sourceThreadId, turnId, boundary,
-      title: thread.preview || "当前会话", models: project.models ?? [], profiles: project.profiles ?? [], route, anchor: anchor ?? document.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(turnId)}"] .icon-button`) ?? undefined, resolve }));
+      route, anchor: anchor ?? document.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(turnId)}"] .icon-button`) ?? undefined, resolve }));
   };
   const openSideSelection = (selection: Data, excerpt: string, anchor?: Data) => {
     if (!project || !thread) return;
@@ -1279,8 +1279,7 @@ function AppContent({ services }: { services: PlatformServices }) {
     if (owner && seed.kind !== "creator") {
       if (!owner.state?.connected) throw new Error("连接当前项目后再使用 Skill，现有输入已保留。");
       const selection = localStorage.getItem(`${key}:profile`);
-      const profile = selection ? owner.profiles.find((item: Data) => profileKey(item) === selection)
-        : owner.profiles.find((item: Data) => item.id === "areal-standard") ?? owner.profiles[0];
+      const profile = resolveDraftProfile(owner, selection);
       if (!profile) throw new Error("当前任务配置不可用，无法附加 Skill。");
       const available = skill ? await resourceAction("manage", { projectId: owner.id, operation: "skills", agentProfile: { id: profile.id, revision: profile.revision } }) : null;
       if (skill && !(available?.data ?? []).some((item: Data) => item.available && item.id === skill.id && item.revision === skill.revision))
@@ -1434,15 +1433,6 @@ function AppContent({ services }: { services: PlatformServices }) {
                       onPanel={name => { if (name === "改动") setReviewRequest({ owner: panelOwner, scope: "unstaged" }); showPanel(name); }}
                       onAgent={id => showPanel(`agent:${id}`)} onFile={openFile} />
                   )}
-                  {showBottomPanelControl && <button
-                    className={`icon-button ${terminalOpen ? "active" : ""}`}
-                    aria-label="终端"
-                    aria-pressed={terminalOpen}
-                    disabled={!thread}
-                    onClick={() => showPanel("终端")}
-                  >
-                    <BottomPanelIcon />
-                  </button>}
                   <button
                     className={`icon-button ${panel ? "active" : ""}`}
                     aria-label="展开侧边面板"
@@ -1533,9 +1523,9 @@ function AppContent({ services }: { services: PlatformServices }) {
               ) : settingsTab === "钩子" ? (
                 <HooksSettings action={resourceAction} connected={snapshot.connection?.state === "ready"} onConnect={reconnectService} />
               ) : settingsTab === "模型服务" ? (
-                <ModelSettings project={project} thread={thread} action={action} />
+                <ModelSettings action={action} onOpenSessionSettings={() => setSettingsTab("会话配置")} />
               ) : settingsTab === "会话配置" ? (
-                project && thread ? <SessionSettings key={`${project.id}:${thread.id}`} project={project} thread={thread} action={resourceAction} /> : <div className="settings-empty"><p>请先选择任务，以编辑会话配置。</p></div>
+                <SessionSettings key={`${project?.id}:${thread?.id}`} project={project} thread={thread} action={resourceAction} />
               ) : settingsTab === "手机连接" ? (
                 <MobileSettings action={resourceAction} projects={snapshot.projects} />
               ) : settingsTab === "数据飞轮" ? (
@@ -1560,7 +1550,7 @@ function AppContent({ services }: { services: PlatformServices }) {
           ) : taskSurface === "inbox" ? (
             <Inbox projects={snapshot.projects} connected={snapshot.connection?.state === "ready"} action={resourceAction} onClose={() => setTaskCenterOpen(false)} />
           ) : taskCenterOpen ? (
-            <TaskCenter target={taskNotification} initialProjectId={taskScope} defaultProjectId={project?.projectless ? undefined : project?.id} projects={snapshot.projects.map(p => ({...p,name:library.projects?.[p.id]?.title || p.root.split(/[\\/]/).pop()}))} connected={snapshot.connection?.state === "ready"} action={resourceAction} onOpenThread={(pid,id) => void open(pid, id)} renderConversation={(owner,managementThread,beforeTurns) => <><Messages beforeTurns={beforeTurns} project={owner} thread={managementThread} action={resourceAction} dark={dark} onLink={onLink}
+            <TaskCenter target={taskNotification} initialProjectId={taskScope} defaultProjectId={project?.projectless ? undefined : project?.id} projects={snapshot.projects.map(p => ({...p,name:library.projects?.[p.id]?.title || p.root.split(/[\\/]/).pop()}))} connected={snapshot.connection?.state === "ready"} action={resourceAction} onOpenThread={(pid,id) => void open(pid, id)} onOpenModelSettings={() => showPanel("设置")} renderConversation={(owner,managementThread,beforeTurns) => <><Messages beforeTurns={beforeTurns} project={owner} thread={managementThread} action={resourceAction} dark={dark} onLink={onLink}
               onFile={path => {void open(owner.id,managementThread.id).then(() => openFile(path));}}
               onReview={turnId => {void open(owner.id,managementThread.id).then(() => {setReviewRequest({owner:`${owner.id}:${managementThread.id}`,turnId});setPanel("改动");});}}
               readTurnReview={(turnId,itemId) => resourceAction("workspace",{projectId:owner.id,threadId:managementThread.id,turnId,itemId,operation:"turnReview"})}/>
@@ -1894,12 +1884,12 @@ function AppContent({ services }: { services: PlatformServices }) {
           </form>
         </div>
       )}
-      {forkIntent && <ForkTargetDialog anchor={forkIntent.anchor} title={forkIntent.title} boundary={forkIntent.boundary} models={forkIntent.models} profiles={forkIntent.profiles}
+      {forkIntent && <ForkTargetDialog anchor={forkIntent.anchor}
         onClose={() => { forkIntent.resolve(); setForkIntent(current => current === forkIntent ? null : current); }}
         onCheck={() => resourceAction("reconcile", { projectId: forkIntent.projectId })}
-        onCreate={async target => {
+        onCreate={async () => {
           const result = await resourceAction("fork", { projectId: forkIntent.projectId, sourceThreadId: forkIntent.sourceThreadId,
-            anchor: { turnId: forkIntent.turnId, boundary: forkIntent.boundary }, workspaceMode: "sharedCurrent", ...(target ? { target } : {}) });
+            anchor: { turnId: forkIntent.turnId, boundary: forkIntent.boundary }, workspaceMode: "sharedCurrent" });
           forkIntent.resolve(); setForkIntent(current => current === forkIntent ? null : current);
           if (activeConversation.current === forkIntent.route) void open(forkIntent.projectId, result.threadId).catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
         }} />}
