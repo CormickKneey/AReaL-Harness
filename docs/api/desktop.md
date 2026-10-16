@@ -41,7 +41,7 @@ Cookie 名为 `areal_session_<origin摘要>`，不指定 Domain，使用 `HttpOn
 | interaction/list/respond | observe / interact（allowProject 另需不限定 Thread 的 manage） | 追问/审批，绑定 Thread/Turn/requestId |
 | provider/list/read/upsert/remove/probe | manage | 凭据引用、CAS 写入与显式连通性探测；TOML 托管 ID 的 upsert/remove 返回 `CONFIGURATION_MANAGED`，改用共享配置命令 |
 | model/list | observe | providerId/modelId、解析后默认参数、isDefault、能力和可用状态 |
-| turn/start/enqueue, queue/list/update/remove/reorder/pause/resume | observe / interact | 持久提交、冻结配置与队列管理 |
+| turn/start/enqueue/submit, queue/list/update/remove/reorder/pause/resume | observe / interact | 持久提交、冻结配置与队列管理 |
 | goal/get, goal/create/update/pause/resume/clear | observe / interact | 持久目标、CAS 控制与共享预算；显式创建目标后运行，见 [Goal 契约](core.md#goals) |
 | request/read | observe | 按当前身份找回受理收据 |
 | process/start/list/get/read/wait/write/resize/closeStdin/terminate | observe / interact | 受管进程与共享终端 |
@@ -59,6 +59,12 @@ Cookie 名为 `areal_session_<origin摘要>`，不指定 Domain，使用 `HttpOn
 ## 提交、配置与恢复
 
 requestId 是持久业务键，RPC id 只关联响应。相同身份、方法、键和规范参数返回原结果；参数不同冲突。Thread 最多 1024 收据，管理日志 4096；容量满拒绝而不遗忘旧键。重启后 accepted 但无结果的管理记录为 UNKNOWN，不重新执行。
+
+`areal/turn/submit` 是普通会话的原子提交入口，使用 `{requestId,threadId,expectedConfigRevision,intent}`。`intent` 互斥取 `{type:"message",input}` 或 `{type:"continue",expectedTurnId}`，继续分支不接受文本。能力由 `features.ordinaryTurnSubmit=true` 和方法声明共同确认。Core 在 lifecycle、Thread、普通所有权锁内先查收据，再核验配置、归属、归档、压缩、取消结算及 UNKNOWN。Task、Goal、Side 和任务管理会话沿用其既有入口。
+
+Message 保留输入原文。正常活动轮次存在时追加队尾；空闲且没有 pending 时直接创建 Turn。有 pending 时，Message 追加队尾并恢复队列，Continue 只恢复现有队列，均先处理当前权威 FIFO 顺序。没有 pending 的 Continue 在原 Thread 创建新 Turn，写 `continuedFromTurnId`，以可见继续意图承接历史和当前工作区。继续锚点必须是最后一个 `interrupted` Turn，或有明确中断事实、Core recovery UNKNOWN 证据的 `failed` Turn；普通模型失败与已完成轮次不符合条件。未经核查的工具、Hook、插件 UNKNOWN 或资源清理仍阻止执行。
+
+直接执行返回 `{turn}`。排队返回 `{queueItemId,queueRevision,configRevision}`，其中 Continue 的 `queueItemId` 为 null，Message 的 ID 只指向本次新项。Turn、队列与收据在同一个快照提交后才激活或通知调度器。`areal/request/read {threadId,requestId}` 查询同一方法的收据；掉响应或客户端日志清理失败保留原键，不使用新键重放。基础 `turn/start` 和 durable `areal/turn/start` 拒绝越过 retained pending 或 running 项。
 
 turn/start/enqueue 使用 `{requestId,threadId,input,expectedConfigRevision?,interactionMode?}`。队列最多 128 历史项，每项冻结配置；仅成功自动推进，Stop/失败/UNKNOWN/重启/drain 暂停，必须显式恢复。超时后先 request/read 或读权威状态，不能推断没发生副作用。
 

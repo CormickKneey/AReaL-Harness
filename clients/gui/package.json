@@ -25,6 +25,7 @@
     "test:startup": "node scripts/startup-timing-smoke.mjs",
     "test:history": "node --test scripts/history.test.mjs && node scripts/history-smoke.mjs",
     "test:architecture": "node scripts/architecture-smoke.mjs",
+    "test:conversation-continue": "node scripts/conversation-continue-smoke.mjs",
     "test:conversation-derivation": "node scripts/conversation-derivation-smoke.mjs",
     "test:trajectory": "node --test scripts/trajectory.test.mjs scripts/trajectory-polling.test.mjs",
     "test:trajectory-config": "node scripts/trajectory-config-smoke.mjs",

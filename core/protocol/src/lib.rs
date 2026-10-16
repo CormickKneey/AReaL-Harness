@@ -23,6 +23,13 @@ pub enum TurnStatus {
     Failed,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum TurnInterruption {
+    UserPause,
+    CoreRecovery,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TurnError {
@@ -421,6 +428,10 @@ pub struct HookExecution {
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Turn {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interruption: Option<TurnInterruption>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continued_from_turn_id: Option<String>,
     /// Core 准入时的 Unix 秒；旧历史缺省，不从打开界面的时刻补造。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at: Option<i64>,

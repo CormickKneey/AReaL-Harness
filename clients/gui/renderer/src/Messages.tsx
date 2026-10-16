@@ -6,6 +6,8 @@ import { executionOutcome, executionSegments, goalContinuationLabel, turnFailure
 import { TurnProgress } from "./TurnProgress.js";
 import { TurnElapsed, completedTimeLabel } from "./TurnElapsed.js";
 import { ForkIcon, MoreOptionsIcon } from "./interfaceIcons.js";
+import { UserPromptEdit } from "./UserPromptEdit.js";
+import { isOrdinaryConversation, interruptionLabel } from "./ordinaryConversation.js";
 import { MessageActions } from "./MessageActions.js";
 import { CollapsibleText } from "./CollapsibleText.js";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./components/ui/dropdown-menu.js";
@@ -70,6 +72,8 @@ export function Messages({
   const inherited = useForkHistory(project.id, localThread, action);
   const thread: Data = { ...localThread, turns: [...inherited.turns, ...(localThread.turns ?? [])] };
   const inheritedIds = new Set(inherited.turns.map(turn => turn.id));
+  const ordinary = isOrdinaryConversation(localThread, project.configurations?.[localThread.id]);
+  const editable = ordinary ? (localThread.turns ?? []).flatMap((turn: Data) => turn.continuedFromTurnId || goalContinuationLabel(turn) ? [] : (turn.items ?? []).filter((item: Data) => item.type === "userMessage")).at(-1)?.id : undefined;
   const responseSpace = useRef<HTMLDivElement>(null);
   const container = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
@@ -361,11 +365,11 @@ export function Messages({
           const command = (turn.items ?? []).find((item: Data) => item.type === "dynamicToolCall" && item.tool === "run_command");
           const resourceLabel = command && queue?.pauseReason === "stopped" ? commandResourceLabel(command) : null;
           const stopHeading = <div className="turn-stop-heading turn-progress-heading">
-            <div className="turn-progress-label"><span className="turn-status turn-progress-summary" role="status">已停止{turn.error ? `：${turnFailureMessage(turn)}` : ""}</span></div>
+            <div className="turn-progress-label"><span className="turn-status turn-progress-summary" role="status">{ordinary ? interruptionLabel(turn) : "已停止"}{turn.error ? `：${turnFailureMessage(turn)}` : ""}</span></div>
             <div className="turn-progress-divider" />
           </div>;
           return <section key={turn.id} data-turn-id={turn.id} data-turn-status={turn.status} data-latest-turn={turn.id === latestTurnId}>
-            {stopAccepted && <p role="status">停止已受理，等待执行结算</p>}
+            {stopAccepted && <p role="status">{ordinary ? "暂停已受理，等待执行结算" : "停止已受理，等待执行结算"}</p>}
             {resourceLabel && <p role="status">{resourceLabel}</p>}
             {groups.map((group, groupIndex) => {
             const outcome = executionOutcome(group.entries.flatMap(({ item }) => item.items ?? []));
@@ -379,7 +383,7 @@ export function Messages({
                 </div></div>
               </div>;
               if (item.type === "userMessage") {
-                const continuation = goalContinuationLabel(turn);
+                const continuation = turn.continuedFromTurnId ? "继续执行" : goalContinuationLabel(turn);
                 if (continuation && item.id === turn.items?.find((entry: Data) => entry.type === "userMessage")?.id) {
                   return <div className="turn-status" key={item.id}>{continuation}</div>;
                 }
@@ -409,7 +413,7 @@ export function Messages({
                         <MessageResponse className="conversation-markdown user-message-body" preserveLineBreaks theme={dark ? "dark" : "light"} onOpenExternalUrl={onLink} onOpenFileLink={onFile}>{browserFeedback.text}</MessageResponse>
                         </CollapsibleText>
                       </div> : null}
-                      {text.trim() && <MessageActions text={text} />}
+                      {(text.trim() || item.id === editable) && <MessageActions text={text}>{item.id === editable && <UserPromptEdit key={`${owner}:${item.id}`} project={project} thread={localThread} item={item} action={action} />}</MessageActions>}
                     </div>
                   </div>
                 );

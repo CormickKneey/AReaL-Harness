@@ -295,6 +295,9 @@ impl Store {
             for turn in &mut record.thread.turns {
                 if turn.status == TurnStatus::InProgress {
                     turn.status = TurnStatus::Interrupted;
+                    if turn.interruption.is_none() {
+                        turn.interruption = Some(areal_protocol::TurnInterruption::CoreRecovery);
+                    }
                     repaired = true;
                 }
                 for item in &mut turn.items {
@@ -337,6 +340,9 @@ impl Store {
                             ]);
                         }
                         turn.status = TurnStatus::Failed;
+                        if turn.interruption.is_none() {
+                            turn.interruption = Some(areal_protocol::TurnInterruption::CoreRecovery);
+                        }
                         turn.error = Some(crate::outcome::infrastructure(
                             "recovered an UNKNOWN tool outcome; inspection is required",
                             "core_recovery",

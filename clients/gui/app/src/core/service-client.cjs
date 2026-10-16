@@ -308,7 +308,7 @@ class SharedCoreBackend {
     const ownedRecovery = name === 'manage' && request.operation === 'processSubmission' && request.guiOwned === true;
     const { guiOwned, ...params } = request;
     // 队列业务键跨 GUI/共享服务连接保留，外层丢失响应后也能只读核对。
-    if (name === 'queueEdit') params.requestId ??= randomUUID();
+    if (['queueEdit', 'send', 'continue'].includes(name)) params.requestId ??= randomUUID();
     const pending = this.connection.request('command', { name, request: name === 'media' ? encodeMedia(params) : params }, true).then(value => {
       if (ownedRecovery && value.confirmed) {
         this.guiTerminals.set(value.result.id, { projectId: request.projectId, threadId: request.threadId, id: value.result.id });
@@ -319,7 +319,7 @@ class SharedCoreBackend {
     });
     if (ownedStart || ownedRecovery) this.guiTerminalStarts.add(pending);
     try { return await pending; }
-    catch (error) { if (name === 'queueEdit' && error.submissionUnknown) error.requestId = params.requestId; throw error; }
+    catch (error) { if (['queueEdit', 'send', 'continue'].includes(name) && error.submissionUnknown) error.requestId ??= params.requestId; throw error; }
     finally { this.guiTerminalStarts.delete(pending); }
   }
   async resources(request) {

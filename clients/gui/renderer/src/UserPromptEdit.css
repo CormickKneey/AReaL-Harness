@@ -1,0 +1,7 @@
+.message-actions:has(> .user-prompt-edit) {
+  flex-wrap: wrap;
+}
+.user-prompt-edit {
+  flex: 0 0 100%;
+  min-width: 0;
+}

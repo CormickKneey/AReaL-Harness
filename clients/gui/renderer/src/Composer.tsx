@@ -1,3 +1,4 @@
+import { isOrdinaryConversation, interruptedConversationTurn } from "./ordinaryConversation.js";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { McpComposerAttachments, useMcpDraft } from "./McpComposerAttachments.js";
 import { readMcpDraft, consumeMcpDraft, clearMcpDraft } from "./mcp-app-draft.js";
@@ -17,7 +18,7 @@ import { ApprovalRequest } from "./ApprovalRequest.js";
 import { GoalCard, goalControlError } from "./Goal.js";
 import { goalContinuationLabel } from "./conversationPresentation.js";
 import { GoalIcon as Target, PlanModeIcon as Lightbulb } from "./interfaceIcons.js";
-import { FileTree, ArchiveChatIcon, SendMessageIcon, StopIcon, SideChatIcon } from "./interfaceIcons.js";
+import { FileTree, ArchiveChatIcon, SendMessageIcon, StopIcon, ContinueExecutionIcon, SideChatIcon } from "./interfaceIcons.js";
 import { ConversationComposer } from "./ConversationComposer.js";
 import { ComposerAttachment, composerInput, composerPaste, isComposerFile, type ComposerDraftAttachment } from "./ComposerAttachments.js";
 import { useComposerSkills, composerSkillContent, readComposerSkills } from "./ComposerSkills.js";
@@ -129,6 +130,10 @@ export function Composer({
 
   const skills = useComposerSkills({ project, threadId: thread.id, draftKey: key, action: readAction, disabled });
   const taskManagement = config?.options?.appendInstructions?.startsWith("AREAL_TASK_DRAFT_V1\n") === true;
+  const ordinary = isOrdinaryConversation(thread, config);
+  const interrupted = ordinary && project.core?.features?.ordinaryTurnSubmit === true ? interruptedConversationTurn(thread) : undefined;
+  const emptyDraft = !input.text.trim() && !input.files.length && !comments.length && !skills.selected.length && !mcpDraft.length;
+  const canContinue = !!interrupted && emptyDraft && !creatingGoal && !queueEditor.edit;
   const planActive = permissionMode(config ?? {}) === "plan";
   const executionPermission = planActive ? permissionMode({ ...config, readOnly: false, options: planModeOptions(false, config?.options) }) : permissionMode(config ?? {});
   const planReady = canExecutePlan(config ?? {}, thread, project.state?.queues?.[thread.id]);
@@ -180,7 +185,10 @@ export function Composer({
     reconcileReviewSubmission(reviewKey, unknown, outcome.accepted !== false);
     const wasGoal = localStorage.getItem(`${key}:pending-goal`) === unknown;
     localStorage.removeItem(`${key}:pending-goal`);
+    const wasContinue = localStorage.getItem(`${key}:pending-continue`) === unknown;
+    localStorage.removeItem(`${key}:pending-continue`);
     if (outcome.accepted === false) setDeliveryError(outcome.message || "原轮次已结束，内容已保留，请检查后发送。");
+    else if (wasContinue) setDeliveryError("");
     else if (wasGoal) {
       clearText(); changeGoalMode(false);
     } else clear();
@@ -245,6 +253,21 @@ export function Composer({
     } finally {
       markSending(key, false);
     }
+  };
+  const continueExecution = async () => {
+    if (!canContinue || disabled || sending.has(key)) return;
+    markSending(key, true); setDeliveryError("");
+    try {
+      await action("continue", { projectId: project.id, threadId: thread.id, expectedTurnId: interrupted.id, expectedConfigRevision: config?.revision });
+    } catch (cause) {
+      const error = cause as Error & { submissionUnknown?: boolean; requestId?: string };
+      setDeliveryError(error.message);
+      if (error.submissionUnknown && error.requestId) {
+        localStorage.setItem(`${key}:pending`, error.requestId);
+        localStorage.setItem(`${key}:pending-continue`, error.requestId);
+        setUnknown(error.requestId);
+      }
+    } finally { markSending(key, false); }
   };
   const configure = async (values: Data) => {
     if (queueEditor.edit) return;
@@ -350,9 +373,9 @@ export function Composer({
         submitTestId="chat-send-button"
         placeholder={archived ? "已归档任务只读" : creatingGoal ? "描述目标，明确可衡量的结果" : planActive ? "描述任务，生成计划…" : "随心输入"}
         disabled={disabled}
-        submitDisabled={disabled || (taskManagement && !!running) || annotationEditing || invalidAnnotation || (queueEditor.edit ? queueEditor.saveDisabled || (!input.text.trim() && !input.files.length && !queueEditor.edit.attachments.length) : creatingGoal ? !input.text.trim() || !!running : !input.text.trim() && !input.files.length && !comments.length && !skills.selected.length && !mcpDraft.length)}
+        submitDisabled={disabled || (taskManagement && !!running) || annotationEditing || invalidAnnotation || (queueEditor.edit ? queueEditor.saveDisabled || (!input.text.trim() && !input.files.length && !queueEditor.edit.attachments.length) : creatingGoal ? !input.text.trim() || !!running : !canContinue && emptyDraft)}
         submitting={busy}
-        submitLabel={queueEditor.edit ? "保存排队消息" : creatingGoal ? "开始目标" : "发送"}
+        submitLabel={queueEditor.edit ? "保存排队消息" : creatingGoal ? "开始目标" : canContinue ? "继续执行" : "发送"}
         enterSubmits={prefs.sendShortcut === "enter"}
         enableMentionPanel={false}
         composerCatalog={{ ...skills.catalog, entries: [...catalogActions, ...skills.catalog.entries].map(entry => ({ ...entry, disabled: entry.disabled || (!!queueEditor.edit && !["upload", "files", "mcp"].includes(entry.value)) })) }}
@@ -362,12 +385,15 @@ export function Composer({
           localStorage.setItem(key, value);
           localStorage.setItem(`${key}:version`, String(Number(localStorage.getItem(`${key}:version`) ?? 0) + 1));
         }}
+        allowSubmitWhenEmpty={canContinue}
         onSubmit={(value) => {
-          void submit(value);
+          if (canContinue) void continueExecution();
+          else void submit(value);
           return false;
         }}
         onModifiedSubmit={prefs.sendShortcut === "enter" ? (value) => {
-          void submit(value, !!running);
+          if (canContinue) void continueExecution();
+          else void submit(value, !!running);
           return false;
         } : undefined}
         onPaste={event => composerPaste(event, pasted => setFiles(current => [...current, ...pasted]))}
@@ -396,7 +422,7 @@ export function Composer({
         }
         promptHistory={(thread.turns ?? []).flatMap((t: Data) =>
           (t.items ?? [])
-            .filter((i: Data) => i.type === "userMessage" && !(goalContinuationLabel(t) && i.id === t.items.find((entry: Data) => entry.type === "userMessage")?.id))
+            .filter((i: Data) => i.type === "userMessage" && !t.continuedFromTurnId && !(goalContinuationLabel(t) && i.id === t.items.find((entry: Data) => entry.type === "userMessage")?.id))
             .map((i: Data) =>
               (i.content ?? [])
                 .filter((p: Data) => p.type === "text")
@@ -424,8 +450,8 @@ export function Composer({
         onCancel={queueEditor.edit ? () => void queueEditor.cancel() : running ? stop : undefined}
         submitControl={queueEditor.edit ? <Button type="button" size="icon-md" aria-label="保存排队消息" data-testid="chat-send-button" disabled={disabled || queueEditor.saveDisabled || (!input.text.trim() && !input.files.length && !queueEditor.edit.attachments.length)}
           className="composer-primary-action" onClick={() => void queueEditor.save()}><SendMessageIcon className="size-5" /></Button> : running && !input.text.trim() && !input.files.length && !comments.length && !skills.selected.length && !mcpDraft.length ? (
-          <ControlHintTooltip title="停止" shortcut="Esc">
-            <Button type="button" variant="secondary" size="icon-md" className="composer-primary-action composer-stop-action" aria-label="停止"
+          <ControlHintTooltip title={ordinary ? "暂停执行" : "停止"} shortcut="Esc">
+            <Button type="button" variant="secondary" size="icon-md" className="composer-primary-action composer-stop-action" aria-label={ordinary ? "暂停执行" : "停止"}
               onClick={() => { stop(); api.current?.focus(); }}>
               <StopIcon className="size-4" />
             </Button>
@@ -436,6 +462,13 @@ export function Composer({
               disabled={disabled || taskManagement || (!input.text.trim() && !input.files.length && !comments.length && !skills.selected.length && !mcpDraft.length)}
               onClick={event => void submit(api.current?.getMarkdown() ?? text, event.metaKey || event.ctrlKey)}>
               <SendMessageIcon className="size-5" />
+            </Button>
+          </ControlHintTooltip>
+        ) : canContinue ? (
+          <ControlHintTooltip title="继续执行">
+            <Button type="button" variant="composer" size="icon-md" aria-label="继续执行" data-testid="chat-continue-button"
+              disabled={disabled} className="composer-primary-action" onClick={() => void continueExecution()}>
+              <ContinueExecutionIcon className="size-5" />
             </Button>
           </ControlHintTooltip>
         ) : undefined}

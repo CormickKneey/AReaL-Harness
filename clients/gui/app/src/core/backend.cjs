@@ -880,7 +880,7 @@ class CoreBackend {
     }
     if (this.awaitingResponses.has(entry) || !project.client?.ready || project.client.closed || !project.model?.state?.connected)
       return entry;
-    if (!['areal/thread/start', 'areal/turn/start', 'areal/turn/enqueue', 'areal/thread/configure', ...['update','remove','reorder','pause','resume','steer'].map(op => `areal/queue/${op}`), ...['create','pause','resume','clear'].map(op => `areal/goal/${op}`)].includes(entry.method)) return entry;
+    if (!['areal/thread/start', 'areal/turn/start', 'areal/turn/submit', 'areal/turn/enqueue', 'areal/thread/configure', ...['update','remove','reorder','pause','resume','steer'].map(op => `areal/queue/${op}`), ...['create','pause','resume','clear'].map(op => `areal/goal/${op}`)].includes(entry.method)) return entry;
     const client = project.client, generation = project.service?.generation;
     try {
       beforeReceipt?.(entry);
@@ -939,7 +939,7 @@ class CoreBackend {
 
   async submit(project, method, parameters, { requestId, remote, dispatch } = {}) {
     if (remote) return this.submitRemote(project, method, parameters, remote, dispatch);
-    if (requestId !== undefined && (!(workgroupMutationMethods.has(method) || taskMutationMethods.has(method) || managementMethods.has(method) || ['areal/agent/spawn', 'areal/process/start', 'areal/thread/start', 'areal/turn/start', 'areal/thread/fork', 'areal/side/start', 'areal/thread/tools/attach', 'areal/marketplace/add', 'areal/plugin/install', 'areal/plugin/configure', 'areal/plugin/uninstall', 'areal/plugin/setup', ...['update','remove','reorder','pause','resume','steer'].map(name => `areal/queue/${name}`)].includes(method)) || typeof requestId !== 'string' || !/^[0-9a-f-]{36}$/.test(requestId))) throw new Error('无效请求标识');
+    if (requestId !== undefined && (!(workgroupMutationMethods.has(method) || taskMutationMethods.has(method) || managementMethods.has(method) || ['areal/agent/spawn', 'areal/process/start', 'areal/thread/start', 'areal/turn/start', 'areal/turn/enqueue', 'areal/turn/submit', 'areal/thread/fork', 'areal/side/start', 'areal/thread/tools/attach', 'areal/marketplace/add', 'areal/plugin/install', 'areal/plugin/configure', 'areal/plugin/uninstall', 'areal/plugin/setup', ...['update','remove','reorder','pause','resume','steer'].map(name => `areal/queue/${name}`)].includes(method)) || typeof requestId !== 'string' || !/^[0-9a-f-]{36}$/.test(requestId))) throw new Error('无效请求标识');
     const params = { ...parameters, requestId: requestId ?? randomUUID() };
     const entry = { method, params };
     // 活跃请求仅保存在内存；重启后仍在恢复日志中的请求应显示为结果未知。
@@ -978,6 +978,9 @@ class CoreBackend {
       }
       try {
         if (workgroupMutationMethods.has(method)) await this.rememberWorkgroupOutcome(project, entry, result);
+        if (method === 'areal/turn/submit') await this.changeOutcomes(project, outcomes => ({ ...outcomes, [params.requestId]: {
+          accepted: true, method, threadId: params.threadId,
+        } }));
         if (method === 'areal/agent/spawn') {
           // Core 无 spawn 请求查询；只保存已经收到的明确受理结果，再清除 pending。
           if (typeof result.threadId !== 'string' || typeof result.turnId !== 'string') throw new Error('子任务受理结果不完整');
@@ -1027,6 +1030,20 @@ class CoreBackend {
       return await project.client.request(method, method === 'areal/agent/spawn' ? spawn : method === 'turn/steer' ? {...steer,...(durableSteer?{requestId}:{})} : params, ['areal/marketplace/addGit', 'areal/marketplace/update'].includes(method) ? { timeoutMs: 120_000 } : undefined);
     }
     catch (error) {
+      if (method === 'areal/turn/submit') {
+        let receipt;
+        try {
+          const value = await project.client.request('areal/request/read', { threadId: params.threadId, requestId: params.requestId });
+          receipt = value.data?.find(item => item.method === method);
+        } catch {
+          throw Object.assign(new Error('提交结果待核对；不会自动重试'), { submissionUnknown: true, requestId: params.requestId });
+        }
+        if (receipt?.result) return receipt.result;
+        if (receipt || error.submissionUnknown || typeof error.code !== 'number' || error.code === -32603) {
+          throw Object.assign(new Error('提交结果待核对；不会自动重试'), { submissionUnknown: true, requestId: params.requestId });
+        }
+        throw error;
+      }
       if (['areal/thread/fork', 'areal/side/start'].includes(method) && (error.code === -32603 || typeof error.code !== 'number')) {
         try {
           const receipts = await project.client.request('areal/request/read', { requestId: params.requestId });
@@ -1119,7 +1136,7 @@ class CoreBackend {
         try { await this.processControlOutcome(project, entry.params, receipt.result); }
         catch (error) { if (error.submissionUnknown) continue; await this.changePending(project, pending => pending.filter(value => value !== entry)); throw error; }
       }
-      if (['areal/thread/start', 'areal/turn/start', 'turn/start', 'areal/turn/enqueue'].includes(entry.method)) {
+      if (['areal/thread/start', 'areal/turn/start', 'areal/turn/submit', 'turn/start', 'areal/turn/enqueue'].includes(entry.method)) {
         await this.changeOutcomes(project, outcomes => ({ ...outcomes, [entry.params.requestId]: { accepted: true, threadId: entry.params.threadId ?? receipt.threadId ?? receipt.result?.thread?.id } }));
       }
       if (entry.method.startsWith('areal/queue/')) {
@@ -1360,13 +1377,28 @@ class CoreBackend {
         }
         await this.ensureBrowserTools(project, threadId);
         const input = messageInput(this, request);
-        // Queue state survives completed/interrupted turns. Only current execution
-        // determines admission; the renderer's enqueue hint may already be stale.
-        const enqueue = project.model.state.threads[threadId]?.turns?.some(turn => turn.status === 'inProgress');
-        const submitted = await this.submit(project, enqueue ? 'areal/turn/enqueue' : 'areal/turn/start', { threadId, input });
-        if (enqueue) context.onBrowserTurnQueued?.(submitted.queueItemId);
-        else context.onBrowserTurnStarted?.(submitted.turn?.id);
-        break;
+        const current = project.model.state.threads[threadId];
+        let submitted;
+        if (current?.goals?.goal || current?.goalOwner || current?.parentThreadId || current?.source === 'nativeTaskAgent' || current?.conversation?.kind === 'side') {
+          const enqueue = current.turns?.some(turn => turn.status === 'inProgress');
+          submitted = await this.submit(project, enqueue ? 'areal/turn/enqueue' : 'areal/turn/start', { threadId, input }, { requestId: request.requestId });
+        } else {
+          if (!projectCoreCapabilities(this.binary, project.client.capabilities).features?.ordinaryTurnSubmit) throw new Error('当前 Core 不支持普通会话提交，请更新 Core。');
+          submitted = await this.submit(project, 'areal/turn/submit', { threadId,
+            expectedConfigRevision: project.configurations[threadId].revision, intent: { type: 'message', input } }, { requestId: request.requestId });
+        }
+        if (submitted.queueItemId) context.onBrowserTurnQueued?.(submitted.queueItemId);
+        else if (submitted.turn?.id) context.onBrowserTurnStarted?.(submitted.turn.id);
+        return submitted;
+      }
+      case 'continue': {
+        if (!projectCoreCapabilities(this.binary, project.client.capabilities).features?.ordinaryTurnSubmit) throw new Error('当前 Core 不支持继续执行，请更新 Core。');
+        await this.ensureBrowserTools(project, threadId);
+        const submitted = await this.submit(project, 'areal/turn/submit', { threadId,
+          expectedConfigRevision: request.expectedConfigRevision ?? project.configurations[threadId].revision,
+          intent: { type: 'continue', expectedTurnId: request.expectedTurnId } }, { requestId: request.requestId });
+        if (submitted.turn?.id) context.onBrowserTurnStarted?.(submitted.turn.id);
+        return submitted;
       }
       case 'steer': {
         if (isTaskDraftConfiguration(project.configurations?.[threadId])) throw new Error('请等待当前安排完成后再补充修改要求。');

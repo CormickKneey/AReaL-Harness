@@ -43,6 +43,9 @@ impl Engine {
         if state.active.is_some() || state.compacting {
             return Err(Error::Conflict);
         }
+        if state.thread.desktop.as_ref().is_some_and(|data| data.queue.items.iter().any(|item| matches!(item.status.as_str(), "pending" | "running"))) {
+            return Err(Error::Conflict);
+        }
         if state.thread.is_side() && (input.len() != 1 || !matches!(&input[0], Input::Text { .. }))
         {
             return Err(Error::Invalid("SIDE_POLICY_VIOLATION".into()));
@@ -143,6 +146,8 @@ impl Engine {
             candidate.preview = text.chars().take(120).collect();
         }
         let mut turn = Turn {
+            interruption: None,
+            continued_from_turn_id: None,
             started_at: Some(now()),
             completed_at: None,
             duration_ms: None,
@@ -486,11 +491,25 @@ impl Engine {
             }
         } else if state.thread.desktop.is_some() {
             let mut candidate = state.thread.clone();
+            if state.active.is_some() && !state.thread.is_side()
+                && state.thread.parent_thread_id.is_none()
+                && state.thread.goal_owner.is_none()
+                && state.thread.source != "nativeTaskAgent"
+                && let Some(turn) = candidate.turns.iter_mut().find(|turn| turn.id == turn_id)
+                && turn.interruption.is_none()
+            {
+                turn.interruption = Some(areal_protocol::TurnInterruption::UserPause);
+            }
             let queue = &mut candidate.desktop.as_mut().unwrap().queue;
             queue.paused = true;
             queue.pause_reason = Some("stopped".into());
             queue.revision += 1;
-            self.persist(&candidate).await?;
+            if let Err(error) = self.persist(&candidate).await {
+                if let Some(active) = &state.active {
+                    active.cancel.cancel();
+                }
+                return Err(error);
+            }
             state.thread = candidate;
             cell.emit(
                 "areal/queue/updated",

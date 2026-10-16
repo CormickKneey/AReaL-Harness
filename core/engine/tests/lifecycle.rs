@@ -641,6 +641,8 @@ async fn legacy_text_sessions_load_and_upgrade_on_next_write() {
             dynamic_tools: Vec::new(),
             toolset_revision: 0,
             turns: vec![Turn {
+                interruption: None,
+                continued_from_turn_id: None,
                 started_at: None,
                 completed_at: None,
                 duration_ms: None,

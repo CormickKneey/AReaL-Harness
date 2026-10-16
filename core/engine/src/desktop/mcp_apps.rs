@@ -1600,6 +1600,8 @@ impl Engine {
         let mut candidate = thread.clone();
         let configuration = self.freeze_configuration(desktop(thread).configuration);
         let turn = Turn {
+            interruption: None,
+            continued_from_turn_id: None,
             id: id(),
             started_at: Some(now()),
             completed_at: None,

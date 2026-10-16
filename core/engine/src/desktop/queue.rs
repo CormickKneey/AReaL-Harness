@@ -1,6 +1,110 @@
 use super::*;
 
 impl Engine {
+    pub async fn submit_turn(
+        self: &Arc<Self>,
+        identity: String,
+        request: TurnSubmit,
+    ) -> Result<Value> {
+        let hash = digest(&request)?;
+        {
+            let cell = self.cell(&request.thread_id).await?;
+            let state = cell.state.lock().await;
+            if let Some(result) = receipt(&desktop(&state.thread), &identity, &request.request_id, "areal/turn/submit", &hash)? {
+                return Ok(result);
+            }
+        }
+        self.refresh_plugins().await?;
+        self.connect_trusted_plugins(&request.thread_id).await?;
+        self.mutate(move |engine| async move {
+            let _gate = engine.desktop.lifecycle.gate.lock().await;
+            let cell = engine.cell(&request.thread_id).await?;
+            let mut state = cell.state.lock().await;
+            let method = "areal/turn/submit";
+            let mut data = desktop(&state.thread);
+            if let Some(result) = receipt(&data, &identity, &request.request_id, method, &hash)? {
+                return Ok(result);
+            }
+            if !engine.accepting_work() { return Err(Error::Closed); }
+            let _ordinary = engine.ordinary_admission(&state.thread).await?;
+            if state.thread.is_side() || state.thread.goals.goal.is_some()
+                || state.thread.goal_owner.is_some()
+                || state.poisoned || state.compacting || data.archived
+                || data.configuration.revision != request.expected_config_revision
+                || state.active.as_ref().is_some_and(|active| active.cancel.is_cancelled() || active.sealed)
+            { return Err(Error::Conflict); }
+            if data.configuration.profile.as_ref().is_some_and(|profile| profile.workflow.is_some())
+                || data.configuration.options.append_instructions.starts_with("AREAL_TASK_DRAFT_V1\n")
+            { return Err(invalid("ordinary submit requires an ordinary conversation profile")); }
+            engine.check_turn_available(&cell, &state).await?;
+            let pending = data.queue.items.iter().any(|item| item.status == "pending");
+            let (input, continued_from) = match request.intent {
+                TurnSubmitIntent::Message { input } => (input, None),
+                TurnSubmitIntent::Continue { expected_turn_id } => {
+                    if state.active.is_some() { return Err(Error::Conflict); }
+                    let turn = state.thread.turns.last().ok_or(Error::Conflict)?;
+                    let recovery = turn.error.as_ref().and_then(|error| error.outcome.as_ref())
+                        .is_some_and(|outcome| outcome.source == "core_recovery" && outcome.code == "HARNESS_INTERNAL_ERROR"
+                            && outcome.details.as_ref().and_then(|details| details.get("reason")).and_then(Value::as_str) == Some("unknown_tool_outcome"));
+                    if turn.id != expected_turn_id || !(turn.status == TurnStatus::Interrupted
+                        || turn.status == TurnStatus::Failed && (turn.interruption.is_some() || recovery))
+                    { return Err(Error::Conflict); }
+                    (vec![Input::text("Continue the unfinished work in this conversation using the recorded history and the current workspace. Check the current state before acting. Do not replay operations whose outcomes are unknown.")], Some(expected_turn_id))
+                }
+            };
+            let queued = pending || state.active.is_some();
+            let result;
+            let mut candidate;
+            let mut activation = None;
+            if queued {
+                let queue_item = if continued_from.is_none() {
+                    if data.queue.items.len() >= 128 { return Err(Error::Exhausted("queue history capacity reached".into())); }
+                    engine.validate_uploads(&state.thread, &input)?;
+                    let mut configuration = data.configuration.clone();
+                    engine.select_plugin_attachments(&mut configuration, &input, true)?;
+                    let configuration = engine.freeze_configuration(configuration);
+                    validate_input(&input, &engine.configured_model(&configuration)?.capabilities())?;
+                    let item = QueueItem { id: id(), input, configuration, submitted_by: identity.clone(), status: "pending".into(), turn_id: None };
+                    let item_id = item.id.clone();
+                    data.queue.items.push(item);
+                    Some(item_id)
+                } else { None };
+                data.queue.paused = false;
+                data.queue.pause_reason = None;
+                data.queue.revision += 1;
+                result = json!({"queueRevision": data.queue.revision, "configRevision": data.configuration.revision,
+                    "queueItemId": queue_item});
+                candidate = state.thread.clone();
+                candidate.desktop = Some(data);
+            } else {
+                let (mut prepared, mut turn) = engine.prepare_turn(&state.thread, input)?;
+                turn.continued_from_turn_id = continued_from;
+                *prepared.turns.last_mut().unwrap() = turn.clone();
+                let queue = &mut prepared.desktop.get_or_insert_with(Default::default).queue;
+                if queue.paused {
+                    queue.paused = false;
+                    queue.pause_reason = None;
+                    queue.revision += 1;
+                }
+                let permit = engine.reserve_active_turn()?;
+                result = json!({"turn": turn});
+                candidate = prepared;
+                activation = Some((turn, permit));
+            }
+            remember(candidate.desktop.as_mut().unwrap(), &identity, &request.request_id, method, hash, result.clone());
+            engine.persist(&candidate).await?;
+            state.thread = candidate;
+            cell.emit("areal/queue/updated", json!({"threadId": request.thread_id, "queue": state.thread.desktop.as_ref().unwrap().queue}));
+            if let Some((turn, permit)) = activation {
+                engine.activate(&cell, &mut state, &turn, engine.shutdown.child_token(), permit);
+            } else {
+                drop(state);
+                engine.spawn_goal_scheduler();
+                engine.goals.request(&cell.id);
+            }
+            Ok(result)
+        }).await
+    }
     pub async fn start_durable(
         self: &Arc<Self>,
         identity: String,
@@ -43,6 +147,7 @@ impl Engine {
             let hash = digest(&request)?;
             let mut data = desktop(&state.thread);
             if let Some(result) = receipt(&data,&identity,&request.request_id,method,&hash)? { return Ok(result); }
+            if !enqueue && data.queue.items.iter().any(|item| matches!(item.status.as_str(), "pending" | "running")) { return Err(Error::Conflict); }
             if state.poisoned || state.thread.parent_thread_id.is_some() || state.thread.source == "nativeTaskAgent" { return Err(Error::Conflict); }
             if request.expected_config_revision.is_some_and(|revision| revision != data.configuration.revision) { return Err(Error::Conflict); }
             // 锁顺序为 lifecycle → Thread → Tasks；持久化和激活完成前保留 Task 预留锁。
@@ -193,6 +298,14 @@ impl Engine {
             ));
         }
         if state.thread.turns.iter().flat_map(|t|&t.items).any(|i|matches!(i,Item::DynamicToolCall{execution,..} if execution.inspection.is_none() && (execution.outcome==areal_protocol::ToolOutcome::Unknown || execution.hooks.iter().any(|h|h.outcome==areal_protocol::ToolOutcome::Unknown)))){return Err(invalid("UNKNOWN requires operator inspection"));}
+        if state.thread.turns.iter().flat_map(|turn| &turn.items).any(|item| matches!(item,
+            Item::DynamicToolCall { execution, .. } if execution.inspection.is_none()
+                && execution.plugin.as_ref().is_some_and(|plugin| plugin.operations.iter().any(|op| op.outcome == areal_protocol::ToolOutcome::Unknown))))
+            || state.thread.desktop.as_ref().is_some_and(|data| data.hook_runs.iter().any(|hook| hook.outcome == "unknown" && hook.inspection.is_none()))
+        { return Err(invalid("UNKNOWN requires operator inspection")); }
+        if state.thread.desktop.as_ref().is_some_and(|data| data.processes.iter().any(|process|
+            !process.cleanup_confirmed && (process.state == "unknown" || state.active.is_none() && process.lifetime == "turn")))
+        { return Err(invalid("UNKNOWN process cleanup requires operator inspection")); }
         Ok(())
     }
     pub async fn queue(&self, thread_id: &str) -> Result<Queue> {

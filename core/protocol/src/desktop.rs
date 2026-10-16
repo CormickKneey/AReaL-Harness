@@ -506,6 +506,24 @@ pub struct TurnStart {
 }
 #[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TurnSubmit {
+    pub request_id: String,
+    pub thread_id: String,
+    pub expected_config_revision: u64,
+    pub intent: TurnSubmitIntent,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
+pub enum TurnSubmitIntent {
+    Message { input: Vec<Input> },
+    Continue {
+        #[serde(rename = "expectedTurnId")]
+        expected_turn_id: String,
+    },
+}
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TurnInterrupt {
     pub thread_id: String,
     pub turn_id: String,

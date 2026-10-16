@@ -319,7 +319,7 @@ class DesktopService {
       else if (typeof params?.path !== 'string') throw new Error('无效工作区路径');
       this.inflight++; this.schedule();
       try {
-        const entryKey = method === 'command' && params.name === 'send'
+        const entryKey = method === 'command' && ['send', 'continue'].includes(params.name)
           ? browserKey(params.request.projectId, params.request.threadId) : null;
         const entryProject = entryKey && this.backend.projects.get(params.request.projectId);
         const entry = entryProject?.model.state.threads[params.request.threadId]

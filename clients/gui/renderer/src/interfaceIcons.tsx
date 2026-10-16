@@ -315,3 +315,9 @@ export function ReviewOptionGlyph({ kind, size = 16, ...props }: LucideProps & {
 export function ForkIcon({ size = 16, className, style }: LucideProps) {
   return <span aria-hidden="true" className={className} style={{ display: "inline-block", flexShrink: 0, width: size, height: size, background: "currentColor", maskImage: `url(${forkMask})`, maskPosition: "center", maskSize: "contain", maskRepeat: "no-repeat", ...style }} />;
 }
+
+export function ContinueExecutionIcon({ size = 20, ...props }: LucideProps) {
+  return <svg width={size} height={size} viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" {...props}>
+    <path d="M6.5 4.6a1 1 0 0 1 1.5-.86l8 4.9a1.6 1.6 0 0 1 0 2.72l-8 4.9a1 1 0 0 1-1.5-.86V4.6Z" />
+  </svg>;
+}

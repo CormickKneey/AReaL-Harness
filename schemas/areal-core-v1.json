@@ -8396,6 +8396,12 @@
                       }
                     ]
                   },
+                  "continuedFromTurnId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "durationMs": {
                     "description": "单调时钟测得的执行经过毫秒，包含模型、工具、审批与清理等待。",
                     "format": "uint64",
@@ -8493,6 +8499,20 @@
                     "type": [
                       "string",
                       "null"
+                    ]
+                  },
+                  "interruption": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "userPause",
+                          "coreRecovery"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
                     ]
                   },
                   "items": {
@@ -9615,6 +9635,12 @@
                 }
               ]
             },
+            "continuedFromTurnId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "durationMs": {
               "description": "单调时钟测得的执行经过毫秒，包含模型、工具、审批与清理等待。",
               "format": "uint64",
@@ -9712,6 +9738,20 @@
               "type": [
                 "string",
                 "null"
+              ]
+            },
+            "interruption": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "userPause",
+                    "coreRecovery"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
               ]
             },
             "items": {
@@ -10812,6 +10852,12 @@
                 }
               ]
             },
+            "continuedFromTurnId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "durationMs": {
               "description": "单调时钟测得的执行经过毫秒，包含模型、工具、审批与清理等待。",
               "format": "uint64",
@@ -10909,6 +10955,20 @@
               "type": [
                 "string",
                 "null"
+              ]
+            },
+            "interruption": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "userPause",
+                    "coreRecovery"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
               ]
             },
             "items": {
@@ -18262,6 +18322,230 @@
       "title": "TurnStart",
       "type": "object"
     },
+    "areal/turn/submit": {
+      "additionalProperties": false,
+      "properties": {
+        "expectedConfigRevision": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "intent": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "input": {
+                  "items": {
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "mcpContent": {
+                            "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                          },
+                          "text": {
+                            "type": "string"
+                          },
+                          "text_elements": {
+                            "default": [],
+                            "items": true,
+                            "type": "array"
+                          },
+                          "type": {
+                            "const": "text",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "text"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "detail": {
+                            "anyOf": [
+                              {
+                                "enum": [
+                                  "auto",
+                                  "low",
+                                  "high",
+                                  "original"
+                                ],
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "default": null
+                          },
+                          "type": {
+                            "const": "image",
+                            "type": "string"
+                          },
+                          "url": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "url"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "detail": {
+                            "anyOf": [
+                              {
+                                "enum": [
+                                  "auto",
+                                  "low",
+                                  "high",
+                                  "original"
+                                ],
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "default": null
+                          },
+                          "path": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "const": "localImage",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "path"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "type": {
+                            "const": "audio",
+                            "type": "string"
+                          },
+                          "url": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "url"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "const": "localAudio",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "path"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "mime_type": {
+                            "default": null,
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "name": {
+                            "default": null,
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "type": {
+                            "const": "file",
+                            "type": "string"
+                          },
+                          "url": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "url"
+                        ],
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "type": "array"
+                },
+                "type": {
+                  "const": "message",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "input"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "expectedTurnId": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "continue",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "expectedTurnId"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "requestId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "requestId",
+        "threadId",
+        "expectedConfigRevision",
+        "intent"
+      ],
+      "title": "TurnSubmit",
+      "type": "object"
+    },
     "areal/work/overview": {
       "additionalProperties": false,
       "properties": {
@@ -22823,6 +23107,12 @@
                         }
                       ]
                     },
+                    "continuedFromTurnId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "durationMs": {
                       "description": "单调时钟测得的执行经过毫秒，包含模型、工具、审批与清理等待。",
                       "format": "uint64",
@@ -22920,6 +23210,20 @@
                       "type": [
                         "string",
                         "null"
+                      ]
+                    },
+                    "interruption": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "userPause",
+                            "coreRecovery"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
                       ]
                     },
                     "items": {
@@ -26793,6 +27097,12 @@
                           }
                         ]
                       },
+                      "continuedFromTurnId": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
                       "durationMs": {
                         "description": "单调时钟测得的执行经过毫秒，包含模型、工具、审批与清理等待。",
                         "format": "uint64",
@@ -26890,6 +27200,20 @@
                         "type": [
                           "string",
                           "null"
+                        ]
+                      },
+                      "interruption": {
+                        "anyOf": [
+                          {
+                            "enum": [
+                              "userPause",
+                              "coreRecovery"
+                            ],
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
                         ]
                       },
                       "items": {
@@ -28003,6 +28327,12 @@
                     }
                   ]
                 },
+                "continuedFromTurnId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "durationMs": {
                   "description": "单调时钟测得的执行经过毫秒，包含模型、工具、审批与清理等待。",
                   "format": "uint64",
@@ -28100,6 +28430,20 @@
                   "type": [
                     "string",
                     "null"
+                  ]
+                },
+                "interruption": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "userPause",
+                        "coreRecovery"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
                   ]
                 },
                 "items": {
@@ -33991,6 +34335,12 @@
                         }
                       ]
                     },
+                    "continuedFromTurnId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "durationMs": {
                       "description": "单调时钟测得的执行经过毫秒，包含模型、工具、审批与清理等待。",
                       "format": "uint64",
@@ -34088,6 +34438,20 @@
                       "type": [
                         "string",
                         "null"
+                      ]
+                    },
+                    "interruption": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "userPause",
+                            "coreRecovery"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
                       ]
                     },
                     "items": {
@@ -48261,6 +48625,12 @@
                       }
                     ]
                   },
+                  "continuedFromTurnId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "durationMs": {
                     "description": "单调时钟测得的执行经过毫秒，包含模型、工具、审批与清理等待。",
                     "format": "uint64",
@@ -48358,6 +48728,20 @@
                     "type": [
                       "string",
                       "null"
+                    ]
+                  },
+                  "interruption": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "userPause",
+                          "coreRecovery"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
                     ]
                   },
                   "items": {
@@ -49468,6 +49852,12 @@
                 }
               ]
             },
+            "continuedFromTurnId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "durationMs": {
               "description": "单调时钟测得的执行经过毫秒，包含模型、工具、审批与清理等待。",
               "format": "uint64",
@@ -49565,6 +49955,20 @@
               "type": [
                 "string",
                 "null"
+              ]
+            },
+            "interruption": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "userPause",
+                    "coreRecovery"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
               ]
             },
             "items": {
@@ -57772,6 +58176,12 @@
                       }
                     ]
                   },
+                  "continuedFromTurnId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "durationMs": {
                     "description": "单调时钟测得的执行经过毫秒，包含模型、工具、审批与清理等待。",
                     "format": "uint64",
@@ -57869,6 +58279,20 @@
                     "type": [
                       "string",
                       "null"
+                    ]
+                  },
+                  "interruption": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "userPause",
+                          "coreRecovery"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
                     ]
                   },
                   "items": {
@@ -62595,6 +63019,12 @@
                       }
                     ]
                   },
+                  "continuedFromTurnId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "durationMs": {
                     "description": "单调时钟测得的执行经过毫秒，包含模型、工具、审批与清理等待。",
                     "format": "uint64",
@@ -62692,6 +63122,20 @@
                     "type": [
                       "string",
                       "null"
+                    ]
+                  },
+                  "interruption": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "userPause",
+                          "coreRecovery"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
                     ]
                   },
                   "items": {
@@ -66548,6 +66992,12 @@
                       }
                     ]
                   },
+                  "continuedFromTurnId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "durationMs": {
                     "description": "单调时钟测得的执行经过毫秒，包含模型、工具、审批与清理等待。",
                     "format": "uint64",
@@ -66645,6 +67095,20 @@
                     "type": [
                       "string",
                       "null"
+                    ]
+                  },
+                  "interruption": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "userPause",
+                          "coreRecovery"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
                     ]
                   },
                   "items": {
@@ -67813,6 +68277,12 @@
                 }
               ]
             },
+            "continuedFromTurnId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "durationMs": {
               "description": "单调时钟测得的执行经过毫秒，包含模型、工具、审批与清理等待。",
               "format": "uint64",
@@ -67910,6 +68380,20 @@
               "type": [
                 "string",
                 "null"
+              ]
+            },
+            "interruption": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "userPause",
+                    "coreRecovery"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
               ]
             },
             "items": {
@@ -76249,6 +76733,12 @@
                         }
                       ]
                     },
+                    "continuedFromTurnId": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "durationMs": {
                       "description": "单调时钟测得的执行经过毫秒，包含模型、工具、审批与清理等待。",
                       "format": "uint64",
@@ -76346,6 +76836,20 @@
                       "type": [
                         "string",
                         "null"
+                      ]
+                    },
+                    "interruption": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "userPause",
+                            "coreRecovery"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
                       ]
                     },
                     "items": {
@@ -80207,6 +80711,12 @@
                       }
                     ]
                   },
+                  "continuedFromTurnId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "durationMs": {
                     "description": "单调时钟测得的执行经过毫秒，包含模型、工具、审批与清理等待。",
                     "format": "uint64",
@@ -80304,6 +80814,20 @@
                     "type": [
                       "string",
                       "null"
+                    ]
+                  },
+                  "interruption": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "userPause",
+                          "coreRecovery"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
                     ]
                   },
                   "items": {
@@ -84186,6 +84710,12 @@
                       }
                     ]
                   },
+                  "continuedFromTurnId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "durationMs": {
                     "description": "单调时钟测得的执行经过毫秒，包含模型、工具、审批与清理等待。",
                     "format": "uint64",
@@ -84283,6 +84813,20 @@
                     "type": [
                       "string",
                       "null"
+                    ]
+                  },
+                  "interruption": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "userPause",
+                          "coreRecovery"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
                     ]
                   },
                   "items": {
@@ -88173,6 +88717,12 @@
                       }
                     ]
                   },
+                  "continuedFromTurnId": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
                   "durationMs": {
                     "description": "单调时钟测得的执行经过毫秒，包含模型、工具、审批与清理等待。",
                     "format": "uint64",
@@ -88270,6 +88820,20 @@
                     "type": [
                       "string",
                       "null"
+                    ]
+                  },
+                  "interruption": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "userPause",
+                          "coreRecovery"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
                     ]
                   },
                   "items": {
@@ -89403,6 +89967,12 @@
                 }
               ]
             },
+            "continuedFromTurnId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "durationMs": {
               "description": "单调时钟测得的执行经过毫秒，包含模型、工具、审批与清理等待。",
               "format": "uint64",
@@ -89500,6 +90070,20 @@
               "type": [
                 "string",
                 "null"
+              ]
+            },
+            "interruption": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "userPause",
+                    "coreRecovery"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
               ]
             },
             "items": {
@@ -93534,6 +94118,12 @@
                 }
               ]
             },
+            "continuedFromTurnId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "durationMs": {
               "description": "单调时钟测得的执行经过毫秒，包含模型、工具、审批与清理等待。",
               "format": "uint64",
@@ -93631,6 +94221,20 @@
               "type": [
                 "string",
                 "null"
+              ]
+            },
+            "interruption": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "userPause",
+                    "coreRecovery"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
               ]
             },
             "items": {
@@ -94741,6 +95345,12 @@
           }
         ]
       },
+      "continuedFromTurnId": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
       "durationMs": {
         "description": "单调时钟测得的执行经过毫秒，包含模型、工具、审批与清理等待。",
         "format": "uint64",
@@ -94838,6 +95448,20 @@
         "type": [
           "string",
           "null"
+        ]
+      },
+      "interruption": {
+        "anyOf": [
+          {
+            "enum": [
+              "userPause",
+              "coreRecovery"
+            ],
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
         ]
       },
       "items": {

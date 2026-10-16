@@ -6,6 +6,8 @@
 
 [产品术语](../GLOSSARY.md) · [桌面端迁移决策（待实施）](adr/0001-desktop-client-module.md)
 
+[普通会话暂停与继续](adr/0014-conversation-pause-and-continue.md)
+
 | 分类 | 文档 |
 |---|---|
 | 使用指南 | [快速开始](guides/quickstart.md) · [CLI、TUI 与 Web](guides/clients.md) · [配置](guides/configuration.md) · [Runtime 部署](guides/runtime.md) |

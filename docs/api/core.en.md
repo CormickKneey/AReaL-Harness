@@ -6,6 +6,8 @@ Core implements a subset of pinned Codex app-server 0.145.0 plus AReaL extension
 
 `Turn` optionally includes `startedAt`, `completedAt` (Unix seconds), and `durationMs` (milliseconds). Admission persists the start; settlement persists and publishes the end and final duration. A monotonic clock measures `durationMs` from activation through model/tool/approval waits and cleanup, excluding the queue before admission. Clients refresh only the running display; they must not sum tool durations or restart timing when a view opens. Old records and unconfirmed end/duration after crash recovery remain absent, not zero or the restart time. Normal cancellation and failure settlement also persist final timing.
 
+Optional `Turn.interruption` records `userPause` or `coreRecovery`. Missing facts in older records remain unknown. Optional `continuedFromTurnId` identifies a new Turn created by explicit continuation. It does not restore a model call or process. Pause still settles the original Turn and preserves UNKNOWN and failure classifications. Opening a conversation, reconnecting, or restarting never continues ordinary work automatically. See the [desktop submission contract](desktop.en.md#submissions).
+
 ## Transport and sessions
 
 Each WebSocket text frame carries one request, response or notification, up to 4 MiB. Requests are `{id,method,params}` with string/integer id and object params. jsonrpc is optional; responses contain either result or error; batches are unsupported. Request initialize, then send initialized.

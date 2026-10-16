@@ -41,7 +41,7 @@ Compatibility: Bearer clients and the authentication file format are unchanged. 
 | interaction/list/respond | observe / interact (allowProject also needs unrestricted manage) | Questions/approvals bound to Thread/Turn/requestId |
 | provider/list/read/upsert/remove/probe | manage | Credential references, CAS writes and explicit probes; upsert/remove of TOML-managed IDs return `CONFIGURATION_MANAGED`; use shared configuration commands |
 | model/list | observe | providerId/modelId, resolved default parameters, isDefault, capabilities and availability |
-| turn/start/enqueue, queue/list/update/remove/reorder/pause/resume | observe / interact | Durable submissions, frozen configuration and queue management |
+| turn/start/enqueue/submit, queue/list/update/remove/reorder/pause/resume | observe / interact | Durable submissions, frozen configuration and queue management |
 | goal/get, goal/create/update/pause/resume/clear | observe / interact | Persistent Goals, CAS control and shared budgets; execution begins when a Goal is explicitly created; see the [Goal contract](core.en.md#goals) |
 | request/read | observe | Recover receipts for the authenticated identity |
 | process/start/list/get/read/wait/write/resize/closeStdin/terminate | observe / interact | Managed processes and shared terminals |
@@ -59,6 +59,12 @@ Compatibility: Bearer clients and the authentication file format are unchanged. 
 ## Submissions, configuration and recovery
 
 requestId is a durable business key; RPC id only correlates responses. Identical identity, method, key and normalized parameters return the original result; changed parameters conflict. Each Thread permits 1024 receipts; management logs permit 4096. Exhaustion rejects instead of forgetting keys. Accepted management records without results become UNKNOWN after restart and are not reexecuted.
+
+`areal/turn/submit` atomically admits ordinary conversation input using `{requestId,threadId,expectedConfigRevision,intent}`. The tagged intent is either `{type:"message",input}` or `{type:"continue",expectedTurnId}`. Continue accepts no text. Support requires both `features.ordinaryTurnSubmit=true` and the advertised method. Under the lifecycle, Thread, and ordinary ownership locks, Core reads receipts before checking configuration, ownership, archival, compaction, cancellation settlement, and UNKNOWN. Task, Goal, Side, and task management conversations retain their existing entry points.
+
+Message preserves the submitted input. A normally active Turn queues it at the tail. An idle Thread without pending input starts a Turn directly. With pending input, Message appends at the tail and resumes the queue; Continue resumes the existing queue. Both respect the authoritative FIFO order. Continue without pending input creates a new Turn in the same Thread, records `continuedFromTurnId`, and uses a visible continuation instruction with history and the current workspace. Its anchor must be the latest `interrupted` Turn, or a `failed` Turn with an explicit interruption fact or Core recovery UNKNOWN evidence. Ordinary model failure and completed Turns do not qualify. Uninspected tool, Hook, or plugin UNKNOWN and unresolved resource cleanup still block execution.
+
+Direct execution returns `{turn}`. Queued admission returns `{queueItemId,queueRevision,configRevision}`. Continue has a null `queueItemId`; Message identifies only the newly submitted item. Core persists the Turn, queue, and receipt in one snapshot before activation or scheduler notification. `areal/request/read {threadId,requestId}` reads the receipt for this method. A lost response or failed client journal cleanup retains the original key and never replays with a new key. Basic `turn/start` and durable `areal/turn/start` cannot bypass retained pending or running items.
 
 turn/start/enqueue take `{requestId,threadId,input,expectedConfigRevision?,interactionMode?}`. Queues retain at most 128 historical items with frozen configuration. Only success advances automatically. Stop/failure/UNKNOWN/restart/drain pauses the queue until explicit resume. After timeout, query request/read or authoritative state rather than assuming no side effects.
 
