@@ -27,6 +27,7 @@ fn io(error: impl Into<std::io::Error>) -> Error {
         std::io::ErrorKind::NotFound => ErrorCode::NotFound,
         std::io::ErrorKind::PermissionDenied => ErrorCode::PermissionDenied,
         std::io::ErrorKind::AlreadyExists => ErrorCode::Conflict,
+        std::io::ErrorKind::Interrupted => ErrorCode::Unavailable,
         _ => ErrorCode::InvalidArgument,
     };
     Error::new(code, format!("filesystem operation failed: {error}"))
@@ -49,12 +50,14 @@ fn regular(file: &File) -> Result<()> {
 }
 fn read(parent: &File, name: &str) -> Result<(Vec<u8>, u32)> {
     use std::os::unix::fs::MetadataExt;
-    let file: File = fs::openat(
-        parent,
-        name,
-        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
-        Mode::empty(),
-    )
+    let file: File = rustix::io::retry_on_intr(|| {
+        fs::openat(
+            parent,
+            name,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC | OFlags::NONBLOCK,
+            Mode::empty(),
+        )
+    })
     .map_err(io)?
     .into();
     regular(&file)?;
@@ -76,12 +79,15 @@ fn read(parent: &File, name: &str) -> Result<(Vec<u8>, u32)> {
     Ok((bytes, metadata.mode() & 0o777))
 }
 fn directory(parent: &File, name: &str) -> Result<File> {
-    Ok(fs::openat(
-        parent,
-        name,
-        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        Mode::empty(),
-    )
+    // 打开已有对象没有写入副作用；只重试被信号打断的系统调用，不重放文件操作。
+    Ok(rustix::io::retry_on_intr(|| {
+        fs::openat(
+            parent,
+            name,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+    })
     .map_err(io)?
     .into())
 }
@@ -89,11 +95,13 @@ fn directory(parent: &File, name: &str) -> Result<File> {
 /// Authorization is supplied by the Runtime's mandatory OS sandbox. Descriptor
 /// traversal additionally rejects symlinks instead of checking then following them.
 pub fn execute(request: FileHelperRequest) -> Result<Value> {
-    let root: File = fs::open(
-        &request.root,
-        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
-        Mode::empty(),
-    )
+    let root: File = rustix::io::retry_on_intr(|| {
+        fs::open(
+            &request.root,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+    })
     .map_err(io)?
     .into();
     let path = request.command.path().to_owned();

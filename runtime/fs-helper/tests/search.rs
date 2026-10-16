@@ -3,7 +3,17 @@ use std::{fs, os::unix::fs::PermissionsExt, path::Path, process::Command};
 
 fn run(root: &Path, request: &Value) -> Value {
     // 隔离测试子进程环境，避免修改并行测试共用的宿主环境。
-    let output = Command::new(env!("CARGO_BIN_EXE_areal-runtime-fs"))
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        // 与 Runtime 一致，由系统父进程启动本地链接的助手；保留真实退出状态与输出。
+        let mut command = Command::new("/usr/bin/python3");
+        command.args(["-I", "-S", "-c", "import subprocess,sys; r=subprocess.run(sys.argv[1:]).returncode; sys.exit(r if r>=0 else 128-r)"]);
+        command.arg(env!("CARGO_BIN_EXE_areal-runtime-fs"));
+        command
+    };
+    #[cfg(not(target_os = "macos"))]
+    let mut command = Command::new(env!("CARGO_BIN_EXE_areal-runtime-fs"));
+    let output = command
         .args(["--search", &request.to_string()])
         .env("PATH", root.join("host-tools"))
         .env("RIPGREP_CONFIG_PATH", root.join("rg-config"))
