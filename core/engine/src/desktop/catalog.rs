@@ -486,50 +486,28 @@ impl Engine {
         revision: u64,
     ) -> Result<EffectiveConfig> {
         let profile = profile.as_ref().map(|p| self.profile(p)).transpose()?;
-        let configured = self.desktop.configured_models.read().unwrap();
         let model = model
             .or_else(|| profile.as_ref().and_then(|p| p.model.clone()))
-            .or_else(|| configured.default_model.clone());
+            .or_else(|| {
+                self.desktop
+                    .configured_models
+                    .read()
+                    .unwrap()
+                    .default_model
+                    .clone()
+            });
         let provider = model
             .as_ref()
             .map(|m| self.provider(&m.provider_id))
             .transpose()?;
-        let defaults = provider
-            .as_ref()
-            .map(|p| p.parameters.clone())
-            .unwrap_or_default();
-        let model_defaults = model
-            .as_ref()
-            .and_then(|m| {
-                configured
-                    .parameters
-                    .get(&(m.provider_id.clone(), m.model_id.clone()))
-            })
-            .cloned()
-            .unwrap_or_default();
-        let parameters = ModelParameters {
-            context_window_tokens: parameters
-                .context_window_tokens
-                .or(model_defaults.context_window_tokens)
-                .or(defaults.context_window_tokens),
-            temperature: parameters
-                .temperature
-                .or(model_defaults.temperature)
-                .or(defaults.temperature),
-            max_output_tokens: parameters
-                .max_output_tokens
-                .or(model_defaults.max_output_tokens)
-                .or(defaults.max_output_tokens),
-            reasoning_effort: parameters
-                .reasoning_effort
-                .or(model_defaults.reasoning_effort)
-                .or(defaults.reasoning_effort),
-            reasoning_summary: parameters
-                .reasoning_summary
-                .or(model_defaults.reasoning_summary)
-                .or(defaults.reasoning_summary),
+        let defaults = match (&model, &provider) {
+            (Some(model), Some(provider)) => self.model_parameters(model, &provider.parameters),
+            _ => self
+                .default_model_metadata(None)
+                .map(|(_, parameters)| parameters)
+                .unwrap_or_default(),
         };
-        drop(configured);
+        let parameters = merge_model_parameters(parameters, defaults);
         let configuration = EffectiveConfig {
             allow_plugin_skills: false,
             plugin_skills: None,
@@ -545,8 +523,15 @@ impl Engine {
             parameters,
             instructions: String::new(),
         };
-        if configuration.model.is_some() || !self.default_model().name().is_empty() {
-            let actual = self.configured_model(&configuration)?;
+        self.validate_config_model(&configuration)?;
+        Ok(configuration)
+    }
+    pub(crate) fn validate_config_model(&self, configuration: &EffectiveConfig) -> Result<()> {
+        if configuration.model.is_some()
+            || configuration.default_model_revision.is_some()
+            || !self.default_model().name().is_empty()
+        {
+            let actual = self.configured_model(configuration)?;
             if configuration.profile.as_ref().is_some_and(|p| {
                 p.required_modalities
                     .iter()
@@ -555,7 +540,34 @@ impl Engine {
                 return Err(invalid("model does not meet profile modality requirements"));
             }
         }
-        Ok(configuration)
+        Ok(())
+    }
+    pub(crate) fn model_parameters(
+        &self,
+        model: &ModelRef,
+        provider: &ModelParameters,
+    ) -> ModelParameters {
+        let configured = self.desktop.configured_models.read().unwrap();
+        let parameters = configured
+            .parameters
+            .get(&(model.provider_id.clone(), model.model_id.clone()))
+            .cloned()
+            .unwrap_or_default();
+        merge_model_parameters(parameters, provider.clone())
+    }
+    pub(crate) fn update_model_parameters(
+        &self,
+        configuration: &mut EffectiveConfig,
+        parameters: ModelParameters,
+    ) {
+        let defaults = match (&configuration.model, &configuration.provider) {
+            (Some(model), Some(provider)) => self.model_parameters(model, &provider.parameters),
+            _ => self
+                .default_model_metadata(configuration.default_model_revision.as_deref())
+                .map(|(_, parameters)| parameters)
+                .unwrap_or_default(),
+        };
+        configuration.parameters = merge_model_parameters(parameters, defaults);
     }
     fn selected_skill(
         &self,
@@ -1007,5 +1019,20 @@ impl Engine {
             config.selected_skills = Some(selected);
         }
         Ok(())
+    }
+}
+
+pub(crate) fn merge_model_parameters(
+    parameters: ModelParameters,
+    defaults: ModelParameters,
+) -> ModelParameters {
+    ModelParameters {
+        context_window_tokens: parameters
+            .context_window_tokens
+            .or(defaults.context_window_tokens),
+        temperature: parameters.temperature.or(defaults.temperature),
+        max_output_tokens: parameters.max_output_tokens.or(defaults.max_output_tokens),
+        reasoning_effort: parameters.reasoning_effort.or(defaults.reasoning_effort),
+        reasoning_summary: parameters.reasoning_summary.or(defaults.reasoning_summary),
     }
 }

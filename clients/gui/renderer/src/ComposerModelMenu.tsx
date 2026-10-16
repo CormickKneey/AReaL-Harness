@@ -19,7 +19,7 @@ export interface ComposerModelOption {
 }
 /** 可用性直接投影 Core 目录，不在 Renderer 重新判断凭据。 */
 export function composerModelOption(model: {
-    providerId: string;
+    providerId?: string | null;
     modelId: string;
     displayName?: string;
     reasoningEffortOptions?: readonly string[];
@@ -27,7 +27,7 @@ export function composerModelOption(model: {
     credentialState?: string;
 }): ComposerModelOption {
     return {
-        value: `${model.providerId}/${model.modelId}`,
+        value: model.providerId ? `${model.providerId}/${model.modelId}` : "",
         label: model.displayName ?? model.modelId,
         efforts: model.reasoningEffortOptions,
         unavailableReason: model.available === false
@@ -94,7 +94,7 @@ export function ComposerModelMenu({
             >
                 <span>
                     {label}
-                    {effort ? ` ${labels[effort] ?? effort}` : ""}
+                    {` ${effort ? labels[effort] ?? effort : "供应商默认"}`}
                 </span>
                 <MenuChevronIcon size={14} aria-hidden="true" />
             </PopoverTrigger>
@@ -113,11 +113,7 @@ export function ComposerModelMenu({
                     <>
                         <div className="composer-effort-center">
                             <strong>
-                                {index >= 0
-                                    ? (labels[effort!] ?? effort)
-                                    : efforts.length
-                                      ? "默认强度"
-                                      : "默认"}
+                                {effort ? (labels[effort] ?? effort) : "供应商默认"}
                             </strong>
                             <button
                                 type="button"
@@ -149,7 +145,7 @@ export function ComposerModelMenu({
                                     type="range"
                                     aria-label="思考强度"
                                     aria-valuetext={
-                                        index >= 0 ? (labels[effort!] ?? effort) : "默认强度"
+                                        index >= 0 ? (labels[effort!] ?? effort) : "供应商默认"
                                     }
                                     min={0}
                                     max={efforts.length - 1}
@@ -163,6 +159,8 @@ export function ComposerModelMenu({
                         ) : (
                             <p className="composer-effort-unavailable">此模型未提供可选强度</p>
                         )}
+                        {onEffortChange && <Button type="button" variant="ghost" aria-label="使用模型默认"
+                            onClick={() => onEffortChange("")}>使用模型默认</Button>}
                     </>
                 ) : (
                     <>

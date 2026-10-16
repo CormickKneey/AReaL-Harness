@@ -597,6 +597,7 @@ impl Engine {
                 )?,
                 ..Default::default()
             };
+            engine.pin_desktop_default(&mut data.configuration);
             data.configuration.allow_plugin_skills = allow_plugin_skills
                 || data
                     .configuration
@@ -740,12 +741,23 @@ impl Engine {
                 if previous.revision != request.expected_revision {
                     return Err(Error::Conflict);
                 }
-                let mut configuration = engine.resolve_config(
-                    None,
-                    request.model.or(previous.model.clone()),
-                    request.parameters.unwrap_or(previous.parameters.clone()),
-                    previous.revision + 1,
-                )?;
+                let mut configuration = if request.model.is_none() {
+                    let mut configuration = previous.clone();
+                    configuration.revision += 1;
+                    if let Some(parameters) = request.parameters {
+                        engine.update_model_parameters(&mut configuration, parameters);
+                    }
+                    configuration
+                } else {
+                    let mut configuration = engine.resolve_config(
+                        None,
+                        request.model,
+                        request.parameters.unwrap_or_default(),
+                        previous.revision + 1,
+                    )?;
+                    engine.pin_desktop_default(&mut configuration);
+                    configuration
+                };
                 configuration.options = previous.options;
                 configuration.selected_skills = previous.selected_skills;
                 configuration.instructions = previous.instructions;
@@ -783,21 +795,49 @@ impl Engine {
                 return Err(invalid("model and resetModel cannot be used together"));
             }
             let inherited_plugin_scope = request.agent_profile.is_none();
-            let mut configuration = engine.resolve_config(
-                request.agent_profile.or_else(|| {
-                    previous.profile.as_ref().map(|p| VersionRef {
-                        id: p.id.clone(),
-                        revision: p.revision.clone(),
-                    })
-                }),
-                if request.reset_model {
-                    None
-                } else {
-                    request.model.or(previous.model)
-                },
-                request.parameters.unwrap_or(previous.parameters),
-                previous.revision + 1,
-            )?;
+            let preserve_model =
+                request.model.is_none() && !request.reset_model && request.agent_profile.is_none();
+            let mut configuration = if preserve_model {
+                let mut configuration = previous.clone();
+                configuration.revision += 1;
+                if let Some(parameters) = request.parameters {
+                    engine.update_model_parameters(&mut configuration, parameters);
+                } else if configuration.model.is_none()
+                    && configuration.default_model_revision.is_some()
+                {
+                    let parameters = configuration.parameters.clone();
+                    engine.update_model_parameters(&mut configuration, parameters);
+                }
+                engine.validate_config_model(&configuration)?;
+                configuration.read_only = configuration
+                    .profile
+                    .as_ref()
+                    .is_some_and(|profile| profile.read_only);
+                configuration.tool_allowlist = configuration
+                    .profile
+                    .as_ref()
+                    .and_then(|profile| profile.tool_allowlist.clone());
+                configuration.plugin_skills = None;
+                configuration
+            } else {
+                let mut configuration = engine.resolve_config(
+                    request.agent_profile.or_else(|| {
+                        previous.profile.as_ref().map(|p| VersionRef {
+                            id: p.id.clone(),
+                            revision: p.revision.clone(),
+                        })
+                    }),
+                    if request.reset_model {
+                        None
+                    } else {
+                        request.model.or(previous.model.clone())
+                    },
+                    request.parameters.unwrap_or(previous.parameters.clone()),
+                    previous.revision + 1,
+                )?;
+                engine.pin_desktop_default(&mut configuration);
+                configuration
+            };
             if previous.profile.as_ref().map(|p| (&p.id, &p.revision))
                 != configuration.profile.as_ref().map(|p| (&p.id, &p.revision))
                 && (previous
@@ -1022,8 +1062,18 @@ impl Engine {
         let tools = self
             .visible_tools(&cell, &config, state.thread.desktop.is_some())
             .await;
+        let model_metadata = config
+            .model
+            .is_none()
+            .then(|| {
+                config
+                    .default_model_revision
+                    .as_deref()
+                    .and_then(|revision| self.default_model_metadata(Some(revision)))
+            })
+            .flatten();
         Ok(
-            json!({"threadId":thread_id,"sessionId":state.thread.session_id,"parentThreadId":state.thread.parent_thread_id,
+            json!({"modelName":model_metadata.as_ref().map(|(name, _)| name),"resolvedParameters":model_metadata.map(|(_, parameters)| super::catalog::merge_model_parameters(config.parameters.clone(), parameters)),"threadId":thread_id,"sessionId":state.thread.session_id,"parentThreadId":state.thread.parent_thread_id,
             "activeTurnId":state.active.as_ref().map(|a| &a.id),"configuration":config,
             "instructionSnapshot":state.thread.turns.last().and_then(|t|t.instruction_snapshot.as_ref()),"instructionSources":["runtime/defaultOrClientSystem","profile","childTask","clientAppend","workspace/AGENTS.md"],"tools":tools,"loadedSkills":state.thread.desktop.as_ref().map(|d| &d.loaded_skills),
             "contextCheckpoint":state.thread.context_checkpoint,"usage":state.thread.turns.last().and_then(|t| t.usage.as_ref()),

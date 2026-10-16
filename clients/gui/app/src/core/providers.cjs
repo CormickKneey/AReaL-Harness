@@ -261,7 +261,7 @@ class AppProviders {
     if (this.saving || this.backend.providerUpdating) throw new Error('模型配置正在保存，请稍后重试');
     if (request.operation === 'list') { await this.config.current(); return this.public(); }
     if (request.operation === 'probe' || request.operation === 'discover') { await this.config.current(); return this.test(request); }
-    if (request.operation === 'saveAndApply' || request.operation === 'removeAndApply') return this.saveAndApply(request);
+    if (['saveAndApply', 'removeAndApply', 'defaultAndApply'].includes(request.operation)) return this.saveAndApply(request);
     if (request.operation === 'apply') return this.apply(request);
     if (!['save', 'remove', 'default'].includes(request.operation)) throw new Error('不支持的供应商操作');
     return this.write(request);
@@ -329,7 +329,7 @@ class AppProviders {
         if (!status.restartSafe) throw new Error('任务尚未结算，完成后再保存；修改仍保留。');
         drained.push(project);
       }
-      written = await this.write({ ...request, operation: request.operation === 'removeAndApply' ? 'remove' : 'save', discoverModels: true }, next => { candidate = structuredClone(next); });
+      written = await this.write({ ...request, operation: request.operation === 'removeAndApply' ? 'remove' : request.operation === 'defaultAndApply' ? 'default' : 'save', discoverModels: true }, next => { candidate = structuredClone(next); });
       const failures = await this.restart(drained);
       if (failures.length) throw new Error('项目配置同步失败。');
       await this.config.current();

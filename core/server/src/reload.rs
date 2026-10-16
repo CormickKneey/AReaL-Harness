@@ -69,6 +69,16 @@ pub fn model(
     ))
 }
 
+fn parameters(config: &SelectedModelConfig) -> areal_protocol::desktop::ModelParameters {
+    areal_protocol::desktop::ModelParameters {
+        context_window_tokens: config.context_window_tokens,
+        temperature: config.temperature,
+        max_output_tokens: config.max_output_tokens,
+        reasoning_effort: config.reasoning_effort.clone(),
+        reasoning_summary: config.reasoning_summary.clone(),
+    }
+}
+
 fn deployment(config: &ResolvedCoreConfig) -> Value {
     let mut value = config.diagnostic(false);
     if config.model_catalog_managed {
@@ -117,6 +127,11 @@ impl Reload {
                 "model configuration archive digest mismatch"
             );
             let previous: SelectedModelConfig = serde_json::from_str(encoded.get())?;
+            engine.register_default_model_metadata(
+                revision.clone(),
+                previous.name.clone(),
+                parameters(&previous),
+            );
             // 退役凭据缺失不阻止服务启动；使用该版本的队列恢复会明确拒绝。
             if let Ok(model) = model(&previous, &inputs, &config.data_dir, false) {
                 engine.register_default_model(revision.clone(), model, false);
@@ -161,6 +176,11 @@ impl Reload {
         file.as_file().sync_all()?;
         file.persist(self.data.join("desktop/default-models.json"))?;
         std::fs::File::open(self.data.join("desktop"))?.sync_all()?;
+        engine.register_default_model_metadata(
+            revision.clone(),
+            config.name.clone(),
+            parameters(config),
+        );
         engine.register_default_model(revision.clone(), model, true);
         self.models = candidate;
         self.current = revision;

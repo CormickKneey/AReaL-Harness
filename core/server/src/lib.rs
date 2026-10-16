@@ -520,6 +520,7 @@ async fn serve(
             }
         }
         engine.install_configured_models(configured_models(&config, &mcp_env, &engine)?)?;
+        engine.recover_desktop_default_models().await?;
         if let Some(policy_path) = &args.workgroup_policy {
             use areal_engine::workgroup::service::{NativeFactory, Policy, Service};
             let policy: Policy = serde_json::from_slice(&std::fs::read(policy_path)?)?;

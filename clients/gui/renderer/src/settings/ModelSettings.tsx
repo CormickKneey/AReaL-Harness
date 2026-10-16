@@ -53,10 +53,10 @@ export function ModelSettings({ project, thread, action }: { project?: Data; thr
     try {
       result = await api("saveAndApply", { expectedRevision: candidate.basedOnRevision ?? state.value?.revision, provider: candidate, authentication: candidate.authentication ?? (candidate.apiKeyEnv ? "apiKey" : "none"), ...(apiKey !== undefined ? { apiKey } : {}) });
     } catch (cause) {
-      const previous = state.value?.data;
+      const previous = state.value;
       const current = await state.refresh();
       // 仅在原目录完整恢复时更新 CAS 基线；外部编辑冲突不能被重试覆盖。
-      if (current && JSON.stringify(current.data) === JSON.stringify(previous))
+      if (current && JSON.stringify([current.data, current.defaultModel]) === JSON.stringify([previous?.data, previous?.defaultModel]))
         setDraft(value => value ? { ...value, basedOnRevision: current.revision } : value);
       throw cause;
     }
@@ -93,8 +93,38 @@ export function ModelSettings({ project, thread, action }: { project?: Data; thr
   const enabled = catalog.filter(item => item.enabled);
   const disabled = catalog.filter(item => !item.enabled);
   const overrides = Object.entries(state.value?.effective?.sources ?? {}).filter(([field, source]) => field.startsWith("model.") && ["env", "cli"].includes((source as Data).kind));
+  const defaultOptions = [
+    ...accountModels.map(model => ({ value: `areal_openai/${model.id}`, label: model.displayName || model.name || model.id,
+      model: { providerId: "areal_openai", modelId: model.id } })),
+    ...items.filter(item => item.enabled).flatMap(item =>
+    item.models.filter((model: Data) => model.enabled).map((model: Data) => ({
+      value: `${item.id}/${model.id}`, label: model.displayName || model.id,
+      model: { providerId: item.id, modelId: model.id },
+    }))),
+  ];
+  const defaultValue = state.value?.defaultModel
+    ? `${state.value.defaultModel.providerId}/${state.value.defaultModel.modelId}` : "";
+  const changeDefault = (value: string | null) => {
+    const choice = defaultOptions.find(option => option.value === value);
+    if (!choice || value === defaultValue) return;
+    navigate(() => run(async () => {
+      try {
+        state.accept(await api("defaultAndApply", { expectedRevision: state.value?.revision, model: choice.model }));
+      } catch (cause) {
+        await state.refresh();
+        throw cause;
+      }
+    }));
+  };
   return <div className="model-settings">
     <Feedback error={state.error || error} message={message} />
+    <div className="flex items-center justify-between gap-3 py-3">
+      <div><strong>新会话默认模型</strong><p className="settings-muted">{dirty ? "请先保存或取消供应商修改，再更改默认模型。" : "新会话使用此模型及其默认思考强度。已有会话保留自己的选择。"}</p></div>
+      <Select value={defaultValue} items={defaultOptions} onValueChange={changeDefault} disabled={busy || dirty || state.loading || !defaultOptions.length}>
+        <SelectTrigger aria-label="新会话默认模型" className="min-w-48"><SelectValue placeholder="请选择模型" /></SelectTrigger>
+        <SelectContent>{defaultOptions.map(option => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
+      </Select>
+    </div>
     <div className="provider-settings" data-provider={current === CHATGPT && !picker ? CHATGPT : "custom"}>
       <aside className="provider-navigation" aria-label="供应商目录">
         <SettingsSearchInput placeholder="搜索供应商" aria-label="搜索供应商" value={query} onChange={e => setQuery(e.target.value)} onClear={() => setQuery("")} clearLabel="清除搜索" />

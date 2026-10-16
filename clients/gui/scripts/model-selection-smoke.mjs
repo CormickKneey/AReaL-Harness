@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { captureSmokeFailure, createProjectConversation } from "./smoke-navigation.mjs";
+import { captureSmokeFailure, createProjectConversation, selectConversation } from "./smoke-navigation.mjs";
 
 // 模型可用性来自真实 Core；仅上游推理使用本地确定性服务。
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -17,9 +17,12 @@ const workspace = join(scratch, "workspace"), userHome = join(scratch, "user");
 await mkdir(workspace); await mkdir(join(userHome, ".areal"), { recursive: true });
 execFileSync("git", ["init", "-b", "main"], { cwd: workspace, stdio: "ignore" });
 const requests = [];
+const modelRequests = [];
 const server = createServer(async (request, response) => {
   let body = ""; for await (const chunk of request) body += chunk;
-  requests.push({ model: JSON.parse(body).model, authenticated: request.headers.authorization === "Bearer fixture-key", authorizationPresent: request.headers.authorization !== undefined });
+  const payload = JSON.parse(body);
+  requests.push({ model: payload.model, authenticated: request.headers.authorization === "Bearer fixture-key", authorizationPresent: request.headers.authorization !== undefined });
+  modelRequests.push({ model: payload.model, effort: payload.reasoning_effort ?? null, hasEffort: Object.hasOwn(payload, "reasoning_effort") });
   response.writeHead(200, { "Content-Type": "text/event-stream" });
   response.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: "MODEL_SELECTION_OK" }, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`);
 });
@@ -32,6 +35,9 @@ const env = { ...process.env, AREAL_GUI_USER_DATA: join(scratch, "electron"),
   AREAL_HARNESS_SERVICE_HOME: join(scratch, "registry"),
   AREAL_CORE_BIN: process.env.AREAL_CORE_BIN || resolve(gui, "../../target/debug/areal") };
 for (const key of ["AREAL_CORE_WORKSPACE", "AREAL_CORE_CONFIG", "AREAL_HARNESS_HOME", "AREAL_HARNESS_CONFIG", "AREAL_CORE_DESKTOP_CONFIG", "AREAL_CREDENTIAL_MISSING_theta", "AREAL_CREDENTIAL_MISSING_arena"]) delete env[key];
+for (const key of Object.keys(env)) if (key.startsWith("AREAL_HARNESS_") && key !== "AREAL_HARNESS_SERVICE_HOME") delete env[key];
+const noProxy = [env.NO_PROXY, env.no_proxy, "127.0.0.1", "localhost"].filter(Boolean).join(",");
+env.NO_PROXY = noProxy; env.no_proxy = noProxy;
 // 非法凭据也不能被 Core 启动时的引用注入误标为可用。
 env.AREAL_CREDENTIAL_MISSING_arena = "   ";
 env.AREAL_CREDENTIAL_fixture_env = "fixture-key";
@@ -42,6 +48,7 @@ const coreBinary = process.env.AREAL_GUI_EXECUTABLE
 const coreSha256 = createHash("sha256").update(await readFile(coreBinary)).digest("hex");
 let app, page, failure = null, passed = false;
 const checks = [], errors = [];
+const stoppedServices = [];
 const button = name => page.getByRole("button", { name, exact: true });
 async function saveProvider() {
   await button("保存").click();
@@ -50,6 +57,7 @@ async function saveProvider() {
   assert.equal(await button("应用模型配置").count(), 0);
 }
 const state = () => page.evaluate(() => window.arealDesktop.snapshot());
+const fixtureProject = snapshot => snapshot.projects.find(project => project.root === workspace);
 async function call(name, params) {
   const result = await page.evaluate(({ name, params }) => window.arealDesktop.command(name, params), { name, params });
   assert.equal(result.ok, true, JSON.stringify(result)); return result.value;
@@ -62,11 +70,22 @@ async function until(predicate, label) {
 async function stopService() {
   const { ServiceConnection } = require("../app/src/core/service-client.cjs");
   const connection = new ServiceConnection();
+  const metadata = JSON.parse(await readFile(join(scratch, "core/service.json"), "utf8"));
   try {
-    const metadata = JSON.parse(await readFile(join(scratch, "core/service.json"), "utf8"));
     await connection.connect(metadata);
     await connection.request("stopService", { protocol: metadata.protocol }, true);
   } finally { connection.close(); }
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    try { process.kill(metadata.pid, 0); }
+    catch (error) {
+      if (error.code !== "ESRCH") throw error;
+      stoppedServices.push({ pid: metadata.pid, exited: true });
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  throw new Error(`Isolated backend ${metadata.pid} did not exit`);
 }
 async function launch() {
   app = await electron.launch({ executablePath: process.env.AREAL_GUI_EXECUTABLE || require("electron"), args: process.env.AREAL_GUI_EXECUTABLE ? [] : [join(gui, "app")], env, timeout: 120000 });
@@ -80,22 +99,147 @@ async function launch() {
     BrowserWindow.getAllWindows()[0].setSize(1440, 960);
   }, workspace);
 }
+async function verifyModelDefaults(projectId) {
+  const previous = await call("providers", { operation: "list" });
+  const seeded = await call("providers", { operation: "saveAndApply", expectedRevision: previous.revision, authentication: "none", provider: {
+    name: "Defaults", baseUrl: `http://127.0.0.1:${server.address().port}/v1`, protocol: "chatCompletions", enabled: true, parameters: {},
+    models: [{ id: "alpha-default", displayName: "Alpha", enabled: true, parameters: { reasoningEffort: "high" } }, { id: "beta-default", displayName: "Beta", enabled: true, parameters: {} }],
+  } });
+  const provider = seeded.data.find(item => item.name === "Defaults");
+  assert.ok(provider);
+  const snapshotProject = snapshot => snapshot.projects.find(item => item.id === projectId);
+  const expectModel = async (name, effort) => {
+    await page.waitForFunction(({ name, effort }) => {
+      const label = document.querySelector('button[aria-label="模型"]')?.textContent ?? "";
+      return label.includes(name) && label.includes(effort);
+    }, { name, effort });
+  };
+  const settings = async () => {
+    await button("模型").click();
+    const configure = button("配置模型");
+    if (await configure.isVisible()) await configure.click();
+    await page.getByRole("heading", { name: "模型设置", exact: true }).waitFor();
+  };
+  const setDefault = async (name, reference = { providerId: provider.id, modelId: name === "Alpha" ? "alpha-default" : "beta-default" }) => {
+    await page.getByRole("combobox", { name: "新会话默认模型", exact: true }).click();
+    await page.getByRole("option", { name, exact: true }).click();
+    await button("返回应用").click({ trial: true, timeout: 180000 });
+    const configured = await call("providers", { operation: "list" });
+    assert.deepEqual(configured.defaultModel, reference);
+    assert.equal(configured.pendingApply, false);
+    assert.equal((await page.getByRole("combobox", { name: "新会话默认模型", exact: true }).innerText()).trim(), name, "default picker shows the model name rather than its internal reference");
+  };
+  const chooseModel = async name => {
+    await button("模型").click(); await button("选择模型").click();
+    await page.getByRole("radio", { name, exact: true }).click();
+    await page.keyboard.press("Escape");
+  };
+  const chooseNone = async () => {
+    await button("模型").click();
+    const threadId = await page.getByTestId("areal-workbench").getAttribute("data-thread-id");
+    const slider = page.getByRole("slider", { name: "思考强度", exact: true });
+    await slider.press("End");
+    await until(snapshot => snapshotProject(snapshot)?.configurations?.[threadId]?.parameters?.reasoningEffort === "xhigh", "slider reaches explicit highest effort");
+    await page.waitForFunction(() => !document.querySelector('button[aria-label="模型"]')?.disabled);
+    await slider.press("Home");
+    await until(snapshot => snapshotProject(snapshot)?.configurations?.[threadId]?.parameters?.reasoningEffort === "none", "slider explicitly selects none");
+    await page.waitForFunction(() => !document.querySelector('button[aria-label="模型"]')?.disabled);
+    await page.keyboard.press("Escape");
+  };
+  const send = async (text, expected) => {
+    const before = modelRequests.length;
+    await page.getByTestId("chat-input").fill(text); await button("发送").click();
+    await page.waitForFunction(() => document.querySelector('[data-testid="areal-workbench"]')?.dataset.threadId);
+    const threadId = await page.getByTestId("areal-workbench").getAttribute("data-thread-id");
+    await until(snapshot => snapshotProject(snapshot)?.state?.threads?.[threadId]?.turns?.at(-1)?.status === "completed" && modelRequests.length === before + 1, text);
+    assert.deepEqual(modelRequests.at(-1), expected);
+    return threadId;
+  };
+  await page.getByRole("button", { name: "刷新供应商", exact: true }).click();
+  await setDefault("Alpha");
+  await page.screenshot({ path: join(scratch, "default-model-settings.png"), animations: "disabled" });
+  await button("返回应用").click();
+  await createProjectConversation(page, "workspace");
+  await expectModel("Alpha", "高");
+  const switched = await send("Default Alpha uses configured high", { model: "alpha-default", effort: "high", hasEffort: true });
+  await chooseModel("Beta");
+  await expectModel("Beta", "供应商默认");
+  await chooseNone();
+  await expectModel("Beta", "无");
+  await until(snapshot => snapshotProject(snapshot)?.configurations?.[switched]?.parameters?.reasoningEffort === "none", "unsent model and effort changes persist");
+  await createProjectConversation(page, "workspace");
+  await expectModel("Alpha", "高");
+  const alpha = await send("New conversation still uses global Alpha", { model: "alpha-default", effort: "high", hasEffort: true });
+  await settings(); await setDefault("Beta"); await button("返回应用").click();
+  await expectModel("Alpha", "高");
+  await createProjectConversation(page, "workspace"); await expectModel("Beta", "供应商默认");
+  const beta = await send("New default Beta omits reasoning effort", { model: "beta-default", effort: null, hasEffort: false });
+  await chooseNone(); await expectModel("Beta", "无");
+  await send("Explicit none remains distinct", { model: "beta-default", effort: "none", hasEffort: true });
+  await button("模型").click(); await button("使用模型默认").click(); await page.keyboard.press("Escape");
+  await expectModel("Beta", "供应商默认");
+  await send("Reset restores supplier default", { model: "beta-default", effort: null, hasEffort: false });
+  await selectConversation(page, alpha); await expectModel("Alpha", "高");
+  await send("Historical Alpha ignores changed global default", { model: "alpha-default", effort: "high", hasEffort: true });
+  await selectConversation(page, switched); await expectModel("Beta", "无");
+  const beforeRestart = modelRequests.length;
+  await writeFile(join(scratch, "model-defaults-before.json"), JSON.stringify(await state(), null, 2));
+  await app.close(); app = undefined; await stopService(); await launch();
+  await until(snapshot => snapshotProject(snapshot)?.state?.connected, "model-defaults cold reopen");
+  await selectConversation(page, alpha); await expectModel("Alpha", "高");
+  await selectConversation(page, switched); await expectModel("Beta", "无");
+  await selectConversation(page, beta); await expectModel("Beta", "供应商默认");
+  assert.equal(modelRequests.length, beforeRestart, "cold reopen and history navigation cannot replay requests");
+  await page.screenshot({ path: join(scratch, "model-defaults-reopened.png"), animations: "disabled" });
+  await createProjectConversation(page, "workspace"); await expectModel("Beta", "供应商默认");
+  await send("Cold new conversation keeps global Beta", { model: "beta-default", effort: null, hasEffort: false });
+  await writeFile(join(scratch, "model-defaults-after.json"), JSON.stringify(await state(), null, 2));
+  checks.push("UI default selection applies to new conversations; per-conversation model/effort and unsent changes survive global changes and a cold GUI/backend restart without replay");
+  checks.push("resolved high, explicit none, and supplier default labels match actual model requests; resetting effort restores model defaults");
+  await app.close(); app = undefined; await stopService();
+  await writeFile(config, `schema_version=1\n[model]\nprovider="legacy"\nname="legacy-alpha"\nreasoning_effort="high"\n[model.providers.legacy]\nname="Legacy"\nendpoint="http://127.0.0.1:${server.address().port}/v1/chat/completions"\nprotocol="chat-completions"\nmodels=[{id="legacy-alpha",display_name="Legacy Alpha"},{id="legacy-beta",display_name="Legacy Beta"}]\n`);
+  await launch();
+  await until(snapshot => snapshotProject(snapshot)?.state?.connected && snapshotProject(snapshot)?.models.some(model => model.modelId === "legacy-alpha"), "legacy service default ready");
+  await selectConversation(page, alpha); await expectModel("alpha-default", "高");
+  const beforeLegacy = modelRequests.length;
+  await createProjectConversation(page, "workspace"); await expectModel("legacy-alpha", "高");
+  const implicit = await send("Implicit service default records effective high", { model: "legacy-alpha", effort: "high", hasEffort: true });
+  const implicitConfig = snapshotProject(await state()).configurations[implicit];
+  assert.ok(implicitConfig.defaultModelRevision, "desktop implicit model is pinned before global changes");
+  assert.equal(implicitConfig.model, null);
+  await settings(); await setDefault("Legacy Beta", { providerId: "legacy", modelId: "legacy-beta" }); await button("返回应用").click();
+  await expectModel("legacy-alpha", "高");
+  await chooseNone(); await expectModel("legacy-alpha", "无");
+  await send("Implicit history keeps old identity while configuring effort", { model: "legacy-alpha", effort: "none", hasEffort: true });
+  await button("模型").click(); await button("使用模型默认").click(); await page.keyboard.press("Escape");
+  await expectModel("legacy-alpha", "高");
+  await send("Implicit reset uses archived model defaults", { model: "legacy-alpha", effort: "high", hasEffort: true });
+  await app.close(); app = undefined; await stopService(); await launch();
+  await until(snapshot => snapshotProject(snapshot)?.state?.connected, "implicit history cold reopen");
+  await selectConversation(page, implicit); await expectModel("legacy-alpha", "高");
+  assert.equal(snapshotProject(await state()).configurations[implicit].defaultModelRevision, implicitConfig.defaultModelRevision);
+  assert.equal(modelRequests.length, beforeLegacy + 3, "implicit history cold reopen cannot replay requests");
+  await createProjectConversation(page, "workspace"); await expectModel("Legacy Beta", "高");
+  await send("New conversation uses changed concrete default", { model: "legacy-beta", effort: "high", hasEffort: true });
+  await page.screenshot({ path: join(scratch, "implicit-default-reopened.png"), animations: "disabled" });
+  checks.push("implicit desktop defaults pin model revision and effective effort across global default changes, effort reconfiguration, reset, and cold reopen; missing catalog entries retain historical identity");
+}
 try {
   await launch();
   await page.evaluate(() => window.arealDesktop.chooseProject());
   await createProjectConversation(page, "workspace");
-  const ready = await until(s => s.projects[0]?.state?.connected && s.projects[0].models.length === 3, "unavailable Core catalog");
-  const projectId = ready.projects[0].id;
-  assert.ok(ready.projects[0].models.every(m => m.available === false), "the default alias and named entries must all reject unavailable models");
-  assert.ok(ready.projects[0].models.filter(m => m.providerId).every(m => m.credentialState === "unavailable"));
+  const ready = await until(s => fixtureProject(s)?.state?.connected && fixtureProject(s).models.length === 3, "unavailable Core catalog");
+  const projectId = fixtureProject(ready).id;
+  assert.ok(fixtureProject(ready).models.every(m => m.available === false), "the default alias and named entries must all reject unavailable models");
+  assert.ok(fixtureProject(ready).models.filter(m => m.providerId).every(m => m.credentialState === "unavailable"));
   assert.equal(await button("发送").isDisabled(), true, "a missing default credential cannot enable sending");
   assert.equal(await button("模型").isEnabled(), true, "missing credentials must not disable the model configuration entry");
   await button("模型").click();
-  const defaultOption = page.getByRole("radio", { name: /默认模型/ });
-  assert.equal(await defaultOption.isDisabled(), true);
-  assert.match(await defaultOption.innerText(), /模型不可用/);
+  const modelOptions = page.getByRole("radio");
+  assert.ok(await modelOptions.count() >= 2);
+  for (const option of await modelOptions.all()) assert.equal(await option.isDisabled(), true, "every unavailable choice, including the default, stays disabled");
   for (const id of ["theta", "arena"]) {
-    const option = page.getByRole("radio", { name: new RegExp(`${id}-model`) });
+    const option = page.locator(`[role="radio"][data-model-value="${id}/${id}-model"]`);
     await option.waitFor(); assert.equal(await option.isDisabled(), true);
     assert.match(await option.innerText(), /缺少 API Key/);
   }
@@ -121,7 +265,7 @@ try {
   assert.equal(saved.credentialStates.theta, "available");
   assert.equal(saved.credentialSources.theta, "stored");
   assert.equal(saved.pendingApply, false, "save confirms persistence and Core synchronization");
-  await until(s => s.projects[0].models.some(m => m.available === true), "single save makes model available in Core");
+  await until(s => fixtureProject(s).models.some(m => m.available === true), "single save makes model available in Core");
   await page.screenshot({ path: join(scratch, "saved-model-configuration.png"), animations: "disabled" });
   await button("返回应用").click();
   await button("模型").click(); await button("选择模型").click();
@@ -131,15 +275,15 @@ try {
   assert.equal(requests.length, 0, "model selection does not create or send a task");
   await page.getByTestId("chat-input").fill("Use the configured model");
   await button("发送").click();
-  await until(s => Object.values(s.projects[0].state.threads).some(t => t.turns?.at(-1)?.status === "completed"), "model turn completes");
+  await until(s => Object.values(fixtureProject(s).state.threads).some(t => t.turns?.at(-1)?.status === "completed"), "model turn completes");
   assert.deepEqual(requests, [{ model: "theta-model", authenticated: true, authorizationPresent: true }]);
-  assert.equal((await state()).projects[0].configurations[Object.keys((await state()).projects[0].state.threads)[0]]?.model?.providerId, "theta", "the newly created Core task uses the chosen model");
+  assert.equal(fixtureProject(await state()).configurations[Object.keys(fixtureProject(await state()).state.threads)[0]]?.model?.providerId, "theta", "the newly created Core task uses the chosen model");
   // 重启本次隔离后台，证明凭据从安全存储恢复，而非沿用旧进程的内存。
   await app.close(); app = undefined;
   await stopService();
   await launch();
   providerStatus = page.getByRole("status", { name: "供应商状态", exact: true });
-  await until(s => s.projects[0]?.state?.connected && s.projects[0].models.some(m => m.providerId === "theta" && m.available === true), "saved default credential survives a cold reopen");
+  await until(s => fixtureProject(s)?.state?.connected && fixtureProject(s).models.some(m => m.providerId === "theta" && m.available === true), "saved default credential survives a cold reopen");
   const reopened = await call("providers", { operation: "list" });
   assert.equal(reopened.defaultModel.providerId, "theta");
   assert.equal(reopened.credentialSources.theta, "stored");
@@ -150,7 +294,7 @@ try {
   // 默认凭据恢复已验收；后续启停用例沿用无全局默认项的独立目录前置条件。
   const withoutDefault = await call("providers", { operation: "default", model: null, expectedRevision: reopened.revision });
   await call("providers", { operation: "apply", expectedRevision: withoutDefault.revision });
-  await until(s => s.projects[0].models.length === 2, "explicit default cleared for catalog enablement checks");
+  await until(s => fixtureProject(s).models.length === 2, "explicit default cleared for catalog enablement checks");
   await button("模型").click(); await button("选择模型").click();
   assert.equal(await page.getByRole("radio", { name: /arena-model/ }).isDisabled(), true);
   await button("配置模型").click();
@@ -176,7 +320,7 @@ try {
     };
   });
   await button("保存").click();
-  await until(s => s.projects[0].models.every(m => m.available === true), "both models available");
+  await until(s => fixtureProject(s).models.every(m => m.available === true), "both models available");
   await app.evaluate(() => globalThis.modelApplyReceipt.ready);
   assert.equal(await button("返回应用").isDisabled(), true, "back navigation must reflect the pending apply receipt");
   assert.equal(await button("常规").isDisabled(), true, "settings categories share the same navigation admission");
@@ -191,9 +335,9 @@ try {
   const arena = page.getByRole("radio", { name: "arena-model", exact: true });
   assert.equal(await arena.isEnabled(), true); await arena.click();
   await page.keyboard.press("Escape");
-  await until(s => s.projects[0].configurations[Object.keys(s.projects[0].state.threads)[0]]?.model?.providerId === "arena", "Core accepts Composer model selection");
+  await until(s => fixtureProject(s).configurations[Object.keys(fixtureProject(s).state.threads)[0]]?.model?.providerId === "arena", "Core accepts Composer model selection");
   await page.getByTestId("chat-input").fill("Use the other configured model"); await button("发送").click();
-  await until(s => Object.values(s.projects[0].state.threads).some(t => t.turns?.length === 2 && t.turns.at(-1).status === "completed"), "selected model turn completes");
+  await until(s => Object.values(fixtureProject(s).state.threads).some(t => t.turns?.length === 2 && t.turns.at(-1).status === "completed"), "selected model turn completes");
   assert.deepEqual(requests.at(-1), { model: "arena-model", authenticated: true, authorizationPresent: true });
   await button("模型").click(); await button("配置模型").click();
   await page.locator(".provider-catalog-row").filter({ hasText: "arena" }).click();
@@ -227,13 +371,13 @@ try {
   await button("模型").click(); await button("选择模型").click();
   await page.getByRole("radio", { name: "theta-model", exact: true }).click();
   await page.keyboard.press("Escape");
-  await until(s => s.projects[0].configurations[Object.keys(s.projects[0].state.threads)[0]]?.model?.providerId === "theta", "Core accepts temporary model reselection");
+  await until(s => fixtureProject(s).configurations[Object.keys(fixtureProject(s).state.threads)[0]]?.model?.providerId === "theta", "Core accepts temporary model reselection");
   await button("模型").click(); await button("选择模型").click();
   await page.getByRole("radio", { name: "arena-model", exact: true }).click();
   await page.keyboard.press("Escape");
-  await until(s => s.projects[0].configurations[Object.keys(s.projects[0].state.threads)[0]]?.model?.providerId === "arena", "Core accepts no-auth model selection");
+  await until(s => fixtureProject(s).configurations[Object.keys(fixtureProject(s).state.threads)[0]]?.model?.providerId === "arena", "Core accepts no-auth model selection");
   await page.getByTestId("chat-input").fill("Use the provider without authentication"); await button("发送").click();
-  await until(s => Object.values(s.projects[0].state.threads).some(t => t.turns?.length === 3 && t.turns.at(-1).status === "completed"), "no-auth turn completes");
+  await until(s => Object.values(fixtureProject(s).state.threads).some(t => t.turns?.length === 3 && t.turns.at(-1).status === "completed"), "no-auth turn completes");
   assert.deepEqual(requests.at(-1), { model: "arena-model", authenticated: false, authorizationPresent: false });
   await page.screenshot({ path: join(scratch, "no-auth-composer.png"), animations: "disabled" });
   checks.push("one no-auth save removes the Core credential reference; explicit Composer reselection executes without Authorization");
@@ -243,23 +387,23 @@ try {
   await page.getByRole("textbox", { name: "API Key", exact: true }).fill("");
   await page.getByRole("switch", { name: "启用供应商", exact: true }).click();
   await saveProvider();
-  await until(s => s.projects[0].models.length === 3, "environment model available after apply");
+  await until(s => fixtureProject(s).models.length === 3, "environment model available after apply");
   assert.equal((await call("providers", { operation: "list" })).credentialSources.env, "environment", "an empty API Key input preserves the configured environment reference");
   await page.screenshot({ path: join(scratch, "environment-credential.png"), animations: "disabled" });
   await button("返回应用").click();
   await button("模型").click(); await button("选择模型").click();
   await page.getByRole("radio", { name: "env-model", exact: true }).click();
   await page.keyboard.press("Escape");
-  await until(s => s.projects[0].configurations[Object.keys(s.projects[0].state.threads)[0]]?.model?.providerId === "env", "Core accepts environment model selection");
+  await until(s => fixtureProject(s).configurations[Object.keys(fixtureProject(s).state.threads)[0]]?.model?.providerId === "env", "Core accepts environment model selection");
   await page.getByTestId("chat-input").fill("Use an environment credential"); await button("发送").click();
-  await until(s => Object.values(s.projects[0].state.threads).some(t => t.turns?.length === 4 && t.turns.at(-1).status === "completed"), "environment turn completes");
+  await until(s => Object.values(fixtureProject(s).state.threads).some(t => t.turns?.length === 4 && t.turns.at(-1).status === "completed"), "environment turn completes");
   assert.deepEqual(requests.at(-1), { model: "env-model", authenticated: true, authorizationPresent: true });
   checks.push("Core distinguishes environment credentials, securely stored credentials, and no authentication; Composer executes each applied mode");
   await button("模型").click(); await button("配置模型").click();
   await page.locator(".provider-catalog-row").filter({ hasText: /^env/ }).click();
   await page.getByRole("switch", { name: "启用供应商", exact: true }).click();
   await saveProvider();
-  await until(s => s.projects[0].models.length === 2, "environment provider disabled again");
+  await until(s => fixtureProject(s).models.length === 2, "environment provider disabled again");
   await page.locator(".provider-catalog-row").filter({ hasText: "arena" }).click();
   await page.getByRole("switch", { name: "启用供应商", exact: true }).click();
   assert.match(await providerStatus.innerText(), /可用/, "unsaved toggles cannot change saved status");
@@ -267,25 +411,26 @@ try {
   assert.match(await providerStatus.innerText(), /已停用/);
 
 
-  await until(s => s.projects[0].models.length === 1, "disabled provider absent from executable Core catalog");
+  await until(s => fixtureProject(s).models.length === 1, "disabled provider absent from executable Core catalog");
   await page.screenshot({ path: join(scratch, "disabled-provider.png"), animations: "disabled" });
   await page.locator(".provider-catalog-row").filter({ hasText: "theta" }).click();
   await page.getByRole("switch", { name: "启用模型 theta-model", exact: true }).click();
   await saveProvider();
   assert.equal(await page.getByRole("switch", { name: "启用模型 theta-model", exact: true }).isChecked(), false);
 
-  await until(s => s.projects[0].models.length === 0, "disabled model absent from executable Core catalog");
+  await until(s => fixtureProject(s).models.length === 0, "disabled model absent from executable Core catalog");
   checks.push("Core credential states and saved enablement remain separate from drafts and pending apply; Composer explicitly selects and executes another available model");
   // 空目录也必须提供可操作入口，不制造一个不可选的占位模型。
   let providers = await call("providers", { operation: "list" });
   for (const provider of [...providers.data]) providers = await call("providers", { operation: "removeAndApply", id: provider.id, expectedRevision: providers.revision });
   await button("返回应用").click();
   await createProjectConversation(page, "workspace");
-  await until(s => s.projects[0].models.length === 0, "empty Core catalog");
+  await until(s => fixtureProject(s).models.length === 0, "empty Core catalog");
   assert.equal(await button("模型").isEnabled(), true);
   await button("模型").click();
   await page.getByRole("heading", { name: "模型设置", exact: true }).waitFor();
   checks.push("an empty model catalog opens model settings directly");
+  await verifyModelDefaults(projectId);
   assert.deepEqual(errors, []); passed = true;
 } catch (error) {
   failure = error.stack ?? String(error);
@@ -310,10 +455,11 @@ try {
     } catch (error) { cleanupFailure("stop service", error); }
   }
   server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
-  const files = ["scripts/model-selection-smoke.mjs", "renderer/src/settings/ModelSettings.tsx", "renderer/src/settings/UnsavedChanges.tsx", "renderer/src/settings/SettingsWorkspace.tsx", "renderer/src/i18n/IntlProvider.tsx", "app/src/core/model-config.cjs", "app/src/core/providers.cjs", "../../core/config/src/models.rs", "../../core/config/src/lib.rs", "../../core/local-service/src/spec.rs", "../../core/engine/src/desktop/server.rs", "../../core/server/src/lib.rs", "renderer/src/ComposerModelMenu.tsx", "renderer/src/Composer.tsx", "renderer/src/DraftComposer.tsx", "renderer/src/workbench.css"];
+  const files = ["scripts/model-selection-smoke.mjs", "renderer/src/settings/ModelSettings.tsx", "renderer/src/settings/UnsavedChanges.tsx", "renderer/src/settings/SettingsWorkspace.tsx", "renderer/src/i18n/IntlProvider.tsx", "app/src/core/model-config.cjs", "app/src/core/providers.cjs", "app/src/core/backend.cjs", "../../core/config/src/models.rs", "../../core/config/src/lib.rs", "../../core/local-service/src/spec.rs", "../../core/engine/src/desktop/server.rs", "../../core/engine/src/desktop/catalog.rs", "../../core/engine/src/desktop/state.rs", "../../core/engine/src/default_model.rs", "../../core/server/src/lib.rs", "../../core/server/src/reload.rs", "renderer/src/ComposerModelMenu.tsx", "renderer/src/Composer.tsx", "renderer/src/ConversationComposer.tsx", "renderer/src/DraftComposer.tsx", "renderer/src/ProjectlessDraft.tsx", "renderer/src/WorktreeStarter.tsx", "renderer/src/workbench.css"];
   const hashes = Object.fromEntries(await Promise.all(files.map(async file => [file, createHash("sha256").update(await readFile(join(gui, file))).digest("hex")])));
   const coreUnchanged = createHash("sha256").update(await readFile(coreBinary)).digest("hex") === coreSha256;
+  await writeFile(join(scratch, "model-requests.json"), JSON.stringify(modelRequests, null, 2));
   if (!coreUnchanged) { errors.push("Core binary changed during acceptance"); passed = false; process.exitCode = 1; }
-  await writeFile(join(scratch, "manifest.json"), JSON.stringify({ passed, checks, errors, failure, source: execFileSync("git", ["rev-parse", "HEAD"], { cwd: gui, encoding: "utf8" }).trim(), hashes, core: { binary: coreBinary, sha256: coreSha256, unchanged: coreUnchanged }, executable: process.env.AREAL_GUI_EXECUTABLE || "source Electron", scope: "isolated Electron/Core model selection; deterministic local authenticated fixture" }, null, 2));
+  await writeFile(join(scratch, "manifest.json"), JSON.stringify({ passed, checks, errors, failure, stoppedServices, source: execFileSync("git", ["rev-parse", "HEAD"], { cwd: gui, encoding: "utf8" }).trim(), hashes, core: { binary: coreBinary, sha256: coreSha256, unchanged: coreUnchanged }, executable: process.env.AREAL_GUI_EXECUTABLE || "source Electron", scope: "isolated Electron/Core model selection, defaults, and cold recovery; deterministic local authenticated fixture" }, null, 2));
   console.log(JSON.stringify({ passed, evidence: scratch, checks, errors }));
 }

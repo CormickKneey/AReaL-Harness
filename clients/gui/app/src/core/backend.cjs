@@ -387,7 +387,9 @@ class CoreBackend {
         if (!this.currentConnection(project, client)) return;
         if (method === 'areal/thread/configured' && params?.threadId && params.configuration) {
           project.configurations ??= {};
-          project.configurations[params.threadId] = params.configuration;
+          const previous = project.configurations[params.threadId];
+          project.configurations[params.threadId] = { ...params.configuration,
+            modelName: params.configuration.defaultModelRevision && params.configuration.defaultModelRevision === previous?.defaultModelRevision ? previous.modelName : undefined };
           this.onChange();
         }
         if (method === 'areal/mcp/app/notification') this.onMcpAppNotification?.({ projectId: project.id, ...params });
@@ -667,7 +669,7 @@ class CoreBackend {
       throw new Error('Core 未返回有效的会话配置，请重新打开任务');
     }
     project.configurations ??= {};
-    project.configurations[threadId] = result.configuration;
+    project.configurations[threadId] = { ...result.configuration, modelName: result.modelName, resolvedParameters: result.resolvedParameters };
     this.onChange();
     return result;
   }
@@ -718,7 +720,8 @@ class CoreBackend {
       } catch {
         throw Object.assign(new Error('Core 已保存配置，但本机恢复日志更新失败；请核对当前配置'), { submissionUnknown: true });
       }
-      if (this.currentConnection(project, client)) project.configurations[threadId] = configuration;
+      if (this.currentConnection(project, client)) project.configurations[threadId] = { ...configuration,
+        modelName: configuration.defaultModelRevision && configuration.defaultModelRevision === inspection.configuration.defaultModelRevision ? project.configurations[threadId]?.modelName : undefined };
       this.onChange();
     } catch (error) {
       if (entry && !error.submissionUnknown) {

@@ -40,7 +40,7 @@ Cookie 名为 `areal_session_<origin摘要>`，不指定 Domain，使用 `HttpOn
 | permissions/read/forget | manage（不允许 threadIds 限定身份） | 模式、来源、授权记忆查询与撤销 |
 | interaction/list/respond | observe / interact（allowProject 另需不限定 Thread 的 manage） | 追问/审批，绑定 Thread/Turn/requestId |
 | provider/list/read/upsert/remove/probe | manage | 凭据引用、CAS 写入与显式连通性探测；TOML 托管 ID 的 upsert/remove 返回 `CONFIGURATION_MANAGED`，改用共享配置命令 |
-| model/list | observe | providerId/modelId、能力和可用状态 |
+| model/list | observe | providerId/modelId、解析后默认参数、isDefault、能力和可用状态 |
 | turn/start/enqueue, queue/list/update/remove/reorder/pause/resume | observe / interact | 持久提交、冻结配置与队列管理 |
 | goal/get, goal/create/update/pause/resume/clear | observe / interact | 持久目标、CAS 控制与共享预算；显式创建目标后运行，见 [Goal 契约](core.md#goals) |
 | request/read | observe | 按当前身份找回受理收据 |
@@ -72,11 +72,15 @@ turn/start/enqueue 使用 `{requestId,threadId,input,expectedConfigRevision?,int
 
 Composer 队列在主输入区编辑消息：确认暂停后加载内容，保存更新原位置及附件引用，保留原模型/模式；保存或取消恢复原草稿。只有队列版本与暂停原因仍属于该次编辑时才恢复先前的未暂停状态。外部更新、删除或 UNKNOWN 保留编辑草稿，不自动覆盖或恢复旧状态。现有未发送 File 草稿在当前 GUI 进程内跨任务切换保留，不新增磁盘附件缓存。`pnpm --dir clients/gui run test:queue` 使用隔离 Electron/Core/Runtime 和确定性 HTTP/SSE 模型验证队列路径。
 
-`EffectiveConfig.defaultModelRevision` 是可选的不透明默认模型快照引用，在 Turn/队列项提交时固定。会话默认配置不固定此字段；显式 Provider 选择保持原语义。模型版本归数据目录所有，不包含环境凭据值。
+`EffectiveConfig.defaultModelRevision` 是可选的不透明默认模型快照引用。桌面创建会话或显式重选隐式服务默认模型时固定该引用；后续参数、权限等配置更新保留它。没有桌面配置的通用会话仍在 Turn/队列项提交时固定默认版本。显式 Provider 选择保存自己的模型和 Provider 快照。模型版本归数据目录所有，不包含环境凭据值。
 
-thread/configure 使用 expectedRevision，仅空闲且不压缩时生效。resetModel=true 清除会话模型覆盖并回到 Profile/服务默认，不能与非空 model 同传；parameters 省略保留，`{}` 使用目标 Provider 默认。`selectedSkills` 可传 Skill 的 `{id,revision}` 列表，空数组清除会话覆盖并恢复 Profile；列表必须属于当前 Profile。features.modelReset 声明支持。
+服务启动时，旧桌面会话的隐式模型若尚无版本引用，且最后一个已受理 Turn 保存了隐式默认版本，则将该引用恢复到会话并持久化。没有这些历史证据时保留未知。读取历史不重新配置或发送消息。`thread/inspect` 的可选 `modelName` 和 `resolvedParameters` 从已有模型归档投影隐式模型的安全名称与有效参数；缺少历史版本元数据时返回 null，不使用当前默认名称冒充历史。
+
+thread/configure 使用 expectedRevision，仅空闲且不压缩时生效。resetModel=true 清除会话模型覆盖并回到 Profile/服务默认，不能与非空 model 同传；parameters 省略保留，`{}` 按模型默认、Provider 默认依次解析。`parameters.reasoningEffort:null` 清除强度覆盖；客户端需在同一 parameters 对象中带回其他参数才能保留它们，省略字段重新采用默认值。Composer 的“使用模型默认”会带回其他参数。若模型默认是 high，结果仍为 high。`selectedSkills` 可传 Skill 的 `{id,revision}` 列表，空数组清除会话覆盖并恢复 Profile；列表必须属于当前 Profile。features.modelReset 声明支持。
 
 `areal/thread/start` 使用 `{requestId,agentProfile:{id,revision},cwd?,model?,parameters?,dynamicTools?}` 创建按指定 Profile 冻结配置的 Thread。客户端可以用 `--agent id@revision` 传入同一引用；不需要再指定 Workflow。Profile 的 `workflow` 字段是 Agent 属性，创建 Thread 时自动启动一次并在快照 `desktop.workflowRun` 中记录 Workgroup ID 与启动状态；实时状态通过 Workgroup API 查询。相同 requestId 重试和恢复 Thread 不会重复启动；绑定 Workflow 的 Profile 只能在创建 Thread 时选择，不能通过 `thread/configure` 切换。没有 Workflow 的 Profile 不要求 Workgroup policy，仍可使用其 `toolAllowlist` 允许的工具。
+
+`areal/model/list` 的每项 `parameters` 是 Core 按模型默认、Provider 默认合并的参数；`isDefault` 标识新会话的服务默认选择。显式 Profile 模型仍优先于全局默认。Composer 在发送前显示具体模型与有效思考强度，完全未设置强度时显示“供应商默认”，显式 `none` 显示“无”。“使用模型默认”只清除当前强度覆盖，不绕过模型或 Provider 已保存的默认值。新会话只保留本次未发送草稿的选择，创建成功后清除；历史使用会话当前已保存的选择，已有 Turn 快照不变。
 
 可选 `parameters.reasoningSummary` 接受 `auto` / `concise` / `detailed`，仅用于 Responses，按 Provider 默认 → Thread 参数合并；Provider/服务默认与 Thread 都未配置时不启用摘要请求。`areal/model/list.parameterCapabilities` 只在 Responses Provider 下包含 `reasoningSummary`，表示适配器支持传参，不保证供应商的每个模型都支持所选模式。`areal/model/list.reasoningEffortOptions` 返回现有 HTTP 适配器允许的 `none/minimal/low/medium/high/xhigh`（其他适配器为空），同样不保证远端每个模型都支持。Composer 从目录读取这些选项，通过原会话配置提交参数。事件与分段规则见 [Core 思考进度](core.md#思考进度)。
 

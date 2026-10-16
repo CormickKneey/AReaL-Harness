@@ -81,26 +81,18 @@ export function DraftComposer({
   const [mcpOpen, setMcpOpen] = useState(false);
   const [goalMode, setGoalMode] = useState(() => localStorage.getItem(`${key}:goal`) === "true");
   const changeGoalMode = (enabled: boolean) => { setGoalMode(enabled); localStorage.setItem(`${key}:goal`, String(enabled)); api.current?.focus(); };
-  const [efforts, setEfforts] = useState<Record<string, string>>(() => JSON.parse(localStorage.getItem(`${key}:efforts`) ?? "{}"));
+  const [efforts, setEfforts] = useState<Record<string, string>>(() => localStorage.getItem(`${key}:model`) !== null ? JSON.parse(localStorage.getItem(`${key}:efforts`) ?? "{}") : {});
   const unavailableProfile = !!profileSelection && !chosenProfile;
   const setPlanMode = (enabled: boolean) => { setPlan(enabled); localStorage.setItem(`${key}:plan`, String(enabled)); };
-  const [model, setModel] = useState(
-    () => localStorage.getItem(`areal-gui:model:${project.id}`) ?? "",
-  );
-  const selectedModel = project.models.find(
-    (m: Data) => `${m.providerId}/${m.modelId}` === model,
-  );
-  const hasDefaultModel = project.models.some((m: Data) => !m.providerId);
-  const effectiveModel = !model && chosenProfile?.model ? "" : selectedModel
-    ? model
-    : hasDefaultModel
-      ? ""
-      : (() => {
-          const m = project.models.find((m: Data) => m.providerId && m.available !== false);
-          return m ? `${m.providerId}/${m.modelId}` : "";
-        })();
-  const currentModel = project.models.find((item: Data) => effectiveModel ? `${item.providerId}/${item.modelId}` === effectiveModel : chosenProfile?.model ? item.providerId === chosenProfile.model.providerId && item.modelId === chosenProfile.model.modelId : !item.providerId);
-  const effort = efforts[effectiveModel] ?? "";
+  const [model, setModel] = useState<string | null>(() => localStorage.getItem(`${key}:model`));
+  const modelValue = (item: Data) => `${item.providerId ?? ""}/${item.modelId}`;
+  const initialModel = chosenProfile?.model
+    ? project.models.find((item: Data) => item.providerId === chosenProfile.model.providerId && item.modelId === chosenProfile.model.modelId)
+    : project.models.find((item: Data) => item.isDefault);
+  const effectiveModel = model ?? (chosenProfile?.model
+    ? `${chosenProfile.model.providerId}/${chosenProfile.model.modelId}` : initialModel ? modelValue(initialModel) : "");
+  const currentModel = project.models.find((item: Data) => modelValue(item) === effectiveModel);
+  const effort = efforts[effectiveModel] ?? currentModel?.parameters?.reasoningEffort ?? "";
   const [unknown, setUnknown] = useState(() => localStorage.getItem(`${key}:pending-create`));
   const busy = useSyncExternalStore(subscribeSending, () => sending.has(key));
   const modelSelectionDisabled =
@@ -108,8 +100,7 @@ export function DraftComposer({
     !project.state?.connected ||
     !!project.pending.length ||
     !!unknown || !!reviewDraft.error || unavailableProfile;
-  const disabled = modelSelectionDisabled || currentModel?.available === false ||
-    (!hasDefaultModel && !effectiveModel && !chosenProfile?.model);
+  const disabled = modelSelectionDisabled || !currentModel || currentModel.available === false;
   const skills = useComposerSkills({ project, profile: chosenProfile, draftKey: key, action: readAction, disabled });
   useEffect(() => {
     attachmentDrafts.set(key, files);
@@ -119,6 +110,12 @@ export function DraftComposer({
     localStorage.removeItem(key);
     localStorage.removeItem(`${key}:permission`);
     localStorage.removeItem(`${key}:plan`);
+    localStorage.removeItem(`${key}:model`);
+    localStorage.removeItem(`${key}:efforts`);
+    localStorage.removeItem(`${key}:profile`);
+    setModel(null);
+    setEfforts({});
+    setProfileSelection("");
     attachmentDrafts.delete(key);
     skills.clear();
     changeGoalMode(false);
@@ -159,9 +156,10 @@ export function DraftComposer({
         ? owner.profiles.find((p: Data) => profileKey(p) === profileSelection)
         : owner.profiles.find((p: Data) => p.id === "areal-standard") ?? owner.profiles[0];
       if (profileSelection && !profile) throw new Error("当前任务配置不可用，输入已保留。");
-      const chosenModel = !effectiveModel && profile?.model ? undefined : owner.models.find(
-        (m: Data) => `${m.providerId}/${m.modelId}` === effectiveModel,
-      ) ?? (!owner.models.some((m: Data) => !m.providerId) ? owner.models.find((m: Data) => m.available !== false) : undefined);
+      const chosenModel = owner.models.find((item: Data) => modelValue(item) === effectiveModel);
+      if (!chosenModel || chosenModel.available === false || chosenModel.modelId !== currentModel?.modelId) {
+        throw new Error("所选模型已不可用，输入已保留，请重新选择模型。");
+      }
       const selectedSkills = readComposerSkills(key);
       if (selectedSkills.length) {
         if (!profile) throw new Error("当前任务配置不可用，技能草稿已保留。");
@@ -172,11 +170,11 @@ export function DraftComposer({
       creationAttempted = true;
       const result = await action("create", {
         projectId: owner.id,
-        ...(effort ? { parameters: { reasoningEffort: effort } } : {}),
+        parameters: { ...currentModel.parameters, ...(effort ? { reasoningEffort: effort } : {}) },
         ...(profile
           ? { profile: { id: profile.id, revision: profile.revision } }
           : {}),
-        ...(chosenModel
+        ...(chosenModel.providerId
           ? { model: { providerId: chosenModel.providerId, modelId: chosenModel.modelId } }
           : {}),
       });
@@ -308,13 +306,18 @@ export function DraftComposer({
         }
         betweenCancelAndSubmitAction={<ComposerModelMenu
           value={effectiveModel} disabled={modelSelectionDisabled}
-          effort={effort} onEffortChange={value => { const next = { ...efforts, [effectiveModel]: value }; setEfforts(next); localStorage.setItem(`${key}:efforts`, JSON.stringify(next)); }}
+          effort={effort} onEffortChange={value => {
+            setModel(effectiveModel); localStorage.setItem(`${key}:model`, effectiveModel);
+            const next = { ...efforts };
+            if (value) next[effectiveModel] = value;
+            else delete next[effectiveModel];
+            setEfforts(next); localStorage.setItem(`${key}:efforts`, JSON.stringify(next));
+          }}
           options={[
-            ...(chosenProfile?.model ? [{ value: "", label: `预设模型：${chosenProfile.model.modelId}`, efforts: currentModel?.reasoningEffortOptions, unavailableReason: currentModel?.available === false ? composerModelOption(currentModel).unavailableReason : undefined }] : hasDefaultModel ? [{ value: "", label: "默认模型", efforts: currentModel?.reasoningEffortOptions, unavailableReason: currentModel?.available === false ? composerModelOption(currentModel).unavailableReason : undefined }] : []),
-            ...project.models.filter((model: Data) => model.providerId)
-              .map(composerModelOption),
+            ...project.models.filter((item: Data) => item.providerId || !project.models.some((candidate: Data) => candidate.providerId && candidate.isDefault)).map((item: Parameters<typeof composerModelOption>[0]) => ({ ...composerModelOption(item), value: modelValue(item) })),
+            ...(!currentModel && effectiveModel ? [{ value: effectiveModel, label: effectiveModel.slice(effectiveModel.indexOf("/") + 1), unavailableReason: "模型不可用" }] : []),
           ]}
-          onChange={value => { setModel(value); localStorage.setItem(`areal-gui:model:${project.id}`, value); }}
+          onChange={value => { setModel(value); localStorage.setItem(`${key}:model`, value); }}
           onClose={() => api.current?.focus()}
           onConfigure={() => onPanel("设置")}
         />}
