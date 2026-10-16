@@ -1,17 +1,21 @@
+import { McpContentLabel } from "./McpComposerAttachments.js";
 import { useForkHistory } from "./ForkHistory.js";
 import { UnknownToolInspection } from "./UnknownToolInspection.js";
 import { TurnNavigation } from "./TurnNavigation.js";
 import { executionOutcome, executionSegments, goalContinuationLabel, turnFailureMessage } from "./conversationPresentation.js";
 import { TurnProgress } from "./TurnProgress.js";
-import { TurnElapsed, completedTimeLabel } from "./TurnElapsed.js";
+import { TurnElapsed } from "./TurnElapsed.js";
 import { ForkIcon, MoreOptionsIcon } from "./interfaceIcons.js";
+import { UserPromptEdit } from "./UserPromptEdit.js";
+import { isOrdinaryConversation, interruptionLabel } from "./ordinaryConversation.js";
 import { MessageActions } from "./MessageActions.js";
+import { CollapsibleText } from "./CollapsibleText.js";
 import { UserFeedback } from "./UserFeedback.js";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./components/ui/dropdown-menu.js";
 import { TurnHookStats } from "./TurnHookStats.js";
 import { ToolEvent } from "./ToolEvent.js";
 import { TurnExecution } from "./TurnExecution.js";
-import { Fragment, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { TimelineBottomButton } from "./TimelineBottomButton.js";
 import { MessageResponse } from "./components/ai-elements/message.js";
 import { SentAttachment } from "./MessageAttachment.js";
@@ -69,6 +73,8 @@ export function Messages({
   const inherited = useForkHistory(project.id, localThread, action);
   const thread: Data = { ...localThread, turns: [...inherited.turns, ...(localThread.turns ?? [])] };
   const inheritedIds = new Set(inherited.turns.map(turn => turn.id));
+  const ordinary = isOrdinaryConversation(localThread, project.configurations?.[localThread.id]);
+  const editable = ordinary ? (localThread.turns ?? []).flatMap((turn: Data) => turn.continuedFromTurnId || goalContinuationLabel(turn) ? [] : (turn.items ?? []).filter((item: Data) => item.type === "userMessage")).at(-1)?.id : undefined;
   const responseSpace = useRef<HTMLDivElement>(null);
   const container = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
@@ -187,8 +193,14 @@ export function Messages({
     container.current?.scrollTo({ top: container.current.scrollHeight });
     updateReading();
   };
+  const renderImage = useCallback((uri: string, name: string) => /^areal:\/\/blob\/[A-Za-z0-9_-]+$/.test(uri)
+    ? <SentAttachment part={{ type: "image", uri, name: name || "回复图片" }} projectId={project.id} threadId={thread.id} action={action} /> : null, [project.id, thread.id, action]);
   const renderAgentMessage = (entry: Data, turn: Data, deferActions = false) => !entry.text?.trim() ? null : <div className={`assistant-message${deferActions ? " assistant-message-final" : ""}`} data-message-phase={entry.phase ?? "legacy"} data-side-item-id={entry.id} key={entry.id}>
-    <MessageResponse className="conversation-markdown" preserveLineBreaks streaming={turn.status === "inProgress"} theme={dark ? "dark" : "light"} onOpenExternalUrl={onLink} onOpenFileLink={onFile}>{entry.text}</MessageResponse>
+    {entry.phase === "commentary" && (turn.status !== "inProgress" || entry.id !== turn.items?.findLast((item: Data) => ["agentMessage", "dynamicToolCall", "userMessage", "agentMedia"].includes(item.type))?.id)
+      ? <div className="commentary-scroll" role="region" aria-label="过程消息" tabIndex={0}>
+        <MessageResponse className="conversation-markdown" preserveLineBreaks theme={dark ? "dark" : "light"} onOpenExternalUrl={onLink} onOpenFileLink={onFile} onRenderImage={renderImage} webPreviews>{entry.text}</MessageResponse>
+      </div>
+      : <MessageResponse className="conversation-markdown" preserveLineBreaks streaming={turn.status === "inProgress"} theme={dark ? "dark" : "light"} onOpenExternalUrl={onLink} onOpenFileLink={onFile} onRenderImage={renderImage} webPreviews>{entry.text}</MessageResponse>}
     {!deferActions && entry.phase !== "commentary" && turn.status !== "inProgress" && <MessageActions text={entry.text} />}
   </div>;
   useLayoutEffect(() => {
@@ -360,11 +372,11 @@ export function Messages({
           const command = (turn.items ?? []).find((item: Data) => item.type === "dynamicToolCall" && item.tool === "run_command");
           const resourceLabel = command && queue?.pauseReason === "stopped" ? commandResourceLabel(command) : null;
           const stopHeading = <div className="turn-stop-heading turn-progress-heading">
-            <div className="turn-progress-label"><span className="turn-status turn-progress-summary" role="status">已停止{turn.error ? `：${turnFailureMessage(turn)}` : ""}</span></div>
+            <div className="turn-progress-label"><span className="turn-status turn-progress-summary" role="status">{ordinary ? interruptionLabel(turn) : "已停止"}{turn.error ? `：${turnFailureMessage(turn)}` : ""}</span></div>
             <div className="turn-progress-divider" />
           </div>;
           return <section key={turn.id} data-turn-id={turn.id} data-turn-status={turn.status} data-latest-turn={turn.id === latestTurnId}>
-            {stopAccepted && <p role="status">停止已受理，等待执行结算</p>}
+            {stopAccepted && <p role="status">{ordinary ? "暂停已受理，等待执行结算" : "停止已受理，等待执行结算"}</p>}
             {resourceLabel && <p role="status">{resourceLabel}</p>}
             {groups.map((group, groupIndex) => {
             const outcome = executionOutcome(group.entries.flatMap(({ item }) => item.items ?? []));
@@ -378,12 +390,13 @@ export function Messages({
                 </div></div>
               </div>;
               if (item.type === "userMessage") {
-                const continuation = goalContinuationLabel(turn);
+                const continuation = turn.continuedFromTurnId ? "继续执行" : goalContinuationLabel(turn);
                 if (continuation && item.id === turn.items?.find((entry: Data) => entry.type === "userMessage")?.id) {
                   return <div className="turn-status" key={item.id}>{continuation}</div>;
                 }
                 const content = item.content ?? [];
-                const text = content.filter((part: Data) => part.type === "text").map((part: Data) => part.text ?? "").join("\n");
+                const appContent = content.filter((part: Data) => part.type === "text" && part.mcpContent);
+                const text = content.filter((part: Data) => part.type === "text" && !part.mcpContent).map((part: Data) => part.text ?? "").join("\n");
                 const feedback = sentReviewFeedback(text);
                 const attachments = content.filter((part: Data) => part.type !== "text");
                 const browserFeedback = sentBrowserAnnotations(feedback.text, attachments);
@@ -392,15 +405,22 @@ export function Messages({
                   <div className="user-message" data-side-item-id={item.id} key={item.id}>
                     <div className="user-message-content">
                       <SentReviewComments comments={feedback.comments} />
+                      {appContent.length>0&&<div className="user-attachments" aria-label="应用内容">{appContent.map((part:Data,index:number)=><McpContentLabel key={index} block={part.mcpContent}/>)}</div>}
                       <SentBrowserAnnotations notes={browserFeedback.notes} attachments={attachments} projectId={project.id} threadId={thread.id} action={action} />
                       {ordinaryAttachments.length > 0 ? <div className="user-attachments" data-testid="user-attachments">
                         {ordinaryAttachments.map((part: Data, i: number) => <SentAttachment key={part.url ?? part.uri ?? i}
                           part={part} projectId={project.id} threadId={thread.id} action={action} />)}
                       </div> : null}
                       {browserFeedback.text.trim() ? <div className="user-bubble">
+                        <CollapsibleText key={`${owner}:${item.id}`} onExpandedChange={() => {
+                          follow.current = false;
+                          releaseResponseSpace();
+                          rememberReading();
+                        }}>
                         <MessageResponse className="conversation-markdown user-message-body" preserveLineBreaks theme={dark ? "dark" : "light"} onOpenExternalUrl={onLink} onOpenFileLink={onFile}>{browserFeedback.text}</MessageResponse>
+                        </CollapsibleText>
                       </div> : null}
-                      {text.trim() && <MessageActions text={text} />}
+                      {(text.trim() || item.id === editable) && <MessageActions text={text}>{item.id === editable && <UserPromptEdit key={`${owner}:${item.id}`} project={project} thread={localThread} item={item} action={action} />}</MessageActions>}
                     </div>
                   </div>
                 );
@@ -414,19 +434,20 @@ export function Messages({
               return <TurnExecution key={item.id} active={index === segments.length - 1} items={item.items} turn={turn} project={project} threadId={thread.id}
                 hasTurnSummary={group.progress && turn.status === "completed" && hasReadingSummary}
                 renderItem={(entry: Data, disclosure) => {
-                  if (entry.type === "dynamicToolCall") return <div data-side-item-id={entry.id} key={entry.id}><ToolEvent item={entry} {...disclosure} onFile={onFile} onAgent={isInherited ? undefined : onAgent} turnId={turn.id} action={action} projectId={project.id} threadId={thread.id} readTurnReview={turn.status === "completed" ? readTurnReview : undefined} /></div>;
+                  if (entry.type === "dynamicToolCall") return <div data-side-item-id={entry.id} key={entry.id}><ToolEvent item={entry} {...disclosure} onFile={onFile} onAgent={isInherited ? undefined : onAgent} agents={isInherited ? undefined : project.state?.threads} turnId={turn.id} action={action} projectId={project.id} threadId={thread.id} readTurnReview={turn.status === "completed" ? readTurnReview : undefined} /></div>;
                   if (entry.type === "modelContext") return null;
                   return <details className="tool-call" key={entry.id}><summary>{entry.type}</summary><pre>{JSON.stringify(entry, null, 2)}</pre></details>;
                 }} />;
             });
             return <Fragment key={group.id}>
               {turn.status === "interrupted" && groupIndex === stopHeaderIndex && stopHeading}
-              {group.progress ? <TurnProgress summaryAvailable={turn.status === "completed" && hasReadingSummary}
-                label={(groupIndex === firstProgress ? completedTimeLabel(turn) : undefined) ?? (legacyReply ? "早前消息与活动" : "本轮过程")}
+              {group.progress ? <TurnProgress summaryAvailable
+                turn={groupIndex === firstProgress ? turn : undefined} connected={!!project.state?.connected}
+                label={legacyReply ? "早前消息与活动" : "本轮过程"}
                 settled={turn.status === "completed" && hasReadingSummary && !outcome.unfinished}
                 {...outcome}>{contents}</TurnProgress> : contents}
               {group.entries.some(({ item }) => item === initialUser) &&
-                (turn.status !== "completed" || firstProgress < 0 || !hasReadingSummary) &&
+                firstProgress < 0 &&
                 <TurnElapsed turn={turn} connected={!!project.state?.connected} />}
             </Fragment>;
             })}

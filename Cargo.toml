@@ -1,5 +1,5 @@
 [workspace]
-members = ["core/mcp", "core/config", "core/protocol", "core/engine", "core/app-server", "core/server", "core/service-host", "core/local-service", "clients/tui", "clients/cli",
+members = ["core/plugins", "core/mcp", "core/config", "core/protocol", "core/engine", "core/app-server", "core/server", "core/service-host", "core/local-service", "clients/tui", "clients/cli",
     "runtime/protocol", "runtime/host-tools", "runtime/client", "runtime/supervisor", "runtime/exec-native", "runtime/daemon", "runtime/fs-helper"]
 resolver = "2"
 
@@ -49,6 +49,7 @@ unicode-width = "0.2.2"
 areal-tui = { path = "clients/tui" }
 areal-server = { path = "core/server" }
 areal-service-host = { path = "core/service-host" }
+areal-plugins = { path = "core/plugins" }
 areal-mcp = { path = "core/mcp" }
 areal-protocol = { path = "core/protocol" }
 areal-config = { path = "core/config" }
@@ -63,6 +64,9 @@ areal-runtime-exec-native = { path = "runtime/exec-native" }
 
 [profile.release]
 lto = "thin"
+
+[profile.dev.package.sha2]
+opt-level = 3
 
 # 容器行为测试保留调试断言，省去调试符号和增量产物；性能镜像仍使用 release。
 [profile.ci]

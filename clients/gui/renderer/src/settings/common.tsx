@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Plus, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { Button } from "../components/ui/button.js";
 import {
   Dialog,
@@ -84,7 +84,7 @@ export function SettingsToolbar({
         )}
         {onAdd && (
           <Button disabled={disabled || addDisabled} onClick={onAdd}>
-            <Plus />
+
             {addLabel}
           </Button>
         )}

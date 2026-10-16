@@ -10,6 +10,10 @@
 
 The GUI defaults to the same configuration file and Core read/write interface, with isolated service registration and runtime data. `AREAL_HARNESS_SERVICE_HOME` selects only a nonempty absolute directory for shared-service registration and default instance data; it does not change configuration lookup. When omitted, it falls back to `AREAL_HARNESS_HOME` or `~/.areal`. The GUI selects its service directory automatically, so sharing the default configuration requires no environment variable. See the [GUI guide](../../clients/gui/README.en.md) for overrides.
 
+GUI model settings provide "新会话默认模型" for saved models under enabled providers and ChatGPT models in the current account catalog. Selection uses the existing revision check, idle drain, save, and restart transaction. Active work rejects the save; a failed restart attempts a revision-checked rollback. ChatGPT defaults use the existing `areal_openai` model reference; the desktop still manages account authorization. An explicit Profile model takes precedence over the global default.
+
+Before sending, a new chat displays its concrete model and resolved effort. An entirely unset effort displays "供应商默认"; `none` displays "无". "使用模型默认" clears the conversation's effort override, retains other parameters, and resolves model or Provider defaults again. A saved high default therefore still displays "高". An unsent draft can retain its choices; after creation, the next new chat uses the global default again. Changing that default does not rewrite existing conversations. Model and effort changes in a conversation save immediately and survive reopening and restart; past Turn snapshots remain unchanged.
+
 Shared TUI/Web entry points use a workspace-specific default data directory; explicit dataDir configuration retains the precedence above. See [local services](../api/local-service.en.md) for migration and compatibility.
 
 A missing default file is allowed. A missing explicit file, unknown field, type/version error or explicitly empty value is rejected. Files must be regular UTF-8, at most 1 MiB, with `schema_version=1` or `2`. TOML paths resolve against its directory; CLI/env paths resolve against startup cwd. There is no tilde, variable or glob expansion. Malformed lower-priority inputs are rejected even when overridden.
@@ -480,3 +484,17 @@ Examples are historical candidate values, not performance recommendations. Set o
 `limits.max_repeated_tool_failures` is an experimental execution cap defaulting to 0 (disabled), accepts 0–8, and requires an explicit positive value. After the threshold of consecutive confirmed failures with the same tool and parsed arguments in the current Turn, the next call is journaled as rejected without execution; another unchanged call ends the Turn. Read-only inspection does not reset the sequence; a different operation or arguments does. Earlier failures may have partial effects. Rejection and recovery hints do not imply rollback. UNKNOWN still stops without automatic replay. This bounds repeated execution, not the underlying failure.
 
 Ablations can use `AREAL_HARNESS_CONTEXT_OBSERVATION_TOKENS`, `AREAL_HARNESS_MAX_EMPTY_COMPLETION_RETRIES`, `AREAL_HARNESS_CONTEXT_REFERENCE_TOKENS`, `AREAL_HARNESS_COMMAND_STDIN_CLOSED`, and `AREAL_HARNESS_MAX_REPEATED_TOOL_FAILURES`. Added input and recovery usage remain charged to the root budget; estimated compression is not measured savings.
+
+## Hooks configuration
+
+`[features]` accepts boolean `hooks` and the legacy alias `codex_hooks` (`hooks` wins when both appear). Omission enables discovery, with separate trust still required for every current definition. User `hooks=false` gates both configuration and package hooks; project switches cannot override it. Top-level `[hooks]` is delegated to the hooks parser while model/permission fields retain strict parsing. Project `.codex/config.toml` is read only for hooks, without changing the global precedence described above.
+
+```toml
+[features]
+hooks = true
+
+[[hooks.UserPromptSubmit]]
+hooks = [{ type = "command", command = "python3 /absolute/path/hook.py", timeout = 30 }]
+```
+
+See the [plugin guide](plugins.en.md#hooks-p2-candidate) for sources, review, execution and remaining limits.

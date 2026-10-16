@@ -1,5 +1,6 @@
 use super::skills::Skill;
 use super::*;
+use areal_config::skills::MAX_REGISTERED_SKILLS;
 use std::collections::BTreeSet;
 
 #[derive(Clone, Default, Deserialize, Serialize)]
@@ -143,8 +144,10 @@ impl Engine {
 
     fn install_deployment_data(&self, deployment: Deployment, base: &Path) -> anyhow::Result<()> {
         anyhow::ensure!(
-            deployment.profiles.len() <= 64 && deployment.skills.len() <= 128,
-            "deployment catalog capacity exceeded"
+            deployment.profiles.len() <= 64 && deployment.skills.len() <= MAX_REGISTERED_SKILLS,
+            "deployment catalog capacity exceeded: profiles {} (limit 64), skills {} (limit {MAX_REGISTERED_SKILLS})",
+            deployment.profiles.len(),
+            deployment.skills.len()
         );
         let mut guard = self.desktop.catalog.write().unwrap();
         let mut catalog = guard.clone();
@@ -484,53 +487,31 @@ impl Engine {
         revision: u64,
     ) -> Result<EffectiveConfig> {
         let profile = profile.as_ref().map(|p| self.profile(p)).transpose()?;
-        let configured = self.desktop.configured_models.read().unwrap();
         let model = model
             .or_else(|| profile.as_ref().and_then(|p| p.model.clone()))
-            .or_else(|| configured.default_model.clone());
+            .or_else(|| {
+                self.desktop
+                    .configured_models
+                    .read()
+                    .unwrap()
+                    .default_model
+                    .clone()
+            });
         let provider = model
             .as_ref()
             .map(|m| self.provider(&m.provider_id))
             .transpose()?;
-        let defaults = provider
-            .as_ref()
-            .map(|p| p.parameters.clone())
-            .unwrap_or_default();
-        let model_defaults = model
-            .as_ref()
-            .and_then(|m| {
-                configured
-                    .parameters
-                    .get(&(m.provider_id.clone(), m.model_id.clone()))
-            })
-            .cloned()
-            .unwrap_or_default();
-        let parameters = ModelParameters {
-            context_window_tokens: parameters
-                .context_window_tokens
-                .or(model_defaults.context_window_tokens)
-                .or(defaults.context_window_tokens),
-            temperature: parameters
-                .temperature
-                .or(model_defaults.temperature)
-                .or(defaults.temperature),
-            max_output_tokens: parameters
-                .max_output_tokens
-                .or(model_defaults.max_output_tokens)
-                .or(defaults.max_output_tokens),
-            reasoning_effort: parameters
-                .reasoning_effort
-                .or(model_defaults.reasoning_effort)
-                .or(defaults.reasoning_effort),
-            reasoning_summary: parameters
-                .reasoning_summary
-                .or(model_defaults.reasoning_summary)
-                .or(defaults.reasoning_summary),
+        let defaults = match (&model, &provider) {
+            (Some(model), Some(provider)) => self.model_parameters(model, &provider.parameters),
+            _ => self
+                .default_model_metadata(None)
+                .map(|(_, parameters)| parameters)
+                .unwrap_or_default(),
         };
-        drop(configured);
+        let parameters = merge_model_parameters(parameters, defaults);
         let configuration = EffectiveConfig {
-            historical_allow_plugin_skills: None,
-            historical_plugin_skills: None,
+            allow_plugin_skills: false,
+            plugin_skills: None,
             default_model_revision: None,
             options: ClientOptions::default(),
             selected_skills: None,
@@ -543,8 +524,15 @@ impl Engine {
             parameters,
             instructions: String::new(),
         };
-        if configuration.model.is_some() || !self.default_model().name().is_empty() {
-            let actual = self.configured_model(&configuration)?;
+        self.validate_config_model(&configuration)?;
+        Ok(configuration)
+    }
+    pub(crate) fn validate_config_model(&self, configuration: &EffectiveConfig) -> Result<()> {
+        if configuration.model.is_some()
+            || configuration.default_model_revision.is_some()
+            || !self.default_model().name().is_empty()
+        {
+            let actual = self.configured_model(configuration)?;
             if configuration.profile.as_ref().is_some_and(|p| {
                 p.required_modalities
                     .iter()
@@ -553,18 +541,43 @@ impl Engine {
                 return Err(invalid("model does not meet profile modality requirements"));
             }
         }
-        Ok(configuration)
+        Ok(())
+    }
+    pub(crate) fn model_parameters(
+        &self,
+        model: &ModelRef,
+        provider: &ModelParameters,
+    ) -> ModelParameters {
+        let configured = self.desktop.configured_models.read().unwrap();
+        let parameters = configured
+            .parameters
+            .get(&(model.provider_id.clone(), model.model_id.clone()))
+            .cloned()
+            .unwrap_or_default();
+        merge_model_parameters(parameters, provider.clone())
+    }
+    pub(crate) fn update_model_parameters(
+        &self,
+        configuration: &mut EffectiveConfig,
+        parameters: ModelParameters,
+    ) {
+        let defaults = match (&configuration.model, &configuration.provider) {
+            (Some(model), Some(provider)) => self.model_parameters(model, &provider.parameters),
+            _ => self
+                .default_model_metadata(configuration.default_model_revision.as_deref())
+                .map(|(_, parameters)| parameters)
+                .unwrap_or_default(),
+        };
+        configuration.parameters = merge_model_parameters(parameters, defaults);
     }
     fn selected_skill(
         &self,
         configuration: &EffectiveConfig,
         reference: &VersionRef,
     ) -> Result<Skill> {
-        if !configuration
-            .selected_skills
-            .as_ref()
-            .or_else(|| configuration.profile.as_ref().map(|p| &p.skills))
-            .is_some_and(|s| s.contains(reference))
+        if !self
+            .effective_skill_refs(configuration, false)
+            .contains(reference)
         {
             return Err(invalid("skill is outside the effective profile"));
         }
@@ -598,37 +611,77 @@ impl Engine {
     /// 草稿目录仅观察已登记 Profile，不创建 Thread 或读取技能正文。
     pub fn profile_skills(&self, reference: &VersionRef) -> Result<Value> {
         let profile = self.profile(reference)?;
+        let refs = self.effective_skill_refs(
+            &EffectiveConfig {
+                allow_plugin_skills: profile.allow_plugin_skills,
+                profile: Some(profile),
+                ..Default::default()
+            },
+            false,
+        );
         let catalog = self.desktop.catalog.read().unwrap();
-        let data: Vec<_> = profile.skills.iter().map(|r| {
+        let data: Vec<_> = refs.iter().map(|r| {
             let skill = catalog.skills.get(&key(&r.id, &r.revision));
             json!({"id":r.id,"revision":r.revision,"available":skill.is_some(),
                 "name":skill.map_or(r.id.as_str(), |s| s.metadata.name.as_str()),
                 "description":skill.map_or("", |s| s.metadata.description.as_str()),
+                "pluginId":skill.and_then(|s|s.plugin.as_ref().map(|p|p.plugin_id.as_str())),
+                "allowImplicitInvocation":skill.and_then(|s|s.plugin.as_ref().map(|p|p.allow_implicit_invocation)),
                 "resources":null,
                 "resourceRoot":skill.map(|s| format!("areal://skill/{}/{}",s.location.id,s.location.revision))})
         }).collect();
         Ok(json!({"data":data}))
     }
     pub async fn skills(&self, thread_id: &str) -> Result<Value> {
+        self.skills_for_turn(thread_id, None).await
+    }
+    pub(super) async fn skills_for_turn(
+        &self,
+        thread_id: &str,
+        turn_id: Option<&str>,
+    ) -> Result<Value> {
+        self.refresh_plugins().await?;
         let cell = self.cell(thread_id).await?;
-        let state = cell.state.lock().await;
-        let config = state
-            .thread
-            .desktop
-            .as_ref()
-            .map(|d| d.configuration.clone())
-            .unwrap_or_default();
+        let (config, loaded) = {
+            let state = cell.state.lock().await;
+            let config = self.skill_configuration(&state.thread, turn_id)?;
+            (
+                config,
+                state
+                    .thread
+                    .desktop
+                    .as_ref()
+                    .map(|d| d.loaded_skills.clone()),
+            )
+        };
+        let refs = self.effective_skill_refs(&config, turn_id.is_some());
         let catalog = self.desktop.catalog.read().unwrap();
-        let data: Vec<_> = config.selected_skills.as_ref().or_else(||config.profile.as_ref().map(|p| &p.skills)).into_iter().flatten().map(|r| {
+        let data: Vec<_> = refs.iter().map(|r| {
             let skill = catalog.skills.get(&key(&r.id, &r.revision));
-            let metadata = skill.map(|s| &s.metadata);
             json!({"id":r.id,"revision":r.revision,"available":skill.is_some(),
-                "name":metadata.map_or(r.id.as_str(), |m| m.name.as_str()),
-                "description":metadata.map_or("", |m| m.description.as_str()),
+                "name":skill.map_or(r.id.as_str(), |s| s.metadata.name.as_str()),
+                "description":skill.map_or("", |s| s.metadata.description.as_str()),
+                "pluginId":skill.and_then(|s|s.plugin.as_ref().map(|p|p.plugin_id.as_str())),
+                "allowImplicitInvocation":skill.and_then(|s|s.plugin.as_ref().map(|p|p.allow_implicit_invocation)),
                 "resources":null,
                 "resourceRoot":skill.map(|s| format!("areal://skill/{}/{}",s.location.id,s.location.revision))})
         }).collect();
-        Ok(json!({"data":data,"loaded":state.thread.desktop.as_ref().map(|d| &d.loaded_skills)}))
+        Ok(json!({"data":data,"loaded":loaded}))
+    }
+    fn skill_configuration(
+        &self,
+        thread: &Thread,
+        turn_id: Option<&str>,
+    ) -> Result<EffectiveConfig> {
+        match turn_id {
+            Some(id) => thread
+                .turns
+                .iter()
+                .find(|t| t.id == id)
+                .map(|t| t.configuration.clone().unwrap_or_default())
+                .ok_or(Error::NotFound),
+            None => Ok(desktop(thread).configuration),
+        }
     }
     /// 新草稿预览只读 Profile 允许的资源，不登记 Thread 加载状态。
     pub async fn read_profile_skill(
@@ -639,8 +692,11 @@ impl Engine {
         offset: usize,
         max_bytes: usize,
     ) -> Result<Value> {
+        self.refresh_plugins().await?;
+        let profile = self.profile(&profile)?;
         let configuration = EffectiveConfig {
-            profile: Some(self.profile(&profile)?),
+            allow_plugin_skills: profile.allow_plugin_skills,
+            profile: Some(profile),
             ..Default::default()
         };
         let skill = self.selected_skill(&configuration, &reference)?;
@@ -658,6 +714,7 @@ impl Engine {
         if max_bytes == 0 || max_bytes > 8192 {
             return Err(invalid("maxBytes must be 1..8192"));
         }
+        self.check_plugin_skill(&skill).await?;
         let page = skill
             .read(resource, offset, max_bytes)
             .await
@@ -683,21 +740,36 @@ impl Engine {
         offset: usize,
         max_bytes: usize,
     ) -> Result<Value> {
-        if max_bytes == 0 || max_bytes > 8192 {
-            return Err(invalid("maxBytes must be 1..8192"));
-        }
+        self.read_skill_for_turn(thread_id, None, reference, resource, offset, max_bytes)
+            .await
+    }
+    pub(super) async fn read_skill_for_turn(
+        &self,
+        thread_id: &str,
+        turn_id: Option<&str>,
+        reference: VersionRef,
+        resource: &str,
+        offset: usize,
+        max_bytes: usize,
+    ) -> Result<Value> {
+        self.refresh_plugins().await?;
         let cell = self.cell(thread_id).await?;
-        let mut state = cell.state.lock().await;
-        let configuration = state
-            .thread
-            .desktop
-            .as_ref()
-            .map(|d| d.configuration.clone())
-            .unwrap_or_default();
-        let skill = self.selected_skill(&configuration, &reference)?;
+        let config = {
+            let state = cell.state.lock().await;
+            self.skill_configuration(&state.thread, turn_id)?
+        };
+        if turn_id.is_some()
+            && !self
+                .effective_skill_refs(&config, true)
+                .contains(&reference)
+        {
+            return Err(invalid("skill is not selected for this Turn"));
+        }
+        let skill = self.selected_skill(&config, &reference)?;
         let page = self
             .read_skill_page(skill, &reference, resource, offset, max_bytes)
             .await?;
+        let mut state = cell.state.lock().await;
         let mut candidate = state.thread.clone();
         candidate
             .desktop
@@ -755,6 +827,213 @@ impl Engine {
                 json!({"providerId":id,"providerRevision":provider.revision,"modelId":name,"state":"failed","error":"API_PROBE_FAILED","checked":["authentication","textStream"]})
             }
         })
+    }
+}
+
+impl Engine {
+    pub(crate) fn effective_skill_refs(
+        &self,
+        config: &EffectiveConfig,
+        model: bool,
+    ) -> Vec<VersionRef> {
+        let catalog = self.desktop.catalog.read().unwrap();
+        let manager = self.desktop.plugins.read().unwrap();
+        let mut allowed = config
+            .profile
+            .as_ref()
+            .map(|p| p.skills.clone())
+            .unwrap_or_default();
+        if config.allow_plugin_skills {
+            allowed.extend(config.plugin_skills.clone().unwrap_or_else(|| {
+                manager
+                    .enabled
+                    .iter()
+                    .map(|s| VersionRef {
+                        id: s.id.clone(),
+                        revision: s.revision.clone(),
+                    })
+                    .collect()
+            }));
+        }
+        if config.allow_plugin_skills && config.plugin_skills.is_none() {
+            allowed.extend(
+                config
+                    .selected_skills
+                    .iter()
+                    .flatten()
+                    .filter(|r| {
+                        catalog
+                            .skills
+                            .get(&key(&r.id, &r.revision))
+                            .is_some_and(|s| s.plugin.is_some())
+                    })
+                    .cloned(),
+            );
+        }
+        let refs = config.selected_skills.as_ref().unwrap_or(&allowed);
+        let mut result = Vec::new();
+        for r in refs {
+            if !allowed.contains(r) {
+                continue;
+            }
+            let Some(skill) = catalog.skills.get(&format!("{}/{}", r.id, r.revision)) else {
+                continue;
+            };
+            if let Some(plugin) = &skill.plugin
+                && (!manager.enabled_plugin_ids.contains(&plugin.plugin_id)
+                    || (model
+                        && !plugin.allow_implicit_invocation
+                        && config.selected_skills.is_none()))
+            {
+                continue;
+            }
+            if !result.contains(r) {
+                result.push(r.clone());
+            }
+        }
+        result
+    }
+    pub(crate) fn freeze_plugin_skills(&self, config: &mut EffectiveConfig) {
+        if config.plugin_skills.is_none() {
+            let catalog = self.desktop.catalog.read().unwrap();
+            let refs = config.selected_skills.clone().unwrap_or_else(|| {
+                self.desktop
+                    .plugins
+                    .read()
+                    .unwrap()
+                    .enabled
+                    .iter()
+                    .map(|s| VersionRef {
+                        id: s.id.clone(),
+                        revision: s.revision.clone(),
+                    })
+                    .collect()
+            });
+            config.plugin_skills = Some(
+                refs.into_iter()
+                    .filter(|r| {
+                        catalog
+                            .skills
+                            .get(&format!("{}/{}", r.id, r.revision))
+                            .is_some_and(|s| s.plugin.is_some())
+                    })
+                    .collect(),
+            );
+        }
+    }
+}
+
+impl Engine {
+    /// The existing Composer transports an explicit attachment as a JSON-quoted
+    /// <skill ... id="..." revision="..."> block. Only its ref is a selector;
+    /// caller-supplied names, paths and body remain untrusted user text.
+    pub(crate) fn select_plugin_attachments(
+        &self,
+        config: &mut EffectiveConfig,
+        input: &[Input],
+        ordinary: bool,
+    ) -> Result<()> {
+        let mut scope = config.clone();
+        if ordinary {
+            scope.selected_skills = None;
+        }
+        let allowed = self.effective_skill_refs(&scope, false);
+        let mut selected = self.effective_skill_refs(config, true);
+        let mut attached = false;
+        for item in input {
+            let Input::Text {
+                text,
+                mcp_content: None,
+                ..
+            } = item
+            else {
+                continue;
+            };
+            let mut remaining = text.as_str();
+            while let Some(start) = remaining.find("<skill ") {
+                let mut header = &remaining[start + 7..];
+                let mut id = None;
+                let mut revision = None;
+                let mut valid = false;
+                // Parse JSON string attribute values rather than searching inside names/bodies.
+                for _ in 0..8 {
+                    header = header.trim_start();
+                    if let Some(body) = header.strip_prefix('>') {
+                        if let Some(end) = body.find("</skill>") {
+                            remaining = &body[end + 8..];
+                            valid = true;
+                        }
+                        break;
+                    }
+                    let Some(equal) = header.find('=') else { break };
+                    let name = &header[..equal];
+                    if !name.bytes().all(|c| c.is_ascii_alphabetic()) {
+                        break;
+                    }
+                    let mut value = serde_json::Deserializer::from_str(&header[equal + 1..])
+                        .into_iter::<String>();
+                    let Some(Ok(value_text)) = value.next() else {
+                        break;
+                    };
+                    let consumed = value.byte_offset();
+                    match name {
+                        "id" => id = Some(value_text),
+                        "revision" => revision = Some(value_text),
+                        _ => {}
+                    }
+                    header = &header[equal + 1 + consumed..];
+                }
+                if !valid {
+                    break;
+                }
+                let (Some(id), Some(revision)) = (id, revision) else {
+                    continue;
+                };
+                let reference = VersionRef { id, revision };
+                let plugin = self
+                    .desktop
+                    .catalog
+                    .read()
+                    .unwrap()
+                    .skills
+                    .get(&key(&reference.id, &reference.revision))
+                    .is_some_and(|s| s.plugin.is_some());
+                if !plugin {
+                    continue;
+                } // Standalone attachment behavior remains unchanged.
+                if !allowed.contains(&reference) {
+                    return Err(invalid(
+                        "attached plugin skill is outside the effective scope",
+                    ));
+                }
+                if !selected.contains(&reference) {
+                    selected.push(reference);
+                }
+                if selected.len() > 128 {
+                    return Err(invalid("selected skills exceed budget"));
+                }
+                attached = true;
+            }
+        }
+        if attached {
+            config.selected_skills = Some(selected);
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn merge_model_parameters(
+    parameters: ModelParameters,
+    defaults: ModelParameters,
+) -> ModelParameters {
+    ModelParameters {
+        context_window_tokens: parameters
+            .context_window_tokens
+            .or(defaults.context_window_tokens),
+        temperature: parameters.temperature.or(defaults.temperature),
+        max_output_tokens: parameters.max_output_tokens.or(defaults.max_output_tokens),
+        reasoning_effort: parameters.reasoning_effort.or(defaults.reasoning_effort),
+        reasoning_summary: parameters.reasoning_summary.or(defaults.reasoning_summary),
     }
 }
 

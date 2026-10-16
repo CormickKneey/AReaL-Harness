@@ -65,6 +65,7 @@ async fn mcp_search_uses_proxy_environment() {
                 let request: Value = serde_json::from_slice(&body).unwrap();
                 records.lock().unwrap().push(request.clone());
                 let result = match request["method"].as_str().unwrap() {
+                    "server/discover" => return axum::Json(json!({"jsonrpc":"2.0","id":request["id"],"error":{"code":-32601,"message":"Method not found"}})).into_response(),
                     "initialize" => json!({"protocolVersion":"2025-11-25","capabilities":{"tools":{}},"serverInfo":{"name":"fixture","version":"1"}}),
                     "notifications/initialized" => return StatusCode::ACCEPTED.into_response(),
                     "tools/list" => json!({"tools":[{"name":"web_search","description":"fixture search","inputSchema":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}}]}),

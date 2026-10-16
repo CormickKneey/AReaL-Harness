@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Button } from "./components/ui/button.js";
 import { DraftComposer } from "./DraftComposer.js";
 import type { Action, Data, PlatformServices, Snapshot } from "./services.js";
 import { call } from "./services.js";
@@ -25,9 +26,16 @@ export function ProjectlessDraft({ snapshot, services, action, readAction, onOpe
   useEffect(() => {
     if (ownerId && ready && !owner?.state?.connected) void action("connect", { projectId: ownerId }).catch(cause => setError(cause.message));
   }, [ownerId, ready]);
-  const draftOwner = owner ?? { id: "projectless", root: "", profiles: [], models: [{ modelId: "default" }], pending: [], state: { connected: ready }, outcomes: {} };
+  useEffect(() => {
+    if (!ready || ownerId) return;
+    let active = true;
+    void prepare().catch(cause => { if (active) setError(cause.message); });
+    return () => { active = false; };
+  }, [ready, ownerId]);
+  const draftOwner = owner ?? { id: "projectless", root: "", profiles: [], models: [], pending: [], state: { connected: false }, outcomes: {} };
   return <>
-    {error && <p role="alert">{error}</p>}
+    {error && <p className="projectless-draft-notice text-destructive" role="alert">{error}<Button size="sm" variant="ghost" onClick={() => { setError(""); void prepare().catch(cause => setError(cause.message)); }}>重试准备</Button></p>}
+    {!owner && !error && <p className="projectless-draft-notice text-foreground-subtle" role="status">正在准备新会话模型…</p>}
     <DraftComposer project={draftOwner} draftKey={key} prepareProject={prepare} action={action} readAction={readAction} onPanel={onPanel} onOpen={async (pid, tid) => {
       localStorage.removeItem(`${key}:project`); localStorage.removeItem(`${key}:workspace-request`);
       await onOpen(pid, tid);

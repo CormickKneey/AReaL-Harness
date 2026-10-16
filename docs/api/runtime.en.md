@@ -28,6 +28,7 @@ If Runtime assembly fails, `connection.open` reports the original error after st
 |---|---|
 | connection.open / close | `{protocolVersion}` / `{}` |
 | scope.create | `{operationId,parentScopeId,owner,permissions?,limits?}` |
+| scope.createParticipant | `{authorityScopeId,scope,participation}` |
 | scope.get / revoke / waitClosed | `{scopeId}` |
 | owner.revoke | `{pluginInstanceId}` |
 | process.start | `{operationId,scopeId,argv,cwd,env?,tty?,pipeStdin?,limits?}` |
@@ -54,6 +55,14 @@ Side-effecting methods use `${runtimeEpoch}:op:${UUID}` operationId. Identical k
 Defaults are 30 seconds per process, 8 MiB cumulative descendant output and 4 concurrent processes per Scope, with 256 Scopes/4096 operations retained per connection. Deadlines include write-path queuing and startup. Process quota remains until cleanup. Deployment may configure limits; children can only narrow them.
 
 The Runtime daemon accepts `--cumulative-output-bytes` to set cumulative deployment/descendant-Scope output independently. Omitted values equal `--output-bytes` and explicit values cannot be smaller than the per-process cap. Each process remains bounded by `--output-bytes`; retained windows are separately bounded by `--output-window-bytes`. Accepted stdout/stderr bytes are charged once to each ancestor; rereading retained output does not charge again. File-helper JSON/base64 responses are process output too.
+
+## Bounded hook write groups
+
+`scope.createParticipant` is connection-owner admission. `authorityScopeId` must equal this epoch's opaque connection root; `scope` has the existing `scope.create` fields. `participation` is `{kind:"task",admissionWindowMs}` or `{kind:"hook",taskScopeId}`. A task can only be created outside an existing group. A hook's parent must already belong to the specified validated task Scope. Ordinary child scopes inherit participation; copying owner metadata does not confer authority. Existing `scope.create` and `ScopeInfo` remain unchanged; unsupported Runtimes reject the new method without a permissive fallback.
+
+The admission window is 1–min(task process wall limit,60000) milliseconds. First write admission fixes the generation deadline; later members cannot extend it. Covered paths permit same-group overlap when at least one participant is Hook. Ordinary/ordinary remains serial and cross-group conflicts remain exclusive. Path expansion requires a complete new reservation behind earlier foreign waiters. After sealing, new members enter the next generation's FIFO position; existing processes retain their own limits and leases until confirmed cleanup. UNKNOWN retires admission rather than releasing uncertain effects. Typed participants retain this scheduling even with the legacy concurrent-write option; ungrouped legacy behavior is unchanged.
+
+This changes the fairness unit to a bounded group and permits hook/tool races within a task. It does not grant new paths, promise transactional isolation, or ensure arbitrary dependency chains can reenter after sealing. Core owns a per-Session task Scope, derives ordinary tool and hook scopes from it, and closes it after joined hook tasks and SessionEnd. Per-process permission narrowing and hook secret exclusion remain enforced.
 
 ## Output and cleanup
 

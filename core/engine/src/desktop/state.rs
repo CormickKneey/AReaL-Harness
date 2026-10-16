@@ -169,12 +169,17 @@ impl Engine {
                 .unwrap_or_default();
             // 显式 target 是全新的普通配置选择；空对象表示当前部署默认模型。
             let config = if let Some(target) = &request.target {
-                engine.resolve_config(
+                let mut config = engine.resolve_config(
                     target.agent_profile.clone(),
                     target.model.clone(),
                     target.parameters.clone().unwrap_or_default(),
                     0,
-                )?
+                )?;
+                config.allow_plugin_skills = config
+                    .profile
+                    .as_ref()
+                    .is_some_and(|p| p.allow_plugin_skills);
+                config
             } else {
                 anchor_config
             };
@@ -580,6 +585,7 @@ impl Engine {
                     };
                 }
             }
+            let allow_plugin_skills = request.agent_profile.is_none();
             let mut data = DesktopState {
                 configuration: engine.resolve_config(
                     request
@@ -591,6 +597,13 @@ impl Engine {
                 )?,
                 ..Default::default()
             };
+            engine.pin_desktop_default(&mut data.configuration);
+            data.configuration.allow_plugin_skills = allow_plugin_skills
+                || data
+                    .configuration
+                    .profile
+                    .as_ref()
+                    .is_some_and(|p| p.allow_plugin_skills);
             if let Some(guard) = &request.admission_guard {
                 if !guard.ordinary_session {
                     return Err(invalid("ordinarySession must be true"));
@@ -706,12 +719,10 @@ impl Engine {
         self: &Arc<Self>,
         request: ConfigureThread,
     ) -> Result<EffectiveConfig> {
+        self.refresh_plugins().await?;
         self.mutate(move |engine| async move {
             let cell = engine.cell(&request.thread_id).await?;
             let is_side = cell.state.lock().await.thread.is_side();
-            if !is_side {
-                engine.refresh_managed_tools(&cell).await.map_err(invalid)?;
-            }
             let mut state = cell.state.lock().await;
             if state.active.is_some() || state.compacting {
                 return Err(Error::Conflict);
@@ -730,12 +741,23 @@ impl Engine {
                 if previous.revision != request.expected_revision {
                     return Err(Error::Conflict);
                 }
-                let mut configuration = engine.resolve_config(
-                    None,
-                    request.model.or(previous.model.clone()),
-                    request.parameters.unwrap_or(previous.parameters.clone()),
-                    previous.revision + 1,
-                )?;
+                let mut configuration = if request.model.is_none() {
+                    let mut configuration = previous.clone();
+                    configuration.revision += 1;
+                    if let Some(parameters) = request.parameters {
+                        engine.update_model_parameters(&mut configuration, parameters);
+                    }
+                    configuration
+                } else {
+                    let mut configuration = engine.resolve_config(
+                        None,
+                        request.model,
+                        request.parameters.unwrap_or_default(),
+                        previous.revision + 1,
+                    )?;
+                    engine.pin_desktop_default(&mut configuration);
+                    configuration
+                };
                 configuration.options = previous.options;
                 configuration.selected_skills = previous.selected_skills;
                 configuration.instructions = previous.instructions;
@@ -772,21 +794,50 @@ impl Engine {
             if request.reset_model && request.model.is_some() {
                 return Err(invalid("model and resetModel cannot be used together"));
             }
-            let mut configuration = engine.resolve_config(
-                request.agent_profile.or_else(|| {
-                    previous.profile.as_ref().map(|p| VersionRef {
-                        id: p.id.clone(),
-                        revision: p.revision.clone(),
-                    })
-                }),
-                if request.reset_model {
-                    None
-                } else {
-                    request.model.or(previous.model)
-                },
-                request.parameters.unwrap_or(previous.parameters),
-                previous.revision + 1,
-            )?;
+            let inherited_plugin_scope = request.agent_profile.is_none();
+            let preserve_model =
+                request.model.is_none() && !request.reset_model && request.agent_profile.is_none();
+            let mut configuration = if preserve_model {
+                let mut configuration = previous.clone();
+                configuration.revision += 1;
+                if let Some(parameters) = request.parameters {
+                    engine.update_model_parameters(&mut configuration, parameters);
+                } else if configuration.model.is_none()
+                    && configuration.default_model_revision.is_some()
+                {
+                    let parameters = configuration.parameters.clone();
+                    engine.update_model_parameters(&mut configuration, parameters);
+                }
+                engine.validate_config_model(&configuration)?;
+                configuration.read_only = configuration
+                    .profile
+                    .as_ref()
+                    .is_some_and(|profile| profile.read_only);
+                configuration.tool_allowlist = configuration
+                    .profile
+                    .as_ref()
+                    .and_then(|profile| profile.tool_allowlist.clone());
+                configuration.plugin_skills = None;
+                configuration
+            } else {
+                let mut configuration = engine.resolve_config(
+                    request.agent_profile.or_else(|| {
+                        previous.profile.as_ref().map(|p| VersionRef {
+                            id: p.id.clone(),
+                            revision: p.revision.clone(),
+                        })
+                    }),
+                    if request.reset_model {
+                        None
+                    } else {
+                        request.model.or(previous.model.clone())
+                    },
+                    request.parameters.unwrap_or(previous.parameters.clone()),
+                    previous.revision + 1,
+                )?;
+                engine.pin_desktop_default(&mut configuration);
+                configuration
+            };
             if previous.profile.as_ref().map(|p| (&p.id, &p.revision))
                 != configuration.profile.as_ref().map(|p| (&p.id, &p.revision))
                 && (previous
@@ -802,6 +853,12 @@ impl Engine {
                     "workflow-bound profiles can only be selected when creating a new thread",
                 ));
             }
+            configuration.allow_plugin_skills = previous.allow_plugin_skills
+                && (inherited_plugin_scope
+                    || configuration
+                        .profile
+                        .as_ref()
+                        .is_some_and(|p| p.allow_plugin_skills));
             configuration.options = request.options.unwrap_or(previous.options);
             let selected_skills = match request.selected_skills {
                 Some(skills) if skills.is_empty() => None,
@@ -825,9 +882,12 @@ impl Engine {
                         return Err(invalid("selected skill is unavailable"));
                     }
                 }
-                if let Some(profile) = &configuration.profile
-                    && !skills.iter().all(|skill| profile.skills.contains(skill))
-                {
+                drop(catalog);
+                if !skills.iter().all(|skill| {
+                    engine
+                        .effective_skill_refs(&configuration, false)
+                        .contains(skill)
+                }) {
                     return Err(invalid("selected skill is outside the effective profile"));
                 }
             }
@@ -844,12 +904,14 @@ impl Engine {
                 return Err(invalid("invalid client option budget"));
             }
             if let Some(names) = &o.tool_allowlist {
-                let registry = cell.bindings.read().await;
                 if names.len() > 128 {
                     return Err(invalid("tool allowlist exceeds budget"));
                 }
+                let registry = engine
+                    .managed_registry(&state.thread, cell.research)
+                    .map_err(invalid)?;
                 for name in names {
-                    registry.registry.get(name).map_err(invalid)?;
+                    registry.get(name).map_err(invalid)?;
                     if configuration
                         .tool_allowlist
                         .as_ref()
@@ -865,8 +927,12 @@ impl Engine {
                 .desktop
                 .get_or_insert_with(Default::default)
                 .configuration = configuration.clone();
+            let registry = engine
+                .managed_registry(&candidate, cell.research)
+                .map_err(invalid)?;
             engine.persist(&candidate).await?;
             state.thread = candidate;
+            cell.bindings.write().await.registry = registry;
             cell.emit(
                 "areal/thread/configured",
                 json!({"threadId":request.thread_id,"configuration":configuration}),
@@ -998,8 +1064,18 @@ impl Engine {
         let tools = self
             .visible_tools(&cell, &config, state.thread.desktop.is_some())
             .await;
+        let model_metadata = config
+            .model
+            .is_none()
+            .then(|| {
+                config
+                    .default_model_revision
+                    .as_deref()
+                    .and_then(|revision| self.default_model_metadata(Some(revision)))
+            })
+            .flatten();
         Ok(
-            json!({"threadId":thread_id,"sessionId":state.thread.session_id,"parentThreadId":state.thread.parent_thread_id,
+            json!({"modelName":model_metadata.as_ref().map(|(name, _)| name),"resolvedParameters":model_metadata.map(|(_, parameters)| super::catalog::merge_model_parameters(config.parameters.clone(), parameters)),"threadId":thread_id,"sessionId":state.thread.session_id,"parentThreadId":state.thread.parent_thread_id,
             "activeTurnId":state.active.as_ref().map(|a| &a.id),"configuration":config,
             "instructionSnapshot":state.thread.turns.last().and_then(|t|t.instruction_snapshot.as_ref()),"instructionSources":["runtime/defaultOrClientSystem","profile","childTask","clientAppend","workspace/AGENTS.md"],"tools":tools,"loadedSkills":state.thread.desktop.as_ref().map(|d| &d.loaded_skills),
             "contextCheckpoint":state.thread.context_checkpoint,"usage":state.thread.turns.last().and_then(|t| t.usage.as_ref()),
@@ -1032,12 +1108,15 @@ impl Engine {
         request_id: &str,
     ) -> Result<Value> {
         let thread = self.read(thread_id, false).await?;
-        let records = desktop(&thread)
+        let mut records: Vec<Value> = desktop(&thread)
             .receipts
             .into_iter()
             .filter(|r| r.identity == identity && r.request_id == request_id)
-            .collect::<Vec<_>>();
-        Ok(json!({"data":records,"retention":"threadLifetime","capacity":1024}))
+            .map(|r| json!(r))
+            .collect();
+        let management = self.management_receipts(identity, request_id).await;
+        records.extend(management["data"].as_array().into_iter().flatten().cloned());
+        Ok(json!({"data":records,"retention":"threadAndDeploymentLifetime","capacity":1024}))
     }
     pub(crate) async fn active_permissions(
         &self,

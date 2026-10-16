@@ -6,8 +6,9 @@
  * no ZCode services, subscription, citations catalog or platform stores.
  * See ZCODE-LICENSE and ../../../THIRD-PARTY-NOTICES.md.
  */
-import { Component, memo, useMemo, type ComponentProps, type ReactNode } from 'react';
-import { Streamdown, defaultRemarkPlugins } from 'streamdown';
+import { Component, memo, useMemo, useRef, type ComponentProps, type ReactNode } from 'react';
+import { Streamdown, defaultRehypePlugins, defaultRemarkPlugins, defaultUrlTransform, type ExtraProps } from 'streamdown';
+import { GlobeIcon } from 'lucide-react';
 import remarkBreaks from 'remark-breaks';
 import { FileReference } from '../../interfaceIcons.js';
 import { cjk } from '@streamdown/cjk';
@@ -45,7 +46,7 @@ class MarkdownBoundary extends Component<{
     static getDerivedStateFromError() { return { failed: true }; }
     render() { return this.state.failed ? <div className="whitespace-pre-wrap break-words">{this.props.text}</div> : this.props.children; }
 }
-export const MessageResponse = memo(function MessageResponse({ children, streaming = false, theme = 'light', onOpenExternalUrl, onOpenFileLink, className, fileLinks = false, preserveLineBreaks = false }: {
+export const MessageResponse = memo(function MessageResponse({ children, streaming = false, theme = 'light', onOpenExternalUrl, onOpenFileLink, onRenderImage, webPreviews = false, className, fileLinks = false, preserveLineBreaks = false }: {
     children: string;
     fileLinks?: boolean;
     preserveLineBreaks?: boolean;
@@ -53,21 +54,51 @@ export const MessageResponse = memo(function MessageResponse({ children, streami
     theme?: 'light' | 'dark';
     onOpenExternalUrl?: (url: string) => void;
     onOpenFileLink?: (path: string) => void;
+    onRenderImage?: (uri: string, alt: string) => ReactNode;
+    webPreviews?: boolean;
     className?: string;
 }) {
     const { fontSizePx } = useCodePreferences();
     const reducedMotion = useReducedMotion();
+    // Snapshot refreshes can replace navigation callbacks. Keep Markdown component
+    // types stable so a media read does not remount its own attachment on refresh.
+    const callbacks = useRef({ onOpenExternalUrl, onOpenFileLink, onRenderImage });
+    callbacks.current = { onOpenExternalUrl, onOpenFileLink, onRenderImage };
+    // Preserve the host's authorized media references through sanitization.
+    // The caller still validates the exact blob URI and reads it through Core.
+    const rehypePlugins = useMemo(() => onRenderImage ? Object.entries(defaultRehypePlugins).map(([name, plugin]): (typeof defaultRehypePlugins)[string] => {
+        if (name !== 'sanitize' || !Array.isArray(plugin)) return plugin;
+        const schema = plugin[1] ?? {};
+        return [plugin[0], { ...schema, protocols: { ...schema.protocols, src: [...(schema.protocols?.src ?? []), 'areal'] } }];
+    }) : undefined, [Boolean(onRenderImage)]);
     const remarkPlugins = useMemo(() => preserveLineBreaks
         ? [...Object.values(defaultRemarkPlugins), ...(fileLinks ? [relativeFileLinks] : []), remarkBreaks]
         : fileLinks ? [relativeFileLinks] : undefined, [fileLinks, preserveLineBreaks]);
     const components = useMemo(() => ({
         a: ({ children, href, node: _node, ...props }: ComponentProps<'a'> & {
             node?: unknown;
-        }) => <button type="button" className={href && !/^[\w+.-]+:/.test(href) && onOpenFileLink ? "markdown-file-reference" : "inline text-brand underline underline-offset-2"} title={href} onClick={() => { if (/^https?:\/\//i.test(href ?? ''))
-            onOpenExternalUrl?.(href!);
+        }) => <button type="button" className={href && !/^[\w+.-]+:/.test(href) && callbacks.current.onOpenFileLink ? "markdown-file-reference" : "inline text-brand underline underline-offset-2"} title={href} onClick={() => { if (/^https?:\/\//i.test(href ?? ''))
+            callbacks.current.onOpenExternalUrl?.(href!);
         else if (href && !/^[\w+.-]+:/.test(href))
-            onOpenFileLink?.(href); }}>{href && !/^[\w+.-]+:/.test(href) && onOpenFileLink && <span className="markdown-file-reference-icon"><FileReference aria-hidden="true" /></span>}<span>{children}</span></button>,
-        img: ({ alt }: ComponentProps<'img'>) => <span className="text-foreground-subtle">[图片：{alt || '请在附件中查看'}]</span>,
+            callbacks.current.onOpenFileLink?.(href); }}>{href && !/^[\w+.-]+:/.test(href) && callbacks.current.onOpenFileLink && <span className="markdown-file-reference-icon"><FileReference aria-hidden="true" /></span>}<span>{children}</span></button>,
+        img: ({ src, alt }: ComponentProps<'img'>) => callbacks.current.onRenderImage?.(typeof src === 'string' ? src : '', alt ?? '') ?? <span className="text-foreground-subtle">[图片：{alt || '请在附件中查看'}]</span>,
+        p: ({ node, children, ...props }: ComponentProps<'p'> & ExtraProps) => {
+            const link = node?.children?.length === 1 && node.children[0].type === 'element' && node.children[0].tagName === 'a' ? node.children[0] : undefined;
+            let localUrl: URL | undefined;
+            try {
+                const url = new URL(typeof link?.properties.href === 'string' ? link.properties.href : '');
+                if (/^https?:$/.test(url.protocol) && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) localUrl = url;
+            } catch { /* Ordinary text and links keep their existing rendering. */ }
+            if (webPreviews && localUrl && callbacks.current.onOpenExternalUrl) {
+                const url = localUrl.href;
+                const title = link?.children?.map(child => child.type === 'text' ? child.value : '').join('') || '网页预览';
+                return <div className="conversation-web-preview" role="group" aria-label="网页预览">
+                    <GlobeIcon size={24} aria-hidden="true" /><span className="conversation-web-preview-info"><strong>{title}</strong><small>{url}</small></span>
+                    <button type="button" onClick={() => callbacks.current.onOpenExternalUrl?.(url)} aria-label={`打开网页 ${title}`}>打开</button>
+                </div>;
+            }
+            return node?.children?.some(child => child.type === 'element' && child.tagName === 'img') ? <div className="conversation-inline-media">{children}</div> : <p {...props}>{children}</p>;
+        },
         // Keep ZCode's compact heading scale instead of Streamdown's browser-sized headings.
         h1: ({ node: _node, className, ...props }: ComponentProps<'h1'> & { node?: unknown }) => <h1 className={cn('mt-6 mb-4 text-ui-xl font-semibold', className)} {...props} />,
         h2: ({ node: _node, className, ...props }: ComponentProps<'h2'> & { node?: unknown }) => <h2 className={cn('mt-6 mb-4 text-ui-lg font-semibold', className)} {...props} />,
@@ -89,6 +120,6 @@ export const MessageResponse = memo(function MessageResponse({ children, streami
         },
         blockquote: MarkdownBlockquote, li: MarkdownListItem, ol: MarkdownOrderedList, ul: MarkdownUnorderedList,
         table: MarkdownTable, tbody: MarkdownTableBody, td: MarkdownTableCell, th: MarkdownTableHead, thead: MarkdownTableHeader, tr: MarkdownTableRow,
-    }), [streaming, theme, onOpenExternalUrl, onOpenFileLink, fontSizePx]);
-    return <MarkdownBoundary key={streaming ? 'streaming' : `static:${children.length}`} text={children}><Streamdown key={theme} className={cn('size-full text-ui-base leading-[1.75] tracking-wide [&>*:first-child]:mt-0 [&>*:last-child]:mb-0', className)} mode={streaming ? 'streaming' : 'static'} components={components} parseIncompleteMarkdown={streaming} remarkPlugins={remarkPlugins} plugins={plugins} controls={STREAMDOWN_CONTROLS} linkSafety={{ enabled: false }} animated={streaming && !reducedMotion ? streamAnimation : false} isAnimating={streaming}>{children}</Streamdown></MarkdownBoundary>;
+    }), [streaming, theme, Boolean(onOpenExternalUrl), Boolean(onOpenFileLink), Boolean(onRenderImage), webPreviews, fontSizePx]);
+    return <MarkdownBoundary key={streaming ? 'streaming' : `static:${children.length}`} text={children}><Streamdown key={theme} className={cn('size-full text-ui-base leading-[1.75] tracking-wide [&>*:first-child]:mt-0 [&>*:last-child]:mb-0', className)} mode={streaming ? 'streaming' : 'static'} components={components} parseIncompleteMarkdown={streaming} remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} plugins={plugins} controls={STREAMDOWN_CONTROLS} linkSafety={{ enabled: false }} urlTransform={(url, key, node) => onRenderImage && key === 'src' && /^areal:\/\/blob\/[A-Za-z0-9_-]+$/.test(url) ? url : defaultUrlTransform(url, key, node)} animated={streaming && !reducedMotion ? streamAnimation : false} isAnimating={streaming}>{children}</Streamdown></MarkdownBoundary>;
 });

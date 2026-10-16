@@ -1,0 +1,22 @@
+.user-message .message-actions:has(> .user-prompt-edit) {
+  flex-wrap: wrap;
+  width: 100%;
+  margin: 0;
+  opacity: 1;
+}
+.user-message-content:has(.user-prompt-edit) > .user-bubble,
+.message-actions:has(> .user-prompt-edit) > button { display: none; }
+.user-prompt-edit {
+  flex: 0 0 100%;
+  min-width: 0;
+}
+.user-prompt-edit .composer-surface {
+  background: var(--color-composer-catalog, var(--color-surface));
+  box-shadow: none;
+  backdrop-filter: none;
+  border-radius: var(--radius-composer);
+}
+.user-prompt-edit .composer-surface:focus-within { box-shadow: 0 0 0 1px var(--color-border-hover); }
+.user-prompt-edit .composer-toolbar button { height: 28px; padding: 3px 10px; border-radius: 10px; font-size: var(--text-ui-base); }
+.user-prompt-edit .composer-toolbar .user-prompt-edit-send:not(:disabled) { background: var(--color-foreground); color: var(--color-background); }
+.user-prompt-edit-note { margin: 6px 4px 0; color: var(--color-foreground-subtle); font-size: var(--text-ui-caption); line-height: 1.5; }

@@ -954,10 +954,7 @@ impl Engine {
                 let scope = client
                     .create_scope(rt::CreateScope {
                         operation_id: client.operation_id(),
-                        parent_scope_id: runtime.command_scope.as_ref().map_or_else(
-                            || client.info().root_scope_id.clone(),
-                            |scope| scope.scope_id.clone(),
-                        ),
+                        parent_scope_id: self.runtime_task_parent(cell).await?,
                         owner: rt::Owner {
                             task_id: format!("{thread_id}/{turn_id}"),
                             plugin_instance_id: None,
@@ -1223,9 +1220,14 @@ impl Engine {
             "gen_ai.tool.call.result",
             &result,
         );
-        let mut custom_content = result
+        let mcp_event = result.get("mcpResult").map(|raw| json!({"threadId":thread_id,"turnId":turn_id,"callId":call.id,"itemId":item_id,"serverId":result["mcpServer"]["serverId"],"generation":result["mcpServer"]["generation"],"toolMetadata":result["mcpServer"]["toolMetadata"],"mcpResult":raw}));
+        let mut model_result = result.clone();
+        if result.get("mcpResult").is_some() {
+            crate::desktop::mcp_apps::strip_meta(&mut model_result);
+        }
+        let mut custom_content = model_result
             .get("contentItems")
-            .map(|_| extensions::content_items(&result));
+            .map(|_| extensions::content_items(&model_result));
         if let Some(content) = custom_content.as_mut()
             && let Some(note) = result.get("recoveryNote").and_then(Value::as_str)
         {
@@ -1239,7 +1241,7 @@ impl Engine {
             "areal.tool.result.projected",
             &prepared.value,
         );
-        if prepared.value != result
+        if prepared.value != model_result
             && custom_content
                 .as_ref()
                 .is_some_and(|items| items.iter().all(|v| v["type"] == "inputText"))
@@ -1302,6 +1304,9 @@ impl Engine {
         }
         state.active.as_mut().unwrap().open_items.remove(&item_id);
         emit_item(cell, "item/completed", &thread_id, &turn_id, &item);
+        if let Some(result) = mcp_event {
+            cell.emit("areal/mcp/tool/result", result);
+        }
         anyhow::ensure!(
             !repeat_blocked || repeats == repeat_limit,
             "repeated tool failure recovery exhausted; rejected calls were not executed"

@@ -143,6 +143,7 @@ try {
       },
       theme: async () => ({ platform: "darwin", dark: false, id: "light" }),
       onTheme: () => () => {},
+      onMcpAppEvent: () => () => {},
       presentReady: async () => {},
       preview: async () => ({}),
       command: async (name, params) => {

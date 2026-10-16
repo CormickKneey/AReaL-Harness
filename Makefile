@@ -156,8 +156,9 @@ verify-harness: ## 全部常规与原生集成验收（容量测试单独运行�
 	$(MAKE) verify
 	$(MAKE) runtime-smoke harness-smoke examples-desktop-api workgroup-smoke
 
-verify-native: ## macOS 原生后端与 Harness 集成验收（通用回归由 Linux CI 执行）
+verify-native: build ## macOS 原生后端与 Harness 集成验收（通用回归由 Linux CI 执行）
 	cargo test --locked -p areal-runtime-exec-native
+	cargo test --locked -p areal-runtime --features native-tests --test native_transport
 	$(MAKE) launcher-test runtime-smoke harness-smoke examples-desktop-api workgroup-smoke
 
 smoke: build ## 构建后验证 TUI、HTTP/SSE、持久化、强杀恢复和异步轨迹补传
@@ -210,7 +211,7 @@ examples-desktop-api: build ## 真实 Core/Runtime 的桌面 API 与 CLI 确定�
 	node examples/desktop-api/packaged-workgroup.mjs
 
 desktop-schemas: ## 从 Rust 类型导出 AReaL 桌面契约
-	python3 scripts/desktop-schemas.py --write
+	python3 scripts/generate-desktop-schemas.py
 
 desktop-schema-check: ## 临时生成并规范化比较三份桌面 schema，不修改已提交文件
 	python3 scripts/desktop-schemas.py

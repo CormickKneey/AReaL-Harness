@@ -8,11 +8,13 @@ export type FileOpenRequest = { operation: 'targets' } | { operation: 'setDefaul
     | { operation: 'open' | 'reveal' | 'saveAs'; projectId: string; path: string };
 export interface Snapshot {
     projects: Data[];
+    desktopCapabilities?: { currentCommands: boolean };
     power?: { enabled: boolean; active: boolean; error: string | null } | null;
     menuBar?: { supported: boolean; active: boolean; error: string | null } | null;
     projectless?: { directory: string };
     revision?: number;
-    connection?: { state: 'connecting' | 'ready' | 'unavailable'; message?: string };
+    connection?: { state: 'connecting' | 'ready' | 'unavailable'; message?: string; recovery?: 'check' };
+    backendUpdate?: { state: 'applying' | 'pending' | 'failed'; message?: string };
     library?: Data;
 }
 export interface UpdateState {
@@ -36,6 +38,7 @@ export interface PlatformServices {
     snapshot(): Promise<Snapshot>;
     onState(listener: (state: Snapshot) => void): () => void;
     chooseProject(): Promise<string | null>;
+    chooseTaskDirectory?(): Promise<{ cwd: string } | null>;
     chooseProjectlessDirectory?(): Promise<{ directory: string } | null>;
     fileOpen?(request: FileOpenRequest): Promise<FileOpenTargets | { saved: boolean } | Record<string, never>>;
     command<N extends CommandName>(name: N, params: CommandParams<N>): Promise<DesktopResult<unknown>>;
@@ -53,6 +56,12 @@ export interface PlatformServices {
     onPreviewEvent?(listener: (event: Data) => void): () => void;
 }
 type SideRequest = CommandParams<"side">;
+export type PreparedCreator = {
+  projectId: string;
+  profile: { id: string; revision: string };
+  skill: { id: string; revision: string; name: string; description: string };
+  provenance: { upstream: string; revision: string; contentDigest: string };
+};
 type SideResult<Operation extends SideRequest["operation"]> =
   Operation extends "start" ? { threadId: string; requestId: string; turnId?: string } :
   Operation extends "recover" ? { confirmed: false } | { confirmed: true; threadId: string } :
@@ -60,10 +69,11 @@ type SideResult<Operation extends SideRequest["operation"]> =
   Operation extends "context" ? { snapshotId: string; evidence: Record<string, unknown>[]; nextCursor?: string | null } :
   { turn: { id: string } };
 export interface Action {
+  (name: "prepareCreator", params: CommandParams<"prepareCreator">): Promise<PreparedCreator>;
   <Request extends SideRequest>(name: "side", params: Request): Promise<SideResult<Request["operation"]>>;
   (name: "fork", params: CommandParams<"fork">): Promise<{ threadId: string; requestId: string }>;
   (name: "configure", params: CommandParams<"configure">): Promise<Snapshot>;
-  <Name extends Exclude<CommandName, "side" | "fork" | "configure">>(name: Name, params?: Data): Promise<any>;
+  <Name extends Exclude<CommandName, "prepareCreator" | "side" | "fork" | "configure">>(name: Name, params?: Data): Promise<any>;
 }
 // 业务投影仍由各能力所有者建模；此适配保留现有 Action 调用方的返回类型。
 export async function call<N extends CommandName>(services: PlatformServices, name: N, params: CommandParams<N>): Promise<any> { validateCommand(name, params); const result = await services.command(name, params); if (!result.ok)

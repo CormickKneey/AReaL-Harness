@@ -8,6 +8,8 @@ The GUI is distributed under the repository Apache-2.0 license, subject to the f
 - The Fork action glyph preserves the Codex App glyph from the user-supplied design reference as a bounded raster mask (`renderer/src/assets/codex-fork-mask.png`); no capture archive is included.
 - Interface glyphs, the file-tree sprite, provider logos and the application icon retain the source repository's assets and provenance comments. Other Lucide icons retain their dependency's ISC license. Appearance previews are original SVG illustrations.
 - Agent avatars use DiceBear Core and Bottts 9.4.2 locally with the authoritative Thread ID as seed. DiceBear code is MIT licensed (copyright Florian Körner); Bottts artwork is by Pablo Stanley and is free for personal and commercial use. See `licenses/dicebear-core-LICENSE` and `licenses/dicebear-bottts-LICENSE`, https://www.dicebear.com/styles/bottts/ and https://bottts.com/.
+- MCP Apps uses the official MIT-licensed `@modelcontextprotocol/ext-apps` 2.0.3 AppBridge and `@modelcontextprotocol/client/core` 2.0.0. Package versions are locked in `pnpm-lock.yaml`; licenses are retained in `licenses/mcp-ext-apps-LICENSE` and `licenses/mcp-sdk-LICENSE`.
+- The bundled official Skill Creator retains the unmodified Apache-2.0 resource from [openai/skills](https://github.com/openai/skills/tree/49f948faa9258a0c61caceaf225e179651397431/skills/.system/skill-creator). Its license and pinned file inventory are retained under `app/assets/builtin-skills`.
 - Runtime dependencies retain their package licenses in the staged application. Core binaries, tools and their licenses come from the repository's Core bundle.
 
 Only the selected runtime icon assets are retained; reference capture archives, private development Skills, signing identities, notarization credentials, and source repository Git history are not part of this module.
@@ -17,3 +19,5 @@ Only the selected runtime icon assets are retained; reference capture archives, 
 Electron 宿主复用 Caxson 的 MIT 许可项目 [dsh-gui 1.6.2](https://github.com/Caxson/dsh-gui/tree/562cc65e143d64b66a551b88bd5d4e55c9e1d587)，原导入修订为 `562cc65e143d64b66a551b88bd5d4e55c9e1d587`，之后按 AReaL 接口调整。原许可保留于 `app/LICENSE`；原 DSH 引擎、更新源和发布指令不属于本产品的运行或发布入口。
 
 Renderer 的来源修订为 ZCode `872ad960de7ec172591f7e1952f7849229f94521`，Apache-2.0 许可和源码清单保留于 `renderer/ZCODE-LICENSE`、`renderer/source-files.json`。638 个选用 Material Icon Theme SVG 与该修订的 `packages/desktop/src/renderer/public/material-icons` 逐字节一致，以此固定资产来源，不推测原图标语义版本；MIT 许可保留于 `licenses/material-icon-theme-LICENSE`，许可来源修订为 `cb1dfb6d9cb73b15681a93939983d75dbba7bf5b`。
+
+内置官方 Skill Creator 保留 OpenAI Skills 修订 `49f948faa9258a0c61caceaf225e179651397431` 的原始资源。Apache-2.0 许可与固定文件清单位于 `app/assets/builtin-skills`。

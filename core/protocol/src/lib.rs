@@ -1,5 +1,6 @@
 pub mod delegation;
 pub mod goals;
+pub mod plugin_runtime;
 pub mod service;
 pub mod tasks;
 pub mod work;
@@ -20,6 +21,13 @@ pub enum TurnStatus {
     Completed,
     Interrupted,
     Failed,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum TurnInterruption {
+    UserPause,
+    CoreRecovery,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
@@ -48,6 +56,13 @@ pub enum Input {
         text: String,
         #[serde(default, rename = "text_elements")]
         text_elements: Vec<Value>,
+        /// Original MCP attachment metadata for user history; excluded from model projection.
+        #[serde(
+            default,
+            rename = "mcpContent",
+            skip_serializing_if = "Option::is_none"
+        )]
+        mcp_content: Option<Value>,
     },
     Image {
         url: String,
@@ -79,7 +94,28 @@ impl Input {
         Self::Text {
             text: text.into(),
             text_elements: Vec::new(),
+            mcp_content: None,
         }
+    }
+    pub fn mcp_text(content: Value) -> Result<Self, String> {
+        let text = mcp_content_text(&content)?;
+        Ok(Self::Text {
+            text,
+            text_elements: Vec::new(),
+            mcp_content: Some(content),
+        })
+    }
+    pub fn validate_mcp_content(&self) -> Result<(), String> {
+        if let Self::Text {
+            text,
+            mcp_content: Some(content),
+            ..
+        } = self
+            && mcp_content_text(content)? != *text
+        {
+            return Err("MCP content projection mismatch".into());
+        }
+        Ok(())
     }
     pub fn as_text(&self) -> &str {
         match self {
@@ -94,6 +130,62 @@ impl Input {
             Self::Audio { .. } | Self::LocalAudio { .. } => Modality::Audio,
             Self::File { .. } => Modality::File,
         }
+    }
+}
+
+/// MCP attachments are data. Only text/resources are translated; metadata never reaches models.
+pub fn mcp_content_text(content: &Value) -> Result<String, String> {
+    if serde_json::to_vec(content)
+        .map_err(|_| "invalid MCP content")?
+        .len()
+        > 65536
+    {
+        return Err("MCP content exceeds 64 KiB".into());
+    }
+    let object = content.as_object().ok_or("MCP content must be an object")?;
+    fn clean(value: &Value) -> Value {
+        match value {
+            Value::Object(v) => Value::Object(
+                v.iter()
+                    .filter(|(k, _)| *k != "_meta")
+                    .map(|(k, v)| (k.clone(), clean(v)))
+                    .collect(),
+            ),
+            Value::Array(v) => Value::Array(v.iter().map(clean).collect()),
+            v => v.clone(),
+        }
+    }
+    let kind = object
+        .get("type")
+        .and_then(Value::as_str)
+        .ok_or("MCP content type is required")?;
+    match kind {
+        "text" => content["text"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| "MCP text is required".into()),
+        "resource_link" => {
+            if !content["uri"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty() && s.len() <= 8192 && !s.contains('\0'))
+                || !content["name"].is_string()
+            {
+                return Err("invalid MCP resource link".into());
+            }
+            Ok(clean(content).to_string())
+        }
+        "resource" => {
+            let resource = &content["resource"];
+            if !resource.is_object()
+                || !resource["uri"].is_string()
+                || !(resource["text"].is_string() || resource["blob"].is_string())
+            {
+                return Err("invalid embedded MCP resource".into());
+            }
+            Ok(clean(content).to_string())
+        }
+        _ => Err("unsupported MCP message content type".into()),
     }
 }
 
@@ -335,6 +427,10 @@ pub struct HookExecution {
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Turn {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interruption: Option<TurnInterruption>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continued_from_turn_id: Option<String>,
     /// Core 准入时的 Unix 秒；旧历史缺省，不从打开界面的时刻补造。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at: Option<i64>,

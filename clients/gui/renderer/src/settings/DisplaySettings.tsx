@@ -1,8 +1,6 @@
+import { ActionButton } from "../components/ui/action-button.js";
+import { SettingsSelect } from "./SettingsPageParts.js";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import systemPreview from "./assets/appearance-system.svg";
-import lightPreview from "./assets/appearance-light.svg";
-import darkPreview from "./assets/appearance-dark.svg";
-import { ChevronDown } from "lucide-react";
 import { Input } from "../components/ui/input.js";
 import { Switch } from "../components/ui/switch.js";
 import { CODE_PREVIEW_THEME_OPTIONS } from "../lib/codePreviewPreferences.js";
@@ -34,8 +32,6 @@ import { ProjectlessDirectorySetting } from "./ProjectlessDirectorySetting.js";
 import { FileOpenSetting } from "./FileOpenSetting.js";
 import type { Action, Data, Snapshot, PlatformServices } from "../services.js";
 import type { CodePreviewTheme } from "@/lib/codePreviewSettings.js";
-
-const THEME_PREVIEWS = { system: systemPreview, light: lightPreview, dark: darkPreview } as const;
 
 const THEME_DIFF = {
   remove: [
@@ -129,26 +125,34 @@ export function GeneralSettings({ settings = {}, power, menuBar, projectlessDire
   };
   return (
     <div className="settings-sections">
-      <SettingsSection title="常规">
+      <SettingsSection title="文件与打开">
         <SettingsGroupCard>
           <ProjectlessDirectorySetting directory={projectlessDirectory} choose={chooseProjectlessDirectory} connected={connected} />
           <FileOpenSetting service={fileOpen} preferred={settings.fileOpenTarget} connected={connected} />
+        </SettingsGroupCard>
+      </SettingsSection>
+      <SettingsSection title="窗口与终端">
+        <SettingsGroupCard>
           <MenuBarSetting enabled={settings.showInMenuBar !== false} state={menuBar} action={action} connected={connected} />
           <SettingsRow
             label="底部面板"
             description="在应用标题栏中显示底部面板控件"
             control={<SettingsSwitch aria-label="底部面板" checked={prefs.showBottomPanelControl} onCheckedChange={(showBottomPanelControl) => setApplicationPreferences({ showBottomPanelControl })} />}
           />
-        <SettingsRow
+          <SettingsRow
             label="默认终端位置"
-            description="选择终端快捷键和环境操作在何处打开终端标签页"
+            description="新终端标签页的默认位置"
             control={<SettingsSegmentedTabs ariaLabel="默认终端位置" value={prefs.terminalLocation}
               items={[{ label: "底部", value: "bottom" }, { label: "右侧", value: "right" }]}
               onValueChange={(terminalLocation) => setApplicationPreferences({ terminalLocation })} />}
           />
+        </SettingsGroupCard>
+      </SettingsSection>
+      <SettingsSection title="电源">
+        <SettingsGroupCard>
           <SettingsRow
             label="运行时防止系统休眠"
-            description="后台任务运行时阻止自动休眠，允许屏幕关闭。手动睡眠和合盖仍遵从系统设置。"
+            description="任务运行时保持唤醒；仍可手动睡眠或合盖。"
             control={<SettingsSwitch aria-label="运行时防止系统休眠" checked={settings.preventSleep !== false}
               disabled={!connected || !action || powerSaving} onCheckedChange={value => void savePower(value)} />}
           />
@@ -159,25 +163,19 @@ export function GeneralSettings({ settings = {}, power, menuBar, projectlessDire
         <SettingsGroupCard>
           <SettingsRow
             label="发送快捷键"
-            description="选择按 Enter 时是发送提示还是插入新行。Shift+Enter 始终换行。"
+            description="Shift+Enter 始终换行。"
             control={
-              <select
-                aria-label="发送快捷键"
-                value={prefs.sendShortcut}
-                onChange={(e) =>
-                  setApplicationPreferences({
-                    sendShortcut: e.target.value as "enter" | "modifier",
-                  })
-                }
-              >
-                <option value="enter">⌘ + Enter 用于多行提示</option>
-                <option value="modifier">Enter 用于多行提示</option>
-              </select>
+              <SettingsSelect aria-label="发送快捷键" value={prefs.sendShortcut} onValueChange={selectedValue => setApplicationPreferences({
+                    sendShortcut: selectedValue as "enter" | "modifier",
+                  })}>
+                <option value="enter">Enter 发送</option>
+                <option value="modifier">⌘/Ctrl+Enter 发送</option>
+              </SettingsSelect>
             }
           />
           <SettingsRow
             label="跟进处理方式"
-            description="运行中把后续消息加入队列，或调整当前运行的方向。按住 ⌘/Ctrl 点击发送可临时反转。"
+            description="运行中发送新消息的方式；⌘/Ctrl+点击可临时反转。"
             control={
               <SettingsSegmentedTabs
                 ariaLabel="跟进处理方式"
@@ -257,11 +255,7 @@ export function AppearanceSettings({
     name: "uiFont" | "contentFont" | "codeFont",
     label: string,
   ) => (
-    <select
-      aria-label={label}
-      value={prefs[mode].fonts[name]}
-      onChange={(e) => setApplicationPreferences({ [mode]: { ...prefs[mode], fonts: { ...prefs[mode].fonts, [name]: e.target.value } } })}
-    >
+    <SettingsSelect aria-label={label} value={prefs[mode].fonts[name]} onValueChange={selectedValue => setApplicationPreferences({ [mode]: { ...prefs[mode], fonts: { ...prefs[mode].fonts, [name]: selectedValue } } })}>
       {name === "contentFont" && <option value="inherit">与界面字体相同</option>}
       {Object.keys(name === "codeFont" ? CODE_FONTS : UI_FONTS).map((font) => (
         <option key={font} value={font}>
@@ -274,7 +268,7 @@ export function AppearanceSettings({
           )[font] ?? font}
         </option>
       ))}
-    </select>
+    </SettingsSelect>
   );
   const sizeInput = (
     label: string,
@@ -300,21 +294,15 @@ export function AppearanceSettings({
     </div>
   );
   const codeTheme = (mode: "light" | "dark") => (
-    <select
-      aria-label={`${mode === "light" ? "浅色" : "深色"}代码主题`}
-      value={code[`${mode}Theme`]}
-      onChange={(e) =>
-        setCodePreferences({
-          [`${mode}Theme`]: e.target.value as CodePreviewTheme,
-        })
-      }
-    >
+    <SettingsSelect aria-label={`${mode === "light" ? "浅色" : "深色"}代码主题`} value={code[`${mode}Theme`]} onValueChange={selectedValue => setCodePreferences({
+          [`${mode}Theme`]: selectedValue as CodePreviewTheme,
+        })}>
       {CODE_PREVIEW_THEME_OPTIONS.map((option) => (
         <option key={option.value} value={option.value}>
           {option.label}
         </option>
       ))}
-    </select>
+    </SettingsSelect>
   );
   // Editing a palette is local UI state; both persisted palettes keep their
   // existing owners, including when the app follows the system appearance.
@@ -330,15 +318,12 @@ export function AppearanceSettings({
           items={[{ label: "浅色配色", value: "light" }, { label: "深色配色", value: "dark" }]} />
       }>
         <SettingsGroupCard density="compact">
-          <SettingsRow label="模式" controlLayout="wide" control={
-            <div className="theme-choices" role="group" aria-label="界面主题">
-              {[["system", "系统"], ["soft-glass", "浅色"], ["data-dense", "深色"]].map(([id, name]) => (
-                <button type="button" key={id} aria-label={name} title={name} aria-pressed={theme === id}
-                  onClick={() => { setTheme(id); if (id !== "system") setMode(id === "data-dense" ? "dark" : "light"); }}>
-                  <img className={`theme-thumbnail theme-thumbnail-${id}`} alt="" src={THEME_PREVIEWS[id === "system" ? "system" : id === "data-dense" ? "dark" : "light"]} />
-                </button>
-              ))}
-            </div>
+          <SettingsRow label="界面主题" control={
+            <SettingsSelect aria-label="界面主题" value={theme} onValueChange={value => {
+              setTheme(value); if (value !== "system") setMode(value === "data-dense" ? "dark" : "light");
+            }}>
+              <option value="system">跟随系统</option><option value="soft-glass">浅色</option><option value="data-dense">深色</option>
+            </SettingsSelect>
           } />
         </SettingsGroupCard>
         <div className="appearance-theme-palette" key={mode}>
@@ -347,12 +332,9 @@ export function AppearanceSettings({
               <div className="appearance-theme-tools"><ThemeSharing mode={mode} /><CodeThemeSample theme={code[`${mode}Theme`]} />{codeTheme(mode)}</div>
             } />
             <SettingsRow label="强调色" control={
-              <div className="appearance-accent">
-                <select aria-label={`${label}强调色`} value={palette.accent.toLowerCase() === DEFAULT_PALETTES[mode].accent ? "default" : "custom"}
-                  onChange={event => { if (event.target.value === "default") update({ accent: DEFAULT_PALETTES[mode].accent }); else event.currentTarget.parentElement?.querySelector("input")?.click(); }}>
-                  <option value="default">默认</option><option value="custom">{palette.accent.toLowerCase() === DEFAULT_PALETTES[mode].accent ? "自定义" : palette.accent.toUpperCase()}</option>
-                </select>
-                <input type="color" aria-label={`${label}自定义强调色`} value={validColor(palette.accent) ? palette.accent : DEFAULT_PALETTES[mode].accent} onChange={event => update({ accent: event.target.value })} />
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <ColorField label={`${label}强调色`} value={palette.accent} onChange={accent => update({ accent })} />
+                <ActionButton disabled={palette.accent.toLowerCase() === DEFAULT_PALETTES[mode].accent} onClick={() => update({ accent: DEFAULT_PALETTES[mode].accent })}>重置</ActionButton>
               </div>
             } />
             <SettingsRow label="背景" control={<ColorField label={`${label}背景颜色`} value={palette.background} onChange={background => update({ background })} />} />
@@ -363,9 +345,9 @@ export function AppearanceSettings({
       </SettingsSection>
       <SettingsSection title={
         <button type="button" className="appearance-disclosure" aria-expanded={advanced} aria-controls="appearance-advanced" onClick={() => setAdvanced(!advanced)}>
-          高级 <ChevronDown size={14} aria-hidden="true" />
+          高级 <span className="settings-disclosure-action">{advanced ? "收起" : "展开"}</span>
         </button>
-      } action={<button type="button" className="appearance-text-action" aria-label={`恢复${label}默认`} onClick={() => setApplicationPreferences({ [mode]: DEFAULT_PALETTES[mode] })}>重置{label}配色</button>}>
+      } action={<ActionButton aria-label={`恢复${label}默认`} onClick={() => setApplicationPreferences({ [mode]: DEFAULT_PALETTES[mode] })}>{`重置${label}配色`}</ActionButton>}>
         {advanced && <div id="appearance-advanced" className="appearance-advanced">
           <SettingsGroupCard>
             <SettingsRow label="界面字号" description="调整应用的基础字号" control={sizeInput("界面字号", fontSize, 12, 18, setFontSize)} />
@@ -374,9 +356,10 @@ export function AppearanceSettings({
           </SettingsGroupCard>
           <SettingsGroupCard>
             <SettingsRow label="减少动态效果" description="减少动画效果或匹配系统设置" control={
-              <SettingsSegmentedTabs ariaLabel="减少动态效果" value={prefs.reducedMotion}
-                items={[{ label: "系统", value: "system" }, { label: "开启", value: "on" }, { label: "关闭", value: "off" }]}
-                onValueChange={reducedMotion => setApplicationPreferences({ reducedMotion })} />
+              <SettingsSelect aria-label="减少动态效果" value={prefs.reducedMotion}
+                onValueChange={reducedMotion => setApplicationPreferences({ reducedMotion: reducedMotion as "system" | "on" | "off" })}>
+                <option value="system">跟随系统</option><option value="on">开启</option><option value="off">关闭</option>
+              </SettingsSelect>
             } />
           </SettingsGroupCard>
           <SettingsGroupCard density="compact">

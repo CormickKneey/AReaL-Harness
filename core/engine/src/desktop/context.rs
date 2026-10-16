@@ -40,6 +40,13 @@ impl Engine {
         )
     }
     pub async fn context_compact(self: &Arc<Self>, thread_id: String) -> Result<Value> {
+        self.context_compact_owned(String::new(), thread_id).await
+    }
+    pub async fn context_compact_owned(
+        self: &Arc<Self>,
+        identity: String,
+        thread_id: String,
+    ) -> Result<Value> {
         if !self.limits.context_compaction_enabled {
             return Err(Error::Invalid("context compaction is disabled".into()));
         }
@@ -48,16 +55,18 @@ impl Engine {
             let admission=engine.desktop.lifecycle.gate.lock().await;
             if !engine.accepting_work(){return Err(Error::Closed);}
             let cell=engine.cell(&thread_id).await?;
+            let cancel=engine.shutdown.child_token();
             if cell.state.lock().await.thread.is_side() { return Err(invalid("SIDE_POLICY_VIOLATION")); }
-            {let mut state=cell.state.lock().await;if state.active.is_some()||state.compacting||state.thread.goals.goal.as_ref().is_some_and(|g|g.status==areal_protocol::goals::GoalStatus::Active){return Err(Error::Conflict);}state.compacting=true;}
+            {let mut state=cell.state.lock().await;engine.ensure_hook_session_open(&cell,&state.thread)?;if state.active.is_some()||state.compacting||state.thread.goals.goal.as_ref().is_some_and(|g|g.status==areal_protocol::goals::GoalStatus::Active){return Err(Error::Conflict);}state.compacting=true;
+             let activation=id();state.compaction_owner=Some(crate::desktop::mcp_apps::CallOwner{token:activation.clone(),scope:crate::desktop::mcp_apps::CallOwnerScope::CompactionHook{activation},cancellation:cancel.clone(),identity,thread:thread_id.clone(),turn:String::new(),call:String::new(),instance:None});}
             drop(admission);
             let result=async {
-                let _permit=tokio::select!{_=engine.shutdown.cancelled()=>return Err(invalid("compaction cancelled")),p=engine.permits.acquire()=>p.map_err(invalid)?};
+                let _permit=tokio::select!{_=cancel.cancelled()=>return Err(invalid("compaction cancelled")),p=engine.permits.acquire()=>p.map_err(invalid)?};
                 let thread = cell.state.lock().await.thread.clone();
                 let overhead = engine.recorded_context_overhead(&cell, &thread).await.map_err(invalid)?;
-                engine.compact_context(&cell,&engine.shutdown,overhead,None,true).await.map_err(invalid)
+                engine.compact_context_with_trigger(&cell,&cancel,overhead,None,true,"manual").await.map_err(invalid)
             }.await;
-            cell.state.lock().await.compacting=false;
+            {let mut state=cell.state.lock().await;cancel.cancel();state.compaction_owner=None;state.compacting=false;}
             engine.goals.request(&cell.id);
             result?;
             engine.context_read(&thread_id,0,16).await

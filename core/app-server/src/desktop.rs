@@ -35,6 +35,18 @@ pub(crate) const METHODS: &[&str] = &[
     "areal/mcp/configure",
     "areal/mcp/connect",
     "areal/mcp/disconnect",
+    "areal/plugin/list",
+    "areal/plugin/read",
+    "areal/plugin/importArchive",
+    "areal/plugin/install",
+    "areal/plugin/configure",
+    "areal/plugin/uninstall",
+    "areal/plugin/setup",
+    "areal/marketplace/add",
+    "areal/marketplace/addGit",
+    "areal/marketplace/remove",
+    "areal/marketplace/update",
+    "areal/plugin/resolve",
     "areal/thread/start",
     "areal/thread/configure",
     "areal/thread/inspect",
@@ -52,6 +64,7 @@ pub(crate) const METHODS: &[&str] = &[
     "areal/provider/remove",
     "areal/turn/start",
     "areal/turn/enqueue",
+    "areal/turn/submit",
     "areal/queue/list",
     "areal/queue/steer",
     "areal/queue/update",
@@ -111,6 +124,30 @@ struct QueueEdit {
     queue_item_ids: Option<Vec<String>>,
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CatalogRefreshRequired {
+    revision: u64,
+    catalog_refresh_required: bool,
+}
+
+fn plugin_catalog_mutation_result(catalog: Value) -> areal_engine::Result<Value> {
+    let size = serde_json::to_vec(&json!({"result": &catalog}))
+        .map_err(|error| Error::Invalid(error.to_string()))?
+        .len();
+    if size <= Engine::MANAGEMENT_RECEIPT_MAX_BYTES {
+        return Ok(catalog);
+    }
+    let revision = catalog["revision"]
+        .as_u64()
+        .ok_or_else(|| Error::Invalid("invalid plugin directory revision".into()))?;
+    serde_json::to_value(CatalogRefreshRequired {
+        revision,
+        catalog_refresh_required: true,
+    })
+    .map_err(|error| Error::Invalid(error.to_string()))
+}
+
 pub(crate) async fn dispatch(
     engine: &Arc<Engine>,
     identity: &str,
@@ -128,7 +165,18 @@ pub(crate) async fn dispatch(
             | "areal/mcp/configure"
             | "areal/mcp/connect"
             | "areal/mcp/disconnect"
+            | "areal/plugin/importArchive"
+            | "areal/plugin/install"
+            | "areal/plugin/configure"
+            | "areal/plugin/uninstall"
+            | "areal/plugin/setup"
+            | "areal/marketplace/add"
+            | "areal/marketplace/addGit"
+            | "areal/marketplace/remove"
+            | "areal/marketplace/update"
+            | "areal/plugin/resolve"
             | "areal/queue/update"
+            | "areal/queue/steer"
             | "areal/queue/remove"
             | "areal/queue/reorder"
             | "areal/queue/pause"
@@ -145,6 +193,17 @@ pub(crate) async fn dispatch(
     {
         return Err(RpcError::invalid("requestId is required for unarchive"));
     }
+    if mutation
+        && (method.starts_with("areal/plugin/") || method.starts_with("areal/marketplace/"))
+        && params
+            .get("requestId")
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)
+    {
+        return Err(RpcError::invalid(
+            "requestId is required for plugin mutations",
+        ));
+    }
     if mutation && params.get("requestId").is_some() {
         let request = params
             .as_object_mut()
@@ -157,6 +216,9 @@ pub(crate) async fn dispatch(
         let method = method.to_owned();
         let owner = identity.to_owned();
         let snapshot = params.clone();
+        if method == "areal/plugin/setup" || method == "areal/queue/steer" {
+            params["requestId"] = json!(request);
+        }
         let reply = engine
             .management_submission(
                 identity.into(),
@@ -430,7 +492,9 @@ async fn dispatch_inner(
         }
         "areal/context/compact" => {
             let p: ThreadId = parse(params)?;
-            engine.context_compact(p.thread_id).await
+            engine
+                .context_compact_owned(identity.into(), p.thread_id)
+                .await
         }
         "areal/agent/wait" => {
             #[derive(Deserialize)]
@@ -466,6 +530,158 @@ async fn dispatch_inner(
             }
             let p: Drain = parse(params)?;
             engine.drain(p.strategy, p.timeout_ms).await
+        }
+        "areal/plugin/list" => {
+            let _: ModelList = parse(params)?;
+            engine.plugin_list().await
+        }
+        "areal/plugin/read" => {
+            let p: Id = parse(params)?;
+            engine.plugin_read(p.id).await
+        }
+        "areal/marketplace/add" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct Add {
+                root: std::path::PathBuf,
+                expected_revision: u64,
+            }
+            let p: Add = parse(params)?;
+            engine
+                .plugin_add_marketplace(p.root, p.expected_revision)
+                .await
+                .and_then(plugin_catalog_mutation_result)
+        }
+        "areal/plugin/resolve" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct Resolve {
+                id: String,
+                expected_revision: u64,
+            }
+            let p: Resolve = parse(params)?;
+            engine.plugin_resolve(p.id, p.expected_revision).await
+        }
+        "areal/marketplace/addGit" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct AddGit {
+                url: String,
+                #[serde(default)]
+                ref_name: Option<String>,
+                #[serde(default)]
+                sparse_paths: Vec<String>,
+                expected_revision: u64,
+            }
+            let p: AddGit = parse(params)?;
+            engine
+                .plugin_add_git_marketplace_sparse(
+                    p.url,
+                    p.ref_name,
+                    p.sparse_paths,
+                    p.expected_revision,
+                )
+                .await
+                .and_then(plugin_catalog_mutation_result)
+        }
+        "areal/marketplace/remove" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct Remove {
+                root: std::path::PathBuf,
+                expected_revision: u64,
+            }
+            let p: Remove = parse(params)?;
+            engine
+                .plugin_remove_marketplace(p.root, p.expected_revision)
+                .await
+                .and_then(plugin_catalog_mutation_result)
+        }
+        "areal/marketplace/update" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct Update {
+                expected_revision: u64,
+            }
+            let p: Update = parse(params)?;
+            engine
+                .plugin_update_marketplaces(p.expected_revision)
+                .await
+                .and_then(plugin_catalog_mutation_result)
+        }
+        "areal/plugin/importArchive" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct Import {
+                path: std::path::PathBuf,
+                expected_revision: u64,
+            }
+            let p: Import = parse(params)?;
+            engine
+                .plugin_import_archive(p.path, p.expected_revision)
+                .await
+        }
+        "areal/plugin/install" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct Install {
+                id: String,
+                scope: String,
+                expected_revision: u64,
+                source: std::path::PathBuf,
+                expected_digest: String,
+            }
+            let p: Install = parse(params)?;
+            engine
+                .plugin_install(
+                    p.id,
+                    p.scope,
+                    p.expected_revision,
+                    p.source,
+                    p.expected_digest,
+                )
+                .await
+        }
+        "areal/plugin/configure" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct Configure {
+                id: String,
+                scope: String,
+                enabled: bool,
+                expected_revision: u64,
+            }
+            let p: Configure = parse(params)?;
+            engine
+                .plugin_configure(p.id, p.scope, p.enabled, p.expected_revision)
+                .await
+        }
+        "areal/plugin/uninstall" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct Uninstall {
+                id: String,
+                expected_revision: u64,
+            }
+            let p: Uninstall = parse(params)?;
+            engine
+                .plugin_uninstall(p.id, p.expected_revision)
+                .await
+                .and_then(plugin_catalog_mutation_result)
+        }
+        "areal/plugin/setup" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct Setup {
+                id: String,
+                #[serde(default)]
+                thread_id: Option<String>,
+                request_id: String,
+            }
+            let p: Setup = parse(params)?;
+            engine
+                .plugin_setup(identity.into(), p.id, p.thread_id, p.request_id)
+                .await
         }
         "areal/mcp/list" => {
             let _: ModelList = parse(params)?;
@@ -596,6 +812,7 @@ async fn dispatch_inner(
                 )
                 .await
         }
+        "areal/turn/submit" => engine.submit_turn(identity.into(), parse(params)?).await,
         "areal/queue/steer" => engine.steer_queue(identity.into(), parse(params)?).await,
         "areal/queue/list" => {
             let p: ThreadId = parse(params)?;

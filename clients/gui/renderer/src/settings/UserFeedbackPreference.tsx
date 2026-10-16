@@ -15,6 +15,7 @@ export function UserFeedbackPreference({
     const [busy, setBusy] = useState(false),
         [error, setError] = useState("");
     const change = async (enabled: boolean) => {
+        if (!connected || busy || !value.supported) return;
         setBusy(true);
         setError("");
         try {
@@ -36,12 +37,17 @@ export function UserFeedbackPreference({
                         <Switch
                             aria-label="显示点赞和点踩"
                             checked={value.opted_in}
-                            disabled={!connected || busy}
+                            disabled={!connected || busy || !value.supported}
                             onCheckedChange={(enabled) => void change(enabled)}
                         />
                     }
                 />
             </SettingsGroupCard>
+            {connected && !value.supported && (
+                <p role="status" className="settings-section-desc">
+                    当前后台未提供可用的评价状态，暂时无法更改。
+                </p>
+            )}
             {error && (
                 <p role="alert" className="text-destructive">
                     {error}

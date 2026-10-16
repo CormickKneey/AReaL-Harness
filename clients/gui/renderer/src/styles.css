@@ -127,6 +127,9 @@ body {
   --spacing-section: 24px;
   --spacing-panel: 16px;
   --radius-control: 10px;
+  --radius-button: 8px;
+  --color-button-surface: color-mix(in srgb, var(--color-foreground) 10%, var(--color-card));
+  --color-button-hover: color-mix(in srgb, var(--color-foreground) 14%, var(--color-card));
   --radius-inset: 8px;
   --radius-pill: 999px;
   --radius-overlay: 20px;

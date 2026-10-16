@@ -53,7 +53,7 @@ export function ComposerAttachment({
     const [error, setError] = useState("");
     const [reading, setReading] = useState(false);
     const actualFile = isComposerFile(file) ? file : null;
-    const name = actualFile ? actualFile.name : "粘贴的文本.txt";
+    const name = isComposerFile(file) ? file.name : file.text.split(/\r?\n/).find(line => line.trim())?.trim() || "粘贴的文本";
     const image = actualFile?.type.startsWith("image/") === true;
     useEffect(() => {
         if (!image || !actualFile) return;

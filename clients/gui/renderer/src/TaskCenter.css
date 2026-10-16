@@ -10,7 +10,6 @@
 .task-new:hover, .task-list-row:hover { background:var(--color-hover); }
 .task-list-subheading { display:flex; align-items:center; justify-content:space-between; padding:0 8px; height:44px; flex-shrink:0; color:var(--color-foreground-subtle); }
 .task-search { margin:0 8px 8px; border:1px solid var(--color-border); border-radius:8px; padding:6px 8px; }
-.task-scope-filter { margin:10px 8px 0; width:calc(100% - 16px); }
 .task-list-scroll { overflow:auto; min-height:0; flex:1; }
 .task-list-scroll > p { padding:8px; color:var(--color-foreground-subtle); font-size:12px; }
 .task-list-rows { display:flex; flex-direction:column; }
@@ -38,9 +37,23 @@
 .task-create-welcome > svg { margin:0 auto 20px; color:var(--color-foreground-subtle); }
 .task-conversation-pending { flex:1; padding:24px; color:var(--color-foreground-subtle); }
 .task-plan-note { padding:8px 20px; font-size:13px; }
+.task-plan-summary { flex-shrink:0; display:grid; gap:8px; padding:12px 20px; border-bottom:1px solid var(--color-border); }
+.task-location-row { display:flex; align-items:center; gap:12px; min-width:0; }
+.task-location-row > span { flex:0 0 56px; color:var(--color-foreground-subtle); font-size:12px; }
+.task-location-row > [data-slot="select-trigger"] { min-width:0; flex:1; }
+.task-work-directory { flex:1; min-width:0; overflow-wrap:anywhere; font-size:12px; }
+.task-location-note { color:var(--color-foreground-subtle); font-size:12px; line-height:18px; }
+.task-setup-intro { max-width:560px; margin:8vh auto 0; text-align:center; }
+.task-setup-intro > svg { margin:0 auto 20px; }
+.task-setup-intro > h2 { color:var(--color-foreground); font-size:20px; line-height:28px; }
+.task-setup-intro > p { margin:12px 0 20px; font-size:14px; line-height:22px; }
+.task-setup-text { padding:12px; border:1px solid var(--color-border); border-radius:8px; white-space:pre-wrap; text-align:left; }
 .task-draft-error { color:var(--color-destructive); }
 .task-resource-history summary { cursor:pointer; color:var(--color-foreground-subtle); padding:0 8px; font-size:13px; }
 .task-resource-history > div { padding:12px 8px 0; }
 .task-resource-history article { font-size:12px; }
 .task-center.is-narrow .task-examples { grid-template-columns:1fr; }
 .task-center.is-narrow .task-create-welcome { padding:48px 16px 24px; }
+.task-center.is-narrow .task-plan-summary { padding:12px; }
+.task-center.is-narrow .task-location-row { flex-wrap:wrap; gap:8px; }
+.task-center.is-narrow .task-work-directory { flex-basis:calc(100% - 76px); }

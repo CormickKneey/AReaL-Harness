@@ -1,13 +1,9 @@
+import { SettingsSelect } from "./SettingsPageParts.js";
+import { SettingsDisclosure } from "./SettingsDisclosure.js";
 import { useEffect, useRef, useState } from "react";
-import { LogIn, LogOut, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { Button } from "../components/ui/button.js";
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "../components/ui/select.js";
+
 import { Feedback, useResource } from "./common.js";
 import { SettingsGroupCard, SettingsRow, SettingsSection } from "./SettingsPageParts.js";
 import { subscriptionProjection } from "./provider-ui-state.js";
@@ -136,7 +132,7 @@ export function ChatGPTSubscription({
                                         disabled={disabled}
                                         onClick={() => void run("login")}
                                     >
-                                        <LogIn size={14} />
+
                                         {projection.state === "reauth_required"
                                             ? "重新登录"
                                             : "使用 ChatGPT 登录"}
@@ -148,7 +144,7 @@ export function ChatGPTSubscription({
                                         disabled={disabled}
                                         onClick={() => void run("logout")}
                                     >
-                                        <LogOut size={14} />
+
                                         退出登录
                                     </Button>
                                 ) : null}
@@ -175,47 +171,20 @@ export function ChatGPTSubscription({
                 {accounts.length > 1 && (
                     <div>
                         <label
-                            htmlFor="chatgpt-account"
+
                             className="mb-1 block text-ui-base text-foreground-subtle"
                         >
                             已保存账号
                         </label>
-                        <Select<string>
-                            value={value?.activeAccountId ?? null}
-                            items={accounts.map((account) => ({
-                                value: account.id,
-                                label: `${account.label}${account.email ? ` · ${account.email}` : ""}${account.active ? " · 当前" : ""}`,
-                            }))}
-                            onValueChange={(id) => {
+                        <SettingsSelect aria-label="已保存 ChatGPT 账号" value={value?.activeAccountId ?? ""}
+                            disabled={disabled || !!value?.login || projection.state === "storage_locked"}
+                            onValueChange={id => {
                                 if (!id || id === value?.activeAccountId) return;
-                                const account = accounts.find((account) => account.id === id);
-                                void run(account?.state === "saved" ? "selectAccount" : "login", {
-                                    accountId: id,
-                                });
-                            }}
-                        >
-                            <SelectTrigger
-                                id="chatgpt-account"
-                                aria-label="已保存 ChatGPT 账号"
-                                disabled={
-                                    disabled ||
-                                    !!value?.login ||
-                                    projection.state === "storage_locked"
-                                }
-                                className="w-full justify-between"
-                            >
-                                <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {accounts.map((account) => (
-                                    <SelectItem key={account.id} value={account.id}>
-                                        {account.label}
-                                        {account.email ? ` · ${account.email}` : ""}
-                                        {account.active ? " · 当前" : ""}
-                                    </SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
+                                const account = accounts.find(account => account.id === id);
+                                void run(account?.state === "saved" ? "selectAccount" : "login", {accountId: id});
+                            }}>
+                            {accounts.map(account => <option key={account.id} value={account.id}>{`${account.label}${account.email ? ` · ${account.email}` : ""}${account.active ? " · 当前" : ""}`}</option>)}
+                        </SettingsSelect>
                     </div>
                 )}
                 {!value?.login && projection.state !== "storage_locked" && (
@@ -229,8 +198,7 @@ export function ChatGPTSubscription({
                     </Button>
                 )}
                 {value?.diagnostic && (
-                    <details>
-                        <summary className="settings-muted">诊断信息</summary>
+                    <SettingsDisclosure title={<> 诊断信息 </>}>
                         <p className="settings-muted break-all">
                             {value.diagnostic.code} · {value.diagnostic.phase}
                             {value.diagnostic.httpStatus
@@ -240,7 +208,7 @@ export function ChatGPTSubscription({
                                 ? ` · Request ID ${value.diagnostic.requestId}`
                                 : ""}
                         </p>
-                    </details>
+                    </SettingsDisclosure>
                 )}
                 {value?.authenticated && (
                     <div className="subscription-models-footer flex flex-wrap items-center justify-between gap-3 pt-1">

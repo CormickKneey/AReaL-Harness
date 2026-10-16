@@ -1,3 +1,5 @@
+import { SettingsSelect } from "./SettingsPageParts.js";
+import { SettingsDisclosure } from "./SettingsDisclosure.js";
 import { useState } from "react";
 import { Input } from "../components/ui/input.js";
 import { SettingsSegmentedTabs } from "./SettingsSegmentedTabs.js";
@@ -46,24 +48,18 @@ export function McpConfigEditor({
         </label>
       ) : (
         <>
-          <label>
+          <div className="settings-choice-field">
             类型
-            <select
-              aria-label="类型"
-              value={transport.type}
-              onChange={(e) =>
-                update({
+            <SettingsSelect aria-label="类型" value={transport.type} onValueChange={selectedValue => update({
                   transport:
-                    e.target.value === "stdio"
+                    selectedValue === "stdio"
                       ? { type: "stdio", command: "", args: [] }
                       : { type: "streamableHttp", url: "" },
-                })
-              }
-            >
+                })}>
               <option value="stdio">stdio（本地命令）</option>
               <option value="streamableHttp">HTTP（Streamable HTTP）</option>
-            </select>
-          </label>
+            </SettingsSelect>
+          </div>
           {transport.type === "stdio" ? (
             <>
               <label>
@@ -113,8 +109,7 @@ export function McpConfigEditor({
               </label>
             </>
           )}
-          <details>
-            <summary>高级设置</summary>
+          <SettingsDisclosure title={<> 高级设置 </>}>
             <div className="settings-form mt-3">
               {transport.type === "stdio" && <>
               <label>
@@ -174,7 +169,7 @@ export function McpConfigEditor({
             />
           </label>
             </div>
-          </details>
+          </SettingsDisclosure>
         </>
       )}
     </>

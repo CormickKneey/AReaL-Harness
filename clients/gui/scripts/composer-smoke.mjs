@@ -115,6 +115,8 @@ const errors = [],
 const pasteEvidence = { uploadedFile: null, folded: [] };
 const button = (name) => page.getByRole("button", { name, exact: true });
 const state = () => page.evaluate(() => window.arealDesktop.snapshot());
+const project = (snapshot) =>
+  snapshot.projects.find((p) => p.root === workspace && !p.projectless);
 async function call(name, params) {
   const result = await page.evaluate(
     async ({ name, params }) => window.arealDesktop.command(name, params),
@@ -205,8 +207,21 @@ try {
   }, workspace);
   await button("不在项目中工作").click();
   await page.getByRole("menuitem", { name: "新建项目", exact: true }).click();
-  await until((s) => s.projects[0]?.state?.connected, "project ready");
-  const pid = (await state()).projects[0].id;
+  await until((s) => project(s)?.state?.connected, "project ready");
+  const pid = project(await state()).id;
+  const selectFixtureProfile = async () => {
+    await page.waitForFunction((id) => {
+      const workbench = document.querySelector('[data-testid="areal-workbench"]');
+      return workbench?.dataset.projectId === id && !workbench.dataset.threadId;
+    }, pid);
+    assert(project(await state()).profiles.some((p) => p.id === "standard" && p.revision === "v1"));
+    await page.evaluate((id) => {
+      const key = `areal-gui:draft:${id}:new`;
+      localStorage.setItem(`${key}:profile`, JSON.stringify({ id: "standard", revision: "v1" }));
+      window.dispatchEvent(new CustomEvent("areal-draft-change", { detail: key }));
+    }, pid);
+  };
+  await selectFixtureProfile();
   await call("manage", {
     projectId: pid,
     operation: "providerSave",
@@ -221,7 +236,7 @@ try {
     },
   });
   await until(
-    (s) => s.projects[0].models.some((model) => model.modelId === "fixture-alt"),
+    (s) => project(s).models.some((model) => model.modelId === "fixture-alt"),
     "provider catalog",
   );
   const input = () => page.locator("[data-testid=chat-input]");
@@ -239,7 +254,7 @@ try {
     await button("发送").click();
     await until(
       (s) =>
-        Object.values(s.projects[0].state.threads).some(
+        Object.values(project(s).state.threads).some(
           (t) => t.turns?.at(-1)?.status === "completed",
         ) && received.length > count,
       "send completed",
@@ -389,7 +404,7 @@ try {
   assert.equal(await input().textContent(), "正文保留");
   await chooseFirst();
   assert.equal(await tags().count(), 2);
-  assert.equal((await state()).projects[0].summaries?.length ?? 0, 0);
+  assert.equal(project(await state()).summaries?.length ?? 0, 0);
   await input().fill("正文保留 /fixture");
   await page.getByRole("listbox", { name: "功能与 Skills" }).waitFor();
   await input().press("ArrowDown");
@@ -487,7 +502,9 @@ try {
   await slider.press("Escape");
   await sendAndWait();
   const tid = await page.locator("[data-testid=areal-workbench]").getAttribute("data-thread-id");
-  const current = (s) => s.projects[0].state.threads[tid];
+  assert.equal(project(await state()).configurations[tid].profile.id, "standard");
+  assert.equal(project(await state()).configurations[tid].profile.revision, "v1");
+  const current = (s) => project(s).state.threads[tid];
   const sentBody = received.at(-1);
   assert.equal(sentBody.model, "fixture-alt");
   assert.equal(sentBody.reasoning_effort, "high");
@@ -495,7 +512,7 @@ try {
   assert.ok(sentText.includes("PAGED_SKILL_END"));
   assert.ok(sentText.includes("SECOND_SKILL_CONTENT"));
   assert.ok(sentText.includes("正文保留"));
-  await until((s) => !s.projects[0].pending.length, "submission settled");
+  await until((s) => !project(s).pending.length, "submission settled");
   assert.equal(await tags().count(), 0);
   checks.push(
     "real paged Core Skill read (multibyte >8192 bytes) reaches model request; two-tier real model/effort selection reaches provider",
@@ -514,9 +531,10 @@ try {
         !document.querySelector('[data-testid="areal-workbench"]')?.dataset.threadId,
       );
       await input().waitFor();
+      await selectFixtureProfile();
     }
     let pasteTid = newDraft ? null : tid;
-    const pasteThread = (s) => s.projects[0].state.threads[pasteTid];
+    const pasteThread = (s) => project(s).state.threads[pasteTid];
     assert.equal(
       await page.getByText("model does not support File input", { exact: true }).count(),
       0,
@@ -560,7 +578,7 @@ try {
         }
         return received.length === beforePaste.requests + 1 &&
           pasteThread(s)?.turns.length === beforePaste.turns + 1 &&
-          pasteThread(s)?.turns.at(-1)?.status === "completed" && !s.projects[0].pending.length;
+          pasteThread(s)?.turns.at(-1)?.status === "completed" && !project(s).pending.length;
       },
       `${label}: folded paste direct Send completes as Text`,
     );
@@ -627,7 +645,7 @@ try {
   await button("移除附件 粘贴的文本.txt").click();
   checks.push("real text/plain picker file keeps File modality, uploaded bytes and draft on Core refusal");
   await sendAndWait();
-  await until((s) => current(s).turns.at(-1)?.status === "completed" && !s.projects[0].pending.length,
+  await until((s) => current(s).turns.at(-1)?.status === "completed" && !project(s).pending.length,
     "explicit text retry after removing the real file");
   await page.waitForFunction(() => document.querySelector('[data-testid="chat-input"]')?.textContent === "");
   assert.equal(current(await state()).turns.at(-1).items.find(item => item.type === "userMessage").content[0].text, fileDraft);
@@ -637,7 +655,8 @@ try {
   for (const theme of ["dark", "light"]) {
     await button("设置").click();
     await button("外观").click();
-    await button(theme === "dark" ? "深色" : "浅色").click();
+    await page.getByRole("combobox", { name: "界面主题", exact: true }).click();
+    await page.getByRole("option", { name: theme === "dark" ? "深色" : "浅色", exact: true }).click();
     await page.waitForFunction(
       (theme) => document.documentElement.classList.contains(`theme-areal-${theme}`) &&
         document.documentElement.classList.contains("dark") === (theme === "dark"),
@@ -650,7 +669,7 @@ try {
     await input().press("Enter");
     await until(
       (s) => received.length > requestCount &&
-        current(s).turns.at(-1)?.status === "completed" && !s.projects[0].pending.length,
+        current(s).turns.at(-1)?.status === "completed" && !project(s).pending.length,
       `${theme}: Enter send completed`,
     );
     await page.waitForFunction(() => {
@@ -696,7 +715,7 @@ try {
   await rename(join(skill, "SKILL.unavailable"), join(skill, "SKILL.md"));
   await sendAndWait();
   await until(
-    (s) => current(s).turns.at(-1)?.status === "completed" && !s.projects[0].pending.length,
+    (s) => current(s).turns.at(-1)?.status === "completed" && !project(s).pending.length,
     "second send",
   );
   checks.push(
@@ -713,7 +732,7 @@ try {
   await slider.fill("2");
   await slider.press("Escape");
   await until(
-    (s) => s.projects[0].configurations[tid]?.parameters.reasoningEffort === "low",
+    (s) => project(s).configurations[tid]?.parameters.reasoningEffort === "low",
     "existing effort configured",
   );
   await input().fill("已有模型设置");
@@ -722,6 +741,7 @@ try {
   checks.push("existing Composer inline Goal toggle; model effort configuration and request");
   // 新目标只消费目标正文；技能和文件留在新聊天。
   await button("新聊天").click();
+  await selectFixtureProfile();
   await chooseFirst();
   await page.locator("input[type=file]").setInputFiles({
     name: "goal-note.txt",
@@ -738,11 +758,11 @@ try {
     clipboardData.setData("text/plain", text);
     element.dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
   }, foldedGoal);
-  await button("移除附件 粘贴的文本.txt").waitFor();
+  await button("移除附件 完成").waitFor();
   assert.equal(await input().textContent(), "");
   await button("开始目标").click();
   await until(
-    (s) => Object.values(s.projects[0].state.threads).some((t) => t.goals?.goal),
+    (s) => Object.values(project(s).state.threads).some((t) => t.goals?.goal),
     "goal created",
   );
   await page.getByRole("button", { name: "移除附件 goal-note.txt" }).waitFor();
@@ -750,10 +770,10 @@ try {
   const goalTid = await page
     .locator("[data-testid=areal-workbench]")
     .getAttribute("data-thread-id");
-  assert.equal((await state()).projects[0].state.threads[goalTid].goals.goal.objective, foldedGoal);
-  assert.equal(await button("移除附件 粘贴的文本.txt").count(), 0);
+  assert.equal(project(await state()).state.threads[goalTid].goals.goal.objective, foldedGoal);
+  assert.equal(await button("移除附件 完成").count(), 0);
   await until(
-    (s) => s.projects[0].state.threads[goalTid]?.goals?.goal?.status !== "active",
+    (s) => project(s).state.threads[goalTid]?.goals?.goal?.status !== "active",
     "goal settles without progress",
   );
   await shot("04-inline-goal");
@@ -855,7 +875,10 @@ try {
       sourceFiles[path] = null; // Tracked deletions remain part of the source evidence.
     }
   }
-  const diff = execFileSync("git", ["diff", "--binary", "HEAD"], { cwd: root });
+  const diff = execFileSync("git", ["diff", "--binary", "HEAD"], {
+    cwd: root,
+    maxBuffer: 32 * 1024 * 1024,
+  });
   await writeFile(
     join(scratch, "manifest.json"),
     JSON.stringify(

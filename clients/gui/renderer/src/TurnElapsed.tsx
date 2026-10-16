@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Data } from "./services.js";
+import { ActivityIcon } from "./ActivityIcon.js";
 
 function durationText(milliseconds: number): string {
   const seconds = Math.floor(milliseconds / 1000);
@@ -13,7 +14,7 @@ export function completedTimeLabel(turn: Data): string | undefined {
 }
 
 /** Refresh only the display. History and reconnect retain Core's original start. */
-export function TurnElapsed({ turn, connected }: { turn: Data; connected: boolean }) {
+export function TurnElapsed({ turn, connected, disclosure }: { turn: Data; connected: boolean; disclosure?: { expanded: boolean; controls: string; onToggle: () => void } }) {
   const [now, setNow] = useState(Date.now);
   const running = turn.status === "inProgress";
   const hasStart = Number.isSafeInteger(turn.startedAt) && turn.startedAt > 0;
@@ -27,9 +28,11 @@ export function TurnElapsed({ turn, connected }: { turn: Data; connected: boolea
     ? !connected ? "连接已中断，耗时待同步" : hasStart && now >= turn.startedAt * 1000
       ? `已处理 ${durationText(now - turn.startedAt * 1000)}` : undefined
     : completedTimeLabel(turn);
-  if (!label) return null;
+  if (!label && !disclosure) return null;
   return <div className="turn-elapsed turn-progress-heading" data-testid="turn-elapsed">
-    <div className="turn-progress-label"><span className="turn-progress-summary">{label}</span></div>
+    <div className="turn-progress-label">{disclosure ? <button type="button" className="turn-progress-summary" aria-label={label ?? "本轮过程"} aria-expanded={disclosure.expanded} aria-controls={disclosure.controls} onClick={disclosure.onToggle}>
+      <span>{label ?? "本轮过程"}</span><ActivityIcon kind="chevron" size={14} className={disclosure.expanded ? "open" : ""} />
+    </button> : <span className="turn-progress-summary">{label}</span>}</div>
     <div className="turn-progress-divider" />
   </div>;
 }

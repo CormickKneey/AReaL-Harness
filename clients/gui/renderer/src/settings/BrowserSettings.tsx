@@ -3,11 +3,9 @@ import {
   SettingsSection,
   SettingsRow,
   SettingsSwitch,
+  SettingsSelect,
 } from "./SettingsPageParts.js";
 import { useRef, useState } from "react";
-import { ChevronDown } from "lucide-react";
-import { Button } from "../components/ui/button.js";
-import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "../components/ui/dropdown-menu.js";
 import type { Action, Data } from "../services.js";
 
 /** Only settings wired to the current native preview are editable. */
@@ -21,10 +19,10 @@ export function BrowserSettings({ settings = {}, action, connected = false }: { 
     catch (cause) { setError((cause as Error).message); }
     finally { pending.current = false; setBusy(false); }
   };
-  const destination = (label: string, key: string, fallback: string) => <DropdownMenu>
-    <DropdownMenuTrigger render={<Button size="sm" variant="outline" aria-label={label} disabled={!action || !connected || busy}>{(settings[key] ?? fallback) === 'internal' ? '应用内' : '默认浏览器'}<ChevronDown size={12} aria-hidden="true" /></Button>} />
-    <DropdownMenuContent align="end"><DropdownMenuItem onClick={() => void save(key, 'internal')}>应用内</DropdownMenuItem><DropdownMenuItem onClick={() => void save(key, 'external')}>默认浏览器</DropdownMenuItem></DropdownMenuContent>
-  </DropdownMenu>;
+  const destination = (label: string, key: string, fallback: string) => <SettingsSelect aria-label={label}
+    value={settings[key] ?? fallback} disabled={!action || !connected || busy} onValueChange={value => void save(key, value)}>
+    <option value="internal">应用内</option><option value="external">默认浏览器</option>
+  </SettingsSelect>;
   return (
     <div className="settings-sections">
       {error && <p role="alert" className="text-destructive">{error}</p>}
@@ -32,12 +30,11 @@ export function BrowserSettings({ settings = {}, action, connected = false }: { 
       <SettingsGroupCard>
         <SettingsRow
           label="网页 URL 和链接打开位置"
-          description="链接默认打开位置"
           control={destination('网页 URL 和链接打开位置', 'browserLinkTarget', 'external')}
         />
         <SettingsRow
           label="本地 URL 打开位置"
-          description="本地开发站点默认打开位置"
+          description="用于本地开发站点"
           control={destination('本地 URL 打开位置', 'browserLocalTarget', 'internal')}
         />
         <SettingsRow

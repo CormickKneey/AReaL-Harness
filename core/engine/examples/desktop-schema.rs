@@ -18,6 +18,74 @@ fn main() {
         };
     }
     add!("areal/capabilities", CapabilitiesRequest);
+    add!(
+        "areal/plugin/hooks/list",
+        areal_protocol::plugin_runtime::Empty
+    );
+    add!(
+        "areal/plugin/hooks/configure",
+        areal_protocol::plugin_runtime::HooksConfigure
+    );
+    add!(
+        "areal/hook/acknowledge",
+        areal_protocol::plugin_runtime::HookAcknowledge
+    );
+    add!(
+        "areal/plugin/mcp/list",
+        areal_protocol::plugin_runtime::Empty
+    );
+    add!(
+        "areal/plugin/connection",
+        areal_protocol::plugin_runtime::Connection
+    );
+    add!("areal/plugin/auth", areal_protocol::plugin_runtime::Auth);
+    add!(
+        "areal/mcp/form/resource/prepare",
+        areal_protocol::plugin_runtime::FormResourcePrepare
+    );
+    add!(
+        "areal/mcp/form/resource/stage",
+        areal_protocol::plugin_runtime::FormResourceStage
+    );
+    add!(
+        "areal/mcp/form/resource/release",
+        areal_protocol::plugin_runtime::FormResourceRelease
+    );
+    add!(
+        "areal/plugin/auth/configure",
+        areal_protocol::plugin_runtime::AuthConfigure
+    );
+    add!(
+        "areal/plugin/connector/configure",
+        areal_protocol::plugin_runtime::Connector
+    );
+    add!(
+        "areal/mcp/tool/result",
+        areal_protocol::plugin_runtime::ToolResult
+    );
+    add!("areal/mcp/apps/list", areal_protocol::plugin_runtime::Apps);
+    add!("areal/mcp/app/open", areal_protocol::plugin_runtime::Open);
+    add!(
+        "areal/mcp/app/request",
+        areal_protocol::plugin_runtime::AppRequest
+    );
+    add!("areal/mcp/app/close", areal_protocol::plugin_runtime::Close);
+    add!(
+        "areal/mcp/extension/call",
+        areal_protocol::plugin_runtime::Extension
+    );
+    add!(
+        "areal/mcp/forms/list",
+        areal_protocol::plugin_runtime::Forms
+    );
+    add!(
+        "areal/mcp/form/respond",
+        areal_protocol::plugin_runtime::Respond
+    );
+    add!(
+        "areal/mcp/form/preview",
+        areal_protocol::plugin_runtime::Preview
+    );
     add!("areal/work/overview", areal_protocol::work::OverviewRequest);
     add!("areal/goal/create", areal_protocol::goals::GoalCreate);
     add!("areal/task/create", areal_protocol::tasks::TaskCreate);
@@ -67,6 +135,7 @@ fn main() {
     add!("areal/thread/configure", ConfigureThread);
     add!("areal/turn/start", TurnStart);
     add!("areal/turn/enqueue", TurnStart);
+    add!("areal/turn/submit", TurnSubmit);
     add!("areal/queue/steer", QueueSteer);
     add!("areal/plan/update", PlanUpdate);
     add!("areal/interaction/respond", Respond);
@@ -95,6 +164,7 @@ fn main() {
         "areal/server/status",
         "areal/server/gc",
         "areal/mcp/list",
+        "areal/plugin/list",
         "areal/workflow/list",
     ] {
         methods.insert(method.into(), empty.clone());
@@ -125,9 +195,84 @@ fn main() {
             vec!["threadId"],
         ),
     );
-    for method in ["areal/provider/read", "areal/mcp/read"] {
+    for method in ["areal/provider/read", "areal/mcp/read", "areal/plugin/read"] {
         methods.insert(method.into(), object(json!({"id":string}), vec!["id"]));
     }
+    let scope = json!({"enum":["user","project"]});
+    methods.insert(
+        "areal/marketplace/add".into(),
+        object(
+            json!({"root":string,"expectedRevision":integer,"requestId":string}),
+            vec!["root", "expectedRevision", "requestId"],
+        ),
+    );
+    methods.insert(
+        "areal/plugin/resolve".into(),
+        object(
+            json!({"id":string,"expectedRevision":integer,"requestId":string}),
+            vec!["id", "expectedRevision", "requestId"],
+        ),
+    );
+    methods.insert(
+        "areal/plugin/importArchive".into(),
+        object(
+            json!({"path":string,"expectedRevision":integer,"requestId":string}),
+            vec!["path", "expectedRevision", "requestId"],
+        ),
+    );
+    methods.insert(
+        "areal/marketplace/addGit".into(),
+        object(
+            json!({"url":string,"refName":string,"sparsePaths":{"type":"array","items":string},"expectedRevision":integer,"requestId":string}),
+            vec!["url", "expectedRevision", "requestId"],
+        ),
+    );
+    methods.insert(
+        "areal/marketplace/remove".into(),
+        object(
+            json!({"root":string,"expectedRevision":integer,"requestId":string}),
+            vec!["root", "expectedRevision", "requestId"],
+        ),
+    );
+    methods.insert(
+        "areal/marketplace/update".into(),
+        object(
+            json!({"expectedRevision":integer,"requestId":string}),
+            vec!["expectedRevision", "requestId"],
+        ),
+    );
+    methods.insert(
+        "areal/plugin/install".into(),
+        object(
+            json!({"id":string,"scope":scope,"expectedRevision":integer,"source":string,
+            "expectedDigest":{"type":"string","pattern":"^[0-9a-f]{64}$"},"requestId":string}),
+            vec![
+                "id",
+                "scope",
+                "expectedRevision",
+                "source",
+                "expectedDigest",
+                "requestId",
+            ],
+        ),
+    );
+    methods.insert("areal/plugin/configure".into(), object(
+        json!({"id":string,"scope":scope,"enabled":{"type":"boolean"},"expectedRevision":integer,"requestId":string}),
+        vec!["id","scope","enabled","expectedRevision","requestId"]));
+    methods.insert(
+        "areal/plugin/uninstall".into(),
+        object(
+            json!({"id":string,"expectedRevision":integer,"requestId":string}),
+            vec!["id", "expectedRevision", "requestId"],
+        ),
+    );
+    methods.insert(
+        "areal/plugin/setup".into(),
+        object(
+            json!({"id":string,"threadId":string,"requestId":string}),
+            vec!["id", "requestId"],
+        ),
+    );
     for method in [
         "areal/provider/remove",
         "areal/mcp/connect",
@@ -305,7 +450,7 @@ fn main() {
         ),
     );
     methods.insert("areal/side/context/read".into(),object(json!({"threadId":string,"evidenceRef":string,"cursor":string,"maxBytes":{"type":"integer","minimum":64,"maximum":16384}}),vec!["threadId"]));
-    methods.insert("turn/steer".into(),object(json!({"threadId":string,"expectedTurnId":string,"input":{"type":"array","items":schemars::schema_for!(areal_protocol::Input)}}),vec!["threadId","expectedTurnId","input"]));
+    methods.insert("turn/steer".into(),object(json!({"requestId":string,"threadId":string,"expectedTurnId":string,"input":{"type":"array","items":schemars::schema_for!(areal_protocol::Input)}}),vec!["threadId","expectedTurnId","input"]));
     add!("turn/interrupt", TurnInterrupt);
     for (method, schema) in &mut methods {
         if matches!(
@@ -333,6 +478,20 @@ fn main() {
     let (responses, notifications) = schema::projections();
     output["responses"] = responses;
     output["notifications"] = notifications;
+    schema::plugins::codex_management(&mut output);
+    let requests = output["requests"].as_object().unwrap();
+    let responses = output["responses"].as_object().unwrap();
+    assert_eq!(
+        requests.keys().collect::<Vec<_>>(),
+        responses.keys().collect::<Vec<_>>(),
+        "every desktop method requires both request and response schemas"
+    );
+    for method in NOTIFICATIONS {
+        assert!(
+            output["notifications"].get(*method).is_some(),
+            "advertised notification lacks schema: {method}"
+        );
+    }
     let browser_request = object(
         json!({"threadId":string,"turnId":string,"callId":string,"tool":string,"arguments":{},"hostGeneration":string}),
         vec![
@@ -359,13 +518,13 @@ fn main() {
 fn inline(value: &mut Value, inherited: &Value) {
     let defs = value
         .get("$defs")
+        .or_else(|| value.get("$schema").and_then(|_| value.get("definitions")))
         .cloned()
         .unwrap_or_else(|| inherited.clone());
-    if let Some(reference) = value
-        .get("$ref")
-        .and_then(Value::as_str)
-        .and_then(|r| r.strip_prefix("#/$defs/"))
-    {
+    if let Some(reference) = value.get("$ref").and_then(Value::as_str).and_then(|r| {
+        r.strip_prefix("#/$defs/")
+            .or_else(|| r.strip_prefix("#/definitions/"))
+    }) {
         *value = defs[reference].clone();
         assert!(!value.is_null(), "unresolved schema reference");
         inline(value, &defs);
@@ -374,6 +533,9 @@ fn inline(value: &mut Value, inherited: &Value) {
     match value {
         Value::Object(map) => {
             map.remove("$defs");
+            if map.contains_key("$schema") {
+                map.remove("definitions");
+            }
             map.remove("$schema");
             for child in map.values_mut() {
                 inline(child, &defs);

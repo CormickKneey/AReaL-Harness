@@ -4,6 +4,7 @@ import "./SettingsSegmentedTabs.css";
 interface SettingsSegmentedTabItem<TValue extends string> {
   label: string;
   value: TValue;
+  disabled?: boolean;
 }
 
 /** 设置详情页共用的紧凑分段切换，避免相同层级出现多套 Tabs 视觉。 */
@@ -12,6 +13,7 @@ export function SettingsSegmentedTabs<TValue extends string>({
   value,
   onValueChange,
   activateOnFocus = true,
+  disabled = false,
   ariaLabel,
 }: {
   items: readonly SettingsSegmentedTabItem<TValue>[];
@@ -19,6 +21,7 @@ export function SettingsSegmentedTabs<TValue extends string>({
   onValueChange: (value: TValue) => void;
   /** Guarded (dirty-checked) tab switches must activate on click only, not focus. */
   activateOnFocus?: boolean;
+  disabled?: boolean;
   ariaLabel?: string;
 }) {
   return (
@@ -36,6 +39,7 @@ export function SettingsSegmentedTabs<TValue extends string>({
           <TabsTrigger
             key={item.value}
             value={item.value}
+            disabled={disabled || item.disabled}
             className="settings-segmented-trigger"
           >
             {item.label}

@@ -1,4 +1,6 @@
-import type { ReactNode } from "react";
+import { Children, isValidElement, Fragment, type ReactNode, type ReactElement } from "react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select.js";
+import { SettingsSegmentedTabs } from "./SettingsSegmentedTabs.js";
 import "./SettingsWorkspace.css";
 import { Card, CardContent } from "@/components/ui/card.js";
 import { Switch } from "@/components/ui/switch.js";
@@ -158,4 +160,28 @@ export function SettingsValueAction({
       )}
     </div>
   );
+}
+
+/** Settings values use a segmented pair or the shared menu, never a native select. */
+export function SettingsSelect({ children, value, onValueChange, disabled, className, "aria-label": label }: {
+  children: ReactNode; value: string | number; onValueChange: (value: string) => void;
+  disabled?: boolean; className?: string; "aria-label": string;
+}) {
+  const text = (nodes: ReactNode): string => Children.toArray(nodes).map(node =>
+    isValidElement(node) ? text((node.props as {children?: ReactNode}).children) : String(node),
+  ).join("");
+  const options: {value: string; label: string; disabled?: boolean}[] = [];
+  const collect = (nodes: ReactNode) => Children.forEach(nodes, node => {
+    if (!isValidElement(node)) return;
+    const element = node as ReactElement<{value?: string | number; children?: ReactNode; disabled?: boolean}>;
+    if (element.type === Fragment) collect(element.props.children);
+    else if (element.type === "option") options.push({value: String(element.props.value ?? text(element.props.children)), label: text(element.props.children), disabled: element.props.disabled});
+  });
+  collect(children);
+  if (options.length === 2) return <SettingsSegmentedTabs ariaLabel={label} activateOnFocus={false}
+    disabled={disabled} value={String(value)} onValueChange={onValueChange} items={options} />;
+  return <Select value={String(value)} items={options} onValueChange={next => { if (next !== null) onValueChange(next); }} disabled={disabled}>
+    <SelectTrigger aria-label={label} variant="secondary" size="sm" className={className}><SelectValue placeholder={options.length ? "请选择" : "暂无可选项"} /></SelectTrigger>
+    <SelectContent align="end">{options.map(option => <SelectItem key={option.value} value={option.value} disabled={option.disabled}>{option.label}</SelectItem>)}</SelectContent>
+  </Select>;
 }

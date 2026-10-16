@@ -110,6 +110,14 @@ _Avoid_: Every chat panel, an active task only
 An accepted user input and the resulting processing episode, including replies, tool interactions and its terminal outcome. A turn may contain multiple messages.
 _Avoid_: Message, single model request, display index
 
+**Pause Execution**:
+A temporary stop in advancing unfinished work in a main conversation, retaining its objective, existing progress and intent to continue later.
+_Avoid_: Abandoning the objective, undoing completed work, freezing an exact execution position
+
+**Continue Execution**:
+An explicit user action to continue unfinished work in the original main conversation using its retained objective, progress and current conditions.
+_Avoid_: Creating a new conversation, starting over, automatically replaying old tool calls
+
 **Source Conversation**:
 The conversation whose content a fork or side discussion draws from. This is a provenance relationship, not delegation.
 _Avoid_: Parent agent, coordinating task owner

@@ -62,7 +62,16 @@ impl Engine {
         let mut active_goals = Vec::new();
         let mut pending_queue_items = 0usize;
         for cell in &cells {
+            if let Some(scope) = self.hook_task_unknown(cell).await {
+                unknown.push(scope);
+            }
             let s = cell.state.lock().await;
+            if cell.hooks.closing.load(Ordering::Acquire)
+                && !cell.hooks.ended.load(Ordering::Acquire)
+            {
+                resources
+                    .push(json!({"threadId":s.thread.id,"kind":"hookSession","state":"closing"}));
+            }
             if s.thread
                 .goals
                 .goal
@@ -78,6 +87,16 @@ impl Engine {
                 active.push(json!({"threadId":s.thread.id,"turnId":a.id}));
             }
             if let Some(d) = &s.thread.desktop {
+                for hook in &d.hook_runs {
+                    if hook.outcome == "running" {
+                        resources.push(json!({"threadId":s.thread.id,"id":hook.id,"kind":"hook","state":"running"}));
+                    }
+                    if hook.outcome == "unknown" && hook.inspection.is_none() {
+                        unknown.push(
+                            json!({"threadId":s.thread.id,"invocationId":hook.id,"kind":"hook"}),
+                        );
+                    }
+                }
                 pending_queue_items += d
                     .queue
                     .items
@@ -138,6 +157,11 @@ impl Engine {
                 }
                 groups.push(group);
             }
+        }
+        let preparations = self.desktop.plugin_mcp.pending_preparations();
+        if preparations > 0 {
+            resources
+                .push(json!({"kind":"pluginPreparation","state":"running","count":preparations}));
         }
         let mut status = json!({"configuration":self.configuration_status.read().unwrap().clone(),"activeTasks":active_tasks,"activeGoals":active_goals,"pendingQueueItems":pending_queue_items,"compactions":compacting,"workgroups":groups,"apiVersion":API_VERSION,"stateVersion":crate::store::STATE_VERSION,"productVersion":env!("CARGO_PKG_VERSION"),"draining":self.desktop.lifecycle.draining.load(Ordering::Acquire),"closed":self.is_closed(),"acceptingWork":self.accepting_work(),"activeTurns":active,"resources":resources,"unresolvedTools":unknown,"runtime":runtime,"capacity":{"threads":cells.len(),"maxThreads":self.limits.max_threads,"activeTurns":self.limits.max_active_turns-self.active_turns.available_permits(),"maxActiveTurns":self.limits.max_active_turns,"historyBytesPerThread":self.limits.max_history_bytes,"blobBytes":512*1024*1024u64}});
         status["lifecycle"] = lifecycle_assessment(&status, unsettled);
@@ -202,6 +226,12 @@ impl Engine {
                 {
                     active.cancel.cancel();
                 }
+                if strategy == "cancel" {
+                    cell.hooks.cancel.cancel();
+                    if let Some(owner) = &state.compaction_owner {
+                        owner.cancellation.cancel();
+                    }
+                }
                 cell.emit(
                     "areal/server/draining",
                     json!({"threadId":state.thread.id,"strategy":strategy}),
@@ -216,8 +246,25 @@ impl Engine {
                 {
                     return Ok(engine.server_status().await);
                 }
+                while cell.state.lock().await.compacting {
+                    if tokio::time::Instant::now() >= deadline {
+                        return Ok(engine.server_status().await);
+                    }
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
             }
             if strategy == "cancel" {
+                for cell in &cells {
+                    let closing_engine = engine.clone();
+                    let cell = cell.clone();
+                    // The accepted close owns cleanup even when the drain deadline
+                    // expires or its caller disconnects; dropping a join is no abort.
+                    let closing =
+                        tokio::spawn(async move { closing_engine.plugin_hooks_end(&cell).await });
+                    if tokio::time::timeout_at(deadline, closing).await.is_err() {
+                        return Ok(engine.server_status().await);
+                    }
+                }
                 for service in [engine.workgroups.get(), engine.automatic_workgroups.get()]
                     .into_iter()
                     .flatten()
@@ -238,27 +285,33 @@ impl Engine {
         // 这是现有 HTTP 适配器的允许值，不代表远端供应商已验证这些选项。
         let efforts = ["none", "minimal", "low", "medium", "high", "xhigh"];
         let model = self.default_model();
+        let default_model = self
+            .desktop
+            .configured_models
+            .read()
+            .unwrap()
+            .default_model
+            .clone();
+        let parameters = self
+            .default_model_metadata(None)
+            .map(|(_, parameters)| parameters)
+            .unwrap_or_default();
         if !model.name().is_empty() {
-            data.push(json!({"providerId":null,"providerRevision":null,"modelId":model.name(),"available":model.check_work().is_ok(),"transport":model.provider(),"reasoningEffortOptions":if matches!(model.provider(), "openai.responses" | "openai.chat_completions") {efforts.to_vec()} else {vec![]},"input":model.capabilities().input,"output":model.capabilities().output,"contextWindowTokens":model.capabilities().context_window_tokens,"effectiveContextWindowTokens":model.capabilities().context_window_tokens.unwrap_or(self.limits.context_window_tokens)}));
+            data.push(json!({"providerId":null,"providerRevision":null,"modelId":model.name(),"parameters":parameters,"isDefault":default_model.is_none(),"available":model.check_work().is_ok(),"transport":model.provider(),"reasoningEffortOptions":if matches!(model.provider(), "openai.responses" | "openai.chat_completions") {efforts.to_vec()} else {vec![]},"input":model.capabilities().input,"output":model.capabilities().output,"contextWindowTokens":model.capabilities().context_window_tokens,"effectiveContextWindowTokens":model.capabilities().context_window_tokens.unwrap_or(self.limits.context_window_tokens)}));
         }
         for p in self.desktop.catalog.read().unwrap().providers.values() {
             for name in &p.models {
-                let mut parameters = p.parameters.clone();
-                parameters.context_window_tokens = self
-                    .desktop
-                    .configured_models
-                    .read()
-                    .unwrap()
-                    .parameters
-                    .get(&(p.id.clone(), name.clone()))
-                    .and_then(|p| p.context_window_tokens)
-                    .or(parameters.context_window_tokens);
+                let reference = ModelRef {
+                    provider_id: p.id.clone(),
+                    model_id: name.clone(),
+                };
+                let parameters = self.model_parameters(&reference, &p.parameters);
                 let result = self.provider_model(p, name, &parameters);
                 let capabilities = match p.protocol.as_str() {
                     "responses" => model::ModelProtocol::Responses.capabilities(),
                     _ => model::ModelProtocol::ChatCompletions.capabilities(),
                 };
-                data.push(json!({"providerId":p.id,"providerRevision":p.revision,"modelId":name,"transport":p.protocol,"input":capabilities.input,"output":capabilities.output,"available":result.is_ok(),"credentialState":self.provider_view(p)["credentialState"],"contextWindowTokens":parameters.context_window_tokens,"effectiveContextWindowTokens":parameters.context_window_tokens.unwrap_or(self.limits.context_window_tokens),"parameterCapabilities":if p.protocol == "responses" {vec!["temperature","maxOutputTokens","contextWindowTokens","reasoningEffort","reasoningSummary"]} else {vec!["temperature","maxOutputTokens","contextWindowTokens","reasoningEffort"]},"reasoningEffortOptions":efforts,"connectionState":"unchecked"}));
+                data.push(json!({"providerId":p.id,"providerRevision":p.revision,"modelId":name,"parameters":parameters,"isDefault":default_model.as_ref() == Some(&reference),"transport":p.protocol,"input":capabilities.input,"output":capabilities.output,"available":result.is_ok(),"credentialState":self.provider_view(p)["credentialState"],"contextWindowTokens":parameters.context_window_tokens,"effectiveContextWindowTokens":parameters.context_window_tokens.unwrap_or(self.limits.context_window_tokens),"parameterCapabilities":if p.protocol == "responses" {vec!["temperature","maxOutputTokens","contextWindowTokens","reasoningEffort","reasoningSummary"]} else {vec!["temperature","maxOutputTokens","contextWindowTokens","reasoningEffort"]},"reasoningEffortOptions":efforts,"connectionState":"unchecked"}));
             }
         }
         json!({"data":data})

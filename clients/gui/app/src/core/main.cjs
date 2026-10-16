@@ -1,32 +1,41 @@
 'use strict';
+const { startupTrace } = require('./startup-timing.cjs');
+const startupTraceMain = startupTrace('gui.startup');
+startupTraceMain.advance('imports');
 
 const { app, BrowserWindow, Menu, dialog, ipcMain, protocol, nativeTheme, WebContentsView, shell, powerMonitor, Notification } = require('electron');
-const { readFile, realpath, writeFile } = require('node:fs/promises');
+const { readFile, realpath, stat, writeFile } = require('node:fs/promises');
 const { join, resolve, extname, sep } = require('node:path');
 const { setupUpdater } = require('../update/electron.cjs');
 const { showCoreNotification } = require('./notifications.cjs');
 const { MenuBar } = require('./menu-bar.cjs');
 const { fileOpen } = require('./file-open.cjs');
+const { PluginArchives } = require('./plugin-archives.cjs');
+const { McpFormResources } = require('./mcp-form-resources.cjs');
+const { McpAppsHost, parseDeepLink } = require('./mcp-apps.cjs');
+const { McpMetadataImages } = require('./mcp-apps-images.cjs');
 const { validateCommand, validatePreview, desktopError } = require('@areal/workbench/desktop-contract');
 const { CorePreview } = require('./preview.cjs');
 const { configureUserData, serviceOptions } = require('./service-config.cjs');
 const { SharedCoreBackend } = require('./service-client.cjs');
-const { recoverStartupService, recoverConnectedService } = require('./startup-recovery.cjs');
+const { recoverConnectedService } = require('./startup-recovery.cjs');
 const { loadThemes, engineCss, panelCss } = require('../themes');
 
+startupTraceMain.advance('app_ready');
 app.setName('AReaL Harness GUI');
 configureUserData(app);
 // Acquire before loading resources or registering shutdown hooks. The userData
 // directory scopes the lock, so explicitly isolated development/test homes coexist.
-if (!app.requestSingleInstanceLock()) { app.exit(0); return; }
-protocol.registerSchemesAsPrivileged([{ scheme: 'areal-ui', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
+if (!app.requestSingleInstanceLock()) { startupTraceMain.finish('skipped'); app.exit(0); return; }
+protocol.registerSchemesAsPrivileged([{ scheme: 'areal-mcp', privileges: { standard: true, secure: true, supportFetchAPI: true } }, { scheme: 'areal-ui', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 
 const guiRoot = app.isPackaged ? join(process.resourcesPath, 'areal-gui') : resolve(__dirname, '../../../renderer/dist');
 const mime = { '.wasm': 'application/wasm', '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.json': 'application/json', '.woff2': 'font/woff2', '.woff': 'font/woff', '.svg': 'image/svg+xml', '.png': 'image/png' };
-let window, backend, preview, updates, quitting = false, exitReady = false, themeId = 'system';
+let window, backend, preview, mcpApps, updates, quitting = false, exitReady = false, themeId = 'system';
 let browserWindowClosed = false;
 const previewSubscriptions = new Map();
 let startupPending = true, startupPainted = false, startupReady = false;
+let startupShowTrace, startupPaintTrace, startupPresentTrace;
 // The renderer owns first-screen readiness; Main alone owns native visibility.
 // Consume this gate once so late data cannot reopen a window the user hid.
 function presentStartup() {
@@ -45,6 +54,16 @@ function openNotificationTarget(target) {
   if (!startupPending) { window.show(); window.focus(); }
   window.webContents.send('areal-core:notification-open');
 }
+let mcpAppDeepLink = null, mcpAppDeepLinkSequence = 0;
+function receiveMcpAppDeepLink(raw) {
+  try { mcpAppDeepLink = { ...parseDeepLink(raw), id: ++mcpAppDeepLinkSequence }; }
+  catch { return false; }
+  if (window && !window.isDestroyed()) window.webContents.send('areal-core:mcp-app-deep-link');
+  return true;
+}
+app.on('open-url', (event, url) => { if (receiveMcpAppDeepLink(url)) event.preventDefault(); });
+app.on('second-instance', (_event, argv) => { for (const arg of argv) if (/^(areal|codex):\/\/plugins\//.test(arg)) receiveMcpAppDeepLink(arg); });
+for (const arg of process.argv) if (/^(areal|codex):\/\/plugins\//.test(arg)) receiveMcpAppDeepLink(arg);
 const themes = loadThemes();
 app.on('second-instance', () => {
   if (startupPending || !window || window.isDestroyed()) return;
@@ -62,6 +81,7 @@ function theme() {
 }
 function publish() {
   preview?.releaseInvalidOwners();
+  mcpApps?.revokeInvalid();
   if (window && !window.isDestroyed()) window.webContents.send('areal-core:state', desktopSnapshot());
 }
 function desktopSnapshot() {
@@ -78,70 +98,84 @@ function trusted(event) {
 }
 
 async function createWindow() {
-  browserWindowClosed = false;
-  window = new BrowserWindow({ width: 1440, height: 900, minWidth: 980, minHeight: 620,
-    show: false,
-    title: 'AReaL Harness', titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 14, y: 15 }, backgroundColor: '#1b1b1c',
-    webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false },
-  });
-  {
-    // Native recovery dialogs may reveal their parent before the normal gate.
-    window.once('show', () => { startupPending = false; });
-    window.once('ready-to-show', () => { startupPainted = true; presentStartup(); });
-  }
-  preview = new CorePreview(window, WebContentsView,
-    (projectId, threadId) => backend.ownsThread(projectId, threadId),
-    () => backend.snapshot().library?.settings ?? {},
-    projectId => backend.status.browserCore?.[projectId] ?? null,
-    () => [backend.metadata?.endpoint, ...(backend.status.browserControlEndpoints ?? [])].filter(Boolean),
-    async ({ origin, page, fence, kind }) => {
-      const current = () => !quitting && !!backend.metadata?.endpoint
-        && window && !window.isDestroyed() && window.isVisible() && !window.isMinimized()
-        && window.isFocused() && preview?.currentDevelopmentPrompt(page, fence);
-      if (!current()) return false;
-      const { response } = await dialog.showMessageBox(window, {
-        type: 'question', title: kind === 'frame' ? '授权当前页面的嵌入站点' : '允许本地开发站点',
-        message: kind === 'frame' ? `允许当前页面嵌入 ${origin} 并在人工标注时检查其隐私？` : `允许此浏览工作区访问 ${origin}？`,
-        detail: kind === 'frame'
-          ? '仅当前 Human 页面有效，不授权 Agent。确认后需明确重载，未保存的页面状态可能丢失。截图检查失败不生成图片；撤销、文档变化、关闭预览或切换页面将关闭此页面；标注时临时隐藏除外。'
-          : '仅允许此精确地址的临时站点状态；关闭工作区或重启后需要重新授权。',
-        buttons: ['取消', kind === 'frame' ? '仅当前页面允许' : '仅此工作区允许'], defaultId: 0, cancelId: 0, noLink: true,
-      });
-      return response === 1 && current();
+  const trace = startupTrace('gui.window');
+  trace.advance('create');
+  startupShowTrace = startupTrace('gui.first_show');
+  startupShowTrace.advance('show');
+  startupPaintTrace = startupTrace('gui.ready_to_show');
+  startupPaintTrace.advance('ready_to_show');
+  startupPresentTrace = startupTrace('gui.present_ready');
+  startupPresentTrace.advance('present_ready');
+  try {
+    browserWindowClosed = false;
+    window = new BrowserWindow({ width: 1440, height: 900, minWidth: 980, minHeight: 620,
+      show: false,
+      title: 'AReaL Harness', titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 14, y: 15 }, backgroundColor: '#1b1b1c',
+      webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false },
     });
-  preview.onRevoke = identity => { void backend.browserRevoke(identity).catch(() => {}); };
-  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  window.webContents.on('will-navigate', event => event.preventDefault());
-  window.on('show', () => { browserWindowClosed = false; });
-  window.on('close', event => {
-    if (exitReady) return;
-    event.preventDefault();
-    // A close-to-background still ends this window's Browser ownership. Fence
-    // native callbacks before hiding; reopening creates fresh Pages on demand.
-    browserWindowClosed = true;
-    preview?.dispose();
-    window.hide();
-  });
-  await window.loadURL('areal-ui://app/');
-  return window;
+    {
+      // Native recovery dialogs may reveal their parent before the normal gate.
+      window.once('show', () => { startupPending = false; startupShowTrace.finish('ok'); });
+      window.once('ready-to-show', () => { startupPainted = true; startupPaintTrace.finish('ok'); presentStartup(); });
+    }
+    preview = new CorePreview(window, WebContentsView,
+      (projectId, threadId) => backend.ownsThread(projectId, threadId),
+      () => backend.snapshot().library?.settings ?? {},
+      projectId => backend.status.browserCore?.[projectId] ?? null,
+      () => [backend.metadata?.endpoint, ...(backend.status.browserControlEndpoints ?? [])].filter(Boolean),
+      async ({ origin, page, fence, kind }) => {
+        const current = () => !quitting && !!backend.metadata?.endpoint
+          && window && !window.isDestroyed() && window.isVisible() && !window.isMinimized()
+          && window.isFocused() && preview?.currentDevelopmentPrompt(page, fence);
+        if (!current()) return false;
+        const { response } = await dialog.showMessageBox(window, {
+          type: 'question', title: kind === 'frame' ? '授权当前页面的嵌入站点' : '允许本地开发站点',
+          message: kind === 'frame' ? `允许当前页面嵌入 ${origin} 并在人工标注时检查其隐私？` : `允许此浏览工作区访问 ${origin}？`,
+          detail: kind === 'frame'
+            ? '仅当前 Human 页面有效，不授权 Agent。确认后需明确重载，未保存的页面状态可能丢失。截图检查失败不生成图片；撤销、文档变化、关闭预览或切换页面将关闭此页面；标注时临时隐藏除外。'
+            : '仅允许此精确地址的临时站点状态；关闭工作区或重启后需要重新授权。',
+          buttons: ['取消', kind === 'frame' ? '仅当前页面允许' : '仅此工作区允许'], defaultId: 0, cancelId: 0, noLink: true,
+        });
+        return response === 1 && current();
+      });
+    preview.onRevoke = identity => { void backend.browserRevoke(identity).catch(() => {}); };
+    window.webContents.on('render-process-gone', () => mcpApps?.dispose());
+    window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    window.webContents.on('will-navigate', event => event.preventDefault());
+    window.on('show', () => { browserWindowClosed = false; });
+    window.on('close', event => {
+      if (exitReady) return;
+      event.preventDefault();
+      // A close-to-background still ends this window's Browser ownership. Fence
+      // native callbacks before hiding; reopening creates fresh Pages on demand.
+      browserWindowClosed = true;
+      preview?.dispose();
+      mcpApps?.dispose();
+      window.hide();
+    });
+    trace.advance('load');
+    await window.loadURL('areal-ui://app/');
+    trace.finish('ok');
+    return window;
+  } catch (error) { trace.finish('error', error); throw error; }
 }
 
 app.whenReady().then(async () => {
+  startupTraceMain.finish('ok');
   if (process.platform === 'darwin') app.dock.setIcon(join(__dirname, '../../assets/icon-1024.png'));
   protocol.handle('areal-ui', async request => {
     const url = new URL(request.url);
     if (url.host !== 'app') return new Response('Not found', { status: 404 });
     const path = resolve(guiRoot, '.' + decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname));
     if (!path.startsWith(guiRoot + sep)) return new Response('Not found', { status: 404 });
-    try { return new Response(await readFile(path), { headers: { 'Content-Type': mime[extname(path)] ?? 'application/octet-stream', 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; frame-src 'none'" } }); }
+    try { return new Response(await readFile(path), { headers: { 'Content-Type': mime[extname(path)] ?? 'application/octet-stream', 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; frame-src areal-mcp:" } }); }
     catch { return new Response('GUI 未构建，请先执行 make gui-build', { status: 404 }); }
   });
   backend = new SharedCoreBackend({ app, ...serviceOptions(app), onChange: publish,
     onNotification: notice => showCoreNotification(Notification, window, notice, openNotificationTarget),
     onNotificationOpen: openNotificationTarget,
     onRecoveryAttention: attention => dialog.showMessageBox(window, { type: 'warning', message: '定时安排需要核对',
-      detail: attention.join('\n\n') + '\n\n可打开原任务核对安排。应用不会恢复已暂停的 Run 或自动重发未知操作。', buttons: ['打开应用后核对'], defaultId: 0, cancelId: 0 }),
-    recoverIncompatible: (metadata, home) => recoverStartupService({ metadata, home, notify: options => dialog.showMessageBox(window, options) }) });
+      detail: attention.join('\n\n') + '\n\n可打开原任务核对安排。应用不会恢复已暂停的 Run 或自动重发未知操作。', buttons: ['打开应用后核对'], defaultId: 0, cancelId: 0 }) });
   backend.onBrowserDisconnected = () => preview?.revokeAll();
   backend.onBrowserCancel = request => preview?.cancelRead(request);
   backend.onBrowserRequest = async request => {
@@ -182,6 +216,37 @@ app.whenReady().then(async () => {
         : /not_sent|target_unavailable/.test(error.message) ? 'not_sent'
         : /budget exceeded|Sensitive field|viewport changed|content changed during capture|capture guard unavailable/.test(error.message) ? 'evidence_unavailable' : 'page_unavailable' }; }
   };
+  app.on('before-quit', () => mcpApps?.dispose());
+  mcpApps = new McpAppsHost({ backend, ownerId: () => window?.webContents.id,
+    notify: value => { if (window && !window.isDestroyed()) window.webContents.send('areal-core:mcp-app-event', value); },
+    openFile: (request, current) => fileOpen({ backend, shell, home: app.getPath('home'), authorize: current,
+      chooseSave: options => dialog.showSaveDialog(window, options) }, request) });
+  backend.onMcpAppNotification = event => mcpApps?.notification(event);
+  protocol.handle('areal-mcp', request => mcpApps.resource(request));
+  ipcMain.handle('areal-core:mcp-app-deep-link-target', event => { trusted(event); return mcpAppDeepLink; });
+  ipcMain.handle('areal-core:mcp-app-deep-link-consumed', (event, id) => { trusted(event); if (mcpAppDeepLink?.id === id) mcpAppDeepLink = null; });
+  const mcpMetadataImages = new McpMetadataImages(backend);
+  const mcpFormResources = new McpFormResources({ backend,
+    choose: options => dialog.showOpenDialog(window, options),
+    confirm: options => dialog.showMessageBox(window, options) });
+  app.on('before-quit', () => mcpFormResources.dispose());
+  ipcMain.handle('areal-core:mcp-form-resource', async (event, operation, request) => {
+    trusted(event);
+    const ownerWindow = window;
+    const current = () => { trusted(event); if (window !== ownerWindow || ownerWindow.isDestroyed()) throw new Error('Form window expired'); };
+    if (operation === 'pick') return mcpFormResources.pick(request, current);
+    if (operation === 'release') return mcpFormResources.release(request, current);
+    throw new Error('Invalid form resource operation');
+  });
+  ipcMain.handle('areal-core:mcp-app', async (event, request) => {
+    trusted(event);
+    if (!request || typeof request !== 'object') throw new Error('Invalid app request');
+    if (request.operation === 'metadataImage') return mcpMetadataImages.load(request.source).catch(() => { throw new Error('Metadata image unavailable'); });
+    if (request.operation === 'open') return mcpApps.open(request, event.sender.id).catch(() => { throw new Error('MCP App could not be opened'); });
+    if (request.operation === 'request') return mcpApps.request(request.token, request.request, event.sender.id).catch(() => { throw new Error('MCP App request rejected or incomplete'); });
+    if (request.operation === 'close') return mcpApps.close(request.token, event.sender.id);
+    throw new Error('Unsupported app operation');
+  });
   ipcMain.handle('areal-core:preview', async (event, request) => {
     trusted(event);
     validatePreview(request);
@@ -233,6 +298,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('areal-core:present-ready', event => {
     trusted(event);
     startupReady = true;
+    startupPresentTrace?.finish('ok');
     presentStartup();
   });
   ipcMain.handle('areal-core:theme', (event, id) => {
@@ -252,6 +318,15 @@ app.whenReady().then(async () => {
     trusted(event);
     return backend.addProject(path);
   });
+  ipcMain.handle('areal-core:choose-task-directory', async event => {
+    trusted(event);
+    const result = await dialog.showOpenDialog(window, { title: '选择工作目录', properties: ['openDirectory'] });
+    if (result.canceled) return null;
+    const cwd = await realpath(result.filePaths[0]);
+    if (!(await stat(cwd)).isDirectory()) throw new Error('请选择现有文件夹');
+    trusted(event);
+    return { cwd };
+  });
   ipcMain.handle('areal-core:choose-projectless-directory', async event => {
     trusted(event);
     const result = await dialog.showOpenDialog(window, { title: '选择无项目任务文件夹', properties: ['openDirectory', 'createDirectory'] });
@@ -263,10 +338,13 @@ app.whenReady().then(async () => {
     trusted(event);
     return fileOpen({ backend, shell, home: app.getPath('home'), authorize: () => trusted(event), chooseSave: options => dialog.showSaveDialog(window, options) }, request);
   });
+  const pluginArchives = new PluginArchives({ backend, choose: options => dialog.showOpenDialog(window, options) });
   ipcMain.handle('areal-core:command', async (event, name, params) => {
     trusted(event);
     try {
       validateCommand(name, params);
+      if (name === 'manage' && ['pluginArchivePick', 'pluginArchiveImport'].includes(params.operation))
+        return { ok: true, value: await pluginArchives.command(params, () => trusted(event)) };
       if (name === 'remoteControl') return { ok: true, value: await backend.remoteControl(params) };
       if (name === 'serviceStatus') return { ok: true, value: await backend.serviceStatus() };
       if (name === 'stopService') return { ok: true, value: await requestStopService() };
@@ -288,6 +366,13 @@ app.whenReady().then(async () => {
       }
       trusted(event);
       const value = await backend.command(name, params);
+      if (name === 'manage') mcpMetadataImages.remember(params, value);
+      if (name === 'manage' && params.operation === 'pluginAuth' && params.authOperation === 'start' && value?.status === 'pending') {
+        const authUrl=new URL(value.authorizationUrl);
+        if (authUrl.protocol !== 'https:' && !(authUrl.protocol === 'http:' && ['localhost','127.0.0.1','[::1]'].includes(authUrl.hostname))) throw new Error('不支持的认证 URL');
+        try { await shell.openExternal(authUrl.href); }
+        catch { throw new Error('无法打开认证页面，请核对认证状态后重试'); }
+      }
       if (name === 'chatgpt' && params.operation === 'login') {
         try { await shell.openExternal(value.authUrl); }
         catch { await backend.command('chatgpt', { operation: 'cancel', provider: params.provider }); throw new Error('无法打开浏览器，请重试 ChatGPT 登录'); }
@@ -330,10 +415,14 @@ app.whenReady().then(async () => {
   // Incompatible services keep their recovery dialog; failures remain retryable.
   const windowLoaded = createWindow();
   const serviceStarted = (async () => {
+    const trace = startupTrace('gui.backend_init');
+    trace.advance('initialize');
     try {
       await backend.init({ automatic: true });
+      trace.advance('initial_project');
       if (backend.status.connected && process.env.AREAL_CORE_WORKSPACE) await backend.addProject(process.env.AREAL_CORE_WORKSPACE);
-    } catch { /* 错误由后台连接快照展示，用户显式重试。 */ }
+      trace.finish(backend.status.connected ? 'ok' : 'skipped');
+    } catch (error) { trace.finish('error', error); } /* 错误由后台连接快照展示，用户显式重试。 */
     publish();
   })();
   await windowLoaded;
@@ -349,7 +438,7 @@ app.whenReady().then(async () => {
   sampleActivity();
   await serviceStarted;
   sampleActivity();
-}).catch(error => { if (error.code !== 'STARTUP_CANCELLED') { console.error(error); dialog.showErrorBox('AReaL 启动失败', error.message); } app.exit(error.code === 'STARTUP_CANCELLED' ? 0 : 1); });
+}).catch(error => { startupTraceMain.finish('error', error); if (error.code !== 'STARTUP_CANCELLED') { console.error(error); dialog.showErrorBox('AReaL 启动失败', error.message); } app.exit(error.code === 'STARTUP_CANCELLED' ? 0 : 1); });
 
 app.on('activate', () => { if (!startupPending && window && !window.isDestroyed()) window.show(); });
 app.on('window-all-closed', () => {});

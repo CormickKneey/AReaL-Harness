@@ -1,10 +1,12 @@
+import { SettingsSelect } from "./SettingsPageParts.js";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../components/ui/button.js";
 import { Input } from "../components/ui/input.js";
 import { Switch } from "../components/ui/switch.js";
-import type { Data } from "../services.js";
-import { EmptySettings, Feedback, type SettingsProps } from "./common.js";
+import type { Action, Data } from "../services.js";
+import { EmptySettings, Feedback } from "./common.js";
 import { SettingsGroupCard, SettingsRow, SettingsSection } from "./SettingsPageParts.js";
+import { NewSessionModelSetting } from "./NewSessionModelSetting.js";
 import { useDraftBlocker } from "./UnsavedChanges.js";
 
 const storageKeyFor = (projectId?: string, threadId?: string) => `areal-gui:thread-config:${projectId}:${threadId}`;
@@ -54,8 +56,8 @@ const wireParameters = (parameters: Data, clear: boolean) => clear ? {} : {
 };
 
 /** 会话配置只影响 Core 接受后的后续轮次。草稿和未知结果留在本页，不自动重发。 */
-export function SessionSettings({ project, thread, action }: SettingsProps) {
-  const configuration = thread && project.configurations?.[thread.id];
+export function SessionSettings({ project, thread, action }: { project?: Data; thread?: Data; action: Action }) {
+  const configuration = thread && project?.configurations?.[thread.id];
   const storageKey = storageKeyFor(project?.id, thread?.id);
   const ready = useRef(false);
   const clean = useRef("");
@@ -65,13 +67,14 @@ export function SessionSettings({ project, thread, action }: SettingsProps) {
   const [readback, setReadback] = useState<Data | null>(null);
   const [rereadRevision, setRereadRevision] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  const [defaultBusy, setDefaultBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const threadPending = (project?.pending ?? []).filter((entry: Data) => entry.params?.threadId === thread?.id);
   const pendingConfig = threadPending.some((entry: Data) => entry.method === "areal/thread/configure" && !entry.awaitingResponse);
   const unknown = !!draft?.unknown || pendingConfig;
   const running = !!thread?.turns?.some((turn: Data) => turn.status === "inProgress");
-  const fieldsDisabled = busy || !!thread?.desktop?.archived || running || threadPending.length > 0;
+  const fieldsDisabled = busy || defaultBusy || !!thread?.desktop?.archived || running || threadPending.length > 0;
   useEffect(() => {
     if (ready.current || !configuration) return;
     ready.current = true;
@@ -92,7 +95,7 @@ export function SessionSettings({ project, thread, action }: SettingsProps) {
   useDraftBlocker({
     label: "会话配置",
     dirty,
-    busy,
+    busy: busy || defaultBusy,
     discard: () => {
       localStorage.removeItem(storageKey);
       if (configuration) {
@@ -112,7 +115,8 @@ export function SessionSettings({ project, thread, action }: SettingsProps) {
       await saveRef.current(draft?.baseRevision);
     },
   });
-  if (!thread || !configuration || !draft) return <EmptySettings>请先选择任务，以编辑会话配置。</EmptySettings>;
+  const newSessionSetting = <NewSessionModelSetting action={action} disabled={busy || dirty} onBusyChange={setDefaultBusy} />;
+  if (!project || !thread || !configuration || !draft) return <>{newSessionSetting}<EmptySettings>请先选择任务，以编辑会话配置。</EmptySettings></>;
   const profileLocked = configuration.profile?.readOnly === true;
   const profileSkills: Data[] = configuration.profile?.skills ?? [];
   const models = (project.models ?? []).filter((model: Data) => model.providerId && model.modelId && model.available !== false);
@@ -190,24 +194,24 @@ export function SessionSettings({ project, thread, action }: SettingsProps) {
     finally { setBusy(false); }
   };
   return (
-    <form className="settings-form" noValidate onSubmit={event => { event.preventDefault(); if (!fieldsDisabled && !conflict) void saveRef.current(draft.baseRevision); }}>
+    <>{newSessionSetting}<form className="settings-form" noValidate onSubmit={event => { event.preventDefault(); if (!fieldsDisabled && !conflict) void saveRef.current(draft.baseRevision); }}>
       <fieldset disabled={fieldsDisabled} className="m-0 space-y-6 border-0 p-0">
-        <SettingsSection title="会话模型" description="只影响之后的新消息。选择预设或服务默认会清除会话模型覆盖。">
+        <SettingsSection title="会话模型" description="新消息使用此模型，已入队消息保持不变。">
           <SettingsGroupCard>
-            <SettingsRow label="模型" description="可选模型来自当前 Core 目录。已入队消息保留加入时的模型。" control={
-              <select aria-label="会话模型" value={modelValue(draft.model)} onChange={event => update({ model: parseModel(event.target.value) })}>
+            <SettingsRow label="模型"  control={
+              <SettingsSelect aria-label="会话模型" value={modelValue(draft.model)} onValueChange={selectedValue => update({ model: parseModel(selectedValue) })}>
                 <option value="">预设或服务默认</option>
                 {models.map((model: Data) => <option key={modelValue(model)} value={modelValue(model)}>{model.displayName || model.modelId}</option>)}
-              </select>
+              </SettingsSelect>
             } />
           </SettingsGroupCard>
         </SettingsSection>
-        <SettingsSection title="会话权限与安全" description="只影响之后的新消息。已入队消息配置保持不变；部署与预设的权限上限仍生效。">
+        <SettingsSection title="会话权限与安全" description="用于新消息，仍受部署与预设的权限上限约束。">
           <SettingsGroupCard>
-            <SettingsRow label="只读模式" description={profileLocked ? "只读预设不能放宽为可写，部署权限也不会被会话配置扩大。" : "限制写操作与高危行为，具体工具权限由 Core 判定。"} control={
+            <SettingsRow label="只读模式" description={profileLocked ? "当前预设强制只读。" : "限制写操作与高危行为。"} control={
               <Switch aria-label="只读模式" checked={profileLocked || draft.options.readOnly === true} disabled={fieldsDisabled || profileLocked} onCheckedChange={readOnly => update({ options: { ...draft.options, readOnly } })} />
             } />
-            <SettingsRow label="单轮最大模型调用次数" description="防止单轮次无限循环调用的安全上限（1 - 1024）。" control={
+            <SettingsRow label="单轮最大模型调用次数" description="安全上限：1–1024。" control={
               <div className="flex items-center gap-1.5">
                 <Input type="number" aria-label="单轮最大模型调用次数" min={1} max={1024} value={draft.options.maxModelRounds ?? ""} className="w-20 text-center" onChange={event => update({ options: { ...draft.options, maxModelRounds: event.target.value === "" ? null : Number(event.target.value) } })} />
                 <span className="text-ui-sm text-foreground-subtle">次</span>
@@ -215,7 +219,7 @@ export function SessionSettings({ project, thread, action }: SettingsProps) {
             } />
           </SettingsGroupCard>
         </SettingsSection>
-        <SettingsSection title="指令设置" description="为当前任务追加自定义系统指令。恢复默认会清除这段追加，不改写旧轮次。">
+        <SettingsSection title="指令设置" description="追加到之后的新消息；恢复默认可清除追加内容。">
           <SettingsGroupCard>
             <div className="space-y-2 p-4">
               <div className="settings-field-label">附加指令</div>
@@ -223,13 +227,13 @@ export function SessionSettings({ project, thread, action }: SettingsProps) {
             </div>
           </SettingsGroupCard>
         </SettingsSection>
-        <SettingsSection title="会话技能" description="只使用所选技能时，下一次执行采用这个子集。使用预设全部技能会清除会话覆盖。">
+        <SettingsSection title="会话技能" description="选择之后执行时可用的技能。">
           <SettingsGroupCard>
-            <div className="space-y-3 p-4">
-              <select aria-label="会话技能范围" value={draft.skillMode} onChange={event => update({ skillMode: event.target.value, skills: event.target.value === "profile" ? [] : draft.skills })}>
-                <option value="profile">使用预设全部技能</option>
-                <option value="custom">只使用所选技能</option>
-              </select>
+            <SettingsRow label="技能范围" control={<SettingsSelect aria-label="会话技能范围" value={draft.skillMode} onValueChange={selectedValue => update({ skillMode: selectedValue, skills: selectedValue === "profile" ? [] : draft.skills })}>
+                <option value="profile">预设全部</option>
+                <option value="custom">所选技能</option>
+              </SettingsSelect>} />
+            <div className="space-y-3 px-4 pb-4">
               {draft.skillMode === "custom" && profileSkills.map(skill => {
                 const key = skillKey(skill);
                 return <label key={key} className="flex items-center gap-2"><input type="checkbox" aria-label={`${skill.id} · ${skill.revision}`} checked={draft.skills.includes(key)} onChange={event => update({ skills: event.target.checked ? [...draft.skills, key] : draft.skills.filter((item: string) => item !== key) })} />{skill.id} · {skill.revision}</label>;
@@ -238,7 +242,7 @@ export function SessionSettings({ project, thread, action }: SettingsProps) {
             </div>
           </SettingsGroupCard>
         </SettingsSection>
-        <SettingsSection title="模型参数" description="留空表示交给目标模型的默认参数。恢复默认会清空会话参数覆盖。">
+        <SettingsSection title="模型参数" description="留空使用模型默认值。">
           <SettingsGroupCard>
             <SettingsRow label="温度 (Temperature)" description="采样随机性（0.0 - 2.0）。" control={
               <Input type="number" aria-label="温度" min={0} max={2} step={0.1} value={draft.parameters.temperature ?? ""} className="w-24 text-center" onChange={event => update({ parameters: { ...draft.parameters, temperature: event.target.value === "" ? null : Number(event.target.value) } })} />
@@ -271,6 +275,6 @@ export function SessionSettings({ project, thread, action }: SettingsProps) {
         <p>最大输出 Token：{readback.parameters?.maxOutputTokens ?? "默认"}</p>
         <p>只读：{readback.readOnly === true ? "是" : "否"}</p>
       </section>}
-    </form>
+    </form></>
   );
 }

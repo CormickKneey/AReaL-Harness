@@ -14,6 +14,8 @@ async fn fork_settled_failure_and_interruption_preserve_status() {
         (&active, TurnStatus::InProgress),
     ] {
         source.turns.push(Turn {
+            interruption: None,
+            continued_from_turn_id: None,
             started_at: None,
             completed_at: None,
             duration_ms: None,
@@ -134,6 +136,8 @@ async fn fork_unknown_hook_requires_source_inspection_and_keeps_unknown() {
     }))
     .unwrap();
     source.turns.push(Turn {
+        interruption: None,
+        continued_from_turn_id: None,
         started_at: None,
         completed_at: None,
         duration_ms: None,
@@ -280,6 +284,8 @@ async fn fork_creation_faults_recover_only_committed_targets() {
         let mut source = engine.create("/fixture".into()).await.unwrap();
         let anchor = id();
         source.turns.push(Turn {
+            interruption: None,
+            continued_from_turn_id: None,
             started_at: None,
             completed_at: None,
             duration_ms: None,
@@ -437,6 +443,8 @@ async fn inherited_media_survives_release_gc_and_restart() {
     source = engine.read(&source.id, true).await.unwrap();
     let anchor = id();
     source.turns.push(Turn {
+        interruption: None,
+        continued_from_turn_id: None,
         started_at: None,
         completed_at: None,
         duration_ms: None,
@@ -573,6 +581,8 @@ async fn model_history_preserves_completion_batches_and_defers_tool_images() {
         .unwrap()
     };
     thread.turns.push(Turn {
+        interruption: None,
+        continued_from_turn_id: None,
         started_at: None,
         completed_at: None,
         duration_ms: None,
@@ -648,6 +658,8 @@ async fn model_history_keeps_short_references_and_preserves_runtime_audit() {
         );
     }
     thread.turns.push(Turn {
+        interruption: None,
+        continued_from_turn_id: None,
         started_at: None,
         completed_at: None,
         duration_ms: None,
@@ -749,6 +761,8 @@ async fn browser_history_keeps_plan_private_and_preserves_rejected_arguments() {
         expected.push(want);
     }
     thread.turns.push(Turn {
+        interruption: None,
+        continued_from_turn_id: None,
         started_at: None,
         completed_at: None,
         duration_ms: None,
@@ -855,19 +869,15 @@ async fn dropping_a_steer_waiter_keeps_durable_input_and_memory_consistent() {
     let owned = engine.clone();
     let thread_id = thread.id.clone();
     let turn_id = turn.id.clone();
-    let cell = engine.cell(&thread.id).await.unwrap();
     let request = tokio::spawn(async move {
         owned
             .steer(&thread_id, &turn_id, vec![Input::text("accepted steer")])
             .await
     });
-    tokio::time::timeout(Duration::from_secs(2), async {
-        while cell.state.try_lock().is_ok() {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
+    // hooks 会额外读取会话锁；只在真实持久写入排队后丢弃响应等待。
+    tokio::time::timeout(Duration::from_secs(2), engine.store.wait_for_paused_write())
+        .await
+        .unwrap();
     request.abort();
     let _ = request.await;
     drop(pause);
@@ -889,6 +899,8 @@ async fn compacted_history_preserves_steer_inside_an_automatic_goal_turn() {
     let engine = Engine::open(dir.path(), Arc::new(PendingModel), Limits::default()).unwrap();
     let mut thread = engine.create("/fixture".into()).await.unwrap();
     thread.turns.push(Turn {
+        interruption: None,
+        continued_from_turn_id: None,
         started_at: None,
         completed_at: None,
         duration_ms: None,
@@ -966,6 +978,8 @@ async fn persistence_encoding_benchmark() {
     let engine = Engine::open(dir.path(), Arc::new(PendingModel), Limits::default()).unwrap();
     let mut thread = engine.create("/fixture".into()).await.unwrap();
     thread.turns.push(Turn {
+        interruption: None,
+        continued_from_turn_id: None,
         started_at: None,
         completed_at: None,
         duration_ms: None,

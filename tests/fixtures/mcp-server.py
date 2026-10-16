@@ -27,6 +27,9 @@ try:
         method = request.get("method")
         params = request.get("params", {})
         result = None
+        if method == "server/discover":
+            send({"id": request["id"], "error": {"code": -32601, "message": "Method not found"}})
+            continue
         if method == "initialize":
             if mode == "hang-startup":
                 continue

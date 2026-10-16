@@ -10,8 +10,13 @@
 .design-preview[data-width="narrow"] .design-preview-panel { width: min(100%, 360px); }
 .design-preview-actions { display: flex; flex-wrap: wrap; gap: var(--spacing-inline); }
 .design-preview-side { height: 600px; display: flex; flex-direction: column; }
+.design-preview-messages .messages { height: 420px; }
 .design-preview-tokens { max-width: 900px; }
 .design-preview-tokens dl > div { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--spacing-inline); padding: var(--spacing-inline) 0; border-bottom: var(--border-width-default) solid var(--color-border); }
 .design-preview-tokens dt { display: flex; flex-direction: column; }
 .design-preview-tokens dt span { color: var(--color-foreground-subtle); }
 .design-preview-tokens dd { margin: 0; max-width: 440px; overflow-wrap: anywhere; font: var(--text-ui-sm)/1.5 var(--font-mono); }
+
+.design-preview .settings-group-card { background-color: var(--color-settings-card, var(--color-card)) !important; }
+.design-preview[data-view="conversation"] > :not(.design-preview-header):not(#conversation-timeline) { display: none; }
+.design-preview[data-view="conversation"] #conversation-timeline { margin-inline: auto; }

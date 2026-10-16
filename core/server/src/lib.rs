@@ -511,6 +511,11 @@ async fn serve(
             id: s.id, revision: s.revision, root: s.root,
             metadata: Some(s.metadata),
         }).collect())?;
+        // Trusted launcher paths determine plugin discovery and shared installation state.
+        engine.install_hook_configuration(config.home.clone(), config.config_file.clone())?;
+        engine.install_plugin_store(Arc::new(areal_plugins::Store::open(
+            config.home.join("plugins"), args.workspace.clone().unwrap_or(workspace.clone()).canonicalize()?, homedir.clone(),
+        )?))?;
         for name in mcp_env.keys() {
             if let Some(name) = name.to_str()
                 && let Some(reference) = name.strip_prefix("AREAL_CREDENTIAL_")
@@ -520,6 +525,7 @@ async fn serve(
             }
         }
         engine.install_configured_models(configured_models(&config, &mcp_env, &engine)?)?;
+        engine.recover_desktop_default_models().await?;
         if let Some(policy_path) = &args.workgroup_policy {
             use areal_engine::workgroup::service::{NativeFactory, Policy, Service};
             let policy: Policy = serde_json::from_slice(&std::fs::read(policy_path)?)?;

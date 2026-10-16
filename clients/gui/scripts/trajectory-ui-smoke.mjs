@@ -187,6 +187,7 @@ try {
       },
       theme: async () => ({ platform: "darwin", dark: false, id: "light" }),
       onTheme: () => () => {},
+      onMcpAppEvent: () => () => {},
       presentReady: async () => {},
       preview: async () => ({}),
       command: async (name, params) => {
@@ -262,8 +263,8 @@ try {
   await page.getByText(/^Agent 执行耗时（含工具\/等待） 1,?200 ms$/).waitFor();
   await page.getByText("模型调用耗时（含网络/重试） 125.5 ms", { exact: true }).waitFor();
   await page.getByText("125.5 ms / 125.5 ms / 125.5 ms", { exact: true }).waitFor();
-  await page.getByText(/^最近 3 条记录中的模型调用耗时/).waitFor();
-  await page.getByText(/仅汇总最近最多 100 条上传记录，非完整历史/).waitFor();
+  await page.getByText("最近 3 条记录；包含请求准备、网络、排队与重试耗时。", { exact: true }).waitFor();
+  await page.getByText("最近最多 100 条；重试不重复计数，缺失耗时保持未知。", { exact: true }).waitFor();
   assert.equal(await page.getByText(/^事件发生 /).count(), 1);
   assert.equal(await page.getByText(/^记录创建 /).count(), 3);
   assert.equal(await page.getByText(/^上传成功 /).count(), 2);
@@ -423,7 +424,7 @@ try {
   await page.evaluate(() => window.setConnection("unavailable"));
   await settled();
   await page
-    .getByText("后台适配器未连接，请在“后台服务”中连接后读取状态。", { exact: true })
+    .getByText("后台未连接", { exact: true })
     .waitFor();
   await advance(31000);
   assert.equal(await trajectoryCalls(), retryCalls);

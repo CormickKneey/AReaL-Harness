@@ -1,16 +1,24 @@
+import { useState } from "react";
+import { ActionButton } from "../components/ui/action-button.js";
+import { SettingsDialog } from "./common.js";
 import { SettingsGroupCard, SettingsRow, SettingsSection } from "./SettingsPageParts.js";
 import type { Data } from "../services.js";
 
 /** Read-only deployment projection; viewing it never connects or starts Core. */
 export function CoreCapabilitiesSettings({ projects, connected }: { projects: Data[]; connected: boolean }) {
-  return <section aria-label="Core 连接与能力" className="settings-sections">
-    <SettingsSection title="Core 连接与能力" description="当前运行环境声明的功能。实际操作仍受权限、部署配置和任务状态限制。">
+  const [open, setOpen] = useState(false);
+  return <SettingsSection title="运行环境">
+    <SettingsGroupCard>
+      <SettingsRow label="Core 连接与能力" control={<ActionButton onClick={() => setOpen(true)}>查看详情</ActionButton>} />
+    </SettingsGroupCard>
+    {open && <SettingsDialog title="Core 连接与能力" description="各工作区的运行环境与功能支持。" onClose={() => setOpen(false)}>
+    <div className="settings-sections">
       {!projects.length && <p role="status">尚未连接工作区，能力信息尚未读取。</p>}
       {projects.map(project => {
         const core = project.core, available = connected && !!project.state?.connected;
         const error = project.error || project.state?.error;
         return <SettingsGroupCard key={project.id}>
-          <SettingsRow label={project.root.split(/[\\/]/).filter(Boolean).at(-1) || "工作区"} description={project.root}
+          <SettingsRow label={project.root.split(/[\\/]/).filter(Boolean).at(-1) || "工作区"}
             control={<span>{available ? "Core 已连接" : "Core 未连接，上次能力信息可能已过期。"}</span>} />
           {error && <p role="alert" className="px-4 text-destructive">{error}</p>}
           {core?.binary && <SettingsRow control={null} label="Core 程序" description={<span className="break-all">{core.binary}</span>} />}
@@ -25,6 +33,7 @@ export function CoreCapabilitiesSettings({ projects, connected }: { projects: Da
           </>}
         </SettingsGroupCard>;
       })}
-    </SettingsSection>
-  </section>;
+    </div>
+    </SettingsDialog>}
+  </SettingsSection>;
 }

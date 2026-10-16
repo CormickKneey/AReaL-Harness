@@ -123,7 +123,6 @@ impl Engine {
         cancel: &CancellationToken,
         steer: &mut mpsc::Receiver<bool>,
     ) -> anyhow::Result<()> {
-        self.refresh_managed_tools(cell).await?;
         let model = cell
             .state
             .lock()
@@ -185,6 +184,7 @@ impl Engine {
         };
         let mut model_rounds = 0;
         'restart: loop {
+            self.drain_hook_results(cell, true).await?;
             if self.task_wait_requested(cell).await {
                 return Ok(());
             }
@@ -802,6 +802,10 @@ impl Engine {
                                 anyhow::bail!(
                                     "delegated execution has unresolved delivery or cleanup; inspect its executionId before continuing"
                                 );
+                            }
+                            if self.plugin_hooks_stop(cell, cancel).await? {
+                                complete_item(cell, &thread_id, &turn_id, &item_id).await;
+                                continue 'restart;
                             }
                             {
                                 let mut state = cell.state.lock().await;

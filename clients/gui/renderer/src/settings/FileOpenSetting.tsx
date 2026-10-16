@@ -1,7 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Button } from "../components/ui/button.js";
-import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "../components/ui/dropdown-menu.js";
-import { SettingsRow } from "./SettingsPageParts.js";
+import { SettingsRow, SettingsSelect } from "./SettingsPageParts.js";
 import type { PlatformServices, FileOpenTargets } from "../services.js";
 
 export function FileOpenSetting({ service, preferred, connected }: {
@@ -22,9 +20,9 @@ export function FileOpenSetting({ service, preferred, connected }: {
     catch (cause) { setError((cause as Error).message); }
     finally { saving.current = false; setBusy(false); }
   };
-  return <SettingsRow label="默认文件打开位置" description="默认打开文件和文件夹的位置"
+  return <SettingsRow label="默认文件打开位置"
     detail={error && <span role="alert" className="text-destructive">{error}</span>}
-    control={<DropdownMenu><DropdownMenuTrigger render={<Button variant="outline" size="sm" aria-label="默认文件打开位置" disabled={!service || !connected || !catalog || busy}>{catalog?.preferredLabel ?? "读取中…"}</Button>} />
-      <DropdownMenuContent align="end">{catalog?.targets.map(target => <DropdownMenuItem key={target.id} onClick={() => void save(target.id)}>{target.label}</DropdownMenuItem>)}</DropdownMenuContent>
-    </DropdownMenu>} />;
+    control={catalog ? <SettingsSelect aria-label="默认文件打开位置" value={catalog.preferred} disabled={!service || !connected || busy}
+      onValueChange={target => void save(target)}>{catalog.targets.map(target => <option key={target.id} value={target.id}>{target.label}</option>)}</SettingsSelect>
+      : <span className="text-foreground-subtle">读取中…</span>} />;
 }

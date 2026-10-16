@@ -6,6 +6,8 @@ Core 提供固定 Codex app-server 0.145.0 的子集与 AReaL 扩展，不代表
 
 `Turn` 包含可缺省的 `startedAt`、`completedAt`（Unix 秒）和 `durationMs`（毫秒）。开始时间在准入时保存，结束时间与最终时长随终态保存并发布；`durationMs` 使用单调时钟，覆盖激活后的模型、工具、审批等待和清理，不包含尚未准入的排队时间。客户端只刷新运行显示，不把工具时长相加或从打开窗口时重新计时。旧记录与异常重启后无法确认的结束时间/时长保持缺省，不能当作零或用重启时间填补。正常停止和失败结算也保存最终时间。
 
+`Turn.interruption` 可选取 `userPause` 或 `coreRecovery`，记录主动暂停或重启修复的事实。旧记录缺省时不猜原因。可选 `continuedFromTurnId` 只标记用户显式继续所创建的新 Turn，不表示旧模型调用或进程恢复。暂停仍结算原 Turn，UNKNOWN 和失败分类保留。打开会话、重连和重启不自动继续；普通会话的提交与继续见[桌面提交契约](desktop.md#submissions)。
+
 ## 传输与会话
 
 每个 WebSocket 文本帧是一条请求/响应/通知，上限 4 MiB。请求 `{id,method,params}`，id 为字符串或整数，params 为对象；可省略 jsonrpc，响应 result/error 二选一，不支持批处理。先请求 initialize，再发送 initialized 通知。

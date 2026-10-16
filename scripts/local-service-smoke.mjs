@@ -469,7 +469,37 @@ try {
     input: [{ type: "text", text: "after-reload" }],
   });
   await until(() => requests.some((r) => r.text === "after-reload"));
-  assert.equal(requests.find((r) => r.text === "after-reload").model, "fixture-new");
+  assert.equal(requests.find((r) => r.text === "after-reload").model, "fixture");
+  await until(async () => (await hot.call("areal/server/status", {})).restartSafe);
+  const { thread: newHotThread } = await hot.call("areal/thread/start", {
+    requestId: crypto.randomUUID(),
+    cwd: workspace,
+  });
+  await hot.call("areal/turn/start", {
+    requestId: crypto.randomUUID(),
+    threadId: newHotThread.id,
+    input: [{ type: "text", text: "new-thread-after-reload" }],
+  });
+  await until(() => requests.some((r) => r.text === "new-thread-after-reload"));
+  assert.equal(requests.find((r) => r.text === "new-thread-after-reload").model, "fixture-new");
+  await until(async () => (await hot.call("areal/server/status", {})).restartSafe);
+  const { thread: beforeReset } = await hot.call("thread/read", {
+    threadId: hotThread.id,
+    includeTurns: true,
+  });
+  await hot.call("areal/thread/configure", {
+    requestId: crypto.randomUUID(),
+    threadId: hotThread.id,
+    expectedRevision: beforeReset.desktop.configuration.revision,
+    resetModel: true,
+  });
+  await hot.call("areal/turn/start", {
+    requestId: crypto.randomUUID(),
+    threadId: hotThread.id,
+    input: [{ type: "text", text: "after-default-reset" }],
+  });
+  await until(() => requests.some((r) => r.text === "after-default-reset"));
+  assert.equal(requests.find((r) => r.text === "after-default-reset").model, "fixture-new");
   await until(async () => (await hot.call("areal/server/status", {})).restartSafe);
   // 非法编辑保留旧配置，修复后无需重启即可再次更新。
   await writeFile(config, "schema_version = 1\n[model\n");
@@ -543,7 +573,15 @@ try {
   assert.notEqual(current.generation, beforeCredentialRestart.generation);
   assert.equal(applied[1].generation, current.generation);
   const refreshed = await client(current);
-  await refreshed.call("thread/resume", { threadId: hotThread.id });
+  const { thread: beforeCredentialReset } = await refreshed.call("thread/resume", {
+    threadId: hotThread.id,
+  });
+  await refreshed.call("areal/thread/configure", {
+    requestId: crypto.randomUUID(),
+    threadId: hotThread.id,
+    expectedRevision: beforeCredentialReset.desktop.configuration.revision,
+    resetModel: true,
+  });
   await refreshed.call("areal/turn/start", {
     requestId: crypto.randomUUID(),
     threadId: hotThread.id,

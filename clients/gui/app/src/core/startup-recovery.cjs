@@ -5,7 +5,6 @@ const { PROTOCOL } = require('./service-protocol.cjs');
 const { createResourceRecovery, summary } = require('./resource-recovery.cjs');
 const { cancelLegacyService, legacyBusy, captureLegacySchedules, reconcileLegacySchedules, pauseLegacySchedules } = require('./legacy-service-cancel.cjs');
 
-// 只使用旧服务的资源恢复/安全停止接口，不将其任务投影接入新 GUI。
 async function recoverDesktopService({ metadata, home, notify, connection, performStop, purpose = 'startup' }) {
   const lifecycle = new DesktopLifecycle({ connection, metadata, home, notify, forUpdate: true });
   const restarting = purpose === 'startup';
@@ -28,7 +27,7 @@ async function recoverDesktopService({ metadata, home, notify, connection, perfo
       const canCancel = view.cancel;
       const stop = mode => performStop ? performStop(mode, view) : lifecycle.stop({ mode, observed: view });
       const detail = [
-        restarting ? '检测到另一版本或启动配置的后台服务。安全重启后继续打开应用，已有模型配置和历史记录会保留。'
+        restarting ? '检测到另一版本或启动配置的后台服务。继续使用原后台会保留其原启动配置，包括沙箱和工作组配置，已有任务会继续运行。本次启动的新配置或磁盘代码需要显式安全重启后才能生效。已有模型配置和历史记录会保留。'
           : '检查共享后台的执行和资源状态。安全停止后所有窗口将断开后台连接，已有模型配置和历史记录会保留。',
         peers && '请先退出其他连接此后台的 GUI。',
         busy && '后台仍有任务、排队消息或操作，请等待完成后重试。',
@@ -36,10 +35,12 @@ async function recoverDesktopService({ metadata, home, notify, connection, perfo
         canRecover && '受管终端阻止后台重启。请检查并关闭不再需要的终端，然后重新检查。',
         describe(projects) || summary(projects), lastError,
       ].filter(Boolean).join('\n\n');
-      const buttons = blocked ? ['稍后处理', '重新检查', ...(canRecover ? ['检查后台资源…'] : []), ...(canPause ? ['暂停定时安排…'] : []), ...(canCancel ? [cancelLabel] : [])] : ['稍后处理', restarting ? '重启后台并继续' : '停止后台服务'];
-      const answer = await notify({ type: blocked ? 'warning' : 'question', message: blocked ? restarting ? '后台暂时无法重启' : '后台暂时无法停止' : restarting ? '需要重启后台服务' : '停止共享后台服务？', detail, buttons, defaultId: canRecover ? 2 : 1, cancelId: 0, noLink: true });
+      const preserve = ['稍后处理', ...(restarting ? ['继续使用原后台'] : [])];
+      const buttons = blocked ? [...preserve, '重新检查', ...(canRecover ? ['检查后台资源…'] : []), ...(canPause ? ['暂停定时安排…'] : []), ...(canCancel ? [cancelLabel] : [])] : [...preserve, restarting ? '重启后台并继续' : '停止后台服务'];
+      const answer = await notify({ type: blocked ? 'warning' : 'question', message: blocked ? restarting ? '后台暂时无法重启' : '后台暂时无法停止' : restarting ? '需要重启后台服务' : '停止共享后台服务？', detail, buttons, defaultId: restarting ? 1 : canRecover ? 2 : 1, cancelId: 0, noLink: true });
       if (answer.response === 0 && purpose !== 'startup') return { kind: 'dismissed', canceled: true };
       if (answer.response === 0) throw Object.assign(new Error('后台连接已暂缓，原后台保持运行。可重新检查并处理后台资源。'), { code: 'STARTUP_CANCELLED' });
+      if (restarting && answer.response === 1) return { kind: 'reconnect-existing' };
       lastError = ''; stopRejected = false;
       if (blocked) {
         if (buttons[answer.response] === '检查后台资源…') await recoverResources();

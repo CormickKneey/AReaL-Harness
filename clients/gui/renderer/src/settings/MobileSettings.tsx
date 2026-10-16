@@ -1,10 +1,11 @@
+import { SettingsSelect } from "./SettingsPageParts.js";
+import { SettingsDisclosure } from "./SettingsDisclosure.js";
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, Monitor, ShieldCheck, Smartphone } from "lucide-react";
+import { Check, Monitor, ShieldCheck, Smartphone } from "lucide-react";
 import "./MobileSettings.css";
 import { Button } from "../components/ui/button.js";
 import { Input } from "../components/ui/input.js";
-import { SettingsSection, SettingsGroupCard } from "./SettingsPageParts.js";
-import { SettingsSegmentedTabs } from "./SettingsSegmentedTabs.js";
+import { SettingsSection, SettingsGroupCard, SettingsRow } from "./SettingsPageParts.js";
 import type { Action, Data } from "../services.js";
 
 const networkDiagnostics: Record<string, string> = {
@@ -387,20 +388,16 @@ export function MobileSettings({ action, projects }: { action: Action; projects:
                             : "只有你在电脑上确认设备、项目和权限后，对方才能访问。"}
                     </p>
                     <div className="remote-entry-controls">
-                        <label>
-                            连接方式
-                            <select
-                                aria-label="配对入口"
-                                value={pairTransport}
-                                onChange={(event) => {
-                                    setPairTransport(event.target.value);
+                        <div>
+                            <div className="mb-1">连接方式</div>
+                            <SettingsSelect aria-label="配对入口" value={pairTransport} onValueChange={selectedValue => {
+                                    setPairTransport(selectedValue);
                                     setInvite(null);
-                                }}
-                            >
-                                <option value="direct">直接连接 · 本机或 HTTPS</option>
-                                <option value="relay">中继服务 · Relay</option>
-                            </select>
-                        </label>
+                                }}>
+                                <option value="direct">直接连接</option>
+                                <option value="relay">中继服务</option>
+                            </SettingsSelect>
+                        </div>
                         {pairTransport === "direct" && !state.directEnabled && (
                             <Button
                                 disabled={busy}
@@ -468,8 +465,7 @@ export function MobileSettings({ action, projects }: { action: Action; projects:
                     )}
                     {inviteExpired && <p role="status">配对邀请已过期，请生成新邀请。</p>}
                     {reconnectUrl && (
-                        <details className="remote-reconnect">
-                            <summary>已有设备如何重新连接？</summary>
+                        <SettingsDisclosure className="remote-reconnect" title={<> 已有设备如何重新连接？ </>}>
                             <p>在已授权的浏览器中打开此链接；清除浏览器身份后需要重新配对。</p>
                             <Input
                                 aria-label="当前连接链接"
@@ -477,7 +473,7 @@ export function MobileSettings({ action, projects }: { action: Action; projects:
                                 value={reconnectUrl}
                                 onFocus={(event) => event.target.select()}
                             />
-                        </details>
+                        </SettingsDisclosure>
                     )}
                 </section>
             )}
@@ -487,12 +483,10 @@ export function MobileSettings({ action, projects }: { action: Action; projects:
             >
                 <SettingsGroupCard>
                     {(state.deviceGrants ?? []).map((device: Data) => (
-                        <details
+                        <SettingsDisclosure
                             className="remote-device-management"
                             key={`${device.devicePeerId}:${device.revision}`}
-                        >
-                            <summary>
-                                <Monitor size={18} />
+                         title={<> <Monitor size={18} />
                                 <span>
                                     {device.displayName ?? device.name ?? "浏览器设备"}
                                     <small>
@@ -505,38 +499,34 @@ export function MobileSettings({ action, projects }: { action: Action; projects:
                                                 : "仅查看"}
                                     </small>
                                 </span>
-                                <span>管理权限</span>
-                            </summary>
+                                <span>管理权限</span> </>}>
                             <GrantReview
                                 device={device}
                                 projects={projects}
                                 busy={busy}
                                 run={run}
                             />
-                        </details>
+                        </SettingsDisclosure>
                     ))}
                     {!state.deviceGrants?.length && (
                         <p className="settings-card-empty">还没有已配对设备</p>
                     )}
                 </SettingsGroupCard>
             </SettingsSection>
-            <details className="remote-network-settings" ref={networkDetails}>
-                <summary>
-                    <Smartphone size={20} />
+            <SettingsDisclosure className="remote-network-settings" ref={networkDetails} title={<> <Smartphone size={20} />
                     <span>
                         手机访问与网络设置<small>配置 HTTPS、Tailscale 或中继服务</small>
                     </span>
-                    <ChevronDown size={18} className="remote-disclosure-icon" />
-                </summary>
+                     </>}>
                 <div className="remote-network-content">
                     <SettingsSection
                         title="配置手机访问"
                         description="选择手机访问方式。"
                     >
-                        <fieldset disabled={busy} className="remote-access-tabs">
-                            <SettingsSegmentedTabs ariaLabel="手机访问方式" activateOnFocus={false} value={accessMethod} items={[{ value: "private", label: "私人网络" }, { value: "public", label: "公网" }, { value: "organization", label: "组织网络" }]} onValueChange={value => {
+                        <SettingsGroupCard><SettingsRow label="访问方式" control={
+                            <SettingsSelect aria-label="手机访问方式" value={accessMethod} disabled={busy} onValueChange={value => {
                                 if (busy) return;
-                                setAccessMethod(value);
+                                setAccessMethod(value as "private" | "public" | "organization");
                                 setProposal(null);
                                 setServeConfirmed(false);
                                 setScopeConfirmed(false);
@@ -544,11 +534,9 @@ export function MobileSettings({ action, projects }: { action: Action; projects:
                                 setOrganizationConfirmed(false);
                                 setPublicConfirmed(false);
                                 setRecoveryConfirmed(false);
-                            }} />
-                        </fieldset>
+                            }}><option value="private">私人网络</option><option value="public">公网</option><option value="organization">组织网络</option></SettingsSelect>} /></SettingsGroupCard>
                         <SettingsGroupCard className="remote-access-panel">
-                            <details className="remote-connection-details">
-                            <summary>连接详情与诊断</summary>
+                            <SettingsDisclosure className="remote-connection-details" title={<> 连接详情与诊断 </>}>
                             <p>
                                 手机使用 Serve 时必须加入同一 tailnet。组织策略、手机 tailnet
                                 成员资格及实际可达性尚未验证，本机检测成功不表示手机可连接。
@@ -591,7 +579,7 @@ export function MobileSettings({ action, projects }: { action: Action; projects:
                                     )}
                                 </div>
                             )}
-                            </details>
+                            </SettingsDisclosure>
                             {state.network?.diagnostic && <p className="remote-error" role="alert">{networkDiagnostic(state.network.diagnostic)}</p>}
                             <fieldset disabled={busy} hidden={accessMethod !== "private"} className="remote-access-fields">
                                 <legend>Tailscale Serve · 私人网络</legend>
@@ -659,7 +647,7 @@ export function MobileSettings({ action, projects }: { action: Action; projects:
                                 <legend>Tailscale Funnel · 公网</legend>
                                 <p className="remote-muted">公开 Remote 入口；配对与操作仍需授权。</p>
                                 {state.network?.scope !== "private" && state.network?.scope !== "public" && <p className="remote-muted">请先在私人网络中配置 Serve，再生成公网方案。</p>}
-                                <details><summary>公网访问说明</summary>
+                                <SettingsDisclosure title={<> 公网访问说明 </>}>
                                 <p>
                                     默认保持私人入口。Funnel 会让互联网访问 Remote 入口；仍需 Host
                                     指纹、
@@ -697,7 +685,7 @@ export function MobileSettings({ action, projects }: { action: Action; projects:
                                         。请在下方明确恢复或移除。
                                     </p>
                                 )}
-                                </details>
+                                </SettingsDisclosure>
                                 <div className="flex flex-wrap gap-2">
                                     <Button
                                         disabled={
@@ -800,27 +788,23 @@ export function MobileSettings({ action, projects }: { action: Action; projects:
                                         }}
                                     />
                                 </label>
-                                <label>
+                                <div className="settings-choice-field">
                                     访问范围
-                                    <select
-                                        aria-label="组织入口访问范围"
-                                        value={visibility}
-                                        onChange={(event) => {
-                                            setVisibility(event.target.value);
+                                    <SettingsSelect aria-label="组织入口访问范围" value={visibility} onValueChange={selectedValue => {
+                                            setVisibility(selectedValue);
                                             setOrganizationConfirmed(false);
                                             setPublicConfirmed(false);
-                                        }}
-                                    >
+                                        }}>
                                         <option value="private">组织私有网络</option>
                                         <option value="public">可能公开访问</option>
-                                    </select>
-                                </label>
-                                <details><summary>组织入口要求</summary><p>
+                                    </SettingsSelect>
+                                </div>
+                                <SettingsDisclosure title={<> 组织入口要求 </>}><p>
                                     这里只保存应用接受的精确 HTTPS
                                     来源和配对链接。组织须自行配置指向 Remote
                                     的代理、证书、WebSocket 和 ACL；代理必须保留该来源的
                                     Host，不能依赖转发身份头。
-                                </p></details>
+                                </p></SettingsDisclosure>
                                 <label className="block">
                                     <input
                                         type="checkbox"
@@ -868,7 +852,7 @@ export function MobileSettings({ action, projects }: { action: Action; projects:
                                 <span>配置状态</span><strong>{state.network?.kind ? !state.network.scope ? "待核对" : state.network.kind === "organization" ? "组织入口" : state.network.scope === "public" ? "公网入口" : "私人入口" : "待配置"}</strong><span>手机连接待验证</span>
                             </div>
                             {state.network?.kind && (
-                                <details className="remote-network-recovery"><summary>恢复或移除本应用网络配置</summary><fieldset disabled={busy} className="p-4">
+                                <SettingsDisclosure className="remote-network-recovery" title={<> 恢复或移除本应用网络配置 </>}><fieldset disabled={busy} className="p-4">
                                     <p>
                                         恢复只读核对已记录映射的实际范围，不重放发布命令；移除只撤销精确匹配的本应用
                                         Serve/Funnel
@@ -909,11 +893,11 @@ export function MobileSettings({ action, projects }: { action: Action; projects:
                                             移除网络配置
                                         </Button>
                                     </div>
-                                </fieldset></details>
+                                </fieldset></SettingsDisclosure>
                             )}
                         </SettingsGroupCard>
                     </SettingsSection>
-                    <details className="remote-relay-settings"><summary>通过中继服务连接</summary>
+                    <SettingsDisclosure className="remote-relay-settings" title={<> 通过中继服务连接 </>}>
                     <SettingsSection
                         title="通过中继服务连接"
                         description="由你的组织提供 HTTPS 同源 Remote 页面。Host 仅向此来源建立出站 WSS；手机仍须核对指纹并经桌面批准。"
@@ -994,7 +978,7 @@ export function MobileSettings({ action, projects }: { action: Action; projects:
                             </fieldset>
                         </SettingsGroupCard>
                     </SettingsSection>
-                    </details>
+                    </SettingsDisclosure>
                     <SettingsSection
                         title="关闭连接入口"
                         description="先停止入口，再移除本应用的网络映射；撤销失败会保留恢复提示。"
@@ -1008,7 +992,7 @@ export function MobileSettings({ action, projects }: { action: Action; projects:
                         </Button>
                     </SettingsSection>
                 </div>
-            </details>
+            </SettingsDisclosure>
         </div>
     );
 }

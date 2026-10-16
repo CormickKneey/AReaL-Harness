@@ -23,7 +23,9 @@ export function UserFeedback({
     action: Action;
     dark: boolean;
 }) {
-    const availability = useFeedbackAvailability(action, !!project.state?.connected);
+    const connected = !!project.state?.connected && project.desktopCapabilities?.currentCommands !== false;
+    const availability = useFeedbackAvailability(action, connected);
+    const supported = connected && availability.supported;
     const anchor = useRef<HTMLSpanElement>(null),
         panel = useRef<HTMLDivElement>(null);
     const reasonInput = useRef<HTMLTextAreaElement>(null);
@@ -54,6 +56,7 @@ export function UserFeedback({
         setAnalysis(value.analysis ?? "");
     };
     useEffect(() => {
+        if (!supported) return;
         const id = localStorage.getItem(key);
         if (!id) return;
         let live = true;
@@ -74,7 +77,7 @@ export function UserFeedback({
         return () => {
             live = false;
         };
-    }, [key, action, project.id, thread.id, project.state?.connected]);
+    }, [key, action, project.id, thread.id, supported]);
     const side = draft?.sideThreadId ? project.state?.threads?.[draft.sideThreadId] : undefined;
     const active = side?.turns?.some((value: Data) => value.status === "inProgress");
     const answers = (side?.turns ?? []).flatMap((value: Data) =>
@@ -90,7 +93,7 @@ export function UserFeedback({
         }
     }, [latest?.id, latest?.text, active]);
     useEffect(() => {
-        if (!draft || draft.state === "submitted" || busy || draft.submissionUnknown) return;
+        if (!supported || !draft || draft.state === "submitted" || busy || draft.submissionUnknown) return;
         const timer = setTimeout(() => {
             void action("feedback", {
                 operation: "draft",
@@ -106,7 +109,7 @@ export function UserFeedback({
             });
         }, 300);
         return () => clearTimeout(timer);
-    }, [draft?.id, draft?.state, busy, rating, reason, analysis, action, project.id, thread.id]);
+    }, [draft?.id, draft?.state, busy, rating, reason, analysis, action, project.id, thread.id, supported]);
     useLayoutEffect(() => {
         if (!open || !anchor.current) return;
         const trigger = anchor.current;
@@ -159,7 +162,7 @@ export function UserFeedback({
         };
     }, [open]);
     const choose = async (value: "up" | "down") => {
-        if (busy) return;
+        if (!supported || busy) return;
         if (draft?.submissionUnknown) {
             setOpen(true);
             return;
@@ -192,7 +195,7 @@ export function UserFeedback({
         }
     };
     const command = async (operation: "refine" | "submit") => {
-        if (!draft || busy || active) return;
+        if (!supported || !draft || busy || active) return;
         setBusy(true);
         setError("");
         try {
@@ -238,19 +241,20 @@ export function UserFeedback({
     };
     const close = () => {
         setOpen(false);
-        if (draft)
+        if (supported && draft)
             void action("feedback", {
                 operation: "close",
                 projectId: project.id,
                 threadId: thread.id,
                 id: draft.id,
             }).catch((cause: Error) => setError(cause.message));
-        if (!draft?.submissionUnknown) {
+        if (supported && !draft?.submissionUnknown) {
             localStorage.removeItem(key);
             setDraft(undefined);
         }
     };
     if (
+        !supported ||
         !availability.enabled ||
         !availability.connected ||
         !availability.opted_in ||

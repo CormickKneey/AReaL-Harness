@@ -223,6 +223,8 @@ const errors = [],
   checks = [];
 const button = (name) => page.getByRole("button", { name, exact: true });
 const state = () => page.evaluate(() => window.arealDesktop.snapshot());
+const project = (snapshot) =>
+  snapshot.projects.find((p) => p.root === workspace && !p.projectless);
 async function call(name, params) {
   const result = await page.evaluate(
     async ({ name, params }) => window.arealDesktop.command(name, params),
@@ -275,7 +277,7 @@ async function launch() {
 async function openPanel(name) {
   if (await button("返回工作区").isVisible()) await button("返回工作区").click();
   if (name === "终端") {
-    await button(name).click();
+    await page.keyboard.press("Control+Backquote");
     return;
   }
   await button("任务操作").click();
@@ -308,11 +310,24 @@ try {
   }, workspace);
   await button("不在项目中工作").click();
   await page.getByRole("menuitem", { name: "新建项目", exact: true }).click();
-  await until((s) => s.projects[0]?.state?.connected, "project ready");
-  const pid = (await state()).projects[0].id;
+  await until((s) => project(s)?.state?.connected, "project ready");
+  const pid = project(await state()).id;
+  const selectFixtureProfile = async () => {
+    await page.waitForFunction((id) => {
+      const workbench = document.querySelector('[data-testid="areal-workbench"]');
+      return workbench?.dataset.projectId === id && !workbench.dataset.threadId;
+    }, pid);
+    assert(project(await state()).profiles.some((p) => p.id === "standard" && p.revision === "v1"));
+    await page.evaluate((id) => {
+      const key = `areal-gui:draft:${id}:new`;
+      localStorage.setItem(`${key}:profile`, JSON.stringify({ id: "standard", revision: "v1" }));
+      window.dispatchEvent(new CustomEvent("areal-draft-change", { detail: key }));
+    }, pid);
+  };
+  await selectFixtureProfile();
   const input = () => page.locator("[data-testid=chat-input]");
   const turnCountOf = (s) =>
-    Object.values(s.projects[0].state.threads).reduce((n, t) => n + (t.turns?.length ?? 0), 0);
+    Object.values(project(s).state.threads).reduce((n, t) => n + (t.turns?.length ?? 0), 0);
   const send = async (text) => {
     const count = turnCountOf(await state());
     await input().fill(text);
@@ -331,14 +346,16 @@ try {
   await send("检查当前项目");
   await until(
     (s) =>
-      Object.values(s.projects[0].state.threads).some(
+      Object.values(project(s).state.threads).some(
         (t) => t.turns?.at(-1)?.status === "completed",
       ),
     "first send",
   );
   await page.waitForFunction(() => !document.querySelector(".error-banner"));
   const tid = await page.locator("[data-testid=areal-workbench]").getAttribute("data-thread-id");
-  const current = (s) => s.projects[0].state.threads[tid];
+  assert.equal(project(await state()).configurations[tid].profile.id, "standard");
+  assert.equal(project(await state()).configurations[tid].profile.revision, "v1");
+  const current = (s) => project(s).state.threads[tid];
   assert.ok(tid);
   await shot("02-conversation");
   checks.push("sandboxed Electron; project picker; first send; real Core/Runtime and local SSE");
@@ -395,7 +412,9 @@ try {
   await page.locator(".task-resources-popup").screenshot({ path: join(scratch, "02r-task-resources-crop.png") });
   const liveAvatar = await resources.locator(`[data-agent-avatar="${liveChild.id}"]`).getAttribute("src");
   assert.ok(liveAvatar.startsWith("data:image/svg+xml"));
-  assert.equal(await page.locator("[data-testid=chat-view]").getByRole("button", { name: `打开 ${liveChild.id} 子对话`, exact: true }).innerText(), "已创建 1 个智能体");
+  const liveAgentCard = page.locator("[data-testid=chat-view]").getByRole("button", { name: `打开 ${liveChild.id} 子对话`, exact: true });
+  assert.equal(await liveAgentCard.count(), 1);
+  assert.match(await liveAgentCard.innerText(), new RegExp(`Agent · ${liveChild.id.slice(0, 8)}`));
   await resources.getByRole("button", { name: `打开 ${liveChild.id} 子对话`, exact: true }).click();
   await page.locator(`[data-agent-conversation="${liveChild.id}"] [data-turn-status=inProgress]`).waitFor();
   assert.equal(await page.locator("[data-testid=areal-workbench]").getAttribute("data-thread-id"), tid);
@@ -508,7 +527,7 @@ try {
   );
   await button("清除目标").click();
   await until(
-    (s) => current(s).goals?.goal === null && !s.projects[0].pending.length,
+    (s) => current(s).goals?.goal === null && !project(s).pending.length,
     "unfinished goal cleared",
   );
   await send("目标清除后发送普通消息");
@@ -534,7 +553,7 @@ try {
   await shot("04-diff");
   await button("关闭面板").click();
   checks.push("native file edit and Git diff panel");
-  await button("终端").click();
+  await openPanel("终端");
   const terminal = page.locator(".xterm-helper-textarea");
   await terminal.waitFor();
   await terminal.pressSequentially("printf 'AREAL_TERMINAL_OK\\n'");
@@ -563,10 +582,7 @@ try {
   }
   assert.match(output, /AREAL_TERMINAL_OK/);
   await shot("05-terminal");
-  await page
-    .locator(".bottom-terminal")
-    .getByRole("button", { name: "关闭面板", exact: true })
-    .click();
+  await button("关闭面板").click();
   checks.push("real Runtime PTY with input/output");
   await app.evaluate(({ dialog }, origin) => {
     const showMessageBox = dialog.showMessageBox.bind(dialog);
@@ -587,10 +603,20 @@ try {
     if (window.isMinimized()) window.restore();
     window.show(); app.focus({ steal: true }); window.focus();
   });
-  await until(() => app.evaluate(({ BrowserWindow }) => {
-    const window = BrowserWindow.getAllWindows()[0];
-    return window.isVisible() && !window.isMinimized() && window.isFocused();
-  }), "visible focused window for development-site consent");
+  let previewWindowState = null;
+  try {
+    await until(async () => {
+      previewWindowState = await app.evaluate(({ app, BrowserWindow }) => {
+        const window = BrowserWindow.getAllWindows()[0];
+        return { id: window.id, visible: window.isVisible(), minimized: window.isMinimized(),
+          focused: window.isFocused(), focusedWindowId: BrowserWindow.getFocusedWindow()?.id ?? null,
+          appHidden: app.isHidden() };
+      });
+      return previewWindowState.visible && !previewWindowState.minimized && previewWindowState.focused;
+    }, "visible focused window for development-site consent");
+  } finally {
+    await writeFile(join(scratch, "preview-window-state.json"), JSON.stringify(previewWindowState, null, 2));
+  }
   await page.getByLabel("预览地址").press("Enter");
   let previewEvidence;
   for (let i = 0; i < 100; i++) {
@@ -637,7 +663,7 @@ try {
   finishBackground();
   await launch();
   await until(
-    (s) => s.projects[0]?.state?.connected && current(s)?.turns.at(-1)?.status === "completed",
+    (s) => project(s)?.state?.connected && current(s)?.turns.at(-1)?.status === "completed",
     "recover after GUI exit",
   );
   assert.equal(current(await state()).turns.length, turnCount);
@@ -670,7 +696,7 @@ try {
     await readFile(join(scratch, "core/subscription-transport.json"), "utf8"),
   );
   await launch();
-  await until((s) => s.projects[0]?.state?.connected, "recover after adapter exit");
+  await until((s) => project(s)?.state?.connected, "recover after adapter exit");
   const restored = JSON.parse(
     await readFile(join(scratch, "core/subscription-transport.json"), "utf8"),
   );
@@ -701,7 +727,7 @@ try {
   await quit();
   await new Promise((r) => setTimeout(r, 4500));
   await launch();
-  await until((s) => s.projects[0]?.state?.connected, "scheduled task reconnect");
+  await until((s) => project(s)?.state?.connected, "scheduled task reconnect");
   let task;
   for (let i = 0; i < 100; i++) {
     task = await call("manage", { projectId: pid, operation: "task", taskId: scheduled.id });

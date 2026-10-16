@@ -1,6 +1,8 @@
 .agent-avatar { flex: none; object-fit: contain; }
 .agent-spawn-row { display: flex; align-items: center; gap: 7px; min-height: 24px; color: var(--color-foreground-subtle); font-size: 13px; }
-.agent-spawn-link { display: inline-flex; align-items: center; gap: 7px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
+.agent-spawn-link { display: inline-flex; align-items: center; gap: 7px; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
+.agent-spawn-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-spawn-status { flex-shrink: 0; font-size: var(--text-ui-sm); }
 .agent-spawn-link:hover { text-decoration: underline; }
 .agent-spawn-record { margin-left: auto; border: 0; background: transparent; padding: 3px; color: var(--color-foreground-subtle); }
 .agent-conversation-pane { height: 100%; display: flex; flex-direction: column; min-height: 0; }
@@ -30,9 +32,6 @@
 .task-resource-agent-body { flex: 1; min-width: 0; }
 .task-resource-agent-body p { margin: 3px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-foreground-subtle); font-size: 11px; }
 .task-resources-agents { height: auto; }
-
-/* 折叠保留创建入口，其他活动仍由现有 disclosure 隐藏。 */
-.execution-details[data-expanded="false"][data-agent-entries="true"] { display: flex; }
 
 .task-resource-description { display: block; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-resource-agent-body > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

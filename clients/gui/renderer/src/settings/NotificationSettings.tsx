@@ -1,3 +1,4 @@
+import { SettingsSelect } from "./SettingsPageParts.js";
 import { useRef, useState } from "react";
 import type { Action, Data } from "../services.js";
 import { Feedback } from "../components/ui/feedback.js";
@@ -19,9 +20,9 @@ export function NotificationSettings({ settings, action, connected }: { settings
     <Feedback error={error} />
     <SettingsGroupCard>
       <SettingsRow label="轮次完成通知" description="设置任务完成后何时提醒" control={
-        <select aria-label="轮次完成通知" disabled={disabled} value={settings.turnNotifications ?? "unfocused"} onChange={e => void save("turnNotifications", e.target.value)}>
+        <SettingsSelect aria-label="轮次完成通知" disabled={disabled} value={settings.turnNotifications ?? "unfocused"} onValueChange={selectedValue => void save("turnNotifications", selectedValue)}>
           <option value="always">始终</option><option value="unfocused">仅在未聚焦时</option><option value="never">从不</option>
-        </select>
+        </SettingsSelect>
       } />
       <SettingsRow label="启用权限通知" description="需要你批准工具操作时显示提醒" control={
         <SettingsSwitch aria-label="启用权限通知" disabled={disabled} checked={settings.permissionNotifications !== false} onCheckedChange={v => void save("permissionNotifications", v)} />
@@ -30,9 +31,9 @@ export function NotificationSettings({ settings, action, connected }: { settings
         <SettingsSwitch aria-label="启用问题通知" disabled={disabled} checked={settings.questionNotifications !== false} onCheckedChange={v => void save("questionNotifications", v)} />
       } />
       <SettingsRow label="通知声音" description="任务完成、权限请求和提问时播放的声音" control={
-        <select aria-label="通知声音" disabled={disabled} value={settings.notificationSound ?? "default"} onChange={e => void save("notificationSound", e.target.value)}>
+        <SettingsSelect aria-label="通知声音" disabled={disabled} value={settings.notificationSound ?? "default"} onValueChange={selectedValue => void save("notificationSound", selectedValue)}>
           <option value="default">默认</option><option value="silent">无</option>
-        </select>
+        </SettingsSelect>
       } />
     </SettingsGroupCard>
   </SettingsSection>;

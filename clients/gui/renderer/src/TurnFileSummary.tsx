@@ -1,5 +1,5 @@
 import { FileChanges } from "./interfaceIcons.js";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Button } from "./components/ui/button.js";
 import type { Data } from "./services.js";
 
@@ -41,6 +41,7 @@ export function TurnFileSummary({ turn, readTurnReview, onFile, onReview }: {
   const files = verifiedWrittenFiles(turn.items ?? []);
   const identity = JSON.stringify([turn.id, turn.status, [...files.values()]]);
   const [expanded, setExpanded] = useState(false);
+  const filesId = useId();
   useEffect(() => setExpanded(false), [turn.id]);
   const [review, setReview] = useState<{ identity: string; totals?: Map<string, { additions: number; deletions: number }>; error?: string }>();
   useEffect(() => {
@@ -67,13 +68,13 @@ export function TurnFileSummary({ turn, readTurnReview, onFile, onReview }: {
   }, { additions: 0, deletions: 0 });
   return <div className="turn-file-summary" data-testid="turn-file-summary">
     <div className="turn-file-summary-header">
-      <strong>{files.size} 个文件已更改</strong>
-      {totals && <span className="turn-file-summary-totals" aria-label={`合计新增 ${totals.additions} 行，删除 ${totals.deletions} 行`}>
-        <span className="added">+{totals.additions}</span><span className="deleted">-{totals.deletions}</span>
-      </span>}
+        <FileChanges aria-hidden="true" /><strong>{files.size} 个文件已更改</strong>
+        {totals && <span className="turn-file-summary-totals" aria-label={`合计新增 ${totals.additions} 行，删除 ${totals.deletions} 行`}>
+          <span className="added">+{totals.additions}</span><span className="deleted">-{totals.deletions}</span>
+        </span>}
       <Button size="sm" variant="ghost" className="turn-file-summary-review-action" onClick={() => onReview(turn.id)}>查看变更</Button>
     </div>
-    <div className="turn-file-summary-files" role="region" aria-label="本轮文件" data-expanded={expanded}>
+    <div id={filesId} className="turn-file-summary-files" role="region" aria-label="本轮文件" data-expanded={expanded}>
       {(expanded ? entries : entries.slice(0, 5)).map(file => {
         // A verified comparison omits unchanged paths. Only that successful
         // result permits zero; pending or rejected reads never do.
@@ -86,6 +87,6 @@ export function TurnFileSummary({ turn, readTurnReview, onFile, onReview }: {
           </span> : <span className="turn-file-summary-meta" title={current?.error}>{file.size} B · {current?.error ? "行数不可验证" : "读取行数…"}</span>}
       </Button>; })}
     </div>
-    {entries.length > 5 && <button type="button" className="turn-file-summary-disclosure" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? "收起文件" : `展开剩余 ${entries.length - 5} 个文件`}</button>}
+    {entries.length > 5 && <button type="button" className="turn-file-summary-disclosure" aria-expanded={expanded} aria-controls={filesId} onClick={() => setExpanded(value => !value)}>{expanded ? "收起文件" : `展开剩余 ${entries.length - 5} 个文件`}</button>}
   </div>;
 }

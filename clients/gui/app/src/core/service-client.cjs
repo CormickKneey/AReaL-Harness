@@ -1,14 +1,47 @@
 'use strict';
+const { startupTrace } = require('./startup-timing.cjs');
 const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const { mkdir, readFile, realpath, open, writeFile, rename, rm } = require('node:fs/promises');
 const { join } = require('node:path');
 const WebSocket = require('ws');
-const { PROTOCOL, encodeMedia, decodeMedia } = require('./service-protocol.cjs');
+const { PROTOCOL, COMMAND_CONTRACT, encodeMedia, decodeMedia } = require('./service-protocol.cjs');
 const { serviceIdentity } = require('./service-config.cjs');
 const { inspectCoreCapabilities } = require('./core-capabilities.cjs');
 const { desktopExecutables } = require('./desktop-executables.cjs');
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const currentCommands = new Set(['send', 'continue', 'prepareCreator', 'feedback']);
+const currentManagePrefixes = ['plugin', 'marketplace', 'mcpApp', 'mcpForm'];
+const currentManageOperations = new Set(['mcpExtensionCall', 'mcpToolResult', 'connectorConfigure', 'connectorCredential', 'hookAcknowledge']);
+const unconfirmedConnection = () => ({ state: 'unavailable', recovery: 'check',
+  message: '停止结果未确认，请检查后台状态；不会自动重发或启动后台。' });
+
+function requiresCurrentCommands(name, request) {
+  return currentCommands.has(name)
+    || ['steer', 'queueEdit'].includes(name) && request.mcpContent?.length > 0
+    || name === 'trajectory' && request.operation === 'setEnabled'
+    || name === 'providers' && request.operation === 'defaultAndApply'
+    || name === 'manage' && (currentManageOperations.has(request.operation)
+      || currentManagePrefixes.some(prefix => request.operation?.startsWith(prefix)));
+}
+
+function validateServicePacket(packet, metadata) {
+  const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+  const count = value => Number.isSafeInteger(value) && value >= 0;
+  const snapshot = packet?.snapshot, service = packet?.service, library = snapshot?.library;
+  if (!count(packet?.sequence) || !record(snapshot) || !record(library)
+    || !record(library.projects) || !record(library.threads) || !record(library.settings)
+    || !Array.isArray(library.projectOrder) || !library.projectOrder.every(id => typeof id === 'string')
+    || !Array.isArray(snapshot.projects) || snapshot.projects.some(project => !record(project)
+      || typeof project.id !== 'string' || typeof project.root !== 'string'
+      || project.state !== null && (!record(project.state) || !record(project.state.threads)))
+    || !record(service) || service.connected !== true || typeof service.busy !== 'boolean'
+    || typeof service.providerUpdating !== 'boolean' || !count(service.clients)
+    || !count(service.activeCommands) || !count(service.starting)
+    || !Number.isSafeInteger(service.pid) || service.pid <= 1 || service.pid !== metadata.pid) {
+    throw Object.assign(new Error('后台服务快照不受支持，原后台保持运行。请安全重启后使用本次配置。'), { code: 'SERVICE_SNAPSHOT_INVALID' });
+  }
+}
 
 async function waitForServiceExit(home, metadata) {
   const deadline = Date.now() + 60000;
@@ -36,22 +69,26 @@ async function waitForProcessExit(pid) {
 }
 
 class ServiceConnection {
-  constructor(onState = () => {}, onClose = () => {}, onNotification = () => {}, onNotificationOpen = () => {}, onBrowserRequest = null, onBrowserCancel = null) {
+  constructor(onState = () => {}, onClose = () => {}, onNotification = () => {}, onNotificationOpen = () => {}, onBrowserRequest = null, onBrowserCancel = null, onMcpAppNotification = () => {}) {
     this.onNotification = onNotification;
     this.onNotificationOpen = onNotificationOpen;
     this.onBrowserRequest = onBrowserRequest;
     this.onBrowserCancel = onBrowserCancel;
+    this.onMcpAppNotification = onMcpAppNotification;
     this.onState = onState; this.onClose = onClose; this.pending = new Map(); this.nextId = 0;
   }
   async connect(metadata) {
     const url = new URL(metadata.endpoint);
     if (metadata.protocol !== PROTOCOL || url.protocol !== 'ws:' || url.hostname !== '127.0.0.1'
-      || url.username || url.password || !/^[a-f0-9]{64}$/.test(metadata.token)) throw new Error('本地后台服务连接元数据无效');
+      || url.username || url.password || !/^[a-f0-9]{64}$/.test(metadata.token)
+      || typeof metadata.identity !== 'string' || !metadata.identity
+      || !Number.isSafeInteger(metadata.pid) || metadata.pid <= 1) throw new Error('本地后台服务连接元数据无效');
     const socket = this.socket = new WebSocket(url, { headers: { Authorization: `Bearer ${metadata.token}` }, followRedirects: false, maxPayload: 256 * 1024 * 1024 });
     socket.on('error', () => {});
     socket.on('message', bytes => {
       let message;
       try { message = JSON.parse(bytes.toString()); } catch { socket.terminate(); return; }
+      if (message.method === 'mcpAppNotification') { if (this.socket === socket) this.onMcpAppNotification?.(message.params); return; }
       if (message.method === 'notification') { this.onNotification(message.params); return; }
       if (message.method === 'notificationOpen') { this.onNotificationOpen(message.params); return; }
       if (message.method === 'state') { this.onState(message.params); return; }
@@ -101,13 +138,13 @@ class ServiceConnection {
 // GUI-local connection/projection only. Control intent lives in GUI userData;
 // shared Core history and execution state remain owned by the service.
 class SharedCoreBackend {
-  constructor({ app, onChange = () => {}, onNotification, onNotificationOpen, recoverIncompatible, onRecoveryAttention, ...options }) {
+  constructor({ app, onChange = () => {}, onNotification, onNotificationOpen, onRecoveryAttention, ...options }) {
     this.onNotification = onNotification;
     this.onNotificationOpen = onNotificationOpen;
-    this.recoverIncompatible = recoverIncompatible; this.onRecoveryAttention = onRecoveryAttention; this.app = app; this.options = options; this.home = options.home; this.onChange = onChange;
+    this.onRecoveryAttention = onRecoveryAttention; this.app = app; this.options = options; this.home = options.home; this.onChange = onChange;
     this.value = { library: { projects: {}, threads: {}, projectOrder: [], settings: {} }, projects: [] };
     this.status = { connected: false }; this.sequence = -1;
-    this.connectionState = { state: 'connecting' }; this.revision = 0;
+    this.connectionState = { state: 'connecting' }; this.revision = 0; this.initializing = false;
     this.guiTerminals = new Map(); this.guiTerminalStarts = new Set();
     this.analytics = { sample: sample => { this.lastActivity = sample; if (this.status.connected) void this.connection.request('activity', sample).catch(() => {}); }, flush: async () => {} };
   }
@@ -121,17 +158,30 @@ class SharedCoreBackend {
     const thread = this.saved.find(p => p.id === projectId)?.state?.threads?.[threadId];
     return !!thread && !thread.desktop?.archived;
   }
-  snapshot() { return { ...this.value, revision: ++this.revision, connection: this.connectionState }; }
-  accept(packet) {
-    if (this.disposed || !packet || packet.sequence <= this.sequence) return;
+  snapshot() {
+    const desktopCapabilities = { currentCommands: this.status.commandContract === COMMAND_CONTRACT };
+    const connection = this.initializing && this.connectionState.state === 'ready' ? { state: 'connecting' } : this.connectionState;
+    return { ...this.value, desktopCapabilities,
+      projects: this.value.projects.map(project => ({ ...project, desktopCapabilities })),
+      backendUpdate: this.backendUpdate,
+      revision: ++this.revision, connection };
+  }
+  accept(packet, metadata = this.metadata) {
+    if (this.disposed) return;
+    validateServicePacket(packet, metadata);
+    if (packet.sequence <= this.sequence) return;
     this.clearReconnect(); this.reconnectAttempts = 0;
-    this.sequence = packet.sequence; this.value = packet.snapshot; this.status = packet.service; this.connectionState = packet.service.stopReport ? { state: 'unavailable', message: '后台停止尚未完成，请检查后台状态' } : { state: 'ready' }; this.onChange();
+    this.sequence = packet.sequence; this.value = packet.snapshot; this.status = packet.service;
+    this.connectionState = this.controlState === 'unconfirmed' ? unconfirmedConnection()
+      : packet.service.stopReport ? { state: 'unavailable', message: '后台停止尚未完成，请检查后台状态' }
+        : { state: 'ready' };
+    this.onChange();
   }
   disconnected() {
     this.onBrowserDisconnected?.();
     const stopped = !!this.connection && this.stoppedConnection === this.connection;
     const message = stopped ? '后台服务已停止，可按需重新连接' : this.controlState === 'unconfirmed' ? '停止结果未确认，请显式连接后核查后台状态；不会自动重发。' : '后台服务已断开，请重新连接';
-    this.connectionState = { state: 'unavailable', message };
+    this.connectionState = this.controlState === 'unconfirmed' ? unconfirmedConnection() : { state: 'unavailable', message };
     this.status = { ...this.status, connected: false };
     this.value = { ...this.value, projects: this.value.projects.map(p => ({ ...p, error: stopped ? null : message, state: p.state ? { ...p.state, connected: false, error: stopped ? null : message } : null })) };
     this.onChange();
@@ -143,7 +193,7 @@ class SharedCoreBackend {
       && !['stopped', 'unconfirmed'].includes(this.controlState) && !this.status.stopReport;
   }
   scheduleReconnect() {
-    if (!this.identity || !this.canReconnect() || this.reconnectTimer) return;
+    if (!(this.metadata?.identity ?? this.identity) || !this.canReconnect() || this.reconnectTimer) return;
     const delay = Math.min(30000, 500 * 2 ** Math.min(this.reconnectAttempts ?? 0, 6));
     this.reconnectAttempts = (this.reconnectAttempts ?? 0) + 1;
     this.reconnectTimer = setTimeout(() => {
@@ -164,23 +214,36 @@ class SharedCoreBackend {
     }, delay);
     this.reconnectTimer.unref?.();
   }
-  async attach({ passive = false } = {}) {
+  async attach({ expectedIdentity, passive = false } = {}) {
     let metadata;
     try { metadata = JSON.parse(await readFile(join(this.home, 'service.json'), 'utf8')); }
     catch (e) { if (e.code === 'ENOENT') return false; throw e; }
-    const connection = new ServiceConnection(packet => { if (this.connection === connection) this.accept(packet); }, () => { if (this.connection === connection) this.disconnected(); }, notice => { if (this.connection === connection) this.onNotification?.(notice); }, target => { if (this.connection === connection) this.onNotificationOpen?.(target); }, request => {
+    const identity = expectedIdentity ?? (passive ? this.metadata?.identity ?? this.identity : metadata.identity);
+    const connection = new ServiceConnection(packet => {
+      if (this.connection !== connection) return;
+      try { this.accept(packet, metadata); }
+      catch { this.connection = null; connection.close(); this.disconnected(); }
+    }, () => { if (this.connection === connection) this.disconnected(); }, notice => { if (this.connection === connection) this.onNotification?.(notice); }, target => { if (this.connection === connection) this.onNotificationOpen?.(target); }, request => {
       if (this.connection !== connection || this.disposed) throw new Error('Browser host is disconnected');
       return this.onBrowserRequest?.(request) ?? Promise.reject(new Error('Browser host unavailable'));
-    }, request => { if (this.connection === connection) this.onBrowserCancel?.(request); });
+    }, request => { if (this.connection === connection) this.onBrowserCancel?.(request); }, event => {
+      if (this.connection === connection && !this.disposed) this.onMcpAppNotification?.(event);
+    });
     try { await connection.connect(metadata); }
     catch (e) { connection.close(); if (e.code === 'DISCONNECTED') return false; throw e; }
     if (this.disposed) { connection.close(); throw new Error('GUI 连接已关闭'); }
     if (passive && !this.canReconnect()) { connection.close(); return false; }
     this.connection?.close(); this.connection = connection; this.sequence = -1;
+    const helloTrace = startupTrace('service.hello', { servicePid: metadata.pid });
+    helloTrace.advance('hello');
     try {
       const deadline = Date.now() + 60000;
       for (;;) {
-        try { this.accept(await connection.request('hello', { protocol: PROTOCOL, identity: this.identity, notifications: !!this.onNotification })); break; }
+        try {
+          const packet = await connection.request('hello', { protocol: PROTOCOL, identity, notifications: !!this.onNotification });
+          if (this.connection !== connection) throw Object.assign(new Error('后台服务连接已变化，请重新连接'), { code: 'DISCONNECTED' });
+          this.accept(packet, metadata); break;
+        }
         catch (error) {
           if (passive) throw error;
           if (error.code !== 'SERVICE_STOPPING') throw error;
@@ -192,15 +255,16 @@ class SharedCoreBackend {
       }
     }
     catch (e) {
+      helloTrace.finish('error', e);
       this.connection = null;
       connection.close();
       if (e.code === 'DISCONNECTED') return false; // Only a read-only handshake was attempted.
-      // 旧 v1 服务没有错误码，只兼容其明确的身份不匹配消息。
-      const incompatible = e.code === 'SERVICE_INCOMPATIBLE' || e.message.startsWith('后台服务版本或启动配置不兼容。');
-      if (!incompatible || !this.recoverIncompatible || passive) throw e;
-      await this.recoverIncompatible(metadata, this.home);
-      return false;
+      if (expectedIdentity !== undefined && (e.code === 'SERVICE_INCOMPATIBLE' || e.message.startsWith('后台服务版本或启动配置不兼容。'))) {
+        throw Object.assign(new Error('当前后台使用了不同的启动配置，本次启动配置尚未生效。请重新连接，或安全停止后台后重试。'), { code: 'SERVICE_INCOMPATIBLE' });
+      }
+      throw e;
     }
+    helloTrace.finish('ok');
     if (this.lastActivity) void connection.request('activity', this.lastActivity).catch(() => {});
     this.metadata = metadata; this.exitConfirmation = null;
     return true;
@@ -220,78 +284,135 @@ class SharedCoreBackend {
   }
   async init({ automatic = false } = {}) {
     if (this.disposed) throw new Error('GUI 连接已关闭');
-    if (this.status.connected) return;
-    if (automatic) {
-      try {
-        const control = await this.readControl();
-        if (control) {
-          this.controlState = control.state;
-          this.connectionState = { state: 'unavailable', message: control.state === 'stopped' ? '后台服务已停止，可按需重新连接' : '停止结果未确认，请显式连接后核查后台状态；不会自动重发。' };
-          this.onChange();
-          return;
-        }
-      } catch (error) {
-        this.connectionState = { state: 'unavailable', message: `后台启动状态读取失败，请显式连接后核查。${error.message}` };
-        this.onChange(); throw error;
-      }
-    }
-    if (this.connecting) return this.connecting;
-    this.clearReconnect(); this.reconnectBlocked = false;
-    this.connectionState = { state: 'connecting' };
-    this.connecting = this.initialize().then(async () => {
-      const { restoreLegacySchedules } = require('./legacy-service-cancel.cjs');
-      let attention;
-      try { ({ attention } = await restoreLegacySchedules({ connection: this.connection, home: this.home, metadata: this.metadata })); }
-      catch (error) { attention = [`安排恢复尚未完成，恢复记录已保留：${error.message}`]; }
-      if (attention.length) {
-        if (this.onRecoveryAttention) await this.onRecoveryAttention(attention);
-        else console.warn(attention.join('\n'));
-      }
-      await rm(this.controlPath, { force: true }); this.controlState = null;
-    }).catch(error => {
-      this.connectionState = { state: 'unavailable', message: error.message };
-      if (['SERVICE_NOT_READY', 'DISCONNECTED'].includes(error.code)) this.scheduleReconnect();
-      this.onChange(); throw error;
-    }).finally(() => { this.connecting = null; });
-    this.onChange();
-    return this.connecting;
-  }
-  async initialize() {
-    await mkdir(this.home, { recursive: true, mode: 0o700 });
-    this.home = await realpath(this.home); this.identity = await serviceIdentity(this.options);
-    if (this.disposed) throw new Error('GUI 连接已关闭');
-    if (await this.attach()) return;
-    if (this.disposed) throw new Error('GUI 连接已关闭');
-    // Explain a known binary incompatibility through this connection attempt's
-    // error channel; never expose shared or stale service log contents to GUI.
-    await inspectCoreCapabilities(this.options.binary);
-    const log = await open(join(this.home, 'service.log'), 'a', 0o600);
-    const env = { ...process.env, AREAL_BACKEND: 'areal', AREAL_CORE_HOME: this.home };
-    delete env.ELECTRON_RUN_AS_NODE;
-    const args = this.app.isPackaged ? ['--areal-core-service'] : [this.app.getAppPath(), '--areal-core-service'];
-    const executable = desktopExecutables({ packaged: this.app.isPackaged }).service;
+    const trace = startupTrace('service.init');
+    trace.advance('control');
     try {
-      let launchError, retryLaunch = false;
-      const launch = () => {
-        if (this.disposed) throw new Error('GUI 连接已关闭');
-        retryLaunch = false;
-        const child = spawn(executable, args, { detached: true, stdio: ['ignore', log.fd, log.fd], env, windowsHide: true });
-        child.once('error', e => { launchError = e; });
-        child.once('exit', code => { retryLaunch = code === 0; }); child.unref();
-      };
-      launch();
-      const deadline = Date.now() + 20000;
-      while (Date.now() < deadline) {
-        if (this.disposed) throw new Error('GUI 连接已关闭');
-        if (launchError) throw launchError;
-        if (await this.attach()) return;
-        if (retryLaunch) launch();
-        await sleep(100);
+      let control;
+      {
+        try {
+          control = await this.readControl();
+          if (automatic && control) {
+            this.controlState = control.state;
+            this.connectionState = control.state === 'stopped' ? { state: 'unavailable', message: '后台服务已停止，可按需重新连接' } : unconfirmedConnection();
+            this.onChange();
+            trace.finish('skipped');
+            return;
+          }
+        } catch (error) {
+          this.connectionState = { state: 'unavailable', message: `后台启动状态读取失败，请显式连接后核查。${error.message}` };
+          this.onChange(); throw error;
+        }
       }
-      throw Object.assign(new Error(`后台服务未就绪；请检查 ${join(this.home, 'service.log')}`), { code: 'SERVICE_NOT_READY' });
-    } finally { await log.close(); }
+      if (this.connecting) { trace.finish('skipped'); return this.connecting; }
+      const checking = control?.state === 'unconfirmed';
+      if (this.status.connected && !checking) { trace.finish('skipped'); return; }
+      this.controlState = control?.state ?? null;
+      this.clearReconnect(); this.reconnectBlocked = false;
+      this.connectionState = { state: 'connecting' };
+      this.initializing = true;
+      trace.advance('initialize');
+      this.connecting = (checking ? (async () => {
+        this.reconnectBlocked = true;
+        if (!await this.attach()) throw new Error('停止结果未确认，当前无法连接原后台。请检查后台状态，不会自动启动。');
+      })() : this.initialize(automatic)).then(async () => {
+        if (checking) { this.connectionState = unconfirmedConnection(); trace.finish('skipped'); return; }
+        trace.advance('legacy_schedules');
+        const { restoreLegacySchedules } = require('./legacy-service-cancel.cjs');
+        let attention;
+        try { ({ attention } = await restoreLegacySchedules({ connection: this.connection, home: this.home, metadata: this.metadata })); }
+        catch (error) { trace.advance('legacy_attention', 'degraded'); attention = [`安排恢复尚未完成，恢复记录已保留：${error.message}`]; }
+        if (attention.length) {
+          if (this.onRecoveryAttention) await this.onRecoveryAttention(attention);
+          else console.warn(attention.join('\n'));
+        }
+        trace.advance('control_clear');
+        await rm(this.controlPath, { force: true }); this.controlState = null; this.reconnectBlocked = false;
+        trace.finish(attention.length ? 'degraded' : 'ok');
+      }).catch(error => {
+        trace.finish('error', error);
+        if (this.backendUpdate?.state === 'applying') this.backendUpdate = { state: 'failed', message: error.message };
+        this.connectionState = this.controlState === 'unconfirmed' ? unconfirmedConnection() : { state: 'unavailable', message: error.message };
+        if (['SERVICE_NOT_READY', 'DISCONNECTED'].includes(error.code)) this.scheduleReconnect();
+        this.onChange(); throw error;
+      }).finally(() => { this.initializing = false; this.connecting = null; this.onChange(); });
+      this.onChange();
+      return this.connecting;
+    } catch (error) { trace.finish('error', error); throw error; }
   }
-  async addProject(path) { await this.init(); return this.connection.request('addProject', { path }, true); }
+  async initialize(automatic = false) {
+    const trace = startupTrace('service.initialize');
+    trace.advance('home');
+    try {
+      await mkdir(this.home, { recursive: true, mode: 0o700 });
+      this.home = await realpath(this.home);
+      if (this.disposed) throw new Error('GUI 连接已关闭');
+      trace.advance('attach');
+      const retained = await this.attach();
+      if (this.disposed) throw new Error('GUI 连接已关闭');
+      trace.advance('identity');
+      try { this.identity = await serviceIdentity(this.options); }
+      catch (error) {
+        if (!retained || !this.status.connected) throw error;
+        this.backendUpdate = { state: 'failed', message: error.message }; this.onChange(); return;
+      }
+      if (this.disposed) throw new Error('GUI 连接已关闭');
+      if (retained) {
+        this.backendUpdate = this.identity === this.metadata.identity ? undefined : { state: 'pending' };
+        this.onChange();
+        if (!automatic || !this.backendUpdate) return;
+        try {
+          await inspectCoreCapabilities(this.options.binary);
+          const observed = await this.observeLifecycle();
+          if (!observed.ifIdle) return;
+          if (this.disposed) throw new Error('GUI 连接已关闭');
+          this.backendUpdate = { state: 'applying' }; this.onChange();
+          await this.stopService(false, { observed });
+        } catch (error) {
+          if (error.submissionUnknown || !this.status.connected || this.status.stopReport) throw error;
+          this.backendUpdate = ['LIFECYCLE_BLOCKED', 'CONFIRMATION_STALE', 'CORE_RESOURCES'].includes(error.code)
+            ? { state: 'pending' } : { state: 'failed', message: error.message };
+          this.onChange(); return;
+        }
+        this.connectionState = { state: 'connecting' }; this.onChange();
+      }
+      // Explain a known binary incompatibility through this connection attempt's
+      // error channel; never expose shared or stale service log contents to GUI.
+      trace.advance('capabilities');
+      if (!retained) await inspectCoreCapabilities(this.options.binary);
+      trace.advance('spawn_wait');
+      const log = await open(join(this.home, 'service.log'), 'a', 0o600);
+      const env = { ...process.env, AREAL_BACKEND: 'areal', AREAL_CORE_HOME: this.home };
+      delete env.ELECTRON_RUN_AS_NODE;
+      const args = this.app.isPackaged ? ['--areal-core-service'] : [this.app.getAppPath(), '--areal-core-service'];
+      const executable = desktopExecutables({ packaged: this.app.isPackaged }).service;
+      try {
+        let launchError, retryLaunch = false;
+        const launch = () => {
+          if (this.disposed) throw new Error('GUI 连接已关闭');
+          retryLaunch = false;
+          const child = spawn(executable, args, { detached: true, stdio: ['ignore', log.fd, log.fd], env, windowsHide: true });
+          child.once('error', e => { launchError = e; });
+          child.once('exit', code => { retryLaunch = code === 0; }); child.unref();
+        };
+        launch();
+        const deadline = Date.now() + 20000;
+        while (Date.now() < deadline) {
+          if (this.disposed) throw new Error('GUI 连接已关闭');
+          if (launchError) throw launchError;
+          if (await this.attach({ expectedIdentity: this.identity })) { this.backendUpdate = undefined; return; }
+          if (retryLaunch) launch();
+          await sleep(100);
+        }
+        throw Object.assign(new Error(`后台服务未就绪；请检查 ${join(this.home, 'service.log')}`), { code: 'SERVICE_NOT_READY' });
+      } finally { await log.close(); }
+    } catch (error) { trace.finish('error', error); throw error; }
+    finally { trace.finish('ok'); }
+  }
+  async addProject(path) {
+    await this.init();
+    if (this.controlState === 'unconfirmed') throw Object.assign(new Error('停止结果未确认，仅允许检查后台和显式恢复'), { code: 'LIFECYCLE_INCOMPLETE' });
+    return this.connection.request('addProject', { path }, true);
+  }
   async browserClaim(identity) {
     if (!this.status.connected || !this.connection) throw new Error('后台尚未连接');
     return this.connection.request('browserClaim', identity, true);
@@ -302,17 +423,24 @@ class SharedCoreBackend {
   }
   async command(name, request) {
     if (this.disposed) throw new Error('GUI 连接已关闭');
+    if (this.connecting) await this.connecting.catch(() => {});
     // Only explicit reconnect opens a stopped service. Periodic panel reads must
     // not undo the user's stop action; in-flight commands are never replayed.
     if (name === 'connect') await this.init();
+    if (this.disposed) throw new Error('GUI 连接已关闭');
     if (!this.status.connected) throw new Error('后台尚未连接，请先处理后台连接提示');
+    if (this.controlState === 'unconfirmed' && !require('./lifecycle.cjs').isRecoveryCommand(name, request))
+      throw Object.assign(new Error('停止结果未确认，仅允许检查后台和显式恢复；不会重新受理输入。'), { code: 'LIFECYCLE_INCOMPLETE' });
+    if (this.status.commandContract !== COMMAND_CONTRACT && requiresCurrentCommands(name, request)) {
+      throw Object.assign(new Error('当前运行中的后台不支持此操作。现有任务继续运行，输入已保留；请在任务完成后安全停止后台并重新连接。'), { code: 'SERVICE_COMMAND_UNSUPPORTED' });
+    }
     // Only explicitly GUI-owned shells are tied to this GUI's lifetime. Model
     // tools and manually managed thread processes keep their Core lifetime.
     const ownedStart = name === 'manage' && request.operation === 'processStart' && request.guiOwned === true;
     const ownedRecovery = name === 'manage' && request.operation === 'processSubmission' && request.guiOwned === true;
     const { guiOwned, ...params } = request;
     // 队列业务键跨 GUI/共享服务连接保留，外层丢失响应后也能只读核对。
-    if (name === 'queueEdit') params.requestId ??= randomUUID();
+    if (['queueEdit', 'send', 'continue'].includes(name)) params.requestId ??= randomUUID();
     const pending = this.connection.request('command', { name, request: name === 'media' ? encodeMedia(params) : params }, true).then(value => {
       if (ownedRecovery && value.confirmed) {
         this.guiTerminals.set(value.result.id, { projectId: request.projectId, threadId: request.threadId, id: value.result.id });
@@ -323,7 +451,7 @@ class SharedCoreBackend {
     });
     if (ownedStart || ownedRecovery) this.guiTerminalStarts.add(pending);
     try { return await pending; }
-    catch (error) { if (name === 'queueEdit' && error.submissionUnknown) error.requestId = params.requestId; throw error; }
+    catch (error) { if (['queueEdit', 'send', 'continue'].includes(name) && error.submissionUnknown) error.requestId ??= params.requestId; throw error; }
     finally { this.guiTerminalStarts.delete(pending); }
   }
   async resources(request) {
@@ -373,7 +501,11 @@ class SharedCoreBackend {
         notify: options.notify, forUpdate: true });
       const result = await lifecycle.stop({ mode: options.cancel ? 'cancel' : 'ifIdle', observed: options.observed });
       if (result.kind === 'dismissed') {
-        if (!forUpdate) { await rm(this.controlPath, { force: true }); this.controlState = null; }
+        if (!forUpdate) {
+          await rm(this.controlPath, { force: true }); this.controlState = null;
+          if (this.status.connected && !this.status.stopReport) this.connectionState = { state: 'ready' };
+          this.onChange();
+        }
         this.reconnectBlocked = false; this.scheduleReconnect();
         return result;
       }
@@ -385,8 +517,14 @@ class SharedCoreBackend {
       if (this.connection === connection) { this.stoppedConnection = connection; this.disconnected(); }
       return result;
     } catch (error) {
+      if (this.controlState === 'unconfirmed' && error.submissionUnknown) {
+        this.connectionState = unconfirmedConnection();
+        this.onChange();
+      }
       if (!forUpdate && !accepted && !error.submissionUnknown) {
         await rm(this.controlPath, { force: true }); this.controlState = null;
+        if (this.status.connected && !this.status.stopReport) this.connectionState = { state: 'ready' };
+        this.onChange();
       }
       if (!accepted && !error.submissionUnknown) { this.reconnectBlocked = false; this.scheduleReconnect(); }
       throw error;

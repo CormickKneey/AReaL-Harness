@@ -10,6 +10,10 @@
 
 GUI 默认使用同一配置文件和 Core 读写接口；服务登记与运行数据保持隔离。`AREAL_HARNESS_SERVICE_HOME` 只选择共享服务登记及默认实例数据的非空绝对目录，不改变配置位置；省略时沿用 `AREAL_HARNESS_HOME` 或 `~/.areal`。GUI 自动选择自己的服务目录，无需为共享默认配置设置环境变量；路径覆盖见 [GUI 指南](../../clients/gui/README.md)。
 
+GUI 的模型设置提供“新会话默认模型”，可选择已保存且启用的供应商模型，以及当前账号目录中的 ChatGPT 模型。选择后按现有配置版本检查、空闲排空、保存和重启流程应用；任务仍在执行时拒绝保存，重启失败时尝试按版本回滚。ChatGPT 默认选择使用既有 `areal_openai` 模型引用，账号授权仍由桌面管理。显式 Profile 模型优先于全局默认。
+
+新会话在发送前显示具体模型和解析后的思考强度。强度完全未配置时显示“供应商默认”，`none` 显示“无”。“使用模型默认”清除当前会话的强度覆盖，保留其他参数，并重新使用模型或供应商默认；模型默认为 high 时仍显示“高”。未发送草稿可保留本次选择，创建成功后下次新会话重新采用全局默认。修改全局默认不会改写已有会话；会话中切换模型或强度会立即保存，重开及重启后沿用该选择，过去的 Turn 快照保持不变。
+
 共享 TUI/Web 入口使用按工作区隔离的默认数据目录；显式 dataDir 仍遵循上述优先级。历史迁移与配置兼容性见[本地服务契约](../api/local-service.md)。
 
 默认文件不存在可继续；显式文件不存在、未知字段、类型/版本错误或已设置为空的值均拒绝。文件限普通 UTF-8、1 MiB，接受 `schema_version=1` 或 `2`。TOML 相对路径以配置文件目录为基准，CLI/env 相对路径以启动 cwd 为基准，不展开 `~`、变量或 glob。即使字段被高层覆盖，低层格式错误仍拒绝。
@@ -480,3 +484,17 @@ WebSocket 求解连接携带 Core 线程 ID 作为 session-id/thread-id，以便
 `limits.max_repeated_tool_failures` 是默认 0（关闭）、范围 0–8 的实验性执行上限，必须显式设为正数。当前 Turn 连续相同工具及解析后参数的确认失败达到阈值后，下一次调用记录为拒绝且不执行；再次不变地调用则结束 Turn。只读检查不清零；不同操作或不同参数中断连续序列。失败可能已有部分副作用，不能把拒绝或重试提示当作事务回滚。UNKNOWN 仍停止且不自动重放。此机制限制重复执行，不保证修复失败原因。
 
 消融可使用环境变量 `AREAL_HARNESS_CONTEXT_OBSERVATION_TOKENS`、`AREAL_HARNESS_MAX_EMPTY_COMPLETION_RETRIES`、`AREAL_HARNESS_CONTEXT_REFERENCE_TOKENS`、`AREAL_HARNESS_COMMAND_STDIN_CLOSED`、`AREAL_HARNESS_MAX_REPEATED_TOOL_FAILURES`。实际新增输入与恢复费用仍记入根预算，不能将估算压缩量当作实际节省。
+
+## Hooks 配置
+
+`[features]` 接受 `hooks` 布尔开关与旧别名 `codex_hooks`（同时设置时 `hooks` 优先）；省略时启用发现，仍须独立信任每份当前定义。用户 `hooks=false` 禁止配置与包 hooks，项目开关不能覆盖它。顶层 `[hooks]` 交给插件 hooks 解析器，其他模型/权限配置仍按原严格规则解析。项目 `.codex/config.toml` 仅在 hooks 发现中读取，不改变本页的全局配置优先级。
+
+```toml
+[features]
+hooks = true
+
+[[hooks.UserPromptSubmit]]
+hooks = [{ type = "command", command = "python3 /absolute/path/hook.py", timeout = 30 }]
+```
+
+有效来源、显式审阅、执行与剩余限制见 [插件指南](plugins.md)。

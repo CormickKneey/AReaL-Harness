@@ -30,14 +30,24 @@ impl Engine {
         input: Vec<Input>,
         cancel: CancellationToken,
     ) -> Result<Turn> {
+        self.refresh_plugins().await?;
         let _admission = self.tasks.token();
         let _gate = self.desktop.lifecycle.gate.lock().await;
         let cell = self.cell(thread_id).await?;
         let mut state = cell.state.lock().await;
+        self.ensure_hook_session_open(&cell, &state.thread)?;
         if !self.accepting_work() || cancel.is_cancelled() {
             return Err(Error::Closed);
         }
         if state.active.is_some() || state.compacting {
+            return Err(Error::Conflict);
+        }
+        if state.thread.desktop.as_ref().is_some_and(|data| {
+            data.queue
+                .items
+                .iter()
+                .any(|item| matches!(item.status.as_str(), "pending" | "running"))
+        }) {
             return Err(Error::Conflict);
         }
         if state.thread.is_side() && (input.len() != 1 || !matches!(&input[0], Input::Text { .. }))
@@ -71,6 +81,15 @@ impl Engine {
         if state.thread.turns.iter().flat_map(|turn| &turn.items).any(|item| matches!(item, Item::DynamicToolCall {execution,..} if (execution.outcome == areal_protocol::ToolOutcome::Unknown || execution.hooks.iter().any(|hook| hook.outcome == areal_protocol::ToolOutcome::Unknown)) && execution.inspection.is_none())) {
             return Err(Error::Invalid("an UNKNOWN tool result requires operator inspection and areal/tool/acknowledge before a new turn".into()));
         }
+        if state.thread.desktop.as_ref().is_some_and(|d| {
+            d.hook_runs
+                .iter()
+                .any(|r| r.outcome == "unknown" && r.inspection.is_none())
+        }) {
+            return Err(Error::Invalid(
+                "UNKNOWN hook requires operator inspection; refusing replay".into(),
+            ));
+        }
         let (candidate, turn) = self.prepare_turn(&state.thread, input)?;
         let admission = self.reserve_active_turn()?;
         self.persist(&candidate).await?;
@@ -84,14 +103,35 @@ impl Engine {
         thread: &Thread,
         input: Vec<Input>,
     ) -> Result<(Thread, Turn)> {
+        self.prepare_turn_with_skill(thread, input, None)
+    }
+
+    /// Setup's Core-selected skill is the complete selection. Package text is not
+    /// a user Composer attachment and must never be parsed for additional refs.
+    pub(super) fn prepare_turn_with_skill(
+        &self,
+        thread: &Thread,
+        input: Vec<Input>,
+        skill: Option<&areal_protocol::desktop::VersionRef>,
+    ) -> Result<(Thread, Turn)> {
         self.validate_uploads(thread, &input)?;
-        let configuration = self.freeze_configuration(
-            thread
-                .desktop
-                .as_ref()
-                .map(|d| d.configuration.clone())
-                .unwrap_or_default(),
-        );
+        let mut configuration = thread
+            .desktop
+            .as_ref()
+            .map(|d| d.configuration.clone())
+            .unwrap_or_default();
+        if let Some(skill) = skill {
+            configuration.selected_skills = Some(vec![skill.clone()]);
+        } else {
+            self.select_plugin_attachments(
+                &mut configuration,
+                &input,
+                !thread.is_side()
+                    && thread.parent_thread_id.is_none()
+                    && thread.source != "nativeTaskAgent",
+            )?;
+        }
+        let configuration = self.freeze_configuration(configuration);
         let model = self.configured_model(&configuration)?;
         self.validate_fork_model_compatibility(thread, model.as_ref())?;
         validate_input(&input, &model.capabilities())?;
@@ -110,6 +150,8 @@ impl Engine {
             candidate.preview = text.chars().take(120).collect();
         }
         let mut turn = Turn {
+            interruption: None,
+            continued_from_turn_id: None,
             started_at: Some(now()),
             completed_at: None,
             duration_ms: None,
@@ -172,12 +214,31 @@ impl Engine {
         cancel: CancellationToken,
         admission: OwnedSemaphorePermit,
     ) {
+        self.activate_with_tool(cell, state, turn, cancel, admission, (None, None));
+    }
+
+    pub(super) fn activate_with_tool(
+        self: &Arc<Self>,
+        cell: &Arc<Cell>,
+        state: &mut State,
+        turn: &Turn,
+        cancel: CancellationToken,
+        admission: OwnedSemaphorePermit,
+        direct_tool: (
+            Option<model::ToolCall>,
+            Option<serde_json::Map<String, Value>>,
+        ),
+    ) {
+        let (direct_tool, tool_meta) = direct_tool;
         self.spawn_goal_scheduler();
         self.start_task_scheduler();
         let (tx, rx) = mpsc::channel(self.limits.mailbox_capacity);
-        let mut model = self
-            .configured_model(&turn.configuration.clone().unwrap_or_default())
-            .expect("configuration validated before admission");
+        let mut model = if direct_tool.is_some() {
+            self.model.clone()
+        } else {
+            self.configured_model(&turn.configuration.clone().unwrap_or_default())
+                .expect("configuration validated before admission")
+        };
         if turn.goal.is_some() || state.thread.goal_owner.is_some() {
             if let Some(budget) = self.goals.budget(&state.thread) {
                 if let Some(goal) = &state.thread.goals.goal {
@@ -196,6 +257,20 @@ impl Engine {
         }
         cell.cancel_grace_ms.store(1000, Ordering::Release);
         state.active = Some(Active {
+            registry: cell.inherited_registry.clone().map(Ok).unwrap_or_else(|| {
+                self.managed_registry(&state.thread, cell.research)
+                    .map_err(|e| e.to_string())
+            }),
+            hooks: cell
+                .hooks
+                .inherited
+                .get()
+                .map(|hooks| self.admitted_plugin_hooks(&state.thread, hooks))
+                .unwrap_or_else(|| self.frozen_plugin_hooks(&state.thread)),
+            hook_user_input: true,
+            hook_tasks: TaskTracker::new(),
+            direct_tool,
+            tool_meta,
             tool_calls: 0,
             waiting_for_model_capacity: false,
             started: std::time::Instant::now(),
@@ -215,6 +290,8 @@ impl Engine {
             process_cursors: BTreeMap::new(),
             handles: tools::Handles::default(),
         });
+        let pending =
+            self.pending_trusted_plugins(cell, &state.thread, turn, state.active.as_ref().unwrap());
         cell.settled.send_replace(false);
         let thread_id = &state.thread.id;
         cell.emit("turn/started", json!({"threadId": thread_id, "turn": turn}));
@@ -242,7 +319,7 @@ impl Engine {
             areal.turn.status = tracing::field::Empty,
         );
         self.tasks
-            .spawn(async move { engine.run(run_cell, cancel, rx).await }.instrument(span));
+            .spawn(async move { engine.run(run_cell, cancel, rx, pending).await }.instrument(span));
     }
 
     pub async fn steer(
@@ -277,13 +354,24 @@ impl Engine {
     }
 
     async fn steer_inner(
-        &self,
+        self: &Arc<Self>,
         thread_id: &str,
         turn_id: &str,
         input: Vec<Input>,
         settle_request: bool,
     ) -> Result<()> {
         let cell = self.cell(thread_id).await?;
+        if !settle_request {
+            let cancel = {
+                let state = cell.state.lock().await;
+                self.ensure_hook_session_open(&cell, &state.thread)?;
+                // Validate admission without publishing user input; release the lock
+                // while hooks run, then validate the still-current Turn again below.
+                drop(self.prepare_steer(&state, turn_id, input.clone())?);
+                state.active.as_ref().ok_or(Error::Conflict)?.cancel.clone()
+            };
+            self.plugin_hooks_user_input(&cell, &input, &cancel).await?;
+        }
         let mut state = cell.state.lock().await;
         let (candidate, item, permit) = self.prepare_steer(&state, turn_id, input)?;
         self.persist(&candidate).await?;
@@ -412,11 +500,26 @@ impl Engine {
             }
         } else if state.thread.desktop.is_some() {
             let mut candidate = state.thread.clone();
+            if state.active.is_some()
+                && !state.thread.is_side()
+                && state.thread.parent_thread_id.is_none()
+                && state.thread.goal_owner.is_none()
+                && state.thread.source != "nativeTaskAgent"
+                && let Some(turn) = candidate.turns.iter_mut().find(|turn| turn.id == turn_id)
+                && turn.interruption.is_none()
+            {
+                turn.interruption = Some(areal_protocol::TurnInterruption::UserPause);
+            }
             let queue = &mut candidate.desktop.as_mut().unwrap().queue;
             queue.paused = true;
             queue.pause_reason = Some("stopped".into());
             queue.revision += 1;
-            self.persist(&candidate).await?;
+            if let Err(error) = self.persist(&candidate).await {
+                if let Some(active) = &state.active {
+                    active.cancel.cancel();
+                }
+                return Err(error);
+            }
             state.thread = candidate;
             cell.emit(
                 "areal/queue/updated",
@@ -491,6 +594,7 @@ impl Engine {
         cell: Arc<Cell>,
         cancel: CancellationToken,
         mut steer: mpsc::Receiver<bool>,
+        pending: Vec<TrustedPlugin>,
     ) {
         let prompt_span = info_span!(target: trajectory::TARGET, "areal.user_prompt",
             gen_ai.input.messages = tracing::field::Empty,
@@ -560,13 +664,29 @@ impl Engine {
         };
         let mut result = {
             let generation = std::panic::AssertUnwindSafe(async {
+                if !pending.is_empty() {
+                    let turn_id = cell.state.lock().await.active.as_ref().unwrap().id.clone();
+                    self.prepare_turn_plugins(cell.clone(), turn_id, pending).await?;
+                }
+                anyhow::ensure!(!cancel.is_cancelled(), "cancelled before turn preparation completed");
                 if exclusive {
                     let guard=tokio::select! {biased; _=cancel.cancelled()=>anyhow::bail!("cancelled before writer admission"), guard=self.workspace_gate.clone().write_owned()=>guard};
                     self.ensure_workspace_processes_settled().await?;
                     cell.state.lock().await.active.as_mut().unwrap().workspace_exclusive=true;
                     workspace_guard=Some(guard);
                 }
-                self.generate(&cell, &cancel, &mut steer).await
+                let (registry, direct) = {
+                    let state = cell.state.lock().await;
+                    let active = state.active.as_ref().unwrap();
+                    (active.registry.clone().map_err(anyhow::Error::msg)?, active.direct_tool.clone())
+                };
+                cell.bindings.write().await.registry = registry;
+                self.plugin_hooks_before_turn(&cell,&cancel).await?;
+                if let Some(call) = direct {
+                    self.tool(&cell, &cancel, call, usize::MAX).await.map(|_| ())
+                } else {
+                    self.generate(&cell, &cancel, &mut steer).await
+                }
             }).catch_unwind();
             tokio::pin!(generation);
             let result = tokio::select! {
@@ -607,6 +727,16 @@ impl Engine {
             // 在清理及账本刷新之前释放生成 future，包括内部计量 guard。
             result
         };
+        if cancel.is_cancelled() && cell.state.lock().await.thread.parent_thread_id.is_none() {
+            let _ = self
+                .plugin_hook_event(
+                    &cell,
+                    areal_plugins::hooks::HookEvent::Interrupt,
+                    json!({}),
+                    &CancellationToken::new(),
+                )
+                .await;
+        }
         // 关闭子任务准入并传播取消，再等待子树；整个过程不持有父会话锁。
         let (children, tools) = {
             let mut state = cell.state.lock().await;
@@ -620,6 +750,17 @@ impl Engine {
         };
         tools.close();
         tools.wait().await;
+        let hook_tasks = cell
+            .state
+            .lock()
+            .await
+            .active
+            .as_ref()
+            .unwrap()
+            .hook_tasks
+            .clone();
+        hook_tasks.close();
+        hook_tasks.wait().await;
         let mut cleanup_failed = false;
         let mut dependency_failed = false;
         let active_id = cell.state.lock().await.active.as_ref().unwrap().id.clone();

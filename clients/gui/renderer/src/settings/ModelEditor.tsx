@@ -1,3 +1,4 @@
+import { SettingsSelect } from "./SettingsPageParts.js";
 import { useId, useRef, useState } from "react";
 import { Button } from "../components/ui/button.js";
 import { Input } from "../components/ui/input.js";
@@ -35,7 +36,7 @@ export function ModelEditor({ model, editing, ids, onSave, onClose }: {
     setError(message);
     input?.focus();
   };
-  return <SettingsDialog title={editing ? "编辑模型" : "添加模型"} description="为模型设置独立名称和生成参数。" onClose={requestClose}>
+  return <SettingsDialog title={editing ? "编辑模型" : "添加模型"} description="为模型设置独立名称和生成参数。" className="model-editor-dialog" onClose={requestClose}>
     <form className="model-editor" noValidate onSubmit={e => {
       e.preventDefault();
       if (!id.trim() || ids.includes(id.trim())) { fail("id", "模型 ID 不能为空或重复", idInput.current); return; }
@@ -61,14 +62,15 @@ export function ModelEditor({ model, editing, ids, onSave, onClose }: {
         <label>显示名称<Input aria-label="显示名称" maxLength={128} placeholder="留空使用模型 ID" value={name} onChange={e => setName(e.target.value)} /></label>
       </div>
       <section className="model-editor-parameters" aria-label="模型生成参数">
-        <h3>生成参数</h3><p>留空沿用供应商默认值。保存供应商后，新任务或重新选择此模型时生效。</p>
+        <h3>生成参数</h3><p>留空沿用供应商默认值。</p>
         <div className="model-editor-grid">
           <label>最大输出 Token<Input ref={maximumInput} {...invalid("maximum")} aria-label="模型最大输出 Token" type="number" min={1} step={1} placeholder="供应商默认" value={maximum} onChange={e => setMaximum(e.target.value)} /></label>
           <label>温度<Input ref={temperatureInput} {...invalid("temperature")} aria-label="模型温度" type="number" min={0} max={2} step="any" placeholder="供应商默认" value={temperature} onChange={e => setTemperature(e.target.value)} /></label>
         </div>
-        <label className="model-editor-effort"><span>推理强度<small>仅适用于支持推理参数的模型</small></span><select aria-label="模型推理强度" value={effort} onChange={e => setEffort(e.target.value)}><option value="">供应商默认</option><option value="none">无</option><option value="minimal">最低</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="xhigh">最高</option></select></label>
+        <div className="model-editor-effort"><span>推理强度<small>仅适用于支持推理参数的模型</small></span><SettingsSelect aria-label="模型推理强度" value={effort || "inherit"} onValueChange={selectedValue => setEffort(selectedValue === "inherit" ? "" : selectedValue)}><option value="inherit">供应商默认</option><option value="none">无</option><option value="minimal">最低</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="xhigh">最高</option></SettingsSelect></div>
       </section>
       <Feedback id={errorId} error={error} />
+      <p className="settings-muted model-editor-save-note">保存到供应商草稿，保存供应商后生效。</p>
       <footer><Button type="button" variant="outline" onClick={requestClose}>取消</Button><Button type="submit">保存模型</Button></footer>
     </form>
     {confirmDiscard && <SettingsDialog title="放弃模型修改？" description="尚未保存的模型名称和生成参数将丢失。" onClose={() => setConfirmDiscard(false)}>

@@ -10,6 +10,24 @@ contextBridge.exposeInMainWorld('arealDesktop', {
     ipcRenderer.on('areal-core:update-changed', handler);
     return () => ipcRenderer.removeListener('areal-core:update-changed', handler);
   },
+  onMcpAppDeepLink: listener => {
+    let active = true, pending = null;
+    const handler = () => { void ipcRenderer.invoke('areal-core:mcp-app-deep-link-target').then(async target => {
+      if (!active || !target || pending === target.id) return;
+      pending = target.id;
+      try { await listener(target); if (active) await ipcRenderer.invoke('areal-core:mcp-app-deep-link-consumed', target.id); }
+      finally { pending = null; }
+    }).catch(() => {}); };
+    ipcRenderer.on('areal-core:mcp-app-deep-link', handler); handler();
+    return () => { active = false; ipcRenderer.removeListener('areal-core:mcp-app-deep-link', handler); };
+  },
+  mcpFormResource: (operation, request) => ipcRenderer.invoke('areal-core:mcp-form-resource', operation, request),
+  mcpApp: request => ipcRenderer.invoke('areal-core:mcp-app', request),
+  onMcpAppEvent: listener => {
+    const handler = (_event, value) => listener(value);
+    ipcRenderer.on('areal-core:mcp-app-event', handler);
+    return () => ipcRenderer.removeListener('areal-core:mcp-app-event', handler);
+  },
   preview: request => ipcRenderer.invoke('areal-core:preview', request),
   onPreviewEvent: listener => {
     const handler = (_event, value) => listener(value);
@@ -18,6 +36,7 @@ contextBridge.exposeInMainWorld('arealDesktop', {
   },
   snapshot: () => ipcRenderer.invoke('areal-core:snapshot'),
   chooseProject: () => ipcRenderer.invoke('areal-core:choose-project'),
+  chooseTaskDirectory: () => ipcRenderer.invoke('areal-core:choose-task-directory'),
   chooseProjectlessDirectory: () => ipcRenderer.invoke('areal-core:choose-projectless-directory'),
   fileOpen: request => ipcRenderer.invoke('areal-core:file-open', request),
   command: (name, params) => ipcRenderer.invoke('areal-core:command', name, params),

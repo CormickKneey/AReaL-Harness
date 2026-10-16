@@ -11,7 +11,7 @@ pub(super) struct Submission {
     response: Option<Value>,
 }
 pub(super) struct Submissions {
-    gate: Mutex<()>,
+    gate: Mutex<BTreeMap<String, std::sync::Weak<Mutex<()>>>>,
     entries: Mutex<BTreeMap<String, Submission>>,
 }
 impl Submissions {
@@ -32,12 +32,14 @@ impl Submissions {
             }
         }
         Ok(Self {
-            gate: Mutex::new(()),
+            gate: Mutex::new(BTreeMap::new()),
             entries: Mutex::new(entries),
         })
     }
 }
 impl Engine {
+    pub const MANAGEMENT_RECEIPT_MAX_BYTES: usize = 256 * 1024;
+
     pub async fn management_submission<F, Fut>(
         self: &Arc<Self>,
         identity: String,
@@ -53,17 +55,37 @@ impl Engine {
         self.mutate(move|engine|async move{
    if !valid_id(&request_id){return Err(invalid("invalid requestId"));}
    let key=digest(&(&identity,&method,&request_id))?;let hash=digest(&parameters)?;
-   let _gate=engine.desktop.submissions.gate.lock().await;
+   // Serialize only this business key across execution/human wait. The entries
+   // lock serializes journal publications; independent uploads/revocations can run.
+   let serial = {
+       let mut gates = engine.desktop.submissions.gate.lock().await;
+       gates.retain(|_, gate| gate.strong_count() > 0);
+       if let Some(gate) = gates.get(&key).and_then(std::sync::Weak::upgrade) {
+           gate
+       } else {
+           let gate = Arc::new(Mutex::new(()));
+           gates.insert(key.clone(), Arc::downgrade(&gate));
+           gate
+       }
+   };
+   let _request = serial.lock().await;
    let mut entries=engine.desktop.submissions.entries.lock().await;
    if let Some(record)=entries.get(&key){if record.digest!=hash{return Err(Error::Conflict);}return record.response.clone().ok_or_else(||invalid("UNKNOWN_SUBMISSION: inspect current state; mutation was not replayed"));}
    if entries.len()>=4096{return Err(Error::Exhausted("management submission capacity reached; keys are retained for deployment lifetime".into()));}
-   if serde_json::to_vec(&*entries).map_err(invalid)?.len()>8*1024*1024-512*1024{return Err(Error::Exhausted("management receipt byte capacity reached".into()));}
    let record=Submission{identity,request_id,method,digest:hash,state:"accepted".into(),response:None};entries.insert(key.clone(),record);
+   // Each admitted operation may later persist a 256 KiB response. Reserve that
+   // space now while journal admission is serialized, so concurrent completions
+   // cannot exceed the same 8 MiB budget enforced when reopening the service.
+   let reserved=entries.values().filter(|r|r.state=="accepted").count().saturating_mul(Self::MANAGEMENT_RECEIPT_MAX_BYTES+512);
+   if serde_json::to_vec(&*entries).map_err(invalid)?.len().saturating_add(reserved)>8*1024*1024 {
+       entries.remove(&key);
+       return Err(Error::Exhausted("management receipt capacity cannot reserve this response".into()));
+   }
    if let Err(e)=engine.store.save_metadata("submissions",&*entries).await{entries.remove(&key);return Err(invalid(e));}
    drop(entries);
    let mut result=run(engine.clone()).await;
    let mut entries=engine.desktop.submissions.entries.lock().await;
-   if serde_json::to_vec(&result).map_err(invalid)?.len()>256*1024 {result=json!({"error":{"code":-32005,"message":"mutation completed; response exceeds receipt budget; inspect authoritative state"}}); }
+   if serde_json::to_vec(&result).map_err(invalid)?.len()>Self::MANAGEMENT_RECEIPT_MAX_BYTES {result=json!({"error":{"code":-32005,"message":"mutation completed; response exceeds receipt budget; inspect authoritative state"}}); }
    let record=entries.get_mut(&key).unwrap();record.state="completed".into();record.response=Some(result.clone());
    if let Err(e)=engine.store.save_metadata("submissions",&*entries).await{let record=entries.get_mut(&key).unwrap();record.state="unknown".into();record.response=None;return Err(invalid(e));}
    Ok(result)

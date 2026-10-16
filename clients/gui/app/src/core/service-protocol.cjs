@@ -6,6 +6,7 @@ const { validateCommand: validateDesktopCommand, desktopError } = require('@area
 const { inspectResources, recoverResource, summary, blocked } = require('./resource-recovery.cjs');
 const { validToolInput, failure: browserFailure, success: browserSuccess } = require('./browser-tool.cjs');
 const PROTOCOL = 'areal.desktop-service.v1';
+const COMMAND_CONTRACT = 'areal.desktop-commands.v1';
 const browserKey = (projectId, threadId) => JSON.stringify([projectId, threadId]);
 function validateCommand(name, params) {
   validateDesktopCommand(name, params, { serviceOnly: true });
@@ -43,10 +44,25 @@ class DesktopService {
     this.idleSince = Date.now(); this.closed = false;
     backend.onChange = () => this.schedule();
     backend.onNotification = notice => this.notify(notice);
+    backend.onMcpAppNotification = event => {
+      const notification = event?.notification;
+      if (this.closed || !['projectId', 'threadId', 'instanceId'].every(key => typeof event?.[key] === 'string')
+        || !['string', 'number'].includes(typeof event.generation)
+        || notification?.jsonrpc !== '2.0' || notification.id !== undefined
+        || !['notifications/resources/updated', 'notifications/resources/list_changed',
+          'notifications/tools/list_changed', 'ui/notifications/host-context-changed'].includes(notification.method)) return;
+      // Only authenticated clients that completed hello are present in this set.
+      // Main owns the final app-instance/window match; background events never reveal a pane.
+      const params = { projectId: event.projectId, threadId: event.threadId,
+        instanceId: event.instanceId, generation: event.generation,
+        notification: { jsonrpc: '2.0', method: notification.method,
+          ...(notification.params === undefined ? {} : { params: notification.params }) } };
+      for (const socket of this.clients) this.send(socket, { method: 'mcpAppNotification', params });
+    };
   }
   packet() {
     return { sequence: ++this.sequence, snapshot: this.backend.snapshot(), service: {
-      connected: true, cancelStop: true, clients: this.clients.size, busy: this.backend.hasWork({ includePausedQueues: false }),
+      connected: true, commandContract: COMMAND_CONTRACT, cancelStop: true, clients: this.clients.size, busy: this.backend.hasWork({ includePausedQueues: false }),
       activeCommands: this.inflight, providerUpdating: !!this.backend.providerUpdating,
       starting: this.backend.starting.size, pid: process.pid, lifecycleVersion: 1, stopReport: this.stopReport ?? null,
       targets: [...this.backend.projects].map(([projectId, p]) => ({ projectId, serviceId: p.service?.serviceId ?? null, generation: p.service?.generation ?? null })),
@@ -304,7 +320,7 @@ class DesktopService {
       else if (typeof params?.path !== 'string') throw new Error('无效工作区路径');
       this.inflight++; this.schedule();
       try {
-        const entryKey = method === 'command' && params.name === 'send'
+        const entryKey = method === 'command' && ['send', 'continue'].includes(params.name)
           ? browserKey(params.request.projectId, params.request.threadId) : null;
         const entryProject = entryKey && this.backend.projects.get(params.request.projectId);
         const entry = entryProject?.model.state.threads[params.request.threadId]
@@ -572,4 +588,4 @@ class DesktopService {
     return browserSuccess(result);
   }
 }
-module.exports = { PROTOCOL, DesktopService, validateCommand, encodeMedia, decodeMedia };
+module.exports = { PROTOCOL, COMMAND_CONTRACT, DesktopService, validateCommand, encodeMedia, decodeMedia };

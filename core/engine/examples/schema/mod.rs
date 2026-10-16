@@ -1,6 +1,7 @@
 //! 桌面扩展投影的响应和事件；动态工具参数、Runtime capabilities 保留扩展对象。
 use areal_protocol::{desktop::*, *};
 use serde_json::{Value, json};
+pub mod plugins;
 fn schema<T: schemars::JsonSchema>() -> Value {
     serde_json::to_value(schemars::schema_for!(T)).unwrap()
 }
@@ -545,6 +546,7 @@ pub fn projections() -> (Value, Value) {
     ] {
         notifications.insert(name.into(), value);
     }
+    plugins::projections(&mut responses, &mut notifications);
     (Value::Object(responses), Value::Object(notifications))
 }
 

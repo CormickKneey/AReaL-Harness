@@ -250,17 +250,23 @@ test("explicit retry and ordinary send still count as work and release admission
   await rejected;
   assert.equal(backend.activeCommands, 0);
 
-  const project = { model: { state: { threads: {} } } };
+  const project = {
+    model: { state: { threads: {} } },
+    client: { capabilities: { methods: ["areal/turn/submit"], features: { ordinaryTurnSubmit: true } } },
+    configurations: { thread: { revision: 0 } },
+  };
   backend.start = async (id) => {
     assert.equal(id, "project");
     return project;
   };
   backend.submit = async (value, method, params) => {
     assert.equal(value, project);
-    assert.equal(method, "areal/turn/start");
-    assert.deepEqual(params, { threadId: "thread", input: [{ type: "text", text: "fixture" }] });
+    assert.equal(method, "areal/turn/submit");
+    assert.deepEqual(params, { threadId: "thread", expectedConfigRevision: 0,
+      intent: { type: "message", input: [{ type: "text", text: "fixture" }] } });
     submitted.resolve();
     await releaseSend.promise;
+    return { turn: { id: "turn" } };
   };
   const sending = backend.command("send", {
     projectId: "project",

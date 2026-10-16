@@ -268,9 +268,40 @@ fn invalid_skills_warn_without_losing_valid_skills_or_falling_back_to_shadowed_c
 fn combined_skill_count_is_bounded() {
     let user = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
-    for i in 0..128 {
+    for i in 0..256 {
         skill(user.path(), ".agents/skills", &format!("s-{i}"), "body");
+        skill(project.path(), ".agents/skills", &format!("p-{i}"), "body");
     }
+    let discovered = discover(Some(project.path()), Some(user.path())).unwrap();
+    assert_eq!(discovered.skills.len(), 512);
+    assert_eq!(discovered.skills[0].id, "p-0");
+    assert_eq!(discovered.skills[511].id, "s-99");
+    assert!(discovered.warnings.is_empty());
     skill(project.path(), ".agents/skills", "extra", "body");
-    assert!(discover(Some(project.path()), Some(user.path())).is_err());
+    let error = discover(Some(project.path()), Some(user.path())).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "discovered skills count 513 exceeds limit 512"
+    );
+}
+
+#[test]
+fn skill_directory_raw_entry_count_is_bounded() {
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path().join(".agents/skills");
+    fs::create_dir_all(&root).unwrap();
+    skill(project.path(), ".agents/skills", "valid", "body");
+    for i in 0..511 {
+        fs::write(root.join(format!("entry-{i}.txt")), "index").unwrap();
+    }
+    let discovered = discover(Some(project.path()), None).unwrap();
+    assert_eq!(discovered.skills.len(), 1);
+    assert_eq!(discovered.skills[0].id, "valid");
+    fs::write(root.join("extra.txt"), "index").unwrap();
+    let error = discover(Some(project.path()), None).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("skills directory exceeds 512 raw entries")
+    );
 }

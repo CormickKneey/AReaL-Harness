@@ -449,6 +449,7 @@ pub async fn probe(service: &Service) -> Result<()> {
     let mut url = http_endpoint(service)?;
     url.set_path("/areal/service");
     let identity: Identity = reqwest::Client::builder()
+        .tls_built_in_native_certs(false)
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(2))

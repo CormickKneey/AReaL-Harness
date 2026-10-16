@@ -28,7 +28,6 @@ export function WorktreeStarter({project,action,onOpen}:{project:Data;action:Act
     const from=`areal-gui:draft:${project.id}:new`,to=`areal-gui:draft:${result.projectId}:new`;
     if(localStorage.getItem(to)===null){
       for(const suffix of ['',':permission',':plan']){const value=localStorage.getItem(from+suffix);if(value!==null)localStorage.setItem(to+suffix,value);}
-      const model=localStorage.getItem(`areal-gui:model:${project.id}`);if(model!==null)localStorage.setItem(`areal-gui:model:${result.projectId}`,model);
       if(attachmentDrafts.has(from))attachmentDrafts.set(to,[...attachmentDrafts.get(from)!]);
     }
     await onOpen(result.projectId);setOpen(false);

@@ -3,8 +3,10 @@
 /** @typedef {{message:string, code?:string|number, reason?:string, submissionUnknown?:boolean, requestId?:string}} DesktopError */
 /** @template T @typedef {{ok:true,value:T}|{ok:false,error:DesktopError}} DesktopResult */
 /** @typedef {{id:string,revision:string}} ResourceRef */
+/** @typedef {{projectId:string,profile?:ResourceRef}} PrepareCreatorRequest */
 /** @typedef {{projectId:string,threadId:string,expectedRevision?:number,model?:{providerId:string,modelId:string}|null,profile?:ResourceRef,options?:Record<string,unknown>,parameters?:Record<string,unknown>,selectedSkills?:ResourceRef[]}} ConfigureRequest */
 /** @typedef {{projectId:string,operation:'start',sourceThreadId:string,requestId:string,text:string,workspaceAccess:'none'|'readOnly',model?:{providerId:string,modelId:string},resetModel?:boolean,anchor?:Record<string,unknown>|null,selection?:Record<string,unknown>|null,parameters?:Record<string,unknown>}|{projectId:string,operation:'recover',requestId:string}|{projectId:string,operation:'send',threadId:string,text:string}|{projectId:string,operation:'context',threadId:string,cursor?:string,evidenceRef?:string,maxBytes?:number}|{projectId:string,operation:'list',sourceThreadId:string,includeArchived?:boolean,cursor?:string}} SideRequest */
+/** @typedef {{projectId:string,threadId:string,expectedTurnId:string,expectedConfigRevision?:number,requestId?:string}} ContinueRequest */
 /** @typedef {{projectId:string,sourceThreadId:string,requestId?:string,workspaceMode:'sharedCurrent',anchor:{turnId:string,boundary:'before'|'after'},target?:Record<string,unknown>}} ForkRequest */
 
 /** @typedef {{operation:'status'|'retry'}|{operation:'setEnabled',enabled:boolean,expectedRevision:string}} TrajectoryRequest */
@@ -15,7 +17,7 @@
 // 名称、作用域和执行层只维护一份；Main 专属能力不能从后台服务入口调用。
 const commandDefinitions = Object.freeze({
   connect: ['service', 'project'], list: ['service', 'project'], open: ['service', 'thread'],
-  create: ['service', 'project'], fork: ['service', 'project'], side: ['service', 'project'], send: ['service', 'thread'], stop: ['service', 'thread'],
+  create: ['service', 'project'], prepareCreator: ['service', 'project'], fork: ['service', 'project'], side: ['service', 'project'], send: ['service', 'thread'], continue: ['service', 'thread'], stop: ['service', 'thread'],
   attachBrowser: ['service', 'thread'],
   respond: ['service', 'thread'], reconcile: ['service', 'project'], configure: ['service', 'thread'],
   queue: ['service', 'thread'], queueEdit: ['service', 'thread'], library: ['service', 'app'],
@@ -27,7 +29,7 @@ const commandDefinitions = Object.freeze({
   connectService: ['main', 'app'], export: ['main', 'thread'], remoteControl: ['main', 'app'],
 });
 /** @typedef {keyof typeof commandDefinitions} CommandName */
-/** @template {CommandName} N @typedef {N extends 'fork' ? ForkRequest : N extends 'configure' ? ConfigureRequest : N extends 'side' ? SideRequest : N extends 'trajectory' ? TrajectoryRequest : Record<string,unknown>} CommandParams */
+/** @template {CommandName} N @typedef {N extends 'continue' ? ContinueRequest : N extends 'prepareCreator' ? PrepareCreatorRequest : N extends 'fork' ? ForkRequest : N extends 'configure' ? ConfigureRequest : N extends 'side' ? SideRequest : N extends 'trajectory' ? TrajectoryRequest : Record<string,unknown>} CommandParams */
 /** @typedef {'show'|'navigate'|'back'|'forward'|'reload'|'stop'|'state'|'external'|'devtools'|'openLink'|'release'|'claim'|'takeover'|'captureRegion'|'captureElement'|'selectElement'|'cancelElementSelection'|'checkElement'|'endRegion'|'beginStyleTrial'|'applyStyleTrial'|'undoStyleTrial'|'redoStyleTrial'|'styleTrialState'|'captureStyleTrialAfter'|'clearStyleTrial'|'newPage'|'selectPage'|'subscribe'|'unsubscribe'|'allowNextDownload'|'cancelFileHandoff'|'cancelDownload'|'authorizeFrameOrigin'|'reloadFrameOrigin'|'revokeFrameOrigin'} OwnedPreviewOperation */
 /** @typedef {{operation:'hide',projectId?:string,threadId?:string,pageId?:string,captureId?:string}|{operation:OwnedPreviewOperation,projectId:string,threadId:string,pageId?:string,captureId?:string,x?:number,y?:number,elementId?:string,trialId?:string,property?:string,value?:string,downloadId?:string,url?:string,userIntent?:boolean,visible?:boolean,bounds?:{x:number,y:number,width:number,height:number}}} PreviewRequest */
 /** @param {unknown} value @returns {value is Record<string,unknown>} */
@@ -46,6 +48,13 @@ function validateCommand(name, params, { serviceOnly = false } = {}) {
   if (serviceOnly && layer !== 'service') invalid();
   if (scope !== 'app' && !identifier(params.projectId)) invalid();
   if (scope === 'thread' && !identifier(params.threadId)) invalid();
+  if (name === 'prepareCreator' && (Object.keys(params).some(key => !['projectId', 'profile'].includes(key))
+    || params.profile !== undefined && (!record(params.profile) || !resource(params.profile) || Object.keys(params.profile).some(key => !['id', 'revision'].includes(key))))) invalid();
+  if (name === 'send' && params.requestId !== undefined && (typeof params.requestId !== 'string' || !/^[0-9a-f-]{36}$/.test(params.requestId))) invalid();
+  if (name === 'continue' && (!identifier(params.expectedTurnId)
+    || Object.keys(params).some(key => !['projectId', 'threadId', 'expectedTurnId', 'expectedConfigRevision', 'requestId'].includes(key))
+    || params.requestId !== undefined && (typeof params.requestId !== 'string' || !/^[0-9a-f-]{36}$/.test(params.requestId))
+    || params.expectedConfigRevision !== undefined && (!Number.isSafeInteger(params.expectedConfigRevision) || Number(params.expectedConfigRevision) < 0))) invalid();
   if (name === 'create' && params.browserEnabled !== undefined && typeof params.browserEnabled !== 'boolean') invalid();
   if (name === 'fork' && (!identifier(params.sourceThreadId) || !record(params.anchor)
     || !identifier(params.anchor.turnId) || !['before', 'after'].includes(String(params.anchor.boundary))
@@ -88,6 +97,78 @@ function validateCommand(name, params, { serviceOnly = false } = {}) {
   }
   if (['manage', 'workspace', 'media', 'queueEdit', 'library', 'providers', 'chatgpt', 'analytics', 'resources', 'projectless', 'tasks', 'remoteControl'].includes(name)
     && !identifier(params.operation)) invalid();
+  if (name === 'resources' && params.operation === 'builtinSkill'
+    && (params.id !== 'openai-skill-creator' || Object.keys(params).some(key => !['operation', 'id'].includes(key)))) invalid();
+  if (name === 'manage' && ['pluginArchivePick', 'pluginArchiveImport'].includes(String(params.operation))) {
+    const importing = params.operation === 'pluginArchiveImport';
+    if (serviceOnly && !importing) invalid();
+    const keys = ['operation', 'projectId', ...(importing ? ['expectedRevision', 'requestId', serviceOnly ? 'path' : 'selectionToken'] : [])];
+    if (Object.keys(params).some(key => !keys.includes(key))) invalid();
+    if (importing && (!identifier(params.requestId) || !Number.isSafeInteger(params.expectedRevision) || Number(params.expectedRevision) < 0)) invalid();
+    if (importing && (serviceOnly
+      ? typeof params.path !== 'string' || params.path.length > 4096 || params.path.includes('\0') || !params.path.startsWith('/')
+      : !identifier(params.selectionToken))) invalid();
+  }
+  if (name === 'manage' && ['plugin', 'pluginInstall', 'pluginConfigure', 'pluginUninstall', 'pluginSetup', 'pluginResolve', 'marketplaceAdd', 'marketplaceAddGit', 'marketplaceRemove', 'marketplaceUpdate'].includes(String(params.operation))) {
+    if (!String(params.operation).startsWith('marketplace') && !identifier(params.id)) invalid();
+    if (params.operation === 'marketplaceAdd' && (typeof params.root !== 'string' || !params.root.trim() || params.root.length > 4096 || params.root.includes('\0'))) invalid();
+    if (['pluginInstall', 'pluginConfigure'].includes(String(params.operation)) && !['user', 'project'].includes(String(params.scope))) invalid();
+    if (params.operation === 'pluginInstall' && (typeof params.source !== 'string' || !params.source.trim() || params.source.length > 4096 || params.source.includes('\0') || !identifier(params.expectedDigest))) invalid();
+    if (params.operation === 'pluginConfigure' && typeof params.enabled !== 'boolean') invalid();
+    if (params.operation !== 'plugin' && params.operation !== 'pluginSetup' && (!Number.isSafeInteger(params.expectedRevision) || Number(params.expectedRevision) < 0)) invalid();
+    if (params.threadId !== undefined && !identifier(params.threadId)) invalid();
+    if (params.requestId !== undefined && !identifier(params.requestId)) invalid();
+  }
+  if (name === 'manage' && params.operation === 'pluginSubmission'
+    && (!identifier(params.requestId) || !['pluginArchiveImport', 'marketplaceAdd', 'marketplaceAddGit', 'marketplaceRemove', 'marketplaceUpdate', 'pluginResolve', 'pluginConnection', 'pluginHooksConfigure', 'hookAcknowledge', 'pluginAuthConfigure', 'connectorConfigure', 'pluginInstall', 'pluginConfigure', 'pluginUninstall', 'pluginSetup'].includes(String(params.mutation)))) invalid();
+  if (name === 'manage') {
+    if (['mcpFormResourcePrepare', 'mcpFormResourceStage', 'mcpFormResourceSubmission', 'mcpFormResourceRelease'].includes(String(params.operation))) {
+      const operation = String(params.operation);
+      // Only native Main mediation may acquire selection tokens or submit filesystem paths.
+      if (operation !== 'mcpFormResourceRelease' && !serviceOnly) invalid();
+      const keys = operation === 'mcpFormResourceStage' ? ['selectionToken', 'requestId', 'paths']
+        : operation === 'mcpFormResourceSubmission' ? ['requestId']
+        : ['threadId', 'requestId', 'fieldName', ...(operation === 'mcpFormResourceRelease' ? ['uri'] : [])];
+      if (Object.keys(params).some(key => !['operation', 'projectId', ...keys].includes(key))
+        || !identifier(params.requestId)) invalid();
+      if (operation === 'mcpFormResourceStage') {
+        if (!identifier(params.selectionToken) || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(String(params.requestId))
+          || !Array.isArray(params.paths) || params.paths.length < 1 || params.paths.length > 256
+          || params.paths.some(path => typeof path !== 'string' || path.length > 4096 || path.includes('\0')
+            || !(/^(?:\/|[a-zA-Z]:[\\/])/.test(path)))) invalid();
+      } else if (operation !== 'mcpFormResourceSubmission') {
+        if (!identifier(params.threadId) || typeof params.fieldName !== 'string' || !params.fieldName || params.fieldName.length > 4096) invalid();
+        if (operation === 'mcpFormResourceRelease' && (typeof params.uri !== 'string' || !params.uri || params.uri.length > 4096 || params.uri.includes('\0'))) invalid();
+      }
+    }
+
+    // Main grants file paths; renderer requests cannot supply a saved grant.
+    if (params.operation === 'mcpAppOpen' && params.fileResource !== undefined) {
+      const grant = params.fileResource;
+      if (!serviceOnly || !record(grant) || !identifier(params.threadId)
+        || typeof grant.uri !== 'string' || !/^areal-file:\/\/[^\s/]+$/.test(grant.uri) || grant.uri.length > 512
+        || typeof grant.path !== 'string' || !grant.path.trim() || grant.path.length > 4096 || grant.path.includes('\0')
+        || Object.keys(grant).some(key => key !== 'uri' && key !== 'path')) invalid();
+    }
+    if (['pluginConnection','connectorConfigure','connectorCredential'].includes(String(params.operation)) && (!identifier(params.id) || typeof params.expectedDigest !== 'string' || !/^[a-f0-9]{64}$/.test(params.expectedDigest) || !identifier(params.requestId))) invalid();
+    if (params.operation === 'pluginConnection' && typeof params.connect !== 'boolean') invalid();
+    if (params.operation === 'pluginHooksConfigure' && (!identifier(params.id) || !identifier(params.requestId) || typeof params.enabled !== 'boolean' || typeof params.trusted !== 'boolean' || (params.allowReadOnlyCommands !== undefined && typeof params.allowReadOnlyCommands !== 'boolean') || typeof params.expectedDigest !== 'string' || !/^(?:sha256:)?[a-f0-9]{64}$/.test(params.expectedDigest) || typeof params.definitionDigest !== 'string' || !/^[a-f0-9]{64}$/.test(params.definitionDigest))) invalid();
+    if (params.operation === 'hookAcknowledge' && (!identifier(params.threadId) || !identifier(params.requestId) || !identifier(params.invocationId) || typeof params.inspection !== 'string' || !params.inspection.trim() || params.inspection.length > 8192)) invalid();
+    if (['connectorConfigure','connectorCredential'].includes(String(params.operation)) && (!identifier(params.connectorId) || params.provider !== 'github')) invalid();
+    if (params.operation === 'connectorCredential' && (typeof params.secret !== 'string' || !params.secret.trim() || params.secret.length > 16384 || /[\r\n]/.test(params.secret))) invalid();
+    if (params.operation === 'connectorConfigure' && !identifier(params.credentialRef)) invalid();
+    if (['pluginAuthCredential','pluginAuthConfigure'].includes(String(params.operation))) {
+      if (!identifier(params.id) || !identifier(params.server) || typeof params.expectedDigest !== 'string' || !/^[a-f0-9]{64}$/.test(params.expectedDigest) || !identifier(params.requestId)
+        || !record(params.configuration) || Object.keys(params.configuration).some(key => !['clientSecretRef','privateKeyRef','privateKeyId','clientMetadataUrl','apiKeyRef','callbackUrl'].includes(key))) invalid();
+      for (const key of ['clientSecretRef','privateKeyRef','privateKeyId']) if (params.configuration[key] !== undefined && !identifier(params.configuration[key])) invalid();
+      for (const key of ['clientMetadataUrl','callbackUrl']) if (params.configuration[key] !== undefined && (typeof params.configuration[key] !== 'string' || params.configuration[key].length > 4096 || params.configuration[key].includes('\0'))) invalid();
+      if (params.operation === 'pluginAuthCredential') {
+        if (!record(params.credentials) || Object.keys(params.credentials).some(key => !['clientSecret','privateKeyPem','apiKey'].includes(key))) invalid();
+        for (const [key,value] of Object.entries(params.credentials)) if (typeof value !== 'string' || value.length > (key === 'privateKeyPem' ? 32768 : 16384) || value.includes('\0') || (key !== 'privateKeyPem' && /[\r\n]/.test(value))) invalid();
+      }
+    }
+    if (params.operation === 'pluginAuth' && (!identifier(params.id) || !identifier(params.server) || !['start','status','cancel'].includes(String(params.authOperation)))) invalid();
+  }
   if (name !== 'configure') return;
   if (params.expectedRevision !== undefined && (!Number.isSafeInteger(params.expectedRevision) || Number(params.expectedRevision) < 0)) invalid();
   if (params.model !== undefined && params.model !== null && (!record(params.model) || !identifier(params.model.providerId) || !identifier(params.model.modelId))) invalid();
@@ -158,6 +239,19 @@ function desktopError(error) {
 /** @param {string} name @param {unknown} params @param {unknown} value */
 function validateCommandResponse(name, params, value) {
   if (!record(params)) invalid();
+  if (name === 'prepareCreator') {
+    if (!record(value) || !identifier(value.projectId) || value.projectId !== params.projectId
+      || Object.keys(value).some(key => !['projectId', 'profile', 'skill', 'provenance'].includes(key))
+      || !record(value.profile) || !resource(value.profile) || Object.keys(value.profile).some(key => !['id', 'revision'].includes(key))
+      || !record(value.skill) || !resource(value.skill) || Object.keys(value.skill).some(key => !['id', 'revision', 'name', 'description'].includes(key))
+      || typeof value.skill.name !== 'string' || !value.skill.name.trim() || value.skill.name.length > 256
+      || typeof value.skill.description !== 'string' || value.skill.description.length > 8192
+      || !record(value.provenance) || Object.keys(value.provenance).some(key => !['upstream', 'revision', 'contentDigest'].includes(key))
+      || !identifier(value.provenance.upstream) || !identifier(value.provenance.revision)
+      || typeof value.provenance.contentDigest !== 'string' || !/^[a-f0-9]{64}$/.test(value.provenance.contentDigest)) invalid();
+    return;
+  }
+  if (name === 'continue' && (!record(value) || !(record(value.turn) && identifier(value.turn.id) || Number.isSafeInteger(value.queueRevision) && Number(value.queueRevision) >= 0))) invalid();
   if (name === 'configure' && (!record(value) || !Array.isArray(value.projects))) invalid();
   if (name === 'fork' && (!record(value) || !identifier(value.threadId) || !identifier(value.requestId))) invalid();
   if (name !== 'side') return;

@@ -2,6 +2,12 @@ import type { Data } from "./services.js";
 
 export const profileKey = (profile: Data) => JSON.stringify({ id: profile.id, revision: profile.revision });
 
+export function resolveDraftProfile(project: Data, selection?: string | null): Data | undefined {
+  if (selection) return project.profiles.find((profile: Data) => profileKey(profile) === selection);
+  const reference = project.defaultProfile;
+  return reference ? project.profiles.find((profile: Data) => profile.id === reference.id && profile.revision === reference.revision) : undefined;
+}
+
 /** Deployed restrictions are read from Core; this surface never edits deployment. */
 export function ProfileDetails({ profile }: { profile: Data }) {
   return <details className="text-ui-sm text-foreground-subtle" open>
