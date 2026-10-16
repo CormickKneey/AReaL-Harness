@@ -97,6 +97,8 @@ expected 为 `{kind:"absent"}` 或 `{kind:"sha256",value:"digest"}`。read 的 s
 
 list 每页最多 256 项/约 32 KiB，扫描最多 4096 UTF-8 名称；目录变化时不是快照。helper 使用目录描述符与 NOFOLLOW，普通读写拒绝符号链接、硬链接和特殊文件，条件替换 fsync。
 
+打开已有根目录、路径中间目录和只读文件时，helper 在原描述符边界重试 `EINTR`，保留 `NOFOLLOW` 等标志，不重放整个操作或消耗新的模型轮次。权限拒绝不重试；创建、写入、替换和删除不因 `EINTR` 自动重放，未恢复的中断返回 `UNAVAILABLE` 并保留未知结果语义。系统权限审批或存储服务持续不可用时，重试不能使其恢复；已有 Scope 的 wall-time 和取消、清理仍约束助手进程。
+
 `search` 是只读的原生 `FileCommand`，在当前 Scope 授权的文件或目录中按正则表达式 `pattern` 搜索，可选 `glob` 过滤路径。`context` 必填且为 0–20，`limit` 必填且为 1–1000，只计匹配行，不计上下文行。结果行的 `path` 是宿主文件路径，`line` 为行号或 null，`text` 为 UTF-8 文本或 null，`kind` 为 `match` 或 `context`。匹配超限、单行超过 64 KiB、返回行累计超过 8 MiB 或序列化结果行超过 13000 字节时，`limited=true`；此时应按 `guidance` 缩小路径或模式，只有 `limited=false` 时空结果才表示没有匹配。搜索遵循工作区内 ignore 规则，不读取宿主 rg 配置，不跟随符号链接。此分支扩展了既有 `fs.execute` 命令联合类型；旧 Runtime 不认识 `search` 时会拒绝请求，SDK 不自动降级或重试。
 
 默认 helper 按文件、命令按写根协调冲突（writeSerialization=conflictingPaths）；显式绕过命令协调为 filePaths。外部进程不参与，不保证外部 CAS/跨文件事务。helper 结果丢失或提交后清理失败为 UNKNOWN，不能重放。
