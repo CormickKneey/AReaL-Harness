@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { runSettingsExercise } from "./design-system-settings-exercise.mjs";
 import { createRequire } from "node:module";
 import { createServer } from "node:http";
 import { mkdtemp, readFile, writeFile, readdir } from "node:fs/promises";
@@ -15,6 +16,8 @@ const { chromium } = require("playwright-core");
 const dist = join(gui, "dist/design-system");
 const scratch = await mkdtemp(join(tmpdir(), "areal-design-system-"));
 const baseline = process.argv.includes("--baseline");
+const settingsExercise = process.argv.includes("--settings-exercise");
+let exercise = null;
 const html = await readFile(join(dist, "design-system.html"), "utf8");
 const buildDigest = createHash("sha256").update(html);
 for (const match of html.matchAll(/(?:src|href)="([^\"]+\.(?:js|css))"/g)) buildDigest.update(await readFile(join(dist, match[1])));
@@ -36,16 +39,22 @@ const errors = [], external = [], samples = [], checks = [];
 try {
   browser = await chromium.launch({ headless: true, ...(process.env.AREAL_GUI_TEST_BROWSER ? { executablePath: process.env.AREAL_GUI_TEST_BROWSER } : { channel: "chrome" }) });
   browserVersion = browser.version();
-  const context = await browser.newContext({ deviceScaleFactor: 1, viewport: { width: 1440, height: 900 }, serviceWorkers: "block" });
+  const context = await browser.newContext({ deviceScaleFactor: settingsExercise ? 2 : 1, viewport: { width: 1440, height: settingsExercise ? 949 : 900 }, serviceWorkers: "block" });
   await context.route("**/*", route => {
     if (route.request().url().startsWith(origin + "/")) return route.continue();
     external.push(route.request().url()); return route.abort();
   });
+  if (settingsExercise) await context.tracing.start({ screenshots: true, snapshots: true });
   page = await context.newPage();
   page.on("pageerror", error => errors.push(error.message));
-  await page.goto(`${origin}/design-system.html`);
+  await page.goto(`${origin}/design-system.html${settingsExercise ? "?settings-exercise" : ""}`);
   await page.getByRole("heading", { name: "客户端设计系统", exact: true }).waitFor();
   assert.equal(await page.evaluate(() => typeof window.arealDesktop), "undefined");
+  if (settingsExercise) {
+    exercise = { id: "settings-reflow", questionId: "Q-SETTINGS-REFLOW-01", steps: [], checks: [] };
+    await runSettingsExercise(page, scratch, gui, exercise);
+    checks.push(...exercise.checks);
+  } else {
   const controls = page.getByRole("region", { name: "公共控件", exact: true });
   const toggle = controls.getByRole("switch", { name: "显示底部面板", exact: true });
   const checked = await toggle.getAttribute("aria-checked");
@@ -362,6 +371,7 @@ try {
   await card.getByRole("button", { name: "核对待审批状态", exact: true }).waitFor();
   assert.equal(await card.getByRole("button", { name: "允许一次", exact: true }).count(), 0);
   checks.push("real approval component shows busy/failure/unknown and blocks duplicate decisions");
+  }
   assert.deepEqual(errors, []); assert.deepEqual(external, []);
   passed = true;
 } catch (error) {
@@ -369,11 +379,12 @@ try {
   if (page) await page.screenshot({ path: join(scratch, "failure.png"), fullPage: true }).catch(() => {});
   process.exitCode = 1;
 } finally {
+  if (settingsExercise && page) await page.context().tracing.stop({ path: join(scratch, "settings-trace.zip") }).catch(error => { errors.push(String(error)); passed = false; process.exitCode = 1; });
   await browser?.close(); await new Promise(resolve => server.close(resolve));
-  const artifacts = await Promise.all((await readdir(scratch)).filter(name => name.endsWith(".png")).sort().map(async name => ({ path: name, sha256: createHash("sha256").update(await readFile(join(scratch, name))).digest("hex") })));
+  const artifacts = await Promise.all((await readdir(scratch)).filter(name => name.endsWith(".png") || (settingsExercise && /\.(json|zip)$/.test(name))).sort().map(async name => ({ path: name, sha256: createHash("sha256").update(await readFile(join(scratch, name))).digest("hex") })));
   const worktreeStatus = execFileSync("git", ["status", "--porcelain"], { cwd: gui }).toString();
   const diffSha256 = createHash("sha256").update(execFileSync("git", ["diff", "HEAD", "--"], { cwd: gui })).digest("hex");
-  await writeFile(join(scratch, "manifest.json"), JSON.stringify({ passed, baseline, commit, buildSha256, worktreeStatus, diffSha256,
-    environment: { platform: process.platform, arch: process.arch, browserVersion, viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 }, artifacts, checks, errors, external, samples, scope: "production renderer components with local fixture actions; no Electron/Core acceptance" }, null, 2));
+  await writeFile(join(scratch, "manifest.json"), JSON.stringify({ passed, baseline, exercise, runId: scratch.split("/").at(-1), recordedAt: new Date().toISOString(), commit, buildSha256, worktreeStatus, diffSha256,
+    environment: { platform: process.platform, arch: process.arch, browserVersion, viewport: settingsExercise ? null : { width: 1440, height: 900 }, deviceScaleFactor: settingsExercise ? 2 : 1 }, artifacts, checks, errors, external, samples, scope: "production renderer components with local fixture actions; no Electron/Core acceptance" }, null, 2));
   console.log(JSON.stringify({ passed, scratch, checks, errors }));
 }

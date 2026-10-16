@@ -63,3 +63,9 @@ pnpm --dir clients/gui verify:design
 目录检查能拒绝坏引用、缺状态和过期输出，不能证明页面实际使用了声明的组件，不能拦截所有新硬编码样式，也不证明状态在浏览器里可达。组件预览的运行脚本和真实桌面验收继续独立。
 
 若下一阶段扩大自动约束，应先选一个真实迁移范围：用 TypeScript AST / CSS 解析器检查新增裸控件与设计值，建立按文件/类别的基线，只允许减少存量；规则的反例先验证，报告稳定后再提升为阻断。现阶段不引入全仓计数基线、不批量接受截图，也不将人工例外作为整文件免检。
+
+## REA 的问题与证据方法
+
+参考 `morluto/rea@781d5751` 的 [Evidence](https://github.com/morluto/rea/blob/781d5751ad18b25a1fe1ffa8c6035388be8c3283/src/domain/evidence.ts)、[ResidualUnknown](https://github.com/morluto/rea/blob/781d5751ad18b25a1fe1ffa8c6035388be8c3283/src/domain/residualUnknown.ts) 和[场景比较](https://github.com/morluto/rea/blob/781d5751ad18b25a1fe1ffa8c6035388be8c3283/docs/browser-scenario-contract.md)：来源、观察/推断、局限和逐步比较需可追溯；缺失证据保持未知。这些是不同契约，不能称为一个现成的设计系统 JSON DSL。
+
+AReaL 在[设置迁移题](exercises/settings-reflow.md)中复用现有 renderer runner，记录问题、步骤、截图有效性、测量、trace 与原始材料摘要；研究结论与视觉基线批准分开。未引入 REA 工具、通用问题账本或 Token 提取器；参考应用继续由已授权的 agent-browser CDP 会话观察。视觉判断仍需选定目标和人工审查。

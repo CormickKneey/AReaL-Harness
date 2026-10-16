@@ -181,7 +181,7 @@ export function SettingsSelect({ children, value, onValueChange, disabled, class
   if (options.length === 2) return <SettingsSegmentedTabs ariaLabel={label} activateOnFocus={false}
     disabled={disabled} value={String(value)} onValueChange={onValueChange} items={options} />;
   return <Select value={String(value)} items={options} onValueChange={next => { if (next !== null) onValueChange(next); }} disabled={disabled}>
-    <SelectTrigger aria-label={label} variant="secondary" size="sm" className={className}><SelectValue placeholder={options.length ? "请选择" : "暂无可选项"} /></SelectTrigger>
+    <SelectTrigger aria-label={label} variant="secondary" size="default" className={cn("rounded-navigation px-3", className)}><SelectValue placeholder={options.length ? "请选择" : "暂无可选项"} /></SelectTrigger>
     <SelectContent align="end">{options.map(option => <SelectItem key={option.value} value={option.value} disabled={option.disabled}>{option.label}</SelectItem>)}</SelectContent>
   </Select>;
 }

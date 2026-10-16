@@ -20,6 +20,7 @@ import { TooltipProvider } from "../components/ui/tooltip.js";
 import { MessageResponse } from "../components/ai-elements/message.js";
 import { TurnExecution } from "../TurnExecution.js";
 import { Messages } from "../Messages.js";
+import { SettingsReflowExercise } from "./SettingsReflowExercise.js";
 import { ConversationTimelinePreview } from "./ConversationTimelinePreview.js";
 import type { LexicalChatInputHandle } from "../LexicalChatInput.js";
 import type { Action, CommandName } from "../services.js";
@@ -84,6 +85,8 @@ function Preview() {
   const [panelLocation, setPanelLocation] = useState<"bottom" | "right">("bottom");
   const [message, setMessage] = useState("");
   const [reducedMotion, setReducedMotion] = useState(true);
+  const exercise = new URLSearchParams(window.location.search).has("settings-exercise");
+  const [exerciseContent, setExerciseContent] = useState("reference");
   const [values, setValues] = useState<Record<string, string>>({});
   const api = useRef<LexicalChatInputHandle | null>(null);
   useAppearance(dark);
@@ -117,7 +120,9 @@ function Preview() {
       <label>面板宽度<select aria-label="面板宽度" value={width} onChange={event => setWidth(event.target.value)}><option value="wide">宽面板</option><option value="narrow">窄面板</option></select></label>
       <label>状态<select aria-label="状态" value={state} onChange={event => { setState(event.target.value as PreviewState); setMessage(""); }}>{Object.entries(states).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       <label>减少动态效果<input type="checkbox" checked={reducedMotion} onChange={event => setReducedMotion(event.target.checked)} /></label>
+      {exercise && <label>题目内容<select aria-label="题目内容" value={exerciseContent} onChange={event => setExerciseContent(event.target.value)}><option value="reference">参考内容</option><option value="stress">长文案</option></select></label>}
     </header>
+    {exercise ? <SettingsReflowExercise key={exerciseContent} stress={exerciseContent === "stress"} state={state} /> : <>
     <section className="design-preview-panel" aria-label="公共控件">
       <h2>设置控件 · 按交互选择</h2>
       <p className="text-ui-sm text-foreground-subtle">执行操作用按钮，开启或关闭用开关，多项选择用下拉，仅两个选项直接并排选择。</p>
@@ -125,7 +130,7 @@ function Preview() {
       <SettingsGroupCard>
         <SettingsRow label="导入配置" description="点击后执行一次操作；普通操作直接显示文字。" control={<ActionButton onClick={() => setMessage("导入入口仅作组件预览。")}>导入</ActionButton>} />
         <SettingsRow label="聊天存储位置" description="项目外聊天的默认位置。" control={<ActionButton onClick={() => setMessage("目录选择仅作组件预览。")}>更改</ActionButton>} />
-        <SettingsRow label="显示底部面板" description="开或关：切换后立即更新，用左右滑动的开关表示状态。" control={<Switch size="sm" aria-label="显示底部面板" checked={showPanel} onCheckedChange={setShowPanel} />} />
+        <SettingsRow label="显示底部面板" description="开或关：切换后立即更新，用左右滑动的开关表示状态。" control={<Switch aria-label="显示底部面板" checked={showPanel} onCheckedChange={setShowPanel} />} />
         <SettingsRow label="默认终端位置" description="只有两个互斥选项：直接展示两个选项，选中项保持高亮。" control={<SettingsSegmentedTabs ariaLabel="默认终端位置" items={[{value: "bottom", label: "底部"}, {value: "right", label: "右侧"}]} value={panelLocation} onValueChange={setPanelLocation} />} />
         <SettingsRow label="关闭窗口前确认" description="三个及以上选项：下拉按钮显示当前值，展开后选择。" control={
           <SettingsSelect aria-label="关闭窗口前确认" value={closeBehavior ?? "never"} onValueChange={setCloseBehavior}>
@@ -177,6 +182,7 @@ function Preview() {
     <section className="design-preview-tokens" aria-label="Token 目录">
       <h2>Token 角色与当前值</h2>{tokenGroups.map(group => <div key={group.title}><h3>{group.title}</h3><dl>{group.tokens.map(([name, role]) => <div key={name}><dt><code>{name}</code><span>{role}</span></dt><dd data-token={name}>{values[name]}</dd></div>)}</dl></div>)}
     </section>
+    </>}
   </main>;
 }
 createRoot(document.getElementById("root")!).render(<TooltipProvider><Preview /></TooltipProvider>);
