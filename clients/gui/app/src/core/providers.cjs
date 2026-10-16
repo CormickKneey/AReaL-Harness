@@ -1,4 +1,5 @@
 'use strict';
+const { startupTrace } = require('./startup-timing.cjs');
 const { readFile, appendFile } = require('node:fs/promises');
 const { join } = require('node:path');
 const { randomUUID, randomBytes } = require('node:crypto');
@@ -76,9 +77,33 @@ class AppProviders {
     return this.openaiPromise;
   }
   async prepare() {
-    try { const saved = JSON.parse(await readFile(join(this.backend.home, 'openai-subscription.json'), 'utf8')); if (!saved.secret) return; }
-    catch (error) { if (error.code === 'ENOENT') return; throw error; }
-    await (await this.openai()).ready();
+    const trace = startupTrace('providers.prepare');
+    trace.advance('subscription_config');
+    try {
+      try { const saved = JSON.parse(await readFile(join(this.backend.home, 'openai-subscription.json'), 'utf8')); if (!saved.secret) { trace.finish('skipped'); return; } }
+      catch (error) { if (error.code === 'ENOENT') { trace.finish('skipped'); return; } throw error; }
+      trace.advance('local_ready');
+      const service = await this.openai();
+      await service.ready();
+      this.prepareSubscriptionStatus(service);
+      trace.finish('ok');
+    } catch (error) { trace.finish('error', error); throw error; }
+  }
+  prepareSubscriptionStatus(service) {
+    const account = service.account, revision = account.revision, lifetime = account.lifetime;
+    if (lifetime.signal.aborted) return;
+    const prepared = this.preparedSubscriptionStatus;
+    if (prepared?.service === service && prepared.revision === revision && prepared.lifetime === lifetime) return;
+    const trace = startupTrace('providers.subscription_prefetch');
+    trace.advance('account_status');
+    const outcome = Promise.resolve().then(() => account.status()).then(status => {
+      trace.finish(status.modelError || !['ready', 'signed_out'].includes(status.state) ? 'degraded' : 'ok');
+      return { ok: true, status, completedAt: Date.now(), failure: account.failure, refreshing: account.refreshing };
+    }, error => {
+      trace.finish('error', error);
+      return { ok: false, error, completedAt: Date.now(), failure: account.failure, refreshing: account.refreshing };
+    });
+    this.preparedSubscriptionStatus = { service, revision, lifetime, outcome: account.track(outcome) };
   }
   async chatgpt(request) {
     if ((request.provider ?? 'openai') !== 'openai') throw new Error('不支持的账号类型');
@@ -132,22 +157,62 @@ class AppProviders {
     this.backend.onChange();
     return { ...status, billing: 'subscription', catalog: service.catalog?.metadata() ?? null };
   }
-  syncSubscription(project, service) {
-    const task = (this.subscriptionSync ?? Promise.resolve()).catch(() => {}).then(() => this.applySubscription(project, service));
+  syncSubscription(project, service, correlation = { projectId: project.id, connectionGeneration: project.connectionGeneration, coreGeneration: project.service?.generation }) {
+    const queueTrace = startupTrace('providers.subscription_queue', correlation);
+    queueTrace.advance('queue_wait');
+    const task = (this.subscriptionSync ?? Promise.resolve()).catch(() => {}).then(() => {
+      queueTrace.finish('ok');
+      return this.applySubscription(project, service, correlation);
+    });
     this.subscriptionSync = task; return task;
   }
-  async applySubscription(project, service) {
-    const status = service ? await service.account.status() : { authenticated: false };
-    const existing = (await project.client.request('areal/provider/list')).data.find(p => p.id === (service?.id ?? 'areal_openai'));
-    if (status.modelError || status.state && !['ready', 'signed_out'].includes(status.state)) return;
-    if (!status.authenticated || status.models?.length === 0) {
-      if (existing) await this.backend.submit(project, 'areal/provider/remove', { id: existing.id, expectedRevision: existing.revision });
-      return;
-    }
-    await service.ready();
-    const desired = { id: service.id ?? 'areal_openai', protocol: 'responses', endpoint: service.endpoint, credentialRef: service.id ?? 'areal_openai', models: (status.models ?? service.models).map(m => m.id), parameters: {} };
-    if (!existing || Object.entries(desired).some(([k,v]) => JSON.stringify(existing[k]) !== JSON.stringify(v)))
-      await this.backend.submit(project, 'areal/provider/upsert', { provider: { ...desired, revision: existing?.revision ?? 0 }, expectedRevision: existing?.revision ?? 0 });
+  async applySubscription(project, service, correlation) {
+    const trace = startupTrace('providers.subscription', correlation);
+    const account = service?.account, revision = account?.revision, lifetime = account?.lifetime;
+    const current = () => !account || account.revision === revision && account.lifetime === lifetime && !lifetime?.signal.aborted;
+    const prepared = this.preparedSubscriptionStatus;
+    trace.advance(prepared?.service === service ? 'consume_wait' : 'account_status');
+    try {
+      if (!current()) { trace.finish('degraded'); return; }
+      let status;
+      if (prepared?.service === service && prepared.revision === revision && prepared.lifetime === lifetime) {
+        const outcome = await prepared.outcome;
+        if (this.preparedSubscriptionStatus === prepared) this.preparedSubscriptionStatus = null;
+        if (!current()) { trace.finish('degraded'); return; }
+        const metadata = service.catalog?.metadata();
+        const fresh = outcome.status?.state === 'ready'
+          ? metadata?.fresh && metadata.sessionRevision === revision && outcome.status.models === service.models
+          : Date.now() - outcome.completedAt < 30_000;
+        const coherent = !outcome.ok || !account.refreshing && outcome.status.state !== 'refreshing'
+          && isDeepStrictEqual(outcome.status.diagnostic, account.failure?.diagnostic() ?? null);
+        if (fresh && coherent && outcome.failure === account.failure && outcome.refreshing === account.refreshing) {
+          if (!outcome.ok) throw outcome.error;
+          status = outcome.status;
+        }
+      } else if (prepared) this.preparedSubscriptionStatus = null;
+      if (!status) {
+        if (prepared) trace.advance('account_status');
+        status = service ? await account.status() : { authenticated: false };
+      }
+      trace.advance('provider_read', status.modelError ? 'degraded' : service ? 'ok' : 'skipped');
+      const existing = (await project.client.request('areal/provider/list')).data.find(p => p.id === (service?.id ?? 'areal_openai'));
+      if (!current()) { trace.finish('degraded'); return; }
+      if (status.modelError || status.state && !['ready', 'signed_out'].includes(status.state)) { trace.finish('degraded'); return; }
+      if (!status.authenticated || status.models?.length === 0) {
+        trace.advance('provider_remove');
+        if (existing) await this.backend.submit(project, 'areal/provider/remove', { id: existing.id, expectedRevision: existing.revision });
+        trace.finish(existing ? 'ok' : 'skipped');
+        return;
+      }
+      trace.advance('local_ready');
+      await service.ready();
+      if (!current()) { trace.finish('degraded'); return; }
+      const desired = { id: service.id ?? 'areal_openai', protocol: 'responses', endpoint: service.endpoint, credentialRef: service.id ?? 'areal_openai', models: (status.models ?? service.models).map(m => m.id), parameters: {} };
+      trace.advance('provider_upsert');
+      if (!existing || Object.entries(desired).some(([k,v]) => JSON.stringify(existing[k]) !== JSON.stringify(v)))
+        await this.backend.submit(project, 'areal/provider/upsert', { provider: { ...desired, revision: existing?.revision ?? 0 }, expectedRevision: existing?.revision ?? 0 });
+      trace.finish('ok');
+    } catch (error) { trace.finish('error', error); throw error; }
   }
   async refreshGoalTransport(project, threadId) {
     const { configuration } = await this.backend.refreshConfiguration(project, threadId);
@@ -166,6 +231,7 @@ class AppProviders {
     });
   }
   async close() {
+    this.preparedSubscriptionStatus = null;
     try { if (this.openaiPromise) await (await this.openaiPromise).close(); }
     finally { if (this.networkPromise) (await this.networkPromise).close(); }
   }
@@ -180,11 +246,11 @@ class AppProviders {
     for (const item of this.value.data) { const key = this.key(item); if (key) value = value.split(key).join('[redacted]'); }
     return value;
   }
-  async sync(project) {
+  async sync(project, correlation = { projectId: project.id, connectionGeneration: project.connectionGeneration, coreGeneration: project.service?.generation }) {
     // Retire the previous desktop catalog without importing its OAuth grant or changing task history.
     const retired = (await project.client.request('areal/provider/list')).data.find(p => p.id === 'areal_chatgpt');
     if (retired) await this.backend.submit(project, 'areal/provider/remove', { id: retired.id, expectedRevision: retired.revision });
-    await this.syncSubscription(project, this.openaiPromise ? await this.openaiPromise : null);
+    await this.syncSubscription(project, this.openaiPromise ? await this.openaiPromise : null, correlation);
     for (const id of this.config.legacy?.retired ?? []) {
       if (this.value.data.some(item => item.id === id)) continue;
       const existing = (await project.client.request('areal/provider/list')).data.find(item => item.id === id);

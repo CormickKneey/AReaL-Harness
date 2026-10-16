@@ -8,7 +8,7 @@ import { FileTree, AttachmentIcon, GoalIcon, PlanModeIcon as Lightbulb } from ".
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ChatPromptEditor } from "./prompt-editor/ChatPromptEditor.js";
 import { ComposerAttachment, composerInput, composerPaste, isComposerFile, type ComposerDraftAttachment } from "./ComposerAttachments.js";
-import { useComposerSkills, transferComposerSkills, clearComposerSkills } from "./ComposerSkills.js";
+import { useComposerSkills, transferComposerSkills, clearComposerSkills, readComposerSkills } from "./ComposerSkills.js";
 import { ComposerMcpIcon } from "./ComposerIcons.js";
 import { ComposerMcp } from "./ComposerMcp.js";
 import { Button } from "./components/ui/button.js";
@@ -63,6 +63,7 @@ export function DraftComposer({
     const refreshDraft = (event: Event) => {
       if ((event as CustomEvent<string>).detail !== key || sending.has(key)) return;
       const draft = localStorage.getItem(key) ?? "";
+      setProfileSelection(localStorage.getItem(`${key}:profile`) ?? "");
       api.current?.setText(draft); setText(draft); api.current?.focus();
     };
     window.addEventListener("areal-draft-change", refreshDraft);
@@ -161,6 +162,13 @@ export function DraftComposer({
       const chosenModel = !effectiveModel && profile?.model ? undefined : owner.models.find(
         (m: Data) => `${m.providerId}/${m.modelId}` === effectiveModel,
       ) ?? (!owner.models.some((m: Data) => !m.providerId) ? owner.models.find((m: Data) => m.available !== false) : undefined);
+      const selectedSkills = readComposerSkills(key);
+      if (selectedSkills.length) {
+        if (!profile) throw new Error("当前任务配置不可用，技能草稿已保留。");
+        const available = await readAction("manage", { projectId: owner.id, operation: "skills", agentProfile: { id: profile.id, revision: profile.revision } });
+        if (selectedSkills.some(skill => !(available.data ?? []).some((item: Data) => item.available && item.id === skill.id && item.revision === skill.revision)))
+          throw new Error("当前任务配置未提供所选 Skill 的确切版本，草稿已保留。");
+      }
       creationAttempted = true;
       const result = await action("create", {
         projectId: owner.id,

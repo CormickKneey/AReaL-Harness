@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld('arealDesktop', {
   },
   snapshot: () => ipcRenderer.invoke('areal-core:snapshot'),
   chooseProject: () => ipcRenderer.invoke('areal-core:choose-project'),
+  chooseTaskDirectory: () => ipcRenderer.invoke('areal-core:choose-task-directory'),
   chooseProjectlessDirectory: () => ipcRenderer.invoke('areal-core:choose-projectless-directory'),
   fileOpen: request => ipcRenderer.invoke('areal-core:file-open', request),
   command: (name, params) => ipcRenderer.invoke('areal-core:command', name, params),

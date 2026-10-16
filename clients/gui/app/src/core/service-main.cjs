@@ -1,4 +1,7 @@
 'use strict';
+const { startupTrace } = require('./startup-timing.cjs');
+const startupTraceService = startupTrace('service.startup', { servicePid: process.pid });
+startupTraceService.advance('imports');
 const { app, safeStorage, dialog, Notification, powerSaveBlocker } = require('electron');
 const childProcess = require('node:child_process');
 const { mkdir, realpath, writeFile, rename, readFile, rm } = require('node:fs/promises');
@@ -50,8 +53,10 @@ async function start() {
       }
       await connection.request('stopService', { protocol: PROTOCOL }, true);
     } finally { connection.close(); }
+    startupTraceService.finish('skipped');
     app.exit(0); return;
   }
+  startupTraceService.advance('prepare_home');
   const options = serviceOptions(app);
   await mkdir(options.home, { recursive: true, mode: 0o700 });
   home = options.home = await realpath(options.home);
@@ -59,19 +64,24 @@ async function start() {
   // of any GUI profile. Concurrent launchers converge on one writer.
   app.setPath('userData', join(home, '.service-user-data'));
   await mkdir(app.getPath('userData'), { recursive: true, mode: 0o700 });
-  if (!app.requestSingleInstanceLock()) { app.exit(0); return; }
+  if (!app.requestSingleInstanceLock()) { startupTraceService.finish('skipped'); app.exit(0); return; }
   // This process owns background work and notifications, never windows. Dock
   // hiding alone leaves a duplicate entry in macOS Force Quit Applications.
   // The separate recovery entry above remains able to show native dialogs.
   if (process.platform === 'darwin') app.setActivationPolicy('prohibited');
+  startupTraceService.advance('app_ready');
   await app.whenReady();
+  startupTraceService.advance('proxy_discovery');
   backend = new CoreBackend({ ...options, proxyEnvironment: await systemProxyEnvironment(), encryption: safeStorage });
+  startupTraceService.advance('proxy_relay');
   let ports;
   try { ports = JSON.parse(await readFile(join(home, 'proxy-relays.json'), 'utf8')); }
   catch (error) { if (error.code !== 'ENOENT') throw error; }
   backend.proxyRelay = await proxyRelay(backend.proxyEnvironment, { ports, save: ports => backend.save('proxy-relays.json', ports) });
   backend.proxyEnvironment = backend.proxyRelay.environment;
+  startupTraceService.advance('backend_init');
   await backend.init();
+  startupTraceService.advance('service_identity');
   const notifications = new BackgroundNotifications(Notification, () => {
     const env = { ...process.env, AREAL_BACKEND: 'areal', AREAL_CORE_HOME: home, AREAL_GUI_USER_DATA: guiUserData };
     delete env.ELECTRON_RUN_AS_NODE;
@@ -84,16 +94,20 @@ async function start() {
   power = new SharedPowerMonitor(backend, powerSaveBlocker);
   service = new DesktopService(backend, await serviceIdentity(options), () => { void finish(); }, notifications, power);
   service.remote = new RemoteControl(service, safeStorage);
+  startupTraceService.advance('remote_init');
   await service.remote.init();
   power.start();
+  startupTraceService.advance('listen');
   descriptor = await service.listen();
+  startupTraceService.advance('metadata');
   const temporary = join(home, `service-${process.pid}.tmp`);
   await writeFile(temporary, JSON.stringify(descriptor), { mode: 0o600 });
   await rename(temporary, join(home, 'service.json'));
+  startupTraceService.finish('ok');
 }
 app.on('window-all-closed', () => {});
 app.on('before-quit', event => { event.preventDefault(); });
 for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => {
   void (async () => { try { await backend?.disconnect(); } finally { await finish(); } })();
 });
-void start().catch(async error => { console.error(backend?.providers.redact(error.message) ?? error.message); service?.close(); await backend?.proxyRelay?.close(); app.exit(1); });
+void start().catch(async error => { startupTraceService.finish('error', error); console.error(backend?.providers.redact(error.message) ?? error.message); service?.close(); await backend?.proxyRelay?.close(); app.exit(1); });

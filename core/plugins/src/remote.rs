@@ -507,9 +507,9 @@ fn fetch_npm(source: &Value, stage: &Path) -> Result<(String, String)> {
     );
     Ok((version, integrity.into()))
 }
-fn publish(store: &Store, files: &package::Files) -> Result<PathBuf> {
+pub(crate) fn publish(store: &Store, files: &package::Files) -> Result<PathBuf> {
     let digest = package::digest(files);
-    let root = store.root.join("cache").join(digest);
+    let root = store.root.join("cache").join(&digest);
     if root.exists() {
         ensure!(
             package::digest(&package::snapshot(&root)?) == package::digest(files),
@@ -522,12 +522,22 @@ fn publish(store: &Store, files: &package::Files) -> Result<PathBuf> {
     for (path, bytes) in files {
         let dest = stage.path().join(path);
         fs::create_dir_all(dest.parent().unwrap())?;
-        fs::write(&dest, &bytes.bytes)?;
+        use std::io::Write;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&dest)?;
+        file.write_all(&bytes.bytes)?;
+        file.sync_all()?;
         fs::set_permissions(
             &dest,
             fs::Permissions::from_mode(if bytes.executable { 0o555 } else { 0o444 }),
         )?;
     }
+    ensure!(
+        package::digest(&package::snapshot(stage.path())?) == digest,
+        "published package path collision"
+    );
     fs::rename(stage.path(), &root)?;
     seal_directory(&root)?;
     Ok(root)

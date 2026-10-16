@@ -2786,6 +2786,8 @@ class CorePreview {
   }
   async command(request) {
     validatePreview(request);
+    if (request.operation === 'state' && !this.owns(request.projectId, request.threadId))
+      return this.state(null);
     const workspace = workspaceKey(this.coreIdentity(request.projectId), request.projectId, request.threadId);
     let page = this.page(request.projectId, request.threadId, request.pageId);
     let key = page && pageKey(page.coreInstanceId, request.projectId, request.threadId, page.id);

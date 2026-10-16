@@ -1,4 +1,5 @@
 'use strict';
+const { startupTrace } = require('./startup-timing.cjs');
 const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const { mkdir, readFile, realpath, open, writeFile, rename, rm } = require('node:fs/promises');
@@ -150,6 +151,8 @@ class SharedCoreBackend {
     catch (e) { connection.close(); if (e.code === 'DISCONNECTED') return false; throw e; }
     if (this.disposed) { connection.close(); throw new Error('GUI 连接已关闭'); }
     this.connection?.close(); this.connection = connection; this.sequence = -1;
+    const helloTrace = startupTrace('service.hello', { servicePid: metadata.pid });
+    helloTrace.advance('hello');
     try {
       const deadline = Date.now() + 60000;
       for (;;) {
@@ -164,6 +167,7 @@ class SharedCoreBackend {
       }
     }
     catch (e) {
+      helloTrace.finish('error', e);
       this.connection = null;
       connection.close();
       if (e.code === 'DISCONNECTED') return false; // Only a read-only handshake was attempted.
@@ -173,6 +177,7 @@ class SharedCoreBackend {
       await this.recoverIncompatible(metadata, this.home);
       return false;
     }
+    helloTrace.finish('ok');
     if (this.lastActivity) void connection.request('activity', this.lastActivity).catch(() => {});
     this.metadata = metadata; this.exitConfirmation = null;
     return true;
@@ -193,72 +198,92 @@ class SharedCoreBackend {
   async init({ automatic = false } = {}) {
     if (this.disposed) throw new Error('GUI 连接已关闭');
     if (this.status.connected) return;
-    if (automatic) {
-      try {
-        const control = await this.readControl();
-        if (control) {
-          this.controlState = control.state;
-          this.connectionState = { state: 'unavailable', message: control.state === 'stopped' ? '后台服务已停止，可按需重新连接' : '停止结果未确认，请显式连接后核查后台状态；不会自动重发。' };
-          this.onChange();
-          return;
+    const trace = startupTrace('service.init');
+    trace.advance('control');
+    try {
+      if (automatic) {
+        try {
+          const control = await this.readControl();
+          if (control) {
+            this.controlState = control.state;
+            this.connectionState = { state: 'unavailable', message: control.state === 'stopped' ? '后台服务已停止，可按需重新连接' : '停止结果未确认，请显式连接后核查后台状态；不会自动重发。' };
+            this.onChange();
+            trace.finish('skipped');
+            return;
+          }
+        } catch (error) {
+          this.connectionState = { state: 'unavailable', message: `后台启动状态读取失败，请显式连接后核查。${error.message}` };
+          this.onChange(); throw error;
         }
-      } catch (error) {
-        this.connectionState = { state: 'unavailable', message: `后台启动状态读取失败，请显式连接后核查。${error.message}` };
+      }
+      if (this.connecting) { trace.finish('skipped'); return this.connecting; }
+      this.connectionState = { state: 'connecting' };
+      trace.advance('initialize');
+      this.connecting = this.initialize().then(async () => {
+        trace.advance('legacy_schedules');
+        const { restoreLegacySchedules } = require('./legacy-service-cancel.cjs');
+        let attention;
+        try { ({ attention } = await restoreLegacySchedules({ connection: this.connection, home: this.home, metadata: this.metadata })); }
+        catch (error) { trace.advance('legacy_attention', 'degraded'); attention = [`安排恢复尚未完成，恢复记录已保留：${error.message}`]; }
+        if (attention.length) {
+          if (this.onRecoveryAttention) await this.onRecoveryAttention(attention);
+          else console.warn(attention.join('\n'));
+        }
+        trace.advance('control_clear');
+        await rm(this.controlPath, { force: true }); this.controlState = null;
+        trace.finish(attention.length ? 'degraded' : 'ok');
+      }).catch(error => {
+        trace.finish('error', error);
+        this.connectionState = { state: 'unavailable', message: error.message };
         this.onChange(); throw error;
-      }
-    }
-    if (this.connecting) return this.connecting;
-    this.connectionState = { state: 'connecting' };
-    this.connecting = this.initialize().then(async () => {
-      const { restoreLegacySchedules } = require('./legacy-service-cancel.cjs');
-      let attention;
-      try { ({ attention } = await restoreLegacySchedules({ connection: this.connection, home: this.home, metadata: this.metadata })); }
-      catch (error) { attention = [`安排恢复尚未完成，恢复记录已保留：${error.message}`]; }
-      if (attention.length) {
-        if (this.onRecoveryAttention) await this.onRecoveryAttention(attention);
-        else console.warn(attention.join('\n'));
-      }
-      await rm(this.controlPath, { force: true }); this.controlState = null;
-    }).catch(error => {
-      this.connectionState = { state: 'unavailable', message: error.message };
-      this.onChange(); throw error;
-    }).finally(() => { this.connecting = null; });
-    this.onChange();
-    return this.connecting;
+      }).finally(() => { this.connecting = null; });
+      this.onChange();
+      return this.connecting;
+    } catch (error) { trace.finish('error', error); throw error; }
   }
   async initialize() {
-    await mkdir(this.home, { recursive: true, mode: 0o700 });
-    this.home = await realpath(this.home); this.identity = await serviceIdentity(this.options);
-    if (this.disposed) throw new Error('GUI 连接已关闭');
-    if (await this.attach()) return;
-    if (this.disposed) throw new Error('GUI 连接已关闭');
-    // Explain a known binary incompatibility through this connection attempt's
-    // error channel; never expose shared or stale service log contents to GUI.
-    await inspectCoreCapabilities(this.options.binary);
-    const log = await open(join(this.home, 'service.log'), 'a', 0o600);
-    const env = { ...process.env, AREAL_BACKEND: 'areal', AREAL_CORE_HOME: this.home };
-    delete env.ELECTRON_RUN_AS_NODE;
-    const args = this.app.isPackaged ? ['--areal-core-service'] : [this.app.getAppPath(), '--areal-core-service'];
+    const trace = startupTrace('service.initialize');
+    trace.advance('home');
     try {
-      let launchError, retryLaunch = false;
-      const launch = () => {
-        if (this.disposed) throw new Error('GUI 连接已关闭');
-        retryLaunch = false;
-        const child = spawn(process.execPath, args, { detached: true, stdio: ['ignore', log.fd, log.fd], env, windowsHide: true });
-        child.once('error', e => { launchError = e; });
-        child.once('exit', code => { retryLaunch = code === 0; }); child.unref();
-      };
-      launch();
-      const deadline = Date.now() + 20000;
-      while (Date.now() < deadline) {
-        if (this.disposed) throw new Error('GUI 连接已关闭');
-        if (launchError) throw launchError;
-        if (await this.attach()) return;
-        if (retryLaunch) launch();
-        await sleep(100);
-      }
-      throw new Error(`后台服务未就绪；请检查 ${join(this.home, 'service.log')}`);
-    } finally { await log.close(); }
+      await mkdir(this.home, { recursive: true, mode: 0o700 });
+      this.home = await realpath(this.home);
+      trace.advance('identity');
+      this.identity = await serviceIdentity(this.options);
+      if (this.disposed) throw new Error('GUI 连接已关闭');
+      trace.advance('attach');
+      if (await this.attach()) { return; }
+      if (this.disposed) throw new Error('GUI 连接已关闭');
+      // Explain a known binary incompatibility through this connection attempt's
+      // error channel; never expose shared or stale service log contents to GUI.
+      trace.advance('capabilities');
+      await inspectCoreCapabilities(this.options.binary);
+      trace.advance('spawn_wait');
+      const log = await open(join(this.home, 'service.log'), 'a', 0o600);
+      const env = { ...process.env, AREAL_BACKEND: 'areal', AREAL_CORE_HOME: this.home };
+      delete env.ELECTRON_RUN_AS_NODE;
+      const args = this.app.isPackaged ? ['--areal-core-service'] : [this.app.getAppPath(), '--areal-core-service'];
+      try {
+        let launchError, retryLaunch = false;
+        const launch = () => {
+          if (this.disposed) throw new Error('GUI 连接已关闭');
+          retryLaunch = false;
+          const child = spawn(process.execPath, args, { detached: true, stdio: ['ignore', log.fd, log.fd], env, windowsHide: true });
+          child.once('error', e => { launchError = e; });
+          child.once('exit', code => { retryLaunch = code === 0; }); child.unref();
+        };
+        launch();
+        const deadline = Date.now() + 20000;
+        while (Date.now() < deadline) {
+          if (this.disposed) throw new Error('GUI 连接已关闭');
+          if (launchError) throw launchError;
+          if (await this.attach()) { return; }
+          if (retryLaunch) launch();
+          await sleep(100);
+        }
+        throw new Error(`后台服务未就绪；请检查 ${join(this.home, 'service.log')}`);
+      } finally { await log.close(); }
+    } catch (error) { trace.finish('error', error); throw error; }
+    finally { trace.finish('ok'); }
   }
   async addProject(path) { await this.init(); return this.connection.request('addProject', { path }, true); }
   async browserClaim(identity) {

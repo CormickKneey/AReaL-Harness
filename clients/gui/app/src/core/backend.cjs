@@ -1,4 +1,5 @@
 'use strict';
+const { startupTrace } = require('./startup-timing.cjs');
 
 const { connectService, stopService } = require('./local-service.cjs');
 const { restartSafe } = require('./resource-recovery.cjs');
@@ -81,17 +82,28 @@ class CoreBackend {
   }
 
   async init() {
-    await mkdir(this.home, { recursive: true, mode: 0o700 });
+    const trace = startupTrace('core.init');
+    trace.advance('project_index');
     try {
-      this.saved = JSON.parse(await readFile(join(this.home, 'projects.json'), 'utf8'));
-      if (!Array.isArray(this.saved)) throw new Error('Invalid project index');
-    } catch (error) { if (error.code !== 'ENOENT') throw error; this.saved = []; }
-    await this.library.init();
-    await this.projectless.init();
-    await this.analytics.init();
-    await inspectCoreCapabilities(this.binary);
-    await this.providers.init();
-    await this.resources.init();
+      await mkdir(this.home, { recursive: true, mode: 0o700 });
+      try {
+        this.saved = JSON.parse(await readFile(join(this.home, 'projects.json'), 'utf8'));
+        if (!Array.isArray(this.saved)) throw new Error('Invalid project index');
+      } catch (error) { if (error.code !== 'ENOENT') throw error; this.saved = []; }
+      trace.advance('library');
+      await this.library.init();
+      trace.advance('projectless');
+      await this.projectless.init();
+      trace.advance('analytics');
+      await this.analytics.init();
+      trace.advance('capabilities');
+      await inspectCoreCapabilities(this.binary);
+      trace.advance('providers');
+      await this.providers.init();
+      trace.advance('resources');
+      await this.resources.init();
+      trace.finish('ok');
+    } catch (error) { trace.finish('error', error); throw error; }
   }
 
   save(name, value) {
@@ -190,60 +202,85 @@ class CoreBackend {
   }
 
   async startProject(id) {
-    const project = await this.loadProjectJournal(id);
-    if (project.client?.ready && !project.resourceInitializing) return project;
+    const current = this.projects.get(id);
+    const trace = current?.client?.ready && !current.resourceInitializing ? null : startupTrace('core.start_project', { projectId: id });
+    trace?.advance('journal');
     try {
-      project.resourceInitializing = !!project.worktreeResources;
-      await this.resources.worktrees.prepare(project);
-      if (!project.client?.ready) await this.launch(project);
-      if (!project.client?.ready) await this.connect(project);
-      await this.listThreads(project);
-      await this.reconcile(project);
-      await this.resources.worktrees.apply(project);
-      project.resourceInitializing = false;
-      project.error = null;
-      project.model.connection(true);
-      this.onChange();
-      return project;
-    } catch (error) {
-      // A failed resource import must still allow authenticated status/drain on
-      // its running Core. Keep the management connection, while start() retries
-      // initialization before admitting any task or project command.
-      if (!project.resourceInitializing || !project.client?.ready) project.client?.close();
-      project.error = error.message;
-      project.model.connection(false, error.message);
-      throw error;
-    }
+      const project = await this.loadProjectJournal(id);
+      if (project.client?.ready && !project.resourceInitializing) { trace?.finish('skipped'); return project; }
+      try {
+        project.resourceInitializing = !!project.worktreeResources;
+        trace?.advance('worktree_prepare');
+        await this.resources.worktrees.prepare(project);
+        trace?.advance('launch');
+        if (!project.client?.ready) await this.launch(project);
+        trace?.advance('connect');
+        if (!project.client?.ready) await this.connect(project);
+        trace?.advance('history');
+        await this.listThreads(project);
+        trace?.advance('reconcile');
+        await this.reconcile(project);
+        trace?.advance('worktree_apply');
+        await this.resources.worktrees.apply(project);
+        project.resourceInitializing = false;
+        project.error = null;
+        project.model.connection(true);
+        this.onChange();
+        trace?.finish('ok');
+        return project;
+      } catch (error) {
+        // A failed resource import must still allow authenticated status/drain on
+        // its running Core. Keep the management connection, while start() retries
+        // initialization before admitting any task or project command.
+        if (!project.resourceInitializing || !project.client?.ready) project.client?.close();
+        project.error = error.message;
+        project.model.connection(false, error.message);
+        throw error;
+      }
+    } catch (error) { trace?.finish('error', error); throw error; }
   }
 
   async launch(project, operation = 'ensure') {
-    const directory = join(this.home, project.id);
-    const dataDir = join(directory, 'state');
-    const scratch = join(directory, 'scratch');
-    await mkdir(scratch, { recursive: true, mode: 0o700 });
-    const args = ['--workspace', project.root, '--data-dir', dataDir, '--scratch', scratch, '--allow-write'];
-    if (this.desktopProcesses) args.push('--allow-concurrent-writes', '--desktop-process-timeout-ms', '86400000');
-    if (this.config) args.push('--config', this.config);
-    if (this.sandboxProfile) args.push('--sandbox-profile', this.sandboxProfile);
-    if (this.workgroupPolicy) args.push('--workgroup-policy', this.workgroupPolicy);
-    if (this.workgroupToolchain) args.push('--workgroup-toolchain', this.workgroupToolchain);
-    const resourceDeployment = await this.resources.deployment(project);
-    if (resourceDeployment.path) args.push('--desktop-config', resourceDeployment.path);
-    project.resourceProfile = resourceDeployment.profile;
-    project.resourceFingerprint = resourceDeployment.fingerprint;
-    await this.providers.prepare();
-    const providerSnapshot = await this.providers.config.current();
-    project.providerSnapshot = providerSnapshot;
-    project.providerRevision = null;
-    const hookDeployment = await this.hooks.launch();
-    project.hookRevision = null;
-    const environment = { ...this.hooks.environment(), AREAL_HARNESS_TOOL_EXTENSIONS: hookDeployment.path, ...this.providers.environment() };
-    const { descriptor, token } = await connectService(this, operation, args, environment, project, dataDir);
-    project.service = descriptor;
-    project.endpoint = descriptor.endpoint;
-    project.token = token;
-    if ((await this.providers.config.current()).revision === providerSnapshot.revision) project.providerRevision = providerSnapshot.revision;
-    if ((await this.hooks.current()).revision === hookDeployment.revision) project.hookRevision = hookDeployment.revision;
+    const trace = startupTrace('core.launch', { projectId: project.id });
+    trace.advance('directories');
+    try {
+      const directory = join(this.home, project.id);
+      const dataDir = join(directory, 'state');
+      const scratch = join(directory, 'scratch');
+      await mkdir(scratch, { recursive: true, mode: 0o700 });
+      const args = ['--workspace', project.root, '--data-dir', dataDir, '--scratch', scratch, '--allow-write'];
+      if (this.desktopProcesses) args.push('--allow-concurrent-writes', '--desktop-process-timeout-ms', '86400000');
+      if (this.config) args.push('--config', this.config);
+      if (this.sandboxProfile) args.push('--sandbox-profile', this.sandboxProfile);
+      if (this.workgroupPolicy) args.push('--workgroup-policy', this.workgroupPolicy);
+      if (this.workgroupToolchain) args.push('--workgroup-toolchain', this.workgroupToolchain);
+      trace.advance('resources');
+      const resourceDeployment = await this.resources.deployment(project);
+      if (resourceDeployment.path) args.push('--desktop-config', resourceDeployment.path);
+      project.resourceProfile = resourceDeployment.profile;
+      project.resourceFingerprint = resourceDeployment.fingerprint;
+      trace.advance('provider_prepare');
+      await this.providers.prepare();
+      trace.advance('provider_config');
+      const providerSnapshot = await this.providers.config.current();
+      project.providerSnapshot = providerSnapshot;
+      project.providerRevision = null;
+      trace.advance('hooks');
+      const hookDeployment = await this.hooks.launch();
+      project.hookRevision = null;
+      const environment = { ...this.hooks.environment(), AREAL_HARNESS_TOOL_EXTENSIONS: hookDeployment.path, ...this.providers.environment() };
+      trace.advance('service_ensure');
+      const { descriptor, token } = await connectService(this, operation, args, environment, project, dataDir);
+      project.service = descriptor;
+      project.endpoint = descriptor.endpoint;
+      project.token = token;
+      trace.advance('configuration_recheck');
+      if ((await this.providers.config.current()).revision === providerSnapshot.revision) project.providerRevision = providerSnapshot.revision;
+      if ((await this.hooks.current()).revision === hookDeployment.revision) project.hookRevision = hookDeployment.revision;
+      trace.finish('ok');
+      const attached = startupTrace('core.service_ready', { projectId: project.id, coreGeneration: descriptor.generation });
+      attached.finish('ok');
+    } catch (error) { trace.finish('error', error); throw error; }
   }
 
   async restartProject(project) {
@@ -342,85 +379,105 @@ class CoreBackend {
     } });
     project.client = client;
     project.connectionGeneration = (project.connectionGeneration ?? 0) + 1;
-    client.onNotification((method, params) => {
-      if (!this.currentConnection(project, client)) return;
-      if (method === 'areal/thread/configured' && params?.threadId && params.configuration) {
-        project.configurations ??= {};
-        project.configurations[params.threadId] = params.configuration;
-        this.onChange();
-      }
-      if (method === 'areal/mcp/app/notification') this.onMcpAppNotification?.({ projectId: project.id, ...params });
-      this.analytics.observe(project.id, method, params);
-      project.model.event(method, params);
-      if (!isTaskDraftConfiguration(project.configurations?.[params.threadId])) this.notifications.observe(project, method, params, this.library.value);
-      if (method === 'thread/started' || method === 'turn/started' || method === 'turn/completed') {
-        void this.library.recordThreadActivity(project.id, params.threadId ?? params.thread?.id,
-          method === 'turn/completed' ? params.turn?.id ?? params.turnId : undefined).catch(() => {});
-      }
-      // Lifecycle notifications omit thread timestamps; refresh the authoritative
-      // summaries so continued and automatically dequeued tasks sort correctly.
-      if (method === 'turn/started' || method === 'turn/completed') {
-        void this.listThreads(project).catch(() => {});
-      }
-    });
-    client.onClose(() => { if (project.client === client) {
-      project.taskNotificationMonitor?.stop();
-      project.model.connection(false, '连接中断，正在恢复任务状态');
-      this.scheduleReconnect(project);
-    } });
-    await client.connect();
-    this.requireConnection(project, client);
-    project.error = null;
-    project.configurations ??= {};
-    project.configurationChanges ??= new Map();
-    if (!observeOnly) {
-      await this.providers.sync(project);
-      this.requireConnection(project, client);
-      await this.resources.syncMcp(project);
-      this.requireConnection(project, client);
-    }
-    const [models, profiles] = await Promise.all([
-      client.request('areal/model/list'), client.request('areal/profile/list'),
-    ]);
-    this.requireConnection(project, client);
-    project.models = models.data ?? models.models ?? [];
-    project.profiles = profiles.data ?? profiles.profiles ?? [];
-    await this.listThreads(project);
-    if (!observeOnly) void this.analytics.syncProject(project);
-    // 重连恢复所有已打开的任务，快照在 socket 消息分派栈内替换。
-    for (const threadId of Object.keys(project.model.state.threads)) await this.openThread(project, threadId);
-    for (const taskId of new Set(project.taskViews?.values() ?? [])) {
-      await client.request('areal/task/subscribe', { taskId }, { onResult: task => {
-        if (this.currentConnection(project, client)) project.model.setTask(task);
-      } });
-      this.requireConnection(project, client);
-    }
-    project.taskNotificationMonitor = new TaskNotificationMonitor(client, project.id,
-      notice => { if (this.currentConnection(project, client)) this.notifications.publish(notice); }, error => console.warn(this.providers.redact(`任务通知读取失败：${error.message}`)),
-      async tasks => {
+    const correlation = { projectId: project.id, connectionGeneration: project.connectionGeneration, coreGeneration: project.service?.generation };
+    const trace = startupTrace('core.connect', correlation);
+    trace.advance('socket');
+    try {
+      client.onNotification((method, params) => {
         if (!this.currentConnection(project, client)) return;
-        for (const task of tasks) project.model.setTask(task);
-        const scheduled=tasks.filter(task=>task.mode==='scheduled');
-        if(scheduled.some(task=>task.runs.some(run=>run.threadId&&!project.summaries.some(thread=>thread.id===run.threadId)))) {
-          await this.listThreads(project);
-          this.requireConnection(project, client);
+        if (method === 'areal/thread/configured' && params?.threadId && params.configuration) {
+          project.configurations ??= {};
+          project.configurations[params.threadId] = params.configuration;
+          this.onChange();
         }
-        for(const task of scheduled)for(const run of task.runs) {
-          if(run.status!=='completed' || !run.threadId || this.library.value.threads[`${project.id}:${run.threadId}`]?.scheduledCompletionId===run.id)continue;
-          const {thread}=await client.request('thread/read',{threadId:run.threadId,includeTurns:true});
-          this.requireConnection(project,client);
-          const completionId=thread.turns?.findLast(turn=>turn.status==='completed')?.id;
-          await this.library.recordScheduledCompletion(project.id,run,completionId);
+        if (method === 'areal/mcp/app/notification') this.onMcpAppNotification?.({ projectId: project.id, ...params });
+        this.analytics.observe(project.id, method, params);
+        project.model.event(method, params);
+        if (!isTaskDraftConfiguration(project.configurations?.[params.threadId])) this.notifications.observe(project, method, params, this.library.value);
+        if (method === 'thread/started' || method === 'turn/started' || method === 'turn/completed') {
+          void this.library.recordThreadActivity(project.id, params.threadId ?? params.thread?.id,
+            method === 'turn/completed' ? params.turn?.id ?? params.turnId : undefined).catch(() => {});
+        }
+        // Lifecycle notifications omit thread timestamps; refresh the authoritative
+        // summaries so continued and automatically dequeued tasks sort correctly.
+        if (method === 'turn/started' || method === 'turn/completed') {
+          void this.listThreads(project).catch(() => {});
         }
       });
-    await project.taskNotificationMonitor.start();
-    this.requireConnection(project, client);
-    if (client.capabilities?.methods?.includes('areal/task/host/ready')) {
-      await client.request('areal/task/host/ready', {});
+      client.onClose(() => { if (project.client === client) {
+        project.taskNotificationMonitor?.stop();
+        project.model.connection(false, '连接中断，正在恢复任务状态');
+        this.scheduleReconnect(project);
+      } });
+      await client.connect();
       this.requireConnection(project, client);
-    }
-    project.model.connection(true);
-    this.onChange();
+      project.error = null;
+      project.configurations ??= {};
+      project.configurationChanges ??= new Map();
+      if (!observeOnly) {
+        trace.advance('providers');
+        await this.providers.sync(project, correlation);
+        this.requireConnection(project, client);
+        trace.advance('mcp');
+        await this.resources.syncMcp(project);
+        this.requireConnection(project, client);
+      }
+      trace.advance('catalogs');
+      const modelsTrace = startupTrace('core.model_list', correlation);
+      modelsTrace.advance('request');
+      const profilesTrace = startupTrace('core.profile_list', correlation);
+      profilesTrace.advance('request');
+      const [models, profiles] = await Promise.all([
+        client.request('areal/model/list').then(value => { modelsTrace.finish('ok'); return value; }, error => { modelsTrace.finish('error', error); throw error; }),
+        client.request('areal/profile/list').then(value => { profilesTrace.finish('ok'); return value; }, error => { profilesTrace.finish('error', error); throw error; }),
+      ]);
+      this.requireConnection(project, client);
+      project.models = models.data ?? models.models ?? [];
+      project.profiles = profiles.data ?? profiles.profiles ?? [];
+      trace.advance('history');
+      await this.listThreads(project);
+      if (!observeOnly) void this.analytics.syncProject(project);
+      // 重连恢复所有已打开的任务，快照在 socket 消息分派栈内替换。
+      trace.advance('restore_views');
+      for (const threadId of Object.keys(project.model.state.threads)) await this.openThread(project, threadId);
+      trace.advance('task_subscriptions');
+      for (const taskId of new Set(project.taskViews?.values() ?? [])) {
+        await client.request('areal/task/subscribe', { taskId }, { onResult: task => {
+          if (this.currentConnection(project, client)) project.model.setTask(task);
+        } });
+        this.requireConnection(project, client);
+      }
+      trace.advance('task_monitor');
+      project.taskNotificationMonitor = new TaskNotificationMonitor(client, project.id,
+        notice => { if (this.currentConnection(project, client)) this.notifications.publish(notice); }, error => console.warn(this.providers.redact(`任务通知读取失败：${error.message}`)),
+        async tasks => {
+          if (!this.currentConnection(project, client)) return;
+          for (const task of tasks) project.model.setTask(task);
+          const scheduled=tasks.filter(task=>task.mode==='scheduled');
+          if(scheduled.some(task=>task.runs.some(run=>run.threadId&&!project.summaries.some(thread=>thread.id===run.threadId)))) {
+            await this.listThreads(project);
+            this.requireConnection(project, client);
+          }
+          for(const task of scheduled)for(const run of task.runs) {
+            if(run.status!=='completed' || !run.threadId || this.library.value.threads[`${project.id}:${run.threadId}`]?.scheduledCompletionId===run.id)continue;
+            const {thread}=await client.request('thread/read',{threadId:run.threadId,includeTurns:true});
+            this.requireConnection(project,client);
+            const completionId=thread.turns?.findLast(turn=>turn.status==='completed')?.id;
+            await this.library.recordScheduledCompletion(project.id,run,completionId);
+          }
+        });
+      await project.taskNotificationMonitor.start();
+      this.requireConnection(project, client);
+      trace.advance('host_ready');
+      if (client.capabilities?.methods?.includes('areal/task/host/ready')) {
+        await client.request('areal/task/host/ready', {});
+        this.requireConnection(project, client);
+      }
+      trace.advance('connected');
+      project.model.connection(true);
+      this.onChange();
+      trace.finish('ok');
+    } catch (error) { trace.finish('error', error); throw error; }
   }
 
   listThreads(project) {
@@ -1169,6 +1226,7 @@ class CoreBackend {
     if (this.closing) throw new Error('应用正在退出');
     switch (name) {
       case 'connect': return this.snapshot();
+      case 'prepareCreator': return this.resources.prepareCreator(project, request.profile);
       case 'dismissRecovery': {
         await this.changeOutcomes(project, previous => { const outcomes = { ...previous }; if (!outcomes[request.requestId]?.remote) delete outcomes[request.requestId]; return outcomes; }); break;
       }

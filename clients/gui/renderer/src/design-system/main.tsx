@@ -11,6 +11,7 @@ import { Feedback } from "../components/ui/feedback.js";
 import { TooltipProvider } from "../components/ui/tooltip.js";
 import { MessageResponse } from "../components/ai-elements/message.js";
 import { TurnExecution } from "../TurnExecution.js";
+import { Messages } from "../Messages.js";
 import type { LexicalChatInputHandle } from "../LexicalChatInput.js";
 import type { Action, CommandName } from "../services.js";
 import { tokenGroups } from "./catalog.js";
@@ -28,6 +29,13 @@ const approval = { requestId: "preview-approval", threadId: "main", tool: "fs_cr
   effectiveArguments: { path: "example.txt", text: "示例文本 Example content" }, effectivePermissions: { rememberAllowed: true } };
 const states = { ready: "可操作", busy: "提交中", failed: "明确失败", unknown: "结果待核对" } as const;
 type PreviewState = keyof typeof states;
+
+const longMessage = `# 长消息预览\n\n${Array.from({ length: 18 }, (_, index) => `第 ${index + 1} 段：保留原始内容，长文本默认展示开头，展开后可完整阅读。 Long text stays complete and readable.`).join("\n\n")}\n\n[末尾链接](https://example.com)\n\n全文结束 END_OF_LONG_MESSAGE`;
+const messagePreview = { id: "long-text-preview", turns: [{ id: "preview-messages", status: "completed", items: [
+  { id: "long", type: "userMessage", content: [{ type: "text", text: longMessage }] },
+  { id: "short", type: "userMessage", content: [{ type: "text", text: "短消息直接完整展示。" }] },
+  { id: "wrapped", type: "userMessage", content: [{ type: "text", text: "随宽度重新判断折叠，文字保留。".repeat(12) }] },
+] }] };
 
 const motionText = "流式文字沿用当前主题，新内容柔和显现，已经读过的内容保持稳定。\n\nStreaming text stays readable as each new fragment arrives.\n\n- 支持**加粗**和 `行内代码`\n- 保留中文、English 与换行";
 function ChatMotionPreview({ dark }: { dark: boolean }) {
@@ -114,6 +122,11 @@ function Preview() {
       <Feedback message={message} />
     </section>
     <ChatMotionPreview dark={dark} />
+    <section className="design-preview-panel design-preview-messages" aria-label="长文本预览">
+      <h2>已发送消息 · 渐进展示</h2>
+      <Messages project={project} thread={messagePreview} action={action} dark={dark} reserveResponseSpace={false}
+        onLink={() => setMessage("链接入口仅作预览。")} onFile={() => {}} onReview={() => {}} readTurnReview={async () => ({})} />
+    </section>
     <section className="design-preview-panel" aria-label="审批预览">
       <h2>审批卡片</h2><ApprovalRequest key={state} item={approval} projectId="design-preview" action={action} />
     </section>

@@ -6,11 +6,15 @@ AReaL 的插件包由共享 Core 管理；GUI 与 CLI 读取同一安装与启�
 
 ## 插件、Skills 与 MCP
 
-“设置 → 插件”提供插件、Skills、MCP 三个视图。插件视图管理真实插件包；Skills 和 MCP 视图同时展示独立资源与已安装包内的组件，并标明来源。同名资源按所有者区分，不复制配置或合并身份。
+左侧“插件”打开插件市场。公共和个人目录按已注册来源展示，Skills 和已安装插件在同一工作区导航。点击插件或 Skill 打开内容页，可返回原列表。Skills 页的已安装总览默认展示六项，点击“查看更多”展开。下方通过“个人”和项目标签浏览各来源的已安装技能，各自保留展开状态；搜索展示全部匹配结果。市场操作使用此前明确选择的项目；尚未选择项目时，先选择或打开项目。浏览不会创建任务目录。
+
+“设置 → 插件”管理已安装的插件、MCP、Skills 和市场来源。Skills 和 MCP 同时展示独立资源与已安装包内的组件，并标明来源。同名资源按所有者区分，不复制配置或合并身份。
 
 插件沿用 OpenAI 的包结构。便携包使用根目录 `plugin.json`、`skills/` 和 `mcp.json`，OpenAI 专用设置位于 `extensions.com.openai`；兼容 manifest 仍按既有规则解析。安装、启用、认证与连接状态由 AReaL 的原有所有者管理，不写回包声明。
 
-独立技能保留原有查看、新建和范围启停入口；独立 MCP 保留配置编辑与连接入口。范围选择只筛选独立资源。包内组件显示当前项目的插件有效状态，“管理插件”打开所属插件详情，继续使用整包启停、摘要信任、认证和提交核对流程。包内组件不通过独立资源接口修改，目录展示不扩大当前聊天的有效技能或工具范围。
+独立技能支持内容页和范围启停；“创建 Skill”先核对所选项目当前部署的任务配置，再进入该项目的普通聊天草稿并加载产品内固定版本的官方 Skill Creator。旧任务保留原配置；产品默认部署下保存的基础配置会使用当前资源版本，自定义受限配置不会获得额外权限。用户发送需求后，Agent 按 Creator 流程在该项目的 `.agents/skills/<skill-name>/` 中创建并校验技能。该资源保留上游版本、许可证与内容摘要，不读取其他 Agent 应用的本机配置。独立 MCP 保留配置编辑与连接入口。范围选择只筛选独立资源。包内组件显示当前项目的插件有效状态，“管理插件”打开所属插件详情，继续使用整包启停、摘要信任、认证和提交核对流程。包内组件不通过独立资源接口修改，目录展示不扩大当前聊天的有效技能或工具范围。
+
+官方 Creator 的初始化和校验脚本需要 Python 3 与 PyYAML。`clients/gui/scripts/plugin-concepts-smoke.mjs` 通过真实 Runtime 验证项目内创建，可用 `AREAL_TEST_PYTHON` 指定解释器；该解释器须在隔离 HOME、禁用用户 site-packages 的环境中仍能导入 `yaml`。
 
 交互应用和 Hooks 位于插件详情或已有工作区入口。GitHub 在用户界面中作为插件管理，Connector 仅保留为内部服务映射与凭据绑定。
 
@@ -30,7 +34,9 @@ AReaL 的插件包由共享 Core 管理；GUI 与 CLI 读取同一安装与启�
 }
 ```
 
-路径相对 marketplace 根，不相对 `.agents/plugins` 文件所在目录。可在 GUI 的“设置 → 插件 → 插件”添加其他本地 marketplace 根目录，查看组件并安装。安装固定已选来源和内容摘要；预览后源文件变化会拒绝安装，需要刷新后重新选择。安装不执行包中的脚本、MCP 或 hooks，也不自动运行 setup。
+路径相对 marketplace 根，不相对 `.agents/plugins` 文件所在目录。可在插件市场右上角“添加 → 添加市场”添加本地 marketplace 根目录或 Git 来源，查看组件并安装。安装固定已选来源和内容摘要；预览后源文件变化会拒绝安装，需要刷新后重新选择。安装不执行包中的脚本、MCP 或 hooks，也不自动运行 setup。
+
+“添加 → 上传插件包”选择本机 ZIP，导入后先审核摘要，再安装。支持包根目录或一层外包目录。压缩文件和展开内容各最多 64 MiB，最多 4096 个条目。链接、越界路径、重复路径、加密、多卷和 ZIP64 归档会被拒绝。导入不执行插件。
 
 CLI 连接到已经运行的 Core，保持运行服务的配置：
 
@@ -49,7 +55,7 @@ areal plugin --workspace /absolute/workspace disconnect review-helper@team-tools
 areal plugin --workspace /absolute/workspace disable review-helper@team-tools --scope project
 ```
 
-用户选择作为默认值，项目的明确选择覆盖用户默认；它们不代表更高权限的强制要求。显式 Profile 不会自动获得全部插件。MCP 必须明确核对已安装摘要后连接；Connector 必须映射原始 ID 并配置账户。未支持的 hook handler、认证机制、旧命令或依赖显示诊断。“已安装”不代表服务器已经连接。
+用户选择作为默认值，项目的明确选择覆盖用户默认；它们不代表更高权限的强制要求。产品生成的普通标准 Profile 明确启用 `allowPluginSkills`，因此可选择已启用插件的 Skills。其他显式 Profile 未声明该权限时，不会自动获得插件 Skills。MCP 必须明确核对已安装摘要后连接；Connector 必须映射原始 ID 并配置账户。未支持的 hook handler、认证机制、旧命令或依赖显示诊断。“已安装”不代表服务器已经连接。
 
 ## Skills 与设置流程
 
@@ -75,7 +81,7 @@ areal plugin --workspace /absolute/workspace submission REQUEST_ID
 
 ## Git/npm 与 MCP
 
-在“添加来源”选择 Git marketplace；包条目可以使用以下来源。Git ref 固定到 commit，npm 版本范围解析到具体版本与 integrity；下载和安装不运行 npm lifecycle scripts。
+在“添加市场”选择 Git marketplace；包条目可以使用以下来源。Git ref 固定到 commit，npm 版本范围解析到具体版本与 integrity；下载和安装不运行 npm lifecycle scripts。
 
 ```json
 {"name":"example","source":{"source":"git-subdir","url":"https://github.com/example/plugins.git","ref":"main","path":"plugins/example"}}
@@ -96,7 +102,7 @@ Codex `marketplace/add` 接受顶层 `sparsePaths`：非空列表使用 Git cone
 
 `ui/message` 可以将文本和资源添加到草稿，保留未发送的人类内容；只有 `send:true` 发起明确的新提交。标题和 `_meta` 留在历史/UI，递归剔除 `_meta` 后才进入模型。App 上下文按实例分组，可更新或移除。设置、mentions 和表单预览通过服务器声明的工具/资源处理；不猜测方法或地址。
 
-GitHub Connector 保留 `.app.json` 的原始 ID。在详情中填写这个 ID 和 GitHub token，通过系统安全存储保存，再明确连接。Core 将这个显式映射接到 `https://api.githubcopilot.com/mcp/`；不会根据不透明 ID 猜测供应商。账户凭据不足、未映射和不支持分别显示。只读 `get_me` 的实际服务验收独立于本地模型与桌面夹具。
+GitHub Connector 保留 `.app.json` 的原始 ID。在详情中填写这个 ID 和 GitHub token，通过系统安全存储保存，再明确连接。Core 将这个显式映射接到 `https://api.githubcopilot.com/mcp/`；不会根据不透明 ID 猜测供应商。账户凭据不足、未映射和不支持分别显示。`scripts/plugin-github-smoke.mjs` 使用固定版本的官方 GitHub 包，通过真实 MCP 读取公开 `openai/plugins` 仓库的市场文件。模型使用本地确定性服务，GitHub HTTP、桌面用户路径和真实模型供应商的验收分别记录。
 
 文件入口只给 App 不透明资源 URI。Core 校验保存的文件授权，并复用 Runtime 的目录描述符文件助手读写；Main 只管理窗口与文件监听。读取最多2 MiB，当前原子写入最多64 KiB；超限返回 `too-large`。写入支持 ETag/CAS 和持久请求回执；重试同键返回原结果，不覆盖后续编辑。
 

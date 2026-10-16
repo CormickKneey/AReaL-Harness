@@ -37,6 +37,7 @@ pub(crate) const METHODS: &[&str] = &[
     "areal/mcp/disconnect",
     "areal/plugin/list",
     "areal/plugin/read",
+    "areal/plugin/importArchive",
     "areal/plugin/install",
     "areal/plugin/configure",
     "areal/plugin/uninstall",
@@ -139,6 +140,7 @@ pub(crate) async fn dispatch(
             | "areal/mcp/configure"
             | "areal/mcp/connect"
             | "areal/mcp/disconnect"
+            | "areal/plugin/importArchive"
             | "areal/plugin/install"
             | "areal/plugin/configure"
             | "areal/plugin/uninstall"
@@ -541,11 +543,18 @@ async fn dispatch_inner(
                 url: String,
                 #[serde(default)]
                 ref_name: Option<String>,
+                #[serde(default)]
+                sparse_paths: Vec<String>,
                 expected_revision: u64,
             }
             let p: AddGit = parse(params)?;
             engine
-                .plugin_add_git_marketplace(p.url, p.ref_name, p.expected_revision)
+                .plugin_add_git_marketplace_sparse(
+                    p.url,
+                    p.ref_name,
+                    p.sparse_paths,
+                    p.expected_revision,
+                )
                 .await
         }
         "areal/marketplace/remove" => {
@@ -568,6 +577,18 @@ async fn dispatch_inner(
             }
             let p: Update = parse(params)?;
             engine.plugin_update_marketplaces(p.expected_revision).await
+        }
+        "areal/plugin/importArchive" => {
+            #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase", deny_unknown_fields)]
+            struct Import {
+                path: std::path::PathBuf,
+                expected_revision: u64,
+            }
+            let p: Import = parse(params)?;
+            engine
+                .plugin_import_archive(p.path, p.expected_revision)
+                .await
         }
         "areal/plugin/install" => {
             #[derive(Deserialize)]

@@ -188,6 +188,14 @@ impl Engine {
         self.plugin_change(move |s| Ok(serde_json::to_value(s.add_marketplace(&root, expected)?)?))
             .await
     }
+    pub async fn plugin_import_archive(
+        self: &Arc<Self>,
+        path: PathBuf,
+        expected: u64,
+    ) -> Result<Value> {
+        self.plugin_change(move |s| Ok(serde_json::to_value(s.import_archive(&path, expected)?)?))
+            .await
+    }
     pub async fn plugin_install(
         self: &Arc<Self>,
         id: String,

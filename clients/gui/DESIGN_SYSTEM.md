@@ -36,9 +36,22 @@ Tailwind 的 `text-ui-sm`、`rounded-overlay` 等直接消费同一套 Token。�
 | [DecisionCard](renderer/src/DecisionCard.tsx) | label/icon/正文/反馈/footer 插槽，复用 [DecisionCard.css](renderer/src/DecisionCard.css) | 审批/提问拥有提交、核对与请求身份 |
 | [Feedback](renderer/src/components/ui/feedback.tsx) | error 或 message；保留 alert/status 语义 | 文案和恢复动作归调用方 |
 | 菜单、Popover、Tooltip、Input/Textarea | 从 [components/ui](renderer/src/components/ui) 选择既有组件 | 不在功能文件复制公共控件样式 |
+| [CollapsibleText](renderer/src/CollapsibleText.tsx) | 渲染高度检测、有界预览与展开/收起，样式在 [CollapsibleText.css](renderer/src/CollapsibleText.css) | 只拥有展示状态；原文与复制/发送仍由调用方管理 |
 | [SideChatPane](renderer/src/SideChatPane.tsx) | 组合共享 Composer 与 Side 上下文，样式在 [SideChat.css](renderer/src/SideChat.css) | 保留服务/来源/Side 草稿隔离与独立执行 |
 
 审批按钮的 split 几何、Side 面板比例、Composer 紧凑布局是当前组合规则，不作为全局控件的新默认值。
+
+## 长文本统一采用渐进展示
+
+新增或修改含长文本的界面时，先确定阅读任务，再选择有界预览、显式展开或专用阅读面板。聊天中的已发送消息、引用、上下文说明和详情卡片应避免由单段长文本占满工作区；不要以缩小字号、无提示裁剪或嵌套滚动代替信息层级。
+
+- **按实际布局折叠**：根据渲染高度判断，覆盖 Markdown、多行与自动换行；宽度、字号或字体变化后重新测量，不只按字符数判断。短文本完整展示，不出现无效展开入口。
+- **预览与全文可逆切换**：默认保留开头预览，提供始终可见的“展开全文 / 收起”按钮；按钮位于裁剪区域之外，不能只在 hover 时出现。聊天默认预览约 8 行，数值归 [CollapsibleText.css](renderer/src/CollapsibleText.css)。新消费者优先复用 [CollapsibleText](renderer/src/CollapsibleText.tsx)，不要另写字符截断或折叠状态机。
+- **全文完整可达**：折叠只改变展示，不截断存储、发送、复制和导出的原文；附件和独立操作在正文预览之外。展开后使用所属页面滚动，不再嵌套纵向滚动；收起时保持阅读位置与按钮焦点可达。
+- **可访问且稳定**：原生按钮支持键盘、可见焦点、`aria-expanded` 与 `aria-controls`；聚焦裁剪正文内的操作时先展开。每条消息独立保存当前挂载期间的展开状态，流式刷新或尺寸变化不覆盖人工选择，换到其他消息不继承旧状态。不依赖动画表达状态，遵守 reduced motion。
+- **按任务设定例外**：正在编辑的输入、流式主要回复、需要完整核对的审批关键信息以及专用文件/日志阅读器，保留其现有阅读机制；不能为了统一外观隐藏完成当前任务必需的信息。未来长文本设计评审必须说明所选机制与可达全文的路径。
+
+已发送消息在共享 `Messages` 中应用此规则，主聊天、Side 与 Remote 复用同一展示路径。验收至少覆盖长/短文本、连续长段落、Markdown、明暗、窄宽面板、字号变化、展开再收起，以及原文复制。生产组件预览与脚本见下文；它们不代替真实服务或安装包验收。
 
 ## 新增功能的四步
 

@@ -21,7 +21,7 @@ await writeFile(join(workspace,'.agents','plugins','marketplace.json'),JSON.stri
 const sourceRoot=resolve(gui,'../..');
 const sourceFiles={};
 for(const path of new Set(execFileSync('git',['ls-files','--modified','--others','--exclude-standard','-z'],{cwd:sourceRoot}).toString().split('\0').filter(Boolean))){
-if(/^(core\/|clients\/|scripts\/|schemas\/|Cargo\.|upstream\/)/.test(path))sourceFiles[path]=createHash('sha256').update(await readFile(join(sourceRoot,path))).digest('hex');}
+if(/^(core\/|clients\/|scripts\/|schemas\/|Cargo\.|upstream\/)/.test(path)){try{sourceFiles[path]=createHash('sha256').update(await readFile(join(sourceRoot,path))).digest('hex');}catch(error){if(error.code!=='ENOENT')throw error;sourceFiles[path]=null;}}}
 const sourceDiffSha256=createHash('sha256').update(execFileSync('git',['diff','--binary','HEAD'],{cwd:sourceRoot,maxBuffer:32*1024*1024})).digest('hex');
 const requests=[],checks=[],errors=[];
 const model=createServer(async(req,res)=>{let body='';for await(const p of req)body+=p;requests.push(JSON.parse(body));res.writeHead(200,{'Content-Type':'text/event-stream'});
@@ -40,7 +40,7 @@ async function call(name,params){const r=await page.evaluate(({name,params})=>wi
 async function pluginState(predicate,label){const end=Date.now()+30_000;while(Date.now()<end){
 const row=(await call('manage',{projectId:await page.getByTestId('areal-workbench').getAttribute('data-project-id'),operation:'plugins'})).data.find(x=>x.id==='hello@gui-p0');
 if(predicate(row))return row;await new Promise(r=>setTimeout(r,75));}throw Error('timeout: '+label);}
-async function settings(){await button('设置').click();await page.getByLabel('集成',{exact:true}).getByRole('button',{name:'插件',exact:true}).click();await page.getByRole('heading',{name:'插件',exact:true}).waitFor();await page.getByRole('button',{name:'查看插件 hello@gui-p0',exact:true}).click();}
+async function settings(){await page.getByRole('navigation',{name:'应用导航',exact:true}).getByRole('button',{name:'插件',exact:true}).click();await page.getByRole('tablist',{name:'市场范围',exact:true}).getByRole('tab',{name:'个人',exact:true}).click();await page.getByRole('button',{name:'查看插件 hello@gui-p0',exact:true}).click();}
 try{
 app=await electron.launch({executablePath:require('electron'),args:[join(gui,'app')],env,timeout:120_000});
 page=await app.firstWindow();page.setDefaultTimeout(20_000);page.on('pageerror',e=>errors.push(e.message));
@@ -60,7 +60,7 @@ await app.evaluate(({ipcMain})=>{const channel='areal-core:command',original=ipc
 ipcMain.removeHandler(channel);ipcMain.handle(channel,async(event,name,params)=>{const result=await original(event,name,params);
 if(lose&&name==='manage'&&params.operation==='pluginSetup'&&result.ok){lose=false;return {ok:false,error:{message:'Injected response loss',submissionUnknown:true,requestId:params.requestId}};}return result;});});
 await button('运行设置').click();
-await page.getByRole('dialog').getByRole('button',{name:'核对插件提交',exact:true}).click();
+await page.getByTestId('plugin-detail-page').getByRole('button',{name:'核对插件提交',exact:true}).click();
 await button('打开设置对话').waitFor();await button('打开设置对话').click();
 await page.getByTestId('chat-input').waitFor();await page.getByText('GUI_PLUGIN_SETUP_OK',{exact:true}).waitFor();
 const setupThread=await page.getByTestId('areal-workbench').getAttribute('data-thread-id');

@@ -1,6 +1,6 @@
 import { useSettingsOperation } from "./useSettingsOperation.js";
 import { useDraftBlocker, useGuardedNavigation } from "./UnsavedChanges.js";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   BookOpen,
   Plug,
@@ -33,8 +33,9 @@ import type { Data } from "../services.js";
 import { pluginSourceLabel, pluginMcpStateLabel, type PluginMcpResource } from "./pluginResources.js";
 export function McpSettings({
   project, action, scope: controlledScope, onScopeChange,
-  pluginServers = [], onManagePlugin, onRefreshPlugins,
+  pluginServers = [], onManagePlugin, onRefreshPlugins, addRequest = 0,
 }: ScopedProps & {
+  addRequest?: number;
   pluginServers?: PluginMcpResource[];
   onManagePlugin?: (pluginId: string) => void;
   onRefreshPlugins?: () => Promise<void>;
@@ -96,6 +97,7 @@ export function McpSettings({
     setConfig(baseline.current.config);
     setError("");
   };
+  useEffect(() => { if (addRequest) edit(); }, [addRequest]);
   const source = `独立资源 · ${scope === "user" ? "用户" : "当前项目"}`;
   const packageItems = pluginServers.filter((item) =>
     `${item.serverId} ${pluginSourceLabel(item.owner)}`.toLowerCase().includes(query.toLowerCase()),

@@ -9,6 +9,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub const MAX_REGISTERED_SKILLS: usize = 512;
+pub const MAX_SKILL_DIRECTORY_ENTRIES: usize = 512;
+
 #[derive(Debug, Serialize)]
 pub struct DiscoveredSkill {
     pub id: String,
@@ -76,12 +79,12 @@ pub fn discover(workspace: Option<&Path>, homedir: Option<&Path>) -> Result<Skil
     // 先选定最高优先级，避免低优先级副本的旧资源阻止项目覆盖。
     for root in roots.into_iter().rev() {
         let mut entries = fs::read_dir(&root)?
-            .take(257)
+            .take(MAX_SKILL_DIRECTORY_ENTRIES + 1)
             .collect::<std::io::Result<Vec<_>>>()?;
         entries.sort_by_key(|e| e.file_name());
         ensure!(
-            entries.len() <= 256,
-            "skills directory exceeds 256 entries: {}",
+            entries.len() <= MAX_SKILL_DIRECTORY_ENTRIES,
+            "skills directory exceeds {MAX_SKILL_DIRECTORY_ENTRIES} raw entries: {}",
             root.display()
         );
         for entry in entries {
@@ -129,8 +132,9 @@ pub fn discover(workspace: Option<&Path>, homedir: Option<&Path>) -> Result<Skil
             // 无效的高优先级目录也占据名称，避免意外启用被覆盖的全局副本。
             selected.insert(name, (path, target));
             ensure!(
-                selected.len() <= 128,
-                "discovered skills exceed 128 entries"
+                selected.len() <= MAX_REGISTERED_SKILLS,
+                "discovered skills count {} exceeds limit {MAX_REGISTERED_SKILLS}",
+                selected.len()
             );
         }
     }

@@ -1,4 +1,5 @@
 //! Local-only Codex plugin packages. No package code, hooks or MCP is executed.
+mod archive;
 mod components;
 pub mod hook_sources;
 pub mod hooks;
@@ -387,6 +388,11 @@ impl Store {
                         ))
                     }
                 }
+            }
+        }
+        for (id, candidate) in &s.candidates {
+            if candidate.detail.source_kind.as_deref() == Some("archive") {
+                details.insert(id.clone(), candidate.detail.clone());
             }
         }
         (markets, details.into_values().collect(), errors)

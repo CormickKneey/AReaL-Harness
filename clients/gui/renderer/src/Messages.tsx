@@ -7,6 +7,7 @@ import { TurnProgress } from "./TurnProgress.js";
 import { TurnElapsed, completedTimeLabel } from "./TurnElapsed.js";
 import { ForkIcon, MoreOptionsIcon } from "./interfaceIcons.js";
 import { MessageActions } from "./MessageActions.js";
+import { CollapsibleText } from "./CollapsibleText.js";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./components/ui/dropdown-menu.js";
 import { TurnHookStats } from "./TurnHookStats.js";
 import { ToolEvent } from "./ToolEvent.js";
@@ -400,7 +401,13 @@ export function Messages({
                           part={part} projectId={project.id} threadId={thread.id} action={action} />)}
                       </div> : null}
                       {browserFeedback.text.trim() ? <div className="user-bubble">
+                        <CollapsibleText key={`${owner}:${item.id}`} onExpandedChange={() => {
+                          follow.current = false;
+                          releaseResponseSpace();
+                          rememberReading();
+                        }}>
                         <MessageResponse className="conversation-markdown user-message-body" preserveLineBreaks theme={dark ? "dark" : "light"} onOpenExternalUrl={onLink} onOpenFileLink={onFile}>{browserFeedback.text}</MessageResponse>
+                        </CollapsibleText>
                       </div> : null}
                       {text.trim() && <MessageActions text={text} />}
                     </div>

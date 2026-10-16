@@ -58,6 +58,50 @@ try {
   await input.waitFor();
   assert.equal(await input.innerText(), "保留这份草稿 Keep this draft");
   checks.push("production model menu opens/closes with draft retained");
+  const longText = page.getByRole("region", { name: "长文本预览", exact: true });
+  const longBubble = longText.locator('[data-side-item-id="long"]');
+  const shortBubble = longText.locator('[data-side-item-id="short"]');
+  const expand = longBubble.getByRole("button", { name: "展开全文", exact: true });
+  // Renderer-only acceptance: exercise production Messages, layout and keyboard behavior.
+  await expand.waitFor({ timeout: 5000 });
+  assert.equal(await expand.getAttribute("aria-expanded"), "false");
+  assert.equal(await shortBubble.getByRole("button", { name: "展开全文", exact: true }).count(), 0);
+  const collapsedHeight = await longBubble.locator(".collapsible-text-viewport").evaluate(el => el.clientHeight);
+  assert.ok(collapsedHeight < 240, "long sent message must leave room for the conversation");
+  await expand.focus();
+  await page.keyboard.press("Enter");
+  const collapse = longBubble.getByRole("button", { name: "收起", exact: true });
+  await collapse.waitFor();
+  assert.equal(await collapse.getAttribute("aria-expanded"), "true");
+  const expanded = await longBubble.locator(".collapsible-text-viewport").evaluate(el => ({ height: el.clientHeight, fullHeight: el.scrollHeight, overflow: getComputedStyle(el).overflowY, text: el.textContent }));
+  assert.ok(expanded.height > collapsedHeight * 2);
+  assert.ok(expanded.fullHeight <= expanded.height + 1, "expanded content uses the conversation scroll");
+  assert.ok(expanded.text.includes("END_OF_LONG_MESSAGE"));
+  await page.keyboard.press("Space");
+  await expand.waitFor();
+  assert.equal(await expand.evaluate(el => el === document.activeElement), true, "toggle retains keyboard focus");
+  const controlledId = await expand.getAttribute("aria-controls");
+  assert.equal(await longBubble.locator(".collapsible-text-viewport").getAttribute("id"), controlledId);
+  // Capture the browser clipboard boundary without replacing the user's OS clipboard.
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
+      writeText: async text => { window.previewCopiedText = text; },
+    } });
+  });
+  await longBubble.getByRole("button", { name: "复制消息", exact: true }).click();
+  const copied = await page.evaluate(() => window.previewCopiedText);
+  assert.ok(copied.startsWith("# 长消息预览\n\n"));
+  assert.ok(copied.includes("第 18 段"));
+  assert.ok(copied.endsWith("END_OF_LONG_MESSAGE"), "copy includes text beyond the collapsed preview");
+  await longBubble.getByRole("button", { name: "末尾链接", exact: true }).focus();
+  await collapse.waitFor();
+  assert.equal(await collapse.getAttribute("aria-expanded"), "true", "keyboard focus never remains in clipped content");
+  await page.getByLabel("字号", { exact: true }).selectOption("18");
+  assert.equal(await collapse.getAttribute("aria-expanded"), "true", "font reflow retains a manual expansion");
+  await collapse.click();
+  await page.getByLabel("字号", { exact: true }).selectOption("14");
+  checks.push("production sent messages default to a bounded preview; short text stays open; keyboard expand/collapse retains full text and focus");
+  checks.push("collapsed copy retains original Markdown and tail text; focusing clipped links expands; font changes preserve manual expansion");
   for (const sample of [
     { theme: "light", font: "14", width: "wide" }, { theme: "dark", font: "14", width: "wide" },
     { theme: "light", font: "18", width: "narrow" }, { theme: "dark", font: "18", width: "narrow" },
@@ -80,6 +124,16 @@ try {
       assert.equal(measured.sideInfo.fontSize, `${Number(sample.font) - 3}px`);
     }
     assert.equal(measured.composer.fontSize, `${Number(sample.font) + 2}px`);
+    assert.equal(await expand.getAttribute("aria-expanded"), "false", "theme/font/width changes retain collapsed state");
+    const previewSize = await longBubble.locator(".collapsible-text-viewport").evaluate(el => ({ height: el.clientHeight, line: parseFloat(getComputedStyle(el).lineHeight), width: el.clientWidth, fullWidth: el.scrollWidth }));
+    assert.ok(Math.abs(previewSize.height - previewSize.line * 8) <= 1, "preview follows eight rendered lines at the current font size");
+    assert.ok(previewSize.fullWidth <= previewSize.width + 1, "long text wraps inside the bubble");
+    const wrappedText = longText.locator('[data-side-item-id="wrapped"]');
+    await page.waitForFunction(({ narrow }) => {
+      const button = document.querySelector('[data-side-item-id="wrapped"] .collapsible-text-toggle');
+      return Boolean(button) === narrow;
+    }, { narrow: sample.width === "narrow" });
+    assert.equal(await wrappedText.getByRole("button", { name: "展开全文", exact: true }).count(), sample.width === "narrow" ? 1 : 0, "unbroken paragraphs fold only when the rendered width requires it");
     await input.fill("第一行 First line");
     await input.press("Shift+Enter");
     const caret = await input.evaluate(element => {
@@ -98,6 +152,8 @@ try {
     for (const name of ["Composer 预览", "审批预览", "Side 预览"]) {
       await page.getByRole("region", { name, exact: true }).screenshot({ path: join(scratch, `${sample.theme}-${sample.font}-${sample.width}-${name}.png`), animations: "disabled" });
     }
+    await longText.locator(".messages").evaluate(el => el.scrollTo(0, 0));
+    await longText.screenshot({ path: join(scratch, `${sample.theme}-${sample.font}-${sample.width}-long-text.png`), animations: "disabled" });
   }
   checks.push("light/dark and wide/narrow production components; semantic typography and layout");
   checks.push("newline caret follows theme and editor typography at both font sizes");

@@ -2,6 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { ChatGPTAccount } from "../packages/chatgpt-provider/account.js";
 import { AppProviders } from "../app/src/core/providers.cjs";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 function fixture(oauth) {
   let record = {
@@ -484,3 +487,260 @@ for (const recover of [true, false])
     assert.equal(f.refreshes, 1);
     assert.equal(f.sends, recover ? 1 : 0);
   });
+
+function deferred() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+const turn = () => new Promise((resolve) => setImmediate(resolve));
+const catalogResponse = (id = "fixture-model") => Response.json({
+  models: [{ slug: id, display_name: "Fixture", visibility: "list" }],
+});
+
+async function startupSubscription(t, { catalog, refresh, expired = false } = {}) {
+  const f = fixture();
+  await f.store.modifyRecord("", (current) => ({ ...current, payload: {
+    ...current.payload, clientId: "fixture-client", subject: "fixture-account",
+    hostId: "urn:uuid:fixture", issuer: "https://auth.openai.com",
+    scopes: ["resource.invoke", "chatgpt.tokens.use.direct"],
+    expires: expired ? 0 : Date.now() + 3600000,
+  } }));
+  const home = await mkdtemp(join(tmpdir(), "areal-subscription-startup-"));
+  await writeFile(join(home, "openai-subscription.json"), JSON.stringify({ secret: "synthetic" }));
+  let gets = 0, exchanges = 0;
+  const service = new CoreSubscription({
+    store: f.store, token: "fixture-loopback", kind: "openai",
+    fetch: async (url, options) => {
+      if (url.endsWith("openid-configuration")) return Response.json({
+        issuer: "https://auth.openai.com", authorization_endpoint: "https://auth.openai.com/authorize",
+        token_endpoint: "https://auth.openai.com/token", jwks_uri: "https://auth.openai.com/keys",
+        revocation_endpoint: "https://auth.openai.com/revoke",
+      });
+      if (url.endsWith("/token")) {
+        exchanges++;
+        await refresh?.(options);
+        return Response.json({ token_type: "bearer", access_token: "next-access",
+          refresh_token: "next-refresh", expires_in: 3600,
+          scope: "resource.invoke chatgpt.tokens.use.direct" });
+      }
+      assert.equal(url, "https://api.openai.com/v1/models");
+      return catalog ? catalog(++gets, options) : (gets++, catalogResponse());
+    },
+  });
+  const mutations = [];
+  const backend = { home, projects: new Map(), onChange() {},
+    submit: async (_project, method, params) => { mutations.push({ method, params }); } };
+  const app = new AppProviders(backend, {});
+  app.openai = async () => service;
+  app.openaiPromise = Promise.resolve(service);
+  const project = { id: "fixture", client: { request: async (method) => {
+    assert.equal(method, "areal/provider/list");
+    await result.beforeRead?.();
+    return { data: [{ id: "areal_openai", revision: 7, models: ["old-model"] }] };
+  } } };
+  const result = { app, service, project, mutations,
+    get gets() { return gets; }, get exchanges() { return exchanges; },
+    settled: async () => { await turn(); await Promise.allSettled([...service.account.active]); },
+  };
+  t.after(async () => { await app.close(); await rm(home, { recursive: true, force: true }); });
+  return result;
+}
+
+test("startup prepares the real catalog before Core sync and waits before upsert", async (t) => {
+  const gate = deferred();
+  t.after(() => gate.resolve());
+  const f = await startupSubscription(t, { catalog: async () => { await gate.promise; return catalogResponse(); } });
+  await f.app.prepare();
+  await turn();
+  assert.equal(f.gets, 1, "prepare starts the catalog while Core may still be launching");
+  assert.equal(f.service.server.listening, true);
+  const applied = f.app.applySubscription(f.project, f.service);
+  await turn();
+  assert.deepEqual(f.mutations, []);
+  gate.resolve();
+  await applied;
+  assert.equal(f.gets, 1);
+  assert.deepEqual(f.mutations, [{ method: "areal/provider/upsert", params: {
+    expectedRevision: 7, provider: { id: "areal_openai", revision: 7, protocol: "responses",
+      endpoint: f.service.endpoint, credentialRef: "areal_openai", models: ["fixture-model"], parameters: {} },
+  } }]);
+});
+
+test("concurrent prepares join full status through OAuth refresh", async (t) => {
+  const gate = deferred();
+  t.after(() => gate.resolve());
+  const f = await startupSubscription(t, { expired: true, refresh: () => gate.promise });
+  await f.app.prepare();
+  await turn();
+  assert.equal(f.exchanges, 1);
+  await f.app.prepare();
+  const applied = f.app.syncSubscription(f.project, f.service);
+  await turn();
+  assert.deepEqual(f.mutations, []);
+  gate.resolve();
+  await applied;
+  assert.equal(f.exchanges, 1);
+  assert.equal(f.gets, 1);
+  assert.deepEqual(f.mutations.map(({ method, params }) => [method, params.provider.models]),
+    [["areal/provider/upsert", ["fixture-model"]]]);
+});
+
+test("fast failed startup catalog is consumed once and explicit later status retries", async (t) => {
+  const f = await startupSubscription(t, { catalog: (call) => call === 1
+    ? Response.json({ error: { code: "server_error" } }, { status: 503 }) : catalogResponse() });
+  await f.app.prepare();
+  await f.settled();
+  assert.equal(f.gets, 1);
+  await f.app.applySubscription(f.project, f.service);
+  assert.equal(f.gets, 1, "automatic consume retains the first failure without another GET");
+  assert.deepEqual(f.mutations, []);
+  assert.equal((await f.app.chatgpt({ operation: "status" })).state, "ready");
+  assert.equal(f.gets, 2);
+  await f.app.applySubscription(f.project, f.service);
+  assert.deepEqual(f.mutations.map(({ method }) => method), ["areal/provider/upsert"]);
+});
+
+for (const stage of ["provider read", "local ready"])
+  for (const change of ["revision", "close"])
+    test(`account ${change} during ${stage} cannot upsert or remove stale startup status`, async (t) => {
+      const f = await startupSubscription(t);
+      await f.app.prepare();
+      await f.settled();
+      const invalidate = () => change === "revision" ? f.service.account.changed() : f.service.account.close();
+      if (stage === "provider read") f.beforeRead = invalidate;
+      else {
+        const ready = f.service.ready.bind(f.service);
+        f.service.ready = async () => { await ready(); await invalidate(); };
+      }
+      await f.app.applySubscription(f.project, f.service);
+      assert.equal(f.gets, 1);
+      assert.deepEqual(f.mutations, []);
+    });
+
+test("expired prepared ready catalog is refreshed before Core upsert", async (t) => {
+  const f = await startupSubscription(t, { catalog: (call) => catalogResponse(call === 1 ? "old-model" : "new-model") });
+  await f.app.prepare();
+  await f.settled();
+  assert.equal(f.gets, 1);
+  f.service.catalog.expiresAt = 0;
+  await f.app.applySubscription(f.project, f.service);
+  assert.equal(f.gets, 2);
+  assert.deepEqual(f.mutations.map(({ params }) => params.provider.models), [["new-model"]]);
+});
+
+test("a forced catalog replacement cannot restore the prepared models array", async (t) => {
+  const f = await startupSubscription(t, { catalog: (call) => catalogResponse(call === 1 ? "old-model" : "new-model") });
+  await f.app.prepare();
+  await f.settled();
+  assert.equal(f.gets, 1);
+  await f.service.discover({ force: true });
+  await f.app.applySubscription(f.project, f.service);
+  assert.equal(f.gets, 2);
+  assert.deepEqual(f.mutations.map(({ params }) => params.provider.models), [["new-model"]]);
+});
+
+test("admission failure after preparation retains the existing Core provider", async (t) => {
+  const f = await startupSubscription(t);
+  await f.app.prepare();
+  await f.settled();
+  assert.equal(f.gets, 1);
+  f.service.account.fail(Object.assign(new Error("fixture denied"), { code: "subscription_sharing_usage_limit_exceeded" }), "admission");
+  await f.app.applySubscription(f.project, f.service);
+  assert.deepEqual(f.mutations, []);
+  assert.equal(f.gets, 2);
+});
+
+for (const change of ["admission failure", "refresh starting", "refresh completing"])
+  test(`${change} during account directory read cannot reuse stale prepared status`, async (t) => {
+    const directoryGate = deferred(), directoryEntered = deferred(), refreshGate = deferred();
+    t.after(() => { directoryGate.resolve(); refreshGate.resolve(); });
+    const f = await startupSubscription(t, { refresh: () => refreshGate.promise });
+    const account = f.service.account;
+    const publicDirectory = account.directory.public.bind(account.directory);
+    let held = false;
+    account.directory.public = async () => {
+      if (!held) {
+        held = true;
+        directoryEntered.resolve();
+        await directoryGate.promise;
+      }
+      return publicDirectory();
+    };
+    let refreshing;
+    if (change === "refresh completing") {
+      refreshing = account.accessToken(undefined, { force: true });
+      await turn();
+      assert.equal(f.exchanges, 1);
+    }
+    await f.app.prepare();
+    await directoryEntered.promise;
+    if (change === "admission failure") {
+      account.fail(Object.assign(new Error("fixture denied"), { code: "subscription_sharing_usage_limit_exceeded" }), "admission");
+    } else if (change === "refresh starting") {
+      refreshing = account.accessToken(undefined, { force: true });
+      await turn();
+      assert.equal(f.exchanges, 1);
+    } else {
+      refreshGate.resolve();
+      assert.equal(await refreshing, "next-access");
+    }
+    directoryGate.resolve();
+    await f.app.applySubscription(f.project, f.service);
+    if (change === "refresh completing") {
+      assert.deepEqual(f.mutations.map(({ method, params }) => [method, params.provider.models]),
+        [["areal/provider/upsert", ["fixture-model"]]]);
+    } else {
+      assert.deepEqual(f.mutations, []);
+      if (refreshing) { refreshGate.resolve(); assert.equal(await refreshing, "next-access"); }
+    }
+  });
+
+test("nonready preparation expires and a later Core sync retries the catalog", async (t) => {
+  const f = await startupSubscription(t, { catalog: (call) => call === 1
+    ? Response.json({ error: { code: "server_error" } }, { status: 503 }) : catalogResponse() });
+  await f.app.prepare();
+  await f.settled();
+  assert.equal(f.gets, 1);
+  const now = Date.now();
+  t.mock.method(Date, "now", () => now + 30_001);
+  await f.app.applySubscription(f.project, f.service);
+  assert.equal(f.gets, 2);
+  assert.deepEqual(f.mutations.map(({ method }) => method), ["areal/provider/upsert"]);
+});
+
+test("close aborts real prepared catalog work without an unhandled rejection", async (t) => {
+  let aborted = false;
+  const f = await startupSubscription(t, { catalog: (_call, { signal }) => new Promise((_resolve, reject) => {
+    signal.addEventListener("abort", () => { aborted = true; reject(signal.reason); }, { once: true });
+  }) });
+  const unhandled = [];
+  const capture = (reason) => unhandled.push(reason);
+  process.on("unhandledRejection", capture);
+  t.after(() => process.off("unhandledRejection", capture));
+  await f.app.prepare();
+  await turn();
+  assert.equal(f.gets, 1);
+  await f.app.close();
+  await turn();
+  assert.equal(aborted, true);
+  assert.equal(f.service.account.active.size, 0);
+  assert.deepEqual(unhandled, []);
+  assert.deepEqual(f.mutations, []);
+});
+
+test("unconsumed rejected status is handled when launch stops before sync", async (t) => {
+  const f = await startupSubscription(t);
+  let statuses = 0;
+  f.service.account.status = async () => { statuses++; throw new Error("synthetic status rejection"); };
+  const unhandled = [];
+  const capture = (reason) => unhandled.push(reason);
+  process.on("unhandledRejection", capture);
+  t.after(() => process.off("unhandledRejection", capture));
+  await f.app.prepare();
+  await turn();
+  assert.equal(statuses, 1);
+  await f.app.close();
+  assert.deepEqual(unhandled, []);
+  assert.deepEqual(f.mutations, []);
+});

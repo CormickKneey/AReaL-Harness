@@ -6,11 +6,15 @@ Shared Core owns plugin installation and selection; GUI and CLI read the same st
 
 ## Plugins, Skills, and MCP
 
-Settings → Plugins has three views: Plugins, Skills, and MCP. Plugins manages actual packages. Skills and MCP include standalone resources and installed package components, with their sources shown. Resources with the same name retain separate owner identities and configurations.
+The global **Plugins** entry opens the marketplace. Public and Personal list registered sources. Skills and installed plugins share this workspace navigation. A plugin or Skill opens a content page with a return path. The Skills installed overview initially shows six items and expands with Show more. Personal and project tabs below show installed Skills from each source and retain separate expansion state. Search shows all matching results. Management uses the previously selected project. Select or open a project when none is selected. Browsing does not create a task directory.
+
+**Settings → Plugins** manages installed plugins, MCP servers, Skills, and marketplace sources. Skills and MCP include standalone resources and installed package components, with their sources shown. Resources with the same name retain separate owner identities and configurations.
 
 Packages follow the OpenAI plugin layout. Portable packages use root `plugin.json`, `skills/`, and `mcp.json`, with OpenAI-specific settings under `extensions.com.openai`. Compatibility manifests retain their existing parsing rules. AReaL keeps installation, selection, authentication, and connections with their existing owners, without rewriting package declarations.
 
-Standalone skills retain their existing preview, creation, and scoped enable controls. Standalone MCP servers retain configuration and connection controls. The scope selector filters only standalone resources. Package components show the plugin's effective state for the current project. Manage Plugin opens the owning package detail and retains package selection, digest trust, authentication, and submission recovery. Package components cannot be modified through standalone resource commands. Listing a resource does not expand a chat's allowed skills or tools.
+Standalone Skills have content pages and scoped enable controls. **Create Skill** checks the selected project’s current deployment, then opens that project’s ordinary draft with the product’s pinned official Skill Creator selected. Existing tasks keep their original profiles. Under the bundled deployment, a saved base profile uses the current resource version. Custom restricted profiles receive no additional permissions. After the user sends a request, the Agent follows Creator to create and validate the Skill in that project’s `.agents/skills/<skill-name>/` directory. The resource retains its upstream revision, license, and content digest. It does not read another agent application’s local configuration. Standalone MCP servers retain configuration and connection controls. The scope selector filters only standalone resources. Package components show the plugin's effective state for the current project. Manage Plugin opens the owning package detail and retains package selection, digest trust, authentication, and submission recovery. Package components cannot be modified through standalone resource commands. Listing a resource does not expand a chat's allowed skills or tools.
+
+The official Creator initialization and validation scripts require Python 3 and PyYAML. `clients/gui/scripts/plugin-concepts-smoke.mjs` verifies project-local creation through real Runtime tools. Set `AREAL_TEST_PYTHON` to select an interpreter that can import `yaml` with an isolated HOME and user site-packages disabled.
 
 Interactive apps and hooks remain in package details or existing workspace entrypoints. Users manage GitHub as a plugin. Connector remains an internal service mapping and credential binding.
 
@@ -30,7 +34,9 @@ Declare a local package in project/personal `.agents/plugins/marketplace.json`:
 }
 ```
 
-Paths resolve against the marketplace root, not the catalog directory. GUI Settings → Plugins → Plugins can add another local root, inspect components and install. Installation binds the selected source and digest; changes after preview require refresh and renewed selection. Installation runs no scripts, MCP, hooks or setup.
+Paths resolve against the marketplace root, not the catalog directory. Use **Add → Add marketplace** in the marketplace to add a local root or Git source, inspect components, and install. Installation binds the selected source and digest; changes after preview require refresh and renewed selection. Installation runs no scripts, MCP, hooks or setup.
+
+Use **Add → Upload plugin package** to select a local ZIP. Review its digest before installation. The ZIP may contain the package root or one enclosing directory. Both compressed and expanded content are limited to 64 MiB, with at most 4096 entries. Links, path escapes, duplicate paths, encryption, split archives, and ZIP64 are rejected. Import does not execute the plugin.
 
 CLI commands connect to an already running Core with its configuration:
 
@@ -49,7 +55,7 @@ areal plugin --workspace /absolute/workspace disconnect review-helper@team-tools
 areal plugin --workspace /absolute/workspace disable review-helper@team-tools --scope project
 ```
 
-An explicit project selection overrides the user default; neither represents an enforced requirement. Explicit Profiles do not acquire every package. MCP connections require explicit trust in the installed digest; Connectors require an original-ID mapping and account credentials. Unsupported hook handlers/auth mechanisms/commands/dependencies remain diagnostic. Installed does not mean connected.
+An explicit project selection overrides the user default; neither represents an enforced requirement. The product-generated ordinary standard Profile explicitly enables `allowPluginSkills` and can select Skills from enabled plugins. Other explicit Profiles do not inherit plugin Skills unless they declare that permission. MCP connections require explicit trust in the installed digest; Connectors require an original-ID mapping and account credentials. Unsupported hook handlers/auth mechanisms/commands/dependencies remain diagnostic. Installed does not mean connected.
 
 ## Skills and setup
 
@@ -91,7 +97,7 @@ Interactive apps in package details and global/thread/file entrypoints use the o
 
 `ui/message` adds typed text/resources to drafts while preserving unfinished human input; only `send:true` submits. Titles and `_meta` stay in UI/history; recursive `_meta` removal precedes model projection. Context is grouped by instance and can be updated/removed. Settings, mentions and form previews use advertised tools/resources, without guessed methods or endpoints.
 
-GitHub preserves the original `.app.json` Connector ID. Enter that ID and a GitHub token in plugin details, save through system secure storage, then explicitly connect. Core maps that configured ID to `https://api.githubcopilot.com/mcp/`; opaque IDs never imply a provider. Missing mapping, missing credentials and unsupported declarations are distinct. Real read-only `get_me` evidence is separate from deterministic model/desktop fixtures.
+GitHub preserves the original `.app.json` Connector ID. Enter that ID and a GitHub token in plugin details, save through system secure storage, then explicitly connect. Core maps that configured ID to `https://api.githubcopilot.com/mcp/`; opaque IDs never imply a provider. Missing mapping, missing credentials and unsupported declarations are distinct. `scripts/plugin-github-smoke.mjs` uses a pinned official GitHub package and real MCP to read the public `openai/plugins` marketplace file. The model is a local deterministic service. GitHub HTTP, desktop user paths, and real model providers have separate acceptance evidence.
 
 File entrypoints expose opaque URIs. Core validates saved grants and reuses Runtime descriptor traversal for actual I/O; Main owns windows/watchers. Reads are capped at 2 MiB, atomic writes at 64 KiB with `too-large` responses. ETag/CAS and durable request receipts ensure same-key retries return prior results without overwriting later edits.
 

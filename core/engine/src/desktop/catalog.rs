@@ -1,5 +1,6 @@
 use super::skills::Skill;
 use super::*;
+use areal_config::skills::MAX_REGISTERED_SKILLS;
 use std::collections::BTreeSet;
 
 #[derive(Clone, Default, Deserialize, Serialize)]
@@ -143,8 +144,10 @@ impl Engine {
 
     fn install_deployment_data(&self, deployment: Deployment, base: &Path) -> anyhow::Result<()> {
         anyhow::ensure!(
-            deployment.profiles.len() <= 64 && deployment.skills.len() <= 128,
-            "deployment catalog capacity exceeded"
+            deployment.profiles.len() <= 64 && deployment.skills.len() <= MAX_REGISTERED_SKILLS,
+            "deployment catalog capacity exceeded: profiles {} (limit 64), skills {} (limit {MAX_REGISTERED_SKILLS})",
+            deployment.profiles.len(),
+            deployment.skills.len()
         );
         let mut guard = self.desktop.catalog.write().unwrap();
         let mut catalog = guard.clone();
@@ -597,6 +600,7 @@ impl Engine {
         let profile = self.profile(reference)?;
         let refs = self.effective_skill_refs(
             &EffectiveConfig {
+                allow_plugin_skills: profile.allow_plugin_skills,
                 profile: Some(profile),
                 ..Default::default()
             },
@@ -676,8 +680,10 @@ impl Engine {
         max_bytes: usize,
     ) -> Result<Value> {
         self.refresh_plugins().await?;
+        let profile = self.profile(&profile)?;
         let configuration = EffectiveConfig {
-            profile: Some(self.profile(&profile)?),
+            allow_plugin_skills: profile.allow_plugin_skills,
+            profile: Some(profile),
             ..Default::default()
         };
         let skill = self.selected_skill(&configuration, &reference)?;

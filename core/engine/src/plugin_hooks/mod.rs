@@ -130,7 +130,7 @@ impl Manager {
     }
 }
 pub(super) struct Session {
-    pub(super) task_scope: Mutex<Option<task_scope::Anchor>>,
+    task_scope: Mutex<Option<task_scope::Anchor>>,
     pub(super) pending: Mutex<Vec<String>>,
     pub(super) ended: std::sync::atomic::AtomicBool,
     pub(super) inherited: std::sync::OnceLock<Vec<BoundHook>>,

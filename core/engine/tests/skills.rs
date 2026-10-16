@@ -33,6 +33,120 @@ impl DynamicToolHost for ProfileHost {
 }
 
 #[tokio::test]
+async fn deployment_skill_capacity_preserves_selection_and_profile_limits() {
+    let state = tempfile::tempdir().unwrap();
+    let resources = tempfile::tempdir().unwrap();
+    fs::write(
+        resources.path().join("SKILL.md"),
+        "capacity fixture instructions",
+    )
+    .unwrap();
+    let mut skills: Vec<_> = (0..512)
+        .map(|i| SkillLocation {
+            id: format!("skill-{i:03}"),
+            revision: "v1".into(),
+            root: resources.path().into(),
+            metadata: None,
+        })
+        .collect();
+    let engine =
+        Engine::open(state.path(), Arc::new(UnconfiguredModel), Limits::default()).unwrap();
+    engine.install_default_skills(skills.clone()).unwrap();
+    let thread = engine.create("/workspace".into()).await.unwrap();
+    let listing = engine.skills(&thread.id).await.unwrap();
+    assert_eq!(listing["data"].as_array().unwrap().len(), 512);
+    assert_eq!(listing["data"][0]["id"], "skill-000");
+    assert_eq!(listing["data"][511]["id"], "skill-511");
+    for id in ["skill-000", "skill-511"] {
+        assert_eq!(
+            engine
+                .read_skill(
+                    &thread.id,
+                    VersionRef {
+                        id: id.into(),
+                        revision: "v1".into()
+                    },
+                    "SKILL.md",
+                    0,
+                    8192
+                )
+                .await
+                .unwrap()["text"],
+            "capacity fixture instructions"
+        );
+    }
+    let selected: Vec<_> = skills
+        .iter()
+        .take(129)
+        .map(|s| json!({"id":s.id,"revision":s.revision}))
+        .collect();
+    let error = engine
+        .configure_thread(
+            serde_json::from_value(json!({
+                "threadId":thread.id,"expectedRevision":1,"selectedSkills":selected
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("selected skills exceed budget"));
+    let accepted = engine
+        .configure_thread(
+            serde_json::from_value(json!({
+                "threadId":thread.id,"expectedRevision":1,"selectedSkills":&selected[..128]
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(accepted.selected_skills.unwrap().len(), 128);
+    engine
+        .configure_thread(
+            serde_json::from_value(json!({
+                "threadId":thread.id,"expectedRevision":2,"selectedSkills":[]
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    skills.push(SkillLocation {
+        id: "extra".into(),
+        ..skills[0].clone()
+    });
+    let deployment = resources.path().join("deployment.json");
+    fs::write(
+        &deployment,
+        serde_json::to_vec(&json!({"skills":skills})).unwrap(),
+    )
+    .unwrap();
+    let error = engine.install_deployment(&deployment).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "deployment catalog capacity exceeded: profiles 0 (limit 64), skills 513 (limit 512)"
+    );
+    let profiles: Vec<_> = (0..65).map(|i| json!({"id":format!("profile-{i}"),"revision":"v1","displayName":"Fixture","instructions":""})).collect();
+    fs::write(
+        &deployment,
+        serde_json::to_vec(&json!({"profiles":profiles})).unwrap(),
+    )
+    .unwrap();
+    let error = engine.install_deployment(&deployment).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "deployment catalog capacity exceeded: profiles 65 (limit 64), skills 0 (limit 512)"
+    );
+    assert_eq!(
+        engine.skills(&thread.id).await.unwrap()["data"]
+            .as_array()
+            .unwrap()
+            .len(),
+        512
+    );
+    assert_eq!(engine.profiles()["data"].as_array().unwrap().len(), 1);
+    engine.shutdown().await;
+}
+
+#[tokio::test]
 async fn profile_without_workflow_exposes_its_deployed_tool_allowlist() {
     let state = tempfile::tempdir().unwrap();
     let deployment_dir = tempfile::tempdir().unwrap();

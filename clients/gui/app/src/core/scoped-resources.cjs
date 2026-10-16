@@ -13,7 +13,10 @@ const { join, relative, isAbsolute } = require("node:path");
 const { homedir } = require("node:os");
 const { createHash, randomUUID } = require("node:crypto");
 const YAML = require("yaml");
+const { builtinSkill, BUILTIN_SKILL_ID } = require('./builtin-skills.cjs');
 const { WorktreeResources } = require('./worktree-resources.cjs');
+const MAX_REGISTERED_SKILLS = 512;
+const MAX_SKILL_DIRECTORY_ENTRIES = 512;
 const digest = (value) =>
   createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const within = (root, path) => {
@@ -115,12 +118,14 @@ class ScopedResources {
         if (e.code === "ENOENT") continue;
         throw e;
       }
-      if (entries.length > 256) throw new Error("单个技能目录最多支持 256 项");
+      if (entries.length > MAX_SKILL_DIRECTORY_ENTRIES)
+        throw new Error(`单个技能目录有 ${entries.length} 个原始目录项，超过 ${MAX_SKILL_DIRECTORY_ENTRIES} 项上限`);
       for (const entry of entries.sort((a, b) =>
         a.name.localeCompare(b.name),
       )) {
         const id = entry.name;
         if (
+          id === BUILTIN_SKILL_ID ||
           !validId(id) ||
           items.has(id) ||
           !(entry.isDirectory() || entry.isSymbolicLink())
@@ -192,9 +197,13 @@ class ScopedResources {
         root,
         metadata: { name, description },
       }));
+    const builtin = await builtinSkill(this.backend.home, BUILTIN_SKILL_ID);
+    const { id, revision, name: builtinName, description } = builtin.skill;
+    skills.push({ id, revision, root: builtin.root, metadata: { name: builtinName, description } });
     const base = JSON.parse(await readFile(this.backend.desktopConfig, "utf8"));
     const profile = {
       ...base.profiles[0],
+      allowPluginSkills: true,
       skills: skills.map(({ id, revision }) => ({ id, revision })),
     };
     profile.revision = `resources-${digest(profile).slice(0, 32)}`;
@@ -217,8 +226,8 @@ class ScopedResources {
         all.push(s);
       } catch {}
     }
-    if (all.length > 128)
-      throw new Error("技能版本目录超过 Runtime 的 128 项限制");
+    if (all.length > MAX_REGISTERED_SKILLS)
+      throw new Error(`技能登记超出容量：当前启用 ${skills.length} 项，保留版本合计 ${all.length} 项，上限 ${MAX_REGISTERED_SKILLS} 项`);
     await this.backend.save(filename, all);
     const name = `${project.id}-desktop.json`;
     await this.backend.save(name, {
@@ -294,6 +303,22 @@ class ScopedResources {
       this.backend.resourcesUpdating = false;
     }
   }
+  async prepareCreator(project, requestedProfile) {
+    if (project.projectless || !this.backend.saved.some(item => item.id === project.id && !item.projectless))
+      throw new Error("请先选择要创建 Skill 的项目。");
+    const { skill, provenance } = await builtinSkill(this.backend.home, BUILTIN_SKILL_ID);
+    await this.beforeCreate(project);
+    const managed = this.backend.desktopConfig === join(__dirname, "desktop-profile.json");
+    const base = managed ? JSON.parse(await readFile(this.backend.desktopConfig, "utf8")).profiles[0] : null;
+    const useCurrent = !requestedProfile || managed && requestedProfile.id === base.id && requestedProfile.revision === base.revision;
+    const profile = useCurrent ? project.resourceProfile ?? this.backend.defaultProfile : requestedProfile;
+    if (!profile) throw new Error("当前部署未配置默认任务配置，现有草稿已保留。");
+    const available = await project.client.request("areal/skill/list", { agentProfile: profile });
+    if (!available.data.some(item => item.available && item.id === skill.id && item.revision === skill.revision))
+      throw new Error("当前任务配置未提供官方 Skill Creator 的确切版本，现有草稿已保留。");
+    this.backend.onChange();
+    return { projectId: project.id, profile, skill, provenance };
+  }
   async mcpList(request) {
     const scope = this.scope(request);
     const project = request.projectId
@@ -344,6 +369,10 @@ class ScopedResources {
     if (this.backend.resourcesUpdating || this.backend.providerUpdating)
       throw new Error("配置正在更新，请稍后重试");
     if (operation === "hooks" || operation === "hooksSave") return this.backend.hooks.command(request);
+    if (operation === "builtinSkill") {
+      const { skill, provenance } = await builtinSkill(this.backend.home, request.id);
+      return { skill, provenance };
+    }
     if (operation === "skills") return this.skills(request);
     if (operation === "mcp") {
       this.backend.activeCommands++;
@@ -414,7 +443,7 @@ class ScopedResources {
         next.skills[scope] ??= {};
         next.skills[scope][request.id] = request.enabled === true;
       } else if (operation === "skillSave") {
-        if (!validId(request.id))
+        if (request.id === BUILTIN_SKILL_ID || !validId(request.id))
           throw new Error(
             "技能 ID 仅支持字母、数字、连字符、下划线与点（最多 128 字符）",
           );

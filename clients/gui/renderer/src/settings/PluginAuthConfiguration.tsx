@@ -1,12 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "../components/ui/button.js";
 import { Input } from "../components/ui/input.js";
 import { Feedback } from "./common.js";
 import type { Data } from "../services.js";
 
-export function PluginAuthConfiguration({ pluginId, server, digest, disabled, command, onSaved }: {
+export function PluginAuthConfiguration({ pluginId, server, digest, disabled, command, onSaved, onActivityChange }: {
   pluginId: string; server: Data; digest: string; disabled: boolean;
-  command: (operation: string, values: Data) => Promise<Data>; onSaved: () => void;
+  command: (operation: string, values: Data) => Promise<Data>; onSaved: () => void; onActivityChange?: (id: string, pending: boolean) => void;
 }) {
   const requirements = server.config?.authenticationRequirements ?? {};
   const [clientSecret, setClientSecret] = useState("");
@@ -19,6 +19,11 @@ export function PluginAuthConfiguration({ pluginId, server, digest, disabled, co
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [pendingId, setPendingId] = useState<string>();
+  useEffect(() => {
+    const id = `${pluginId}:${server.serverId}:${digest}`;
+    onActivityChange?.(id, busy || !!pendingId);
+    return () => onActivityChange?.(id, false);
+  }, [busy, pendingId, onActivityChange, pluginId, server.serverId, digest]);
   const blocked = disabled || busy || !!pendingId;
   const save = async () => {
     if (blocked) return;

@@ -194,6 +194,7 @@ These deployment-level methods require unrestricted `manage` authority; Thread-s
 | `areal/plugin/list` | `{}` | `revision/data/marketplaces/errors`; entry failures isolated |
 | `areal/plugin/read` | `id` | Package details; candidate and installed versions/digests/Skills separate |
 | `areal/marketplace/add` | `root, expectedRevision, requestId` | Add local catalog root and advance directory revision |
+| `areal/plugin/importArchive` | `path, expectedRevision, requestId` | Import a local ZIP as a candidate source; return package detail without installation or execution |
 | `areal/plugin/install` | `id, scope, expectedRevision, source, expectedDigest, requestId` | `scope=user/project`; digest binds the selected source snapshot |
 | `areal/plugin/configure` | `id, scope, enabled, expectedRevision, requestId` | Explicit project choice overrides user default; disabling revokes subsequent reads |
 | `areal/plugin/uninstall` | `id, expectedRevision, requestId` | Revoke access; retain historical cache |
@@ -205,7 +206,7 @@ Writes reuse the deployment management submission ledger. The same identity, `re
 
 ## Plugin sources, MCP and desktop Apps
 
-New routes retain unrestricted `manage` authorization; generated schemas own parameter types. Source mutations use catalog CAS and management receipts: `areal/plugin/resolve {id,expectedRevision,requestId}`, `areal/marketplace/addGit {url,refName?,expectedRevision,requestId}`, `areal/marketplace/remove {root,expectedRevision,requestId}` and `areal/marketplace/update {expectedRevision,requestId}`.
+New routes retain unrestricted `manage` authorization; generated schemas own parameter types. Source mutations use catalog CAS and management receipts: `areal/plugin/resolve {id,expectedRevision,requestId}`, `areal/marketplace/addGit {url,refName?,sparsePaths?,expectedRevision,requestId}`, `areal/marketplace/remove {root,expectedRevision,requestId}` and `areal/marketplace/update {expectedRevision,requestId}`.
 
 `areal/plugin/connection {id,expectedDigest,connect,requestId}` explicitly trusts/disconnects the installed version. `areal/plugin/mcp/list` distinguishes connection, authentication, optional failure and cleanup states. `areal/plugin/auth {id,server,operation}` supports transient `start/status/cancel` results without management receipts. `areal/plugin/connector/configure {id,connectorId,provider,credentialRef,expectedDigest,requestId}` supports explicit GitHub mappings; only trusted launchers inject credential values.
 

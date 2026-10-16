@@ -192,6 +192,7 @@ MCP 清理失败保持 cleanupFailed，并持久保存 cleanupUnconfirmed。无�
 | `areal/plugin/list` | `{}` | `revision/data/marketplaces/errors`；条目错误隔离 |
 | `areal/plugin/read` | `id` | 包详情；候选版本/摘要与已安装版本/摘要/Skills 分开 |
 | `areal/marketplace/add` | `root, expectedRevision, requestId` | 添加本地目录，更新安装目录版本 |
+| `areal/plugin/importArchive` | `path, expectedRevision, requestId` | 导入本机 ZIP 为候选来源；返回包详情，不安装或执行 |
 | `areal/plugin/install` | `id, scope, expectedRevision, source, expectedDigest, requestId` | `scope=user/project`；摘要必须匹配用户选中的来源快照 |
 | `areal/plugin/configure` | `id, scope, enabled, expectedRevision, requestId` | 项目明确选择覆盖用户默认；停用撤销后续读取 |
 | `areal/plugin/uninstall` | `id, expectedRevision, requestId` | 撤权；保留历史缓存 |
@@ -203,7 +204,7 @@ MCP 清理失败保持 cleanupFailed，并持久保存 cleanupUnconfirmed。无�
 
 ## 插件来源、MCP 与桌面 Apps
 
-新增方法保留无限制 `manage` 授权要求，参数类型见生成 schema。来源变更使用目录 CAS 与管理回执：`areal/plugin/resolve {id,expectedRevision,requestId}`；`areal/marketplace/addGit {url,refName?,expectedRevision,requestId}`；`areal/marketplace/remove {root,expectedRevision,requestId}`；`areal/marketplace/update {expectedRevision,requestId}`。
+新增方法保留无限制 `manage` 授权要求，参数类型见生成 schema。来源变更使用目录 CAS 与管理回执：`areal/plugin/resolve {id,expectedRevision,requestId}`；`areal/marketplace/addGit {url,refName?,sparsePaths?,expectedRevision,requestId}`；`areal/marketplace/remove {root,expectedRevision,requestId}`；`areal/marketplace/update {expectedRevision,requestId}`。
 
 `areal/plugin/connection {id,expectedDigest,connect,requestId}` 明确信任/断开已安装版本；`areal/plugin/mcp/list` 区分连接、认证、可选失败与清理状态。`areal/plugin/auth {id,server,operation}` 的操作为 `start/status/cancel`，返回瞬时认证状态，不是管理回执。`areal/plugin/connector/configure {id,connectorId,provider,credentialRef,expectedDigest,requestId}` 仅支持显式 GitHub 映射；凭据值只由可信启动器注入。
 
