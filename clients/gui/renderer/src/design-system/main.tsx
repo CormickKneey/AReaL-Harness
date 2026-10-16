@@ -12,7 +12,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Switch } from "../components/ui/switch.js";
 import { SettingsSegmentedTabs } from "../settings/SettingsSegmentedTabs.js";
 import { SettingsDisclosure } from "../settings/SettingsDisclosure.js";
-import { SettingsGroupCard, SettingsRow, SettingsSelect } from "../settings/SettingsPageParts.js";
+import { SettingsPage } from "../settings/SettingsWorkspace.js";
+import { SettingsGroupCard, SettingsRow, SettingsSelect, SettingsSection } from "../settings/SettingsPageParts.js";
 import { Button } from "../components/ui/button.js";
 import { Feedback } from "../components/ui/feedback.js";
 import { TooltipProvider } from "../components/ui/tooltip.js";
@@ -22,7 +23,7 @@ import { Messages } from "../Messages.js";
 import { ConversationTimelinePreview } from "./ConversationTimelinePreview.js";
 import type { LexicalChatInputHandle } from "../LexicalChatInput.js";
 import type { Action, CommandName } from "../services.js";
-import { tokenGroups } from "./catalog.js";
+import { tokenGroups, baseCandidate } from "./catalog.js";
 import { setApplicationPreferences, useAppearance } from "../settings/applicationPreferences.js";
 
 const project = {
@@ -110,7 +111,7 @@ function Preview() {
   const disabled = state === "busy" || state === "unknown";
   return <main className="design-preview" data-width={width} data-view={new URLSearchParams(window.location.search).has("conversation") ? "conversation" : undefined}>
     <header className="design-preview-header">
-      <div><h1>客户端设计系统</h1><p>生产组件与语义 Token · 本地预览</p></div>
+      <div><h1>客户端设计系统</h1><p>生产组件与语义 Token · Base 候选 {baseCandidate.version}（未冻结）</p></div>
       <label>主题<select aria-label="主题" value={dark ? "dark" : "light"} onChange={event => setDark(event.target.value === "dark")}><option value="light">明亮</option><option value="dark">深色</option></select></label>
       <label>字号<select aria-label="字号" value={fontSize} onChange={event => setFontSize(event.target.value)}><option value="14">14</option><option value="18">18</option></select></label>
       <label>面板宽度<select aria-label="面板宽度" value={width} onChange={event => setWidth(event.target.value)}><option value="wide">宽面板</option><option value="narrow">窄面板</option></select></label>
@@ -120,6 +121,7 @@ function Preview() {
     <section className="design-preview-panel" aria-label="公共控件">
       <h2>设置控件 · 按交互选择</h2>
       <p className="text-ui-sm text-foreground-subtle">执行操作用按钮，开启或关闭用开关，多项选择用下拉，仅两个选项直接并排选择。</p>
+      <SettingsPage><SettingsSection>
       <SettingsGroupCard>
         <SettingsRow label="导入配置" description="点击后执行一次操作；普通操作直接显示文字。" control={<ActionButton onClick={() => setMessage("导入入口仅作组件预览。")}>导入</ActionButton>} />
         <SettingsRow label="聊天存储位置" description="项目外聊天的默认位置。" control={<ActionButton onClick={() => setMessage("目录选择仅作组件预览。")}>更改</ActionButton>} />
@@ -132,7 +134,7 @@ function Preview() {
         <SettingsRow label="开源许可" description="查看随应用分发的第三方声明。" control={<ActionButton onClick={() => setMessage("许可入口仅作组件预览。")}>查看</ActionButton>} />
       </SettingsGroupCard>
       <SettingsDisclosure title="高级设置详情"><p>原地展开保留明确的展开 / 收起动作和键盘语义。</p></SettingsDisclosure>
-      <h3>样式与状态</h3>
+      </SettingsSection><SettingsSection title="样式与状态">
       <div className="design-preview-actions" aria-label="按钮样式与状态">
         <Button size="sm">主要操作</Button>
         <ActionButton>普通操作</ActionButton>
@@ -145,6 +147,7 @@ function Preview() {
         <Button size="icon-sm" variant="ghost" aria-label="刷新预览" onClick={() => setMessage("状态已刷新。 ")}><RefreshIcon /></Button>
       </div>
       <Feedback error={state === "failed" ? "操作未受理，请检查后重试。" : undefined} message={state === "unknown" ? "结果待核对，保留当前内容。" : "反馈跟随所属组件，错误与等待保持不同含义。"} />
+      </SettingsSection></SettingsPage>
     </section>
     <section className="design-preview-panel" aria-label="Composer 预览">
       <h2>Composer</h2>

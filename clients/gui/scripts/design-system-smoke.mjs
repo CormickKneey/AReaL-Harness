@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { createServer } from "node:http";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,11 +31,12 @@ const server = createServer(async (request, response) => {
 });
 await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 const origin = `http://127.0.0.1:${server.address().port}`;
-let browser, page, passed = false;
+let browser, page, browserVersion, passed = false;
 const errors = [], external = [], samples = [], checks = [];
 try {
   browser = await chromium.launch({ headless: true, ...(process.env.AREAL_GUI_TEST_BROWSER ? { executablePath: process.env.AREAL_GUI_TEST_BROWSER } : { channel: "chrome" }) });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, serviceWorkers: "block" });
+  browserVersion = browser.version();
+  const context = await browser.newContext({ deviceScaleFactor: 1, viewport: { width: 1440, height: 900 }, serviceWorkers: "block" });
   await context.route("**/*", route => {
     if (route.request().url().startsWith(origin + "/")) return route.continue();
     external.push(route.request().url()); return route.abort();
@@ -45,6 +46,47 @@ try {
   await page.goto(`${origin}/design-system.html`);
   await page.getByRole("heading", { name: "客户端设计系统", exact: true }).waitFor();
   assert.equal(await page.evaluate(() => typeof window.arealDesktop), "undefined");
+  const controls = page.getByRole("region", { name: "公共控件", exact: true });
+  const toggle = controls.getByRole("switch", { name: "显示底部面板", exact: true });
+  const checked = await toggle.getAttribute("aria-checked");
+  await toggle.focus(); await page.keyboard.press("Space");
+  assert.notEqual(await toggle.getAttribute("aria-checked"), checked, "Base switch supports keyboard state changes");
+  await page.keyboard.press("Space");
+  assert.equal(await toggle.getAttribute("aria-checked"), checked);
+  const pair = controls.getByRole("tablist", { name: "默认终端位置", exact: true });
+  await pair.getByRole("tab", { name: "右侧", exact: true }).click();
+  assert.equal(await pair.getByRole("tab", { name: "右侧", exact: true }).getAttribute("aria-selected"), "true");
+  await page.keyboard.press("ArrowLeft");
+  assert.equal(await pair.getByRole("tab", { name: "底部", exact: true }).getAttribute("aria-selected"), "true");
+  const choice = controls.getByLabel("关闭窗口前确认", { exact: true });
+  await choice.click();
+  await page.getByRole("option", { name: "始终", exact: true }).click();
+  assert.ok((await choice.innerText()).includes("始终"), "Base select displays the confirmed choice");
+  await choice.focus(); await page.keyboard.press("Space");
+  await page.getByRole("option", { name: "从不", exact: true }).waitFor();
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "关闭窗口前确认", undefined, { timeout: 5000 });
+  assert.equal(await choice.evaluate(element => element === document.activeElement), true, "Base select returns focus after dismissal");
+  const details = controls.locator("summary");
+  await details.focus(); await page.keyboard.press("Enter");
+  await details.getByText("收起", { exact: true }).waitFor();
+  assert.equal(await details.getAttribute("aria-expanded"), "true");
+  assert.ok((await details.innerText()).includes("收起"));
+  await page.keyboard.press("Enter");
+  await details.getByText("展开", { exact: true }).waitFor();
+  assert.equal(await details.getAttribute("aria-expanded"), "false");
+  const refresh = controls.getByRole("button", { name: "刷新状态", exact: true });
+  await page.getByLabel("状态", { exact: true }).selectOption("busy");
+  assert.equal(await refresh.isDisabled(), true);
+  assert.equal(await refresh.getAttribute("aria-busy"), "true");
+  await page.getByLabel("状态", { exact: true }).selectOption("failed");
+  assert.ok((await controls.getByRole("alert").innerText()).includes("操作未受理"));
+  await page.getByLabel("状态", { exact: true }).selectOption("unknown");
+  assert.ok((await controls.getByRole("status").innerText()).includes("结果待核对"));
+  await page.getByLabel("状态", { exact: true }).selectOption("ready");
+  assert.equal(await refresh.isDisabled(), false);
+  assert.equal(await controls.getByRole("button", { name: "不可用", exact: true }).isDisabled(), true);
+  checks.push("Base settings controls exercise keyboard switch, pair selection, menu choice/focus, disclosure and busy/failed/unknown feedback");
   const input = page.getByTestId("preview-composer");
   const timeline = page.getByRole("region", { name: "对话时间线预览", exact: true });
   const earlier = timeline.locator('[data-side-item-id="timeline-progress"]');
@@ -167,6 +209,34 @@ try {
       return { card: style(".decision-card"), feedback: style(".ui-feedback"), sideHeading: style(".side-chat-heading"), sideInfo: style(".side-chat-information"), composer: style(".composer-editor [contenteditable]"),
         overflow: [...document.querySelectorAll(".design-preview-panel")].some(el => el.scrollWidth > el.clientWidth + 1) };
     });
+    const settingStyles = await controls.evaluate(element => {
+      // 独立测量语义角色的解析结果，避免从待测控件反推预期。
+      const probe = document.createElement("span");
+      probe.style.cssText = "position:fixed;visibility:hidden;border-radius:var(--radius-overlay);font-size:var(--text-ui-caption)";
+      element.append(probe);
+      const expected = { radius: getComputedStyle(probe).borderRadius, fontSize: getComputedStyle(probe).fontSize };
+      probe.remove();
+      const group = element.querySelector(".settings-group-card");
+      const action = element.querySelector(".settings-field-control button");
+      const rows = [...element.querySelectorAll(".settings-field-layout")].map(row => {
+        const label = row.firstElementChild.getBoundingClientRect();
+        const control = row.querySelector(".settings-field-control").getBoundingClientRect();
+        return { labelTop: label.top, labelBottom: label.bottom, controlTop: control.top, left: control.left, right: control.right };
+      });
+      return { expected, radius: getComputedStyle(group).borderRadius, actionFont: getComputedStyle(action).fontSize,
+        columns: getComputedStyle(element.querySelector(".settings-field-layout")).gridTemplateColumns.split(" ").length, rows };
+    });
+    // 超出预览滚动视口的整段截图会被祖先裁剪；按可完整观察的生产组合取证。
+    for (const [part, target] of [["group", controls.locator(".settings-group-card")], ["states", controls.locator(".settings-section").last()]]) {
+      await target.screenshot({ path: join(scratch, `${sample.theme}-${sample.font}-${sample.width}-settings-${part}.png`), animations: "disabled" });
+    }
+    samples.push({ ...sample, settingStyles });
+    assert.equal(settingStyles.radius, settingStyles.expected.radius, "Base settings pattern mounts the production settings surface role, not the library default");
+    assert.equal(settingStyles.actionFont, settingStyles.expected.fontSize, "Base actions follow caption typography after font changes");
+    assert.equal(settingStyles.columns, sample.width === "narrow" ? 1 : 2, "Base settings reflow uses shared container constraints");
+    const alignedEdge = sample.width === "narrow" ? "left" : "right";
+    assert.ok(settingStyles.rows.every(row => Math.abs(row[alignedEdge] - settingStyles.rows[0][alignedEdge]) <= 1), "Base settings controls share their content edge");
+    if (sample.width === "narrow") assert.ok(settingStyles.rows.every(row => row.controlTop >= row.labelBottom), "narrow settings move controls below the full label/description");
     assert.equal(measured.overflow, false, "preview panels must not overflow horizontally");
     assert.equal(measured.card.fontSize, `${sample.font}px`);
     assert.equal(measured.card.radius, "20px");
@@ -207,6 +277,7 @@ try {
     await longText.locator(".messages").evaluate(el => el.scrollTo(0, 0));
     await longText.screenshot({ path: join(scratch, `${sample.theme}-${sample.font}-${sample.width}-long-text.png`), animations: "disabled" });
   }
+  checks.push("Base settings surfaces, typography, control alignment and container reflow at both themes and font sizes");
   checks.push("light/dark and wide/narrow production components; semantic typography and layout");
   checks.push("newline caret follows theme and editor typography at both font sizes");
   const motion = page.getByRole("region", { name: "聊天动效预览", exact: true });
@@ -299,6 +370,10 @@ try {
   process.exitCode = 1;
 } finally {
   await browser?.close(); await new Promise(resolve => server.close(resolve));
-  await writeFile(join(scratch, "manifest.json"), JSON.stringify({ passed, baseline, commit, buildSha256, checks, errors, external, samples, scope: "production renderer components with local fixture actions; no Electron/Core acceptance" }, null, 2));
+  const artifacts = await Promise.all((await readdir(scratch)).filter(name => name.endsWith(".png")).sort().map(async name => ({ path: name, sha256: createHash("sha256").update(await readFile(join(scratch, name))).digest("hex") })));
+  const worktreeStatus = execFileSync("git", ["status", "--porcelain"], { cwd: gui }).toString();
+  const diffSha256 = createHash("sha256").update(execFileSync("git", ["diff", "HEAD", "--"], { cwd: gui })).digest("hex");
+  await writeFile(join(scratch, "manifest.json"), JSON.stringify({ passed, baseline, commit, buildSha256, worktreeStatus, diffSha256,
+    environment: { platform: process.platform, arch: process.arch, browserVersion, viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 }, artifacts, checks, errors, external, samples, scope: "production renderer components with local fixture actions; no Electron/Core acceptance" }, null, 2));
   console.log(JSON.stringify({ passed, scratch, checks, errors }));
 }

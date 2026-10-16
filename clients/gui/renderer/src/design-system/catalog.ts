@@ -134,3 +134,48 @@ export const tokenGroups = [
     ]
   }
 ] as const;
+export const baseCandidate = {
+  "id": "desktop-core",
+  "version": "0.1.0",
+  "foundations": [
+    "文字",
+    "表面与反馈",
+    "尺寸与间距",
+    "形状与动效"
+  ],
+  "primitives": [
+    "Button",
+    "ActionButton",
+    "Switch",
+    "Select",
+    "Feedback"
+  ],
+  "compositions": [
+    "SettingsPage",
+    "SettingsSection",
+    "SettingsGroupCard",
+    "SettingsRow",
+    "SettingsSelect",
+    "SettingsSegmentedTabs",
+    "SettingsDisclosure",
+    "DecisionCard",
+    "ApprovalRequest",
+    "CollapsibleText"
+  ],
+  "patterns": [
+    "P-SETTINGS",
+    "P-DECISION"
+  ],
+  "acceptance": [
+    "角色引用现有生产来源；目录不存数值副本",
+    "公共控件覆盖默认、禁用、处理中、失败和待确认",
+    "设置组合挂载真实 SettingsPage 上下文；不只展示脱离页面的库默认",
+    "明暗、14/18 字号、宽/窄与键盘交互有独立运行断言",
+    "决策与长文本保留原权威状态、全文和焦点可达性"
+  ],
+  "limits": [
+    "候选集不是已冻结 Base，不代表用户视觉验收完成",
+    "证据仅覆盖生产 renderer 组件和本地 fixture，不覆盖 Core、真实供应商或安装包",
+    "未覆盖全仓组件、其它平台和所有自定义主题；未完成独立做题实验"
+  ]
+} as const;

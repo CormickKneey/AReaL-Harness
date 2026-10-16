@@ -65,6 +65,17 @@ export async function verifyDesignCatalog({ write = false, root = guiRoot } = {}
     for (const id of pattern.components) assert.ok(components.has(id), `${pattern.id}: unknown component ${id}`);
     await source(root, pattern.reference);
   }
+  const base = registry.baseCandidate;
+  assert.ok(base && text(base.id) && /^\d+\.\d+\.\d+$/.test(base.version), "baseCandidate needs id/version");
+  for (const key of ["foundations", "primitives", "compositions", "patterns", "acceptance", "limits"]) unique(base[key], `baseCandidate.${key}`);
+  for (const title of base.foundations) assert.ok(registry.tokenGroups.some(group => group.title === title), `baseCandidate: unknown foundation ${title}`);
+  unique([...base.primitives, ...base.compositions], "baseCandidate component membership");
+  const baseComponents = new Set([...base.primitives, ...base.compositions]);
+  for (const id of baseComponents) assert.ok(components.has(id), `baseCandidate: unknown component ${id}`);
+  for (const id of base.patterns) {
+    assert.ok(patterns.has(id), `baseCandidate: unknown pattern ${id}`);
+    for (const component of patterns.get(id).components) assert.ok(baseComponents.has(component), `baseCandidate: ${id} needs ${component}`);
+  }
   const surfaces = (await readdir(join(dataRoot, "surfaces"))).filter(name => name.endsWith(".json")).sort();
   list(surfaces, "surface contracts");
   const surfaceIds = [];
@@ -111,9 +122,10 @@ export async function verifyDesignCatalog({ write = false, root = guiRoot } = {}
   unique(surfaceIds, "surface ids");
   const componentTable = "## 生产组件（生成）\n\n| ID | 生产所有者 | 用途 |\n| --- | --- | --- |\n" + registry.components.map(item => `| ${item.id} | [${item.id}](../${item.source}) | ${cells(item.purpose)} |`).join("\n");
   const patternTable = "| ID / 用户任务 | 最小组合 / 生产参考 | 允许变化 | 验收重点 |\n| --- | --- | --- | --- |\n" + registry.patterns.map(item => `| ${item.id} ${cells(item.intent)} | ${item.components.join(" + ")}；[参考](../${item.reference}) | ${cells(item.variation)} | ${cells(item.acceptance)} |`).join("\n");
-  const catalog = "// 由 design-system/registry.json 生成；运行 pnpm --dir clients/gui design:sync。\n// 只记录角色与定义名，数值始终从生产 CSS 读取。\nexport const tokenGroups = " + JSON.stringify(registry.tokenGroups, null, 2) + " as const;\n";
+  const catalog = "// 由 design-system/registry.json 生成；运行 pnpm --dir clients/gui design:sync。\n// 只记录角色与定义名，数值始终从生产 CSS 读取。\nexport const tokenGroups = " + JSON.stringify(registry.tokenGroups, null, 2) + " as const;\nexport const baseCandidate = " + JSON.stringify(base, null, 2) + " as const;\n";
   const outputs = new Map([["renderer/src/design-system/catalog.ts", catalog]]);
-  for (const [file, name, body] of [["inventory.md", "components", componentTable], ["patterns.md", "patterns", patternTable]]) {
+  const baseSummary = `候选 ID：\`${base.id}\`；版本：\`${base.version}\`。该版本尚未冻结。\n\n| 层 | 准入范围 |\n| --- | --- |\n| Foundations | ${base.foundations.join("、")} |\n| Primitives | ${base.primitives.join("、")} |\n| Compositions | ${base.compositions.join("、")} |\n| Patterns | ${base.patterns.join("、")} |\n\n### 验收条件\n\n${base.acceptance.map(value => `- ${value}`).join("\n")}\n\n### 边界\n\n${base.limits.map(value => `- ${value}`).join("\n")}`;
+  for (const [file, name, body] of [["inventory.md", "components", componentTable], ["patterns.md", "patterns", patternTable], ["base.md", "base", baseSummary]]) {
     const path = `design-system/${file}`;
     outputs.set(path, block(await source(root, path), name, body));
   }

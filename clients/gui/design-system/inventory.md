@@ -12,6 +12,7 @@
 | ActionButton | [ActionButton](../renderer/src/components/ui/action-button.tsx) | 普通紧凑操作与 pending |
 | Switch | [Switch](../renderer/src/components/ui/switch.tsx) | 双向布尔值 |
 | Select | [Select](../renderer/src/components/ui/select.tsx) | 多个候选中的单选 |
+| SettingsPage | [SettingsPage](../renderer/src/settings/SettingsWorkspace.tsx) | 设置页面的生产表面、列宽与滚动边界 |
 | SettingsSection | [SettingsSection](../renderer/src/settings/SettingsPageParts.tsx) | 功能分区 |
 | SettingsGroupCard | [SettingsGroupCard](../renderer/src/settings/SettingsPageParts.tsx) | 相关行的公共外框 |
 | SettingsRow | [SettingsRow](../renderer/src/settings/SettingsPageParts.tsx) | 名称、说明与行内控件 |

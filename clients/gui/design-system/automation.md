@@ -45,7 +45,7 @@ AReaL 采纳可重复目录和有限模式，沿用现有设置组合与生产�
 | --- | --- | --- |
 | 现有生产 CSS、主题与外观设置 | 校验登记 Token 名有生产定义；数值不搬家 | 所有现有生产组件 |
 | [registry.json](registry.json) 的 Token 名与角色 | 生成 `renderer/src/design-system/catalog.ts` | 现有组件预览读取生产 computed style |
-| 同一 registry 的组件与页面模式 | 生成 inventory / patterns 中标记的表格区块 | Agent 先选模式与生产参考 |
+| 同一 registry 的组件、模式与 Base 候选范围 | 生成 inventory / patterns / base 中标记的表格区块，导出预览所用候选版本 | Agent 先选模式与生产参考；候选集不等于已冻结版本 |
 | [surfaces](surfaces) 中的页面合同 | 核对版本、目标/参考路径、模式/组件/槽位、必需状态及证据元数据 | 当前设置控件预览的实现说明；后续页面采用同样输入 |
 | 现有 `verify:design` | 先验证目录与派生物，再执行原 CSS 审计 | 本地和已有 verify 调用链 |
 

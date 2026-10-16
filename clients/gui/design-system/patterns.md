@@ -6,7 +6,7 @@
 
 | ID / 用户任务 | 最小组合 / 生产参考 | 允许变化 | 验收重点 |
 | --- | --- | --- | --- |
-| P-SETTINGS 修改偏好或配置 | SettingsSection + SettingsGroupCard + SettingsRow；[参考](../renderer/src/settings/DisplaySettings.tsx) | 分组、字段、文案与现有控件类型 | 标签/控件对齐，窄窗换行，值和反馈真实 |
+| P-SETTINGS 修改偏好或配置 | SettingsPage + SettingsSection + SettingsGroupCard + SettingsRow；[参考](../renderer/src/settings/DisplaySettings.tsx) | 分组、字段、文案与现有控件类型 | 标签/控件对齐，窄窗换行，值和反馈真实 |
 | P-RESOURCES 查找并管理资源 | SettingsSection + ActionButton + Feedback；[参考](../renderer/src/settings/PluginCenter.tsx) | 搜索、筛选、资源状态与详情 | 安装/连接状态分开；列表和详情职责清楚 |
 | P-CONVERSATION 阅读并推进任务 | Messages + TurnExecution + ToolEvent + ConversationComposer；[参考](../renderer/src/design-system/ConversationTimelinePreview.tsx) | 消息类型、工具结果、合法动作与上下文 | 草稿保留；过程与最终结果边界清楚；未知提交不重放 |
 | P-DECISION 回答或批准请求 | DecisionCard + ApprovalRequest + Feedback；[参考](../renderer/src/ApprovalRequest.tsx) | 请求正文及已有决策动作 | 关键参数可核对，动作和结果可达 |

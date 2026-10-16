@@ -17,6 +17,5 @@
 .design-preview-tokens dt span { color: var(--color-foreground-subtle); }
 .design-preview-tokens dd { margin: 0; max-width: 440px; overflow-wrap: anywhere; font: var(--text-ui-sm)/1.5 var(--font-mono); }
 
-.design-preview .settings-group-card { background-color: var(--color-settings-card, var(--color-card)) !important; }
 .design-preview[data-view="conversation"] > :not(.design-preview-header):not(#conversation-timeline) { display: none; }
 .design-preview[data-view="conversation"] #conversation-timeline { margin-inline: auto; }
