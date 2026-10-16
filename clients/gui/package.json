@@ -1,6 +1,6 @@
 {
   "name": "areal-gui-workspace",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "private": true,
   "license": "Apache-2.0",
   "packageManager": "pnpm@11.7.0",
@@ -12,7 +12,7 @@
     "typecheck": "pnpm --filter @areal/gui-renderer typecheck && pnpm --filter @areal/gui-renderer exec tsc --allowJs --checkJs --noEmit --skipLibCheck --target ES2022 --module NodeNext ../packages/workbench/client/desktop-contract.cjs",
     "start": "node scripts/start.mjs",
     "package": "node scripts/package.mjs",
-    "verify": "node scripts/verify-public.mjs && node scripts/design-system-audit.mjs && node --test scripts/side-restore.test.mjs scripts/operation-contract.test.cjs scripts/side-model-intent.test.mjs scripts/startup-recovery.test.mjs scripts/system-proxy.test.mjs scripts/history.test.mjs scripts/macos-service.test.mjs",
+    "verify": "node scripts/verify-public.mjs && node scripts/design-system-audit.mjs && node --test scripts/side-restore.test.mjs scripts/operation-contract.test.cjs scripts/side-model-intent.test.mjs scripts/startup-recovery.test.mjs scripts/system-proxy.test.mjs scripts/history.test.mjs scripts/macos-service.test.mjs scripts/feedback.test.mjs",
     "test:task-conversation": "node scripts/task-conversation-smoke.mjs",
     "test:lifecycle": "node scripts/startup-recovery-smoke.mjs && node scripts/lifecycle-smoke.mjs",
     "test:lifecycle:legacy": "node scripts/legacy-lifecycle-smoke.mjs",
@@ -61,7 +61,9 @@
     "test:design": "node scripts/design-system-smoke.mjs",
     "verify:design": "node scripts/design-system-audit.mjs",
     "test:regressions": "node --test scripts/browser-observation-privacy.test.cjs scripts/trajectory-polling.test.mjs scripts/builder-download.test.mjs",
-    "test:proxy": "node --test scripts/system-proxy.test.mjs"
+    "test:proxy": "node --test scripts/system-proxy.test.mjs",
+    "test:feedback": "node --test scripts/feedback.test.mjs && node scripts/feedback-ui-smoke.mjs",
+    "test:feedback-native": "node scripts/feedback-native-smoke.mjs"
   },
   "devDependencies": {
     "fake-indexeddb": "6.2.4",

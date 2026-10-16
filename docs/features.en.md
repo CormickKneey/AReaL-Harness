@@ -44,3 +44,7 @@ Release preparation supports complete macOS arm64 and Linux x86_64 glibc standal
 File-reference retention and consecutive-failure execution limits require explicit experimental settings and are disabled by default. Noninteractive stdin remains closed by default; see the [configuration guide](guides/configuration.en.md#reference-retention-and-bounded-tool-recovery). Availability does not establish improved task success.
 
 Old-observation folding and extra empty-completion recovery are also disabled by default and require explicit frozen experimental settings. Correctness regressions do not establish end-to-end gains.
+
+## Answer feedback
+
+When trajectory export is enabled and the receiver supports feedback, settled replies accept optional up/down ratings, reasons, and an independent Side refinement. Submission includes frozen context. See [answer feedback](guides/user-feedback.en.md).

@@ -133,3 +133,5 @@ macOS 系统静态代理由 GUI 可信后台适配器读取，转换成标准代
 `core/engine/src/observations.rs` 在显式启用实验策略时，于模型历史投影层实施旧工具观察的软预算，原文由 Store 保留，不改变 Runtime 操作。配置与兼容性见[配置指南](../guides/configuration.md)。
 
 Core 可通过默认关闭的实验配置，在请求投影与检查点证据中有界保留完整文件参考；执行等待仍由 Runtime 管理。参考回取、非交互 stdin 和连续失败上限见[配置指南](../guides/configuration.md#参考保留与有界工具恢复)。
+
+用户评价在 Clients 层冻结公开历史并复用独立 Side；Core Server 仅适配既有轨迹接收端。边界见 [user feedback](../guides/user-feedback.md).

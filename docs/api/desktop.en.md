@@ -183,3 +183,5 @@ Goal controls additionally require an accepted journal record binding the curren
 Side restore has idle/loading/ready/error states per owner and connection generation. A definite error waits for explicit retry; a new target or connection can read again. Old results cannot update new targets. Unknown submissions only reconcile their original receipts and never replay the first question.
 
 MCP cleanup failure remains cleanupFailed with persistent cleanupUnconfirmed. Repeating disconnect without a live connection is no cleanup evidence and cannot clear the state or start another host. Directory rollback also propagates unconfirmed cleanup. Restart does not clear the marker. There is currently no remote RPC to claim successful cleanup; an operator must independently verify the task-owned host exit before repairing the record through maintenance. This state alone does not prove a process leak.
+
+Feedback commands run in the trusted desktop backend. The renderer cannot choose the receiver, owner, or context. See [user feedback](../guides/user-feedback.en.md).

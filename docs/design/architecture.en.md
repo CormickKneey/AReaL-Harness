@@ -133,3 +133,5 @@ Shared Browser keeps sessions, approval and history in Core, authenticated tool 
 `core/engine/src/observations.rs` applies the soft budget for older tool observations in model-history projection only when the experimental policy is explicitly enabled. Store retains originals and Runtime operations are unchanged. See the [configuration guide](../guides/configuration.en.md) for controls and compatibility.
 
 An experimental setting, disabled by default, enables bounded whole-file references in Core request projection and checkpoint evidence; Runtime owns execution waits. See the [configuration guide](../guides/configuration.en.md#reference-retention-and-bounded-tool-recovery) for retrieval, noninteractive stdin and failure limits.
+
+Clients freeze public history and reuse an independent Side for feedback. Core Server only adapts the existing trajectory receiver. See [user feedback](../guides/user-feedback.en.md).

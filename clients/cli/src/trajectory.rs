@@ -155,6 +155,10 @@ pub struct Options {
 
 #[derive(Subcommand)]
 enum Command {
+    /// 检查接收端是否支持用户显式评价。
+    FeedbackStatus,
+    /// 从标准输入提交冻结上下文和用户评价。
+    FeedbackSubmit,
     /// 读取本地轨迹积压和错误，不启动模型或上传。
     Status,
     /// 将失败记录重新排队；上传由独立后台进程完成。
@@ -176,6 +180,24 @@ pub fn run(options: Options) -> Result<()> {
     };
     let mut config = load_management_config(&inputs)?;
     let mut result = match options.command {
+        Command::FeedbackStatus => {
+            areal_server::trajectory::feedback::request(&config.trajectory, None)?
+        }
+        Command::FeedbackSubmit => {
+            use std::io::Read;
+            let mut bytes = Vec::new();
+            std::io::stdin()
+                .take((16 << 20) + (128 << 10) + 1)
+                .read_to_end(&mut bytes)?;
+            anyhow::ensure!(
+                bytes.len() <= (16 << 20) + (128 << 10),
+                "feedback_request_oversize"
+            );
+            areal_server::trajectory::feedback::request(
+                &config.trajectory,
+                Some(serde_json::from_slice(&bytes)?),
+            )?
+        }
         Command::Status => areal_server::trajectory::status(&config.trajectory)?,
         Command::Retry => areal_server::trajectory::retry_failed(&config.trajectory)?,
         Command::SyncConfig => {

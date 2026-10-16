@@ -1,4 +1,5 @@
 //! 可选的标准 OTLP Logs 持久发送器；不依赖任何平台或修改 Agent 的执行结果。
+pub mod feedback;
 mod health;
 mod json;
 mod processor;
