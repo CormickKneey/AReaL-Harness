@@ -14,7 +14,7 @@ const binary=process.env.AREAL_CORE_BIN || resolve(gui,'../../target/debug/areal
 const binarySha256=createHash('sha256').update(await readFile(binary)).digest('hex');
 const scratch=await mkdtemp('/private/tmp/areal-schedule-desktop-');
 const loadingRegression=process.env.AREAL_TASK_LOADING_REGRESSION==='1';
-const loadingGate=join(scratch,'hold-project'), loadingTrace=join(scratch,'loading-trace.log');
+const loadingGate=join(scratch,'hold-project'), loadingTrace=join(scratch,'loading-trace.log'), prepareFailureGate=join(scratch,'fail-projectless-prepare');
 const watchGates=[];
 let launchApp=process.env.AREAL_GUI_TEST_APP_DIR || join(gui,'app');
 const workspace=join(scratch,'workspace'), userHome=join(scratch,'user');
@@ -44,6 +44,7 @@ const model=createServer(async(request,response)=>{
    if(requestText.includes('过去的每日时间')){finish(JSON.stringify({kind:'proposal',message:'已保存每日任务。',objective:'过去的每日时间 SCHEDULE_FIXTURE_COMPLETE',interactionMode:'interactive',schedule:{at:pastDailyAnchor,intervalSeconds:86400}}));return;}
    if(requestText.includes('明确改为一次')){finish(JSON.stringify({kind:'proposal',message:'已保存一次性任务。',schedule:{at:changedAnchor,intervalSeconds:null}}));return;}
    if(requestText.includes('过去的一次性时间')){finish(JSON.stringify({kind:'proposal',message:'已保存过期的一次性任务。',schedule:{at:pastDailyAnchor,intervalSeconds:null}}));return;}
+   if(requestText.includes('旧项目目录验收')){finish(JSON.stringify({kind:'proposal',message:'已保存旧项目任务。',objective:'旧项目目录验收 SCHEDULE_FIXTURE_COMPLETE',interactionMode:'interactive',schedule:{at:changedAnchor}}));return;}
    if(requestText.includes('独立目录验收')){finish(JSON.stringify({kind:'proposal',message:'已保存独立任务。',objective:'独立目录验收 SCHEDULE_FIXTURE_COMPLETE',interactionMode:'interactive',schedule:{at:new Date(Date.now()+4000).toISOString().replace(/\.\d{3}Z$/,'Z'),intervalSeconds:8}}));return;}
    if(requestText.includes('只修改时刻')){finish(JSON.stringify({kind:'proposal',message:'已更新并保存执行时间。',schedule:{at:changedAnchor}}));return;}
    if(requestText.includes('保存失败')){finish(JSON.stringify({kind:'proposal',message:'已保存修改，已更新执行时间。',schedule:{at:'broken'}}));return;}
@@ -78,23 +79,29 @@ const deployment=join(scratch,'desktop.json');
 await writeFile(deployment,JSON.stringify({profiles:[{id:'standard',revision:'v1',displayName:'Fixture',instructions:'Complete the requested fixture.',approvalTools:['fs_create']}]}));
 const env={...process.env,AREAL_GUI_USER_DATA:join(scratch,'electron'),AREAL_CORE_HOME:join(scratch,'core'),AREAL_CORE_USER_HOME:userHome,AREAL_HARNESS_SERVICE_HOME:join(scratch,'registry'),AREAL_CORE_DESKTOP_CONFIG:deployment,AREAL_CORE_BIN:binary};
 for(const key of ['AREAL_CORE_WORKSPACE','AREAL_CORE_CONFIG','AREAL_HARNESS_HOME','AREAL_HARNESS_CONFIG'])delete env[key];
-let app,page,pid,passed=false;
+let app,page,pid,workspacePid,taskCwd,passed=false;
 async function until(fn,label,timeout=60000){const end=Date.now()+timeout;while(Date.now()<end){const value=await fn();if(value)return value;await new Promise(resolve=>setTimeout(resolve,150));}throw Error(`Timeout: ${label}`);}
 const snapshot=()=>page.evaluate(()=>window.arealDesktop.snapshot());
 async function call(name,params){const reply=await page.evaluate(({name,params})=>window.arealDesktop.command(name,params),{name,params});assert.equal(reply.ok,true,JSON.stringify(reply));return reply.value;}
 const task=id=>call('manage',{projectId:pid,operation:'task',taskId:id});
 const control=async(id,operation,runId)=>{const current=await task(id);return call('manage',{projectId:pid,operation,taskId:id,expectedRevision:current.revision,...(runId?{expectedRunId:runId}:{})});};
-async function select(label,name){
- const trigger=page.getByLabel(label,{exact:true});
- await trigger.focus();
- await trigger.press('ArrowDown');
- const popupId=await until(()=>trigger.getAttribute('aria-controls'),`${label} opens its associated popup`,10000);
- const popup=page.locator(`[id=${JSON.stringify(popupId)}]`);
- const option=popup.getByRole('option',{name,exact:true});
- await option.focus();
- await option.press('Enter');
- await popup.waitFor({state:'hidden'});
- assert.ok((await trigger.innerText()).includes(name),`${label} selected ${name}`);
+async function assertGlobalCreation(){
+ const main=page.getByRole('main',{name:'新建定时任务',exact:true});
+ await main.waitFor();
+ assert.equal(await main.getByLabel('任务归属',{exact:true}).count(),0,'new task has no project affiliation selector');
+ assert.equal(await main.getByLabel('工作目录',{exact:true}).count(),0,'new task has no working directory field');
+ assert.equal(await main.getByRole('button',{name:'开始配置',exact:true}).count(),0,'new task requires no start-configuration gate');
+ assert.equal(await main.locator('.task-plan-summary').count(),0);
+ const chat=page.getByTestId('chat-input');await chat.waitFor();await until(()=>chat.isEditable(),'automatic independent configuration Composer ready');
+ const saved=await page.evaluate(key=>JSON.parse(localStorage.getItem(key)),`areal-gui:task-draft:${workspacePid}`);
+ const owner=(await snapshot()).projects.find(project=>project.id===saved.ownerId);
+ assert.equal(owner.projectless,true);
+ assert.notEqual(owner.id,workspacePid);
+ assert.notEqual(owner.root,workspace);
+ assert.notEqual(owner.root,taskDirectory);
+ const draft=await call('manage',{projectId:owner.id,operation:'taskDraftRead',threadId:saved.threadId});
+ assert.equal(draft.thread.cwd,owner.root);
+ return {saved,owner,draft};
 }
 async function launch(){app=await electron.launch({executablePath:process.env.AREAL_ELECTRON_EXECUTABLE||require('electron'),args:[launchApp],env,timeout:120000});page=await app.firstWindow();await app.evaluate(({BrowserWindow})=>{const window=BrowserWindow.getAllWindows()[0];window.show();window.focus();});await page.bringToFront();page.setDefaultTimeout(15000);page.on('pageerror',error=>errors.push(error.message));await page.getByTestId('areal-workbench').waitFor({timeout:120000});await until(async()=>(await snapshot()).connection?.state==='ready','adapter ready');}
 if(loadingRegression){
@@ -102,7 +109,7 @@ if(loadingRegression){
  await writeFile(join(launchApp,'package.json'),JSON.stringify({name:'task-loading-fixture',main:'bootstrap.cjs'}));
  await writeFile(join(launchApp,'bootstrap.cjs'),`
 const {CoreBackend}=require(${JSON.stringify(join(gui,'app/src/core/backend.cjs'))});
-const {existsSync,appendFileSync}=require('node:fs');
+const {existsSync,appendFileSync,unlinkSync}=require('node:fs');
 const {join}=require('node:path');
 const start=CoreBackend.prototype.start, execute=CoreBackend.prototype.executeCommand;
 CoreBackend.prototype.start=async function(id){
@@ -114,6 +121,14 @@ CoreBackend.prototype.start=async function(id){
  return start.call(this,id);
 };
 CoreBackend.prototype.executeCommand=async function(name,request,context){
+ if(name==='projectless'&&request.operation==='prepare'){
+  appendFileSync(${JSON.stringify(loadingTrace)},'projectless prepare '+request.requestId+'\\n');
+  if(existsSync(${JSON.stringify(prepareFailureGate)})){
+   unlinkSync(${JSON.stringify(prepareFailureGate)});
+   throw new Error('独立任务初始化验收失败，请重试。');
+  }
+ }
+ if(name==='manage'&&request.operation==='taskDraftStart')appendFileSync(${JSON.stringify(loadingTrace)},'draft start '+request.projectId+' '+request.draftId+'\\n');
  const result=await execute.call(this,name,request,context);
  if(name==='manage'&&request.operation==='taskWatch'){
   const gate=join(${JSON.stringify(scratch)},'watch-'+request.taskId);
@@ -175,19 +190,47 @@ async function checkLoadingRegression(){
  await until(async()=>await page.getByText('其余任务仍在读取…',{exact:true}).count()===0,'global catalog completes after release');
  checks.push('delayed owner tasks appear after release without a false global empty state');
  await page.getByRole('button',{name:'关闭任务详情',exact:true}).click();
+ const retainedId=randomUUID(),retainedText='保留初始化失败前的任务描述';
+ await page.evaluate(({projectId,cwd,draftId,text})=>localStorage.setItem(`areal-gui:task-draft:${projectId}`,JSON.stringify({draftId,location:{kind:'project',projectId,cwd},text})),{projectId:workspacePid,cwd:taskDirectory,draftId:retainedId,text:retainedText});
+ await writeFile(prepareFailureGate,'fail once');
  await page.getByRole('button',{name:'新建自动化',exact:true}).click();
- await page.getByLabel('任务归属',{exact:true}).waitFor();
- await select('任务归属','workspace');
- await app.evaluate(({dialog},path)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[path]});},taskDirectory);
- await page.getByRole('button',{name:'选择工作目录',exact:true}).click();
- await until(async()=>await page.getByLabel('工作目录',{exact:true}).innerText()===taskDirectory,'selected directory visible before starting configuration');
- await page.getByRole('button',{name:'开始配置',exact:true}).click();
- assert.equal(await page.locator('.task-plan-summary').count(),0,'environment banner hides while configuration opens');
- await chat.waitFor();await until(()=>chat.isEditable(),'new configuration Composer usable');
- const saved=await page.evaluate(key=>JSON.parse(localStorage.getItem(key)),`areal-gui:task-draft:${pid}`);
- assert.equal((await call('manage',{projectId:pid,operation:'taskDraftRead',threadId:saved.threadId})).thread.cwd,taskDirectory);
- assert.equal(await page.locator('.task-plan-summary').count(),0);
- checks.push('new task setup retains project and directory controls; conversation hides the banner and Core retains chosen cwd');
+ await page.getByRole('alert').filter({hasText:'独立任务初始化验收失败，请重试。'}).waitFor();
+ await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+ assert.equal(await page.getByTestId('chat-input').count(),0);
+ const failed=await page.evaluate(key=>JSON.parse(localStorage.getItem(key)),`areal-gui:task-draft:${workspacePid}`);
+ assert.equal(failed.draftId,retainedId);assert.equal(failed.text,retainedText);assert.equal(failed.location.kind,'independent');
+ assert.equal((await readFile(loadingTrace,'utf8')).split('projectless prepare '+retainedId).length-1,1,'failed prepare waits for explicit retry');
+ await page.getByRole('button',{name:'重试',exact:true}).click();
+ const created=await assertGlobalCreation();
+ assert.equal(created.saved.draftId,retainedId);
+ assert.equal(created.saved.location.kind,'independent');
+ assert.equal((await page.getByTestId('chat-input').textContent()).trim(),retainedText);
+ assert.equal((await readFile(loadingTrace,'utf8')).split('projectless prepare '+retainedId).length-1,2,'explicit retry prepares the same independent draft');
+ checks.push('legacy unadmitted draft keeps text and independent location through prepare failure; only explicit Retry admits the same draft independently');
+ checks.push('new task opens directly in an independent Composer without project, directory or start controls');
+ await page.getByRole('button',{name:'关闭创建对话',exact:true}).click();
+ const key=`areal-gui:task-draft:${workspacePid}`;
+ await page.evaluate(({key,saved})=>localStorage.setItem(key,JSON.stringify({...saved,threadId:undefined})),{key,saved:created.saved});
+ await page.getByRole('button',{name:'新建自动化',exact:true}).click();
+ const recovered=await assertGlobalCreation();
+ assert.equal(recovered.saved.draftId,created.saved.draftId);
+ assert.equal(recovered.saved.ownerId,created.saved.ownerId);
+ assert.equal(recovered.saved.threadId,created.saved.threadId);
+ assert.equal(recovered.draft.thread.cwd,created.owner.root);
+ checks.push('prepared independent owner retries the same draft identity and recovers its original Thread');
+ await page.getByRole('button',{name:'关闭创建对话',exact:true}).click();
+ await page.evaluate(({key,saved})=>localStorage.setItem(key,JSON.stringify({...saved,threadId:undefined,pending:'start'})),{key,saved:created.saved});
+ const startsBefore=(await readFile(loadingTrace,'utf8')).split('draft start ').length;
+ await page.getByRole('button',{name:'新建自动化',exact:true}).click();
+ await page.getByText('提交结果尚未确认，请核对当前任务；不会自动重复提交。',{exact:false}).waitFor();
+ await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+ assert.equal(await page.getByTestId('chat-input').count(),0);
+ assert.equal((await readFile(loadingTrace,'utf8')).split('draft start ').length,startsBefore,'pending draft does not resubmit configuration admission');
+ const pending=await page.evaluate(key=>JSON.parse(localStorage.getItem(key)),key);
+ assert.equal(pending.ownerId,created.saved.ownerId);
+ assert.equal(pending.draftId,created.saved.draftId);
+ assert.equal(pending.pending,'start');
+ checks.push('admitted pending draft keeps its owner and request identity without automatic replay');
  assert.deepEqual(errors,[]);
 }
 try{
@@ -195,6 +238,7 @@ try{
  await app.evaluate(({dialog,BrowserWindow},path)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[path]});BrowserWindow.getAllWindows()[0].setSize(1488,1056);},workspace);
  await page.evaluate(()=>window.arealDesktop.chooseProject());
  pid=(await until(async()=>(await snapshot()).projects.find(p=>p.root===workspace&&p.state?.connected),'project ready')).id;
+ workspacePid=pid;
  if(loadingRegression){await checkLoadingRegression();passed=true;}else{
  await page.getByRole('button',{name:'设置',exact:true}).click();
  await page.getByRole('button',{name:'外观',exact:true}).click();
@@ -202,31 +246,16 @@ try{
  await until(()=>page.locator('html').evaluate(el=>el.classList.contains('theme-areal-light')&&!el.classList.contains('dark')),'light theme');
  await page.getByRole('button',{name:'定时任务',exact:true}).click();
  assert.equal(await page.getByLabel('筛选任务归属',{exact:true}).count(),0,'task directory has no workspace filter');
+ const retainedId=randomUUID(),retainedText='保留的任务描述';
+ await page.evaluate(({projectId,cwd,draftId,text})=>localStorage.setItem(`areal-gui:task-draft:${projectId}`,JSON.stringify({draftId,location:{kind:'project',projectId,cwd},text})),{projectId:workspacePid,cwd:taskDirectory,draftId:retainedId,text:retainedText});
  await page.getByRole('button',{name:'新建自动化',exact:true}).click();
- await page.getByLabel('任务归属',{exact:true}).waitFor();
- await select('任务归属','独立任务');
- await select('任务归属','workspace');
- if(process.env.AREAL_TASK_SCHEDULE_REGRESSION==='1'){
-  await app.evaluate(({dialog},path)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[path]});},independentDirectory);
-  await page.getByRole('button',{name:'选择工作目录',exact:true}).click();
-  await page.getByRole('button',{name:'开始配置',exact:true}).click();
-  await page.getByRole('alert').filter({hasText:'目录'}).first().waitFor();
-  assert.equal(modelRequests.length,0,'invalid project directory does not start a model turn');
-  checks.push('project task rejects a working directory outside its project before conversation');
- }
- await app.evaluate(({dialog},path)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[path]});},taskDirectory);
- await page.getByRole('button',{name:'选择工作目录',exact:true}).click();
- await until(async()=>(await page.getByLabel('工作目录',{exact:true}).innerText()).includes(taskDirectory),'selected task working directory is visible');
- await app.evaluate(({dialog})=>{dialog.showOpenDialog=async()=>({canceled:true,filePaths:[]});});
- await page.getByRole('button',{name:'选择工作目录',exact:true}).click();
- assert.ok((await page.getByLabel('工作目录',{exact:true}).innerText()).includes(taskDirectory));
- checks.push('canceling the native directory chooser preserves the selected working directory');
- await page.screenshot({path:join(scratch,'task-directory-choice.png')});
- await page.getByRole('button',{name:'开始配置',exact:true}).click();
- assert.equal(await page.locator('.task-plan-summary').count(),0,'environment banner hides while configuration opens');
- const chat=page.getByTestId('chat-input');
- await chat.waitFor();
- assert.equal(await page.locator('.task-plan-summary').count(),0,'configuration conversation has no environment banner');
+ const creation=await assertGlobalCreation();
+ pid=creation.owner.id;taskCwd=creation.owner.root;
+ assert.equal(creation.saved.draftId,retainedId);
+ assert.equal((await page.getByTestId('chat-input').textContent()).trim(),retainedText);
+ assert.equal(creation.saved.location.kind,'independent');
+ checks.push('unadmitted legacy draft retains identity and text while new task admission ignores the active project and cwd');
+ let chat=page.getByTestId('chat-input');
  assert.equal(await page.locator('.task-management-composer').count(),0);
  assert.equal(await page.getByRole('dialog').count(),0);
  assert.equal(await page.locator('[data-v4-composer-dock]').count(),1);
@@ -239,10 +268,11 @@ try{
   await send('过去的每日时间，请每天继续执行。');
   const recurring=await until(async()=>(await call('tasks',{operation:'list'})).data.find(t=>t.objective.includes('过去的每日时间')),'past recurring anchor advances to a future execution',6000);
   assert.equal(recurring.projectId,pid);
+  assert.equal(recurring.scope,'independent');
   const history=await call('manage',{projectId:pid,operation:'taskDraftHistory',taskId:recurring.id});
   const draft=await call('manage',{projectId:pid,operation:'taskDraftRead',threadId:history.threadId});
-  assert.equal(draft.thread.cwd,taskDirectory);
-  checks.push('project and native-selected subdirectory bind the task management thread');
+  assert.equal(draft.thread.cwd,taskCwd);
+  checks.push('global creation binds its management Thread to the independent owner directory');
   assert.equal(recurring.schedule.intervalSeconds,86400);
   assert.ok(recurring.schedule.at>Date.now()/1000);
   assert.ok(recurring.schedule.at<=Date.now()/1000+86400,'daily recurrence chooses the next occurrence');
@@ -274,51 +304,52 @@ try{
   assert.equal(once.schedule.at,Date.parse(changedAnchor)/1000);
   checks.push('explicit one-time edit clears the interval without treating omitted frequency as a change');
   await page.getByRole('button',{name:'关闭任务详情',exact:true}).click();
+  const rejected=await page.evaluate(({projectId,cwd,draftId})=>window.arealDesktop.command('manage',{projectId,operation:'taskDraftStart',draftId,cwd,timeZone:'Asia/Shanghai'}),{projectId:workspacePid,cwd:independentDirectory,draftId:randomUUID()});
+  assert.equal(rejected.ok,false);assert.match(rejected.error.message,/目录/);
+  const collision=await page.evaluate(({directory,requestId})=>window.arealDesktop.command('projectless',{operation:'prepare',directory,requestId}),{directory:workspace,requestId:randomUUID()});
+  assert.equal(collision.ok,false);assert.match(collision.error.message,/已有项目/);
+  assert.equal((await snapshot()).projects.find(p=>p.id===workspacePid).projectless,undefined);
+  checks.push('production bridge preserves project directory containment and rejects independent reclassification of an existing project');
+  const legacyStart=await call('manage',{projectId:workspacePid,operation:'taskDraftStart',draftId:randomUUID(),cwd:taskDirectory,timeZone:'Asia/Shanghai'});
+  await call('manage',{projectId:workspacePid,operation:'taskDraftSend',threadId:legacyStart.threadId,text:'旧项目目录验收，明天执行。',timeZone:'Asia/Shanghai'});
+  const legacyProposal=await until(async()=>{const value=await call('manage',{projectId:workspacePid,operation:'taskDraftRead',threadId:legacyStart.threadId});return !value.running&&value.proposal&&value;},'legacy bound fixture proposal');
+  const legacy=await call('manage',{projectId:workspacePid,operation:'taskDraftConfirm',threadId:legacyStart.threadId,turnId:legacyProposal.turnId,digest:legacyProposal.digest});
+  const legacyHistory=await call('manage',{projectId:workspacePid,operation:'taskDraftHistory',taskId:legacy.id});
+  assert.equal(legacyHistory.threadId,legacyStart.threadId);
+  await page.getByRole('button',{name:`打开自动化 ${legacy.objective}`,exact:true}).click();
+  await chat.waitFor();await page.getByText('旧项目目录验收，明天执行。',{exact:true}).waitFor();
+  assert.equal((await call('manage',{projectId:workspacePid,operation:'taskDraftRead',threadId:legacyHistory.threadId})).thread.cwd,taskDirectory);
+  checks.push('existing project-bound task opens its original management Thread, cwd and history');
+  await page.getByRole('button',{name:'关闭任务详情',exact:true}).click();
   await rmdir(taskDirectory);
-  await page.evaluate(key=>localStorage.removeItem(key),`areal-gui:task-edit:${pid}:${recurring.id}`);
-  await page.getByRole('button',{name:`打开自动化 ${once.objective}`,exact:true}).click();
-  await chat.waitFor();
-  await page.getByText(/^已创建任务。/).last().waitFor();
-  assert.equal(await page.locator('.task-plan-summary').count(),0);
-  assert.equal((await call('manage',{projectId:pid,operation:'taskDraftRead',threadId:history.threadId})).thread.cwd,taskDirectory);
-  checks.push('existing management history remains available when its working directory is missing');
+  await page.evaluate(key=>localStorage.removeItem(key),`areal-gui:task-edit:${workspacePid}:${legacy.id}`);
+  await page.getByRole('button',{name:`打开自动化 ${legacy.objective}`,exact:true}).click();
+  await chat.waitFor();await page.getByText('旧项目目录验收，明天执行。',{exact:true}).waitFor();
+  assert.equal((await call('manage',{projectId:workspacePid,operation:'taskDraftRead',threadId:legacyHistory.threadId})).thread.cwd,taskDirectory);
+  checks.push('legacy management history remains available when its bound directory is missing');
   await page.getByRole('button',{name:'关闭任务详情',exact:true}).click();
   await page.getByRole('button',{name:'新建自动化',exact:true}).click();
-  await page.getByLabel('任务归属',{exact:true}).waitFor();
-  await select('任务归属','独立任务');
-  await app.evaluate(({dialog},path)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[path]});},workspace);
-  await page.getByRole('button',{name:'选择工作目录',exact:true}).click();
-  await page.getByRole('button',{name:'开始配置',exact:true}).click();
-  await page.getByRole('alert').filter({hasText:'已有项目'}).first().waitFor();
-  assert.equal((await snapshot()).projects.find(p=>p.id===pid).projectless,undefined);
-  checks.push('independent directory choice cannot silently reclassify an existing project');
-  await app.evaluate(({dialog},path)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[path]});},independentDirectory);
-  await page.getByRole('button',{name:'选择工作目录',exact:true}).click();
-  await until(async()=>(await page.getByLabel('工作目录',{exact:true}).innerText()).includes(independentDirectory),'independent directory choice visible');
-  await page.screenshot({path:join(scratch,'independent-directory-choice.png')});
-  await page.getByRole('button',{name:'开始配置',exact:true}).click();
-  await chat.waitFor();await send('独立目录验收，定时执行。');
+  const next=await assertGlobalCreation();
+  await chat.fill('独立目录验收，定时执行。');await page.getByTestId('chat-send-button').click();
   const independent=await until(async()=>(await call('tasks',{operation:'list'})).data.find(t=>t.objective.startsWith('独立目录验收')),'independent task created');
   assert.equal(independent.scope,'independent');
-  const independentOwner=(await snapshot()).projects.find(p=>p.id===independent.projectId);
-  assert.equal(independentOwner.root,independentDirectory);
+  assert.equal(independent.projectId,next.owner.id);
   await call('open',{projectId:independent.projectId,threadId:independent.threadId});
-  assert.equal((await snapshot()).projects.find(p=>p.id===independent.projectId).state.threads[independent.threadId].cwd,independentDirectory);
-  const executed=await until(async()=>{const value=await call('manage',{projectId:independent.projectId,operation:'task',taskId:independent.id});return value.runs.some(r=>r.status==='completed')&&value;},'independent task executes in selected directory');
+  assert.equal((await snapshot()).projects.find(p=>p.id===independent.projectId).state.threads[independent.threadId].cwd,next.owner.root);
+  const executed=await until(async()=>{const value=await call('manage',{projectId:independent.projectId,operation:'task',taskId:independent.id});return value.runs.some(r=>r.status==='completed')&&value;},'independent task executes in its automatic directory');
   const executionId=executed.runs.find(r=>r.status==='completed').threadId;
   await call('open',{projectId:independent.projectId,threadId:executionId});
-  assert.equal((await snapshot()).projects.find(p=>p.id===independent.projectId).state.threads[executionId].cwd,independentDirectory);
+  assert.equal((await snapshot()).projects.find(p=>p.id===independent.projectId).state.threads[executionId].cwd,next.owner.root);
   await page.screenshot({path:join(scratch,'independent-task-saved.png')});
-  checks.push('independent task uses selected existing directory for owner, anchor and actual Run');
-  assert.equal(await page.getByRole('button',{name:`打开自动化 ${once.objective}`,exact:true}).count(),1);
-  assert.equal(await page.getByRole('button',{name:`打开自动化 ${independent.objective}`,exact:true}).count(),1);
-  checks.push('task directory shows project and independent tasks together without a workspace filter');
+  checks.push('global task retains its automatic independent directory for owner, anchor and actual Run');
+  for(const entry of [once,legacy,independent])assert.equal(await page.getByRole('button',{name:`打开自动化 ${entry.objective}`,exact:true}).count(),1);
+  checks.push('global directory shows legacy project-bound tasks and independent tasks together without a workspace filter');
   passed=true;
  }else{
  await send('每天上午九点，稍后安排。');
  const created=await until(async()=>(await call('tasks',{operation:'list'})).data.find(t=>t.objective.includes('SCHEDULE_FIXTURE_COMPLETE')),'Agent created task');
  const taskId=created.id;
- const resources=page.getByRole('button',{name:'任务资源',exact:true});
+ let resources=page.getByRole('button',{name:'任务资源',exact:true});
  assert.equal(await page.getByLabel('任务资源面板').count(),0,'summary is closed initially');
  assert.equal(await page.locator('.task-resource-sidebar').count(),0,'no fixed sidebar');
  const closedWidth=(await chat.boundingBox()).width;
@@ -335,7 +366,10 @@ try{
  const history=await call('manage',{projectId:pid,operation:'taskDraftHistory',taskId});
  const managementThread=history.threadId;
  assert.ok(managementThread);
- assert.equal((await call('manage',{projectId:pid,operation:'taskDraftRead',threadId:managementThread})).thread.cwd,taskDirectory);
+ assert.equal((await call('manage',{projectId:pid,operation:'taskDraftRead',threadId:managementThread})).thread.cwd,taskCwd);
+ assert.equal(created.scope,'independent');
+ await call('open',{projectId:pid,threadId:created.threadId});
+ assert.equal((await snapshot()).projects.find(project=>project.id===pid).state.threads[created.threadId].cwd,taskCwd);
  await send('更新描述，只汇报阻塞项。');
  await until(async()=>(await task(taskId)).objective.startsWith('只汇报阻塞项'),'Agent updated description');
  await resources.click();
@@ -375,14 +409,24 @@ try{
  const reopened=await call('manage',{projectId:pid,operation:'taskDraftHistory',taskId});assert.equal(reopened.threadId,managementThread);
  assert.equal((await call('tasks',{operation:'list'})).data.length,1);
  checks.push('navigation restores full creation/modification history without duplicate task');
+ await app.close();await launch();
+ chat=page.getByTestId('chat-input');resources=page.getByRole('button',{name:'任务资源',exact:true});
+ await page.getByRole('button',{name:'定时任务',exact:true}).click();
+ await page.getByRole('button',{name:`打开自动化 ${(await task(taskId)).objective}`,exact:true}).click();
+ await chat.waitFor();await page.getByText('你希望什么时候执行？',{exact:true}).waitFor();
+ assert.equal((await call('manage',{projectId:pid,operation:'taskDraftHistory',taskId})).threadId,managementThread);
+ assert.equal((await call('manage',{projectId:pid,operation:'taskDraftRead',threadId:managementThread})).thread.cwd,taskCwd);
+ assert.equal((await snapshot()).projects.find(project=>project.id===pid).root,taskCwd);
+ assert.equal((await call('tasks',{operation:'list'})).data.length,1);
+ checks.push('desktop restart restores the same independent owner, management cwd and history without duplicate task');
  const runs=await until(async()=>{const value=await task(taskId);return value.runs.filter(r=>r.status==='completed').length>=2&&value.runs;},'two independent scheduled runs');
  assert.notEqual(runs[0].threadId,runs[1].threadId);assert.notEqual(runs[0].threadId,managementThread);
  for(const run of runs.slice(0,2)){
   await call('open',{projectId:pid,threadId:run.threadId});
-  assert.equal((await snapshot()).projects.find(p=>p.id===pid).state.threads[run.threadId].cwd,taskDirectory);
+  assert.equal((await snapshot()).projects.find(p=>p.id===pid).state.threads[run.threadId].cwd,taskCwd);
  }
  checks.push('scheduled runs retain independent execution Threads');
- checks.push('scheduled execution Threads retain the user-selected project subdirectory');
+ checks.push('scheduled execution Threads retain the task independent directory after navigation and restart');
  await send('取消任务。');
  await until(async()=>(await task(taskId)).cancelled,'Agent cancelled schedule');
  await resources.click();
@@ -397,6 +441,7 @@ try{
  throw error;
 }finally{
  await rm(loadingGate,{force:true});
+ await rm(prepareFailureGate,{force:true});
  for(const gate of watchGates)await rm(gate,{force:true});
  for(const response of held)response.destroy();
  if(page && pid){
