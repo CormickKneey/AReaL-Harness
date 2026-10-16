@@ -3,6 +3,7 @@ import type { TrajectoryStatus } from "@areal/workbench/desktop-contract";
 import { Button } from "../components/ui/button.js";
 import type { Action } from "../services.js";
 import { useTrajectoryPolling } from "./useTrajectoryPolling.js";
+import { UserFeedbackPreference } from "./UserFeedbackPreference.js";
 import {
     SettingsBadge,
     SettingsGroupCard,
@@ -80,6 +81,7 @@ export function TrajectorySettings({
     const stale = !connected || !!error;
     return (
         <div className="settings-sections" aria-label="数据飞轮状态">
+            <UserFeedbackPreference action={action} connected={connected} />
             <SettingsSection
                 title="轨迹上传"
                 description="轨迹由后台异步上传；此页可见且连接正常时，每 2.5 秒自动更新状态。"

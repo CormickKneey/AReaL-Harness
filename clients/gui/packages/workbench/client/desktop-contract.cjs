@@ -22,7 +22,7 @@ const commandDefinitions = Object.freeze({
   manage: ['service', 'project'], workspace: ['service', 'project'], media: ['service', 'thread'],
   steer: ['service', 'thread'], dismissRecovery: ['service', 'project'], providers: ['service', 'app'],
   chatgpt: ['service', 'app'], analytics: ['service', 'app'], resources: ['service', 'app'],
-  projectless: ['service', 'app'], tasks: ['service', 'app'], trajectory: ['service', 'app'],
+  projectless: ['service', 'app'], tasks: ['service', 'app'], trajectory: ['service', 'app'], feedback: ['service', 'app'],
   serviceStatus: ['main', 'app'], stopService: ['main', 'app'], recoverResources: ['main', 'app'],
   connectService: ['main', 'app'], export: ['main', 'thread'], remoteControl: ['main', 'app'],
 });
@@ -63,6 +63,24 @@ function validateCommand(name, params, { serviceOnly = false } = {}) {
 
   // 导出目标与配置路径只由可信启动配置选择，Renderer 不能扩展 CLI 参数。
   if (name === 'trajectory' && (!['status', 'retry'].includes(String(params.operation)) || Object.keys(params).some(key => key !== 'operation'))) invalid();
+  if (name === 'feedback') {
+    const operation = String(params.operation);
+    if (!['status','preference','prepare','read','draft','refine','submit','close'].includes(operation)) invalid();
+    const fields = ['operation', ...(operation === 'preference' ? ['enabled'] : operation === 'status' ? [] :
+      ['projectId','threadId', ...(operation === 'prepare' ? ['turnId','itemId','rating'] : ['id']),
+        ...(['draft','refine','submit'].includes(operation) ? ['rating','reason','analysis','analysisItemId'] : []),
+        ...(operation === 'refine' ? ['text'] : [])])];
+    if (Object.keys(params).some(key => !fields.includes(key))) invalid();
+    if (operation === 'preference' && typeof params.enabled !== 'boolean') invalid();
+    if (!['status','preference'].includes(operation) && (!identifier(params.projectId) || !identifier(params.threadId))) invalid();
+    if (operation === 'prepare' && (!identifier(params.turnId) || !identifier(params.itemId) || !['up','down'].includes(String(params.rating)))) invalid();
+    if (!['status','preference','prepare'].includes(operation) && !identifier(params.id)) invalid();
+    if (params.rating !== undefined && !['up','down'].includes(String(params.rating))) invalid();
+    if (params.analysisItemId !== undefined && (typeof params.analysisItemId !== 'string' || params.analysisItemId.length > 256)) invalid();
+    for (const [key, max] of /** @type {[string,number][]} */ ([['reason',32768],['analysis',65536],['text',16384]])) {
+      if (params[key] !== undefined && (typeof params[key] !== 'string' || new TextEncoder().encode(/** @type {string} */ (params[key])).length > max)) invalid();
+    }
+  }
   if (['manage', 'workspace', 'media', 'queueEdit', 'library', 'providers', 'chatgpt', 'analytics', 'resources', 'projectless', 'tasks', 'remoteControl'].includes(name)
     && !identifier(params.operation)) invalid();
   if (name !== 'configure') return;

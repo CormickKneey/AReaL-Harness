@@ -181,3 +181,5 @@ Turn 显示投影保留 Core 的 `goal.origin`、`goal.sequence` 与 `durationMs
 旁路恢复按 owner/connectionGeneration 区分 idle/loading/ready/error。确定失败等待用户重试，切换目标或新连接可重新读取；旧结果不能更新新目标。未知提交仍只核对原回执，不自动重复首问。
 
 MCP 清理失败保持 cleanupFailed，并持久保存 cleanupUnconfirmed。无连接记录的重复 disconnect 不构成清理证据，不能解除状态或启动第二宿主；目录提交失败的回滚也传播清理未确认。重启不自动消除此标记。当前没有以远端 RPC 声明清理成功的恢复入口，需操作者先独立核验本任务宿主退出，再通过维护流程修复记录。此状态不证明进程泄漏。
+
+评价命令通过可信桌面后端执行；Renderer 不能指定接收端、归属或上下文。契约与限制见 [user feedback](../guides/user-feedback.md).
