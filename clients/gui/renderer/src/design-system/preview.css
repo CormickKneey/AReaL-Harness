@@ -19,3 +19,7 @@
 
 .design-preview[data-view="conversation"] > :not(.design-preview-header):not(#conversation-timeline) { display: none; }
 .design-preview[data-view="conversation"] #conversation-timeline { margin-inline: auto; }
+
+/* 仅题目容器尺寸；消息和输入区沿用生产样式。 */
+.design-preview-flow-panel { width: min(100%, 1100px); margin-inline: auto; }
+.design-preview-flow-chat { height: 660px; display: flex; flex-direction: column; min-width: 0; }

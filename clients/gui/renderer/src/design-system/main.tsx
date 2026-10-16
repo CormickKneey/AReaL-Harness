@@ -22,6 +22,7 @@ import { TurnExecution } from "../TurnExecution.js";
 import { Messages } from "../Messages.js";
 import { DecisionTransferExercise } from "./DecisionTransferExercise.js";
 import { SettingsReflowExercise } from "./SettingsReflowExercise.js";
+import { ConversationFlowExercise } from "./ConversationFlowExercise.js";
 import { ConversationTimelinePreview } from "./ConversationTimelinePreview.js";
 import type { LexicalChatInputHandle } from "../LexicalChatInput.js";
 import type { Action, CommandName } from "../services.js";
@@ -86,12 +87,16 @@ function Preview() {
   const [panelLocation, setPanelLocation] = useState<"bottom" | "right">("bottom");
   const [message, setMessage] = useState("");
   const [reducedMotion, setReducedMotion] = useState(true);
+  const conversationExercise = new URLSearchParams(window.location.search).has("conversation-exercise");
   const decisionExercise = new URLSearchParams(window.location.search).has("decision-exercise");
   const exercise = new URLSearchParams(window.location.search).has("settings-exercise");
   const [exerciseContent, setExerciseContent] = useState("reference");
   const [values, setValues] = useState<Record<string, string>>({});
   const api = useRef<LexicalChatInputHandle | null>(null);
   useAppearance(dark);
+  useLayoutEffect(() => {
+    if (conversationExercise) setApplicationPreferences({ contentSize: Number(fontSize) });
+  }, [conversationExercise, fontSize]);
   useLayoutEffect(() => { setApplicationPreferences({ reducedMotion: reducedMotion ? "on" : "off" }); }, [reducedMotion]);
   useEffect(() => { document.querySelector(".design-preview")?.scrollTo(0, 0); }, []);
   useLayoutEffect(() => {
@@ -124,7 +129,7 @@ function Preview() {
       <label>减少动态效果<input type="checkbox" checked={reducedMotion} onChange={event => setReducedMotion(event.target.checked)} /></label>
       {exercise && <label>题目内容<select aria-label="题目内容" value={exerciseContent} onChange={event => setExerciseContent(event.target.value)}><option value="reference">参考内容</option><option value="stress">长文案</option></select></label>}
     </header>
-    {decisionExercise ? <DecisionTransferExercise key={state} state={state} /> : exercise ? <SettingsReflowExercise key={exerciseContent} stress={exerciseContent === "stress"} state={state} /> : <>
+    {conversationExercise ? <ConversationFlowExercise dark={dark} /> : decisionExercise ? <DecisionTransferExercise key={state} state={state} /> : exercise ? <SettingsReflowExercise key={exerciseContent} stress={exerciseContent === "stress"} state={state} /> : <>
     <section className="design-preview-panel" aria-label="公共控件">
       <h2>设置控件 · 按交互选择</h2>
       <p className="text-ui-sm text-foreground-subtle">执行操作用按钮，开启或关闭用开关，多项选择用下拉，仅两个选项直接并排选择。</p>

@@ -4,13 +4,13 @@
 
 <!-- BEGIN GENERATED: base -->
 
-候选 ID：`desktop-core`；版本：`0.1.2`。该版本尚未冻结。
+候选 ID：`desktop-core`；版本：`0.1.3`。该版本尚未冻结。
 
 | 层 | 准入范围 |
 | --- | --- |
 | Foundations | 文字、表面与反馈、尺寸与间距、形状与动效 |
 | Primitives | Button、ActionButton、Switch、Select、Feedback |
-| Compositions | SettingsPage、SettingsSection、SettingsGroupCard、SettingsRow、SettingsSelect、SettingsSegmentedTabs、SettingsDisclosure、DecisionCard、ApprovalRequest、CollapsibleText |
+| Compositions | SettingsPage、SettingsSection、SettingsGroupCard、SettingsRow、SettingsSelect、SettingsSegmentedTabs、SettingsDisclosure、DecisionCard、ApprovalRequest、CollapsibleText、Messages、TurnProgress、TurnExecution、ToolEvent |
 | Patterns | P-SETTINGS、P-DECISION |
 
 ### 验收条件
@@ -22,12 +22,14 @@
 - 决策与长文本保留原权威状态、全文和焦点可达性
 - 设置单选使用公共control尺寸与navigation圆角；普通设置开关使用default，不自行降为sm
 - 活跃设置说明保留独立角色、对比度偏好与自定义前景色，不连带修改禁用或过程信息
+- 对话过程组合在逐步投影中验证接受消息占位、可见阅读锚点、返回最新、完成收敛及人工详情保留；异常不因final默认隐藏
 
 ### 边界
 
 - 候选集不是已冻结 Base，不代表用户视觉验收完成
 - 证据仅覆盖生产 renderer 组件和本地 fixture，不覆盖 Core、真实供应商或安装包
 - 未覆盖全仓组件、其它平台和所有自定义主题；未完成独立做题实验
+- 仅准入已复验的对话过程/阅读组合；完整P-CONVERSATION及图片/网页/子对话宿主返回、重连和真实执行仍未准入
 
 <!-- END GENERATED: base -->
 
@@ -42,6 +44,7 @@ pnpm --dir clients/gui verify:design
 pnpm --dir clients/gui typecheck
 pnpm --dir clients/gui design:build
 pnpm --dir clients/gui test:design
+pnpm --dir clients/gui test:design --conversation-exercise
 ```
 
 现有测试保存源码 SHA、工作树差异摘要、构建入口资产摘要、浏览器/viewport/DPR、状态条件、计算样式、原始截图哈希及失败诊断。设计状态和键盘/布局断言只证明列明的 fixture；截图不自动成为用户认可的视觉基线。
@@ -57,3 +60,5 @@ pnpm --dir clients/gui test:design
 候选 `0.1.2` 按[设置说明题](exercises/settings-contrast.md)核对明暗与对比度端点后，仅修订深色设置说明默认层级；保留本产品对比度斜率、明亮主题较强说明角色、禁用和已完成过程信息。自定义颜色通过原偏好归一化和派生，不增加消费者覆写。
 
 [内容/决策迁移题](exercises/decision-transfer.md)固定候选0.1.2作为输入，组合现有 CollapsibleText 与 ApprovalRequest。长内容、窄容器、大字号与回执/失败/未知的探索不增加生产样式；窄卡正文沿用内部滚动，页脚动作留在滚动区外。该题保留候选版本，不因新增fixture提升Base版本，也不据一个额外题目声称通用性或盲测通过。
+
+候选`0.1.3`将Messages、TurnProgress、TurnExecution和ToolEvent的过程/阅读切片纳入组合层，依据[动态信息流题](exercises/conversation-flow.md)。共享所有者统一phased/legacy过程收敛，工具详情保持挂载；正常终态与工具失败、UNKNOWN、未结算分别验证。正文增长时的可见锚点及显式返回通过生产阅读逻辑处理；预览尺寸只约束题目容器，不添加产品设计值。完整P-CONVERSATION仍在候选范围外，资源宿主返回、重连、真实执行及桌面验收未覆盖。

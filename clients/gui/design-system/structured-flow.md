@@ -6,7 +6,7 @@
 
 ## 两类数据
 
-[registry.json](registry.json) 是系统级目录，拥有 Token 角色、组件 ID、模式 ID 和最低状态合同；不存数值副本。[surfaces/settings-controls.json](surfaces/settings-controls.json) 是当前预览的页面级合同，引用同一目录。[设置迁移合同](surfaces/settings-reflow.json)与[内容/决策合同](surfaces/decision-transfer.json)演示新内容对已有组合的引用。[对话信息流合同](surfaces/conversation-flow.json)固定下一轮动态扩展的规则引用和检查点，目标目前仍为静态预览，运行证据保持pending。修改规范或增加公共组件时维护目录；普通页面变更维护所属合同，不复制全系统规则。
+[registry.json](registry.json) 是系统级目录，拥有 Token 角色、组件 ID、模式 ID 和最低状态合同；不存数值副本。[surfaces/settings-controls.json](surfaces/settings-controls.json) 是当前预览的页面级合同，引用同一目录。[设置迁移合同](surfaces/settings-reflow.json)与[内容/决策合同](surfaces/decision-transfer.json)演示新内容对已有组合的引用。[对话信息流合同](surfaces/conversation-flow.json)固定逐步投影题的规则引用和检查点，目标为ConversationFlowExercise；本地运行和公共视觉基线分别报告，后者保持pending。修改规范或增加公共组件时维护目录；普通页面变更维护所属合同，不复制全系统规则。
 
 ## 页面合同字段
 

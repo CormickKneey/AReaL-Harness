@@ -1,8 +1,16 @@
 # 动态信息流复验题
 
-问题 ID：`Q-CONVERSATION-DYNAMIC-05`。本题是后续 P-CONVERSATION 的实现验收合同，不是已运行通过的AReaL模拟页。输入源码快照为 `2e4e1d69`，Base候选0.1.2；参考为Codex26.1013.31256的合成验证聊天。仅公共规范更新不准入新Base成员。
+问题ID：`Q-CONVERSATION-DYNAMIC-05`。规则输入快照为`de0033be`、Base候选0.1.2；参考为Codex26.1013.31256的合成验证聊天。本题是已实现的生产renderer逐步投影题，沿用Messages、TurnProgress、TurnExecution、ToolEvent和真实Composer；不连接Core或执行真实工具。Base0.1.3只准入已复验的过程/阅读组合，完整P-CONVERSATION仍未准入。
 
-结构化输入为[conversation-flow.json](../surfaces/conversation-flow.json)，规则语义与证据回溯归[信息流模式](../patterns.md#从证据回溯到规则和组件)。执行前运行`pnpm --dir clients/gui verify:design`，先排除规则或检查点遗漏；它不代表本题运行通过。target指向现有静态预览的后续扩展位置，不表示当前可连续播放本题。
+结构化输入为[conversation-flow.json](../surfaces/conversation-flow.json)，规则语义与回溯归[信息流模式](../patterns.md#从证据回溯到规则和组件)。入口`design-system.html?conversation-exercise`：发送合成任务后点击“下一事件”，在对话内实际回看、返回和展开，再“投影完成”。反例按钮创建独立场景，不继承前一场景的人工选择。默认旧静态预览保留，不把整份live/completed切换当作动态证据。
+
+```sh
+pnpm --dir clients/gui verify:design
+pnpm --dir clients/gui design:build
+pnpm --dir clients/gui test:design --conversation-exercise
+```
+
+runner输出run目录，记录源码（含未提交新文件）和构建摘要、当前回复长度、可见锚点、真实滚动指标、录像、trace、原图及哈希。目录检查不等于本题通过；本地运行结果不自动成为公共视觉基线。
 
 ## 固定路径
 
@@ -22,7 +30,7 @@
 | 只展示模拟工具文字 | 独立工具身份与running/terminal/result证据；真实执行还需Core/Runtime结果，renderer不能独自证明 |
 | 预测建议误算为回复或提交 | 采样排除输入区；建议出现不增加已受理用户消息 |
 
-代表条件先取参考暗色、14px、1509×949 CSS px、DPR2；实现再选择窄容器/大字号和reduced-motion补充布局边界。参考与实现的字体、窗口和时间条件分别记录，不能据此宣称全矩阵或全平台通过。
+参考为暗色、14px、1509×949 CSS px、DPR2；实现固定1440×949、DPR2，在暗色14px宽容器完成整条动态路径，并以明亮14px宽、暗色18px窄且reduced-motion、暗色14px宽且motion的完成/键盘组合补充边界。实际内容字号、容器宽度和运动偏好均核验，不只记录控件值。参考与实现的字体、窗口和时间条件分别记录，不能据此宣称全矩阵或全平台通过。
 
 ## 证据和所有者
 
@@ -31,3 +39,9 @@
 按[动态关联证据](../governance.md#动态信息流的关联证据)记录动作、目标回复增量、分组/人工选择、可见锚点、录像段与关键帧。同一collector的时钟原点及跨时钟映射明确；事件先后不依赖不兼容的局部monotonic差值。视频需实际解码并检查关键动作覆盖，record-stop返回成功不足以证明文件完整。失败片段保留，补采独立登记，不拼成无缺口旅程。
 
 未采到的运行中展开、跨完成保留、可见锚点或录像覆盖保持缺口，不能因静态结果合理就写作通过。本题不证明真实供应商稳定性、安装包、原生系统交互或参考内部协议。
+
+## 当前实现与范围
+
+Messages统一phased/legacy的过程总组；父组从运行期保留挂载，完成只改变展示。TurnExecution默认收敛要求常规成功且无未结算项，完成轮次中的失败工具仍可发现。用时只在适用层级显示一次。人工命令详情在单活动变多活动、结果增量、父组收敛与重新打开后保留，独立场景不继承。
+
+本题验证合成工具投影，不验证真实命令。UNKNOWN刷新失败仅保留原读取，不新提交。尚未覆盖资源宿主打开返回、重连恢复、Electron/原生、真实供应商和安装包；Codex人工工具展开跨完成的缺口也不因AReaL题通过而关闭。

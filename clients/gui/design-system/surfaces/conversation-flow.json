@@ -3,7 +3,7 @@
   "id": "conversation-flow",
   "intent": "让后续对话页面引用统一的信息层级、完成收敛、展开选择和阅读位置规则；先固定动态复验输入",
   "pattern": "P-CONVERSATION",
-  "target": "renderer/src/design-system/ConversationTimelinePreview.tsx",
+  "target": "renderer/src/design-system/ConversationFlowExercise.tsx",
   "runtime": "component-preview",
   "reference": {
     "kind": "existing-code",
@@ -20,9 +20,19 @@
     "CONV-RESOURCE-01"
   ],
   "slots": {
-    "timeline": ["Messages", "TurnExecution", "ToolEvent", "CollapsibleText"],
-    "composer": ["ConversationComposer"],
-    "context": ["ToolEvent"]
+    "timeline": [
+      "Messages",
+      "TurnProgress",
+      "TurnExecution",
+      "ToolEvent",
+      "CollapsibleText"
+    ],
+    "composer": [
+      "ConversationComposer"
+    ],
+    "context": [
+      "ToolEvent"
+    ]
   },
   "states": [
     {
@@ -67,10 +77,22 @@
     }
   ],
   "conditions": {
-    "themes": ["light", "dark"],
-    "fontSizes": [14, 18],
-    "widthModes": ["wide", "narrow"],
-    "reducedMotion": [true, false]
+    "themes": [
+      "light",
+      "dark"
+    ],
+    "fontSizes": [
+      14,
+      18
+    ],
+    "widthModes": [
+      "wide",
+      "narrow"
+    ],
+    "reducedMotion": [
+      true,
+      false
+    ]
   },
   "invariants": [
     "这些是观察检查点的组合，不是新建的Core状态枚举；执行、内容和阅读状态分别拥有",
@@ -84,10 +106,11 @@
     "status": "pending",
     "artifacts": [],
     "gaps": [
-      "当前target仍是整份live/completed切换的静态预览；本合同是其动态扩展输入，不代表槽位已全部挂载或检查点已到达",
-      "Codex参考仅关闭列明观察；运行中人工工具展开跨完成保留是产品选择，仍需实现复验",
-      "尚无本题的动态生产组件运行、同状态视觉比较或真实桌面验收",
-      "conditions是后续代表条件范围，不是已运行矩阵；无正式Base冻结或用户视觉批准"
+      "本地renderer动态题可复验，原始材料仅保存在本地run；尚未批准公共视觉基线，故evidence保持pending",
+      "工具为合成投影，不证明Core/Runtime真实执行；UNKNOWN仅验证既有读取失败时不重提",
+      "Codex运行中人工展开跨完成仍未知；本题仅验证AReaL renderer产品选择",
+      "图片/网页/子对话宿主打开返回及重连未覆盖，完整P-CONVERSATION未准入",
+      "conditions仅按题目列出的代表组合运行，不代表笛卡尔积或安装包/全平台验收"
     ]
   }
 }

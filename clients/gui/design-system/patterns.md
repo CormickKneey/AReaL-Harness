@@ -8,7 +8,7 @@
 | --- | --- | --- | --- |
 | P-SETTINGS 修改偏好或配置 | SettingsPage + SettingsSection + SettingsGroupCard + SettingsRow；[参考](../renderer/src/settings/DisplaySettings.tsx) | 分组、字段、文案与现有控件类型 | 标签/控件对齐，窄窗换行，值和反馈真实 |
 | P-RESOURCES 查找并管理资源 | SettingsSection + ActionButton + Feedback；[参考](../renderer/src/settings/PluginCenter.tsx) | 搜索、筛选、资源状态与详情 | 安装/连接状态分开；列表和详情职责清楚 |
-| P-CONVERSATION 阅读并推进任务 | Messages + TurnExecution + ToolEvent + ConversationComposer；[参考](../renderer/src/design-system/ConversationTimelinePreview.tsx) | 消息类型、工具结果、合法动作与上下文 | 权威状态、内容层级与阅读意图独立；按信息流合同验收完成收敛、人工展开和返回最新；未知提交不重放 |
+| P-CONVERSATION 阅读并推进任务 | Messages + TurnProgress + TurnExecution + ToolEvent + ConversationComposer；[参考](../renderer/src/design-system/ConversationTimelinePreview.tsx) | 消息类型、工具结果、合法动作与上下文 | 权威状态、内容层级与阅读意图独立；按信息流合同验收完成收敛、人工展开和返回最新；未知提交不重放 |
 | P-DECISION 回答或批准请求 | DecisionCard + ApprovalRequest + Feedback；[参考](../renderer/src/ApprovalRequest.tsx) | 请求正文及已有决策动作 | 关键参数可核对，动作和结果可达 |
 | P-DETAIL 阅读或编辑详情 | SettingsDialog + SettingsDisclosure + Feedback；[参考](../renderer/src/settings/common.tsx) | 表单字段、正文及受控 footer | 返回/关闭路径和焦点恢复；不叠多层弹窗 |
 | P-STATUS 了解状态并恢复 | Feedback + EmptySettings；[参考](../renderer/src/settings/ServiceStatusSettings.tsx) | 状态说明、必要详情及可行恢复入口 | 离线/失败/未知区分，静默刷新保留已确认内容 |
@@ -40,7 +40,7 @@ P-RESOURCES 尚无统一公共列表封装；registry 中的组件列表是可�
 
 ## 对话信息流
 
-以下是 P-CONVERSATION 的目标合同。参考依据见[信息流观察](references.md#对话信息流的动态观察)，复验题见[动态信息流题](exercises/conversation-flow.md)。该模式尚未准入 Base候选0.1.2；规则更新不表示现有生产组件已完成迁移或动态验收。
+以下是 P-CONVERSATION 的目标合同。参考依据见[信息流观察](references.md#对话信息流的动态观察)，复验题见[动态信息流题](exercises/conversation-flow.md)。该完整模式尚未准入Base候选0.1.3；已准入的仅是下述动态题验证过的过程/阅读组合，资源宿主及真实执行等缺口保留。
 
 `CONV-OWNER-01`：执行、内容展示和阅读意图分别拥有状态，不合成一个页面大枚举。
 
@@ -96,10 +96,10 @@ P-RESOURCES 尚无统一公共列表封装；registry 中的组件列表是可�
 
 | 所有者 | 当前源码事实 | 迁移/验收缺口 |
 | --- | --- | --- |
-| Messages | 带phase的短commentary直接显示，过程总组主要用于legacy回复 | 与CONV-GROUP-01目标不同；后续在共享所有者迁移，不能由页面包一层CSS隐藏 |
-| TurnExecution / ToolEvent | 已有局部展开、图片与子对话入口 | 需在同身份增量、父组收敛及返回时复验人工选择与可达性 |
+| Messages / TurnProgress | 带phase与legacy均复用从运行期挂载的过程总组；正常完成时默认收敛，final独立 | 动态renderer题验证；真实Core/桌面路径未复验 |
+| TurnExecution / ToolEvent | 同一命令从单项变多项、结果增量及父组收敛后保留人工详情；失败/未知/未结算不默认收敛 | 已验证合成命令；图片/子对话/网页宿主返回未覆盖 |
 | ConversationTimelinePreview | 切换整份live/completed fixture，并关闭回复占位 | 不证明接受消息→逐项追加→完成，也不证明真实聊天的阅读占位行为 |
-| Messages阅读逻辑 | 已有跟随、历史阅读和返回最新所有者 | 当前规范更新不代表动态题或真实桌面路径已通过 |
+| ConversationFlowExercise / Messages阅读逻辑 | 逐步接受合成输入，保留生产回复占位；正文增长时实际滚轮回看并显式返回 | 可见旧段落锚点及后续跟随在代表条件通过；不是Core或桌面验收 |
 
 ## 按钮与表面
 

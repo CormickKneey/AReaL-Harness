@@ -136,7 +136,7 @@ export const tokenGroups = [
 ] as const;
 export const baseCandidate = {
   "id": "desktop-core",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "foundations": [
     "文字",
     "表面与反馈",
@@ -160,7 +160,11 @@ export const baseCandidate = {
     "SettingsDisclosure",
     "DecisionCard",
     "ApprovalRequest",
-    "CollapsibleText"
+    "CollapsibleText",
+    "Messages",
+    "TurnProgress",
+    "TurnExecution",
+    "ToolEvent"
   ],
   "patterns": [
     "P-SETTINGS",
@@ -173,11 +177,13 @@ export const baseCandidate = {
     "明暗、14/18 字号、宽/窄与键盘交互有独立运行断言",
     "决策与长文本保留原权威状态、全文和焦点可达性",
     "设置单选使用公共control尺寸与navigation圆角；普通设置开关使用default，不自行降为sm",
-    "活跃设置说明保留独立角色、对比度偏好与自定义前景色，不连带修改禁用或过程信息"
+    "活跃设置说明保留独立角色、对比度偏好与自定义前景色，不连带修改禁用或过程信息",
+    "对话过程组合在逐步投影中验证接受消息占位、可见阅读锚点、返回最新、完成收敛及人工详情保留；异常不因final默认隐藏"
   ],
   "limits": [
     "候选集不是已冻结 Base，不代表用户视觉验收完成",
     "证据仅覆盖生产 renderer 组件和本地 fixture，不覆盖 Core、真实供应商或安装包",
-    "未覆盖全仓组件、其它平台和所有自定义主题；未完成独立做题实验"
+    "未覆盖全仓组件、其它平台和所有自定义主题；未完成独立做题实验",
+    "仅准入已复验的对话过程/阅读组合；完整P-CONVERSATION及图片/网页/子对话宿主返回、重连和真实执行仍未准入"
   ]
 } as const;

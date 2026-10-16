@@ -98,7 +98,7 @@ Tailwind 的 `text-ui-sm`、`rounded-overlay` 等直接消费同一套 Token。�
 
 已发送消息在共享 `Messages` 中应用此规则，主聊天、Side 与 Remote 复用同一展示路径。验收至少覆盖长/短文本、连续长段落、Markdown、明暗、窄宽面板、字号变化、展开再收起，以及原文复制。生产组件预览与脚本见下文；它们不代替真实服务或安装包验收。
 
-对话时间线的分组、完成收敛、工具层级与阅读状态统一遵循[信息流合同](design-system/patterns.md#对话信息流)。当前源码仍将带phase的短过程直接展示，长过程使用六行预览；该现状与新的完成过程总组目标存在明确迁移缺口，不再作为新增页面的永久自由变体。`design-system.html?conversation` 是生产组件的静态状态fixture，不连接用户 Core，也未启用真实回复占位；不能代替动态信息流或桌面发送验收。文件变更摘要与行数继续取自 Core 本轮比较。
+对话时间线的分组、完成收敛、工具层级与阅读状态统一遵循[信息流合同](design-system/patterns.md#对话信息流)。共享Messages已统一带phase与旧快照的过程总组；实现及未覆盖项见该合同，不由业务页面重新设计。`design-system.html?conversation`仍是静态状态fixture；`?conversation-exercise`通过生产组件逐步处理合成投影，保留真实回复占位及阅读逻辑。二者均不连接用户Core，不能代替真实执行或桌面发送验收。文件变更摘要与行数继续取自Core本轮比较。
 
 ## 新增功能的四步
 

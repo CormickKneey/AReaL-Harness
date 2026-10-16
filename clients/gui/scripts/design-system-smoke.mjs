@@ -1,3 +1,4 @@
+import { runConversationExercise } from "./design-system-conversation-exercise.mjs";
 import { runDecisionExercise } from "./design-system-decision-exercise.mjs";
 import assert from "node:assert/strict";
 import { runSettingsExercise, runSettingsContrast } from "./design-system-settings-exercise.mjs";
@@ -17,10 +18,11 @@ const { chromium } = require("playwright-core");
 const dist = join(gui, "dist/design-system");
 const scratch = await mkdtemp(join(tmpdir(), "areal-design-system-"));
 const baseline = process.argv.includes("--baseline");
+const conversationExercise = process.argv.includes("--conversation-exercise");
 const decisionExercise = process.argv.includes("--decision-exercise");
 const settingsContrast = process.argv.includes("--settings-contrast");
 const settingsExercise = process.argv.includes("--settings-exercise") || settingsContrast;
-const evidenceExercise = settingsExercise || decisionExercise;
+const evidenceExercise = settingsExercise || decisionExercise || conversationExercise;
 let exercise = null;
 const html = await readFile(join(dist, "design-system.html"), "utf8");
 const buildDigest = createHash("sha256").update(html);
@@ -43,7 +45,7 @@ const errors = [], external = [], samples = [], checks = [];
 try {
   browser = await chromium.launch({ headless: true, ...(process.env.AREAL_GUI_TEST_BROWSER ? { executablePath: process.env.AREAL_GUI_TEST_BROWSER } : { channel: "chrome" }) });
   browserVersion = browser.version();
-  const context = await browser.newContext({ deviceScaleFactor: evidenceExercise ? 2 : 1, viewport: { width: 1440, height: evidenceExercise ? 949 : 900 }, serviceWorkers: "block" });
+  const context = await browser.newContext({ deviceScaleFactor: evidenceExercise ? 2 : 1, viewport: { width: 1440, height: evidenceExercise ? 949 : 900 }, ...(conversationExercise ? { recordVideo: { dir: scratch, size: { width: 1440, height: 949 } } } : {}), serviceWorkers: "block" });
   await context.route("**/*", route => {
     if (route.request().url().startsWith(origin + "/")) return route.continue();
     external.push(route.request().url()); return route.abort();
@@ -51,10 +53,14 @@ try {
   if (evidenceExercise) await context.tracing.start({ screenshots: true, snapshots: true });
   page = await context.newPage();
   page.on("pageerror", error => errors.push(error.message));
-  await page.goto(`${origin}/design-system.html${decisionExercise ? "?decision-exercise" : settingsExercise ? "?settings-exercise" : ""}`);
+  await page.goto(`${origin}/design-system.html${conversationExercise ? "?conversation-exercise" : decisionExercise ? "?decision-exercise" : settingsExercise ? "?settings-exercise" : ""}`);
   await page.getByRole("heading", { name: "客户端设计系统", exact: true }).waitFor();
   assert.equal(await page.evaluate(() => typeof window.arealDesktop), "undefined");
-  if (decisionExercise) {
+  if (conversationExercise) {
+    exercise = { steps: [], checks: [] };
+    await runConversationExercise(page, scratch, gui, exercise);
+    checks.push(...exercise.checks);
+  } else if (decisionExercise) {
     exercise = { steps: [], checks: [] };
     await runDecisionExercise(page, scratch, gui, exercise);
     checks.push(...exercise.checks);
@@ -111,8 +117,14 @@ try {
   const input = page.getByTestId("preview-composer");
   const timeline = page.getByRole("region", { name: "对话时间线预览", exact: true });
   const earlier = timeline.locator('[data-side-item-id="timeline-progress"]');
-  assert.equal(await earlier.isVisible(), true, "short commentary remains visible after completion");
-  assert.equal(await timeline.getByRole("button", { name: "用时 19秒", exact: true }).count(), 0, "phased history does not nest all progress behind a turn disclosure");
+  // CONV-GROUP-01统一完成过程；原先“phased短过程始终外露”的预期已被新合同替换。
+  const aggregate = timeline.getByRole("button", { name: "用时 19秒", exact: true });
+  assert.equal(await aggregate.getAttribute("aria-expanded"), "false");
+  assert.equal(await earlier.isVisible(), false, "normal completed commentary follows the aggregate default");
+  assert.equal(await timeline.locator('[data-side-item-id="timeline-final"]').isVisible(), true);
+  assert.equal(await timeline.locator('.turn-progress-body [data-side-item-id="timeline-final"]').count(), 0);
+  await aggregate.click();
+  assert.equal(await earlier.isVisible(), true, "aggregate restores original short commentary");
   const longProgress = timeline.locator('[data-side-item-id="timeline-long-progress"]');
   const progressSize = await longProgress.locator(".collapsible-text-viewport").evaluate(el => ({ height: el.clientHeight, full: el.scrollHeight, line: parseFloat(getComputedStyle(el).lineHeight) }));
   assert.ok(progressSize.full > progressSize.height && Math.abs(progressSize.height - progressSize.line * 6) <= 1);
@@ -121,7 +133,7 @@ try {
   assert.ok((await longProgress.innerText()).includes("检查记录 10"));
   await longProgress.getByRole("button", { name: "收起", exact: true }).click();
   const imageToggle = timeline.getByRole("button", { name: "已查看 1 张图片", exact: true });
-  assert.equal(await imageToggle.isVisible(), true, "image results remain discoverable with the tools collapsed");
+  assert.equal(await imageToggle.isVisible(), true, "image results remain discoverable inside the opened aggregate with the activity collapsed");
   await imageToggle.click();
   await timeline.getByRole("button", { name: "预览图片 工具图片", exact: true }).waitFor();
   await timeline.getByRole("button", { name: "预览图片 工具图片", exact: true }).click();
@@ -160,7 +172,7 @@ try {
   await timeline.getByRole("button", { name: "显示已完成", exact: true }).click();
   assert.equal(await longProgress.getByRole("button", { name: "展开全文", exact: true }).getAttribute("aria-expanded"), "false");
   assert.ok((await timeline.locator('[data-side-item-id="timeline-final"]').innerText()).includes("最终回答保留完整内容"));
-  checks.push("phased timeline retains short progress, bounds long commentary, and exposes images, named agents, command output and verified file totals without nested activity scrolling");
+  checks.push("phased timeline groups completed progress, restores original text, bounds long commentary, and exposes images, named agents, command output and verified file totals without nested activity scrolling");
   await input.fill("保留这份草稿 Keep this draft");
   await input.press("Enter");
   await page.getByRole("status").filter({ hasText: "预览收到输入" }).waitFor();
@@ -391,12 +403,17 @@ try {
   if (page) await page.screenshot({ path: join(scratch, "failure.png"), fullPage: true }).catch(() => {});
   process.exitCode = 1;
 } finally {
-  if (evidenceExercise && page) await page.context().tracing.stop({ path: join(scratch, decisionExercise ? "decision-trace.zip" : "settings-trace.zip") }).catch(error => { errors.push(String(error)); passed = false; process.exitCode = 1; });
+  if (evidenceExercise && page) await page.context().tracing.stop({ path: join(scratch, conversationExercise ? "conversation-trace.zip" : decisionExercise ? "decision-trace.zip" : "settings-trace.zip") }).catch(error => { errors.push(String(error)); passed = false; process.exitCode = 1; });
+  if (conversationExercise && page) await page.context().close();
   await browser?.close(); await new Promise(resolve => server.close(resolve));
-  const artifacts = await Promise.all((await readdir(scratch)).filter(name => name.endsWith(".png") || (evidenceExercise && /\.(json|zip)$/.test(name))).sort().map(async name => ({ path: name, sha256: createHash("sha256").update(await readFile(join(scratch, name))).digest("hex") })));
+  const artifacts = await Promise.all((await readdir(scratch)).filter(name => name.endsWith(".png") || (evidenceExercise && /\.(json|zip|webm)$/.test(name))).sort().map(async name => ({ path: name, sha256: createHash("sha256").update(await readFile(join(scratch, name))).digest("hex") })));
   const worktreeStatus = execFileSync("git", ["status", "--porcelain"], { cwd: gui }).toString();
+  const sourceFiles = conversationExercise ? await Promise.all([...new Set([
+    ...execFileSync("git", ["diff", "--name-only", "HEAD", "--"], { cwd: gui }).toString().trim().split("\n"),
+    ...execFileSync("git", ["ls-files", "--full-name", "--others", "--exclude-standard"], { cwd: gui }).toString().trim().split("\n"),
+  ])].filter(Boolean).map(async path => ({ path, sha256: createHash("sha256").update(await readFile(resolve(gui, "../..", path))).digest("hex") }))) : undefined;
   const diffSha256 = createHash("sha256").update(execFileSync("git", ["diff", "HEAD", "--"], { cwd: gui })).digest("hex");
-  await writeFile(join(scratch, "manifest.json"), JSON.stringify({ passed, baseline, exercise, runId: scratch.split("/").at(-1), recordedAt: new Date().toISOString(), commit, buildSha256, worktreeStatus, diffSha256,
+  await writeFile(join(scratch, "manifest.json"), JSON.stringify({ passed, baseline, exercise, runId: scratch.split("/").at(-1), recordedAt: new Date().toISOString(), commit, buildSha256, worktreeStatus, diffSha256, sourceFiles,
     environment: { platform: process.platform, arch: process.arch, browserVersion, viewport: evidenceExercise ? null : { width: 1440, height: 900 }, deviceScaleFactor: evidenceExercise ? 2 : 1 }, artifacts, checks, errors, external, samples, scope: "production renderer components with local fixture actions; no Electron/Core acceptance" }, null, 2));
   console.log(JSON.stringify({ passed, scratch, checks, errors }));
 }

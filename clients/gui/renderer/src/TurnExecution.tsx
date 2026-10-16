@@ -10,7 +10,7 @@ export function TurnExecution({ items, turn, project, threadId, renderItem, acti
   active?: boolean; hasTurnSummary?: boolean; items: Data[]; turn: Data; project: Data; threadId: string; renderItem: (item: Data, disclosure: { animate: boolean; onDisclosureChange: (open: boolean) => void }) => ReactNode;
 }) {
   const { failures, unfinished } = executionOutcome(items);
-  const settled = turn.status === "completed" && hasTurnSummary && !unfinished;
+  const settled = turn.status === "completed" && hasTurnSummary && !unfinished && !failures;
   // Execution and reading state are independent: live activity stays compact.
   // Terminal exceptions remain discoverable; receipts never override a reader.
   const defaultOpen = turn.status !== "inProgress" && !settled;

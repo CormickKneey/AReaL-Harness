@@ -345,13 +345,15 @@ export function Messages({
           // chronological disclosure; it does not classify or rewrite any message.
           // Unsettled work, pending input and terminal exceptions stay inspectable.
           const tail = segments.at(-1);
+          const pendingInput = project.state?.interactions?.[thread.id]?.data?.some((item: Data) => item.status === "pending" && item.turnId === turn.id);
           const legacyReply = turn.status === "completed" && tail?.type === "agentMessage" &&
             segments.every((item: Data) => item.type !== "agentMessage" || item.phase == null) &&
             !executionOutcome(segments.flatMap((item: Data) => item.items ?? [])).unfinished &&
-            !project.state?.interactions?.[thread.id]?.data?.some((item: Data) => item.status === "pending" && item.turnId === turn.id) ? tail : undefined;
+            !pendingInput ? tail : undefined;
           const responseMessage = finalMessage ?? legacyReply;
           const hasReadingSummary = hasFinal || !!legacyReply;
-          // User follow-ups, media and the retained reply remain in original order.
+          // 带phase与旧快照共用同一过程总组；从运行期起保留挂载，
+          // 完成收敛只隐藏内容，不重置工具详情或改变历史顺序。
           const groups: { id: string; progress: boolean; entries: { item: Data; index: number }[] }[] = [];
           segments.forEach((item: Data, index: number) => {
             const progress = item.type !== "questionAnswer" && item.type !== "userMessage" && item.type !== "agentMedia" && (item.type !== "agentMessage" || item.phase === "commentary" || (!!legacyReply && item.id !== legacyReply.id));
@@ -438,9 +440,9 @@ export function Messages({
             });
             return <Fragment key={group.id}>
               {turn.status === "interrupted" && groupIndex === stopHeaderIndex && stopHeading}
-              {group.progress && legacyReply ? <TurnProgress summaryAvailable={turn.status === "completed" && hasReadingSummary}
+              {group.progress ? <TurnProgress summaryAvailable={turn.status === "completed" && hasReadingSummary}
                 label={(groupIndex === firstProgress ? completedTimeLabel(turn) : undefined) ?? (legacyReply ? "早前消息与活动" : "本轮过程")}
-                settled={turn.status === "completed" && hasReadingSummary && !outcome.unfinished}
+                settled={turn.status === "completed" && hasReadingSummary && !outcome.unfinished && !outcome.failures && !pendingInput}
                 {...outcome}>{contents}</TurnProgress> : contents}
               {group.entries.some(({ item }) => item === initialUser) &&
                 (turn.status !== "completed" || firstProgress < 0 || !hasReadingSummary) &&
@@ -449,7 +451,7 @@ export function Messages({
             })}
             {!isInherited && (turn.items ?? []).filter((item: Data) => item.type === "dynamicToolCall").map((item: Data) =>
               <UnknownToolInspection key={`${project.id}:${thread.id}:${item.id}`} item={item} project={project} thread={thread} action={action} />)}
-            {hasFinal && turn.status === "completed" && completedTimeLabel(turn) && <p className="turn-timing">{completedTimeLabel(turn)}</p>}
+            {hasFinal && firstProgress < 0 && turn.status === "completed" && completedTimeLabel(turn) && <p className="turn-timing">{completedTimeLabel(turn)}</p>}
             <TurnFileSummary turn={turn} readTurnReview={readTurnReview} onFile={onFile} onReview={onReview} />
             {responseMessage && turn.status !== "inProgress" && <MessageActions text={responseMessage.text}><TurnHookStats turn={turn} />{forkControls}{responseActions?.(responseMessage)}</MessageActions>}
             {canFork && forkError?.turnId === turn.id && <p role="alert" className="notice">{forkError?.message}</p>}
