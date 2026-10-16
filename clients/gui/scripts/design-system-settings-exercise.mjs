@@ -122,3 +122,63 @@ export async function runSettingsExercise(page, scratch, gui, report) {
   await writeFile(join(scratch, "exercise-steps.json"), JSON.stringify(report, null, 2));
   return report;
 }
+
+export async function runSettingsContrast(page, scratch, gui, report) {
+  Object.assign(report, { id: "settings-contrast", questionId: "Q-SETTINGS-TEXT-CONTRAST-02", inputBaseSnapshot: "ad04a0c21df22a6336e09ba2e2fb0b116886b73f", candidateVersion: JSON.parse(await readFile(join(gui, "design-system/registry.json"), "utf8")).baseCandidate.version, briefSha256: createHash("sha256").update(await readFile(join(gui, "design-system/exercises/settings-contrast.md"))).digest("hex"), scope: "independent renderer palette samples through saved-preference normalization", errors: [], gaps: ["reference and implementation contrast mappings intentionally differ", "no universal contrast/readability claim for arbitrary palettes", "no native/Core/provider/package acceptance"] });
+  const samples = [
+    { id: "dark-default", dark: true, contrast: 60, background: "#181818", foreground: "#ffffff", expected: 65 },
+    { id: "dark-low", dark: true, contrast: 0, background: "#181818", foreground: "#ffffff", expected: 56 },
+    { id: "dark-high", dark: true, contrast: 100, background: "#181818", foreground: "#ffffff", expected: 71 },
+    { id: "dark-custom", dark: true, contrast: 60, background: "#142030", foreground: "#dae5f5", expected: 65 },
+    { id: "light-default", dark: false, contrast: 45, background: "#ffffff", foreground: "#1a1c1f", expected: 69.5 },
+    { id: "light-low", dark: false, contrast: 0, background: "#ffffff", foreground: "#1a1c1f", expected: 62.75 },
+    { id: "light-high", dark: false, contrast: 100, background: "#ffffff", foreground: "#1a1c1f", expected: 77.75 },
+    { id: "light-custom", dark: false, contrast: 45, background: "#f2f6fb", foreground: "#203040", expected: 69.5 },
+  ];
+  for (const sample of samples) {
+    const scenario = await page.context().newPage();
+    scenario.on("pageerror", error => report.errors.push(error.message));
+    try {
+      const prefs = { [sample.dark ? "dark" : "light"]: { contrast: sample.contrast, background: sample.background, foreground: sample.foreground } };
+      await scenario.addInitScript(settings => localStorage.setItem("areal-gui:application-preferences", JSON.stringify(settings)), prefs);
+      await scenario.goto(page.url());
+      await scenario.getByRole("heading", { name: "客户端设计系统", exact: true }).waitFor();
+      await scenario.getByLabel("主题", { exact: true }).selectOption(sample.dark ? "dark" : "light");
+      await scenario.waitForFunction(dark => document.documentElement.classList.contains("dark") === dark, sample.dark);
+      const group = scenario.getByRole("region", { name: "设置迁移题", exact: true }).locator(".settings-group-card");
+      await group.scrollIntoViewIfNeeded();
+      const observed = await group.evaluate((element, input) => {
+        const description = element.querySelector(".settings-field-description"), css = getComputedStyle(description);
+        const probe = document.createElement("span");
+        probe.style.color = `color-mix(in srgb, ${input.foreground} ${input.expected}%, ${input.dark ? "transparent" : input.background})`;
+        element.append(probe); const expectedColor = getComputedStyle(probe).color; probe.remove();
+        const r = element.getBoundingClientRect();
+        let fullyVisible = r.top >= 0 && r.left >= 0 && r.bottom <= innerHeight && r.right <= innerWidth;
+        for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+          const p = parent.getBoundingClientRect(), c = getComputedStyle(parent);
+          if (/(auto|scroll|hidden|clip)/.test(c.overflowX) && (r.left < p.left - 1 || r.right > p.right + 1)) fullyVisible = false;
+          if (/(auto|scroll|hidden|clip)/.test(c.overflowY) && (r.top < p.top - 1 || r.bottom > p.bottom + 1)) fullyVisible = false;
+        }
+        return { fullyVisible, actualColor: css.color, expectedColor, fontSize: css.fontSize, background: getComputedStyle(element).backgroundColor, role: getComputedStyle(document.documentElement).getPropertyValue("--color-settings-secondary").trim(), viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio }, box: { x: r.x, y: r.y, width: r.width, height: r.height }, disabledOpacity: getComputedStyle(document.querySelector('[aria-label="设置迁移题"] button:disabled')).opacity, desktopBridgePresent: typeof window.arealDesktop !== "undefined" };
+      }, sample);
+      const path = `${sample.id}.png`;
+      await group.screenshot({ path: join(scratch, path), animations: "disabled" });
+      await writeFile(join(scratch, `${sample.id}.json`), JSON.stringify({ input: sample, prefs, observed }, null, 2));
+      report.steps.push({ id: sample.id, questionId: report.questionId, independentSample: true, action: "new renderer page with explicit saved-preference fixture; select theme", readiness: "fixed settings rows mounted with selected theme", observedAt: new Date().toISOString(), observation: `${sample.id}.json`, screenshot: { path, status: observed.fullyVisible ? "captured" : "partial" }, network: { status: "not_requested", reason: "palette rendering has no service claim" } });
+      await writeFile(join(scratch, "exercise-steps.json"), JSON.stringify(report, null, 2));
+      assert.equal(observed.fullyVisible, true, "palette sample group must be completely visible");
+      assert.equal(observed.actualColor, observed.expectedColor, `${sample.id}: settings explanation follows the agreed role and user palette`);
+      // Mounted workbench baseline at ad04a0c2 is0.45 (workbench.css), not the bare Button utility0.5.
+      assert.equal(observed.disabledOpacity, "0.45", "mounted disabled controls retain their separate appearance");
+      assert.equal(observed.desktopBridgePresent, false);
+      report.checks.push(`${sample.id}: normalized preference → rendered settings role; disabled state unchanged`);
+    } catch (error) {
+      await scenario.screenshot({ path: join(scratch, `${sample.id}-failure.png`) }).catch(() => {});
+      throw error;
+    } finally {
+      await scenario.close();
+    }
+  }
+  assert.deepEqual(report.errors, []);
+  await writeFile(join(scratch, "exercise-steps.json"), JSON.stringify(report, null, 2));
+}

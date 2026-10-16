@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { runSettingsExercise } from "./design-system-settings-exercise.mjs";
+import { runSettingsExercise, runSettingsContrast } from "./design-system-settings-exercise.mjs";
 import { createRequire } from "node:module";
 import { createServer } from "node:http";
 import { mkdtemp, readFile, writeFile, readdir } from "node:fs/promises";
@@ -16,7 +16,8 @@ const { chromium } = require("playwright-core");
 const dist = join(gui, "dist/design-system");
 const scratch = await mkdtemp(join(tmpdir(), "areal-design-system-"));
 const baseline = process.argv.includes("--baseline");
-const settingsExercise = process.argv.includes("--settings-exercise");
+const settingsContrast = process.argv.includes("--settings-contrast");
+const settingsExercise = process.argv.includes("--settings-exercise") || settingsContrast;
 let exercise = null;
 const html = await readFile(join(dist, "design-system.html"), "utf8");
 const buildDigest = createHash("sha256").update(html);
@@ -50,7 +51,11 @@ try {
   await page.goto(`${origin}/design-system.html${settingsExercise ? "?settings-exercise" : ""}`);
   await page.getByRole("heading", { name: "客户端设计系统", exact: true }).waitFor();
   assert.equal(await page.evaluate(() => typeof window.arealDesktop), "undefined");
-  if (settingsExercise) {
+  if (settingsContrast) {
+    exercise = { steps: [], checks: [] };
+    await runSettingsContrast(page, scratch, gui, exercise);
+    checks.push(...exercise.checks);
+  } else if (settingsExercise) {
     exercise = { id: "settings-reflow", questionId: "Q-SETTINGS-REFLOW-01", steps: [], checks: [] };
     await runSettingsExercise(page, scratch, gui, exercise);
     checks.push(...exercise.checks);
