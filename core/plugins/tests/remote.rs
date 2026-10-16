@@ -405,6 +405,147 @@ fn git_marketplace_refresh_replaces_registration_but_preserves_install() {
     );
 }
 #[test]
+fn full_git_marketplace_has_separate_checkout_and_package_limits() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    let t = tempfile::tempdir().unwrap();
+    let repo = t.path().join("repo");
+    fs::create_dir(&repo).unwrap();
+    write(
+        &repo,
+        ".agents/plugins/marketplace.json",
+        r#"{"name":"large","plugins":[{"name":"sample","source":"packages/sample"},{"name":"oversized","source":"packages/oversized"}]}"#,
+    );
+    write(&repo, "packages/sample/plugin.json", manifest());
+    write(
+        &repo,
+        "packages/oversized/plugin.json",
+        r#"{"$schema":"https://agent-plugins.org/schemas/1.0.0/plugin.schema.json","name":"oversized","extensions":{"com.openai":{}}}"#,
+    );
+    for index in 0..4100 {
+        write(&repo, &format!("unrelated/{index}.txt"), "fixture\n");
+    }
+    for index in 0..4097 {
+        write(
+            &repo,
+            &format!("packages/oversized/{index}.txt"),
+            "fixture\n",
+        );
+    }
+    git(&repo, &["init", "-q"]);
+    commit_fixture(&repo, "A");
+    let reference = git(&repo, &["branch", "--show-current"]);
+    let initial_commit = git(&repo, &["rev-parse", "HEAD"]);
+    let source = repo.to_str().unwrap();
+    let store = Store::open(t.path().join("state"), t.path().into(), None).unwrap();
+    let first = store
+        .add_git_marketplace_sparse(source, Some(&reference), &[], 0)
+        .expect("full marketplace checkout must have its own limits");
+    assert_eq!(first.revision, 1);
+    assert_eq!(first.marketplaces.len(), 1);
+    assert_eq!(first.marketplaces[0].name, "large");
+    assert_eq!(
+        first.marketplaces[0].resolved_commit.as_deref(),
+        Some(initial_commit.as_str())
+    );
+    let root = &first.marketplaces[0].root;
+    let root_identity = fs::metadata(root).unwrap();
+    assert_eq!(fs::read_dir(root.join("unrelated")).unwrap().count(), 4100);
+    assert_eq!(
+        fs::read_to_string(root.join("unrelated/4099.txt")).unwrap(),
+        "fixture\n"
+    );
+    assert_eq!(root_identity.permissions().mode() & 0o222, 0);
+    assert_eq!(
+        fs::metadata(root.join("unrelated/4099.txt"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o222,
+        0
+    );
+    assert_eq!(first.errors.len(), 1, "{:?}", first.errors);
+    assert!(first.errors[0].ends_with("entry \"oversized\": package exceeds 4096 files"));
+    assert_eq!(first.data.len(), 1);
+    let sample = &first.data[0];
+    assert_eq!(sample.id, "sample@large");
+    let initial_digest = "f5c7b23ba7457d90f0d7032d7a518e6eb9b1673e275f0b32dd63638ea143c7f9";
+    assert_eq!(sample.source_digest, initial_digest);
+    let rejected = store
+        .install(
+            "oversized@large",
+            "user",
+            1,
+            &root.join("packages/oversized"),
+            "",
+        )
+        .unwrap_err();
+    assert!(rejected.to_string().contains("package exceeds 4096 files"));
+    assert_eq!(store.list().unwrap().revision, 1);
+    let installed = store
+        .install(&sample.id, "user", 1, &sample.source, initial_digest)
+        .unwrap();
+    assert!(installed.installed && installed.enabled);
+    assert_eq!(installed.installed_digest.as_deref(), Some(initial_digest));
+
+    let repeated = store
+        .add_git_marketplace(source, Some(&reference), 2)
+        .unwrap();
+    assert_eq!(repeated.revision, 3);
+    assert_eq!(repeated.marketplaces.len(), 1);
+    assert_eq!(repeated.marketplaces[0].root, *root);
+    assert_eq!(
+        repeated.marketplaces[0].resolved_commit.as_deref(),
+        Some(initial_commit.as_str())
+    );
+    let reused = fs::metadata(&repeated.marketplaces[0].root).unwrap();
+    assert_eq!(
+        (reused.dev(), reused.ino()),
+        (root_identity.dev(), root_identity.ino())
+    );
+    assert_eq!(repeated.data.len(), 1);
+    assert_eq!(repeated.data[0].source_digest, initial_digest);
+
+    write(&repo, "packages/sample/new.txt", "B");
+    commit_fixture(&repo, "B");
+    let updated_commit = git(&repo, &["rev-parse", "HEAD"]);
+    let updated = store.update_marketplaces(3).unwrap();
+    assert_eq!(updated.revision, 4);
+    assert_eq!(updated.marketplaces.len(), 1);
+    let updated_root = &updated.marketplaces[0].root;
+    assert_ne!(updated_root, root);
+    assert_eq!(
+        updated.marketplaces[0].resolved_commit.as_deref(),
+        Some(updated_commit.as_str())
+    );
+    assert_eq!(
+        fs::read_to_string(updated_root.join("packages/sample/new.txt")).unwrap(),
+        "B"
+    );
+    assert!(!root.join("packages/sample/new.txt").exists());
+    assert_eq!(
+        fs::read_dir(updated_root.join("unrelated"))
+            .unwrap()
+            .count(),
+        4100
+    );
+    assert_eq!(updated.errors.len(), 1, "{:?}", updated.errors);
+    assert!(updated.errors[0].ends_with("entry \"oversized\": package exceeds 4096 files"));
+    assert_eq!(updated.data.len(), 1);
+    assert_eq!(
+        updated.data[0].source_digest,
+        "3659547d2a11136eceda552c2e6bee1e93e067a3fac0195ed3fa77839a2cfda9"
+    );
+    assert_eq!(
+        updated.data[0].installed_digest.as_deref(),
+        Some(initial_digest)
+    );
+    assert_eq!(
+        store.enabled_components().unwrap()[0].digest,
+        initial_digest
+    );
+}
+#[test]
 fn relative_git_source_resolves_from_marketplace_root() {
     let t = tempfile::tempdir().unwrap();
     let repo = t.path().join("repo");

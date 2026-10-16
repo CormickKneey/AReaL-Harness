@@ -10,8 +10,30 @@ use std::{
     os::unix::fs::MetadataExt,
     path::{Component, Path, PathBuf},
 };
-const MAX_FILES: usize = 4096;
 const MAX_BYTES: usize = 64 * 1024 * 1024;
+#[derive(Clone, Copy)]
+pub(crate) enum SnapshotBudget {
+    Plugin,
+    Marketplace,
+}
+struct SnapshotLimits {
+    files: usize,
+    entries: usize,
+    bytes: usize,
+}
+impl SnapshotBudget {
+    fn limits(self) -> SnapshotLimits {
+        let (files, entries) = match self {
+            Self::Plugin => (4096, 8192),
+            Self::Marketplace => (20_000, 20_000),
+        };
+        SnapshotLimits {
+            files,
+            entries,
+            bytes: MAX_BYTES,
+        }
+    }
+}
 pub(crate) struct PackageFile {
     pub bytes: Vec<u8>,
     pub executable: bool,
@@ -101,7 +123,10 @@ pub(crate) fn read_catalog(root: &Path, path: &Path) -> Result<Vec<u8>> {
     bail!("catalog file missing")
 }
 pub(crate) fn snapshot(root: &Path) -> Result<Files> {
-    Ok(read_snapshot(root, true)?.0)
+    snapshot_with_budget(root, SnapshotBudget::Plugin)
+}
+pub(crate) fn snapshot_with_budget(root: &Path, budget: SnapshotBudget) -> Result<Files> {
+    Ok(read_snapshot(root, true, budget)?.0)
 }
 pub(crate) type Fingerprint = BTreeMap<String, [u64; 9]>;
 fn identity(metadata: &std::fs::Metadata) -> [u64; 9] {
@@ -120,17 +145,25 @@ fn identity(metadata: &std::fs::Metadata) -> [u64; 9] {
 /// Descriptor-relative identity check, including ctime, links and every directory.
 /// No file contents are read. A changed fingerprint requires full digest validation.
 pub(crate) fn fingerprint(root: &Path) -> Result<Fingerprint> {
-    Ok(read_snapshot(root, false)?.1)
+    Ok(read_snapshot(root, false, SnapshotBudget::Plugin)?.1)
 }
-fn read_snapshot(root: &Path, read_content: bool) -> Result<(Files, Fingerprint)> {
+fn read_snapshot(
+    root: &Path,
+    read_content: bool,
+    budget: SnapshotBudget,
+) -> Result<(Files, Fingerprint)> {
+    struct SnapshotUsage {
+        bytes: usize,
+        entries: usize,
+    }
     fn walk(
         dir: &File,
         prefix: &str,
         files: &mut Files,
-        bytes: &mut usize,
-        entries: &mut usize,
+        usage: &mut SnapshotUsage,
         read_content: bool,
         fingerprint: &mut Fingerprint,
+        limits: &SnapshotLimits,
     ) -> Result<()> {
         let before = identity(&dir.metadata()?);
         fingerprint.insert(prefix.into(), before);
@@ -143,8 +176,12 @@ fn read_snapshot(root: &Path, read_content: bool) -> Result<(Files, Fingerprint)
             if name == "." || name == ".." || name == ".git" {
                 continue;
             }
-            *entries += 1;
-            ensure!(*entries <= 8192, "package exceeds 8192 filesystem entries");
+            usage.entries += 1;
+            ensure!(
+                usage.entries <= limits.entries,
+                "package exceeds {} filesystem entries",
+                limits.entries
+            );
             let path = if prefix.is_empty() {
                 name.into()
             } else {
@@ -165,10 +202,10 @@ fn read_snapshot(root: &Path, read_content: bool) -> Result<(Files, Fingerprint)
                     &file,
                     &path,
                     files,
-                    bytes,
-                    entries,
+                    usage,
                     read_content,
                     fingerprint,
+                    limits,
                 )?;
             } else {
                 fingerprint.insert(path.clone(), identity(&metadata));
@@ -176,21 +213,25 @@ fn read_snapshot(root: &Path, read_content: bool) -> Result<(Files, Fingerprint)
                     metadata.is_file() && metadata.nlink() == 1,
                     "package entry must be a regular single-link file: {path}"
                 );
-                ensure!(files.len() < MAX_FILES, "package exceeds 4096 files");
                 ensure!(
-                    metadata.len() <= MAX_BYTES as u64,
+                    files.len() < limits.files,
+                    "package exceeds {} files",
+                    limits.files
+                );
+                ensure!(
+                    metadata.len() <= limits.bytes as u64,
                     "package file exceeds 64 MiB: {path}"
                 );
                 let mut data = Vec::new();
                 if read_content {
                     file.by_ref()
-                        .take((MAX_BYTES - *bytes + 1) as u64)
+                        .take((limits.bytes - usage.bytes + 1) as u64)
                         .read_to_end(&mut data)?;
-                    *bytes += data.len();
+                    usage.bytes += data.len();
                 } else {
-                    *bytes += metadata.len() as usize;
+                    usage.bytes += metadata.len() as usize;
                 }
-                ensure!(*bytes <= MAX_BYTES, "package exceeds 64 MiB total");
+                ensure!(usage.bytes <= limits.bytes, "package exceeds 64 MiB total");
                 let after = file.metadata()?;
                 ensure!(
                     identity(&after) == identity(&metadata),
@@ -217,10 +258,13 @@ fn read_snapshot(root: &Path, read_content: bool) -> Result<(Files, Fingerprint)
         &directory(root)?,
         "",
         &mut files,
-        &mut 0,
-        &mut 0,
+        &mut SnapshotUsage {
+            bytes: 0,
+            entries: 0,
+        },
         read_content,
         &mut fingerprint,
+        &budget.limits(),
     )?;
     Ok((files, fingerprint))
 }

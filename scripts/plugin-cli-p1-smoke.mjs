@@ -156,6 +156,107 @@ try {
   assert.equal(removed.data.find(row => row.id === id).installedDigest, installed.installedDigest);
   await noExecution(); checks.push('marketplace removal preserves the installed package and never runs package code');
   evidence.packageCommitA = pinA; evidence.packageCommitB = pinB;
+
+  const largeRoot = join(scratch, 'large-marketplace'), largeId = 'large@receipt-large';
+  const description = 'd'.repeat(300 * 1024);
+  const largeCatalog = JSON.stringify({ name: 'receipt-large', plugins: [{
+    name: 'large', description,
+    source: { source: 'git-subdir', url: packageRepo, path: 'pkg', sha: pinB },
+    policy: { installation: 'AVAILABLE', authentication: 'ON_USE' },
+    interface: { displayName: 'Large receipt fixture', category: 'Testing' },
+  }] });
+  assert(Buffer.byteLength(largeCatalog) < 1024 * 1024);
+  await mkdir(join(largeRoot, '.agents/plugins'), { recursive: true });
+  await writeFile(join(largeRoot, '.agents/plugins/marketplace.json'), largeCatalog);
+  const original = { root: largeRoot, expectedRevision: removed.revision, requestId: randomUUID() };
+  let largeReply, largeError;
+  try { largeReply = await client.request('areal/marketplace/add', original); }
+  catch (error) { largeError = error; }
+  const largeList = await plugin('list');
+  const largeReceipt = (await plugin('submission', original.requestId)).data;
+  const largeDetail = largeList.data.find(row => row.id === largeId);
+  evidence.largeCatalog = {
+    request: original, catalogBytes: Buffer.byteLength(largeCatalog),
+    listBytes: Buffer.byteLength(JSON.stringify({ result: largeList })), revision: largeList.revision,
+    descriptionBytes: Buffer.byteLength(largeDetail?.description ?? ''),
+    descriptionSha256: createHash('sha256').update(largeDetail?.description ?? '').digest('hex'),
+    rpcError: largeError && { code: largeError.code, message: largeError.message }, receipt: largeReceipt,
+  };
+  assert.equal(largeList.revision, removed.revision + 1);
+  assert.deepEqual(largeList.data.map(row => row.id).sort(), [largeId, id].sort());
+  assert.equal(largeDetail.description, description);
+  assert.equal(largeDetail.sourceDigest, '');
+  assert.deepEqual(largeDetail.policy, { installation: 'AVAILABLE', authentication: 'ON_USE' });
+  assert.deepEqual(largeDetail.catalogSource, { type: 'git', url: packageRepo, path: 'pkg', refName: null, sha: pinB });
+  assert.equal(largeDetail.interface.displayName, 'Large receipt fixture');
+  assert.equal(largeDetail.interface.category, 'Testing');
+  assert(Buffer.byteLength(JSON.stringify({ result: largeList })) > 256 * 1024);
+  await noExecution();
+  if (largeError) throw largeError;
+  const compact = { revision: removed.revision + 1, catalogRefreshRequired: true };
+  assert.deepEqual(largeReply, compact);
+  assert.equal(largeReceipt.length, 1);
+  assert.equal(largeReceipt[0].state, 'completed');
+  assert.deepEqual(largeReceipt[0].response, { result: compact });
+  assert.deepEqual(await client.request('areal/marketplace/add', original), compact);
+  assert.equal((await plugin('list')).revision, compact.revision);
+  checks.push('oversized successful catalog mutation returns one compact durable receipt and preserves full authoritative metadata');
+
+  const lostCatalog = { expectedRevision: compact.revision, requestId: randomUUID() };
+  client.dropNextReply();
+  await assert.rejects(client.request('areal/marketplace/update', lostCatalog, { timeoutMs: 250 }), error => error.submissionUnknown === true);
+  let recoveredCatalog;
+  const catalogDeadline = Date.now() + 30_000;
+  while (Date.now() < catalogDeadline) {
+    recoveredCatalog = (await plugin('submission', lostCatalog.requestId)).data.find(row => row.method === 'areal/marketplace/update' && row.state === 'completed');
+    if (recoveredCatalog) break;
+    await delay(50);
+  }
+  assert(recoveredCatalog);
+  assert.deepEqual(recoveredCatalog.response, { result: compact });
+  assert.equal((await plugin('list')).revision, compact.revision);
+  assert.deepEqual(await client.request('areal/marketplace/add', original), compact);
+  assert.equal((await plugin('list')).revision, compact.revision);
+  const staleCatalog = { expectedRevision: compact.revision - 1, requestId: randomUUID() };
+  await assert.rejects(client.request('areal/marketplace/update', staleCatalog), error => error.code === -32009);
+  const staleReceipt = (await plugin('submission', staleCatalog.requestId)).data;
+  assert.equal(staleReceipt.length, 1);
+  assert.equal(staleReceipt[0].response.error.code, -32009);
+  assert.equal((await plugin('list')).revision, compact.revision);
+  checks.push('lost oversized no-op update reply recovers by receipt lookup without replay; local-only catalog revision stays stable and rejected CAS stays an error');
+
+  let currentRevision = compact.revision;
+  for (const args of [['marketplace-add', marketplaceRepo], ['marketplace-update'], ['marketplace-remove', marketplaceRepo]]) {
+    const output = await exec(bin, ['plugin', '--workspace', workspace, '--json', ...args], { env, timeout: 90_000, maxBuffer: 2 * 1024 * 1024 });
+    const current = JSON.parse(output.stdout);
+    if (args[0] !== 'marketplace-update') currentRevision += 1;
+    assert.equal(current.revision, currentRevision);
+    assert.equal(current.data.find(row => row.id === largeId).description, description);
+    assert.equal(current.data.find(row => row.id === id).installedDigest, installed.installedDigest);
+    assert.equal(current.marketplaces.some(row => row.root === marketplaceRepo), args[0] !== 'marketplace-remove');
+    assert.match(output.stderr, /current catalog/i);
+    assert.match(output.stderr, new RegExp(`receipt revision ${currentRevision}\\b`, 'i'));
+    const requestId = output.stderr.match(/plugin request ([a-f0-9-]{36})/i)?.[1];
+    assert.match(requestId ?? '', /^[a-f0-9-]{36}$/);
+    const historic = (await plugin('submission', requestId)).data;
+    assert.equal(historic.length, 1);
+    assert.deepEqual(historic[0].response, { result: { revision: currentRevision, catalogRefreshRequired: true } });
+    assert.equal((await plugin('list')).revision, currentRevision);
+  }
+  assert.deepEqual(await client.request('areal/marketplace/add', original), compact);
+  assert.deepEqual((await plugin('submission', original.requestId)).data[0].response, { result: compact });
+  checks.push('oversized CLI add/update/remove print the full current catalog, label its receipt revision, and leave submission output historical');
+
+  const uninstall = { id, expectedRevision: currentRevision, requestId: randomUUID() };
+  const uninstallReply = { revision: currentRevision + 1, catalogRefreshRequired: true };
+  assert.deepEqual(await client.request('areal/plugin/uninstall', uninstall), uninstallReply);
+  assert.deepEqual(await client.request('areal/plugin/uninstall', uninstall), uninstallReply);
+  assert.deepEqual((await plugin('submission', uninstall.requestId)).data[0].response, { result: uninstallReply });
+  const uninstalled = await plugin('list');
+  assert.equal(uninstalled.revision, currentRevision + 1);
+  assert.deepEqual(uninstalled.data.map(row => row.id), [largeId]);
+  assert.equal(uninstalled.data[0].description, description);
+  await noExecution(); checks.push('uninstall uses the same bounded catalog receipt and removes the installed sample exactly once without package execution');
   passed = true;
 } catch (error) {
   failure = { message: error.message, stack: error.stack }; process.exitCode = 1;

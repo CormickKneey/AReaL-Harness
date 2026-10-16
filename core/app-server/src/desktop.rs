@@ -123,6 +123,30 @@ struct QueueEdit {
     queue_item_ids: Option<Vec<String>>,
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CatalogRefreshRequired {
+    revision: u64,
+    catalog_refresh_required: bool,
+}
+
+fn plugin_catalog_mutation_result(catalog: Value) -> areal_engine::Result<Value> {
+    let size = serde_json::to_vec(&json!({"result": &catalog}))
+        .map_err(|error| Error::Invalid(error.to_string()))?
+        .len();
+    if size <= Engine::MANAGEMENT_RECEIPT_MAX_BYTES {
+        return Ok(catalog);
+    }
+    let revision = catalog["revision"]
+        .as_u64()
+        .ok_or_else(|| Error::Invalid("invalid plugin directory revision".into()))?;
+    serde_json::to_value(CatalogRefreshRequired {
+        revision,
+        catalog_refresh_required: true,
+    })
+    .map_err(|error| Error::Invalid(error.to_string()))
+}
+
 pub(crate) async fn dispatch(
     engine: &Arc<Engine>,
     identity: &str,
@@ -525,6 +549,7 @@ async fn dispatch_inner(
             engine
                 .plugin_add_marketplace(p.root, p.expected_revision)
                 .await
+                .and_then(plugin_catalog_mutation_result)
         }
         "areal/plugin/resolve" => {
             #[derive(Deserialize)]
@@ -556,6 +581,7 @@ async fn dispatch_inner(
                     p.expected_revision,
                 )
                 .await
+                .and_then(plugin_catalog_mutation_result)
         }
         "areal/marketplace/remove" => {
             #[derive(Deserialize)]
@@ -568,6 +594,7 @@ async fn dispatch_inner(
             engine
                 .plugin_remove_marketplace(p.root, p.expected_revision)
                 .await
+                .and_then(plugin_catalog_mutation_result)
         }
         "areal/marketplace/update" => {
             #[derive(Deserialize)]
@@ -576,7 +603,10 @@ async fn dispatch_inner(
                 expected_revision: u64,
             }
             let p: Update = parse(params)?;
-            engine.plugin_update_marketplaces(p.expected_revision).await
+            engine
+                .plugin_update_marketplaces(p.expected_revision)
+                .await
+                .and_then(plugin_catalog_mutation_result)
         }
         "areal/plugin/importArchive" => {
             #[derive(Deserialize)]
@@ -633,7 +663,10 @@ async fn dispatch_inner(
                 expected_revision: u64,
             }
             let p: Uninstall = parse(params)?;
-            engine.plugin_uninstall(p.id, p.expected_revision).await
+            engine
+                .plugin_uninstall(p.id, p.expected_revision)
+                .await
+                .and_then(plugin_catalog_mutation_result)
         }
         "areal/plugin/setup" => {
             #[derive(Deserialize)]

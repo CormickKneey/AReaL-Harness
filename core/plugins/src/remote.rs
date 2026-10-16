@@ -1,3 +1,4 @@
+use crate::package::SnapshotBudget;
 use crate::{CATALOG_PATHS, PluginDetail, PluginList, Store, StoreError, package, seal_directory};
 use anyhow::{Context, Result, bail, ensure};
 use base64::Engine;
@@ -507,12 +508,17 @@ fn fetch_npm(source: &Value, stage: &Path) -> Result<(String, String)> {
     );
     Ok((version, integrity.into()))
 }
-pub(crate) fn publish(store: &Store, files: &package::Files) -> Result<PathBuf> {
+pub(crate) fn publish(
+    store: &Store,
+    files: &package::Files,
+    budget: SnapshotBudget,
+) -> Result<PathBuf> {
     let digest = package::digest(files);
     let root = store.root.join("cache").join(&digest);
     if root.exists() {
         ensure!(
-            package::digest(&package::snapshot(&root)?) == package::digest(files),
+            package::digest(&package::snapshot_with_budget(&root, budget)?)
+                == package::digest(files),
             "cache integrity mismatch"
         );
         return Ok(root);
@@ -535,7 +541,7 @@ pub(crate) fn publish(store: &Store, files: &package::Files) -> Result<PathBuf> 
         )?;
     }
     ensure!(
-        package::digest(&package::snapshot(stage.path())?) == digest,
+        package::digest(&package::snapshot_with_budget(stage.path(), budget)?) == digest,
         "published package path collision"
     );
     fs::rename(stage.path(), &root)?;
@@ -578,7 +584,7 @@ impl Store {
         let url = normalize_git_url(url, &self.workspace)?;
         let stage = tempfile::tempdir_in(self.root.join("staging"))?;
         let commit = fetch_git_sparse(stage.path(), &url, reference, sparse_paths)?;
-        let files = package::snapshot(stage.path())?;
+        let files = package::snapshot_with_budget(stage.path(), SnapshotBudget::Marketplace)?;
         let catalog = CATALOG_PATHS
             .iter()
             .find_map(|path| files.get(*path))
@@ -631,7 +637,7 @@ impl Store {
             !markets.iter().any(|market| market.name == name),
             "marketplace name already registered by another source: {name}"
         );
-        let root = publish(self, files)?;
+        let root = publish(self, files, SnapshotBudget::Marketplace)?;
         state.marketplaces.push(root.clone());
         state.git_marketplaces.insert(root, pin);
         Ok(())
@@ -820,7 +826,7 @@ impl Store {
                     .any(|d| d.id == id && d.source == detail.source),
                 "remote source changed during resolution"
             );
-            let root = publish(self, &files)?;
+            let root = publish(self, &files, SnapshotBudget::Plugin)?;
             s.candidates.insert(
                 id.into(),
                 Candidate {

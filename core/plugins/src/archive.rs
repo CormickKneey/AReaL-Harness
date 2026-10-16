@@ -169,7 +169,7 @@ impl Store {
         detail.catalog_source = serde_json::json!({"type":"archive", "sha256":archive_digest});
         detail.integrity = Some(format!("sha256:{archive_digest}"));
         self.transact(expected_revision, |state| {
-            let root = remote::publish(self, &files)?;
+            let root = remote::publish(self, &files, package::SnapshotBudget::Plugin)?;
             state
                 .candidates
                 .insert(id.clone(), remote::Candidate { detail, root });

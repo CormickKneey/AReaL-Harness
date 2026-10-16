@@ -301,6 +301,20 @@ pub async fn run(options: Options) -> Result<()> {
     }
     let result: Value = areal_local_service::rpc(&service, method, params).await
         .with_context(|| if mutation { format!("plugin request {request_id}; if acceptance is unknown, inspect with areal plugin submission {request_id}; no replay was attempted") } else if method == "areal/plugin/auth" { "plugin authentication operation failed; inspect auth status before retrying; no replay was attempted".into() } else { "plugin read failed".into() })?;
+    let result = if mutation && result["catalogRefreshRequired"] == true {
+        let receipt_revision = result["revision"]
+            .as_u64()
+            .context("invalid plugin mutation receipt revision")?;
+        let catalog = areal_local_service::rpc(&service, "areal/plugin/list", json!({}))
+            .await
+            .with_context(|| format!("plugin request {request_id} succeeded at receipt revision {receipt_revision}; current catalog read failed; no replay was attempted"))?;
+        eprintln!(
+            "plugin request {request_id} completed at receipt revision {receipt_revision}; stdout is the current catalog"
+        );
+        catalog
+    } else {
+        result
+    };
     println!("{}", serde_json::to_string_pretty(&result)?);
     Ok(())
 }

@@ -1024,7 +1024,7 @@ class CoreBackend {
       const { requestId, previousItems, ...steer } = params;
       const { threadId, ...spawn } = steer;
       const durableSteer=project.client.capabilities?.methods?.includes('areal/plugin/hooks/list');
-      return await project.client.request(method, method === 'areal/agent/spawn' ? spawn : method === 'turn/steer' ? {...steer,...(durableSteer?{requestId}:{})} : params);
+      return await project.client.request(method, method === 'areal/agent/spawn' ? spawn : method === 'turn/steer' ? {...steer,...(durableSteer?{requestId}:{})} : params, ['areal/marketplace/addGit', 'areal/marketplace/update'].includes(method) ? { timeoutMs: 120_000 } : undefined);
     }
     catch (error) {
       if (['areal/thread/fork', 'areal/side/start'].includes(method) && (error.code === -32603 || typeof error.code !== 'number')) {

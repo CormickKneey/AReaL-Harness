@@ -77,6 +77,8 @@ Mutations require `requestId` and applicable `expectedRevision`; RPC installatio
 areal plugin --workspace /absolute/workspace submission REQUEST_ID
 ```
 
+Successful marketplace add, remove, update, and plugin uninstall return `{"revision":N,"catalogRefreshRequired":true}` when the complete catalog receipt exceeds 256 KiB. The mutation has completed at revision N. Read `areal/plugin/list` for the complete current catalog. On this marker, CLI reads the current catalog once and prints it to stdout. Its stderr notice identifies the request ID, original receipt revision, and current catalog. If that read fails, CLI still reports the successful mutation and its request ID. Do not replay the mutation. `submission` preserves the original historical receipt without replacing it with a current catalog read.
+
 Core enforces permissions; observers and Thread-scoped identities cannot perform global plugin management. State lives under the Core configuration home's `plugins/`, without modifying Codex caches/configuration.
 
 ## Current limits
@@ -87,9 +89,13 @@ Git/npm sources, modern MRTR, native stdio resource snapshots, portable auth, Ap
 
 Add a Git marketplace in the GUI. Entries accept `git-subdir` with `url/ref/path` and `npm` with `package/version/registry`. Resolve and preview before installation, reviewing the pinned commit, concrete npm version, integrity and content digest. Git refs and npm ranges become immutable candidates; installation runs no lifecycle scripts. Candidate and installed digests remain separate. Explicitly trust the installed digest before connection, and review upgrades again.
 
+GUI Git marketplace add and marketplace update requests wait up to 120 seconds within the outer 150-second service deadline. A timeout or disconnect can leave an unknown result. Check the original submission receipt without automatic resubmission.
+
 Portable and legacy adapters normalize fields privately. Auth supports provided/DCR/CIMD preference, declared endpoint/resource/OIDC/scope overrides and API-key bearer/basic/custom headers. CIMD preference without a trusted host metadata URL falls back to DCR; it never impersonates an OpenAI client. Main stores client secrets and signing keys securely; Core stores references. ON_INSTALL exposes pending authentication and gates declared auth services; ON_USE requests auth when needed, allowing mixed public access anonymously. OAuth uses PKCE and private storage. Empty scope overrides remain exact through refresh. Challenge-driven upgrades retain proven grants across cancelled retries in the same binding; pending requests are not grants and new configurations/accounts do not inherit them. Private challenges reject the exact sent token without deleting concurrent refreshed tokens or replaying MCP operations.
 
 Codex marketplace/add accepts top-level sparsePaths. Nonempty paths use Git cone directory selection, retained across updates. Callers include the catalog and required package paths; selection is never silently widened. Missing/empty paths retain full checkout; local directory sources reject nonempty sparse selection.
+
+Git marketplace snapshots allow at most 20,000 files and 20,000 filesystem entries. Individual plugin snapshots retain their limits of 4,096 files and 8,192 filesystem entries. Both snapshot types allow at most 64 MiB per file and in total, excluding `.git`.
 
 ## Desktop Apps and GitHub
 

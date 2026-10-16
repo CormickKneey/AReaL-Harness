@@ -77,11 +77,15 @@ Core 管理写入要求 `requestId` 与必要的 `expectedRevision`；RPC 安装
 areal plugin --workspace /absolute/workspace submission REQUEST_ID
 ```
 
+添加、移除、更新 marketplace 和卸载插件成功后，若完整目录回执超过 256 KiB，RPC 返回 `{"revision":N,"catalogRefreshRequired":true}`。变更已在版本 N 完成，再用 `areal/plugin/list` 读取完整当前目录。CLI 遇到此标记会读取一次当前目录并输出到 stdout，stderr 标明请求 ID、原回执版本与当前目录。后续读取失败时，CLI 仍明确报告原变更已成功，并提供请求 ID；不要重放变更。`submission` 保留原始历史回执，不读取当前目录来替换它。
+
 权限归 Core；观察者和限制到特定 Thread 的身份不能进行全局插件管理。安装状态存在 Core 配置 home 的 `plugins/`，不修改 Codex 的缓存或配置。
 
 ## Git/npm 与 MCP
 
 在“添加市场”选择 Git marketplace；包条目可以使用以下来源。Git ref 固定到 commit，npm 版本范围解析到具体版本与 integrity；下载和安装不运行 npm lifecycle scripts。
+
+GUI 的 Git marketplace 添加和 marketplace 更新请求最多等待 120 秒，仍受外层 150 秒服务期限约束。超时或断开后结果可能未知，应核对原提交回执，不自动重发。
 
 ```json
 {"name":"example","source":{"source":"git-subdir","url":"https://github.com/example/plugins.git","ref":"main","path":"plugins/example"}}
@@ -95,6 +99,8 @@ areal plugin --workspace /absolute/workspace submission REQUEST_ID
 OAuth 使用私有存储和 loopback PKCE callback。scope override（包括空列表）在授权与刷新时保留；认证挑战只交给认证所有者。服务要求增加权限时，同一绑定的授权请求保留已授予权限；取消后重试也保留，待授权权限不会被当成已授予权限，新配置或账号不继承旧授权。工具级拒绝绑定实际发送的 token，不误删并发刷新得到的新 token，也不自动重发 MCP 操作。实现与真实服务证据分开记录，见[验收矩阵](../development/codex-plugins-p1-p3-acceptance.md)。
 
 Codex `marketplace/add` 接受顶层 `sparsePaths`：非空列表使用 Git cone 目录选择并在更新时保留；调用方须包含目录文件与所需插件路径，不自动扩大选择。省略或空列表保留完整 checkout；本地目录来源不接受非空 sparse 选择。
+
+Git marketplace 快照最多包含 20,000 个文件和 20,000 个文件系统条目。单插件快照仍最多包含 4,096 个文件和 8,192 个文件系统条目。两类快照的单文件和内容总量均最多为 64 MiB，不计 `.git`。
 
 ## 桌面 Apps 与 GitHub
 

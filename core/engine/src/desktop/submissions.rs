@@ -38,6 +38,8 @@ impl Submissions {
     }
 }
 impl Engine {
+    pub const MANAGEMENT_RECEIPT_MAX_BYTES: usize = 256 * 1024;
+
     pub async fn management_submission<F, Fut>(
         self: &Arc<Self>,
         identity: String,
@@ -74,7 +76,7 @@ impl Engine {
    // Each admitted operation may later persist a 256 KiB response. Reserve that
    // space now while journal admission is serialized, so concurrent completions
    // cannot exceed the same 8 MiB budget enforced when reopening the service.
-   let reserved=entries.values().filter(|r|r.state=="accepted").count().saturating_mul(256*1024+512);
+   let reserved=entries.values().filter(|r|r.state=="accepted").count().saturating_mul(Self::MANAGEMENT_RECEIPT_MAX_BYTES+512);
    if serde_json::to_vec(&*entries).map_err(invalid)?.len().saturating_add(reserved)>8*1024*1024 {
        entries.remove(&key);
        return Err(Error::Exhausted("management receipt capacity cannot reserve this response".into()));
@@ -83,7 +85,7 @@ impl Engine {
    drop(entries);
    let mut result=run(engine.clone()).await;
    let mut entries=engine.desktop.submissions.entries.lock().await;
-   if serde_json::to_vec(&result).map_err(invalid)?.len()>256*1024 {result=json!({"error":{"code":-32005,"message":"mutation completed; response exceeds receipt budget; inspect authoritative state"}}); }
+   if serde_json::to_vec(&result).map_err(invalid)?.len()>Self::MANAGEMENT_RECEIPT_MAX_BYTES {result=json!({"error":{"code":-32005,"message":"mutation completed; response exceeds receipt budget; inspect authoritative state"}}); }
    let record=entries.get_mut(&key).unwrap();record.state="completed".into();record.response=Some(result.clone());
    if let Err(e)=engine.store.save_metadata("submissions",&*entries).await{let record=entries.get_mut(&key).unwrap();record.state="unknown".into();record.response=None;return Err(invalid(e));}
    Ok(result)
