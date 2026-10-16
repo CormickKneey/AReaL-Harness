@@ -1,3 +1,4 @@
+import { runDecisionExercise } from "./design-system-decision-exercise.mjs";
 import assert from "node:assert/strict";
 import { runSettingsExercise, runSettingsContrast } from "./design-system-settings-exercise.mjs";
 import { createRequire } from "node:module";
@@ -16,8 +17,10 @@ const { chromium } = require("playwright-core");
 const dist = join(gui, "dist/design-system");
 const scratch = await mkdtemp(join(tmpdir(), "areal-design-system-"));
 const baseline = process.argv.includes("--baseline");
+const decisionExercise = process.argv.includes("--decision-exercise");
 const settingsContrast = process.argv.includes("--settings-contrast");
 const settingsExercise = process.argv.includes("--settings-exercise") || settingsContrast;
+const evidenceExercise = settingsExercise || decisionExercise;
 let exercise = null;
 const html = await readFile(join(dist, "design-system.html"), "utf8");
 const buildDigest = createHash("sha256").update(html);
@@ -40,18 +43,22 @@ const errors = [], external = [], samples = [], checks = [];
 try {
   browser = await chromium.launch({ headless: true, ...(process.env.AREAL_GUI_TEST_BROWSER ? { executablePath: process.env.AREAL_GUI_TEST_BROWSER } : { channel: "chrome" }) });
   browserVersion = browser.version();
-  const context = await browser.newContext({ deviceScaleFactor: settingsExercise ? 2 : 1, viewport: { width: 1440, height: settingsExercise ? 949 : 900 }, serviceWorkers: "block" });
+  const context = await browser.newContext({ deviceScaleFactor: evidenceExercise ? 2 : 1, viewport: { width: 1440, height: evidenceExercise ? 949 : 900 }, serviceWorkers: "block" });
   await context.route("**/*", route => {
     if (route.request().url().startsWith(origin + "/")) return route.continue();
     external.push(route.request().url()); return route.abort();
   });
-  if (settingsExercise) await context.tracing.start({ screenshots: true, snapshots: true });
+  if (evidenceExercise) await context.tracing.start({ screenshots: true, snapshots: true });
   page = await context.newPage();
   page.on("pageerror", error => errors.push(error.message));
-  await page.goto(`${origin}/design-system.html${settingsExercise ? "?settings-exercise" : ""}`);
+  await page.goto(`${origin}/design-system.html${decisionExercise ? "?decision-exercise" : settingsExercise ? "?settings-exercise" : ""}`);
   await page.getByRole("heading", { name: "客户端设计系统", exact: true }).waitFor();
   assert.equal(await page.evaluate(() => typeof window.arealDesktop), "undefined");
-  if (settingsContrast) {
+  if (decisionExercise) {
+    exercise = { steps: [], checks: [] };
+    await runDecisionExercise(page, scratch, gui, exercise);
+    checks.push(...exercise.checks);
+  } else if (settingsContrast) {
     exercise = { steps: [], checks: [] };
     await runSettingsContrast(page, scratch, gui, exercise);
     checks.push(...exercise.checks);
@@ -384,12 +391,12 @@ try {
   if (page) await page.screenshot({ path: join(scratch, "failure.png"), fullPage: true }).catch(() => {});
   process.exitCode = 1;
 } finally {
-  if (settingsExercise && page) await page.context().tracing.stop({ path: join(scratch, "settings-trace.zip") }).catch(error => { errors.push(String(error)); passed = false; process.exitCode = 1; });
+  if (evidenceExercise && page) await page.context().tracing.stop({ path: join(scratch, decisionExercise ? "decision-trace.zip" : "settings-trace.zip") }).catch(error => { errors.push(String(error)); passed = false; process.exitCode = 1; });
   await browser?.close(); await new Promise(resolve => server.close(resolve));
-  const artifacts = await Promise.all((await readdir(scratch)).filter(name => name.endsWith(".png") || (settingsExercise && /\.(json|zip)$/.test(name))).sort().map(async name => ({ path: name, sha256: createHash("sha256").update(await readFile(join(scratch, name))).digest("hex") })));
+  const artifacts = await Promise.all((await readdir(scratch)).filter(name => name.endsWith(".png") || (evidenceExercise && /\.(json|zip)$/.test(name))).sort().map(async name => ({ path: name, sha256: createHash("sha256").update(await readFile(join(scratch, name))).digest("hex") })));
   const worktreeStatus = execFileSync("git", ["status", "--porcelain"], { cwd: gui }).toString();
   const diffSha256 = createHash("sha256").update(execFileSync("git", ["diff", "HEAD", "--"], { cwd: gui })).digest("hex");
   await writeFile(join(scratch, "manifest.json"), JSON.stringify({ passed, baseline, exercise, runId: scratch.split("/").at(-1), recordedAt: new Date().toISOString(), commit, buildSha256, worktreeStatus, diffSha256,
-    environment: { platform: process.platform, arch: process.arch, browserVersion, viewport: settingsExercise ? null : { width: 1440, height: 900 }, deviceScaleFactor: settingsExercise ? 2 : 1 }, artifacts, checks, errors, external, samples, scope: "production renderer components with local fixture actions; no Electron/Core acceptance" }, null, 2));
+    environment: { platform: process.platform, arch: process.arch, browserVersion, viewport: evidenceExercise ? null : { width: 1440, height: 900 }, deviceScaleFactor: evidenceExercise ? 2 : 1 }, artifacts, checks, errors, external, samples, scope: "production renderer components with local fixture actions; no Electron/Core acceptance" }, null, 2));
   console.log(JSON.stringify({ passed, scratch, checks, errors }));
 }

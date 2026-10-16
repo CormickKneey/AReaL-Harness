@@ -20,6 +20,7 @@ import { TooltipProvider } from "../components/ui/tooltip.js";
 import { MessageResponse } from "../components/ai-elements/message.js";
 import { TurnExecution } from "../TurnExecution.js";
 import { Messages } from "../Messages.js";
+import { DecisionTransferExercise } from "./DecisionTransferExercise.js";
 import { SettingsReflowExercise } from "./SettingsReflowExercise.js";
 import { ConversationTimelinePreview } from "./ConversationTimelinePreview.js";
 import type { LexicalChatInputHandle } from "../LexicalChatInput.js";
@@ -85,6 +86,7 @@ function Preview() {
   const [panelLocation, setPanelLocation] = useState<"bottom" | "right">("bottom");
   const [message, setMessage] = useState("");
   const [reducedMotion, setReducedMotion] = useState(true);
+  const decisionExercise = new URLSearchParams(window.location.search).has("decision-exercise");
   const exercise = new URLSearchParams(window.location.search).has("settings-exercise");
   const [exerciseContent, setExerciseContent] = useState("reference");
   const [values, setValues] = useState<Record<string, string>>({});
@@ -122,7 +124,7 @@ function Preview() {
       <label>减少动态效果<input type="checkbox" checked={reducedMotion} onChange={event => setReducedMotion(event.target.checked)} /></label>
       {exercise && <label>题目内容<select aria-label="题目内容" value={exerciseContent} onChange={event => setExerciseContent(event.target.value)}><option value="reference">参考内容</option><option value="stress">长文案</option></select></label>}
     </header>
-    {exercise ? <SettingsReflowExercise key={exerciseContent} stress={exerciseContent === "stress"} state={state} /> : <>
+    {decisionExercise ? <DecisionTransferExercise key={state} state={state} /> : exercise ? <SettingsReflowExercise key={exerciseContent} stress={exerciseContent === "stress"} state={state} /> : <>
     <section className="design-preview-panel" aria-label="公共控件">
       <h2>设置控件 · 按交互选择</h2>
       <p className="text-ui-sm text-foreground-subtle">执行操作用按钮，开启或关闭用开关，多项选择用下拉，仅两个选项直接并排选择。</p>

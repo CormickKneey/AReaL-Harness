@@ -1,12 +1,12 @@
 # 结构化数据到高保真实现
 
-本页是 [架构阶段 B/C](architecture.md#阶段及准入) 的合同草案。先明确架构，再形成有证据的 Base，最后固定题目与模拟页面。当前设置控件合同只描述已有预览，不属于独立做题结果。
+本页定义 [架构阶段 B/C](architecture.md#阶段及准入) 的 v1 合同。先明确架构，再形成有证据的 Base，最后固定题目与模拟页面。当前设置控件合同描述已有预览；设置迁移和内容/决策合同描述候选探索题，均不是盲测或已批准视觉基线。
 
 本流程把“要做什么、按什么做、如何判断相符”固定下来。输入是设计意图和受控引用，输出是生产组件的组合及可追溯证据；页面业务状态仍由原所有者管理。它不是将截图铺在页面上，也不是让 JSON 绕过 React/Core 的执行边界。
 
 ## 两类数据
 
-[registry.json](registry.json) 是系统级目录，拥有 Token 角色、组件 ID、模式 ID 和最低状态合同；不存数值副本。[surfaces/settings-controls.json](surfaces/settings-controls.json) 是当前预览的页面级合同，引用同一目录。修改规范或增加公共组件时维护目录；普通页面变更维护所属合同，不复制全系统规则。
+[registry.json](registry.json) 是系统级目录，拥有 Token 角色、组件 ID、模式 ID 和最低状态合同；不存数值副本。[surfaces/settings-controls.json](surfaces/settings-controls.json) 是当前预览的页面级合同，引用同一目录。[设置迁移合同](surfaces/settings-reflow.json)与[内容/决策合同](surfaces/decision-transfer.json)演示新内容对已有组合的引用。修改规范或增加公共组件时维护目录；普通页面变更维护所属合同，不复制全系统规则。
 
 ## 页面合同字段
 
