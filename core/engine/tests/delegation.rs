@@ -31,6 +31,8 @@ struct ModelFixture {
     reject_work: AtomicBool,
     started: Semaphore,
     release: Semaphore,
+    read_execution: std::sync::Mutex<Option<String>>,
+    root_calls: AtomicUsize,
 }
 #[async_trait]
 impl Model for ModelFixture {
@@ -51,6 +53,18 @@ impl Model for ModelFixture {
         if root {
             self.started.add_permits(1);
             self.release.acquire().await?.forget();
+            let n = self.root_calls.fetch_add(1, Ordering::SeqCst);
+            if let Some(execution) = self.read_execution.lock().unwrap().clone() {
+                return Ok(Box::pin(futures_util::stream::iter(match n {
+                    0 => vec![Ok(ModelEvent::ToolCall(areal_engine::model::ToolCall {
+                        id: "read-settled-execution".into(),
+                        name: "agent_wait".into(),
+                        arguments: json!({"executionId":execution,"timeoutMs":5000}).to_string(),
+                    }))],
+                    1 => vec![Ok(ModelEvent::text("Verified delivered result"))],
+                    _ => vec![],
+                })));
+            }
         }
         if messages
             .iter()
@@ -217,6 +231,8 @@ impl Fixture {
             reject_work: AtomicBool::new(false),
             started: Semaphore::new(0),
             release: Semaphore::new(0),
+            read_execution: std::sync::Mutex::new(None),
+            root_calls: AtomicUsize::new(0),
         });
         let worker = Arc::new(WorkerFixture {
             probes: AtomicUsize::new(0),
@@ -311,6 +327,38 @@ impl Fixture {
         self.runtime.shutdown().await.unwrap();
         self.peer.await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn an_observed_settled_delivery_does_not_require_another_final_model_response() {
+    let fixture = Fixture::open(Some(false)).await;
+    let mut request = fixture.request("observed-delivery", "modify", "changes");
+    request.independent = true;
+    request.writes = vec!["result.txt".into()];
+    let execution = fixture.engine.delegate(request).await.unwrap();
+    *fixture.model.read_execution.lock().unwrap() =
+        Some(execution["executionId"].as_str().unwrap().into());
+    fixture.model.release.add_permits(8);
+    let done = tokio::time::timeout(
+        Duration::from_secs(10),
+        fixture.engine.wait(&fixture.parent),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        done.turns[0].status,
+        areal_protocol::TurnStatus::Completed,
+        "{:?}",
+        done.turns[0].error
+    );
+    assert_eq!(fixture.model.root_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        std::fs::read(fixture.root.path().join("repo/result.txt")).unwrap(),
+        b"candidate"
+    );
+    assert_eq!(fixture.worker.attempts.load(Ordering::SeqCst), 1);
+    fixture.close().await;
 }
 
 #[tokio::test]

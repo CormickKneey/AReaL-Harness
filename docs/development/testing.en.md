@@ -35,6 +35,8 @@ Composer and queue smoke share navigation and narrow-window steps in `clients/gu
 
 In the model-selection smoke, only settings-operation settlement after applying model configuration uses a 180-second deadline, covering the existing 150-second apply IPC, subsequent configuration reads and UI settlement. Other page actions retain the default 15 seconds. The test submits apply once, waits for navigation to become available, then checks the actual Core model catalog and requests; it does not hide failures with fixed sleeps or replayed applications.
 
+Independent CLI configuration reads, service stop and status queries in the desktop connection smoke use the product `executeCore` launch bridge. On macOS the system Python remains the actual parent of native Core; tests do not substitute direct Node launches for the product entry point. Disconnect recovery still checks the original Turn, subscriptions and request count without replaying submissions.
+
 ## Usage analytics history sync
 
 `node --test scripts/analytics-history.test.cjs` uses the real `CoreClient` and a local WebSocket protocol fixture to verify that the dedicated read-only history connection's 4 MiB frame limit does not close the primary project connection. It also covers startup before the model connects, identity changes, history deduplication, partial caches, handshake/RPC timeouts, and cleanup with partial-history errors after primary closure. The analytics connection only initializes, negotiates capabilities, and calls `thread/read`, using the client's default request deadlines; each project has at most one sync in progress. Large-history failures remain partially synced and do not establish complete history coverage. This test does not replace real Core, native GUI, installed-package, or provider acceptance.
@@ -72,6 +74,8 @@ Native tools/agent smoke tests use a local fixed-response HTTP model, the standa
 
 
 Request-budget tests cover `MAX_MODEL_ROUNDS` classification when Chat Completions or Responses returns tools in the final round, with no tool execution or retries and the original budget audit preserved. Ordinary tool-call budget exhaustion and invalid indices must retain their own classifications. Desktop CLI acceptance also checks the corresponding `error_max_turns` result. Goal HTTP regressions verify that output-token caps and tool count/buffer budgets survive shared pools, while unknown usage from failed requests prevents retries and tool execution.
+
+The interactive-process smoke explicitly sets `stdinOpen:true` for non-PTY pipes, checks `stdinMode=pipe` and the running state before writing, then verifies output; PTY separately checks `stdinMode=pty`. Native tools smoke additionally checks default-closed stdin, write-then-EOF and EOF-only input instead of depending on the old implicit open pipe.
 
 Linux requires Bubblewrap user/PID namespaces, seccomp, Python and Bash. The public Dockerfile builds the pinned bundled rg and provides the remaining toolchain; no host rg installation is required:
 

@@ -89,6 +89,8 @@ Responses 摘要通过可选 `reasoning_summary` / `reasoningSummary` 显式开�
 这是新增的 Item 类型和通知，客户端须识别或忽略 `reasoning`，Rust 的 `Item` / `ModelEvent` 穷尽匹配需增加对应分支，`ModelOptions` / `ModelParameters` / `SelectedModelConfig` 新增可选摘要字段。字段见 [Core schema](../../schemas/areal-core-v1.json)，本地客户端显示行为见[客户端指南](../guides/clients.md)。
 
 <a id="recovery"></a>
+统一委派的结算回执若已通过工具结果完整提供给当前模型请求，Core 不因自动汇总再次出现相同回执而额外请求一次最终答复。比较只忽略等待标记与剩余工具额度；执行身份、状态、资源清退、正文、验证、制品和交付事实仍须一致。新结果、失败、未知状态或未完成交付继续走原有收尾检查，不重放工具。
+
 ## 执行与恢复
 
 工具只在完整模型流终态后执行。dynamicToolCall 保留原始 arguments、有效参数 effectiveArguments、callId、execution 后端与 running/succeeded/failed/cancelled/unknown。本地工具另记 epoch/scope/operationId；外部工具不伪造 Runtime 事实。hooks 和插件嵌套操作分别 journal，成功写入不因外层失败抹掉。
@@ -107,6 +109,8 @@ Goal 请求先检查共享预算与用量是否已知，再决定是否重试。
 
 Goal 的根线程与子线程共享账本。子模型失败后缺失最终用量，会阻止其他线程继续提交模型或工具；根线程诊断保留已观察到的子请求终止分类、账本请求 ID 和所属 thread/turn，避免把上游错误误报为无来源的内部故障。账本只新增可选的脱敏分类字段，兼容旧记录；旧记录可能无法还原失败来源。检查失败请求后，可在 TUI 使用 `/goal-resume` 确认未知消费的保守预留并继续；不会自动重放失败工具或将未知用量改为零。
 
+`max_empty_completion_retries` 是默认 0（关闭）的实验性额外恢复额度，显式开启后仅为空白或纯推理结束提供有界恢复；一般 `max_completion_retries` 仍默认 0。两者共用 Turn 计数，空白取较大上限，成功工具不清零。恢复仅丢弃本次未接受响应，不重放已执行操作；失败原文与 usage 留档，所有实际请求仍受硬预算和取消限制。
+
 `max_completion_retries` 默认 0，可为已分类的长度截断、非法工具 index、空回复等提供有限恢复（仅 reasoning 不算最终回复）；关闭 watchdog 后，已分类网络错误也沿用此有限额度。工具仍只在完整成功流后执行；UNKNOWN、持久化错误、取消与显式任务预算错误不重放。
 
 Chat 工具 index 缺失、null、非整数类型、负数、超出 u64 范围或片段非对象时，使用明确的内部协议错误，只进入上述有限恢复，不进入网络 watchdog，也不作为 Workgroup 推理检查点。Core 不猜测编号或片段归属；数量、参数和缓冲预算错误不自动恢复。失败响应的模型视图被丢弃，已有确认工具、steer 和已观测 usage 保留。解析错误在已排队事件交付后立即传播；同事件或前序事件的已解析 usage 只累计一次，直接 EOF 保留原始错误类型。
@@ -117,7 +121,11 @@ Rust `Model::chat_with_limits(messages, tools, purpose, ToolCallLimits, cap)` �
 
 Checkpoint 的 `retainedInputs: [{itemId, content}]` 与 `evidence: string[]` 是完整请求预算内的原文和历史回执投影，不另设固定额度。最新真实用户请求在前缀内时完整保留，其他输入优先较近修订；首问不享有永久优先。输出仍按权威原文顺序排列，旧附件超额时保留可容纳的文字并明确标记附件省略，完整原文通过 `read_history` 回取。自动 Goal 续轮不是新用户要求。旧 checkpoint 未含 retainedInputs 时保留原重放语义，直到下一次成功压缩；不批量改写用户历史。摘要是可出错的历史证据，不能覆盖后续用户指令。
 
+当候选的必需投影已经达到软 token 目标，较早的纯文本修订可继续使用硬窗口与既有字节额度内的余量；不扩大旧附件或可选回执的额度。`targetMet=false` 如实报告软目标未达成，不据此省掉仍可容纳的修订；完整请求仍须通过硬窗口门禁。摘要不能把所有旧要求必然单独重放当作前提。
+
 压缩使用与实际求解相同的完整输入计量，按完整工具轮次切分，未完成或 UNKNOWN 副作用不得进入前缀。候选须通过净缩减、完整输入硬上限、前缀身份和工具配对校验后才原子提交。摘要等待期间的新 steer 会参与重新规划；实际求解仍重建请求并预检。摘要输入预检会显式标记证据省略，摘要文本最多 16 KiB。仅已收到但不合格的摘要允许一次验证重试；HTTP 400 等永久请求错误直接失败。失败或取消保留旧 checkpoint，不提交降级摘要，已观察用量仍持久保存。只有存储滚动可使用历史摘录归档不可回放记录，不用于摘要失败回退。旧投影可容纳当前完整请求时允许继续，超限则报 `LLM_CONTEXT_WINDOW_EXCEEDED` 并保留摘要失败原因；计量与取消错误不能绕过。没有可缩小的合法前缀时不付费摘要。
+
+每次请求先在内存组装完整动态提示，按完整请求与历史投影的估算差预留附加开销，再规划压缩；未被预检接受的新提示不写入历史，避免挡住已完成工具尾轮的安全切点。压缩或历史变化后重建请求；提交锁内重新核验历史边界、执行硬预检并持久化接受的提示，防止与新 steer 错序。恢复提示在接受请求前保留，本地重建不增加求解轮数；真实摘要请求仍正常计量。已发送提示、工具事实、窗口和执行预算不改写。
 
 `areal/context/compacted` 保留前后字节、估算 token、targetTokens/targetMet、摘要预算、degradationReason、retainedUserMessages、trigger（manual/tokens/bytes/storage）与用量；`degradationReason=storage_archive` 只标识未调用摘要器的存储归档。新增 `areal/context/compactionFailed {threadId,code:"LLM_CONTEXT_COMPACTION_FAILED",reason,checkpointPreserved:true,windowTokens,outputReserveTokens,inputLimitTokens,beforeEstimatedTokens}`，并登记于 capabilities 和 JSON Schema。它表示候选没有提交，不等同于 Turn 失败。
 
@@ -131,9 +139,9 @@ Checkpoint 的 `retainedInputs: [{itemId, content}]` 与 `evidence: string[]` �
 
 `limits.context_compaction_enabled=false` 时自动阈值超限使 Turn 失败，显式 `areal/context/compact` 返回错误，不写入 checkpoint；配置见[上下文限额](../guides/configuration.md#模型与限额)。
 
-模型审计写入 `data_dir/model-requests/*.json` 与 `requests.jsonl`，记录 solve/summary、参数、请求体摘要/大小、attempt、usage、stopReason、耗时与有限响应形状，不记录 header、endpoint 或 prompt。`usageObserved=true` 表示收到可解析的完整用量事件（包括 0）；缺失/false 不能视为已知零。length 终态仍收集同帧/尾帧 usage，等待受期限和取消限制，随后判定截断并禁止执行工具。
+CLI 默认模型与 GUI/桌面目录选定的供应商模型共用审计链路，覆盖求解、摘要及子 Agent 请求；通过 Core 发起的请求保留 thread/turn 关联。模型审计写入 `data_dir/model-requests/*.json` 与 `requests.jsonl`，记录 solve/summary、参数、请求体摘要/大小、attempt、usage、stopReason、耗时与有限响应形状，不记录 header、endpoint 或 prompt。`usageObserved=true` 表示收到可解析的完整用量事件（包括 0）；缺失/false 不能视为已知零。length 终态仍收集同帧/尾帧 usage，等待受期限和取消限制，随后判定截断并禁止执行工具。
 
-SSE 流式 Provider 错误另写入 `data_dir/model-requests/errors/<requestId>.json`，普通审计的 `errorDetailFile` 指向该文件。目录 0700、文件 0600，保存错误对象原文（包括未进入白名单的 code/type/message）；序列化原文超过 16 KiB 时保存 UTF-8 安全截取的 `rawJsonPrefix` 并标记 `truncated=true`。这些私有排障制品可能包含上游回显内容，不进入 `requests.jsonl`、TurnOutcome 或遥测；旧请求未保存的原文无法回取。
+SSE 流式 Provider 错误另写入 `data_dir/model-requests/errors/<requestId>.json`，普通审计的 `errorDetailFile` 指向该文件。目录 0700、文件 0600，保存错误对象原文（包括未进入白名单的 code/type/message）；序列化原文超过 16 KiB 时保存 UTF-8 安全截取的 `rawJsonPrefix` 并标记 `truncated=true`。这些私有排障制品可能包含上游回显内容，不进入 `requests.jsonl`、TurnOutcome 或遥测；旧请求未保存的原文无法回取。HTTP 请求或响应正文的传输失败也在同一私有详情中保留阶段、分类标志和移除 URL 后的底层原因；公开分类、重试与 Goal 未知用量门禁不变。
 
 诊断制品采用固定保留上限，检查时达到年龄、数量或总容量任一条件即回收最旧的已完成记录：
 
@@ -393,3 +401,7 @@ CLI 保持 `--input-file` 的 2 MiB 上限，以有界读取在 JSON 解析前�
 项目指令由 Engine 在每个 Turn 首次模型请求前加载，并保存为 `instructionSnapshot`。按工作区根到 Thread `cwd` 的目录链读取 `AGENTS.md`，来源路径随正文写入快照；不新增 API 字段，已有仅根文件项目保持兼容。正文合计超过 32 KiB、无效 UTF-8、符号链接或超过 64 层的目录链使 Turn 在请求模型前失败，不截断规则。作用域、优先级与 cwd 路径别名见[客户端指南](../guides/clients.md#历史恢复与观测)。
 
 Shared Browser 的旧 Thread 固定工具包追加已实现，方法为 `areal/thread/tools/attach`；请求、回执、存储版本与回退限制见[Browser 契约](browser.md#10-旧-thread-与多客户端新增-core-接口)。工具准备与只读观察订阅仍是设计契约；`thread/resume` 行为未改变。
+
+Core 可通过默认关闭的实验配置，在请求投影与检查点证据中有界保留完整文件参考；执行等待仍由 Runtime 管理。参考回取、非交互 stdin 和连续失败上限见[配置指南](../guides/configuration.md#参考保留与有界工具恢复)。
+
+Rust `Limits` 与 `ResolvedCoreConfig` 增加上述实验控制字段及 `command_stdin_closed`。直接使用完整结构体字面量的调用方需补齐字段，或使用 `..Limits::default()`；默认值不启用四项实验策略。

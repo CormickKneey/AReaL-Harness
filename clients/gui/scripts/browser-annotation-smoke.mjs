@@ -14,6 +14,7 @@ const gui = resolve(dirname(fileURLToPath(import.meta.url)), ".."),
 const require = createRequire(join(gui, "app/package.json"));
 const { _electron: electron } = require("playwright-core");
 const {ServiceConnection,waitForServiceExit}=require(join(gui,"app/src/core/service-client.cjs"));
+const {desktopExecutables}=require(join(gui,"app/src/core/desktop-executables.cjs"));
 const scratch = await mkdtemp("/private/tmp/areal-browser-annotations-");
 const workspace = join(scratch, "workspace"),
   user = join(scratch, "user");
@@ -400,7 +401,8 @@ try {
   throw e;
 } finally {
   // Origin 确认桩不用于退出确认；只关闭本次隔离 GUI，并结算其确切服务。
-  const executable=app?await app.evaluate(()=>process.execPath).catch(()=>null):null;
+  const launch=app?await app.evaluate(()=>({executable:process.execPath,resourcesPath:process.resourcesPath})).catch(()=>null):null;
+  const executable=launch?desktopExecutables({packaged:!!packagedExecutable,...launch}).service:null;
   if(app){await app.evaluate(({dialog})=>{globalThis.__annotationUploadGate?.release?.();dialog.showMessageBox=async()=>({response:1});}).catch(()=>{});await app.close();}
   try{
     const home=join(scratch,"core"),metadata=JSON.parse(await readFile(join(home,"service.json"),"utf8"));

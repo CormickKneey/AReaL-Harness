@@ -1,5 +1,36 @@
 use super::*;
 
+#[tokio::test]
+async fn setuid_process_queries_keep_backend_available() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    for profile in [SandboxProfile::FullAccess, SandboxProfile::Native] {
+        let backend = NativeBackend::launch_with_profile(profile).await.unwrap();
+        for _ in 0..24 {
+            let mut exec = execution(
+                &root,
+                "/bin/ps -axo pid,ppid,etime,comm | /usr/bin/head -n 1",
+            );
+            exec.scope_access = ScopeAccess::Unrestricted;
+            let mut receiver = backend.start(exec).await.unwrap();
+            let (output, code) = collect(&mut receiver, &backend).await;
+            assert_eq!(code, Some(0));
+            if matches!(profile, SandboxProfile::FullAccess) {
+                assert!(String::from_utf8(output).unwrap().contains("PID"));
+            }
+        }
+        let mut receiver = backend
+            .start(execution(&root, "printf ready"))
+            .await
+            .unwrap();
+        assert_eq!(
+            collect(&mut receiver, &backend).await,
+            (b"ready".to_vec(), Some(0))
+        );
+        backend.shutdown().await.unwrap();
+    }
+}
+
 const TREE: &str = r#"
 import os, pathlib, time
 deadline = time.monotonic() + 8

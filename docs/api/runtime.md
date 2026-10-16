@@ -76,7 +76,7 @@ Linux native 每次执行由独立的可信 Rust 二进制 `areal-runtime-reaper
 
 启动握手最多等待 3 秒；确认未创建命令且 helper 已回收的启动失败，只拒绝本次执行并释放登记。后端启动返回 `UNAVAILABLE` 或 `CLEANUP_FAILED` 时，Supervisor 将执行及操作保留为 UNKNOWN、封闭连接准入并保留占额，不能按确定未启动释放资源。已启动执行的清理超时会报告失败；helper 继续收养并等待尚未退出的后代，Runtime 保留其 waiter，不以强杀回收器替代回收完成。
 
-macOS 保留进程组清理，并在执行期间使用 `libproc` 约每 10 ms 发现后代，最多跟踪 4096 个进程身份。已发现后代即使调用 `setsid` 或重新归属，仍按 PID 与启动时间核对后清退；确认这些身份消失后才完成输出收尾。发现、信号或退出观察失败会报告清理失败。它不具备 Linux subreaper 的收养能力：两次观察之间快速 fork、父进程退出和重新归属仍可能漏掉后代；身份检查与发信号也不是内核原子操作。该跟踪不提供任意进程树的完整清理保证，也不覆盖 Runtime 被强杀后的清理。
+macOS 保留进程组清理，并在执行期间使用 `libproc` 约每 10 ms 发现后代，最多跟踪 4096 个进程身份。已发现后代即使调用 `setsid` 或重新归属，仍按 PID 与内核唯一进程 ID 核对后清退；确认这些身份消失后才完成输出收尾。唯一身份查询也适用于执行 setuid 程序的后代，避免因读取受限 BSD 进程信息而错误关闭后端；父身份同样使用内核唯一 ID 校验。发现、信号或退出观察失败会报告清理失败。它不具备 Linux subreaper 的收养能力：两次观察之间快速 fork、父进程退出和重新归属仍可能漏掉后代；身份检查与发信号也不是内核原子操作。该跟踪不提供任意进程树的完整清理保证，也不覆盖 Runtime 被强杀后的清理。
 
 仍归属活着的中间父进程的 zombie，必须由该父进程 wait；helper 在父进程退出、后代被收养后才能代为回收。
 
@@ -105,6 +105,8 @@ staging 和 commit 是独立、可审计操作，不是跨文件事务。断连�
 expected 为 `{kind:"absent"}` 或 `{kind:"sha256",value:"digest"}`。read 的 sha256 总是完整文件摘要，offset 为字节；单文件最多 8 MiB，read/write 最多 64 KiB，patch 旧/新文本合计 64 KiB 且旧文本非空唯一匹配。applyPatch 是保留的单条兼容入口，与单元素 applyPatches 共用实现。applyPatches 一次最多 32 个替换，所有替换均唯一匹配后才条件写入；陈旧摘要/已存在/歧义返回 CONFLICT。
 
 list 每页最多 256 项/约 32 KiB，扫描最多 4096 UTF-8 名称；目录变化时不是快照。helper 使用目录描述符与 NOFOLLOW，普通读写拒绝符号链接、硬链接和特殊文件，条件替换 fsync。
+
+打开已有根目录、路径中间目录和只读文件时，helper 在原描述符边界重试 `EINTR`，保留 `NOFOLLOW` 等标志，不重放整个操作或消耗新的模型轮次。权限拒绝不重试；创建、写入、替换和删除不因 `EINTR` 自动重放，未恢复的中断返回 `UNAVAILABLE` 并保留未知结果语义。系统权限审批或存储服务持续不可用时，重试不能使其恢复；已有 Scope 的 wall-time 和取消、清理仍约束助手进程。
 
 `search` 是只读的原生 `FileCommand`，在当前 Scope 授权的文件或目录中按正则表达式 `pattern` 搜索，可选 `glob` 过滤路径。`context` 必填且为 0–20，`limit` 必填且为 1–1000，只计匹配行，不计上下文行。结果行的 `path` 是宿主文件路径，`line` 为行号或 null，`text` 为 UTF-8 文本或 null，`kind` 为 `match` 或 `context`。匹配超限、单行超过 64 KiB、返回行累计超过 8 MiB 或序列化结果行超过 13000 字节时，`limited=true`；此时应按 `guidance` 缩小路径或模式，只有 `limited=false` 时空结果才表示没有匹配。搜索遵循工作区内 ignore 规则，不读取宿主 rg 配置，不跟随符号链接。此分支扩展了既有 `fs.execute` 命令联合类型；旧 Runtime 不认识 `search` 时会拒绝请求，SDK 不自动降级或重试。
 

@@ -2,6 +2,50 @@
 
 use super::*;
 
+// 已完整交给本次请求的结算回执，不应仅因自动汇总重复出现而使有效最终答复失效。
+// 只忽略等待与调用额度元数据；制品、交付、错误或正文有变化时仍须再次交给模型。
+fn execution_receipts_observed(messages: &[model::Message], reports: &[Value]) -> bool {
+    let normalize = |mut value: Value| -> Option<Value> {
+        if value["timedOut"] == true {
+            return None;
+        }
+        let object = value.as_object_mut()?;
+        object.remove("remainingToolCalls");
+        object.remove("timedOut");
+        Some(value)
+    };
+    if reports.is_empty()
+        || reports.iter().any(|report| {
+            !report["executionId"].is_string()
+                || report["status"] != "completed"
+                || report["settled"] != true
+                || report["resourcesReleased"] != true
+                || !report["error"].is_null()
+                || !matches!(
+                    report["delivery"]["status"].as_str(),
+                    Some("applied" | "notRequired")
+                )
+        })
+    {
+        return false;
+    }
+    let received: Vec<_> = messages
+        .iter()
+        .filter(|message| message.role == "tool")
+        .filter_map(|message| serde_json::from_str::<Value>(&message.text_content()).ok())
+        .flat_map(
+            |value| match value.get("completed").and_then(Value::as_array) {
+                Some(values) => values.clone(),
+                None => vec![value],
+            },
+        )
+        .filter_map(normalize)
+        .collect();
+    reports
+        .iter()
+        .all(|report| normalize(report.clone()).is_some_and(|value| received.contains(&value)))
+}
+
 /// 取消后只排空流以结算尾部用量；不执行工具，不伪造缺失用量。
 pub(crate) async fn settle_cancelled_stream(
     stream: &mut model::ModelStream,
@@ -95,7 +139,7 @@ impl Engine {
         let mut media_output_bytes = 0;
         let mut tool_count = 0;
         let mut completion_retries = 0;
-        let mut recovery_hint = None;
+        let mut recovery_hint: Option<String> = None;
         let mut output_handoff = false;
         let mut previous_usage = None;
         let mut preflight_compactions = 0;
@@ -223,18 +267,28 @@ impl Engine {
             let goal_instructions = self.goal_instructions(cell).await?;
             let (
                 messages,
+                live_context,
+                request_estimate,
                 thread_id,
                 session_id,
                 turn_id,
                 turn_number,
-                fixed_tokens,
+                overhead,
                 checkpoint_before,
                 history_tail_before,
             ) = {
-                let mut state = cell.state.lock().await;
-                let mut messages = history(&state.thread, &self.store)?;
-                // 每次请求的动态提示必须与其输出一起保留，后续只追加。
-                // 删除旧提示会破坏 encrypted reasoning 所对应的原始上下文。
+                let state = cell.state.lock().await;
+                let (mut messages, observation_audit) = observations::project(
+                    &state.thread,
+                    &self.store,
+                    &self.limits,
+                    model.as_ref(),
+                )?;
+                if let Some(audit) = observation_audit {
+                    self.store.save_audit(audit).await?;
+                }
+                let history_tokens = context::estimate_tokens(&messages);
+                // 已发送提示仍与其输出一起保留；未接受的新提示不能先挡住已结算尾轮的压缩边界。
                 let mut live_context = Vec::new();
                 if let Some(browser) = browser_instructions {
                     live_context.push(Message::text("system", browser));
@@ -308,8 +362,8 @@ impl Engine {
                 if let Some(hint) = self.agent_budget_hint(cell) {
                     live_context.insert(0, Message::text("system", hint));
                 }
-                if let Some(hint) = recovery_hint.take() {
-                    live_context.push(Message::text("user", hint));
+                if let Some(hint) = &recovery_hint {
+                    live_context.push(Message::text("user", hint.clone()));
                 }
                 // 仅新记录使用专用角色；旧 system 快照保持原投影，避免改写恢复历史。
                 for message in &mut live_context {
@@ -339,6 +393,97 @@ impl Engine {
                             .is_some_and(|old| old == message)
                     })
                 });
+                messages.extend(live_context.iter().cloned());
+                let request_estimate = context::request_tokens(&messages, &tool_definitions)?;
+                // 与最终预检共用完整请求：包括新提示、固定前缀、工具及协议封套，不重复计算历史。
+                let overhead = request_estimate.saturating_sub(history_tokens);
+                let checkpoint_before = state
+                    .thread
+                    .context_checkpoint
+                    .as_ref()
+                    .map(|c| c.through_item_id.clone());
+                let thread_id = state.thread.id.clone();
+                let session_id = state.thread.session_id.clone();
+                let turn_id = state.thread.turns.last().unwrap().id.clone();
+                (
+                    messages,
+                    live_context,
+                    request_estimate,
+                    thread_id,
+                    session_id,
+                    turn_id,
+                    state.thread.turns.len() as u64
+                        + state
+                            .thread
+                            .history_archive
+                            .as_ref()
+                            .map_or(0, |a| a.completed_turns),
+                    overhead,
+                    checkpoint_before,
+                    state
+                        .thread
+                        .turns
+                        .iter()
+                        .flat_map(|t| &t.items)
+                        .last()
+                        .map(|i| i.id().to_owned()),
+                )
+            };
+            let context_budget = context::ContextBudget::resolve(&self.limits, model.as_ref())?;
+            let mut compaction_failure = None;
+            if side_thread_id.is_none() && preflight_compactions < 2 {
+                let result = self
+                    .compact_context(cell, cancel, overhead, previous_usage, false)
+                    .await;
+                if let Err(error) = result {
+                    if error.downcast_ref::<context::CompactionFailure>().is_none() {
+                        return Err(error);
+                    }
+                    compaction_failure = Some(error);
+                }
+            }
+            {
+                let mut state = cell.state.lock().await;
+                let history_tail_after = state
+                    .thread
+                    .turns
+                    .iter()
+                    .flat_map(|t| &t.items)
+                    .last()
+                    .map(|i| i.id().to_owned());
+                let checkpoint_after = state
+                    .thread
+                    .context_checkpoint
+                    .as_ref()
+                    .map(|c| c.through_item_id.clone());
+                if checkpoint_after != checkpoint_before
+                    || history_tail_after != history_tail_before
+                {
+                    preflight_compactions += 1;
+                    previous_usage = None;
+                    model_rounds -= 1;
+                    continue 'restart;
+                }
+                // 在同一提交锁下核对组装所基于的历史并完成硬预检；steer 不能插到旧提示之前。
+                if context_budget.window > 0 && request_estimate > context_budget.input_limit {
+                    if let Some(error) = compaction_failure {
+                        return Err(context::context_overflow(
+                            "summary failed and the original full request cannot fit",
+                            request_estimate,
+                            context_budget.input_limit,
+                        )
+                        .context(error));
+                    }
+                    return Err(context::context_overflow(
+                        "full request does not fit after compaction; inspect fixed instructions, tools and retained inputs",
+                        request_estimate,
+                        context_budget.input_limit,
+                    ));
+                }
+                if let Some(error) = compaction_failure {
+                    // 仅摘要失败可沿用仍能容纳的旧投影；存储、计量和取消错误不能绕过。
+                    tracing::warn!(error = %error, "keeping previous checkpoint after failed compaction");
+                }
                 if !live_context.is_empty() {
                     let mut candidate = state.thread.clone();
                     let context = Item::ModelContext {
@@ -353,103 +498,13 @@ impl Engine {
                         .push(context.clone());
                     self.persist(&candidate).await?;
                     state.thread = candidate;
-                    let turn_id = &state.thread.turns.last().unwrap().id;
-                    emit_item(cell, "item/started", &state.thread.id, turn_id, &context);
-                    emit_item(cell, "item/completed", &state.thread.id, turn_id, &context);
+                    emit_item(cell, "item/started", &thread_id, &turn_id, &context);
+                    emit_item(cell, "item/completed", &thread_id, &turn_id, &context);
                 }
-                messages.extend(live_context);
-                let fixed_tokens = context::estimate_tokens(&messages).saturating_sub(
-                    context::estimate_tokens(&history(&state.thread, &self.store)?),
-                );
-                let checkpoint_before = state
-                    .thread
-                    .context_checkpoint
-                    .as_ref()
-                    .map(|c| c.through_item_id.clone());
-                let thread_id = state.thread.id.clone();
-                let session_id = state.thread.session_id.clone();
-                let turn_id = state.thread.turns.last().unwrap().id.clone();
-                (
-                    messages,
-                    thread_id,
-                    session_id,
-                    turn_id,
-                    state.thread.turns.len() as u64
-                        + state
-                            .thread
-                            .history_archive
-                            .as_ref()
-                            .map_or(0, |a| a.completed_turns),
-                    fixed_tokens,
-                    checkpoint_before,
-                    state
-                        .thread
-                        .turns
-                        .iter()
-                        .flat_map(|t| &t.items)
-                        .last()
-                        .map(|i| i.id().to_owned()),
-                )
-            };
-            let request_estimate = context::request_tokens(&messages, &tool_definitions)?;
-            let overhead = fixed_tokens
-                + context::text_tokens(&serde_json::to_string(&tool_definitions)?)
-                + 512;
-            let context_budget = context::ContextBudget::resolve(&self.limits, model.as_ref())?;
-            if side_thread_id.is_none() && preflight_compactions < 2 {
-                let result = self
-                    .compact_context(cell, cancel, overhead, previous_usage, false)
-                    .await;
-                if let Err(error) = result {
-                    if error.downcast_ref::<context::CompactionFailure>().is_none() {
-                        return Err(error);
-                    }
-                    if context_budget.window > 0 && request_estimate > context_budget.input_limit {
-                        return Err(context::context_overflow(
-                            "summary failed and the original full request cannot fit",
-                            request_estimate,
-                            context_budget.input_limit,
-                        )
-                        .context(error));
-                    }
-                    // 仅摘要失败可沿用仍能容纳的旧投影；存储、计量和取消错误不能绕过。
-                    tracing::warn!(error = %error, "keeping previous checkpoint after failed compaction");
-                }
-                let history_tail_after = cell
-                    .state
-                    .lock()
-                    .await
-                    .thread
-                    .turns
-                    .iter()
-                    .flat_map(|t| &t.items)
-                    .last()
-                    .map(|i| i.id().to_owned());
-                let checkpoint_after = cell
-                    .state
-                    .lock()
-                    .await
-                    .thread
-                    .context_checkpoint
-                    .as_ref()
-                    .map(|c| c.through_item_id.clone());
-                if checkpoint_after != checkpoint_before
-                    || history_tail_after != history_tail_before
-                {
-                    preflight_compactions += 1;
-                    previous_usage = None;
-                    model_rounds -= 1;
-                    continue 'restart;
-                }
-            }
-            if context_budget.window > 0 && request_estimate > context_budget.input_limit {
-                return Err(context::context_overflow(
-                    "full request does not fit after compaction; inspect fixed instructions, tools and retained inputs",
-                    request_estimate,
-                    context_budget.input_limit,
-                ));
             }
             preflight_compactions = 0;
+            // 本地重建未发送请求时不消费一次性恢复提示，也不增加求解轮数。
+            recovery_hint = None;
             let tools_enabled = !final_round && !output_handoff && !tool_definitions.is_empty();
             let tool_limits = model::ToolCallLimits {
                 max_calls: if tools_enabled {
@@ -729,9 +784,13 @@ impl Engine {
                                     reports = self.settle_generation_groups(cell) => reports?,
                                 };
                                 if reports != group_results {
+                                    let already_observed =
+                                        execution_receipts_observed(&messages, &reports);
                                     group_results = reports;
-                                    complete_item(cell, &thread_id, &turn_id, &item_id).await;
-                                    continue 'restart;
+                                    if !already_observed {
+                                        complete_item(cell, &thread_id, &turn_id, &item_id).await;
+                                        continue 'restart;
+                                    }
                                 }
                             }
                             if !blocked_report
@@ -1096,7 +1155,18 @@ impl Engine {
         error: &anyhow::Error,
         retries: usize,
     ) -> anyhow::Result<bool> {
-        if retries >= self.limits.max_completion_retries
+        // 空白恢复不扩大截断、网络或非法协议的默认重试范围；所有恢复共用整轮计数。
+        let limit = if matches!(
+            error.downcast_ref::<model::ModelFailure>(),
+            Some(model::ModelFailure::EmptyCompletion)
+        ) {
+            self.limits
+                .max_completion_retries
+                .max(self.limits.max_empty_completion_retries)
+        } else {
+            self.limits.max_completion_retries
+        };
+        if retries >= limit
             || (error.downcast_ref::<model::ModelFailure>().is_none()
                 && error.downcast_ref::<model::ToolCallIndexError>().is_none())
         {
@@ -1356,5 +1426,71 @@ mod cancellation_usage_tests {
                 assert_eq!(models[1]["areal.model.response.accepted"], "true", "{mode}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod receipt_tests {
+    use super::*;
+
+    fn report() -> Value {
+        json!({"executionId":"execution-fixture","status":"completed","settled":true,
+            "resourcesReleased":true,"error":null,"delivery":{"status":"applied","head":"head-one"},
+            "text":"Verified delivery","artifact":{"head":"head-one"},"timedOut":false})
+    }
+    fn message(value: &Value) -> model::Message {
+        model::Message::text("tool", value.to_string())
+    }
+    #[test]
+    fn delivered_receipts_can_be_observed_individually_or_in_wait_any() {
+        let expected = report();
+        let mut received = expected.clone();
+        received.as_object_mut().unwrap().remove("timedOut");
+        received["remainingToolCalls"] = json!(12);
+        assert!(execution_receipts_observed(
+            &[message(&received)],
+            std::slice::from_ref(&expected)
+        ));
+        assert!(execution_receipts_observed(
+            &[message(
+                &json!({"completed":[received],"pending":[],"timedOut":false})
+            )],
+            &[expected]
+        ));
+    }
+    #[test]
+    fn new_changed_failed_or_unreleased_evidence_still_requires_the_model() {
+        let old = report();
+        for change in [
+            json!({"text":"A new verification result"}),
+            json!({"status":"failed"}),
+            json!({"error":"cleanup failed"}),
+            json!({"resourcesReleased":false}),
+            json!({"settled":false}),
+            json!({"artifact":{"head":"head-two"}}),
+            json!({"delivery":{"status":"awaitingDelivery"}}),
+            json!({"executionId":"another-execution"}),
+        ] {
+            let mut changed = old.clone();
+            changed
+                .as_object_mut()
+                .unwrap()
+                .extend(change.as_object().unwrap().clone());
+            assert!(!execution_receipts_observed(&[message(&old)], &[changed]));
+        }
+        let mut timed_out = old.clone();
+        timed_out["timedOut"] = json!(true);
+        assert!(!execution_receipts_observed(
+            &[message(&timed_out)],
+            std::slice::from_ref(&old)
+        ));
+        assert!(!execution_receipts_observed(
+            &[model::Message::text("user", old.to_string())],
+            std::slice::from_ref(&old)
+        ));
+        assert!(!execution_receipts_observed(
+            &[message(&old)],
+            &[old.clone(), json!({"executionId":"unseen"})]
+        ));
     }
 }

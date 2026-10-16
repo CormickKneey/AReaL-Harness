@@ -16,6 +16,7 @@ const { SharedPowerMonitor } = require('./power.cjs');
 const { systemProxyEnvironment } = require('./system-proxy.cjs');
 const { proxyRelay } = require('./proxy-relay.cjs');
 const { RemoteControl } = require('./remote.cjs');
+const { desktopExecutables } = require('./desktop-executables.cjs');
 app.setName('AReaL Harness GUI');
 const guiUserData = configureUserData(app);
 let backend, service, descriptor, home, power;
@@ -85,7 +86,7 @@ async function start() {
   const notifications = new BackgroundNotifications(Notification, () => {
     const env = { ...process.env, AREAL_BACKEND: 'areal', AREAL_CORE_HOME: home, AREAL_GUI_USER_DATA: guiUserData };
     delete env.ELECTRON_RUN_AS_NODE;
-    const child = childProcess.spawn(process.execPath, app.isPackaged ? [] : [app.getAppPath()], {
+    const child = childProcess.spawn(desktopExecutables({ packaged: app.isPackaged }).gui, app.isPackaged ? [] : [app.getAppPath()], {
       detached: true, stdio: 'ignore', env, windowsHide: false,
     });
     child.once('error', error => console.warn(backend.providers.redact(`通知打开界面失败：${error.message}`)));
