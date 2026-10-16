@@ -1,0 +1,48 @@
+# 组件与页面目录
+
+此目录登记拥有者和覆盖，不复制组件 API 或所有页面文件名。路径指向生产代码；“已有”表示已在源码存在，不能推导真实服务、桌面或安装包验收通过。
+
+<!-- BEGIN GENERATED: components -->
+
+## 生产组件（生成）
+
+| ID | 生产所有者 | 用途 |
+| --- | --- | --- |
+| Button | [Button](../renderer/src/components/ui/button.tsx) | 基础按钮与有限变体 |
+| ActionButton | [ActionButton](../renderer/src/components/ui/action-button.tsx) | 普通紧凑操作与 pending |
+| Switch | [Switch](../renderer/src/components/ui/switch.tsx) | 双向布尔值 |
+| Select | [Select](../renderer/src/components/ui/select.tsx) | 多个候选中的单选 |
+| SettingsSection | [SettingsSection](../renderer/src/settings/SettingsPageParts.tsx) | 功能分区 |
+| SettingsGroupCard | [SettingsGroupCard](../renderer/src/settings/SettingsPageParts.tsx) | 相关行的公共外框 |
+| SettingsRow | [SettingsRow](../renderer/src/settings/SettingsPageParts.tsx) | 名称、说明与行内控件 |
+| SettingsSelect | [SettingsSelect](../renderer/src/settings/SettingsPageParts.tsx) | 二值分段或多值菜单 |
+| SettingsSegmentedTabs | [SettingsSegmentedTabs](../renderer/src/settings/SettingsSegmentedTabs.tsx) | 两个互斥设置值 |
+| SettingsDisclosure | [SettingsDisclosure](../renderer/src/settings/SettingsDisclosure.tsx) | 显式展开/收起详情 |
+| SettingsDialog | [SettingsDialog](../renderer/src/settings/common.tsx) | 设置编辑与确认详情 |
+| Feedback | [Feedback](../renderer/src/components/ui/feedback.tsx) | 错误与状态反馈 |
+| EmptySettings | [EmptySettings](../renderer/src/settings/common.tsx) | 设置空态 |
+| ConversationComposer | [ConversationComposer](../renderer/src/ConversationComposer.tsx) | 主与 Side 的输入组合 |
+| ComposerSurface | [ComposerSurface](../renderer/src/prompt-editor/ComposerSurface.tsx) | 输入区布局插槽 |
+| DecisionCard | [DecisionCard](../renderer/src/DecisionCard.tsx) | 决策布局插槽 |
+| ApprovalRequest | [ApprovalRequest](../renderer/src/ApprovalRequest.tsx) | 具体审批交互 |
+| Messages | [Messages](../renderer/src/Messages.tsx) | 共享消息投影 |
+| TurnExecution | [TurnExecution](../renderer/src/TurnExecution.tsx) | 过程状态 |
+| ToolEvent | [ToolEvent](../renderer/src/ToolEvent.tsx) | 工具事件 |
+| CollapsibleText | [CollapsibleText](../renderer/src/CollapsibleText.tsx) | 长文本渐进展示 |
+| SideChatPane | [SideChatPane](../renderer/src/SideChatPane.tsx) | 辅助会话组合 |
+
+<!-- END GENERATED: components -->
+
+## 覆盖与缺口
+
+| 范围 | 当前状态 | 后续修改时的边界 |
+| --- | --- | --- |
+| Composer / DecisionCard / Side / Feedback CSS | 已有 Token 检查 | 沿用当前 `verify:design`；检查范围外不能宣称自动防漂移 |
+| 设置动作、Switch、二值/多值、详情 | 已有公共组件及预览 | 新增消费必须复用；页面迁移仍逐页验收 |
+| 长文本、对话时间线 | 已有共享组件及 fixture | 展示边界不改变 Core 权威，预览不证明真实工具路径 |
+| 资源列表与所有设置页面 | 组合规则已定义，未全量迁移 | 不虚构统一列表 API；只有本次修改触及的页面进入验收 |
+| 结构化目录、页面合同、派生文档/预览目录 | 已接入 verify:design | 只核对引用、最低字段和生成一致性；不证明运行或 JSX 依从 |
+| 全局 CSS、Tailwind 任意值、间接 inline style | 未全量自动覆盖 | 人工检查 owned diff；不通过增加豁免掩盖漂移 |
+| Windows / Linux / Remote / 原生预览 | 规则可引用，平台结果独立验证 | macOS renderer 截图不能证明其它平台或原生视图 |
+
+新增公共组件或页面模式时维护 `registry.json`，再运行 `design:sync` 更新本目录；只有一个特定页面需要的局部布局留在原所有者，避免“为了统一”增加无消费者的封装。

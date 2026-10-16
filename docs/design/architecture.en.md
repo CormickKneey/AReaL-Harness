@@ -91,6 +91,8 @@ Ordinary Shared Browser loading uses Chromium system proxy, DNS, and site polici
 
 The Remote React Workbench directly reuses desktop `Messages`, `ConversationComposer`, model/permission menus, `ComposerQueue`, and `GoalCard`. The browser controller retains pairing, generations, drafts, and commandId reconciliation. Authorized Core overview supplies projects/Sessions; bounded atomic subscriptions supply detail. `session.control` accepts only model/permission, goal, and text queue intents, validated by Gateway and dispatched through the existing journal. It exposes no generic Core RPC or credentials. Ordinary Session enqueue uses Core atomic ownership/configuration admission; execution and history remain authoritative in Core.
 
+Client design rules and page patterns live in [`clients/gui/design-system/`](../../clients/gui/design-system/README.md). Values, shared components and development previews retain their existing renderer owners; the rules directory owns neither business execution nor a second token value source.
+
 ## Repository layout
 
 Desktop ownership follows the [migration decision](../adr/0001-desktop-client-module.en.md). The independent Electron adapter retains OS credentials and subscription forwarding and connects through the public shared-service API. GUI exit preserves Core work. On macOS, the packaged foreground and background adapter have separate application identities while sharing main-bundle resources and existing data directories, so Finder does not send GUI reopen requests to a windowless background process. See the [GUI guide](../../clients/gui/README.en.md) for builds, isolation and local packages. Mobile source migration is deferred.

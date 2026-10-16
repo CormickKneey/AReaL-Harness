@@ -1,0 +1,65 @@
+# 自动化设计系统：来源核对与 v1 取舍
+
+## 核对结论
+
+减少页面单点设计依靠四个环节相接：唯一设计源、有限组件/组合、可执行约束、独立效果验证。只统一颜色不限制组合；只做截图又会退回逐页修补。结构化数据负责消除歧义和驱动派生物，不能自动替人决定产品任务与视觉质量。
+
+## Cindy 的机制
+
+固定版本和规则链接见 [references](references.md#cindy分开规则数值目录与视觉证据)。进一步核对了以下实际入口：
+
+| 机制 | 源码依据 | 作用与限制 |
+| --- | --- | --- |
+| reference → semantic → component | [design-tokens README](https://github.com/makecindy/cindy/blob/febe2e5110f5f9ef5b8e0506314f35274a98b524/packages/design-tokens/README.md)、[production.ts](https://github.com/makecindy/cindy/blob/febe2e5110f5f9ef5b8e0506314f35274a98b524/packages/design-tokens/src/production.ts) | 以 DTCG 编辑源和绑定生成生产子集，运行期不加载生成器；保留动态值和平台未接管边界 |
+| 同源生成与漂移检查 | [package.json](https://github.com/makecindy/cindy/blob/febe2e5110f5f9ef5b8e0506314f35274a98b524/packages/design-tokens/package.json)、[generate.ts](https://github.com/makecindy/cindy/blob/febe2e5110f5f9ef5b8e0506314f35274a98b524/packages/design-tokens/src/generate.ts) | 生产映射与文档摘要一起生成；check:generated 拒绝缺失、手改、过期；独立冻结预期不自动更新 |
+| 规则依据进入评审 | [check-pr-design-basis](https://github.com/makecindy/cindy/blob/febe2e5110f5f9ef5b8e0506314f35274a98b524/scripts/check-pr-design-basis.mjs)、[workflow](https://github.com/makecindy/cindy/blob/febe2e5110f5f9ef5b8e0506314f35274a98b524/.github/workflows/pr-design-basis.yml) | UI 变更需填写设计依据；只验证格式与引用，不能证明内容正确 |
+| 目录与增量审计 | [design-inventory](https://github.com/makecindy/cindy/blob/febe2e5110f5f9ef5b8e0506314f35274a98b524/scripts/design-inventory.mjs)、[layer report](https://github.com/makecindy/cindy/blob/febe2e5110f5f9ef5b8e0506314f35274a98b524/scripts/shared/design-layer-report.mjs) | 生成来源事实，区分语义引用、混合表达式与待人工判断；登记不是视觉批准 |
+
+AReaL 采纳唯一来源、生成检查与职责分离。本次保留现有 CSS/主题/偏好作为数值源；未引入 Terrazzo，也未复制其 Token、登录几何或 CI 工作流。
+
+## Raft Flutter 的机制
+
+| 机制 | 源码依据 | 作用与限制 |
+| --- | --- | --- |
+| 固定来源及可重复 Token 转换 | [design-tokens](https://github.com/kevinzhow/raft-flutter/blob/22d51f32c3276c5d67ed454e12d4aa3225074541/docs/design-tokens.md)、[source manifest](https://github.com/kevinzhow/raft-flutter/blob/22d51f32c3276c5d67ed454e12d4aa3225074541/tool/design-source/manifest.json) | Web CSS/主题输入被固定，产物可查来源；跨渲染器转换不等于用户路径通过 |
+| 组件 recipe 解析后再生成 | [recipes/run](https://github.com/kevinzhow/raft-flutter/blob/22d51f32c3276c5d67ed454e12d4aa3225074541/tool/recipes/run)、[component-recipes](https://github.com/kevinzhow/raft-flutter/blob/22d51f32c3276c5d67ed454e12d4aa3225074541/docs/component-recipes.md) | 抽取真实变体组合，经 Tailwind 编译、层叠和变量解析，再生成 Dart recipe 和文档；不是只从图片估计 padding |
+| 页面共享组合 | [page_recipes.dart](https://github.com/kevinzhow/raft-flutter/blob/22d51f32c3276c5d67ed454e12d4aa3225074541/packages/raft_ui/lib/src/page_recipes.dart)、[dimension contract](https://github.com/kevinzhow/raft-flutter/blob/22d51f32c3276c5d67ed454e12d4aa3225074541/docs/design-dimensions.md) | 页面复用布局与状态角色；实际挂载覆盖与库默认分开，绘制/布局/命中范围分开 |
+| AST 漂移审计与棘轮 | [ds-audit](https://github.com/kevinzhow/raft-flutter/blob/22d51f32c3276c5d67ed454e12d4aa3225074541/tool/ds-audit)、[AST scanner](https://github.com/kevinzhow/raft-flutter/blob/22d51f32c3276c5d67ed454e12d4aa3225074541/tool/ds_audit/lib/ds_audit.dart) | 按文件/类别比较存量基线，限制新增漂移；平台例外有理由且单独计数，扫描不代替布局验收 |
+
+AReaL 采纳可重复目录和有限模式，沿用现有设置组合与生产预览。跨平台 Token/recipe 转译、AST 全仓棘轮暂未接入；不写一个正则就声称达到 Raft 的 AST 覆盖。
+
+## Product Design Skills 的方法
+
+方法来源为已安装的 `product-design@0.1.56`：`get-context`、`image-to-code`、`design-qa`、`references/existing-codebase-edits.md`。此处借鉴其步骤，不执行整站原型、模板生成或发布流程。
+
+- 先确定目标和用户结果，已有代码库先找相近流程、Token 与组件。
+- 实现前固定具体视觉目标及资产；参考序号、截图与设计稿不能被实现者自行替换。
+- 核对核心交互和实际可见状态；同 viewport、主题、内容、密度和交互状态下比较设计与实现。
+- 同时检查字体、空间、颜色、资产、文案；区分客观偏差、产品约束与主观润色，缺少任一方材料不能写视觉通过。
+
+这些 Skills 没有提供统一页面 JSON DSL。下述结构化合同是 AReaL 的适配设计，用于把这些步骤保留下来；数据格式本身不会自动产生高保真结果。
+
+## AReaL v1 已接入的闭环
+
+| 输入 / 所有者 | 派生或检查 | 实际消费者 |
+| --- | --- | --- |
+| 现有生产 CSS、主题与外观设置 | 校验登记 Token 名有生产定义；数值不搬家 | 所有现有生产组件 |
+| [registry.json](registry.json) 的 Token 名与角色 | 生成 `renderer/src/design-system/catalog.ts` | 现有组件预览读取生产 computed style |
+| 同一 registry 的组件与页面模式 | 生成 inventory / patterns 中标记的表格区块 | Agent 先选模式与生产参考 |
+| [surfaces](surfaces) 中的页面合同 | 核对版本、目标/参考路径、模式/组件/槽位、必需状态及证据元数据 | 当前设置控件预览的实现说明；后续页面采用同样输入 |
+| 现有 `verify:design` | 先验证目录与派生物，再执行原 CSS 审计 | 本地和已有 verify 调用链 |
+
+维护命令：
+
+```sh
+pnpm --dir clients/gui design:sync
+pnpm --dir clients/gui verify:design
+```
+
+生成器只重写 catalog 和标记的文档表格，不改 CSS、组件、页面、用户设置、测试基线或截图。`verify:design` 默认只读，过期时给出修复命令。单改生成物会失败；改源后应显式同步并审阅实际变化。
+
+## 尚未接入的自动化
+
+目录检查能拒绝坏引用、缺状态和过期输出，不能证明页面实际使用了声明的组件，不能拦截所有新硬编码样式，也不证明状态在浏览器里可达。组件预览的运行脚本和真实桌面验收继续独立。
+
+若下一阶段扩大自动约束，应先选一个真实迁移范围：用 TypeScript AST / CSS 解析器检查新增裸控件与设计值，建立按文件/类别的基线，只允许减少存量；规则的反例先验证，报告稳定后再提升为阻断。现阶段不引入全仓计数基线、不批量接受截图，也不将人工例外作为整文件免检。

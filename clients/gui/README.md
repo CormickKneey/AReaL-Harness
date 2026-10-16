@@ -6,6 +6,8 @@
 
 Web/PWA Remote v2 的实施边界见[架构](../../docs/design/remote-control.md)、[API](../../docs/api/remote-control.md)、[连接与部署](../../docs/guides/remote-control.md)及[验收计划](../../docs/development/remote-control-testing.md)。RC-01/RC-02/RC-03 提供默认关闭的本机只读入口、浏览器申请与桌面确认、显式项目范围和设备撤销；有效能力包括 Host/项目观察及有界 Core 工作/待处理概览，覆盖 GUI 从未打开的会话；尚不声明详情和写方法。Relay、手机真机与公网部署仍为后续设计和验收。
 
+设计与 Agent 页面实现从[设计规则 v1](design-system/README.md)开始，按页面模式选择现有组件；Token、交互合同和预览见[客户端设计系统](DESIGN_SYSTEM.md)。
+
 ## 开发
 
 从仓库根执行，需 Node.js 22.19+、pnpm 11.7.0 及仓库 Rust 工具链；建议构建和验收均使用与 CI 一致的 Node.js 22 LTS：

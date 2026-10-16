@@ -65,7 +65,8 @@
     "verify:design": "node scripts/design-system-audit.mjs",
     "test:regressions": "node --test scripts/browser-observation-privacy.test.cjs scripts/trajectory-polling.test.mjs scripts/builder-download.test.mjs",
     "test:proxy": "node --test scripts/system-proxy.test.mjs",
-    "test:plugins": "node scripts/plugin-p0-smoke.mjs"
+    "test:plugins": "node scripts/plugin-p0-smoke.mjs",
+    "design:sync": "node scripts/design-system-catalog.mjs --write"
   },
   "devDependencies": {
     "fake-indexeddb": "6.2.4",

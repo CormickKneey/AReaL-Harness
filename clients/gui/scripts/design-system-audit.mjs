@@ -1,7 +1,10 @@
+import { verifyDesignCatalog } from "./design-system-catalog.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
+
+const catalog = await verifyDesignCatalog();
 
 const root = fileURLToPath(new URL("../renderer/src/", import.meta.url));
 const files = ["DecisionCard.css", "prompt-editor/ComposerSurface.css", "SideChat.css", "components/ui/feedback.css"];
@@ -35,4 +38,4 @@ sources.forEach((css, index) => {
   }
 });
 assert.deepEqual(violations, [], `设计系统新增硬编码：\n${violations.join("\n")}`);
-console.log(JSON.stringify({ passed: true, files, scope: "migrated CSS typography/color literals; layout values remain component-owned" }));
+console.log(JSON.stringify({ passed: true, catalog, files, scope: "migrated CSS typography/color literals; layout values remain component-owned" }));

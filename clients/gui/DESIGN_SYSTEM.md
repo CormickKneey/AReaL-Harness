@@ -1,5 +1,7 @@
 # 客户端设计系统
 
+新增或修改页面、组件、布局、样式、动效或 UI 文案前，先读[设计规则 v1 的开工顺序](design-system/README.md)。规则目录负责页面模式、基础约束、覆盖和证据；本指南继续维护 Token 角色、控件合同与生产预览入口。
+
 本指南供客户端开发使用，默认中文。设计数值归生产 CSS，组件变体归现有公共组件；新增功能按角色组合，不复制另一套样式。执行、权限、历史和草稿继续由原业务所有者管理。
 
 ## 设置与管理界面的交互规范
@@ -127,6 +129,6 @@ pnpm --dir clients/gui test:design
 
 ## 增量检查与验证边界
 
-普通 `verify` 已包含 `verify:design` 的检查逻辑。`verify:design` 只检查已经迁移的 DecisionCard、ComposerSurface、SideChat 和 Feedback CSS：阻止局部硬编码字号/颜色，检查引用 Token 存在。合法局部几何不禁止。检查器包含错误示例，确认会拒绝目标写法；它不声称解析所有 Tailwind class 或 TypeScript 间接样式。
+普通 `verify` 已包含 `verify:design` 的检查逻辑。它先校验[结构化目录与页面合同](design-system/automation.md)，并拒绝过期的预览目录和文档表格；目录变更运行 `pnpm --dir clients/gui design:sync` 同步派生物。CSS 部分只检查已经迁移的 DecisionCard、ComposerSurface、SideChat 和 Feedback CSS：阻止局部硬编码字号/颜色，检查引用 Token 存在。合法局部几何不禁止。检查器包含错误示例，确认会拒绝目标写法；它不声称解析所有 Tailwind class 或 TypeScript 间接样式。
 
 生产样式改变需查看相关组件和原消费者；变体变化看默认、焦点、禁用和提交状态。Composer、审批、Side 的业务兼容继续使用已有 `test:composer`、`test:interactions`、`test:conversation-derivation`，它们与组件预览各自提供不同证据。物理 IME、真实供应商及安装包需单独验收。

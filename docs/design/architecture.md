@@ -87,6 +87,8 @@ Fork 与 Side 的开发预览复用上述 Core/Runtime 所有权：Engine 创建
 
 共享 Browser 的普通网络加载使用 Chromium 的系统代理、DNS 与站点策略；Main 只隔离活动控制端口，网页不取得产品 bridge。适配器把用户新发送绑定到确切 Turn 和 GUI 连接，首次经 Core 审批的工具发现才懒绑定当前原生页；不以 `thread/resume` 抢宿主。人工键鼠事件由 Main 在派发前撤销页面读取与动作代次，排空在途输入后交付首个用户事件。Core 的读取和动作许可绑定页面、控制代次及具体计划，UNKNOWN 不重放。产品流程及局限见 [Browser 契约](../api/browser.md)。
 
+客户端设计规则与页面模式归 [`clients/gui/design-system/`](../../clients/gui/design-system/README.md)，数值、公共组件和开发预览沿用现有 renderer 所有者；规则目录不承载业务执行或另一份 Token 数值源。
+
 ## 仓库目录
 
 桌面客户端归属见[迁移决策](../adr/0001-desktop-client-module.md)。`clients/gui` 的独立 Electron 适配器保留系统凭据与订阅转发，通过共享服务公共入口连接 Core；退出 GUI 不终止 Core 任务。macOS 安装包中，前台与后台适配器使用不同的应用身份，后台共享主包资源与原有数据目录，避免 Finder 将重开前台的请求交给无窗口后台。GUI 构建、数据隔离与本地包见 [GUI 指南](../../clients/gui/README.md)。移动端源码后续迁移。

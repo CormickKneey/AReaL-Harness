@@ -10,6 +10,8 @@ Startup recovery, update recovery and menu stop share lifecycle observation and 
 
 Legacy backends without `cancelStop` use compatibility cancellation only after an explicit busy rejection. Before cancellation, trusted Main records originally enabled schedules, workspace/task identities, timing and Run identities in private `legacy-schedule-recovery.json`. If old Core pauses schedules itself or requires a temporary pause before stopping, the replacement confirms old-process exit and checks task revisions before restoring only schedule enablement. Paused Runs remain paused. Unknown writes are not replayed; changed tasks or failed restoration retain the record and show a manual inspection notice. `test:lifecycle:legacy` requires verified current and old Core paths in `AREAL_CORE_BIN` and `AREAL_LEGACY_CORE_BIN`. It uses archived legacy adapter source with current renderer/dependencies and isolated data, without installing or publishing a version. `AREAL_LEGACY_PAUSE_UNKNOWN=1` injects a lost pause response.
 
+For page design and agent UI work, start with the internal [design rules v1](design-system/README.md) and choose an existing page pattern and component. Token roles, interaction contracts and previews remain in the [client design system](DESIGN_SYSTEM.md).
+
 ## Development
 
 Run from the repository root with Node.js 22.19+, pnpm 11.7.0 and the repository Rust toolchain. Use the same Node.js 22 LTS version as CI for both packaging and validation:
