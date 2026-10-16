@@ -91,7 +91,7 @@ Ordinary Shared Browser loading uses Chromium system proxy, DNS, and site polici
 
 The Remote React Workbench directly reuses desktop `Messages`, `ConversationComposer`, model/permission menus, `ComposerQueue`, and `GoalCard`. The browser controller retains pairing, generations, drafts, and commandId reconciliation. Authorized Core overview supplies projects/Sessions; bounded atomic subscriptions supply detail. `session.control` accepts only model/permission, goal, and text queue intents, validated by Gateway and dispatched through the existing journal. It exposes no generic Core RPC or credentials. Ordinary Session enqueue uses Core atomic ownership/configuration admission; execution and history remain authoritative in Core.
 
-Client design rules and page patterns live in [`clients/gui/design-system/`](../../clients/gui/design-system/README.md). Values, shared components and development previews retain their existing renderer owners; the rules directory owns neither business execution nor a second token value source.
+Client design rules and page patterns live in [`clients/gui/design-system/`](../../clients/gui/design-system/README.md). Values, shared components and development previews retain their existing renderer owners; the rules directory owns neither business execution nor a second token value source. The internal [design-system architecture draft](../../clients/gui/design-system/architecture.md) defines admission for architecture, Base, independent exercises and feedback; the current catalog-generation prototype does not establish Base or visual acceptance.
 
 ## Repository layout
 
