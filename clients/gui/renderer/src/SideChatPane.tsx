@@ -237,7 +237,7 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
   useEffect(() => { api.current?.focus(); }, []);
   const stop = () => {
     const turn = side?.turns?.find((item: Data) => item.status === "inProgress");
-    if (validSide && turn) void action("stop", { projectId: project.id, threadId: sideId }).catch((cause: Error) => setError(cause.message));
+    if (validSide && turn) void action("stop", { projectId: project.id, threadId: sideId, turnId: turn.id, requestId: crypto.randomUUID() }).catch((cause: Error) => setError(cause.message));
   };
   const disabled = !project.state?.connected || busy || !!pendingId || unsettled || !!sideId && (!validSide || side.desktop?.archived);
   return <>

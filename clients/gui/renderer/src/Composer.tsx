@@ -126,7 +126,10 @@ export function Composer({
     setText, setFiles, setGoalMode, inFlight: busy, setInFlight: active => markSending(key, active), uploadFiles: selected => uploadComposerFiles(action, project.id, thread.id, selected) });
   const disabled = baseDisabled || queueEditor.busy || queueEditor.locked;
   const desktopUnsupported = project.desktopCapabilities?.currentCommands === false;
-  const stop = () => { void action("stop", { projectId: project.id, threadId: thread.id }).catch(() => {}); };
+  const stop = () => {
+    if (running) void action("stop", { projectId: project.id, threadId: thread.id, turnId: running.id, requestId: crypto.randomUUID() })
+      .catch((cause: Error) => setDeliveryError(cause.message));
+  };
   const config = project.configurations?.[thread.id];
   const [mcpOpen, setMcpOpen] = useState(false);
 

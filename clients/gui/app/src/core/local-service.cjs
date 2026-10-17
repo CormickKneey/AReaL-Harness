@@ -2,14 +2,15 @@
 
 const { executeCore } = require('./core-process.cjs');
 const { readFile, realpath } = require('node:fs/promises');
-const { isAbsolute, resolve } = require('node:path');
+const { isAbsolute, resolve, join } = require('node:path');
+const WebSocket = require('ws');
 
-// 可信桌面适配器只调用公共 CLI；不持有或终止 Core/Runtime 子进程。
+// 服务管理只走公共 CLI；轮次核查只读原代际的认证 app-server，不持有或终止 Core/Runtime 子进程。
 async function request(backend, args, environment = backend.hooks.environment()) {
   let stdout;
   try {
     ({ stdout } = await executeCore(backend.binary, ['service', ...args, '--json'], {
-      env: environment, timeout: args[0] === 'status' ? 10_000 : 120_000, maxBuffer: 2 * 1024 * 1024, windowsHide: true,
+      env: environment, timeout: ['status', 'capabilities', 'operation'].includes(args[0]) ? 10_000 : 120_000, maxBuffer: 2 * 1024 * 1024, windowsHide: true,
     }));
   } catch (error) {
     let failure;
@@ -26,7 +27,7 @@ async function request(backend, args, environment = backend.hooks.environment())
 }
 
 async function connectService(backend, operation, args, environment, project, dataDir) {
-  const descriptor = await request(backend, [operation, ...args], environment);
+  const descriptor = await request(backend, [operation, ...args, ...(operation === 'ensure' ? ['--no-auto-restart'] : [])], environment);
   if (operation === 'status' && ['stopped', 'unavailable', 'stopping'].includes(descriptor?.state)) {
     throw Object.assign(new Error('Core 服务已停止或正在停止，请显式重新连接'), { code: 'CORE_STOPPED' });
   }
@@ -49,16 +50,58 @@ async function connectService(backend, operation, args, environment, project, da
   return { descriptor, token: principal.token };
 }
 
-async function stopService(backend, project, { cancel = false } = {}) {
-  if (!project.service) return;
-  const result = await request(backend, ['stop', '--instance', project.service.serviceId, '--expected-generation', project.service.generation, ...(cancel ? ['--cancel'] : [])]);
-  if (result.state !== 'stopped') throw new Error('Core 服务停止结果尚未确认');
+const targetArguments = target => ['--instance', target.serviceId, '--expected-generation', target.generation];
+
+async function lifecycleCapabilities(backend, target) {
+  let value;
+  try { value = await request(backend, ['capabilities', ...targetArguments(target)]); }
+  catch (error) {
+    throw Object.assign(new Error('原 Core Host 不支持持久生命周期回执，请先安全升级后台。'),
+      { code: /generation changed/.test(error.message) ? 'CONFIRMATION_STALE' : 'LIFECYCLE_UNSUPPORTED' });
+  }
+  if (value?.version !== 1 || value.stopOperations !== 1)
+    throw Object.assign(new Error('原 Core Host 不支持持久生命周期回执，请先安全升级后台。'), { code: 'LIFECYCLE_UNSUPPORTED' });
+  return value;
+}
+
+function requestStop(backend, target, cancel) {
+  return request(backend, ['stop', ...targetArguments(target), '--request-id', target.requestId, ...(cancel ? ['--cancel'] : [])]);
+}
+
+async function readStop(backend, target) {
+  const result = await request(backend, ['operation', ...targetArguments(target), '--request-id', target.requestId]);
+  if (!result || !Object.hasOwn(result, 'operation')) throw new Error('Core 返回了无效的生命周期回执查询');
+  return result.operation;
+}
+
+function detachStoppedProject(backend, target) {
+  const project = backend.projects.get(target.projectId);
+  if (project?.service?.serviceId !== target.serviceId || project.service.generation !== target.generation) return;
   project.service = null;
+  project.endpoint = null;
   clearTimeout(project.reconnectTimer);
   project.reconnectTimer = null;
+  project.taskNotificationMonitor?.stop();
   project.client?.close();
   project.client = null;
   project.model.connection(false);
 }
 
-module.exports = { connectService, stopService };
+async function readOriginalTurn(backend, target, threadId, turnId) {
+  const project = backend.saved.find(project => project.id === target.projectId);
+  if (!project) throw Object.assign(new Error('原工作区登记不可用，无法核对轮次'), { code: 'LIFECYCLE_INCOMPLETE' });
+  const { descriptor, token } = await connectService(backend, 'status', ['--instance', target.serviceId],
+    backend.hooks.environment(), project, join(backend.home, target.projectId, 'state'));
+  if (descriptor.serviceId !== target.serviceId || descriptor.generation !== target.generation)
+    throw Object.assign(new Error('原 Core 代际已变化，不能用新实例代替核查'), { code: 'CONFIRMATION_STALE' });
+  const { CoreClient } = await import('@areal/runtime-client/core');
+  const client = new CoreClient({ createSocket: () => new WebSocket(descriptor.endpoint,
+    { headers: { Authorization: `Bearer ${token}` }, followRedirects: false, maxPayload: 4 * 1024 * 1024 }) });
+  try {
+    await client.connect();
+    const { thread } = await client.request('thread/read', { threadId, includeTurns: true });
+    return thread?.turns?.find(turn => turn.id === turnId) ?? null;
+  } finally { client.close(); }
+}
+
+module.exports = { connectService, lifecycleCapabilities, requestStop, readStop, detachStoppedProject, readOriginalTurn };

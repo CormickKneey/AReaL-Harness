@@ -55174,6 +55174,124 @@
         "draining": {
           "type": "boolean"
         },
+        "lifecycle": {
+          "additionalProperties": true,
+          "properties": {
+            "admission": {
+              "enum": [
+                "open",
+                "draining",
+                "closed"
+              ]
+            },
+            "executionOutcomes": {
+              "additionalProperties": true,
+              "properties": {
+                "uninspectedUnknown": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "uninspectedUnknown"
+              ],
+              "type": "object"
+            },
+            "ifIdle": {
+              "additionalProperties": true,
+              "properties": {
+                "allowed": {
+                  "type": "boolean"
+                },
+                "reasons": {
+                  "items": {
+                    "additionalProperties": true,
+                    "properties": {
+                      "code": {
+                        "enum": [
+                          "activeTurn",
+                          "resource",
+                          "compaction",
+                          "workgroup",
+                          "activeGoal",
+                          "queuedMessage",
+                          "activeTask"
+                        ]
+                      },
+                      "count": {
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "code",
+                      "count"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "allowed",
+                "reasons"
+              ],
+              "type": "object"
+            },
+            "settled": {
+              "additionalProperties": true,
+              "properties": {
+                "allowed": {
+                  "type": "boolean"
+                },
+                "reasons": {
+                  "items": {
+                    "additionalProperties": true,
+                    "properties": {
+                      "code": {
+                        "enum": [
+                          "activeTurn",
+                          "resource",
+                          "compaction",
+                          "workgroup",
+                          "activeGoal",
+                          "queuedMessage",
+                          "activeTask"
+                        ]
+                      },
+                      "count": {
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "code",
+                      "count"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "allowed",
+                "reasons"
+              ],
+              "type": "object"
+            },
+            "version": {
+              "const": 1
+            }
+          },
+          "required": [
+            "admission",
+            "executionOutcomes",
+            "ifIdle",
+            "settled",
+            "version"
+          ],
+          "type": "object"
+        },
         "pendingQueueItems": {
           "minimum": 0,
           "type": "integer"
@@ -55183,28 +55301,94 @@
         },
         "resources": {
           "items": {
-            "additionalProperties": true,
-            "properties": {
-              "epoch": {
-                "type": "string"
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "epoch": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string"
+                  },
+                  "threadId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "epoch",
+                  "id",
+                  "state",
+                  "threadId"
+                ],
+                "type": "object"
               },
-              "id": {
-                "type": "string"
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "epoch": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "runtime"
+                  },
+                  "state": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "epoch",
+                  "kind",
+                  "state"
+                ],
+                "type": "object"
               },
-              "state": {
-                "type": "string"
-              },
-              "threadId": {
-                "type": "string"
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "kind": {
+                    "const": "hookTaskScope"
+                  },
+                  "operationId": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "scopeId": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "state": {
+                    "const": "cleanupUnknown"
+                  },
+                  "threadId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "operationId",
+                  "scopeId",
+                  "state",
+                  "threadId"
+                ],
+                "type": "object"
               }
-            },
-            "required": [
-              "epoch",
-              "id",
-              "state",
-              "threadId"
-            ],
-            "type": "object"
+            ]
           },
           "type": "array"
         },
@@ -55319,6 +55503,7 @@
         "compactions",
         "configuration",
         "draining",
+        "lifecycle",
         "pendingQueueItems",
         "productVersion",
         "resources",
@@ -55475,6 +55660,124 @@
         "draining": {
           "type": "boolean"
         },
+        "lifecycle": {
+          "additionalProperties": true,
+          "properties": {
+            "admission": {
+              "enum": [
+                "open",
+                "draining",
+                "closed"
+              ]
+            },
+            "executionOutcomes": {
+              "additionalProperties": true,
+              "properties": {
+                "uninspectedUnknown": {
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "uninspectedUnknown"
+              ],
+              "type": "object"
+            },
+            "ifIdle": {
+              "additionalProperties": true,
+              "properties": {
+                "allowed": {
+                  "type": "boolean"
+                },
+                "reasons": {
+                  "items": {
+                    "additionalProperties": true,
+                    "properties": {
+                      "code": {
+                        "enum": [
+                          "activeTurn",
+                          "resource",
+                          "compaction",
+                          "workgroup",
+                          "activeGoal",
+                          "queuedMessage",
+                          "activeTask"
+                        ]
+                      },
+                      "count": {
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "code",
+                      "count"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "allowed",
+                "reasons"
+              ],
+              "type": "object"
+            },
+            "settled": {
+              "additionalProperties": true,
+              "properties": {
+                "allowed": {
+                  "type": "boolean"
+                },
+                "reasons": {
+                  "items": {
+                    "additionalProperties": true,
+                    "properties": {
+                      "code": {
+                        "enum": [
+                          "activeTurn",
+                          "resource",
+                          "compaction",
+                          "workgroup",
+                          "activeGoal",
+                          "queuedMessage",
+                          "activeTask"
+                        ]
+                      },
+                      "count": {
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "code",
+                      "count"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "allowed",
+                "reasons"
+              ],
+              "type": "object"
+            },
+            "version": {
+              "const": 1
+            }
+          },
+          "required": [
+            "admission",
+            "executionOutcomes",
+            "ifIdle",
+            "settled",
+            "version"
+          ],
+          "type": "object"
+        },
         "pendingQueueItems": {
           "minimum": 0,
           "type": "integer"
@@ -55484,28 +55787,94 @@
         },
         "resources": {
           "items": {
-            "additionalProperties": true,
-            "properties": {
-              "epoch": {
-                "type": "string"
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "epoch": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string"
+                  },
+                  "threadId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "epoch",
+                  "id",
+                  "state",
+                  "threadId"
+                ],
+                "type": "object"
               },
-              "id": {
-                "type": "string"
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "epoch": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "const": "runtime"
+                  },
+                  "state": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "epoch",
+                  "kind",
+                  "state"
+                ],
+                "type": "object"
               },
-              "state": {
-                "type": "string"
-              },
-              "threadId": {
-                "type": "string"
+              {
+                "additionalProperties": true,
+                "properties": {
+                  "kind": {
+                    "const": "hookTaskScope"
+                  },
+                  "operationId": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "scopeId": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "state": {
+                    "const": "cleanupUnknown"
+                  },
+                  "threadId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "operationId",
+                  "scopeId",
+                  "state",
+                  "threadId"
+                ],
+                "type": "object"
               }
-            },
-            "required": [
-              "epoch",
-              "id",
-              "state",
-              "threadId"
-            ],
-            "type": "object"
+            ]
           },
           "type": "array"
         },
@@ -55620,6 +55989,7 @@
         "compactions",
         "configuration",
         "draining",
+        "lifecycle",
         "pendingQueueItems",
         "productVersion",
         "resources",

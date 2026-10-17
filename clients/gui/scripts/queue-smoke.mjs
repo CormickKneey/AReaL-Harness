@@ -12,7 +12,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const desktop = join(gui, "app");
 const require = createRequire(join(desktop, "package.json"));
@@ -605,7 +605,7 @@ try {
     .click();
   await until((s) => pending(s).length === 0, "empty queue");
   await page.waitForFunction(() => !document.querySelector(".composer-queue-row"));
-  await call("stop", { projectId: pid, threadId: tid });
+  await call("stop", { projectId: pid, threadId: tid, turnId: project(await state()).state.threads[tid].turns.at(-1).id, requestId: randomUUID() });
   await until(
     (s) => project(s).state.threads[tid].turns.at(-1)?.status !== "inProgress",
     "turn stop",

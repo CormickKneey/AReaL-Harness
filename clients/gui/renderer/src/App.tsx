@@ -213,7 +213,7 @@ function AppContent({ services }: { services: PlatformServices }) {
   const [backendActionError, setBackendActionError] = useState("");
   useEffect(() => { setBackendActionError(""); }, [snapshot.connection?.state, snapshot.connection?.message,
     snapshot.connection?.recovery, snapshot.backendUpdate?.state, snapshot.backendUpdate?.message,
-    snapshot.desktopCapabilities?.currentCommands]);
+    snapshot.desktopCapabilities?.currentCommands, snapshot.lifecycle?.phase, snapshot.lifecycle?.message]);
   const [themeReady, setThemeReady] = useState(false);
   const [trajectoryAttention, setTrajectoryAttention] = useState(false);
   const [restoration, setRestoration] = useState<{ projectId: string; pending: boolean; failed: boolean }>();
@@ -507,10 +507,9 @@ function AppContent({ services }: { services: PlatformServices }) {
     setBackendActionError("");
     try {
       if (kind === "update") {
-        const result = await resourceAction("stopService");
-        if (result?.stopped === true) await resourceAction("connectService");
+        await resourceAction("serviceLifecycle", { operation: "update" });
       } else if (kind === "check") {
-        await resourceAction("connectService");
+        await resourceAction("serviceLifecycle", { operation: "check" });
       } else {
         await reconnectService();
       }
@@ -1479,7 +1478,7 @@ function AppContent({ services }: { services: PlatformServices }) {
               )}
             </div>
           </WorkspaceHeader>}
-          <BackendStatusNotice connection={snapshot.connection} update={snapshot.backendUpdate}
+          <BackendStatusNotice connection={snapshot.connection} update={snapshot.backendUpdate} lifecycle={snapshot.lifecycle}
             currentCommands={snapshot.desktopCapabilities?.currentCommands ?? project?.desktopCapabilities?.currentCommands}
             pending={backendActionPending} error={backendActionError} onAction={kind => void runBackendAction(kind)} />
           {(error || project?.error || project?.state?.error) && (

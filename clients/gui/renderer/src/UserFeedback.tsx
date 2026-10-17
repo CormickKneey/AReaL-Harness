@@ -79,7 +79,7 @@ export function UserFeedback({
         };
     }, [key, action, project.id, thread.id, supported]);
     const side = draft?.sideThreadId ? project.state?.threads?.[draft.sideThreadId] : undefined;
-    const active = side?.turns?.some((value: Data) => value.status === "inProgress");
+    const active = side?.turns?.find((value: Data) => value.status === "inProgress");
     const answers = (side?.turns ?? []).flatMap((value: Data) =>
         (value.items ?? []).filter(
             (entry: Data) => entry.type === "agentMessage" && entry.phase !== "commentary",
@@ -368,7 +368,8 @@ export function UserFeedback({
                                                     void action("stop", {
                                                         projectId: project.id,
                                                         threadId: draft.sideThreadId,
-                                                    })
+                                                        turnId: active.id, requestId: crypto.randomUUID(),
+                                                    }).catch((cause: Error) => setError(cause.message))
                                                 }
                                             >
                                                 <Square size={12} />

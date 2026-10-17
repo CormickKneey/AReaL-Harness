@@ -123,7 +123,7 @@ process/start 默认 lifetime=turn；thread 生命周期需 Profile allowThreadP
 
 面向模型的 `development_service_inspect` 只列出当前 Thread 的受管记录，或返回单条记录的 Runtime 当前状态与最多 16 KiB 输出。`development_service_start` 通过同一持久 process/start 所有者提交 thread 生命周期进程，请求身份由可信的 Core Thread、Turn 和工具调用 ID 生成。Core 审批、Profile 权限和 Runtime 写入序列化检查仍然生效。启动结果未知时检查原记录，不自动重发。这两个工具不另建进程执行器，也不推断监听端口。
 
-旧 epoch 句柄为 STALE_HANDLE，不恢复活进程。Thread 进程、UNKNOWN、活动组或压缩阻止 restartSafe。归档需空闲且队列/资源结算，释放热历史并保留磁盘和去重键；GC 在 drain 完成后扫描冷热引用，不能删除历史仍引用的 Blob。
+旧 epoch 句柄为 STALE_HANDLE，不恢复活进程。Thread 进程清理未确认、活动组或压缩阻止 restartSafe。纯历史工具或 Hook UNKNOWN 不阻止停止服务，但原 Thread 继续前仍需检查。归档需空闲且队列/资源结算，释放热历史并保留磁盘和去重键；GC 在 drain 完成后扫描冷热引用，不能删除历史仍引用的 Blob。
 
 事件使用 areal/ 前缀，包括 thread/configured/archived、plan/updated、queue/updated、goal/updated/cleared、interaction/requested/resolved、process/updated、server/draining。各自 revision 不可与输出 cursor 混用。未知模型窗口/usage 保留 null 或缺失，不猜测。示例见[直接协议验收](../examples/desktop-api.md)。
 
@@ -131,9 +131,21 @@ features.goals=true 表示服务支持 Goal，无需单独配置开关；Goal �
 
 本地服务发现、独立于窗口的生命周期和 Desktop Main 接入使用[本地服务契约](local-service.md)。`server/status` 与 `server/drain` 新增返回 `activeGoals`（Thread ID 数组）和 `pendingQueueItems`（pending/running 队列项数量）。这是响应字段的向后增量扩展；restartSafe 仍描述执行清理，不代表没有待调度工作。
 
-`server/status` 与 `server/drain` 还返回 `lifecycle={version:1,admission:"open"|"draining"|"closed",ifIdle:{allowed,reasons},settled:{allowed,reasons}}`。`reasons` 为 `{code,count}` 数组，code 包括 `activeTurn`、`resource`、`uninspectedUnknown`、`compaction`、`workgroup`、`activeGoal`、`queuedMessage`、`activeTask`。Core 共用观察和准入锁内的操作判定；观察不是停止授权。`ifIdle` 要求没有工作且执行已结算，`settled` 仅描述 cancel 的执行/资源结算后置条件。cancel 保留暂停 Queue 中的输入，不重新套用 pending 必须为零的前提；UNKNOWN 和未清理资源仍阻止退出。超时可能返回 draining，RPC 成功不证明进程已退出。未知版本、原因或缺失字段不能推断为允许。
+`server/status` 与 `server/drain` 还返回 `lifecycle={version:1,admission:"open"|"draining"|"closed",ifIdle:{allowed,reasons},settled:{allowed,reasons},executionOutcomes:{uninspectedUnknown}}`。结果摘要是 version 1 的增量字段，统计需要检查的历史工具调用或 Hook 调用，与物理资源结算相互独立。`unresolvedTools` 保留原有检查条目。`restartSafe` 等于 `settled.allowed`。
+
+`reasons` 为 `{code,count}` 数组，code 包括 `activeTurn`、`resource`、`compaction`、`workgroup`、`activeGoal`、`queuedMessage`、`activeTask`。Core 共用观察和准入锁内的操作判定；观察不是停止授权。`ifIdle` 要求没有工作且执行已结算，`settled` 仅描述 cancel 的执行/资源结算后置条件。cancel 保留暂停 Queue 中的输入，不重新套用 pending 必须为零的前提。未检查的历史结果仍保留在 journal 中，并继续阻止原 Thread 续轮，但不阻止服务退出。Hook task scope 不确定、Runtime 观察不可用、活跃 Runtime 进程及未确认清理仍是资源阻塞。超时可能返回 draining，RPC 成功不证明进程已退出。未知版本、原因或缺失许可字段不能推断为允许。
 
 共享服务的 `server/status.configuration` 返回 `{modelRevision,restartRequired,error}`，其他部署为 null。模型热更新缺失环境凭据时可同时返回 `restartRequired=true` 和 `error`，表示需要由持有有效凭据的本地客户端安全重启；其他加载错误不触发自动重启。`areal/server/configurationChanged` 向已订阅会话发布 `{threadId,configuration}`。`server/drain` 增加 `strategy="ifIdle"`：在同一准入锁内检查空闲并关闭准入，忙碌拒绝时保留任务运行。见[配置热更新](../guides/configuration.md)。
+
+### Desktop 适配器生命周期
+
+这是 GUI 适配器协议，独立于 `areal.core.v1`。认证 snapshot 的 `service.lifecycle` 声明 `{version:2,desktopGeneration,capabilities:{request,read,reconcile,kinds},activeRequestId}`，支持 stopDesktop、updateDesktop、stopProject、updateProject、interruptTurn。
+
+`lifecycleRequest` 携带 `{protocol,requestId,kind,mode,expectedDesktopGeneration,expectedTargets,threadId?,turnId?}`；mode 为 ifIdle 或 cancel；targets 每项绑定 projectId/serviceId/generation。interruptTurn 必须指定原 threadId/turnId。`lifecycleRead` 与 `lifecycleReconcile` 只携带 protocol/requestId，后者仅核查原 Host 或原轮次，不调用 ensure、drain 或 cancel。
+
+Desktop owner 在副作用前保存持久回执，记录逐目标 Host requestId 与状态。整体 phase 为 acceptedPending、blocked、partial、admissionUnconfirmed、settlementIncomplete 或 completed。Desktop 停止的目标全部完成后，仅记录 desktopExit=requested；Main 核验原 Desktop 确实退出才显示完成。Main 在写入前持久保存原请求引用，不维护另一份执行权威。响应丢失或换代后读取原回执，已完成目标不重做；未知目标限制相关项目，其他项目保留可用。
+
+普通启动只连接；GUI Main 的 serviceLifecycle 入口只接受 `{operation:update|stop|check}`。check 不改变执行状态。显式 update 先结算原目标并确认原 Desktop 退出，再启动替代部署；失败保留引用。旧适配器缺少上述能力时只读观察，不探测新写入、不跨层代取消。
 
 ## Task Mode 接入
 
@@ -260,4 +272,4 @@ GUI 服务的窄命令 `trajectory` 支持 `{operation:"status"}`、`{operation:
 
 共享 Desktop 的 `areal.desktop-service.v1` 认证快照新增 `service.commandContract: "areal.desktop-commands.v1"`。这项声明来自驻留 Desktop 代码，与 Rust Core 的能力独立。Main 将精确匹配结果投影为顶层及每个项目的 `desktopCapabilities.currentCommands`，不采用旧快照自行声明的同名投影。
 
-缺失或未知声明不阻止只读接入或停止原后台。Main 对需要当前语义的 `send`、`continue`、`prepareCreator`、`feedback`、携带 MCP 内容的 steer/队列更新、新增插件管理操作、`providers.defaultAndApply` 和 `trajectory.setEnabled` 在发出前返回 `SERVICE_COMMAND_UNSUPPORTED`。这是已知未提交，不带未知提交标记或伪造的请求 ID。兼容的队列操作继续使用原业务请求键；不退回另一种写操作。评价草稿读取、偏好及 MCP Apps/表单轮询按这项可用性降级，保留本地草稿。
+缺失或未知命令声明不阻止只读接入；停止原后台另需独立的 lifecycle version 2 能力。Main 对需要当前语义的 `send`、`continue`、`prepareCreator`、`feedback`、携带 MCP 内容的 steer/队列更新、新增插件管理操作、`providers.defaultAndApply` 和 `trajectory.setEnabled` 在发出前返回 `SERVICE_COMMAND_UNSUPPORTED`。这是已知未提交，不带未知提交标记或伪造的请求 ID。兼容的队列操作继续使用原业务请求键；不退回另一种写操作。评价草稿读取、偏好及 MCP Apps/表单轮询按这项可用性降级，保留本地草稿。

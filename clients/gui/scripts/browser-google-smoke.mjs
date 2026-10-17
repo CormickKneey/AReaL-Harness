@@ -49,7 +49,11 @@ const model = createServer(async (request, response) => {
     let raw = ''; for await (const chunk of request) raw += chunk;
     const body = JSON.parse(raw), last = body.messages.at(-1);
     const result = last?.role === 'tool' ? last.content : null;
-    evidence.requests.push({ scenario, stage, guidance: JSON.stringify(body.messages).includes('Every new user request') });
+    evidence.requests.push({ scenario, stage, guidance: JSON.stringify(body.messages).includes('Built-in Browser guidance:') });
+    if (scenario === 'chat-before' || scenario === 'chat-after') {
+      assert.doesNotMatch(JSON.stringify(body.messages), /Every new user request (?:must start|starts) with describe/,
+        'ordinary chat must not receive an unconditional browser instruction');
+    }
     response.writeHead(200, { 'Content-Type': 'text/event-stream' });
     const send = (delta, finish_reason) => response.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finish_reason ?? null }] })}\n\n`);
     const tool = args => { send({ tool_calls: [{ index: 0, id: `google-${scenario}-${stage}`, type: 'function', function: { name: 'browser_v1', arguments: JSON.stringify(args) } }] }); send({}, 'tool_calls'); };
@@ -58,7 +62,9 @@ const model = createServer(async (request, response) => {
     const description = find(result, v => v.protocol === 'areal.browser.host.v1');
     if (description) pageId = description.pages[0];
     if (obs) observation = obs;
-    if (scenario === 'spawn') {
+    if (scenario === 'chat-before' || scenario === 'chat-after') {
+      finish(scenario === 'chat-before' ? '1' : '不客气');
+    } else if (scenario === 'spawn') {
       if (stage === 0) tool({ operation: 'describe', parameters: {} });
       else if (stage === 1) tool({ operation: 'observe', parameters: { pageId } });
       else if (stage === 2) tool({ operation: 'newPage', parameters: { pageId, url: new URL('/agent', searchUrl).href } });
@@ -101,7 +107,7 @@ const model = createServer(async (request, response) => {
 await new Promise(resolve => model.listen(0, '127.0.0.1', resolve));
 await writeFile(join(userHome, '.areal/config.toml'), `schema_version=1\n[model]\nprovider="fixture"\nname="fixture"\n[model.providers.fixture]\nprotocol="chat-completions"\nendpoint="http://127.0.0.1:${model.address().port}/v1/chat/completions"\n`);
 const deployment = join(scratch, 'desktop.json');
-await writeFile(deployment, JSON.stringify({ profiles: [{ id: 'fixture', revision: 'v1', displayName: 'Fixture', allowThreadProcesses: true, instructions: 'Use the browser tools and report actual observations.' }] }));
+await writeFile(deployment, JSON.stringify({ profiles: [{ id: 'fixture', revision: 'v1', displayName: 'Fixture', allowThreadProcesses: true, instructions: 'Complete the current user request. Use browser tools when the task requires browser interaction and report actual observations.' }] }));
 const env = { ...process.env, AREAL_GUI_USER_DATA: join(scratch, 'electron'), AREAL_CORE_HOME: join(scratch, 'core'), AREAL_CORE_USER_HOME: userHome,
   AREAL_HARNESS_SERVICE_HOME: join(scratch, 'registry'), AREAL_CORE_DESKTOP_CONFIG: deployment, AREAL_CORE_BIN: process.env.AREAL_CORE_BIN || join(root, 'target/debug/areal') };
 for (const key of ['AREAL_CORE_WORKSPACE', 'AREAL_CORE_CONFIG', 'AREAL_HARNESS_HOME', 'AREAL_HARNESS_CONFIG', 'ELECTRON_RUN_AS_NODE']) delete env[key];
@@ -120,7 +126,7 @@ async function run(kind, text) {
   scenario = kind; stage = 0;
   const count = (await state()).projects.find(p=>p.id===projectId).state.threads[threadId]?.turns?.length ?? 0;
   await page.getByTestId('chat-input').fill(text); await page.getByTestId('chat-input').press('Enter');
-  const turn = await until(async () => { const allow=page.getByRole('button',{name:'允许一次',exact:true}).and(page.locator(':enabled'));if(await allow.isVisible()){await allow.click();evidence.guiApprovals=(evidence.guiApprovals??0)+1;} const t = (await state()).projects.find(p=>p.id===projectId).state.threads[threadId]; const v=t?.turns?.at(-1); return t.turns.length>count && ['completed','failed'].includes(v.status) ? v : null; },kind);
+  const turn = await until(async () => { if(evidence.modelError)throw new Error(evidence.modelError);const allow=page.getByRole('button',{name:'允许一次',exact:true}).and(page.locator(':enabled'));if(await allow.isVisible()){await allow.click();evidence.guiApprovals=(evidence.guiApprovals??0)+1;} const t = (await state()).projects.find(p=>p.id===projectId).state.threads[threadId]; const v=t?.turns?.at(-1); return t.turns.length>count && ['completed','failed'].includes(v.status) ? v : null; },kind);
   evidence.turns.push({scenario:kind,turn}); assert.equal(turn.status,'completed',JSON.stringify(turn.error)); return turn;
 }
 function calls(turn) { return turn.items.filter(i=>i.type==='dynamicToolCall'); }
@@ -137,8 +143,17 @@ try {
   const project=await until(async ()=>(await state()).projects.find(p=>p.root===workspace),'project ready'); projectId=project.id;
   const created=await command('create',{projectId,browserEnabled:true,profile:{id:'fixture',revision:'v1'}});threadId=created.threadId;
   await selectConversation(page,threadId);
+  const chatBefore = await run('chat-before', '1');
+  assert.equal(calls(chatBefore).length, 0);
+  assert.equal(chatBefore.items.filter(item => item.type === 'agentMessage').at(-1)?.text, '1');
+  assert.equal(evidence.guiApprovals ?? 0, 0);
   success(await run('open','打开 Google，并确认搜索框可读取。')); oldObservation=observation;
   assert.equal(new URL(observation.url).origin,new URL(searchUrl).origin); searchRef(observation);
+  const approvalsBeforeChat = evidence.guiApprovals;
+  const chatAfter = await run('chat-after', '谢谢');
+  assert.equal(calls(chatAfter).length, 0);
+  assert.equal(chatAfter.items.filter(item => item.type === 'agentMessage').at(-1)?.text, '不客气');
+  assert.equal(evidence.guiApprovals, approvalsBeforeChat);
   const old=await run('old','检查上一轮旧 refs 是否会被拒绝。'); assert.equal(calls(old)[0].success,false);assert.match(JSON.stringify(calls(old)),/stale_ref/);
   success(await run('search','使用内置浏览器的 Google 搜索 AI Agent，并读取结果。'));
   if (observation.url.includes('/sorry/') && process.env.AREAL_GOOGLE_MANUAL_CAPTCHA === '1') {

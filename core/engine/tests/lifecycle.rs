@@ -14,6 +14,219 @@ use std::{
 };
 use tokio::sync::mpsc;
 
+#[tokio::test]
+async fn historical_unknown_outcomes_preserve_inspection_without_blocking_service_drain() {
+    use serde_json::{Value, json};
+
+    for kind in ["tool", "toolHook", "sessionHook"] {
+        let (dir, engine, model, _entered) = setup(Limits::default());
+        let thread = engine.create("/workspace".into()).await.unwrap();
+        engine
+            .start(&thread.id, vec![Input::text("done")])
+            .await
+            .unwrap();
+        settled(&engine, &thread.id).await;
+        engine.shutdown().await;
+        drop(engine);
+
+        let path = dir.path().join(format!("{}.json", thread.id));
+        let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        record["thread"]["desktop"] =
+            serde_json::to_value(areal_protocol::desktop::DesktopState::default()).unwrap();
+        if kind == "sessionHook" {
+            record["thread"]["desktop"]["hookRuns"] = json!([{
+                "id":"historical-hook", "pluginId":"fixture", "packageDigest":"fixture",
+                "definitionDigest":"fixture", "event":"Stop", "turnId":null,
+                "toolUseId":null, "operationId":"historical-operation", "outcome":"unknown",
+                "asynchronous":false, "delivered":true, "output":null, "inspection":null
+            }]);
+        } else {
+            record["thread"]["turns"][0]["items"].as_array_mut().unwrap().push(json!({
+                "type":"dynamicToolCall", "id":"historical-tool", "tool":"external_write",
+                "arguments":{}, "status":"failed", "success":false, "contentItems":[],
+                "callId":"historical-call", "execution":{
+                    "runtimeEpoch":"historical-epoch", "scopeId":"historical-scope",
+                    "operationId":"historical-operation", "outcome":if kind == "tool" {"unknown"} else {"succeeded"},
+                    "hooks":if kind == "toolHook" {json!([{"name":"fixture", "event":"post", "operationId":"historical-hook", "outcome":"unknown"}])} else {json!([])}
+                }
+            }));
+        }
+        let stored: Thread = serde_json::from_value(record["thread"].clone()).unwrap();
+        record["thread"] = serde_json::to_value(stored).unwrap();
+        let journal = record["thread"]["turns"].clone();
+        let hooks = record["thread"]["desktop"]["hookRuns"].clone();
+        std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+        let engine = Engine::open(dir.path(), model.clone(), Limits::default()).unwrap();
+        let status = engine.server_status().await;
+        assert_eq!(status["resources"], json!([]), "{kind}: {status}");
+        assert_eq!(
+            status["unresolvedTools"].as_array().unwrap().len(),
+            1,
+            "{kind}"
+        );
+        assert_eq!(
+            status["restartSafe"], true,
+            "historical {kind} is not a live resource: {status}"
+        );
+        assert_eq!(status["lifecycle"]["settled"]["allowed"], true);
+        assert_eq!(status["lifecycle"]["ifIdle"]["allowed"], true);
+        assert_eq!(
+            status["lifecycle"]["executionOutcomes"]["uninspectedUnknown"],
+            1
+        );
+        let calls = model.calls.load(Ordering::SeqCst);
+        let rejected = engine
+            .start(&thread.id, vec![Input::text("must not replay")])
+            .await
+            .unwrap_err();
+        assert!(rejected.to_string().contains("UNKNOWN"), "{rejected}");
+        assert_eq!(model.calls.load(Ordering::SeqCst), calls);
+        let next = engine.create("/fresh".into()).await.unwrap();
+        engine
+            .start(&next.id, vec![Input::text("fresh")])
+            .await
+            .unwrap();
+        assert_eq!(
+            settled(&engine, &next.id).await.turns[0].status,
+            TurnStatus::Completed
+        );
+        let drained = engine.drain("ifIdle".into(), 1000).await.unwrap();
+        assert_eq!(drained["restartSafe"], true, "{drained}");
+        assert_eq!(drained["unresolvedTools"], status["unresolvedTools"]);
+        let after: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(after["thread"]["turns"], journal);
+        assert_eq!(after["thread"]["desktop"]["hookRuns"], hooks);
+        engine.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn historical_process_cleanup_unknown_still_blocks_service_drain() {
+    use serde_json::{Value, json};
+
+    let (dir, engine, model, _entered) = setup(Limits::default());
+    let thread = engine.create("/workspace".into()).await.unwrap();
+    engine.shutdown().await;
+    drop(engine);
+    let path = dir.path().join(format!("{}.json", thread.id));
+    let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    record["thread"]["desktop"] =
+        serde_json::to_value(areal_protocol::desktop::DesktopState::default()).unwrap();
+    record["thread"]["desktop"]["processes"] = json!([{
+        "id":"unconfirmed-process", "runtimeEpoch":"old-epoch", "scopeOperationId":"scope-op",
+        "scopeId":"old-scope", "operationId":"process-op", "processId":"old-process",
+        "lifetime":"thread", "turnId":null, "owner":"fixture", "argv":["fixture"],
+        "state":"unknown", "cleanupConfirmed":false, "error":"unconfirmed cleanup", "inputs":[]
+    }]);
+    std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+    let engine = Engine::open(dir.path(), model, Limits::default()).unwrap();
+    let status = engine.server_status().await;
+    assert_eq!(status["restartSafe"], false);
+    assert_eq!(
+        status["lifecycle"]["settled"]["reasons"],
+        json!([{"code":"resource", "count":1}])
+    );
+    assert!(engine.drain("ifIdle".into(), 1000).await.is_err());
+    assert_eq!(engine.server_status().await["acceptingWork"], true);
+    assert_eq!(
+        engine.drain("cancel".into(), 1000).await.unwrap()["restartSafe"],
+        false
+    );
+    engine.shutdown().await;
+}
+
+#[tokio::test]
+async fn runtime_resource_observation_blocks_unconfirmed_cleanup_and_active_processes() {
+    use areal_engine::tools::RuntimeConfig;
+    use areal_runtime_client::Client;
+    use serde_json::{Value, json};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    for condition in [
+        "clean",
+        "active",
+        "cleanupUnknown",
+        "statusUnavailable",
+        "scopeUnavailable",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let (pipe, peer) = tokio::io::duplex(128 * 1024);
+        let (read, write) = tokio::io::split(pipe);
+        let (peer_read, mut peer_write) = tokio::io::split(peer);
+        let task = tokio::spawn(async move {
+            let mut lines = BufReader::new(peer_read).lines();
+            while let Some(line) = lines.next_line().await.unwrap() {
+                let request: Value = serde_json::from_str(&line).unwrap();
+                let result = match request["method"].as_str().unwrap() {
+                    "connection.open" => {
+                        json!({"protocolVersion":"areal.runtime.v0", "runtimeEpoch":"fixture", "connectionId":"fixture", "rootScopeId":"fixture-root", "capabilities":{"methods":["fs.execute"]}})
+                    }
+                    "runtime.status" if condition != "statusUnavailable" => {
+                        json!({"runtimeEpoch":"fixture", "activeProcesses":if condition == "active" {1} else {0}})
+                    }
+                    "scope.get" if condition != "scopeUnavailable" => {
+                        json!({"scopeId":"fixture-root", "parentScopeId":null, "state":"active", "owner":{"taskId":"fixture"}, "readRoots":[], "writeRoots":[], "network":"deny", "limits":{"wallTimeMs":30000,"outputBytes":8388608,"maxProcesses":4}, "activeProcesses":if condition == "active" {1} else {0}, "outputBytes":0, "cleanupError":if condition == "cleanupUnknown" {json!("executor cleanup unconfirmed")} else {Value::Null}})
+                    }
+                    "connection.close" => json!({"closed":true}),
+                    "runtime.status" | "scope.get" => {
+                        peer_write.write_all(format!("{}\n", json!({"id":request["id"], "error":{"code":"UNAVAILABLE", "message":"fixture unavailable"}})).as_bytes()).await.unwrap();
+                        continue;
+                    }
+                    method => panic!("unexpected Runtime method {method}"),
+                };
+                peer_write
+                    .write_all(
+                        format!("{}\n", json!({"id":request["id"], "result":result})).as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+                if request["method"] == "connection.close" {
+                    break;
+                }
+            }
+        });
+        let client = Client::connect(read, write).await.unwrap();
+        let (entered, _received) = mpsc::unbounded_channel();
+        let engine = Engine::open_with_runtime(
+            dir.path(),
+            Arc::new(Controlled {
+                entered,
+                calls: AtomicUsize::new(0),
+            }),
+            Limits::default(),
+            RuntimeConfig {
+                client: client.clone(),
+                workspace: workspace.path().to_path_buf(),
+                writable: true,
+                command_scope: None,
+                command_scratch: None,
+            },
+        )
+        .unwrap();
+        let status = engine.server_status().await;
+        assert_eq!(
+            status["restartSafe"],
+            condition == "clean",
+            "{condition}: {status}"
+        );
+        assert_eq!(
+            status["lifecycle"]["ifIdle"]["allowed"],
+            condition == "clean"
+        );
+        if condition != "clean" {
+            assert!(
+                !status["resources"].as_array().unwrap().is_empty(),
+                "{condition}: {status}"
+            );
+            assert!(engine.drain("ifIdle".into(), 1000).await.is_err());
+        }
+        engine.shutdown().await;
+        client.shutdown().await.unwrap();
+        task.await.unwrap();
+    }
+}
+
 struct Controlled {
     entered: mpsc::UnboundedSender<Vec<Message>>,
     calls: AtomicUsize,

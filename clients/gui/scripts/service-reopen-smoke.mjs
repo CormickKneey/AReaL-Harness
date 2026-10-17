@@ -306,7 +306,11 @@ try {
     assert.equal(sha(await readFile(binary)), binarySha256, 'legacy migration leaves the binary unchanged');
   }
   await launch('reopened');
-  await page.getByText('已连接运行中的后台，沿用其原有启动配置。新的启动配置需安全停止后台并重新连接后生效。', { exact: true }).waitFor();
+  if (scenario === 'mtime') assert.equal((await state()).backendUpdate, undefined, 'timestamps alone do not request an update');
+  else {
+    await until(async () => (await state()).backendUpdate?.state === 'pending', 'explicit deployment update pending');
+    await page.getByRole('button', { name: '更新后台…', exact: true }).waitFor();
+  }
   await until(async () => project(await state())?.state?.connected && turn(await state())?.id === turnId, 'original Thread restored automatically');
   observations.after = await inspectService();
   assert.deepEqual(observations.after.desktop, observations.before.desktop, 'reopen must attach to the original Desktop');
@@ -370,7 +374,11 @@ try {
   assert.equal(requests.length, 2, 'second GUI close must retain the original model request');
   assert.equal(held.size, 1, 'original model stream remains connected after the second GUI close');
   await launch('reopened-again');
-  await page.getByText('已连接运行中的后台，沿用其原有启动配置。新的启动配置需安全停止后台并重新连接后生效。', { exact: true }).waitFor();
+  if (scenario === 'mtime') assert.equal((await state()).backendUpdate, undefined, 'timestamps alone do not request an update');
+  else {
+    await until(async () => (await state()).backendUpdate?.state === 'pending', 'explicit deployment update pending');
+    await page.getByRole('button', { name: '更新后台…', exact: true }).waitFor();
+  }
   await until(async () => project(await state())?.state?.connected && turn(await state())?.id === turnId,
     'original Thread restored automatically after the second reopen');
   if (legacy) assert.equal(await page.getByTestId('chat-input').innerText(), 'LEGACY_DRAFT_RETAINED', 'second reopen retains the draft without replay');

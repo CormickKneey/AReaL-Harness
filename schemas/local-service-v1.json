@@ -34,6 +34,28 @@
     "title": "BrowserBootstrapExchange",
     "type": "object"
   },
+  "capabilities": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "stopOperations": {
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "version": {
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "version",
+      "stopOperations"
+    ],
+    "title": "Capabilities",
+    "type": "object"
+  },
   "identity": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "additionalProperties": false,
@@ -119,12 +141,86 @@
           "cancel"
         ],
         "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "generation": {
+            "type": "string"
+          },
+          "method": {
+            "const": "capabilities",
+            "type": "string"
+          },
+          "version": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "method",
+          "version",
+          "generation"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "cancel": {
+            "type": "boolean"
+          },
+          "generation": {
+            "type": "string"
+          },
+          "method": {
+            "const": "stopOperation",
+            "type": "string"
+          },
+          "requestId": {
+            "type": "string"
+          },
+          "version": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "method",
+          "version",
+          "generation",
+          "requestId",
+          "cancel"
+        ],
+        "type": "object"
       }
     ],
     "title": "Request"
   },
   "response": {
     "$defs": {
+      "Capabilities": {
+        "additionalProperties": false,
+        "properties": {
+          "stopOperations": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "version": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "stopOperations"
+        ],
+        "type": "object"
+      },
       "Service": {
         "additionalProperties": false,
         "properties": {
@@ -199,6 +295,57 @@
           "unavailable"
         ],
         "type": "string"
+      },
+      "StopOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "cancel": {
+            "type": "boolean"
+          },
+          "generation": {
+            "type": "string"
+          },
+          "lifecycle": true,
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requestId": {
+            "type": "string"
+          },
+          "serviceId": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/$defs/StopOperationState"
+          },
+          "version": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "requestId",
+          "serviceId",
+          "generation",
+          "cancel",
+          "state"
+        ],
+        "type": "object"
+      },
+      "StopOperationState": {
+        "enum": [
+          "acceptedPending",
+          "blocked",
+          "admissionUnknown",
+          "settlementIncomplete",
+          "completed"
+        ],
+        "type": "string"
       }
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -217,6 +364,40 @@
         "required": [
           "result",
           "service"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "capabilities": {
+            "$ref": "#/$defs/Capabilities"
+          },
+          "result": {
+            "const": "capabilities",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result",
+          "capabilities"
+        ],
+        "type": "object"
+      },
+      {
+        "additionalProperties": false,
+        "properties": {
+          "operation": {
+            "$ref": "#/$defs/StopOperation"
+          },
+          "result": {
+            "const": "operation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "result",
+          "operation"
         ],
         "type": "object"
       },
@@ -317,6 +498,61 @@
       "state"
     ],
     "title": "Service",
+    "type": "object"
+  },
+  "stopOperation": {
+    "$defs": {
+      "StopOperationState": {
+        "enum": [
+          "acceptedPending",
+          "blocked",
+          "admissionUnknown",
+          "settlementIncomplete",
+          "completed"
+        ],
+        "type": "string"
+      }
+    },
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "additionalProperties": false,
+    "properties": {
+      "cancel": {
+        "type": "boolean"
+      },
+      "generation": {
+        "type": "string"
+      },
+      "lifecycle": true,
+      "message": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "requestId": {
+        "type": "string"
+      },
+      "serviceId": {
+        "type": "string"
+      },
+      "state": {
+        "$ref": "#/$defs/StopOperationState"
+      },
+      "version": {
+        "format": "uint32",
+        "minimum": 0,
+        "type": "integer"
+      }
+    },
+    "required": [
+      "version",
+      "requestId",
+      "serviceId",
+      "generation",
+      "cancel",
+      "state"
+    ],
+    "title": "StopOperation",
     "type": "object"
   }
 }

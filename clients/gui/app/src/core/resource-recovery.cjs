@@ -15,7 +15,8 @@ async function inspectResources(backend, { includeTasks = false } = {}) {
     }
     const status = await project.client.request('areal/server/status');
     const resources = [];
-    for (const threadId of new Set((status.resources ?? []).map(p => p.threadId))) {
+    const resourceThreads = (status.resources ?? []).map(resource => resource.threadId).filter(id => typeof id === 'string' && id.length > 0);
+    for (const threadId of new Set(resourceThreads)) {
       const processes = await project.client.request('areal/process/list', { threadId });
       for (const p of processes.data ?? []) if (!p.cleanupConfirmed) resources.push({
         projectId, threadId, id: p.id, epoch: p.runtimeEpoch, state: p.state,

@@ -1,8 +1,8 @@
 'use strict';
 const { startupTrace } = require('./startup-timing.cjs');
 
-const { connectService, stopService } = require('./local-service.cjs');
-const { restartSafe } = require('./resource-recovery.cjs');
+const { connectService } = require('./local-service.cjs');
+const { LifecycleOperations } = require('./lifecycle-operations.cjs');
 const { randomUUID, createHash } = require('node:crypto');
 const { isDeepStrictEqual } = require('node:util');
 const { mkdir, readFile, writeFile, rename, realpath, rm } = require('node:fs/promises');
@@ -81,6 +81,7 @@ class CoreBackend {
     this.providers = new AppProviders(this, encryption);
     this.activeCommands = 0;
     this.awaitingResponses = new WeakSet();
+    this.lifecycleOperations = new LifecycleOperations(this);
   }
 
   async init() {
@@ -88,6 +89,7 @@ class CoreBackend {
     trace.advance('project_index');
     try {
       await mkdir(this.home, { recursive: true, mode: 0o700 });
+      await this.lifecycleOperations.init();
       try {
         this.saved = JSON.parse(await readFile(join(this.home, 'projects.json'), 'utf8'));
         if (!Array.isArray(this.saved)) throw new Error('Invalid project index');
@@ -106,6 +108,7 @@ class CoreBackend {
       await this.feedback.init();
       trace.advance('resources');
       await this.resources.init();
+      await this.lifecycleOperations.reconcileLoaded();
       trace.finish('ok');
     } catch (error) { trace.finish('error', error); throw error; }
   }
@@ -123,6 +126,7 @@ class CoreBackend {
   }
 
   async addProject(path) {
+    this.lifecycleOperations.assertRegistration();
     if (this.providerUpdating || this.resourcesUpdating) throw new Error('配置正在更新，请稍后打开项目');
     this.activeCommands++;
     try { return await this.addProjectPath(path); }
@@ -130,6 +134,7 @@ class CoreBackend {
   }
 
   async addProjectPath(path, worktreeResources, projectlessRequestId) {
+    this.lifecycleOperations.assertRegistration();
     if (this.providerUpdating || this.resourcesUpdating) throw new Error('配置正在更新，请稍后打开项目');
     const root = await realpath(path);
     const id = createHash('sha256').update(root).digest('hex').slice(0, 24);
@@ -165,6 +170,8 @@ class CoreBackend {
   }
 
   start(id) {
+    try { this.lifecycleOperations.assertProject(id); }
+    catch (error) { return Promise.reject(error); }
     if (this.closing) return Promise.reject(new Error('应用正在退出'));
     if (this.starting.has(id)) return this.starting.get(id);
     const project = this.projects.get(id);
@@ -244,7 +251,7 @@ class CoreBackend {
     } catch (error) { trace?.finish('error', error); throw error; }
   }
 
-  async launch(project, operation = 'ensure') {
+  async launch(project) {
     const trace = startupTrace('core.launch', { projectId: project.id });
     trace.advance('directories');
     try {
@@ -274,7 +281,7 @@ class CoreBackend {
       project.hookRevision = null;
       const environment = { ...this.hooks.environment(), AREAL_HARNESS_TOOL_EXTENSIONS: hookDeployment.path, ...this.providers.environment() };
       trace.advance('service_ensure');
-      const { descriptor, token } = await connectService(this, operation, args, environment, project, dataDir);
+      const { descriptor, token } = await connectService(this, 'ensure', args, environment, project, dataDir);
       project.service = descriptor;
       project.endpoint = descriptor.endpoint;
       project.token = token;
@@ -288,7 +295,15 @@ class CoreBackend {
   }
 
   async restartProject(project) {
-    await this.launch(project, 'restart');
+    this.lifecycleOperations.assertProject(project.id);
+    if (project.service) {
+      const receipt = await this.lifecycleOperations.request({ requestId: randomUUID(), kind: 'updateProject', mode: 'ifIdle',
+        expectedDesktopGeneration: this.lifecycleOperations.generation,
+        expectedTargets: [{ projectId: project.id, serviceId: project.service.serviceId, generation: project.service.generation }] });
+      if (receipt.phase !== 'completed') throw Object.assign(new Error('原 Core 尚未停止，不能更新配置'),
+        { code: 'LIFECYCLE_INCOMPLETE', requestId: receipt.requestId, lifecycle: receipt });
+    }
+    await this.launch(project);
     await this.connect(project);
     await this.reconcile(project);
     await this.resources.worktrees.apply(project);
@@ -1220,6 +1235,28 @@ class CoreBackend {
   }
 
   async command(name, request, context = {}) {
+    if (name === 'stop') {
+      const project = this.projects.get(request.projectId);
+      if (!project?.service || !project.client?.ready) throw Object.assign(new Error('原 Core 连接不可用，不能中断轮次'), { code: 'LIFECYCLE_INCOMPLETE' });
+      return this.lifecycleOperations.request({ requestId: request.requestId, kind: 'interruptTurn', mode: 'cancel',
+        expectedDesktopGeneration: this.lifecycleOperations.generation,
+        expectedTargets: [{ projectId: request.projectId, serviceId: project.service.serviceId, generation: project.service.generation }],
+        threadId: request.threadId, turnId: request.turnId });
+    }
+    const lifecycleBlock = this.lifecycleOperations.blocking(request?.projectId, request?.threadId);
+    if ((lifecycleBlock || this.lifecycleOperations.activeRequestId || this.lifecycleOperations.activeTargets.has(request?.projectId))
+      && (['open', 'list', 'connect'].includes(name) || require('./lifecycle.cjs').isRecoveryCommand(name, request))) {
+      const project = this.projects.get(request.projectId);
+      if (!project?.service || !project.client?.ready) throw Object.assign(new Error('原 Core 已断开，不能确认核查目标'), { code: 'LIFECYCLE_INCOMPLETE' });
+      const original = lifecycleBlock?.targets.find(target => target.projectId === request.projectId);
+      if (original && (project.service.serviceId !== original.serviceId || project.service.generation !== original.generation))
+        throw Object.assign(new Error('原 Core 代际已变化，不能用新实例代替核查'), { code: 'CONFIRMATION_STALE' });
+      if (name === 'manage') return manage(this, project, request);
+      if (name === 'open') await this.openThread(project, request.threadId);
+      if (name === 'list') await this.listThreads(project);
+      return this.snapshot();
+    }
+    this.lifecycleOperations.assertProject(request?.projectId, request?.threadId);
     if (this.closing && require('./lifecycle.cjs').isRecoveryCommand(name, request)) {
       const project = this.projects.get(request.projectId);
       if (!project?.service || !project.client?.ready) throw new Error('原 Core 已断开，不能确认核查目标');
@@ -1414,12 +1451,6 @@ class CoreBackend {
         await this.submit(project, 'turn/steer', { threadId, expectedTurnId: active.id, input: messageInput(this, request), previousItems: active.items.map(item => item.id) });
         break;
       }
-      case 'stop': {
-        const active = [...project.model.state.threads[threadId]?.turns ?? []].reverse().find(turn => turn.status === 'inProgress');
-        if (!active) throw new Error('没有正在运行的轮次，请刷新任务状态');
-        await project.client.request('turn/interrupt', { threadId, turnId: active.id });
-        break;
-      }
       case 'respond': {
         const interaction = project.model.state.interactions[threadId]?.data.find(item => item.requestId === request.requestId && item.status === 'pending');
         if (!interaction) throw new Error('交互已过期，请刷新任务状态');
@@ -1451,35 +1482,11 @@ class CoreBackend {
 
   async shutdown({ requireSafe = true, cancel = false } = {}) {
     if (!requireSafe) return this.disconnect();
-    // 先检查全部已连接实例；真正停机仍由 Core 的公共服务接口关准入并结算。
-    for (const project of this.projects.values()) {
-      if (project.service && !project.client?.ready) throw new Error('Core 连接未恢复，不能安全停止');
-      if (!cancel && project.client?.ready && !restartSafe(await project.client.request('areal/server/status'))) {
-        throw Object.assign(new Error('Core 仍有活动任务或终端，请先处理后台资源'), { code: 'CORE_RESOURCES' });
-      }
-    }
-    this.closing = true;
-    const active = [...this.projects].filter(([, p]) => p.service).map(([projectId, p]) => ({
-      projectId, serviceId: p.service.serviceId, generation: p.service.generation, phase: 'notAttempted',
-    }));
-    const outcomes = [...(this.stopOutcomes ?? []).filter(p => p.phase === 'exited'
-      && !active.some(a => a.projectId === p.projectId)), ...active];
-    this.stopOutcomes = outcomes;
-    try {
-      await Promise.allSettled([...this.starting.values()]);
-      for (const [projectId, project] of this.projects) {
-        if (!project.service) continue;
-        const outcome = active.find(p => p.projectId === projectId);
-        if (outcome) outcome.phase = 'unknown';
-        await stopService(this, project, { cancel });
-        if (outcome) outcome.phase = 'exited';
-        project.taskNotificationMonitor?.stop();
-      }
-      await this.disconnect();
-    } catch (error) {
-      error.lifecycle = { phase: 'incomplete', projects: outcomes };
-      throw error;
-    }
+    const receipt = await this.lifecycleOperations.request({ requestId: randomUUID(), kind: 'stopDesktop', mode: cancel ? 'cancel' : 'ifIdle',
+      expectedDesktopGeneration: this.lifecycleOperations.generation, expectedTargets: this.lifecycleOperations.targets() });
+    if (receipt.desktopExit !== 'requested') throw Object.assign(new Error('后台停止尚未完成，请检查原请求'),
+      { code: 'LIFECYCLE_INCOMPLETE', requestId: receipt.requestId, lifecycle: receipt });
+    return receipt;
   }
 
   async disconnect() {

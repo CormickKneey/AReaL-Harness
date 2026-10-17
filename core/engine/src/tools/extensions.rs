@@ -255,6 +255,34 @@ impl Invocation<'_> {
         let result = if matches!(self.entry.backend, Backend::Mcp(_) | Backend::Plugin(_)) {
             // These backends own cancellation and cleanup; do not drop their futures first.
             self.invoke(&arguments, browser_plan.as_ref()).await
+        } else if matches!(self.entry.backend, Backend::Builtin)
+            && matches!(
+                self.call.name.as_str(),
+                "run_command" | "read_process" | "verify_command"
+            )
+        {
+            let runtime = self
+                .engine
+                .runtime
+                .as_ref()
+                .expect("registered Runtime tool");
+            let mut invocation = Box::pin(self.invoke(&arguments, browser_plan.as_ref()));
+            tokio::select! {
+                biased;
+                result = &mut invocation => result,
+                _ = self.cancel.cancelled() => {
+                    let cleanup = runtime.client.close_scope(self.scope).await;
+                    let result = invocation.await;
+                    match cleanup {
+                        Ok(_) => result,
+                        Err(error) => {
+                            let mut failure = unknown("Runtime scope cleanup failed; tool outcome is UNKNOWN");
+                            failure.details = Some(json!({"cleanupError":error,"invocationResult":result}));
+                            Err(failure)
+                        }
+                    }
+                }
+            }
         } else {
             tokio::select! {
                 biased;

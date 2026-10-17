@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { selectConversation, captureSmokeFailure } from './smoke-navigation.mjs';
 
 // Remaining M1 synthetic Native boundaries: popup, storage, policy, and quota.
@@ -614,7 +614,10 @@ try {
     events.secondMain.ninth = { turnId: ninthTurn.id, item: ninthItem, callbacks: ninthCallbacks, elapsedMs: Date.now() - ninthStarted, trace: traceAfterNinth };
     checks.push('09c5 adapter: ninth actual Core read on a second Main and third isolated Core is host_busy with zero second-Main callbacks; eight original adapter slots remain pending');
     const canceledAt = Date.now();
-    await command('stop', { projectId: jobs[0].projectId, threadId: jobs[0].threadId });
+    const stoppedSnapshot = await snapshot();
+    const stopJob = job => command('stop', { projectId: job.projectId, threadId: job.threadId,
+      turnId: stoppedSnapshot.projects.find(p => p.id === job.projectId).state.threads[job.threadId].turns.at(-1).id, requestId: randomUUID() });
+    await stopJob(jobs[0]);
     await until(() => app.evaluate(() => !globalThis.__budgetJobs[0].manager.page(
       globalThis.__budgetJobs[0].request.projectId, globalThis.__budgetJobs[0].threadId, globalThis.__budgetJobs[0].pageId).activeRead), 'priority cancel reaches Native while remaining seven callbacks are held');
     const elapsedMs = Date.now() - canceledAt;
@@ -623,7 +626,7 @@ try {
       active: globalThis.__budgetJobs.map(job => !!job.manager.page(job.request.projectId, job.threadId, job.pageId).activeRead) }));
     assert.equal(afterFirst.active.filter(Boolean).length, 7);
     assert.ok(afterFirst.cancels.some(row => row.requestId === before.held[0].requestId || row.requestId === before.held.find(row => row.pageId === jobs[0].pageId).requestId));
-    await Promise.all(jobs.slice(1).map(job => command('stop', { projectId: job.projectId, threadId: job.threadId })));
+    await Promise.all(jobs.slice(1).map(stopJob));
     const settled = await until(async () => {
       const value = (await snapshot()).projects;
       const turns = jobs.map(job => value.find(item => item.id === job.projectId).state.threads[job.threadId].turns.at(-1));

@@ -262,7 +262,7 @@ impl Engine {
             // 使用现有请求上下文提供指引，保持持久工具定义及模型收到的声明不变。
             let browser_instructions = tool_definitions.iter()
                 .any(|tool| tool["function"]["name"] == "browser_v1")
-                .then_some("Built-in Browser guidance: Use browser_v1 for visible web requests. Every new user request must start with describe and empty parameters, then a fresh observe for an existing page. Never reuse snapshotId or refs from an earlier turn, even if history says they were fresh. Start with describe even when no page exists or Human previously took control; Core approval can create or reclaim the current page after a new user request. For an existing page, obtain a fresh observe before navigate; only a newly created about:blank page can navigate without an observation. Then navigate using pageId, observe again for current refs, fill the search field and press Enter to perform an approved public search. Do not ask the user to enable Browser manually or use development_service_inspect to create a Browser page. Reads and actions require Core approval. Respect denied, stale and UNKNOWN results without replay.");
+                .then_some("Built-in Browser guidance: Invoke browser_v1 only when the current user task requires browser interaction. For ordinary chat and tasks that do not need a browser, do not call browser_v1 merely because it is available. Every new browser task must start with describe and empty parameters, then a fresh observe for an existing page. Never reuse snapshotId or refs from an earlier turn, even if history says they were fresh. Start with describe even when no page exists or Human previously took control; Core approval can create or reclaim the current page after a new user request. For an existing page, obtain a fresh observe before navigate; only a newly created about:blank page can navigate without an observation. Then navigate using pageId, observe again for current refs, fill the search field and press Enter to perform an approved public search. Do not ask the user to enable Browser manually or use development_service_inspect to create a Browser page. Reads and actions require Core approval. Respect denied, stale and UNKNOWN results without replay.");
             let task_instructions = self.task_context(cell).await;
             let goal_instructions = self.goal_instructions(cell).await?;
             let (
@@ -596,16 +596,18 @@ impl Engine {
                     let pending_response = tokio::time::timeout(
                         self.limits.stream_idle_timeout,
                         model::REQUEST_OWNER
-                            .scope(
-                                (thread_id.clone(), turn_id.clone()),
-                                model.chat_with_limits(
-                                    messages.clone(),
-                                    tool_definitions.clone(),
-                                    model::RequestPurpose::Solve,
-                                    tool_limits,
-                                    None,
-                                ),
-                            )
+                            .scope((thread_id.clone(), turn_id.clone()), async {
+                                anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
+                                model
+                                    .chat_with_limits(
+                                        messages.clone(),
+                                        tool_definitions.clone(),
+                                        model::RequestPurpose::Solve,
+                                        tool_limits,
+                                        None,
+                                    )
+                                    .await
+                            })
                             .instrument(model_span.clone()),
                     );
                     tokio::pin!(pending_response);

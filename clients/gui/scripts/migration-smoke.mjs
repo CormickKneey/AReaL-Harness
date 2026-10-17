@@ -446,7 +446,7 @@ try {
   await shot("02b-agent-completed");
   await page.locator(`[aria-label="关闭 Agent · ${doneChild.id.slice(0, 8)} 标签"]`).click();
   await page.getByRole("tab", { name: `Agent · ${liveChild.id.slice(0, 8)}`, exact: true }).click();
-  await call("stop", { projectId: pid, threadId: liveChild.id });
+  await call("stop", { projectId: pid, threadId: liveChild.id, turnId: project(await state()).state.threads[liveChild.id].turns.at(-1).id, requestId: randomUUID() });
   await page.locator(`[data-agent-conversation="${liveChild.id}"] [data-turn-status=interrupted]`).waitFor();
   await button("新聊天").click();
   assert.equal(await page.locator("[data-agent-conversation]").count(), 0);
@@ -496,7 +496,7 @@ try {
   checks.push("tool approval executes filesystem write; question reply resumes same turn");
   await send("等待停止");
   await until((s) => current(s).turns.at(-1)?.status === "inProgress", "running");
-  await call("stop", { projectId: pid, threadId: tid });
+  await call("stop", { projectId: pid, threadId: tid, turnId: current(await state()).turns.at(-1).id, requestId: randomUUID() });
   await until((s) => current(s).turns.at(-1)?.status !== "inProgress", "stopped");
   checks.push("explicit turn cancellation");
   // 未完成的目标必须先暂停并结算，清除后同一聊天仍能接受普通消息。

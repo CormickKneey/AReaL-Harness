@@ -56,8 +56,29 @@ pub fn projections() -> (Value, Value) {
     let mcp = object(
         json!({"id":string,"revision":number,"directoryRevision":number,"config":schema::<areal_mcp::ServerConfig>(),"state":{"enum":["disconnected","connecting","connected","failed","stale","cleanupFailed"]},"error":nullable(string.clone()),"tools":nullable(array(schema::<ToolDefinition>()))}),
     );
+    let resource = json!({"anyOf":[
+        object(json!({"threadId":string,"id":string,"state":string,"epoch":string})),
+        object(json!({"kind":{"const":"runtime"},"state":string,"epoch":string})),
+        object(json!({"kind":{"const":"hookTaskScope"},"threadId":string,
+            "state":{"const":"cleanupUnknown"},"operationId":nullable(string.clone()),
+            "scopeId":nullable(string.clone())}))
+    ]});
+    let lifecycle_assessment = object(json!({
+        "allowed":boolean,
+        "reasons":array(object(json!({
+            "code":{"enum":["activeTurn","resource","compaction","workgroup","activeGoal","queuedMessage","activeTask"]},
+            "count":number
+        })))
+    }));
+    let lifecycle = object(json!({
+        "version":{"const":1},
+        "admission":{"enum":["open","draining","closed"]},
+        "ifIdle":lifecycle_assessment,
+        "settled":lifecycle_assessment,
+        "executionOutcomes":object(json!({"uninspectedUnknown":number}))
+    }));
     let status = object(
-        json!({"configuration":nullable(object(json!({"modelRevision":string,"restartRequired":boolean,"error":nullable(string.clone())}))),"apiVersion":{"const":API_VERSION},"stateVersion":number,"productVersion":string,"draining":boolean,"closed":boolean,"acceptingWork":boolean,"activeTasks":number,"activeGoals":array(string.clone()),"pendingQueueItems":number,"activeTurns":array(object(json!({"threadId":string,"turnId":string}))),"resources":array(object(json!({"threadId":string,"id":string,"state":string,"epoch":string}))),"unresolvedTools":array(object(json!({"threadId":string,"itemId":string}))),"compactions":array(string.clone()),"workgroups":array(group_entry.clone()),"runtime":nullable(any_object.clone()),"capacity":object(json!({"threads":number,"maxThreads":number,"activeTurns":number,"maxActiveTurns":number,"historyBytesPerThread":number,"blobBytes":number})),"restartSafe":boolean}),
+        json!({"configuration":nullable(object(json!({"modelRevision":string,"restartRequired":boolean,"error":nullable(string.clone())}))),"apiVersion":{"const":API_VERSION},"stateVersion":number,"productVersion":string,"draining":boolean,"closed":boolean,"acceptingWork":boolean,"activeTasks":number,"activeGoals":array(string.clone()),"pendingQueueItems":number,"activeTurns":array(object(json!({"threadId":string,"turnId":string}))),"resources":array(resource),"unresolvedTools":array(object(json!({"threadId":string,"itemId":string}))),"compactions":array(string.clone()),"workgroups":array(group_entry.clone()),"runtime":nullable(any_object.clone()),"capacity":object(json!({"threads":number,"maxThreads":number,"activeTurns":number,"maxActiveTurns":number,"historyBytesPerThread":number,"blobBytes":number})),"restartSafe":boolean,"lifecycle":lifecycle}),
     );
     let context_budget = object(
         json!({"windowTokens":number,"outputReserveTokens":number,"inputLimitTokens":number,"targetTokens":number,"windowSource":{"enum":["model","fallback"]},"outputLimitTokens":nullable(number.clone()),"historyEstimatedTokens":number,"estimatedInputTokens":number,"estimateScope":{"const":"historyWithRecordedInstructionsAndCurrentTools"},"retentionStrategy":{"enum":["automatic","legacyRecentBoundary"]}}),

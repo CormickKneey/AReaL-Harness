@@ -1,6 +1,9 @@
 use crate::{LaunchSpec, storage};
 use anyhow::{Context, Result, bail, ensure};
-use areal_protocol::service::{Identity, Request, Response, Service, State, VERSION};
+use areal_protocol::service::{
+    Capabilities, Identity, Request, Response, Service, State, StopOperation, StopOperationState,
+    VERSION,
+};
 use fs2::FileExt;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
@@ -16,17 +19,22 @@ use tokio::{
 };
 
 pub async fn ensure(spec: &LaunchSpec) -> Result<Service> {
-    ensure_inner(spec, None, false).await
+    ensure_inner(spec, None, false, true).await
+}
+
+pub async fn ensure_without_restart(spec: &LaunchSpec) -> Result<Service> {
+    ensure_inner(spec, None, false, false).await
 }
 
 pub async fn restart(spec: &LaunchSpec, cancel: bool) -> Result<Service> {
-    ensure_inner(spec, Some(cancel), false).await
+    ensure_inner(spec, Some(cancel), false, true).await
 }
 
 async fn ensure_inner(
     spec: &LaunchSpec,
     restart: Option<bool>,
     reconnect: bool,
+    allow_automatic_restart: bool,
 ) -> Result<Service> {
     let directory = spec.directory()?;
     storage::private_dir(&spec.home.join("services"))?;
@@ -93,6 +101,10 @@ async fn ensure_inner(
                 }
             }
         }
+        ensure!(
+            restart.is_some() || allow_automatic_restart,
+            "service requires explicit lifecycle restart; the running instance is unchanged"
+        );
         stop_unlocked(&spec.home, &spec.service_id, restart.unwrap_or(false), None).await
             .with_context(|| format!("configuration requires a restart; wait for background work to finish, or run `{} --cancel` to explicitly cancel it", spec.restart_command()))?;
         if !reconnect {
@@ -200,7 +212,7 @@ async fn startup_lock(directory: &Path) -> Result<std::fs::File> {
 }
 
 pub async fn reconnect(spec: &LaunchSpec) -> Result<Service> {
-    ensure_inner(spec, None, true).await
+    ensure_inner(spec, None, true, true).await
 }
 
 fn check_compatible(spec: &LaunchSpec, service: &Service, directory: &Path) -> Result<()> {
@@ -269,6 +281,13 @@ pub async fn select(
 }
 
 pub async fn request(root: &Path, id: &str, request: Request) -> Result<Service> {
+    match control_request(root, id, request).await? {
+        Response::Ok { service } => Ok(*service),
+        _ => bail!("unexpected service control response"),
+    }
+}
+
+async fn control_request(root: &Path, id: &str, request: Request) -> Result<Response> {
     let directory = storage::registry(root, id)?;
     ensure!(directory.is_dir(), "unknown service instance: {id}");
     storage::private_dir(&directory)?;
@@ -287,8 +306,128 @@ pub async fn request(root: &Path, id: &str, request: Request) -> Result<Service>
     use tokio::io::AsyncReadExt;
     timeout(Duration::from_secs(65), reader.read_line(&mut line)).await??;
     match serde_json::from_str(&line)? {
-        Response::Ok { service } => Ok(*service),
         Response::Error { message } => bail!("{message}"),
+        response => Ok(response),
+    }
+}
+
+pub async fn capabilities(root: &Path, id: &str, generation: &str) -> Result<Capabilities> {
+    let directory = storage::registry(root, id)?;
+    let _startup = startup_lock(&directory).await?;
+    capabilities_unlocked(root, id, generation).await
+}
+
+async fn capabilities_unlocked(root: &Path, id: &str, generation: &str) -> Result<Capabilities> {
+    match control_request(
+        root,
+        id,
+        Request::Capabilities {
+            version: VERSION,
+            generation: generation.to_owned(),
+        },
+    )
+    .await
+    .context("service does not expose stop-operation capabilities")?
+    {
+        Response::Capabilities { capabilities } => Ok(capabilities),
+        _ => bail!("unexpected service capability response"),
+    }
+}
+
+pub async fn operation(
+    root: &Path,
+    id: &str,
+    generation: &str,
+    request_id: &str,
+) -> Result<Option<StopOperation>> {
+    let directory = storage::registry(root, id)?;
+    let _startup = startup_lock(&directory).await?;
+    operation_unlocked(&directory, id, generation, request_id)
+}
+
+fn operation_unlocked(
+    directory: &Path,
+    id: &str,
+    generation: &str,
+    request_id: &str,
+) -> Result<Option<StopOperation>> {
+    let Some(receipt) = storage::read_stop_receipt(directory, request_id)? else {
+        return Ok(None);
+    };
+    let mut operation = receipt.operation;
+    ensure!(
+        operation.version == VERSION
+            && operation.service_id == id
+            && operation.generation == generation
+            && receipt.service.identity.service_id == id
+            && receipt.service.identity.generation == generation,
+        "stop request conflict: operation identity does not match"
+    );
+    if operation.state == StopOperationState::AcceptedPending {
+        let current: Service = storage::read(&directory.join("service.json"))?;
+        ensure!(current.identity.service_id == id, "invalid service record");
+        let replaced = current.identity.generation != generation;
+        if replaced
+            || (storage::available(&receipt.service.identity.data_dir.join("service.lock"))?
+                && storage::store_available(&receipt.service.identity.data_dir)?)
+        {
+            operation.state = if receipt.cleanup_confirmed {
+                StopOperationState::Completed
+            } else {
+                StopOperationState::AdmissionUnknown
+            };
+            if !receipt.cleanup_confirmed {
+                operation.message =
+                    Some("the original host exited without confirming cleanup".into());
+            }
+        }
+    }
+    Ok(Some(operation))
+}
+
+pub async fn stop_operation(
+    root: &Path,
+    id: &str,
+    generation: &str,
+    request_id: &str,
+    cancel: bool,
+) -> Result<StopOperation> {
+    let directory = storage::registry(root, id)?;
+    let _startup = startup_lock(&directory).await?;
+    if let Some(operation) = operation_unlocked(&directory, id, generation, request_id)? {
+        ensure!(
+            operation.cancel == cancel,
+            "stop request conflict: cancel strategy changed"
+        );
+        return Ok(operation);
+    }
+    let capabilities = capabilities_unlocked(root, id, generation).await?;
+    ensure!(
+        capabilities.version == VERSION && capabilities.stop_operations == 1,
+        "service does not support durable stop operations"
+    );
+    match control_request(root, id, Request::StopOperation {
+        version: VERSION,
+        generation: generation.to_owned(),
+        request_id: request_id.to_owned(),
+        cancel,
+    }).await {
+        Ok(Response::Operation { operation }) => {
+            ensure!(
+                operation.request_id == request_id && operation.service_id == id
+                    && operation.generation == generation && operation.cancel == cancel,
+                "invalid stop operation response"
+            );
+            Ok(*operation)
+        }
+        Ok(_) => bail!("unexpected stop operation response"),
+        Err(error) => match operation_unlocked(&directory, id, generation, request_id)? {
+            Some(operation) => {
+                ensure!(operation.cancel == cancel, "stop request conflict: cancel strategy changed");
+                Ok(operation)
+            }
+            None => Err(error).context("stop admission is unknown; read the original operation before taking further action"),
+        },
     }
 }
 

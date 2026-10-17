@@ -13,8 +13,16 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const currentCommands = new Set(['send', 'continue', 'prepareCreator', 'feedback']);
 const currentManagePrefixes = ['plugin', 'marketplace', 'mcpApp', 'mcpForm'];
 const currentManageOperations = new Set(['mcpExtensionCall', 'mcpToolResult', 'connectorConfigure', 'connectorCredential', 'hookAcknowledge']);
-const unconfirmedConnection = () => ({ state: 'unavailable', recovery: 'check',
-  message: '停止结果未确认，请检查后台状态；不会自动重发或启动后台。' });
+const uuid = value => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value);
+const desktopKind = kind => ['stopDesktop', 'updateDesktop'].includes(kind);
+const needsOriginalCheck = operation => operation.phase === 'admissionUnconfirmed'
+  || operation.phase === 'acceptedPending' && operation.desktopExit === 'requested'
+  || operation.targets.some(target => ['notAttempted', 'acceptedPending', 'admissionUnconfirmed'].includes(target.phase));
+const notAdmittedCodes = new Set(['LIFECYCLE_ADMISSION_FAILED', 'LIFECYCLE_UNSUPPORTED', 'LIFECYCLE_INVALID_REQUEST', 'LIFECYCLE_REQUEST_CONFLICT',
+  'CONFIRMATION_STALE', 'LIFECYCLE_BLOCKED', 'LIFECYCLE_INCOMPLETE']);
+const lifecycleMessage = phase => ({ acceptedPending: '请求已受理，后台仍在完成退出和清理。', blocked: '后台明确拒绝了此次操作，原任务仍可继续使用。',
+  admissionUnconfirmed: '原请求是否受理尚未确认，请检查原请求；不会自动重发。', settlementIncomplete: '请求已受理，部分资源尚未完成清理。',
+  partial: '部分后台已完成，仍有目标需要检查。', completed: '后台操作已完成。' })[phase];
 
 function requiresCurrentCommands(name, request) {
   return currentCommands.has(name)
@@ -48,7 +56,7 @@ async function waitForServiceExit(home, metadata) {
   while (Date.now() < deadline) {
     try {
       const current = JSON.parse(await readFile(join(home, 'service.json'), 'utf8'));
-      if (current.token !== metadata.token) return;
+      if (metadata.desktopGeneration ? current.desktopGeneration !== metadata.desktopGeneration : current.token !== metadata.token) return;
     } catch (error) { if (error.code === 'ENOENT') return; throw error; }
     await sleep(100);
   }
@@ -146,6 +154,7 @@ class SharedCoreBackend {
     this.status = { connected: false }; this.sequence = -1;
     this.connectionState = { state: 'connecting' }; this.revision = 0; this.initializing = false;
     this.guiTerminals = new Map(); this.guiTerminalStarts = new Set();
+    this.lifecycleReferences = new Map(); this.lifecycleReceipts = new Map();
     this.analytics = { sample: sample => { this.lastActivity = sample; if (this.status.connected) void this.connection.request('activity', sample).catch(() => {}); }, flush: async () => {} };
   }
   get saved() { return this.value.projects; }
@@ -163,7 +172,7 @@ class SharedCoreBackend {
     const connection = this.initializing && this.connectionState.state === 'ready' ? { state: 'connecting' } : this.connectionState;
     return { ...this.value, desktopCapabilities,
       projects: this.value.projects.map(project => ({ ...project, desktopCapabilities })),
-      backendUpdate: this.backendUpdate,
+      backendUpdate: this.backendUpdate, lifecycle: this.lifecycleProjection(),
       revision: ++this.revision, connection };
   }
   accept(packet, metadata = this.metadata) {
@@ -172,16 +181,14 @@ class SharedCoreBackend {
     if (packet.sequence <= this.sequence) return;
     this.clearReconnect(); this.reconnectAttempts = 0;
     this.sequence = packet.sequence; this.value = packet.snapshot; this.status = packet.service;
-    this.connectionState = this.controlState === 'unconfirmed' ? unconfirmedConnection()
-      : packet.service.stopReport ? { state: 'unavailable', message: '后台停止尚未完成，请检查后台状态' }
-        : { state: 'ready' };
+    this.connectionState = { state: 'ready' };
     this.onChange();
   }
   disconnected() {
     this.onBrowserDisconnected?.();
     const stopped = !!this.connection && this.stoppedConnection === this.connection;
-    const message = stopped ? '后台服务已停止，可按需重新连接' : this.controlState === 'unconfirmed' ? '停止结果未确认，请显式连接后核查后台状态；不会自动重发。' : '后台服务已断开，请重新连接';
-    this.connectionState = this.controlState === 'unconfirmed' ? unconfirmedConnection() : { state: 'unavailable', message };
+    const message = stopped ? '后台服务已停止，可按需重新连接' : '后台服务已断开，请重新连接';
+    this.connectionState = { state: 'unavailable', message };
     this.status = { ...this.status, connected: false };
     this.value = { ...this.value, projects: this.value.projects.map(p => ({ ...p, error: stopped ? null : message, state: p.state ? { ...p.state, connected: false, error: stopped ? null : message } : null })) };
     this.onChange();
@@ -203,8 +210,11 @@ class SharedCoreBackend {
       // 只恢复观察连接：不调用 initialize，不启动 Core、不重放任何未知提交。
       this.connecting = (async () => {
         const control = await this.readControl();
-        if (control) { this.controlState = control.state; this.reconnectBlocked = true; return; }
-        await this.attach({ passive: true });
+        if (control?.state) { this.controlState = control.state; this.reconnectBlocked = true; return; }
+        this.loadReferences(control);
+        if (await this.attach({ passive: true })) {
+          for (const reference of this.lifecycleReferences.values()) await this.readLifecycle(reference);
+        }
       })().catch(error => {
         if (error.code === 'DISCONNECTED') return;
         this.reconnectBlocked = true;
@@ -284,60 +294,37 @@ class SharedCoreBackend {
   }
   async init({ automatic = false } = {}) {
     if (this.disposed) throw new Error('GUI 连接已关闭');
-    const trace = startupTrace('service.init');
-    trace.advance('control');
-    try {
-      let control;
-      {
-        try {
-          control = await this.readControl();
-          if (automatic && control) {
-            this.controlState = control.state;
-            this.connectionState = control.state === 'stopped' ? { state: 'unavailable', message: '后台服务已停止，可按需重新连接' } : unconfirmedConnection();
-            this.onChange();
-            trace.finish('skipped');
-            return;
-          }
-        } catch (error) {
-          this.connectionState = { state: 'unavailable', message: `后台启动状态读取失败，请显式连接后核查。${error.message}` };
-          this.onChange(); throw error;
+    if (this.connecting) return this.connecting;
+    const control = await this.readControl();
+    this.loadReferences(control);
+    if (automatic && this.controlState === 'stopped') {
+      this.connectionState = { state: 'unavailable', message: '后台服务已停止，可按需重新连接' }; this.onChange(); return;
+    }
+    if (this.status.connected && !this.lifecycleReferences.size && !this.legacyControl) return;
+    this.clearReconnect(); this.initializing = true;
+    this.connectionState = { state: 'connecting' }; this.onChange();
+    this.connecting = (async () => {
+      if (this.lifecycleReferences.size || this.legacyControl) {
+        await this.checkLifecycle();
+        const completedStop = this.lifecycleReferences.size > 0 && [...this.lifecycleReferences.values()].every(reference =>
+          reference.kind === 'stopDesktop' && this.lifecycleReceipts.get(reference.requestId)?.phase === 'completed');
+        if (!automatic && completedStop) {
+          this.lifecycleReferences.clear(); this.lifecycleReceipts.clear(); await this.persistReferences();
+        } else {
+          if (!this.status.connected) this.connectionState = { state: 'unavailable', recovery: 'check',
+            message: '原后台暂不可连接，操作引用已保留。请检查原请求，不会自动启动或重发。' };
+          return;
         }
       }
-      if (this.connecting) { trace.finish('skipped'); return this.connecting; }
-      const checking = control?.state === 'unconfirmed';
-      if (this.status.connected && !checking) { trace.finish('skipped'); return; }
-      this.controlState = control?.state ?? null;
-      this.clearReconnect(); this.reconnectBlocked = false;
-      this.connectionState = { state: 'connecting' };
-      this.initializing = true;
-      trace.advance('initialize');
-      this.connecting = (checking ? (async () => {
-        this.reconnectBlocked = true;
-        if (!await this.attach()) throw new Error('停止结果未确认，当前无法连接原后台。请检查后台状态，不会自动启动。');
-      })() : this.initialize(automatic)).then(async () => {
-        if (checking) { this.connectionState = unconfirmedConnection(); trace.finish('skipped'); return; }
-        trace.advance('legacy_schedules');
-        const { restoreLegacySchedules } = require('./legacy-service-cancel.cjs');
-        let attention;
-        try { ({ attention } = await restoreLegacySchedules({ connection: this.connection, home: this.home, metadata: this.metadata })); }
-        catch (error) { trace.advance('legacy_attention', 'degraded'); attention = [`安排恢复尚未完成，恢复记录已保留：${error.message}`]; }
-        if (attention.length) {
-          if (this.onRecoveryAttention) await this.onRecoveryAttention(attention);
-          else console.warn(attention.join('\n'));
-        }
-        trace.advance('control_clear');
-        await rm(this.controlPath, { force: true }); this.controlState = null; this.reconnectBlocked = false;
-        trace.finish(attention.length ? 'degraded' : 'ok');
-      }).catch(error => {
-        trace.finish('error', error);
-        if (this.backendUpdate?.state === 'applying') this.backendUpdate = { state: 'failed', message: error.message };
-        this.connectionState = this.controlState === 'unconfirmed' ? unconfirmedConnection() : { state: 'unavailable', message: error.message };
-        if (['SERVICE_NOT_READY', 'DISCONNECTED'].includes(error.code)) this.scheduleReconnect();
-        this.onChange(); throw error;
-      }).finally(() => { this.initializing = false; this.connecting = null; this.onChange(); });
-      this.onChange();
-      return this.connecting;
-    } catch (error) { trace.finish('error', error); throw error; }
+      this.reconnectBlocked = false;
+      await this.initialize(automatic);
+      if (!this.lifecycleReferences.size) { await rm(this.controlPath, { force: true }); this.controlState = null; }
+    })().catch(error => {
+      this.connectionState = { state: 'unavailable', message: error.message };
+      if (['SERVICE_NOT_READY', 'DISCONNECTED'].includes(error.code)) this.scheduleReconnect();
+      this.onChange(); throw error;
+    }).finally(() => { this.initializing = false; this.connecting = null; this.onChange(); });
+    return this.connecting;
   }
   async initialize(automatic = false) {
     const trace = startupTrace('service.initialize');
@@ -359,32 +346,18 @@ class SharedCoreBackend {
       if (retained) {
         this.backendUpdate = this.identity === this.metadata.identity ? undefined : { state: 'pending' };
         this.onChange();
-        if (!automatic || !this.backendUpdate) return;
-        try {
-          await inspectCoreCapabilities(this.options.binary);
-          const observed = await this.observeLifecycle();
-          if (!observed.ifIdle) return;
-          if (this.disposed) throw new Error('GUI 连接已关闭');
-          this.backendUpdate = { state: 'applying' }; this.onChange();
-          await this.stopService(false, { observed });
-        } catch (error) {
-          if (error.submissionUnknown || !this.status.connected || this.status.stopReport) throw error;
-          this.backendUpdate = ['LIFECYCLE_BLOCKED', 'CONFIRMATION_STALE', 'CORE_RESOURCES'].includes(error.code)
-            ? { state: 'pending' } : { state: 'failed', message: error.message };
-          this.onChange(); return;
-        }
-        this.connectionState = { state: 'connecting' }; this.onChange();
+        return;
       }
       // Explain a known binary incompatibility through this connection attempt's
       // error channel; never expose shared or stale service log contents to GUI.
       trace.advance('capabilities');
       if (!retained) await inspectCoreCapabilities(this.options.binary);
       trace.advance('spawn_wait');
-      const log = await open(join(this.home, 'service.log'), 'a', 0o600);
       const env = { ...process.env, AREAL_BACKEND: 'areal', AREAL_CORE_HOME: this.home };
       delete env.ELECTRON_RUN_AS_NODE;
       const args = this.app.isPackaged ? ['--areal-core-service'] : [this.app.getAppPath(), '--areal-core-service'];
       const executable = desktopExecutables({ packaged: this.app.isPackaged }).service;
+      const log = await open(join(this.home, 'service.log'), 'a', 0o600);
       try {
         let launchError, retryLaunch = false;
         const launch = () => {
@@ -410,7 +383,6 @@ class SharedCoreBackend {
   }
   async addProject(path) {
     await this.init();
-    if (this.controlState === 'unconfirmed') throw Object.assign(new Error('停止结果未确认，仅允许检查后台和显式恢复'), { code: 'LIFECYCLE_INCOMPLETE' });
     return this.connection.request('addProject', { path }, true);
   }
   async browserClaim(identity) {
@@ -426,11 +398,16 @@ class SharedCoreBackend {
     if (this.connecting) await this.connecting.catch(() => {});
     // Only explicit reconnect opens a stopped service. Periodic panel reads must
     // not undo the user's stop action; in-flight commands are never replayed.
-    if (name === 'connect') await this.init();
+    if (name === 'connect' && !this.status.connected) await this.init();
     if (this.disposed) throw new Error('GUI 连接已关闭');
     if (!this.status.connected) throw new Error('后台尚未连接，请先处理后台连接提示');
-    if (this.controlState === 'unconfirmed' && !require('./lifecycle.cjs').isRecoveryCommand(name, request))
-      throw Object.assign(new Error('停止结果未确认，仅允许检查后台和显式恢复；不会重新受理输入。'), { code: 'LIFECYCLE_INCOMPLETE' });
+    if (name === 'stop') {
+      if (!uuid(request.requestId) || typeof request.turnId !== 'string' || !request.turnId)
+        throw Object.assign(new Error('暂停需要原轮次和操作身份，请刷新任务后重试'), { code: 'LIFECYCLE_INVALID_REQUEST' });
+      return this.requestLifecycle({ kind: 'interruptTurn', mode: 'cancel', projectId: request.projectId,
+        threadId: request.threadId, turnId: request.turnId, requestId: request.requestId });
+    }
+    this.assertLifecycleScope(name, request);
     if (this.status.commandContract !== COMMAND_CONTRACT && requiresCurrentCommands(name, request)) {
       throw Object.assign(new Error('当前运行中的后台不支持此操作。现有任务继续运行，输入已保留；请在任务完成后安全停止后台并重新连接。'), { code: 'SERVICE_COMMAND_UNSUPPORTED' });
     }
@@ -487,47 +464,223 @@ class SharedCoreBackend {
     const { DesktopLifecycle } = require('./lifecycle.cjs');
     return new DesktopLifecycle({ connection: this.connection, metadata: this.metadata, home: this.home, forUpdate }).observe();
   }
-  async stopService(forUpdate = false, options = {}) {
-    if (!this.status.connected) throw new Error('后台尚未连接，请先重新连接后台');
-    this.reconnectBlocked = true; this.clearReconnect();
-    const metadata = this.metadata, connection = this.connection;
-    // Persist intent before the write: a missing response or GUI restart must
-    // never turn this user control into an implicit start or repeated stop.
-    if (!forUpdate) await this.saveControl('unconfirmed');
-    let accepted = false;
-    try {
-      const { DesktopLifecycle } = require('./lifecycle.cjs');
-      const lifecycle = new DesktopLifecycle({ connection, metadata, home: this.home,
-        notify: options.notify, forUpdate: true });
-      const result = await lifecycle.stop({ mode: options.cancel ? 'cancel' : 'ifIdle', observed: options.observed });
-      if (result.kind === 'dismissed') {
-        if (!forUpdate) {
-          await rm(this.controlPath, { force: true }); this.controlState = null;
-          if (this.status.connected && !this.status.stopReport) this.connectionState = { state: 'ready' };
-          this.onChange();
+  lifecycleProjection() {
+    const visible = new Map(this.lifecycleReceipts);
+    for (const [requestId, reference] of this.lifecycleReferences) visible.set(requestId, reference);
+    const operations = [...visible.values()].map(reference => {
+      const receipt = this.lifecycleReceipts.get(reference.requestId);
+      return { requestId: reference.requestId, kind: reference.kind,
+        phase: receipt?.phase ?? 'admissionUnconfirmed',
+        targets: (receipt?.targets ?? reference.targets).map(target => ({ projectId: target.projectId,
+          phase: target.phase ?? 'admissionUnconfirmed', ...(target.error ? { message: typeof target.error === 'string' ? target.error : target.error.message } : {}) })),
+        ...(reference.threadId ? { threadId: reference.threadId, turnId: reference.turnId } : {}),
+        ...(receipt?.desktopExit ? { desktopExit: receipt.desktopExit } : {}),
+        message: receipt?.message ?? receipt?.desktopError?.message ?? lifecycleMessage(receipt?.phase ?? 'admissionUnconfirmed') };
+    });
+    const latest = operations.at(-1);
+    return { supported: this.status.lifecycle?.version === 2, operations,
+      ...(latest ?? this.legacyControl ? latest ?? { phase: 'admissionUnconfirmed', targets: [],
+        message: '旧停止记录缺少操作身份，已恢复观察连接。请检查原后台状态；不会重发旧操作。' } : {}),
+      ...(this.lifecycleError ? { error: this.lifecycleError, message: this.lifecycleError } : {}) };
+  }
+  reportLifecycleError(error) {
+    this.lifecycleError = error.message;
+    this.onChange();
+  }
+  async persistReferences() {
+    const write = async () => {
+      await mkdir(this.app.getPath('userData'), { recursive: true, mode: 0o700 });
+      if (!this.lifecycleReferences.size) { await rm(this.controlPath, { force: true }); return; }
+      const temporary = `${this.controlPath}.${randomUUID()}.tmp`;
+      try {
+        const file = await open(temporary, 'wx', 0o600);
+        try { await file.writeFile(JSON.stringify({ version: 2, home: this.home,
+          references: [...this.lifecycleReferences.values()] })); await file.sync(); }
+        finally { await file.close(); }
+        await rename(temporary, this.controlPath);
+        if (process.platform !== 'win32') {
+          const directory = await open(this.app.getPath('userData'), 'r');
+          try { await directory.sync(); } finally { await directory.close(); }
         }
-        this.reconnectBlocked = false; this.scheduleReconnect();
-        return result;
+      } finally { await rm(temporary, { force: true }); }
+    };
+    const pending = (this.referenceWrite ?? Promise.resolve()).catch(() => {}).then(write);
+    this.referenceWrite = pending;
+    return pending;
+  }
+  loadReferences(control) {
+    if (control?.version === 2) {
+      if (!Array.isArray(control.references) || control.references.some(reference =>
+        !uuid(reference?.requestId) || !uuid(reference.desktopGeneration) || !Array.isArray(reference.targets)
+        || !['stopDesktop', 'updateDesktop', 'stopProject', 'updateProject', 'interruptTurn'].includes(reference.kind)
+        || !Number.isSafeInteger(reference.desktop?.pid) || reference.desktop.pid <= 1))
+        throw Object.assign(new Error('后台操作引用损坏，请保留记录并检查原后台'), { code: 'LIFECYCLE_REFERENCE_INVALID' });
+      for (const reference of control.references) this.lifecycleReferences.set(reference.requestId, reference);
+      this.controlState = null;
+    } else if (control?.state === 'unconfirmed') {
+      this.legacyControl = control; this.controlState = null;
+    } else this.controlState = control?.state ?? null;
+  }
+  async readLifecycle(reference, reconcile = true) {
+    let receipt;
+    if (this.status.connected && this.status.lifecycle?.version === 2) {
+      try {
+        receipt = await this.connection.request(reconcile ? 'lifecycleReconcile' : 'lifecycleRead',
+          { protocol: PROTOCOL, requestId: reference.requestId });
+      } catch (error) {
+        if (error.code !== 'DISCONNECTED' && error.code !== 'LIFECYCLE_UNSUPPORTED') throw error;
       }
-      if (result?.stopped !== true) throw Object.assign(new Error('停止结果未确认，请核查后台状态；不会自动重发。'), { submissionUnknown: true });
-      accepted = true;
-      this.guiTerminals.clear(); // Safe service shutdown has already settled all resources.
-      this.exitConfirmation = metadata;
-      if (!forUpdate) await this.saveControl('stopped');
-      if (this.connection === connection) { this.stoppedConnection = connection; this.disconnected(); }
+    }
+    if (!receipt) {
+      const { readLifecycleReceipt, reconcileLifecycleReceipt } = require('./lifecycle-operations.cjs');
+      const identity = { requestId: reference.requestId, desktopGeneration: reference.desktopGeneration };
+      receipt = this.options.binary && this.options.harnessHome
+        ? await reconcileLifecycleReceipt(this.home, { ...identity, binary: this.options.binary, harnessHome: this.options.harnessHome })
+        : await readLifecycleReceipt(this.home, identity);
+    }
+    if (!receipt) receipt = { version: 1, requestId: reference.requestId, kind: reference.kind, mode: reference.mode,
+      desktopGeneration: reference.desktopGeneration, desktopExit: 'notRequested',
+      ...(reference.threadId ? { threadId: reference.threadId, turnId: reference.turnId } : {}),
+      phase: 'admissionUnconfirmed', targets: reference.targets.map(target => ({ ...target, phase: 'admissionUnconfirmed' })) };
+    return this.acceptLifecycleReceipt(reference, receipt);
+  }
+  async acceptLifecycleReceipt(reference, receipt) {
+    if (receipt?.version !== 1 || receipt.requestId !== reference.requestId || receipt.desktopGeneration !== reference.desktopGeneration
+      || receipt.kind !== reference.kind || receipt.mode !== reference.mode || !Array.isArray(receipt.targets)
+      || !['acceptedPending', 'blocked', 'partial', 'admissionUnconfirmed', 'settlementIncomplete', 'completed'].includes(receipt.phase)
+      || !['notRequested', 'requested'].includes(receipt.desktopExit)
+      || receipt.phase === 'completed' && receipt.targets.some(target => target.phase !== 'completed')
+      || receipt.targets.some(target => !target || typeof target.projectId !== 'string' || typeof target.serviceId !== 'string'
+        || typeof target.generation !== 'string' || !['notAttempted', 'acceptedPending', 'blocked', 'admissionUnconfirmed', 'settlementIncomplete', 'completed'].includes(target.phase))
+      || !require('node:util').isDeepStrictEqual(require('./lifecycle.cjs').targets(receipt.targets), reference.targets)
+      || reference.kind === 'interruptTurn' && (receipt.threadId !== reference.threadId || receipt.turnId !== reference.turnId))
+      throw Object.assign(new Error('后台回执与原操作身份不一致'), { code: 'LIFECYCLE_RECEIPT_INVALID', submissionUnknown: true });
+    let operation = desktopKind(reference.kind) && receipt.phase === 'completed' ? { ...receipt, phase: 'acceptedPending' } : receipt;
+    if (desktopKind(reference.kind) && ['acceptedPending', 'settlementIncomplete', 'completed'].includes(receipt.phase)
+      && receipt.targets.every(target => target.phase === 'completed')) {
+      let exited = false;
+      try { process.kill(reference.desktop.pid, 0); }
+      catch (error) { if (error.code === 'ESRCH') exited = true; else throw error; }
+      if (!exited && receipt.desktopExit === 'requested') {
+        try { await waitForProcessExit(reference.desktop.pid); exited = true; }
+        catch (error) { operation = { ...receipt, phase: 'acceptedPending', message: error.message }; }
+      }
+      if (exited) {
+        operation = { ...receipt, phase: 'completed' };
+        this.exitConfirmation = this.metadata?.desktopGeneration === reference.desktopGeneration ? this.metadata : reference.desktop;
+        if (this.metadata?.desktopGeneration === reference.desktopGeneration || !this.status.connected) {
+          this.reconnectBlocked = true; this.clearReconnect();
+        }
+        if (this.metadata?.desktopGeneration === reference.desktopGeneration && this.status.connected) {
+          this.guiTerminals.clear();
+          const connection = this.connection;
+          this.stoppedConnection = connection; this.disconnected(); this.connection = null; connection.close();
+        }
+      }
+    }
+    this.lifecycleReceipts.set(reference.requestId, operation);
+    if (operation.phase === 'blocked' || operation.phase === 'completed' && !desktopKind(reference.kind)) {
+      this.lifecycleReferences.delete(reference.requestId); await this.persistReferences();
+    }
+    this.lifecycleError = null; this.onChange();
+    return operation;
+  }
+  async checkLifecycle() {
+    this.loadReferences(await this.readControl());
+    this.clearReconnect();
+    if (!this.status.connected) await this.attach();
+    for (const reference of [...this.lifecycleReferences.values()]) await this.readLifecycle(reference);
+    this.lifecycleError = null; this.onChange();
+    return this.lifecycleProjection();
+  }
+  assertLifecycleScope(name, request) {
+    if (['list', 'open', 'reconcile', 'queue'].includes(name) || require('./lifecycle.cjs').isRecoveryCommand(name, request)) return;
+    for (const reference of this.lifecycleReferences.values()) {
+      const operation = this.lifecycleReceipts.get(reference.requestId);
+      if (['blocked', 'completed'].includes(operation?.phase)) continue;
+      if (reference.kind === 'interruptTurn' && reference.threadId !== request.threadId) continue;
+      const target = (operation?.targets ?? reference.targets).find(target => target.projectId === request.projectId);
+      if (target && !['blocked', 'completed'].includes(target.phase)) throw Object.assign(
+        new Error('此任务的原后台操作尚未结算，请检查原请求'), { code: 'LIFECYCLE_INCOMPLETE', requestId: reference.requestId });
+    }
+  }
+  async requestLifecycle({ kind, mode = 'ifIdle', observed, projectId, threadId, turnId, requestId = randomUUID() }) {
+    if (!this.status.connected) throw new Error('后台尚未连接，请先重新连接后台');
+    const previous = this.lifecycleReferences.get(requestId) ?? this.lifecycleReceipts.get(requestId);
+    if (previous) {
+      if (previous.kind !== kind || previous.mode !== mode || previous.threadId !== threadId || previous.turnId !== turnId
+        || projectId && !previous.targets.some(target => target.projectId === projectId))
+        throw Object.assign(new Error('原请求身份不能绑定其他操作或轮次'), { code: 'LIFECYCLE_REQUEST_CONFLICT' });
+      const operation = this.lifecycleReferences.has(requestId) ? await this.readLifecycle(previous) : previous;
+      return { stopped: operation.phase === 'completed', operation };
+    }
+    if (desktopKind(kind)) {
+      for (const reference of this.lifecycleReferences.values()) {
+        if (!desktopKind(reference.kind)) continue;
+        const operation = await this.readLifecycle(reference);
+        if (needsOriginalCheck(operation))
+          return { stopped: false, operation };
+      }
+    }
+    const { DesktopLifecycle } = require('./lifecycle.cjs');
+    const intent = await new DesktopLifecycle({ connection: this.connection, metadata: this.metadata,
+      forUpdate: desktopKind(kind) }).prepare({ kind, mode, observed, projectId, threadId, turnId });
+    const reference = { requestId, kind, mode, desktopGeneration: intent.expectedDesktopGeneration,
+      targets: intent.expectedTargets, desktop: { pid: this.metadata.pid, identity: this.metadata.identity },
+      ...(kind === 'interruptTurn' ? { threadId, turnId } : {}) };
+    this.lifecycleReferences.set(requestId, reference);
+    try { await this.persistReferences(); }
+    catch (error) { this.lifecycleReferences.delete(requestId); throw error; }
+    this.lifecycleError = null; this.onChange();
+    let operation;
+    try {
+      const receipt = await this.connection.request('lifecycleRequest', { protocol: PROTOCOL, requestId, ...intent }, true);
+      if (!receipt) throw Object.assign(new Error('后台操作回执缺失'), { submissionUnknown: true });
+      operation = await this.acceptLifecycleReceipt(reference, receipt);
+    } catch (error) {
+      if (!error.submissionUnknown && notAdmittedCodes.has(error.code)) {
+        this.lifecycleReferences.delete(requestId); await this.persistReferences(); throw error;
+      }
+      operation = await this.readLifecycle(reference);
+    }
+    return { stopped: operation.phase === 'completed', operation,
+      ...(desktopKind(kind) && operation.phase === 'completed' ? { kind: 'exited' } : {}) };
+  }
+  async stopService(forUpdate = false, options = {}) {
+    return this.requestLifecycle({ kind: options.kind ?? (forUpdate ? 'updateDesktop' : 'stopDesktop'),
+      mode: options.cancel ? 'cancel' : 'ifIdle', observed: options.observed });
+  }
+  async applyUpdate({ notify } = {}) {
+    try {
+      const pending = [...this.lifecycleReferences.values()].find(reference => reference.kind === 'updateDesktop'
+        && this.lifecycleReceipts.get(reference.requestId)?.phase !== 'blocked');
+      let result;
+      if (pending) {
+        await this.checkLifecycle();
+        const operation = this.lifecycleReceipts.get(pending.requestId);
+        if (operation?.phase === 'completed' || operation && needsOriginalCheck(operation))
+          result = { stopped: operation?.phase === 'completed', operation };
+      }
+      if (!result) {
+        require('./lifecycle.cjs').assertLifecycleSupport(this.status, 'updateDesktop');
+        await inspectCoreCapabilities(this.options.binary);
+        this.backendUpdate = { state: 'applying' }; this.onChange();
+        result = await require('./startup-recovery.cjs').recoverConnectedService({ backend: this, notify, purpose: 'update', forUpdate: true });
+      }
+      if (!result.stopped) { this.backendUpdate = { state: 'pending' }; this.onChange(); return result; }
+      this.connection?.close(); this.connection = null; this.reconnectBlocked = true;
+      this.connectionState = { state: 'connecting' }; this.onChange();
+      await this.initialize(false);
+      for (const [requestId, reference] of this.lifecycleReferences) {
+        if (desktopKind(reference.kind) && reference.desktopGeneration === result.operation.desktopGeneration) {
+          this.lifecycleReferences.delete(requestId); this.lifecycleReceipts.delete(requestId);
+        }
+      }
+      await this.persistReferences(); this.controlState = null; this.reconnectBlocked = false;
+      this.backendUpdate = undefined; this.onChange();
       return result;
     } catch (error) {
-      if (this.controlState === 'unconfirmed' && error.submissionUnknown) {
-        this.connectionState = unconfirmedConnection();
-        this.onChange();
-      }
-      if (!forUpdate && !accepted && !error.submissionUnknown) {
-        await rm(this.controlPath, { force: true }); this.controlState = null;
-        if (this.status.connected && !this.status.stopReport) this.connectionState = { state: 'ready' };
-        this.onChange();
-      }
-      if (!accepted && !error.submissionUnknown) { this.reconnectBlocked = false; this.scheduleReconnect(); }
-      throw error;
+      this.backendUpdate = { state: 'failed', message: error.message }; this.reportLifecycleError(error); throw error;
     }
   }
   async settleGuiTerminals() {

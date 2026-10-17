@@ -346,9 +346,14 @@ app.whenReady().then(async () => {
       if (name === 'manage' && ['pluginArchivePick', 'pluginArchiveImport'].includes(params.operation))
         return { ok: true, value: await pluginArchives.command(params, () => trusted(event)) };
       if (name === 'remoteControl') return { ok: true, value: await backend.remoteControl(params) };
+      if (name === 'serviceLifecycle') {
+        const value = params.operation === 'update' ? await backend.applyUpdate({ notify: options => dialog.showMessageBox(window, options) })
+          : params.operation === 'stop' ? await requestStopService() : await backend.checkLifecycle();
+        return { ok: true, value };
+      }
       if (name === 'serviceStatus') return { ok: true, value: await backend.serviceStatus() };
       if (name === 'stopService') return { ok: true, value: await requestStopService() };
-      if (name === 'recoverResources') { await recoverResources(); return { ok: true, value: null }; }
+      if (name === 'recoverResources') { await backend.checkLifecycle(); return { ok: true, value: null }; }
       if (name === 'connectService') { await backend.init(); return { ok: true, value: null }; }
       if (name === 'manage' && params.operation === 'archive') {
         const answer = await dialog.showMessageBox(window, { type: 'question', message: '归档此会话？', detail: '历史仍可查看。当前 Core 不支持取消归档，归档后无法继续发送消息；该会话的临时浏览页面和登录状态也会关闭。', buttons: ['取消', '归档会话'], defaultId: 0, cancelId: 0 });
@@ -382,8 +387,13 @@ app.whenReady().then(async () => {
     catch (error) { return { ok: false, error: desktopError(error) }; }
   });
   let recoveryPending = 0;
-  const hasUpdateWork = async () => recoveryPending > 0 || !(await backend.observeLifecycle()).ifIdle;
-  const recoverResources = async () => {
+  const hasUpdateWork = async () => {
+    const lifecycle = backend.snapshot().lifecycle;
+    const unsettled = lifecycle?.phase === 'admissionUnconfirmed'
+      || lifecycle?.operations?.some(operation => !['completed', 'blocked'].includes(operation.phase));
+    return recoveryPending > 0 || unsettled || !backend.serviceExited && !(await backend.observeLifecycle()).ifIdle;
+  };
+  const recoverInstall = async () => {
     recoveryPending++;
     try { await recoverConnectedService({ backend, notify: options => dialog.showMessageBox(window, options), purpose: 'update', forUpdate: true }); }
     finally {
@@ -391,28 +401,33 @@ app.whenReady().then(async () => {
       if (recoveryPending === 0 && updates?.state().status === 'deferred') void updates.install();
     }
   };
-  updates = setupUpdater({ recoverInstall: recoverResources, hasWork: hasUpdateWork,
+  updates = setupUpdater({ recoverInstall, hasWork: hasUpdateWork,
     onState: state => { if (window && !window.isDestroyed()) window.webContents.send('areal-core:update-changed', state); },
     prepareInstall: async () => {
     if (quitting || await hasUpdateWork()) throw Object.assign(new Error('仍有活动任务或操作，请检查后台状态'), { code: 'LIFECYCLE_BLOCKED' });
     quitting = true;
-    try { if (!backend.serviceExited) await backend.stopService(true); preview?.dispose(); await backend.shutdown(); exitReady = true; }
+    try {
+      if (!backend.serviceExited) {
+        const result = await backend.stopService(true, { kind: 'updateDesktop' });
+        if (result.stopped !== true) throw Object.assign(new Error('后台更新尚未完成，请检查原请求'), { code: 'LIFECYCLE_INCOMPLETE' });
+      }
+      preview?.dispose(); await backend.shutdown(); exitReady = true;
+    }
     catch (error) { quitting = false; throw error; }
   } });
   ipcMain.handle('areal-core:update-state', event => { trusted(event); return updates.state(); });
   ipcMain.handle('areal-core:update-download', event => { trusted(event); void updates.download(); return updates.state(); });
-  ipcMain.handle('areal-core:update-recover-resources', async event => { trusted(event); await recoverResources(); return updates.state(); });
+  ipcMain.handle('areal-core:update-recover-resources', async event => { trusted(event); await recoverInstall(); return updates.state(); });
   const requestStopService = () => recoverConnectedService({ backend,
     notify: options => dialog.showMessageBox(window, options), purpose: 'stop' });
 
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: 'AReaL Harness', submenu: [{ role: 'about' }, { label: '检查更新…', click: () => { void updates.check(true); } }, { label: '检查后台资源…', click: () => { void recoverResources(); } }, { label: '停止后台 Core 服务…', click: async () => {
-      try { await requestStopService(); } catch (error) { await dialog.showMessageBox(window, { type: 'warning', message: '后台服务未停止', detail: error.message }); }
+    { label: 'AReaL Harness', submenu: [{ role: 'about' }, { label: '检查更新…', click: () => { void updates.check(true); } }, { label: '检查后台资源…', click: () => { void backend.checkLifecycle().catch(error => backend.reportLifecycleError(error)); } }, { label: '停止后台 Core 服务…', click: async () => {
+      try { await requestStopService(); } catch (error) { backend.reportLifecycleError(error); }
     } }, { type: 'separator' }, { role: 'quit' }] },
     { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' },
   ]));
-  // Build the hidden first screen while the existing service connection starts.
-  // Incompatible services keep their recovery dialog; failures remain retryable.
+  // 后台连接与隐藏首屏并行；状态由快照展示，启动不触发维护弹窗。
   const windowLoaded = createWindow();
   const serviceStarted = (async () => {
     const trace = startupTrace('gui.backend_init');

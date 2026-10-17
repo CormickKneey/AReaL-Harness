@@ -766,10 +766,22 @@ try {
   const callsBeforeInterrupt = modelCalls;
   await server.call("turn/interrupt", { threadId: interrupted, turnId: waitingTurn.id });
   const cancelled = await completed(server, interrupted);
-  assert.equal(cancelled.turns[0].status, "failed");
-  assert(cancelled.turns[0].items.some((item) => item.execution?.outcome === "unknown"));
+  assert.equal(cancelled.turns[0].status, "interrupted");
+  const command = cancelled.turns[0].items.find(
+    (item) => item.type === "dynamicToolCall" && item.tool === "run_command",
+  );
+  assert(command, "interrupted command must retain its original tool item");
+  assert.equal(command.execution.outcome, "failed");
+  const receipt = JSON.parse(command.contentItems.find((item) => item.type === "inputText").text);
+  assert.equal(receipt.state, "exited");
+  assert.equal(receipt.commandStatus, "terminated");
+  assert(receipt.processId, "interrupted command must retain its original process identity");
   assert.equal(modelCalls, callsBeforeInterrupt);
-  console.log("PASS interrupt automatic wait, preserve UNKNOWN and reclaim Turn scope");
+  const cleanup = await server.call("areal/server/status", {});
+  assert.equal(cleanup.runtime.activeProcesses, 0);
+  assert.deepEqual(cleanup.resources, []);
+  assert.deepEqual(cleanup.unresolvedTools, []);
+  console.log("PASS interrupt automatic wait, retain terminal receipt and confirm Runtime cleanup");
   for (const action of [
     "echo",
     "echo-large",

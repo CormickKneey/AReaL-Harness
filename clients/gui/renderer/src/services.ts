@@ -15,6 +15,10 @@ export interface Snapshot {
     revision?: number;
     connection?: { state: 'connecting' | 'ready' | 'unavailable'; message?: string; recovery?: 'check' };
     backendUpdate?: { state: 'applying' | 'pending' | 'failed'; message?: string };
+    lifecycle?: { supported: boolean; phase?: string; message?: string; error?: string; requestId?: string; kind?: string; desktopExit?: string;
+      targets?: { projectId: string; phase: string; message?: string }[];
+      operations: { requestId: string; kind: string; phase: string; message?: string; threadId?: string; turnId?: string;
+        desktopExit?: string; targets: { projectId: string; phase: string; message?: string }[] }[] };
     library?: Data;
 }
 export interface UpdateState {

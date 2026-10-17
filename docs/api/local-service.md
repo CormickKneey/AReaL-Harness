@@ -51,6 +51,22 @@ target/debug/areal web --workspace /absolute/workspace --json
 | `hostPid`, `corePid` | 仅用于诊断，不能据此对旧 PID 发信号 |
 | `state` | `ready`、`stopping`、`stopped` 或 `unavailable` |
 
+## 可核查的停止操作
+
+可信 GUI 使用 `service ensure --no-auto-restart`：兼容实例可以复用，不存在时可以在原有锁下启动；需要替换运行实例时返回冲突，不能在 ensure 内隐式停止。普通 CLI ensure 的既有空闲更新行为保留。
+
+```sh
+areal service capabilities --instance INSTANCE --expected-generation GENERATION --json
+areal service stop --instance INSTANCE --expected-generation GENERATION --request-id UUID --cancel --json
+areal service operation --instance INSTANCE --expected-generation GENERATION --request-id UUID --json
+```
+
+能力查询返回 `{version:1,stopOperations:1}`；不支持时停止新写入，不用 Stop 探测。带 request-id 的 stop 返回 `{version:1,requestId,serviceId,generation,cancel,state,message?,lifecycle?}`。operation 返回 `{operation:<原回执或null>}`。同一 ID 永远绑定同一目标代际和 cancel 策略，参数变化拒绝。未带 request-id 的旧 stop 仍返回 Service 描述。
+
+Host 在 drain 前原子保存并 fsync 回执，目录位于私有 registry 的 `operations/`，不随 generation 清理。状态为 `acceptedPending`、`blocked`、`admissionUnknown`、`settlementIncomplete` 或 `completed`。已知忙碌拒绝与已受理但未结算分开；查询不重新 drain 或 cancel，null 不证明原请求未受理。显式新意图可以在已知拒绝或结算不完整后重新观察并使用新 ID；受理未知必须先核对。
+
+`completed` 来自公共 operation 查询：Host 已确认 launcher/Runtime 清理且原实例的服务锁和 Store 锁释放，或锁保护的新代际已接管。Core PID 消失、socket 断开或清理登记缺失都不够。Host 在确认清理前崩溃保留未知状态。私有 socket 的重复请求返回原持久快照，物理退出状态由公共 operation 投影核验。
+
 ## 实例、兼容性与历史
 
 同一 dataDir 只允许一个 Core。`ensure` 串行化并发启动，发现运行实例后校验身份和配置；模型文件变更原地热更新；其他 TOML 配置和二进制更新在空闲时自动重启，有后台工作时拒绝自动重启。权限、Runtime、部署文件或模型 CLI/环境覆盖变化需执行 `areal service restart`。不会静默扩大写/网络权限，也不会杀掉未被托管的旧 Core。符号链接按规范路径识别。
@@ -86,7 +102,7 @@ Store 当前写入版本、`areal/server/status.stateVersion` 与发行 `manifes
 
 关闭窗口只断开连接；活动 Turn/Goal 可继续，多个窗口可订阅同一 Thread。相同 Thread 的并发写入仍遵循 Core 的准入、CAS、队列及 requestId 规则。显式取消与关闭窗口是不同操作。
 
-服务没有闲置退出计时器。模型文件更新保持 generation 和连接；其他 TOML 更新由 TUI 在后台工作结算后发起安全重启。Web 等客户端可运行 `areal service ensure` 或 `restart`；浏览器不拥有进程生命周期。默认 stop 检查 `restartSafe`、`activeGoals`、`pendingQueueItems`、`activeTasks`，再通过 `drain(strategy="ifIdle")` 在 Core 准入锁内复查；有工作或资源时拒绝且不暂停任务。仅等待触发的定时安排不阻止安全重启，安排保持启用。GUI 对旧后台同时检查显式任务、目标和队列计数；旧后台将空闲安排计为忙碌时，显式停止或更新恢复可在用户再次确认后暂停这些安排，保留历史，重启后需手动恢复。`--cancel` 通过 Core drain 取消并结算，UNKNOWN 或未确认清理仍会阻止成功。受理停止后禁止新工作；清理失败应查日志/权威状态，不能推断任务未发生。状态检查和 drain 之间新受理的工作遵循 drain 的等待/暂停规则。
+服务没有闲置退出计时器。模型文件更新保持 generation 和连接；其他 TOML 更新由 TUI 在后台工作结算后发起安全重启。Web 等客户端可运行 `areal service ensure` 或 `restart`；浏览器不拥有进程生命周期。默认 stop 检查 `restartSafe`、`activeGoals`、`pendingQueueItems`、`activeTasks`，再通过 `drain(strategy="ifIdle")` 在 Core 准入锁内复查；有工作或资源时拒绝且不暂停任务。仅等待触发的定时安排不阻止安全重启，安排保持启用。GUI 对旧后台同时检查显式任务、目标和队列计数；旧后台将空闲安排计为忙碌时，显式停止或更新恢复可在用户再次确认后暂停这些安排，保留历史，重启后需手动恢复。`--cancel` 通过 Core drain 取消并结算。历史工具/Hook UNKNOWN 保留在 `lifecycle.executionOutcomes.uninspectedUnknown` 与 `unresolvedTools` 中，仍阻止原 Thread 继续，但不阻止已完成物理结算的服务停止。Runtime 观察失败、活跃进程、Hook task scope 不确定及未确认清理仍会阻止成功。受理停止后禁止新工作；清理失败应查日志/权威状态，不能推断任务未发生。状态检查和 drain 之间新受理的工作遵循 drain 的等待/暂停规则。
 
 宿主控制 Core/Runtime 的启动和关闭；Rust launcher 持有独立进程与私有管道，Linux 不依赖 Python；macOS 使用可执行的 `/usr/bin/python3` 作为 service-host、launcher、Core 和 Runtime 的实际父进程。可信服务链只转交明确的租约/生命周期描述符，记录实际子 PID，并核对 wait/reap 退出回执；没有回执不会报告成功清理。PID 握手限时 10 秒，握手失败或取消清退本次独立组。握手后常规信号发给实际子进程；受监督桥在原宿主死亡时发送 TERM，45 秒后仍未退出则 KILL 并回收，覆盖 launcher 的 Core/Runtime 清理时间。持久 service-host 脱离首次客户端，不因 CLI 退出而停止。配置预检也使用可信启动与退出回执，stdin 关闭，stdout/stderr 并发读取且每路最多 2 MiB，总时限 15 秒；超时、输出超限或调用取消后继续有界回收临时进程，取消清理等待者不会撤销回收。Runtime 保留原独立进程组超时清理。启动前检查解释器可用性；缺失时安装 Xcode Command Line Tools 后重试。Core 生命周期管道在 launcher 死亡后收到 EOF，Runtime 沿私有管道执行清理。宿主死亡由 launcher 的父进程检查触发清理；launcher 继承并持有实例锁，但不让 Core/Runtime 继承锁，即使宿主被强杀也会保持到 Core/Runtime 清理结束。旧 Core 锁未释放时不启动替代实例。`service.json` 是发现线索，客户端同时验证持锁状态、控制 socket 和经过认证的 Core 身份，不信任历史 PID 或端口。
 

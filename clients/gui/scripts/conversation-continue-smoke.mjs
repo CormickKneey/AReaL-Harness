@@ -243,6 +243,11 @@ try {
       const last = body.messages?.findLast(m => m.role === 'user' && !String(m.content).startsWith('AReaL runtime context (not a user request):'));
       const text = typeof last?.content === 'string' ? last.content : JSON.stringify(last?.content);
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      if (text.startsWith('RUNTIME_PAUSE_') && !body.messages?.some(m => m.role === 'tool')) {
+        const tool = { index: 0, id: 'pause-runtime-command', type: 'function', function: { name: 'run_command', arguments: JSON.stringify({ command: 'printf started > pause-started.txt; sleep 120; printf unexpected > pause-finished.txt', yieldMs: 120000 }) } };
+        res.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { tool_calls: [tool] }, finish_reason: 'tool_calls' }] })}\n\ndata: [DONE]\n\n`);
+        return;
+      }
       res.write(chunk(`CONFIRMED_PROGRESS_${requests.length}`));
       if (text.startsWith('HOLD_')) { held.add(res); res.on('close', () => held.delete(res)); return; }
       res.end(`data: ${JSON.stringify({ id: 'continue-fixture', object: 'chat.completion.chunk', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } })}\n\ndata: [DONE]\n\n`);
@@ -259,6 +264,41 @@ try {
   const defaultModel = modelReady.projects.find(p => p.id === projectId).models.find(model => model.isDefault);
   assert.deepEqual({ providerId: defaultModel.providerId, modelId: defaultModel.modelId, available: defaultModel.available },
     { providerId: 'fixture', modelId: 'fixture', available: true }, 'configured fixture is the available default model');
+  await checkpoint('pause a running Runtime command');
+  await input().fill(`RUNTIME_PAUSE_${marker}`);
+  await page.getByTestId('chat-send-button').click();
+  await page.waitForFunction(() => !!document.querySelector('[data-testid="areal-workbench"]')?.dataset.threadId);
+  threadId = await page.getByTestId('areal-workbench').getAttribute('data-thread-id');
+  await until(async () => {
+    try { return (await readFile(join(workspace, 'pause-started.txt'), 'utf8')) === 'started'; }
+    catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+  }, 'Runtime command actually started');
+  await page.getByRole('button', { name: '暂停执行', exact: true }).click();
+  await until(s => thread(s)?.turns?.at(-1)?.status !== 'inProgress', 'Runtime pause settled');
+  const runtimePaused = (await turns()).at(-1);
+  await writeFile(join(scratch, 'runtime-pause-turn.json'), JSON.stringify(runtimePaused, null, 2));
+  await shot('00-runtime-paused.png');
+  assert.equal(runtimePaused.status, 'interrupted', 'pausing a managed command with confirmed cleanup permits manual continuation');
+  const runtimeItem = runtimePaused.items.find(item => item.type === 'dynamicToolCall' && item.tool === 'run_command');
+  assert.ok(runtimeItem, 'the real Runtime command is retained');
+  assert.notEqual(runtimeItem.execution.outcome, 'unknown', 'confirmed Runtime command terminal receipt must be retained');
+  const commandReceipt = JSON.parse(runtimeItem.contentItems.find(item => item.type === 'inputText').text);
+  assert.equal(commandReceipt.state, 'exited');
+  assert.equal(commandReceipt.commandStatus, 'terminated');
+  assert.ok(commandReceipt.processId, 'the original command identity is retained');
+  assert.equal(await readFile(join(workspace, 'pause-finished.txt'), 'utf8').then(() => true, () => false), false, 'cancelled command never reaches its final write');
+  const beforeContinue = requests.length;
+  await page.getByRole('button', { name: '继续执行', exact: true }).click();
+  await until(s => thread(s)?.turns?.at(-1)?.status === 'completed', 'Runtime pause continuation completed');
+  const runtimeContinued = (await turns()).at(-1);
+  assert.equal(runtimeContinued.continuedFromTurnId, runtimePaused.id);
+  assert.equal(runtimeContinued.items.some(item => item.type === 'dynamicToolCall'), false, 'continuation does not dispatch the original command again');
+  assert.equal(requests.length, beforeContinue + 1, 'continuation submits once and does not replay the tool');
+  assert.ok(requests.at(-1).body.messages.some(message => message.role === 'tool' && message.content.includes(commandReceipt.processId)), 'continuation receives the original command receipt');
+  await shot('00-runtime-continued.png');
+  checks.push('running Runtime command pause retains its confirmed terminal receipt and manually continues without UNKNOWN or command replay');
+  await checkpoint(checks.at(-1));
+
   await send(pausePrompt);
   await until(s => thread(s)?.turns?.at(-1)?.items?.some(i => i.type === 'agentMessage'), 'recorded progress');
   await pause();

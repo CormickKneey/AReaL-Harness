@@ -53,6 +53,38 @@ pub enum State {
     Unavailable,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Capabilities {
+    pub version: u32,
+    pub stop_operations: u32,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum StopOperationState {
+    AcceptedPending,
+    Blocked,
+    AdmissionUnknown,
+    SettlementIncomplete,
+    Completed,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StopOperation {
+    pub version: u32,
+    pub request_id: String,
+    pub service_id: String,
+    pub generation: String,
+    pub cancel: bool,
+    pub state: StopOperationState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<serde_json::Value>,
+}
+
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "method", rename_all = "camelCase", deny_unknown_fields)]
 pub enum Request {
@@ -64,12 +96,25 @@ pub enum Request {
         generation: String,
         cancel: bool,
     },
+    Capabilities {
+        version: u32,
+        generation: String,
+    },
+    StopOperation {
+        version: u32,
+        generation: String,
+        #[serde(rename = "requestId")]
+        request_id: String,
+        cancel: bool,
+    },
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "result", rename_all = "camelCase", deny_unknown_fields)]
 pub enum Response {
     Ok { service: Box<Service> },
+    Capabilities { capabilities: Capabilities },
+    Operation { operation: Box<StopOperation> },
     Error { message: String },
 }
 
