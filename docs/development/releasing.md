@@ -70,7 +70,9 @@ node clients/gui/scripts/release-assets.mjs /absolute/new-signed-directory /abso
 
 签名前先执行 `history-copy-smoke.mjs`：默认只读安装版的 `~/Library/Application Support/AReaL Harness GUI/areal-core`，`--history-source /absolute/areal-core` 可指定另一份历史。脚本将项目索引、会话、历史归档和附件复制到权限受限的隔离目录，受控样本的占位工作区在副本中填充；私有副本保留原始会话字节和工作区路径，以满足 Core 的归属校验，只观察、不执行任务。不复制凭据、锁或部署配置，不写原始历史。仅接受空闲、没有待执行队列或未结算执行状态的历史；其他输入会阻断签名。 已完成的子会话执行引用仅在同项目副本中存在对应终态轮次时接受；未结算引用、工作组及受管进程/工作流状态仍阻断签名。候选包必须能连接 Core、打开每个会话，且打开期间副本字节不变、全过程来源字节不变、没有模型请求。停止测试后台导致的副本队列版本变化单独处理。失败发生在签名身份检查及 Apple 请求之前；成功证据绑定候选 Core 哈希并写入 `notarization.json.historyPreflight`。没有该预检记录的旧签名运行不能通过 `--resume` 绕过，需启动新运行。
 
-CI 在现有 GUI 检查中运行 `pnpm --dir clients/gui run test:history-compat`，默认使用 `clients/gui/scripts/fixtures/history-compat/` 的人工合成脱敏样本，包含 `hookRuns`、`allowPluginSkills`、`pluginSkills`；这些文件不来自用户历史，也不包含真实路径或凭据。本机可单独执行 `node clients/gui/scripts/history-copy-smoke.mjs --source /absolute/areal-core --executable "/absolute/candidate.app/Contents/MacOS/AReaL Harness GUI"`；省略 `--executable` 时使用开发 Electron 和已构建 Core。没有日常历史的构建机可显式将 `--history-source` 指向受控样本目录；这仅证明样本兼容，不代表本机历史兼容。私有副本和失败证据保留在脚本输出的 `/private/tmp/ahc-*`，不得作为公开发布附件。
+登记后尚未启动 Core 的项目可以没有状态目录，已连接但没有会话的项目也可以为空。预检保留这些项目，在副本中连接并确认没有创建会话；来源状态目录的存在性及条目在检查期间必须保持不变。存在的状态路径仍必须是普通目录，不能通过符号链接绕过检查；现有会话仍须满足全部空闲和归属约束。
+
+CI 在现有 GUI 检查中运行 `pnpm --dir clients/gui run test:history-compat`，默认使用 `clients/gui/scripts/fixtures/history-compat/` 的人工合成脱敏样本，包含空项目、`hookRuns`、`allowPluginSkills`、`pluginSkills`；这些文件不来自用户历史，也不包含真实路径或凭据。本机可单独执行 `node clients/gui/scripts/history-copy-smoke.mjs --source /absolute/areal-core --executable "/absolute/candidate.app/Contents/MacOS/AReaL Harness GUI"`；省略 `--executable` 时使用开发 Electron 和已构建 Core。没有日常历史的构建机可显式将 `--history-source` 指向受控样本目录；这仅证明样本兼容，不代表本机历史兼容。私有副本和失败证据保留在脚本输出的 `/private/tmp/ahc-*`，不得作为公开发布附件。
 
 在固定提交创建 `gui-v<版本>` 标签，以 draft 上传 ZIP、DMG、`latest-mac.yml`、脱敏 `release.json` 与 `SHA256SUMS`；回读摘要后公开，保持 `--latest=false`。先确认版本附件可下载，再更新 `gui-update-channel` 的清单；首次创建该频道时使用 prerelease。公开后核对完整字节、HTTP Range、清单大小及 SHA-512。版本附件不可覆盖；频道清单按已验收版本推进。此流程不发布 CLI 包，也不更新 Homebrew tap。
 

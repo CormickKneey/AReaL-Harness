@@ -28,6 +28,7 @@ const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const hashes = new Map(),
   copyHashes = new Map(),
   sessions = new Map(),
+  stateDirectories = new Map(),
   checks = [];
 let app,
   page,
@@ -85,6 +86,19 @@ async function unchanged(root, expected = hashes) {
   return true;
 }
 
+async function stateEntries(root, relative) {
+  try {
+    assert.ok(
+      (await lstat(join(root, relative))).isDirectory(),
+      "State must be a directory, not a symlink",
+    );
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+  return (await readdir(join(root, relative))).sort();
+}
+
 async function call(name, params) {
   const result = await withSmokeDeadline(
     `history ${name}`,
@@ -125,12 +139,11 @@ try {
     const workspace = fixtureMode ? join(scratch, "workspaces", project.id) : project.root;
     if (fixtureMode) await mkdir(workspace, { recursive: true, mode: 0o700 });
     assert.equal(typeof workspace, "string", "Project workspace is missing");
-    assert.ok(
-      (await lstat(join(source, state))).isDirectory(),
-      "State must be a directory, not a symlink",
-    );
+    // 项目先登记再启动 Core；首次连接失败时可能尚无状态目录。
+    const entries = await stateEntries(source, state);
+    stateDirectories.set(state, entries);
     await mkdir(join(scratch, "core", state), { recursive: true, mode: 0o700 });
-    for (const name of await readdir(join(source, state))) {
+    for (const name of entries ?? []) {
       if (!name.endsWith(".json")) continue;
       assert.match(name, /^[a-f0-9-]{36}\.json$/, "Invalid stored session filename");
       const relative = join(state, name),
@@ -162,7 +175,6 @@ try {
         );
       }
     }
-    assert.ok(ids.length > 0, "Project has no history sessions");
     // 归档和附件仍由 Core 读取；不复制锁、服务登记、凭据或部署配置。
     for (const directory of ["history", "blobs"]) {
       const relative = join(state, directory);
@@ -232,9 +244,12 @@ try {
     assert.equal(restored.error, null);
     for (const id of sessions.get(project.id))
       assert.ok(restored.state.threads[id], "Existing session was not restored");
+    if (sessions.get(project.id).length === 0)
+      assert.equal(Object.keys(restored.state.threads).length, 0, "Empty project acquired sessions");
     checks.push({
       projectId: project.id,
       sessions: sessions.get(project.id).length,
+      sourceStatePresent: stateDirectories.get(join(project.id, "state")) !== null,
       connected: true,
     });
   }
@@ -273,6 +288,8 @@ try {
   }
   await new Promise((resolve) => server.close(resolve));
   try {
+    for (const [relative, entries] of stateDirectories)
+      assert.deepEqual(await stateEntries(source, relative), entries, "Source state entries changed");
     sourceUnchanged =
       (await unchanged(source)) &&
       (!projectIndexHash ||
