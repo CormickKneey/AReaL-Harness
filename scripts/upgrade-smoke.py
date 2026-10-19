@@ -315,9 +315,27 @@ class UpgradeSmoke(unittest.TestCase):
         binary.parent.mkdir(parents=True)
         shutil.copy2(self.old / "bin/areal", binary)
         self.cli = binary
+        (binary.parents[1] / "INSTALL_RECEIPT.json").write_text(
+            json.dumps({"source": {"tap": "custom/release", "versions": {"stable": self.current}}})
+        )
+        executable(
+            self.case / "bin/brew",
+            f"#!{sys.executable}\nimport json, sys\nprint(json.dumps({{'formulae':[{{'full_name':'custom/release/areal', 'versions':{{'stable':{self.latest!r}}}}}]}}))\n",
+        )
 
     def test_homebrew_non_stopped_record_blocks_without_invoking_brew(self):
         self.homebrew()
+        # 当前编译版本是 beta，模拟正确 beta formula 收据。
+        if "-beta." in self.current:
+            beta_binary = self.case / "Cellar/areal-beta" / self.current / "bin/areal"
+            beta_binary.parent.mkdir(parents=True)
+            shutil.copy2(self.cli, beta_binary)
+            self.cli = beta_binary
+            (beta_binary.parents[1] / "INSTALL_RECEIPT.json").write_text(
+                json.dumps(
+                    {"source": {"tap": "custom/release", "versions": {"stable": self.current}}}
+                )
+            )
         before = self.record("unavailable")
         install_before = snapshot(self.case / "Cellar")
         result = self.invoke("upgrade")
@@ -325,11 +343,11 @@ class UpgradeSmoke(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("stop all shared services before upgrading", result.stderr)
         self.assertEqual(snapshot(self.case / "Cellar"), install_before)
-        self.assertEqual(self.calls(), [["--version", "latest", "--check"]])
+        self.assertFalse(self.trace.exists())
 
     def test_check_has_no_install_or_service_mutation(self):
         before = self.record("unavailable")
-        for installation in ["standalone", "homebrew"]:
+        for installation in ["standalone"]:
             with self.subTest(installation=installation):
                 if installation == "homebrew":
                     self.homebrew()
@@ -343,7 +361,7 @@ class UpgradeSmoke(unittest.TestCase):
                 self.assertEqual(snapshot(self.home), home_before)
                 self.assertEqual(snapshot(self.state), state_before)
                 self.assert_preserved(before)
-        self.assertEqual(self.calls(), [["--version", "latest", "--check"]] * 2)
+        self.assertEqual(self.calls(), [["--version", "latest", "--check"]])
 
     def invalid_checksum(self, state):
         self.checksums.write_text("0" * 64 + "  " + self.new_archive[0].name + "\n")

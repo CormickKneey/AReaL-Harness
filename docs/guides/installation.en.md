@@ -6,18 +6,47 @@ Use these commands after the packages are published to GitHub Releases. Before p
 
 ## Platforms and contents
 
-| Platform | Distribution | Prerequisites |
-|---|---|---|
-| macOS arm64 | Complete GitHub Release bundle and Python installer; optional Homebrew formula once the tap is published | macOS 15+, Xcode Command Line Tools; standalone install/upgrade requires Python 3.9+ on PATH |
-| Linux x86_64 | Complete GitHub Release bundle and Python installer | Ubuntu 22.04 or newer compatible glibc 2.35+ system; standalone install/upgrade requires Python 3.9+ on PATH; musl unsupported |
+| Platform     | Distribution                                                                                             | Prerequisites                                                                                                                  |
+| ------------ | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| macOS arm64  | Complete GitHub Release bundle and Python installer; optional Homebrew formula once the tap is published | macOS 15+, Xcode Command Line Tools; standalone install/upgrade requires Python 3.9+ on PATH                                   |
+| Linux x86_64 | Complete GitHub Release bundle and Python installer; Homebrew once the tap is published                  | Ubuntu 22.04 or newer compatible glibc 2.35+ system; standalone install/upgrade requires Python 3.9+ on PATH; musl unsupported |
 
 Only these architectures are validated. No Windows, Intel macOS or Linux arm64 packages are provided. **npm and `cargo install` do not provide complete bundles yet**, so neither is an installation channel. Choose Homebrew or standalone installation, not both for the same PATH entry. Bundles contain `bin/areal`, `libexec/areal/{areal-runtime,areal-runtime-fs}`, LICENSE and a file SHA256 manifest; Linux bundles also include `areal-runtime-reaper` in the same directory. Do not copy only `areal`. Startup does not require Rust/Cargo. macOS still requires an executable `/usr/bin/python3` from Command Line Tools; configured Node/Python tools need their interpreters.
 
 macOS bundles are ad-hoc signed, without Developer ID signing or notarization. Linux defaults to YOLO/full-access under the current user's permissions. Restricted/read-only scopes require `/usr/bin/bwrap` and usable user namespaces. Install `bubblewrap` on Ubuntu; restricted operations fail if user namespaces are disabled or AppArmor denies them, without silently expanding permissions. See [Runtime deployment](runtime.en.md).
 
-## Homebrew (future channel)
+## Homebrew (macOS / Linux)
 
-Use the complete-bundle installer below. An `areal.rb` release attachment does not establish a public tap. Do not overwrite Homebrew files with the installer. Existing Homebrew installations remain owned by Homebrew: `areal upgrade` invokes the original formula and fails explicitly if its tap has not caught up.
+Public installation requires the [tap](https://github.com/areal-project/homebrew-tap), formula and archives to be publicly downloadable. A `.rb` release attachment or temporary CI tap does not establish that channel. Use the standalone installer below until it is ready.
+
+Both platforms use the same commands once the channel is available. Stable tracks `areal`; explicitly opt into beta through the separate, keg-only `areal-beta`, which leaves the stable PATH entry intact:
+
+```sh
+brew tap areal-project/tap
+brew install areal-project/tap/areal
+brew test areal-project/tap/areal
+areal --version
+# Optional beta: invoke its absolute entry without forcing a link
+brew install areal-project/tap/areal-beta
+"$(brew --prefix areal-project/tap/areal-beta)/bin/areal" --version
+```
+
+The Linux formula supports only x86_64 with host glibc ≥ 2.35 and system `/usr/bin/bwrap` (Ubuntu: `sudo apt-get install bubblewrap`). See the [official Linux guide](https://docs.brew.sh/Homebrew-on-Linux) for Homebrew's own prerequisites and support policy. Linux arm64 and musl support are not added. Complete bundles and the standalone installer retain the glibc 2.35 baseline; native Linuxbrew acceptance uses Ubuntu 24.04 / glibc 2.39. On older hosts, Homebrew may install its own glibc/GCC. This acceptance does not establish all older-system/custom-prefix combinations; use the standalone installer where needed.
+
+Before upgrading, finish tasks and safely stop shared services (`areal service list`, then `areal service stop --workspace /absolute/workspace` for each workspace, retaining its original configuration arguments without cancellation flags):
+
+```sh
+brew update
+brew upgrade --formula areal-project/tap/areal
+brew test areal-project/tap/areal
+areal --version
+# Beta upgrades only its own formula
+brew upgrade --formula areal-project/tap/areal-beta
+brew test areal-project/tap/areal-beta
+"$(brew --prefix areal-project/tap/areal-beta)/bin/areal" --version
+```
+
+The new `areal upgrade --check` reads the same formula in the local tap without refreshing it; run `brew update` first for fresh definitions. `areal upgrade` requires all services to be Stopped before refreshing the tap, upgrading the actual formula recorded in its receipt and checking the installed entry version. It uses the Homebrew that owns the Cellar rather than guessing from PATH. Missing receipts, unknown sources and channel changes are rejected. Stable never enters beta automatically; beta never switches to stable automatically. Older CLIs retain their embedded hardcoded upgrade route: use the exact `brew upgrade --formula <actual-tap/formula>` command above for the first transition. Never overwrite Cellar with the Python installer. Homebrew may clean up old kegs, so this path still requires stopped services; the command does not stop or cancel tasks for you.
 
 ## Standalone installation (macOS / Linux)
 
@@ -80,7 +109,7 @@ Interrupted downloads, bad checksums, mismatched program versions, and failed en
 
 Configure the model in `~/.areal/config.toml` using the [configuration guide](configuration.en.md), then launch `areal` in a workspace. Remove retired `limits.turn_timeout_seconds` and `AREAL_HARNESS_TURN_TIMEOUT_SECONDS` settings. Run `areal config validate`. Old `~/.areal-harness` state is not migrated automatically.
 
-`areal version` is equivalent to `areal --version`. `areal upgrade --check` queries the latest public release without installing it. `areal upgrade` uses the original installation channel. Source builds and unmanaged copies refuse self-upgrade.
+`areal version` is equivalent to `areal --version`. `areal upgrade --check` queries the original channel without installing (latest stable CLI for standalone, original formula for Homebrew). `areal upgrade` uses the original installation channel. Source builds and unmanaged copies refuse self-upgrade.
 
 - **Standalone installations** verify a complete new bundle before atomically switching the command entry symlink. Shared services do not need to stop. The upgrade command neither stops nor restarts backends and does not migrate running sessions. Old version directories remain unchanged for existing processes and their Runtime helpers; new commands use the new entry point. Do not manually delete version directories that running processes still use.
 - **Homebrew installations** upgrade the formula and verify its installed version, reporting an error if the tap is not yet updated. This channel still requires all shared services to stop before `areal upgrade`, because the command does not control Homebrew cleanup of old version directories. Inspect `areal service list`, then run `areal service stop --workspace /absolute/workspace` for each workspace. Busy tasks prevent stopping by default. Complete or explicitly pause them first; do not force-cancel tasks just to upgrade.

@@ -47,42 +47,75 @@ def archive(bundle, output):
     return path
 
 
-def formula(path, output, url=None):
-    match = re.fullmatch(
-        r"areal-harness-v(\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?)-aarch64-apple-darwin.tar.gz", path.name
-    )
-    if not match:
-        raise ValueError("formula requires a macOS arm64 archive")
-    version = match[1]
-    url = (
-        url
-        or f"https://github.com/areal-project/AReaL-Harness/releases/download/v{version}/{path.name}"
-    )
-    # JSON 字符串与本处 Ruby 双引号字面量兼容；拒绝 Ruby 插值。
-    if "#{" in url or not url.startswith(("https://", "file://")):
-        raise ValueError("unsupported formula URL")
+def formula(path, output, url=None, extra_archives=()):
+    paths = [path, *extra_archives]
+    platforms = {}
+    version = None
+    for item in paths:
+        match = re.fullmatch(
+            r"areal-harness-v(\d+\.\d+\.\d+(?:-beta\.[1-9]\d*)?)-(aarch64-apple-darwin|x86_64-unknown-linux-gnu).tar.gz",
+            item.name,
+        )
+        if not match or version not in (None, match[1]) or match[2] in platforms:
+            raise ValueError(
+                "formula requires distinct supported archives of the same stable/beta version"
+            )
+        version = match[1]
+        platforms[match[2]] = item
+    if url and len(paths) != 1:
+        raise ValueError("local URL override requires one platform archive")
+    beta = "-beta." in version
+    name = "ArealBeta" if beta else "Areal"
+    blocks = []
+    for target, item in platforms.items():
+        address = (
+            url
+            or f"https://github.com/areal-project/AReaL-Harness/releases/download/v{version}/{item.name}"
+        )
+        if "#{" in address or not address.startswith(("https://", "file://")):
+            raise ValueError("unsupported formula URL")
+        mac = target == "aarch64-apple-darwin"
+        requirements = (
+            "    depends_on arch: :arm64\n    depends_on macos: :sequoia\n    depends_on xcode: :clt"
+            if mac
+            else "    depends_on arch: :x86_64"
+        )
+        blocks.append(f'''  on_{"macos" if mac else "linux"} do
+{requirements}
+    url {json.dumps(address)}
+    sha256 "{sha(item)}"
+  end''')
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(f'''class Areal < Formula
+    # Homebrew 会自动 link :versioned_formula；预览必须始终保持显式隔离。
+    isolation = (
+        '  keg_only "the beta channel is opt-in and must not replace the stable CLI"\n'
+        if beta
+        else ""
+    )
+    output.write_text(f'''class {name} < Formula
   desc "Agent harness with a terminal UI and local tool runtime"
   homepage "https://github.com/areal-project/AReaL-Harness"
-  url {json.dumps(url)}
   version "{version}"
-  sha256 "{sha(path)}"
   license "Apache-2.0"
-
-  depends_on arch: :arm64
-  depends_on macos: :sequoia
-  depends_on xcode: :clt
+{isolation}
+{chr(10).join(blocks)}
 
   def install
+    if OS.linux?
+      glibc = Utils.safe_popen_read("/usr/bin/getconf", "GNU_LIBC_VERSION").split.last
+      odie "AReaL requires host glibc >= 2.35" if Version.new(glibc) < Version.new("2.35")
+      odie "Install system bubblewrap at /usr/bin/bwrap" unless File.executable?("/usr/bin/bwrap")
+    end
     prefix.install "bin", "libexec", "manifest.json", "LICENSE"
   end
 
   def caveats
     <<~EOS
       Configure your model in ~/.areal/config.toml before starting a task.
-      Stop shared services before upgrading: areal service stop --workspace /path/to/workspace
-      This developer release is ad-hoc signed, not Developer ID notarized.
+      Homebrew may remove old kegs: finish tasks and stop shared services before upgrading.
+      Use areal service list to inspect services; upgrade never stops them automatically.
+      macOS binaries are ad-hoc signed, without Developer ID signing or Apple notarization.
+      Python 3.9+ is required for standalone installation and upgrades.
     EOS
   end
 
@@ -90,6 +123,7 @@ def formula(path, output, url=None):
     assert_equal "areal {version}", shell_output("#{{bin}}/areal --version").strip
     assert_path_exists prefix/"libexec/areal/areal-runtime"
     assert_path_exists prefix/"libexec/areal/areal-runtime-fs"
+    assert_path_exists prefix/"libexec/areal/areal-runtime-reaper" if OS.linux?
   end
 end
 ''')
@@ -102,14 +136,14 @@ def main():
     pack.add_argument("--bundle", type=Path, required=True)
     pack.add_argument("--output", type=Path, required=True)
     brew = commands.add_parser("formula")
-    brew.add_argument("--archive", type=Path, required=True)
+    brew.add_argument("--archive", type=Path, required=True, action="append")
     brew.add_argument("--output", type=Path, required=True)
     brew.add_argument("--url", help="local file URL for prepublication Homebrew verification")
     args = parser.parse_args()
     if args.command == "archive":
         print(archive(args.bundle, args.output))
     else:
-        formula(args.archive, args.output, args.url)
+        formula(args.archive[0], args.output, args.url, args.archive[1:])
 
 
 if __name__ == "__main__":

@@ -150,6 +150,24 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn('prefix.install "bin", "libexec", "manifest.json", "LICENSE"', text)
         self.assertNotIn("PLACEHOLDER", text)
 
+    def test_formula_platforms_and_beta_are_isolated(self):
+        for version in ["0.1.7", "0.1.7-beta.2"]:
+            mac = release.archive(self.bundle(version, "darwin/arm64"), self.root / version)
+            linux = release.archive(self.bundle(version, "linux/x86_64"), self.root / version)
+            output = self.root / (version + ".rb")
+            release.formula(mac, output, extra_archives=[linux])
+            text = output.read_text()
+            self.assertIn("on_linux do", text)
+            self.assertIn("on_macos do", text)
+            self.assertIn(hashlib.sha256(linux.read_bytes()).hexdigest(), text)
+            self.assertEqual('keg_only "the beta channel is opt-in' in text, "-beta." in version)
+            self.assertEqual("class ArealBeta" in text, "-beta." in version)
+            self.assertIn("/usr/bin/bwrap", text)
+            with self.assertRaises(ValueError):
+                release.formula(mac, output, extra_archives=[mac])
+            with self.assertRaises(ValueError):
+                release.formula(mac, output, url="file:///tmp/local", extra_archives=[linux])
+
     def test_release_rejects_dirty_or_debug_bundles(self):
         bundle = self.bundle()
         p = bundle / "manifest.json"

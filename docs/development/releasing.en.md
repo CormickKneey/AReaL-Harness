@@ -2,7 +2,7 @@
 
 # Publishing release bundles
 
-Validated standalone channels are complete macOS arm64 and Linux x86_64 glibc bundles with the Python installer; macOS may also ship a Homebrew formula. Unlike the [official Codex CLI installation matrix](https://learn.chatgpt.com/docs/codex/cli#getting-started), this project has no complete npm or native Windows distribution yet. `cargo install areal-cli` also lacks the Runtime and bundled tools. See [installation](../guides/installation.en.md) for platform scope.
+Validated standalone channels are complete macOS arm64 and Linux x86_64 glibc bundles with the Python installer; both platforms share a Homebrew formula. Unlike the [official Codex CLI installation matrix](https://learn.chatgpt.com/docs/codex/cli#getting-started), this project has no complete npm or native Windows distribution yet. `cargo install areal-cli` also lacks the Runtime and bundled tools. See [installation](../guides/installation.en.md) for platform scope.
 
 ## Channels and source gate
 
@@ -14,20 +14,20 @@ Before formal export, run `git fetch origin main`, then `python3 scripts/release
 
 The `Release bundles` workflow builds candidates on relevant pull requests or workflow_dispatch. These triggers upload CI artifacts without creating Git tags or Releases. It uses the pinned Rust toolchain and Cargo.lock, building natively on macOS 15 arm64 and Ubuntu 22.04 x86_64.
 
-The workflow runs `make release`, creates complete bundles with file manifests, tar.gz archives and checksums, then extracts them into relocated paths containing spaces. A local HTTP model fixture verifies real command writes and file reads. Linux additionally installs through the installer and verifies its entry point and native tools. macOS installs the same local archive through a temporary Homebrew tap, runs `brew test` and real read/write checks, then runs the release-profile bundle lifecycle soak.
+The workflow runs `make release`, creates complete bundles with file manifests, tar.gz archives and checksums, then extracts them into relocated paths containing spaces. A local HTTP model fixture verifies real command writes and file reads. Linux additionally installs through the installer and verifies its entry point and native tools. Both platforms verify stable and beta installation and upgrade in isolated Homebrew prefixes, with `brew test` and real read/write checks. macOS also runs the release-profile bundle lifecycle soak.
 
 macOS packaging preserves the build artifacts' signatures and original bytes and runs `codesign --verify --strict`. Missing or invalid signatures stop packaging and must be fixed in the build artifacts. Packaging does not force a new signature onto binaries; manifest checksums describe the files actually copied.
 
-`release-artifacts.py` rejects dirty-tree or non-release-profile manifests. Candidate outputs include platform archives, manifests and SHA256 sidecars. The macOS job also generates `areal.rb` using the final download URL and actual archive checksum. Never use placeholder SHA256 values or describe unapproved candidates as released versions.
+`release-artifacts.py` rejects dirty-tree or non-release-profile manifests. Candidate outputs include platform archives, manifests and SHA256 sidecars. The draft assembly generates a dual-platform formula using final download URLs and actual archive checksums. Never use placeholder SHA256 values or describe unapproved candidates as released versions.
 
 ## Publication steps
 
 1. Merge preparation changes. Confirm Verify and Release bundles pass for the selected commit; inspect version, licenses and migration notes.
 2. Review both platform candidates, Homebrew checks and Linux installation logs; confirm scope and version.
-3. Create tag `v0.1.4` on the selected commit. It must match `areal --version`. Tag builds reconstruct and verify both packages, then create a **draft** Release only after all checks pass; they do not publish it.
-4. Download draft assets and verify SHA256SUMS and manifest sourceRevision, profile and platform. Complete release notes covering default permissions, dependencies, retired timeout settings, compaction defaults and known caching limitations. macOS has no Developer ID signing/notarization and must not be labeled notarized.
-5. Publish the draft after explicit approval. Create/update `Formula/areal.rb` in `areal-project/homebrew-tap` from that Release asset. Confirm public download availability before testing `brew install areal-project/tap/areal`.
-6. Install through the public URL on clean Linux and run read/write validation. Record artifact digests and results. Repeat for future versions without replacing published archives.
+3. Create an unused `v<version>` tag on the selected commit (`vX.Y.Z-beta.N` for previews). It must match `areal --version`; never replace an existing tag. Tag builds reconstruct and verify both packages, then create a **draft** Release only after all checks pass; they do not publish it.
+4. Download draft assets and verify SHA256SUMS and manifest sourceRevision, profile and platform. Complete concise Chinese and English release notes covering this release’s user-visible changes, important fixes and necessary upgrade notes. macOS has no Developer ID signing/notarization and must not be labeled notarized.
+5. Publish the draft under existing authorization, then synchronize its channel through the public tap procedure below: stable updates only `Formula/areal.rb`, and beta updates only `Formula/areal-beta.rb`. Confirm public access to the repository, corresponding formula and archives before providing installation commands; failed synchronization does not establish Homebrew availability.
+6. In isolated macOS arm64 and Linux x86_64 environments, verify public Homebrew first installation, older-version upgrade, actual-source routing, channel isolation and complete Runtime behavior; retain standalone installer regressions. Record artifact digests and results. Repeat for future versions without replacing published archives.
 
 Tagging, publishing and tap creation/updates are external publication operations performed after artifact review. The draft job does not overwrite existing Releases; inspect remote state before retrying failures. This workflow does not publish Linux container images.
 
@@ -102,3 +102,21 @@ GUI updates support macOS arm64. Electron owns checks and downloads; Core shuts 
 `areal build-info` exposes the Core revision, dirty state, Rust/Cargo/schema input hash, and compiled API/Store versions. Packaging verifies the input hash and revision first, so an old binary cannot acquire a new checkout identity. Manifest format 2 stores coreBuild and actual component byte hashes; sourceRevision refers to Core, without independently asserting the compile source of each Runtime binary. GUI accepts legacy format 1; format 2 also requires matching API, Store version and revision between coreBuild and manifest. GUI requires areal.core.v1, a matching platform and a supported persistent version; Core still reads the Store. Rebuild after source input changes before packaging. `make desktop-schema-check` temporarily generates and compares all three normalized schemas; `make desktop-schemas` replaces them atomically after all generators succeed.
 
 `python3 scripts/install-smoke.py --bundle /absolute/complete-bundle --evidence /absolute/install.json` validates the direct installer with a real isolated shared service: entry updates keep the real service PID, generation and old complete bundle unchanged. Release bundles runs this check. Ordinary script regressions use synthetic executable bundles to check failure invariants without starting user services.
+
+## Public tap and channel synchronization
+
+`release-artifacts.py formula` accepts two `--archive` arguments for the same version and emits conditional macOS arm64/Linux x86_64 definitions using each archive's SHA256. Stable emits `areal.rb`; beta emits keg-only `areal-beta.rb`, leaving the stable entry intact. Linux requires host glibc ≥ 2.35 and system `/usr/bin/bwrap`; macOS restrictions belong only in its platform branch.
+
+`Sync public Homebrew tap` synchronizes a CLI Release after publication; workflow_dispatch can retry an exact public tag. It retains `contents: read` and requires a previously approved `HOMEBREW_TAP_TOKEN` for cross-repository access. Missing authorization fails explicitly without creating credentials or treating release publication as successful tap synchronization. Missing organization repositories, write access or valid checksums block synchronization without replacing or withdrawing published assets. An authorized maintainer can resolve the repository/access blocker and retry the same tag without broadening token or workflow permissions.
+
+A maintainer with existing tap write access can also synchronize manually. The script accepts only public releases with matching channel state, downloads and verifies both platform archives, and refuses formula downgrades:
+
+```sh
+git clone https://github.com/areal-project/homebrew-tap.git /absolute/new-tap
+python3 scripts/sync-homebrew.py --tag vX.Y.Z --tap-checkout /absolute/new-tap --push
+# For beta, select the real public vX.Y.Z-beta.N; only Formula/areal-beta.rb changes.
+```
+
+The script creates neither repositories nor credentials. Public-channel acceptance must check unauthenticated tap/formula access, both public archives and SHA256, followed by first installation, older-version upgrade, actual-source routing and stable/beta isolation in isolated native Homebrew prefixes on both platforms. `homebrew-smoke.py` runs native candidate acceptance on macOS/Linux runners; its isolated `areal-validation/channel` tap does not establish public-tap availability. Installer integrity, native Linux tools, actual running tasks and old-bundle retention remain covered. Homebrew may clean up old kegs, so finish tasks and safely stop services first; upgrades never stop backends implicitly.
+
+Linux bundles still build natively on Ubuntu 22.04 / glibc 2.35 with installer and tool regressions. Linuxbrew downloads and validates that same archive on Ubuntu 24.04. Homebrew itself targets a newer glibc; older hosts combined with long custom prefixes can trigger extra toolchain bootstrapping. This does not change the product glibc baseline or justify skipping dependency checks. Both jobs gate Release acceptance and draft assembly.

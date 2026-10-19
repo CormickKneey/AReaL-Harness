@@ -44,6 +44,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bundle", type=Path, required=True)
     parser.add_argument("--evidence", type=Path, required=True)
+    parser.add_argument("--homebrew-executable", type=Path)
     args = parser.parse_args()
     bundle = args.bundle.resolve()
     manifest = json.loads((bundle / "manifest.json").read_text())
@@ -172,6 +173,13 @@ try {
             text=True,
         )
         assert model.entered.wait(20), "real turn did not reach the held model fixture"
+        if args.homebrew_executable:
+            blocked = run([str(args.homebrew_executable), "upgrade"], check=False)
+            assert blocked.returncode != 0 and "stop all shared services" in blocked.stderr, blocked
+            assert turn.poll() is None
+            report["checks"].append(
+                "Homebrew upgrade refuses an active task without stopping or replacing its service"
+            )
         installed = install(prefix)
         assert installed.returncode == 0, installed.stderr
         observed = json.loads(
