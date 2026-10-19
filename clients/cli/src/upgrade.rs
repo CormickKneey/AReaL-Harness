@@ -36,6 +36,10 @@ fn installation(executable: &std::path::Path) -> Result<Installation> {
             && directory
                 .parent()
                 .is_some_and(|p| p.file_name().is_some_and(|n| n == "areal"))
+            && directory
+                .parent()
+                .and_then(|p| p.parent())
+                .is_some_and(|p| p.file_name().is_some_and(|n| n == "lib"))
         {
             let prefix = directory
                 .parent()
@@ -74,6 +78,20 @@ fn published_version() -> Result<String> {
     python(&["--version", "latest", "--check"])
 }
 
+fn newer_release(latest: &str, current: &str) -> Result<bool> {
+    let parse = |version: &str| -> Result<(u64, u64, u64)> {
+        let parts: Vec<_> = version.split('.').collect();
+        ensure!(parts.len() == 3, "invalid release version");
+        Ok((parts[0].parse()?, parts[1].parse()?, parts[2].parse()?))
+    };
+    let (base, preview) = current
+        .split_once('-')
+        .map_or((current, false), |(base, _)| (base, true));
+    let latest = parse(latest)?;
+    let current = parse(base)?;
+    Ok(latest > current || latest == current && preview)
+}
+
 pub async fn run(check: bool) -> Result<()> {
     let executable = std::env::current_exe()?;
     let source = installation(&executable)?;
@@ -83,25 +101,20 @@ pub async fn run(check: bool) -> Result<()> {
     if current == latest || check {
         return Ok(());
     }
-    let newer = |version: &str| -> Result<(u64, u64, u64)> {
-        let parts: Vec<_> = version.split('.').collect();
-        ensure!(parts.len() == 3, "invalid release version");
-        Ok((parts[0].parse()?, parts[1].parse()?, parts[2].parse()?))
-    };
     ensure!(
-        newer(&latest)? > newer(current)?,
+        newer_release(&latest, current)?,
         "refusing to downgrade to {latest}"
-    );
-    let root = areal_local_service::home()?;
-    let services = areal_local_service::list(&root).await?;
-    ensure!(
-        services
-            .iter()
-            .all(|service| service.state == State::Stopped),
-        "stop all shared services before upgrading: areal service list"
     );
     match source {
         Installation::Homebrew => {
+            let root = areal_local_service::home()?;
+            let services = areal_local_service::list(&root).await?;
+            ensure!(
+                services
+                    .iter()
+                    .all(|service| service.state == State::Stopped),
+                "stop all shared services before upgrading: areal service list"
+            );
             let status = Command::new("brew")
                 .args(["upgrade", "--formula", "areal-project/tap/areal"])
                 .status()
@@ -158,5 +171,29 @@ mod tests {
         std::fs::remove_file(prefix.join("bin/areal")).unwrap();
         std::fs::write(prefix.join("bin/areal"), "user-owned").unwrap();
         assert!(installation(&exe).is_err());
+    }
+
+    #[test]
+    fn release_order_accepts_preview_to_same_release_but_never_downgrades() {
+        assert!(newer_release("0.1.7", "0.1.7-beta.10").unwrap());
+        assert!(!newer_release("0.1.6", "0.1.7-beta.1").unwrap());
+        assert!(newer_release("0.1.7", "0.1.7-test.1").unwrap());
+        assert!(newer_release("0.2.0", "0.1.7-test.1").unwrap());
+        assert!(!newer_release("0.1.6", "0.1.7-test.1").unwrap());
+        assert!(!newer_release("0.1.7", "0.1.7").unwrap());
+        assert!(newer_release("0.1.10", "0.1.9").unwrap());
+        assert!(newer_release("0.1.8-test.1", "0.1.7").is_err());
+    }
+
+    #[test]
+    fn homebrew_cellar_is_owned_by_homebrew() {
+        let root = tempfile::tempdir().unwrap();
+        let exe = root.path().join("Cellar/areal/0.1.6/bin/areal");
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, "fixture").unwrap();
+        assert!(matches!(
+            installation(&exe).unwrap(),
+            Installation::Homebrew
+        ));
     }
 }

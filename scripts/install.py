@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""安装已校验的完整 Linux bundle；升级不覆盖旧版本及用户状态。"""
+"""安装已校验的完整 bundle；升级不覆盖旧版本及用户状态。"""
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
 import platform
 import re
 import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -98,6 +100,8 @@ def verify_bundle(bundle, version, target_platform):
         "libexec/areal/areal-runtime-fs",
         "LICENSE",
     }
+    if target_platform == "linux/x86_64":
+        required.add("libexec/areal/areal-runtime-reaper")
     actual = {str(p.relative_to(bundle)) for p in bundle.rglob("*") if p.is_file()} - {
         "manifest.json"
     }
@@ -108,6 +112,85 @@ def verify_bundle(bundle, version, target_platform):
         if path.is_absolute() or ".." in path.parts or checksum(bundle / name) != digest:
             raise ValueError("bundle file checksum mismatch: " + name)
     return manifest
+
+
+def check_program(binary, version):
+    result = subprocess.run(
+        [str(binary), "--version"], capture_output=True, text=True, timeout=30, check=True
+    )
+    if result.stdout.strip() != "areal " + version:
+        raise ValueError("installed program version does not match release")
+
+
+def managed_link(link, versions):
+    if not (link.exists() or link.is_symlink()):
+        return None
+    resolved = link.resolve()
+    if (
+        not link.is_symlink()
+        or resolved.parent.name != "bin"
+        or resolved.parent.parent.parent != versions
+    ):
+        raise ValueError(
+            "refusing to replace an unmanaged bin/areal; Homebrew owns its installations"
+        )
+    return resolved
+
+
+def install(args, version, target):
+    target_platform, archive_target, install_target = target
+    prefix = args.prefix.expanduser().resolve()
+    versions = prefix / "lib/areal"
+    final = versions / (version + "-" + install_target)
+    link = prefix / "bin/areal"
+    versions.mkdir(parents=True, exist_ok=True)
+    # flock 在异常/进程退出后由内核释放；锁文件保留，避免 unlink 导致双锁。
+    with (versions / ".install.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise ValueError("another installation is in progress for this prefix") from error
+        previous = managed_link(link, versions)
+        if final.exists() or final.is_symlink():
+            raise ValueError(
+                "version directory already exists; retain it for rollback or choose a new version"
+            )
+        filename = "areal-harness-v" + version + "-" + archive_target + ".tar.gz"
+        with tempfile.TemporaryDirectory(prefix=".install-", dir=versions) as temporary:
+            staging = Path(temporary)
+            archive, checksums = args.archive, args.checksums
+            if archive is None:
+                archive, checksums = staging / filename, staging / "SHA256SUMS"
+                base = RELEASES + "/v" + version + "/"
+                download(base + filename, archive)
+                download(base + "SHA256SUMS", checksums)
+            verify_archive(archive, checksums, filename)
+            bundle = extract_bundle(archive, staging / "unpack")
+            verify_bundle(bundle, version, target_platform)
+            check_program(bundle / "bin/areal", version)
+            if managed_link(link, versions) != previous:
+                raise ValueError("installation entry changed while preparing the update")
+            link.parent.mkdir(parents=True, exist_ok=True)
+            temporary_link = staging / "areal-link"
+            temporary_link.symlink_to(final / "bin/areal")
+            bundle.rename(final)
+            try:
+                os.replace(temporary_link, link)
+            except BaseException:
+                # 系统调用成功后仍可能收到中断；入口已指向候选时不能删除活动版本。
+                if not link.is_symlink() or link.resolve() != final / "bin/areal":
+                    shutil.rmtree(final)
+                raise
+    print("Installed " + str(link))
+    selected = shutil.which("areal")
+    if selected and Path(selected).resolve() != link.resolve():
+        print("PATH selects another installation: " + selected)
+    print("Add " + str(link.parent) + " to PATH; verify with: " + str(link) + " --version")
+    print(
+        "User configuration/state remains unchanged. Retain a backup before opening it with a new version."
+    )
+    if platform.system() == "Linux":
+        print("Restricted scopes require /usr/bin/bwrap and usable user namespaces.")
 
 
 def download(url, path):
@@ -150,7 +233,6 @@ def main():
     target = TARGETS.get((platform.system(), platform.machine()))
     if target is None:
         parser.error("supported platforms: macOS arm64 and Linux x86_64 glibc")
-    target_platform, archive_target, install_target = target
     if platform.system() == "Linux":
         libc, libc_version = platform.libc_ver()
         if libc != "glibc" or tuple(map(int, libc_version.split(".")[:2])) < (2, 35):
@@ -159,45 +241,12 @@ def main():
         parser.error("macOS 15 or newer required")
     if bool(args.archive) != bool(args.checksums):
         parser.error("--archive and --checksums must be provided together")
-    prefix = args.prefix.expanduser().resolve()
-    versions = prefix / "lib/areal"
-    final = versions / (version + "-" + install_target)
-    link = prefix / "bin/areal"
-    if final.exists() or final.is_symlink():
-        parser.error(
-            "version directory already exists; retain it for rollback or choose a new version"
-        )
-    if link.exists() or link.is_symlink():
-        if not link.is_symlink() or versions not in link.resolve().parents:
-            parser.error("refusing to replace an unmanaged bin/areal")
-    versions.mkdir(parents=True, exist_ok=True)
-    filename = "areal-harness-v" + version + "-" + archive_target + ".tar.gz"
-    with tempfile.TemporaryDirectory(prefix=".install-", dir=versions) as temporary:
-        staging = Path(temporary)
-        archive = args.archive
-        checksums = args.checksums
-        if archive is None:
-            archive, checksums = staging / filename, staging / "SHA256SUMS"
-            base = RELEASES + "/v" + version + "/"
-            download(base + filename, archive)
-            download(base + "SHA256SUMS", checksums)
-        verify_archive(archive, checksums, filename)
-        bundle = extract_bundle(archive, staging / "unpack")
-        verify_bundle(bundle, version, target_platform)
-        bundle.rename(final)
-        link.parent.mkdir(parents=True, exist_ok=True)
-        temporary_link = staging / "areal-link"
-        temporary_link.symlink_to(final / "bin/areal")
-        os.replace(temporary_link, link)
-    print("Installed " + str(link))
-    print("Add " + str(link.parent) + " to PATH. User configuration/state remains in ~/.areal.")
-    if platform.system() == "Linux":
-        print("Restricted scopes require /usr/bin/bwrap and usable user namespaces.")
+    install(args, version, target)
 
 
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, ValueError, tarfile.TarError) as error:
+    except (OSError, ValueError, tarfile.TarError, subprocess.SubprocessError) as error:
         print("Installation failed: " + str(error), file=sys.stderr)
         sys.exit(1)

@@ -150,7 +150,7 @@ pnpm --dir clients/gui run sign:mac --app "/absolute/new-package/package/mac-arm
   --keychain-profile areal-harness
 ```
 
-`gui-package` 只构建 macOS arm64 候选应用，默认使用已构建的 debug Core；安装包使用上面的 release Core。候选输出包含 `.app`、ad-hoc ZIP、依赖清单与 Core 完整性清单，不能作为安装包验收完成结果。`sign:mac` 在独立副本中完成 Developer ID 签名、app/DMG Apple 公证、stapling、Gatekeeper 和通用桌面及模型专项验收；通过后交付其最终 ZIP/DMG。使用全新输出目录，并将包内 Core revision 与最终修复提交绑定。候选包不配置自动更新，签名和公证不执行发布。正式发布与更新频道见[发行流程](../../docs/development/releasing.md#gui-发布)。
+`gui-package` 只构建 macOS arm64 候选应用，默认使用已构建的 debug Core；安装包使用上面的 release Core。候选输出包含 `.app`、ad-hoc ZIP 和 DMG、依赖清单与 Core 完整性清单，不能作为安装包验收完成结果。`sign:mac` 在独立副本中完成 Developer ID 签名、app/DMG Apple 公证、stapling、Gatekeeper 和通用桌面及模型专项验收；通过后交付其最终 ZIP/DMG。使用全新输出目录，并将包内 Core revision 与最终修复提交绑定。候选包不配置自动更新，签名和公证不执行发布。正式发布与更新频道见[发行流程](../../docs/development/releasing.md#gui-发布)。
 
 构建候选包时，可用 `AREAL_GUI_CORE_BUNDLE=/absolute/core-bundle` 复用已冻结的 Core bundle；打包仍校验内嵌组件哈希，正式发布只接受 `release` Core。该设置仅影响打包输入。
 
@@ -167,3 +167,11 @@ Core 构建完成后再启动使用该二进制的桌面 smoke，验收期间不
 `pnpm --dir clients/gui run test:connection` 验证真实 Core 断线恢复、并发操作、旧连接消息隔离及显式关闭；`pnpm --dir clients/gui run test:architecture` 通过真实 Electron IPC 验证契约拒绝、错误码透传及原生预览的驱逐、崩溃重建和归属释放。两者使用隔离目录并输出证据，不替代安装包验收。
 
 第三方归属见 [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES.md)。运行时图标沿用源仓库版本；不迁入采集档案、开发 Skills/AGENTS 或来源 Git 历史。
+
+## 安装与更新
+
+正式 macOS arm64 包使用 DMG 首次安装、ZIP 自动更新，并保留 Developer ID 签名和 Apple 公证。下载后先校验同一 Release 的 `SHA256SUMS`；从 DMG 将应用拖入所选安装目录，再打开应用，按 macOS 提示处理安全与隐私权限。
+
+升级前备份 GUI 数据（默认 `~/Library/Application Support/AReaL Harness GUI`）、共享配置 `~/.areal` 和自定义项目数据。下载不停止任务；原生校验完成后等待活动任务、队列和后台操作安全结算，再停止后台并交给系统替换/重开。停止受理结果未知时检查原后台资源，不重复提交安装。下载/校验失败可重试；交接系统后未重开时手动打开原安装位置并核对版本。程序回退不等于数据降级，恢复旧程序时可能需要同步恢复备份；凭据继续使用原安全存储，备份目录不代表可跨机器迁移钥匙串。
+
+预览包仅供手动安装，使用 ad-hoc 签名，不执行 Developer ID 分发签名或公证，也不推进正式更新频道。使用隔离数据或先做备份；预览数据格式不保证旧正式版可读，预览转正式需要手动安装并单独验证。不要关闭安全防护或清除隔离标记来绕过系统拦截。

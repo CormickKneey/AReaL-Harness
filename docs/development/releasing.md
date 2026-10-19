@@ -4,6 +4,12 @@
 
 当前可验收的独立渠道为 macOS arm64 与 Linux x86_64 glibc 完整包 + Python 安装器；macOS 另可发布 Homebrew formula。与 [Codex CLI 官方安装矩阵](https://learn.chatgpt.com/docs/codex/cli#getting-started)相比，npm、Windows 在本项目尚无完整 Runtime 包或原生支持，不能列为可用渠道。`cargo install areal-cli` 同样不提供完整布局。安装范围见[安装指南](../guides/installation.md)。
 
+## 渠道与来源门禁
+
+CLI 正式与预览均交付完整 bundle；macOS 保留并严格验证输入 ad-hoc 签名，不做 Developer ID 分发签名或 Apple 公证。GUI 正式版继续使用 Developer ID + 公证、DMG 与更新 ZIP；GUI 预览保留默认 ad-hoc，仅手动安装，不带正式更新配置、不推进正式 feed，也不承诺自动转正式。预览标记 prerelease、非 Latest；仅 CLI 正式版可成为 Latest。
+
+正式导出前先 `git fetch origin main`，再运行 `python3 scripts/release-source.py --revision "$(git rev-parse HEAD)"`。它要求干净 checkout 的完整 HEAD SHA 已属于获取的 main；离线旧 ref 不能代替发布前重新获取。CLI tag 构建和 GUI 正式附件导出执行此门禁，PR 候选仍允许验证未合并源码。GUI 导出必须与候选 Core 的源码提交一致，清单同时记录已核对的 main 提交。版本、commit、平台和校验和随产物保存；公开版本附件不得覆盖。尚未公开的候选与预览不自动改变正式频道。
+
 ## 候选构建
 
 `Release bundles` workflow 可通过相关 PR 或 workflow_dispatch 构建候选；这两种触发只上传 CI artifacts，不创建 Git tag 或 Release。固定 Rust 工具链与 Cargo.lock；macOS 15 arm64、Ubuntu 22.04 x86_64 分别原生构建。
@@ -37,7 +43,7 @@ python3 scripts/release-smoke.py --bundle target/release-bundle/areal
 python3 -m unittest discover -s scripts/tests -p test_release.py
 ```
 
-Homebrew formula 安装 `bin`、`libexec`、LICENSE 和 manifest，避免改变 Core 查找 helper 的相对路径。Linux 安装器将不同版本放在不同目录，只原子替换入口符号链接；用户配置与历史不由安装器维护。校验失败不得切换入口。
+Homebrew formula 安装 `bin`、`libexec`、LICENSE 和 manifest，避免改变 Core 查找 helper 的相对路径。安装器将不同版本放在不同目录，只原子替换入口符号链接；用户配置与历史不由安装器维护。校验、版本探测或入口提交失败均不得切换旧入口。`install-smoke.py` 在隔离目录用真实完整包/共享服务验证入口更新时保留真实运行中服务的 PID、generation 和完整旧包；该脚本随 Release bundles 运行。普通脚本测试使用合成包覆盖异常，不启动用户服务。
 
 ## 可选平台适配包
 
@@ -48,6 +54,17 @@ Homebrew formula 安装 `bin`、`libexec`、LICENSE 和 manifest，避免改变 
 ## GUI 发布
 
 本机无需新增签名时可使用 `AREAL_GUI_UNSIGNED_LOCAL=1 AREAL_GUI_PACKAGE_DIR=/绝对路径/新目录 pnpm --dir clients/gui package`，CLI bundle 对应 `python3 scripts/package.py --unsigned-local --profile debug --output /绝对路径/新目录`。该显式模式跳过 Core 副本和整个 app 的签名，builder 继续使用 `identity: null`；保留输入字节及已有签名，记录真实 bundle 签名核验结果，不移除签名或改变系统策略。它与 `AREAL_GUI_RELEASE=1` 互斥；默认流程仍创建本机 ad-hoc 签名。已生成 ZIP 不证明能启动，须从 ZIP 复制到新隔离目录验收，系统拒绝时保留首次失败并停止该启动路径。
+
+默认本机 ad-hoc 打包输出 `.app`、`AReaL-Harness-GUI-mac-arm64.zip` 和同名 `.dmg`。`package-evidence.json` 记录 DMG 路径、压缩大小、SHA-256 和框架硬链接核验数量。`AREAL_GUI_UNSIGNED_LOCAL=1` 与正式签名前的 `AREAL_GUI_RELEASE=1` 仍只导出 ZIP。
+
+已有签名 app 可单独导出预览 DMG，输出路径必须尚不存在：
+
+```sh
+node clients/gui/scripts/macos-dmg.mjs --app "/absolute/AReaL Harness GUI.app" \
+  --output /absolute/new-preview.dmg --volume-name "AReaL Harness Preview"
+```
+
+预览与正式 DMG 共用导出器。导出器保留源 app，在私有副本中证明两份 Electron framework 的全部文件 payload、布局和签名策略等价，再把对应普通文件改为硬链接。签名不同的代码只在一次性文件副本中移除签名以比较完整字节；不支持的差异直接失败。主应用与后台仍保留独立 helper、元数据和本地框架目录。导出器不签名；它在最后一次 app 签名之后创建 HFS+ UDZO DMG，并只在只读挂载的签名、布局及共享 inode 核验通过后发布。正式流程随后继续 DMG 签名、公证和 stapling。ZIP 格式及更新路径不变，不承诺 ZIP 体积下降。ad-hoc 预览不建立 Apple 分发信任。
 
 GUI 版本由 `clients/gui/package.json` 和 `clients/gui/app/package.json` 共同声明，与 Cargo/CLI 版本独立。发布地址统一为 `areal-project/AReaL-Harness`；版本 Release 使用 `gui-v<版本>` 标签，CLI 继续使用 `v<版本>`。GUI Release 不设为 GitHub Latest，避免改变 CLI 安装器的 Latest 语义。
 

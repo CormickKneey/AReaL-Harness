@@ -5,7 +5,6 @@ import argparse
 import hashlib
 import json
 import re
-import shutil
 import tarfile
 from pathlib import Path
 
@@ -23,6 +22,8 @@ def archive(bundle, output):
         raise ValueError("invalid product version")
     if manifest["profile"] != "release" or manifest["workingTree"]:
         raise ValueError("release artifacts require a clean release-profile bundle")
+    if not re.fullmatch(r"[a-f0-9]{40}", str(manifest.get("sourceRevision", ""))):
+        raise ValueError("release artifacts require a full source commit SHA")
     if manifest["platform"] == "linux/x86_64":
         glibc = next(
             (p.get("verifiedVersion") for p in manifest.get("prerequisites", []) if "glibc" in p),
@@ -33,12 +34,16 @@ def archive(bundle, output):
     target = TARGETS[manifest["platform"]]
     output.mkdir(parents=True, exist_ok=True)
     path = output / f"areal-harness-v{version}-{target}.tar.gz"
-    if path.exists():
-        raise ValueError("archive already exists")
-    with tarfile.open(path, "w:gz") as stream:
+    sums = output / (path.name + ".sha256")
+    metadata = output / f"manifest-{target}.json"
+    if any(p.exists() or p.is_symlink() for p in (path, sums, metadata)):
+        raise ValueError("release output already exists; use a new output directory")
+    with path.open("xb") as archive_file, tarfile.open(fileobj=archive_file, mode="w:gz") as stream:
         stream.add(bundle, arcname="areal")
-    (output / (path.name + ".sha256")).write_text(f"{sha(path)}  {path.name}\n")
-    shutil.copy2(bundle / "manifest.json", output / f"manifest-{target}.json")
+    with sums.open("x") as checksums:
+        checksums.write(f"{sha(path)}  {path.name}\n")
+    with metadata.open("xb") as manifest_file:
+        manifest_file.write((bundle / "manifest.json").read_bytes())
     return path
 
 

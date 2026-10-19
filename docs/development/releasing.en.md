@@ -4,6 +4,12 @@
 
 Validated standalone channels are complete macOS arm64 and Linux x86_64 glibc bundles with the Python installer; macOS may also ship a Homebrew formula. Unlike the [official Codex CLI installation matrix](https://learn.chatgpt.com/docs/codex/cli#getting-started), this project has no complete npm or native Windows distribution yet. `cargo install areal-cli` also lacks the Runtime and bundled tools. See [installation](../guides/installation.en.md) for platform scope.
 
+## Channels and source gate
+
+Formal and preview CLI releases both ship complete bundles. macOS retains and strictly verifies input ad-hoc signatures without Developer ID distribution signing or Apple notarization. Formal GUI releases retain Developer ID signing, notarization, DMG installation and ZIP updates. GUI previews retain default ad-hoc signing, are installed manually, contain no formal update configuration, and do not advance the formal feed or promise automatic migration to formal releases. Previews are prereleases and never Latest; only a formal CLI release may become Latest.
+
+Before formal export, run `git fetch origin main`, then `python3 scripts/release-source.py --revision "$(git rev-parse HEAD)"`. This requires a clean checkout's full HEAD SHA to belong to fetched main; an old offline ref cannot replace fetching before release. CLI tag builds and formal GUI asset export enforce this gate, while PR candidates may validate unmerged source. GUI export must match the candidate Core source commit and records the verified main commit. Retain version, commit, platform and checksums with every artifact. Published version assets must never be replaced. Candidates and previews do not automatically change the formal channel.
+
 ## Candidate builds
 
 The `Release bundles` workflow builds candidates on relevant pull requests or workflow_dispatch. These triggers upload CI artifacts without creating Git tags or Releases. It uses the pinned Rust toolchain and Cargo.lock, building natively on macOS 15 arm64 and Ubuntu 22.04 x86_64.
@@ -49,6 +55,17 @@ Do not require the optional adapter job in regular pull-request branch protectio
 
 For local validation without new signatures, use `AREAL_GUI_UNSIGNED_LOCAL=1 AREAL_GUI_PACKAGE_DIR=/absolute/new-directory pnpm --dir clients/gui package`, or `python3 scripts/package.py --unsigned-local --profile debug --output /absolute/new-directory` for a CLI bundle. This explicit mode skips signing Core copies and the app while builder retains `identity: null`. It preserves input bytes and existing signatures, records actual bundle signature verification, and neither removes signatures nor changes system policy. It is incompatible with `AREAL_GUI_RELEASE=1`; the default flow still creates local ad-hoc signatures. A generated ZIP does not prove launchability: extract into a new isolated directory and validate, preserving the first system rejection and stopping that launch path if denied.
 
+Default local ad-hoc packaging produces an `.app`, `AReaL-Harness-GUI-mac-arm64.zip`, and a matching `.dmg`. `package-evidence.json` records the DMG path, compressed size, SHA-256, and verified framework hardlink counts. `AREAL_GUI_UNSIGNED_LOCAL=1` and the `AREAL_GUI_RELEASE=1` staging step still export only ZIP.
+
+To export a preview DMG from an already signed app, use a destination that does not exist:
+
+```sh
+node clients/gui/scripts/macos-dmg.mjs --app "/absolute/AReaL Harness GUI.app" \
+  --output /absolute/new-preview.dmg --volume-name "AReaL Harness Preview"
+```
+
+Preview and production DMGs use the same exporter. It preserves the source app and proves equivalent payloads, layout, and signing policies for both Electron frameworks in a private copy before hardlinking corresponding regular files. For differently signed code, it removes signatures only from disposable file copies and compares all remaining bytes. Unsupported differences fail the export. The main app and background service retain independent helpers, metadata, and local framework directories. The exporter does not sign code. After the final app signature, it creates an HFS+ UDZO DMG and publishes only after a read-only mount passes signature, layout, and shared-inode checks. The production flow then signs, notarizes, and staples the DMG. The ZIP format and update path are unchanged, with no promised ZIP size reduction. An ad-hoc preview does not establish Apple distribution trust.
+
 GUI versions are declared by `clients/gui/package.json` and `clients/gui/app/package.json`, independently of Cargo/CLI. Publish to `areal-project/AReaL-Harness` using `gui-v<version>` tags; CLI tags remain `v<version>`. GUI releases are not GitHub Latest, preserving the CLI installer's Latest semantics.
 
 Production GUI packages contain `areal-update.json` with the fixed feed `https://github.com/areal-project/AReaL-Harness/releases/download/gui-update-channel/`. The `gui-update-channel` prerelease carries only the current `latest-mac.yml`; that manifest points to the immutable ZIP in `gui-v<version>` and includes size and SHA-512. Only same-repository, same-version assets are accepted. Local ad-hoc packages have no update configuration.
@@ -83,3 +100,5 @@ GUI updates support macOS arm64. Electron owns checks and downloads; Core shuts 
 ## Build identity and GUI compatibility
 
 `areal build-info` exposes the Core revision, dirty state, Rust/Cargo/schema input hash, and compiled API/Store versions. Packaging verifies the input hash and revision first, so an old binary cannot acquire a new checkout identity. Manifest format 2 stores coreBuild and actual component byte hashes; sourceRevision refers to Core, without independently asserting the compile source of each Runtime binary. GUI accepts legacy format 1; format 2 also requires matching API, Store version and revision between coreBuild and manifest. GUI requires areal.core.v1, a matching platform and a supported persistent version; Core still reads the Store. Rebuild after source input changes before packaging. `make desktop-schema-check` temporarily generates and compares all three normalized schemas; `make desktop-schemas` replaces them atomically after all generators succeed.
+
+`python3 scripts/install-smoke.py --bundle /absolute/complete-bundle --evidence /absolute/install.json` validates the direct installer with a real isolated shared service: entry updates keep the real service PID, generation and old complete bundle unchanged. Release bundles runs this check. Ordinary script regressions use synthetic executable bundles to check failure invariants without starting user services.

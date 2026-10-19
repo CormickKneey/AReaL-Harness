@@ -6,7 +6,7 @@ const { newer, validateUpdate } = require('./config.cjs');
 function createUpdater({ updater, config, version, platform = process.platform, arch = process.arch,
   notify, onState, hasWork, prepareInstall, prepareNativeInstall, recoverInstall, log = console }) {
   const enabled = !!config && platform === 'darwin' && arch === 'arm64';
-  let checking = false, downloading = false, installing = false, installAttempt = false, downloaded = null, available = null;
+  let checking = false, downloading = false, installing = false, installAttempt = false, installUnconfirmed = false, downloaded = null, available = null;
   let highWater = version, status = 'idle', percent = null, detail = '';
   updater.autoDownload = false;
   updater.autoInstallOnAppQuit = false;
@@ -32,7 +32,7 @@ function createUpdater({ updater, config, version, platform = process.platform, 
     else if (downloading) set('error', error.message);
   });
   async function install() {
-    if (!downloaded || installing || installAttempt || downloading) return state();
+    if (!downloaded || installing || installAttempt || installUnconfirmed || downloading) return state();
     installAttempt = true;
     let prepared = false;
     try {
@@ -55,7 +55,8 @@ function createUpdater({ updater, config, version, platform = process.platform, 
       }
       installing = false;
       if (error.submissionUnknown) {
-        set('error', '后台停止结果待核对，不会自动重试。' + error.message);
+        installUnconfirmed = true;
+        set('error', '后台停止结果待核对，不会重发安装。请检查后台资源后重新打开应用。' + error.message);
         return state();
       }
       if (['CORE_RESOURCES', 'CORE_BUSY', 'LIFECYCLE_BLOCKED', 'LIFECYCLE_INCOMPLETE', 'CONFIRMATION_STALE'].includes(error.code)) {
@@ -133,6 +134,7 @@ function createUpdater({ updater, config, version, platform = process.platform, 
       }
     } catch (error) {
       log.warn('[areal-update]', error.message);
+      set('error', error.message);
       if (manual) await message('更新失败', error.message);
     } finally { checking = false; publish(); }
     return state();

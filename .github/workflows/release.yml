@@ -51,6 +51,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: Require merged release source
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          git fetch origin main
+          python3 scripts/release-source.py --revision "$(git rev-parse HEAD)"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: '22'
@@ -96,6 +102,7 @@ jobs:
           mkdir -p '${{ runner.temp }}/areal relocated bundle'
           tar -xzf ${{ runner.temp }}/areal-release-assets/areal-harness-v${RELEASE_VERSION}-${{ matrix.target }}.tar.gz -C '${{ runner.temp }}/areal relocated bundle'
           python3 scripts/release-smoke.py --bundle '${{ runner.temp }}/areal relocated bundle/areal'
+          python3 scripts/install-smoke.py --bundle '${{ runner.temp }}/areal relocated bundle/areal' --evidence target/ci/install.json
       - name: Verify Linux installation and native tools
         if: runner.os == 'Linux'
         run: |
@@ -170,7 +177,11 @@ jobs:
           sha256sum --check SHA256SUMS
           sha256sum install.py areal.rb manifest-*.json >> SHA256SUMS
           rm *.tar.gz.sha256
-          gh release create "$GITHUB_REF_NAME" --verify-tag --draft \
+          release_flags=(--draft --latest=false)
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+            release_flags+=(--prerelease)
+          fi
+          gh release create "$GITHUB_REF_NAME" --verify-tag "${release_flags[@]}" \
             --title "AReaL-Harness $GITHUB_REF_NAME" --generate-notes \
             ./*.tar.gz ./SHA256SUMS ./install.py ./areal.rb ./manifest-*.json
 

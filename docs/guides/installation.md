@@ -11,23 +11,13 @@
 | macOS arm64 | GitHub Release 完整包 + Python 安装器；Homebrew tap 发布后可选 formula | macOS 15+、Xcode Command Line Tools；独立安装/升级需 PATH 中的 Python 3.9+ |
 | Linux x86_64 | GitHub Release 完整包 + Python 安装器 | Ubuntu 22.04 或更新的兼容 glibc 2.35+ 系统；独立安装/升级需 PATH 中的 Python 3.9+；不支持 musl |
 
-只验证上述架构，不提供 Windows、macOS Intel 或 Linux arm64 包。**npm 与 `cargo install` 尚未提供完整发行包**，不能作为安装渠道。Homebrew 和独立安装器二选一，不应同时管理同一个 PATH 入口。每个包包含 `bin/areal`、`libexec/areal/{areal-runtime,areal-runtime-fs}`、LICENSE 和文件 SHA256 manifest；Linux 包另外包含同目录的 `areal-runtime-reaper`，不要只复制 `areal`。安装后启动无需 Rust/Cargo/Python，运行自定义 Node/Python 工具仍需对应解释器。
+只验证上述架构，不提供 Windows、macOS Intel 或 Linux arm64 包。**npm 与 `cargo install` 尚未提供完整发行包**，不能作为安装渠道。Homebrew 和独立安装器二选一，不应同时管理同一个 PATH 入口。每个包包含 `bin/areal`、`libexec/areal/{areal-runtime,areal-runtime-fs}`、LICENSE 和文件 SHA256 manifest；Linux 包另外包含同目录的 `areal-runtime-reaper`，不要只复制 `areal`。安装后无需 Rust/Cargo；macOS 仍需要可用的 `/usr/bin/python3`（Command Line Tools），运行自定义 Node/Python 工具需对应解释器。
 
 macOS 包采用 ad-hoc 签名，尚无 Developer ID 签名和公证。Linux 默认 YOLO/full-access 以当前用户权限运行；受限/只读 Scope 需要 `/usr/bin/bwrap` 及可用 user namespace。Ubuntu 可安装 `bubblewrap`；系统禁用 user namespace 或 AppArmor 拒绝时，受限操作会失败，不自动放宽权限。完整边界见 [Runtime 部署](runtime.md)。
 
-## Homebrew（macOS）
+## Homebrew（未来渠道）
 
-维护者将 release 生成的 `areal.rb` 发布到 `areal-project/homebrew-tap` 后：
-
-```sh
-xcode-select --install  # 已有 Command Line Tools 时无需重复
-brew tap areal-project/tap
-brew install areal-project/tap/areal
-areal --version
-brew test areal-project/tap/areal
-```
-
-tap 由维护者发布，首版发布前该安装源可能尚不存在。Formula 使用最终归档的 SHA256，下载完整预编译包，不在安装机编译 Rust。没有注册 brew services；共享服务由 `areal service` 管理。
+目前优先使用下方完整包安装器；Release 中存在 `areal.rb` 不表示公开 tap 已可用。不要自行混用安装器覆盖 Homebrew 的文件。已有 Homebrew 安装由 Homebrew 管理，`areal upgrade` 会使用原 formula；tap 未更新时会明确失败。
 
 ## 独立安装（macOS / Linux）
 
@@ -47,7 +37,9 @@ assert len(expected) == 1 and hashlib.sha256(Path('install.py').read_bytes()).he
 PY
 python3 install.py --version "$version"
 export PATH="$HOME/.local/bin:$PATH"
+command -v areal
 areal --version
+areal build-info
 ```
 
 默认安装到 `~/.local/lib/areal/<version>-macos-arm64` 或 `<version>-linux-x86_64`，入口为 `~/.local/bin/areal` 符号链接。`--prefix /absolute/path` 可选择有写权限的其他目录；不会自动 sudo 或修改 shell 配置。指定目录中已有非安装器管理的 `bin/areal` 时拒绝覆盖，同版本目录存在时拒绝覆盖。
@@ -64,11 +56,38 @@ macOS 离线安装将归档名改为 `areal-harness-v0.1.6-aarch64-apple-darwin.
 
 安装器在执行任何包内程序前校验归档和全部文件，拒绝链接、设备和路径逃逸归档。SHA256 校验提供与发布清单的一致性，不替代发布源的身份验证。
 
+## 升级命令
+
+先备份配置与历史（默认 `~/.areal`；自定义数据目录也需备份）。安装器管理的完整包可在后台继续运行时更新入口：
+
+```sh
+areal upgrade --check
+areal upgrade
+command -v areal
+areal --version
+areal build-info
+```
+
+`command -v areal` 应指向所选安装的入口；多个前缀并存时检查 PATH，必要时运行 `hash -r`。`build-info` 给出源码提交；完整包 `manifest.json` 给出平台和逐文件 SHA-256，与同一 Release 的 `SHA256SUMS` 一起保留。
+
+当前源码将入口更新与后台换代分开：安装器只校验完整新包并原子切换入口，不停止后台，不修改配置/历史，也不删除旧版本。服务在下载或切换期间启动仍可使用其已解析的完整旧包；不同工作区与 GUI 实例不因安装被停止。安装器拒绝同一前缀并发安装。已发布 0.1.6 的 `areal upgrade` 内嵌旧的停服前置检查，无法因目标版本更新而自动获得新入口行为；可使用目标 Release 已校验的安装器更新，无需强制冷迁移。
+
+新客户端遇到不兼容后台时清楚提示，不能隐式停止、降级或抢占旧后台。待任务空闲后，通过原客户端的显式更新/重启流程交接；受理结果未知时只检查原请求，不重发停止。保留旧包不等于备份数据格式，切换后先核对活动入口和后台各自版本。
+
+下载中断、摘要错误、程序版本不符或入口切换失败时，旧入口与配置/历史保持原样，可修复原因后重试。若入口已经切换后才中断，新版本可能已激活；先核对入口和版本，不能直接删除候选目录。强制终止进程可能遗留暂存或未激活的版本目录；不要删除旧安装或用户数据。同版本目录已存在时先核对其完整性和当前入口，不直接覆盖。回退程序前先停止服务，再将入口符号链接指回保留的旧版本；若新版本已写入数据，需配套恢复升级前备份，旧版本读取新格式不作保证。
+
 ## 配置、升级与卸载
 
 按[配置指南](configuration.md)在 `~/.areal/config.toml` 配置模型，然后在工作区启动 `areal`。旧配置必须删除已移除的 `limits.turn_timeout_seconds` 和 `AREAL_HARNESS_TURN_TIMEOUT_SECONDS`。`areal config validate` 可检查配置。旧 `~/.areal-harness` 不会自动迁移。
 
-`areal version` 与 `areal --version` 等价。`areal upgrade --check` 查询最新已公开版本，`areal upgrade` 按原安装来源执行：Homebrew 使用 formula 并核对安装版本（tap 尚未更新会报错），独立安装使用已校验的完整新包并原子切换入口；源码构建或非安装器管理的复制品拒绝自升级。升级前用 `areal service list` 检查服务，在各工作区执行 `areal service stop --workspace /absolute/workspace`；忙碌任务默认拒绝停止，应先完成或显式暂停任务。命令也会拒绝在共享服务尚未停止时升级。不要直接覆盖运行中的二进制。独立安装保留旧版本目录，允许停止服务后手动切回旧入口；数据格式升级后不能保证旧版本可读取新状态，升级前备份 `~/.areal`。
+`areal version` 与 `areal --version` 等价。`areal upgrade --check` 查询最新已公开版本，不安装。`areal upgrade` 按原安装来源执行；源码构建或非安装器管理的复制品拒绝自升级。
+
+- **独立安装**先校验完整新包，再原子切换命令入口，不要求停止共享服务。升级命令不停止或重启后台，也不迁移运行中的会话。旧版本目录保持不变，供原有进程及其 Runtime 继续使用；新命令入口指向新版本。不应手动删除仍被运行中进程使用的版本目录。
+- **Homebrew 安装**使用 formula 并核对安装版本，tap 尚未更新会报错。此渠道仍要求所有共享服务停止后才能执行 `areal upgrade`，因为该命令不控制 Homebrew 对旧版本目录的清理。先用 `areal service list` 检查服务，再在各工作区执行 `areal service stop --workspace /absolute/workspace`。忙碌任务默认拒绝停止，应先完成或显式暂停任务，不要为了升级强制取消任务。
+
+安装新版本不等于后台已切换到新版本。TUI 启动、重连和 `areal service ensure` 不隐式切换二进制版本；需要更新后台时，先完成或暂停其任务，再用新版入口执行 `areal service restart --workspace /absolute/workspace`，或通过 GUI 的显式后台更新入口操作。换代后，旧 TUI 的自动重连不会停止新版后台；要继续使用，请从新版入口重开 TUI。不要直接覆盖运行中的二进制。独立安装保留旧版本目录，可在停止服务后手动切回旧入口；数据格式升级后不能保证旧版本可读取新状态，升级前备份 `~/.areal`。
+
+新版 CLI 使用持久停止回执管理后台，兼容 0.1.5 Host。0.1.4 等旧 Host 不支持这项能力时，先用原版本 CLI 显式停止，再启动新版；新版不会尝试旧式停止来探测兼容性。
 
 卸载先停止服务。Homebrew 用 `brew uninstall areal`；Linux 删除安装器管理的入口链接及选定版本目录。两种方式都不自动删除 `~/.areal` 的配置与历史。
 

@@ -55,7 +55,7 @@ target/debug/areal web --workspace /absolute/workspace --json
 
 `status` 在原实例仍持锁但控制端点已关闭或断开时报告 `unavailable`，不将 socket 消失或响应丢失当作停止；协议、权限和超时错误仍显式失败。`ensure` 不接管这类仍有 owner 的实例。Store 启动仅为派生进程继承描述符的短暂交接等待约 100 ms，未取得独占锁前不清理临时写入，仍拒绝持续持锁的 owner。
 
-可信 GUI 使用 `service ensure --no-auto-restart`：兼容实例可以复用，不存在时可以在原有锁下启动；需要替换运行实例时返回冲突，不能在 ensure 内隐式停止。普通 CLI ensure 的既有空闲更新行为保留。
+可信 GUI 使用 `service ensure --no-auto-restart`：兼容实例可以复用，不存在时可以在原有锁下启动；需要替换运行实例时返回冲突，不能在 ensure 内隐式停止。普通 CLI ensure 和 TUI 重连仍可为空闲服务应用同一二进制的配置变化，但二进制摘要变化必须显式 `service restart` 或通过 GUI 生命周期更新激活，不能隐式升级或降级。
 
 ```sh
 areal service capabilities --instance INSTANCE --expected-generation GENERATION --json
@@ -63,7 +63,7 @@ areal service stop --instance INSTANCE --expected-generation GENERATION --reques
 areal service operation --instance INSTANCE --expected-generation GENERATION --request-id UUID --json
 ```
 
-能力查询返回 `{version:1,stopOperations:1}`；不支持时停止新写入，不用 Stop 探测。带 request-id 的 stop 返回 `{version:1,requestId,serviceId,generation,cancel,state,message?,lifecycle?}`。operation 返回 `{operation:<原回执或null>}`。同一 ID 永远绑定同一目标代际和 cancel 策略，参数变化拒绝。未带 request-id 的旧 stop 仍返回 Service 描述。
+能力查询返回 `{version:1,stopOperations:1}`；不支持时停止新写入，不用 Stop 探测。带 request-id 的 stop 返回 `{version:1,requestId,serviceId,generation,cancel,state,message?,lifecycle?}`。operation 返回 `{operation:<原回执或null>}`。同一 ID 永远绑定同一目标代际和 cancel 策略，参数变化拒绝。当前 CLI 省略 request-id 时也创建持久停止操作，确认原实例退出后仍返回 Service 描述；失败保留原 request-id 和 generation 供查询。新 Host 拒绝旧控制协议中的无回执 `Stop`，不 drain 或取消任务，避免已运行的旧 TUI 在重连时停止新版后台。0.1.5 Host 支持持久停止操作；0.1.4 等不支持该能力的 Host 须先用原版本 CLI 显式停止，再启动新版，不因能力查询失败自动回退到旧 Stop。
 
 Host 在 drain 前原子保存并 fsync 回执，目录位于私有 registry 的 `operations/`，不随 generation 清理。状态为 `acceptedPending`、`blocked`、`admissionUnknown`、`settlementIncomplete` 或 `completed`。已知忙碌拒绝与已受理但未结算分开；查询不重新 drain 或 cancel，null 不证明原请求未受理。显式新意图可以在已知拒绝或结算不完整后重新观察并使用新 ID；受理未知必须先核对。
 
@@ -80,9 +80,9 @@ GUI 的 registry 默认是 `~/.areal/gui/<GUI Core home 摘要>`，每项目 dat
 
 ## 实例、兼容性与历史
 
-同一 dataDir 只允许一个 Core。`ensure` 串行化并发启动，发现运行实例后校验身份和配置；模型文件变更原地热更新；其他 TOML 配置和二进制更新在空闲时自动重启，有后台工作时拒绝自动重启。权限、Runtime、部署文件或模型 CLI/环境覆盖变化需执行 `areal service restart`。不会静默扩大写/网络权限，也不会杀掉未被托管的旧 Core。符号链接按规范路径识别。
+同一 dataDir 只允许一个 Core。`ensure` 串行化并发启动，发现运行实例后校验身份和配置；模型文件变更原地热更新；同一二进制的其他 TOML 配置在空闲时自动重启，有后台工作时拒绝自动重启。二进制、权限、Runtime、部署文件或模型 CLI/环境覆盖变化需执行 `areal service restart`。不会静默扩大写/网络权限，也不会杀掉未被托管的旧 Core。符号链接按规范路径识别。
 
-开发版与 PATH 中的安装版在相同工作区、相同 dataDir 下会定位同一实例，但二进制内容及不同版本的默认配置可能不兼容。冲突诊断给出当前客户端二进制的绝对路径和已解析的部署参数；使用该命令并保持相同环境重启，避免裸 `areal` 重新启动另一版本。纯二进制/普通配置更新仍沿用空闲自动重启；Runtime、权限等边界变化仍需显式重启。
+开发版与 PATH 中的安装版在相同工作区、相同 dataDir 下会定位同一实例，但二进制内容及不同版本的默认配置可能不兼容。冲突诊断给出当前客户端二进制的绝对路径和已解析的部署参数；使用该命令并保持相同环境重启，避免裸 `areal` 重新启动另一版本。同一二进制的普通配置更新沿用空闲自动重启；二进制、Runtime、权限等边界变化需显式重启。
 
 服务 home 由 `AREAL_HARNESS_SERVICE_HOME`（非空绝对路径）选择，省略时沿用 `AREAL_HARNESS_HOME` 或 `~/.areal`；它只决定服务登记、工作区映射与默认实例数据的位置，不改变 Core 配置查找。`ensure`、`restart`、`list`、`status`、`stop`、`bind` 和 `web` 使用同一服务 home。未显式配置 dataDir 时，共享入口使用 `<服务 home>/instances/<workspace-hash前24位>/state`。显式 CLI、环境变量或 TOML 中的 dataDir 保持配置优先级。独占 launcher、非交互 CLI 的默认目录保持原有规则。
 

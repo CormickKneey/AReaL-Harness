@@ -15,10 +15,10 @@ console.log('GUI evidence: ' + scratch);
 const sourceRevision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: gui, encoding: 'utf8' }).trim();
 const scriptSha256 = createHash('sha256').update(await readFile(fileURLToPath(import.meta.url))).digest('hex');
 const checks = [];
-async function launch(executable, name) {
-  const home = join(scratch, name); await mkdir(home); await mkdir(join(home, 'user'));
+async function launch(executable, name, reopen = false) {
+  const home = join(scratch, name); await mkdir(home, { recursive: reopen }); await mkdir(join(home, 'user'), { recursive: reopen });
   const config = join(home, 'config.toml');
-  await writeFile(config, 'schema_version=1\n[model]\nprovider="fixture"\nname="fixture"\n[model.providers.fixture]\nprotocol="chat-completions"\nendpoint="http://127.0.0.1:9/v1/chat/completions"\n');
+  if (!reopen) await writeFile(config, 'schema_version=1\n[model]\nprovider="fixture"\nname="fixture"\n[model.providers.fixture]\nprotocol="chat-completions"\nendpoint="http://127.0.0.1:9/v1/chat/completions"\n');
   const env = { ...process.env, HOME: join(home, 'user'), AREAL_GUI_SMOKE: '1', AREAL_GUI_USER_DATA: join(home, 'electron'),
     AREAL_CORE_HOME: join(home, 'core'), AREAL_CORE_USER_HOME: join(home, 'user'),
     AREAL_HARNESS_HOME: join(home, 'runtime'), AREAL_CORE_CONFIG: config };
@@ -74,11 +74,16 @@ try {
     checks.push('candidate contains electron-builder native update configuration and stable cache name');
     const baselineApp = resolve(dirname(baseline), '../..');
     assert.ok(baselineApp.endsWith('.app'), 'Baseline executable must belong to an app bundle');
+    const appVersion = path => execFileSync('/usr/bin/plutil', ['-extract', 'CFBundleShortVersionString', 'raw', join(path, 'Contents/Info.plist')], { encoding: 'utf8' }).trim();
+    const expectedVersion = appVersion(resolve(dirname(process.env.AREAL_GUI_EXECUTABLE), '../..'));
+    const { newer } = read('../app/src/update/config.cjs');
+    assert.equal(newer(expectedVersion, appVersion(baselineApp)), true, 'Use a lower formal baseline and a higher formal candidate');
     const copiedApp = join(scratch, 'baseline.app');
     execFileSync('/usr/bin/ditto', [baselineApp, copiedApp]);
     const copiedExecutable = join(copiedApp, 'Contents/MacOS', baseline.split('/').at(-1));
     instance = await launch(copiedExecutable, 'native');
     const { app, page } = instance;
+    const configBefore = await readFile(join(scratch, 'native/config.toml'));
     await page.evaluate(() => { window.updateTrace = []; window.arealDesktop.onUpdate(state => window.updateTrace.push(state)); });
     await app.evaluate(({ app, Menu }, options) => {
       const read = process.getBuiltinModule('module').createRequire(app.getAppPath() + '/package.json');
@@ -92,6 +97,8 @@ try {
       Menu.getApplicationMenu().items[0].submenu.items.find(item => item.label === '检查更新…').click();
     }, { nativePath, cache: join(scratch, 'native-cache') });
     await page.getByTestId('areal-update-download').waitFor({ timeout: 30000 });
+    assert.equal((await page.evaluate(() => window.arealDesktop.updateState())).version, expectedVersion,
+      'The public feed must offer the selected candidate before download');
     await page.getByTestId('areal-update-download').click();
     await page.waitForFunction(() => window.updateTrace.some(state => state.status === 'installing' || state.status === 'error'), {}, { timeout: 240000 });
     const result = await app.evaluate(async ({ app }) => {
@@ -110,6 +117,7 @@ try {
     assert.ok(trace.some(state => state.status === 'validating'));
     checks.push('real public ZIP download, SHA-512 verification, Squirrel signed update staging and safe Core shutdown; final install intercepted');
     const target = trace.find(state => state.status === 'available').version;
+    assert.equal(target, expectedVersion, 'The public feed must offer the selected candidate version');
     // Squirrel 在退出时也可能安装已准备的更新，因此始终只启动复制出的旧包。
     await close(instance); instance = null;
     let installed;
@@ -122,6 +130,12 @@ try {
     assert.equal(installed, target);
     await writeFile(join(scratch, 'copy-replacement.json'), JSON.stringify({ target, installed, copiedApp }, null, 2));
     checks.push('Squirrel replaces only the isolated baseline copy with the expected public version after exit');
+    instance = await launch(copiedExecutable, 'native', true);
+    assert.equal(await instance.app.evaluate(({ app }) => app.getVersion()), target);
+    assert.deepEqual(await readFile(join(scratch, 'native/config.toml')), configBefore);
+    await instance.page.screenshot({ path: join(scratch, 'reopened.png') });
+    await close(instance); instance = null;
+    checks.push('replaced isolated app reopens at the selected version with unchanged synthetic model configuration; no credential or history migration claim');
   }
   await writeFile(join(scratch, 'manifest.json'), JSON.stringify({ passed: true, checks, scratch, sourceRevision, scriptSha256 }, null, 2));
   console.log(JSON.stringify({ passed: true, checks, scratch }));

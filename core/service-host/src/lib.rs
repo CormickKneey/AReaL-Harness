@@ -273,34 +273,17 @@ async fn control(
             Request::Stop {
                 version,
                 generation,
-                cancel,
+                ..
             } => {
                 ensure!(
                     version == VERSION && generation == service.identity.generation,
                     "service generation/protocol mismatch"
                 );
-                let mut guard = stopping.lock().await;
-                let operation = begin_stop(
-                    service,
-                    &mut guard,
-                    uuid::Uuid::new_v4().to_string(),
-                    cancel,
-                )
-                .await?;
-                ensure!(
-                    operation.state == StopOperationState::AcceptedPending,
-                    "{}",
-                    operation
-                        .message
-                        .as_deref()
-                        .unwrap_or("service stop is incomplete")
+                bail!(
+                    "legacy stop requests are disabled; use the current areal CLI with `service stop --instance {} --expected-generation {} --request-id <unique-id>` and inspect that operation before retrying",
+                    service.identity.service_id,
+                    service.identity.generation
                 );
-                should_stop = guard.stopping;
-                let mut response = service.clone();
-                response.state = State::Stopping;
-                Ok(Response::Ok {
-                    service: Box::new(response),
-                })
             }
             Request::StopOperation {
                 version,

@@ -315,6 +315,20 @@ try {
       .result,
     "error",
   );
+  for (const cancel of [false, true]) {
+    const response = await control(current, {
+      method: "stop",
+      version: 1,
+      generation: current.generation,
+      cancel,
+    });
+    assert.equal(response.result, "error");
+    assert.match(response.message, /legacy stop requests are disabled/);
+    const observed = await cli(["service", "status", "--instance", current.serviceId]);
+    assert.equal(observed.state, "ready");
+    assert.equal(observed.generation, current.generation);
+    assert.equal(observed.corePid, current.corePid);
+  }
   const first = await client(current),
     second = await client(current);
   setPhase("busy-service-and-shared-windows");

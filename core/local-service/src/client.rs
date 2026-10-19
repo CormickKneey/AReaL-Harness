@@ -108,6 +108,7 @@ async fn ensure_inner(
                 "permissions",
                 "runtime",
                 "deployment",
+                "binaries",
                 "model-inputs",
             ] {
                 if previous
@@ -399,14 +400,27 @@ fn operation_unlocked(
             || (storage::available(&receipt.service.identity.data_dir.join("service.lock"))?
                 && storage::store_available(&receipt.service.identity.data_dir)?)
         {
-            operation.state = if receipt.cleanup_confirmed {
-                StopOperationState::Completed
-            } else {
-                StopOperationState::AdmissionUnknown
-            };
-            if !receipt.cleanup_confirmed {
-                operation.message =
-                    Some("the original host exited without confirming cleanup".into());
+            let settled = storage::read_stop_receipt(directory, request_id)?
+                .context("the original stop receipt disappeared after shutdown")?;
+            ensure!(
+                settled.operation.version == operation.version
+                    && settled.operation.service_id == operation.service_id
+                    && settled.operation.generation == operation.generation
+                    && settled.operation.cancel == operation.cancel
+                    && settled.service.identity == receipt.service.identity,
+                "stop request conflict: settled operation identity does not match"
+            );
+            operation = settled.operation;
+            if operation.state == StopOperationState::AcceptedPending {
+                operation.state = if settled.cleanup_confirmed {
+                    StopOperationState::Completed
+                } else {
+                    StopOperationState::AdmissionUnknown
+                };
+                if !settled.cleanup_confirmed {
+                    operation.message =
+                        Some("the original host exited without confirming cleanup".into());
+                }
             }
         }
     }
@@ -422,6 +436,19 @@ pub async fn stop_operation(
 ) -> Result<StopOperation> {
     let directory = storage::registry(root, id)?;
     let _startup = startup_lock(&directory).await?;
+    stop_operation_unlocked(root, id, generation, request_id, cancel)
+        .await
+        .with_context(|| format!("stop request {request_id} for generation {generation}"))
+}
+
+async fn stop_operation_unlocked(
+    root: &Path,
+    id: &str,
+    generation: &str,
+    request_id: &str,
+    cancel: bool,
+) -> Result<StopOperation> {
+    let directory = storage::registry(root, id)?;
     if let Some(operation) = operation_unlocked(&directory, id, generation, request_id)? {
         ensure!(
             operation.cancel == cancel,
@@ -575,38 +602,44 @@ async fn stop_unlocked(
     if service.state == State::Stopped {
         return Ok(service);
     }
-    request(
-        root,
-        id,
-        Request::Stop {
-            version: VERSION,
-            generation: service.identity.generation.clone(),
-            cancel,
-        },
-    )
-    .await?;
-    let deadline = Instant::now() + Duration::from_secs(45);
-    while !storage::available(&service.identity.data_dir.join("service.lock"))? {
-        ensure!(
-            Instant::now() < deadline,
-            "service cleanup is not confirmed; inspect {}",
-            service.log_file.display()
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    ensure!(
-        storage::store_available(&service.identity.data_dir)?,
-        "Core still owns the store; cleanup is not confirmed"
-    );
-    let settled: Service = storage::read(&storage::registry(root, id)?.join("service.json"))?;
-    ensure!(
-        settled.identity.generation == service.identity.generation
-            && settled.state == State::Stopped,
-        "service did not confirm clean shutdown or has already restarted; inspect {}",
-        service.log_file.display()
-    );
-    service.state = State::Stopped;
-    Ok(service)
+    let generation = service.identity.generation.clone();
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let outcome: Result<Service> = async {
+        let directory = storage::registry(root, id)?;
+        let mut operation =
+            stop_operation_unlocked(root, id, &generation, &request_id, cancel).await?;
+        let deadline = Instant::now() + Duration::from_secs(45);
+        loop {
+            ensure!(
+                matches!(operation.state, StopOperationState::AcceptedPending | StopOperationState::Completed),
+                "service stop is {:?}: {}; inspect the original operation before taking further action",
+                operation.state,
+                operation.message.as_deref().unwrap_or("cleanup is not confirmed")
+            );
+            if operation.state == StopOperationState::Completed
+                && storage::available(&service.identity.data_dir.join("service.lock"))?
+                && storage::store_available(&service.identity.data_dir)?
+            {
+                let settled: Service = storage::read(&directory.join("service.json"))?;
+                ensure!(
+                    settled.identity.generation == generation && settled.state == State::Stopped,
+                    "service did not confirm clean shutdown or has already restarted; inspect {}",
+                    service.log_file.display()
+                );
+                service.state = State::Stopped;
+                return Ok(service);
+            }
+            ensure!(
+                Instant::now() < deadline,
+                "service cleanup is not confirmed; inspect the original operation and {}",
+                service.log_file.display()
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            operation = operation_unlocked(&directory, id, &generation, &request_id)?
+                .context("the original stop receipt is missing; admission is unknown")?;
+        }
+    }.await;
+    outcome.with_context(|| format!("stop request {request_id} for generation {generation}"))
 }
 
 fn token(service: &Service) -> Result<String> {
