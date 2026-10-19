@@ -35,6 +35,10 @@ target/debug/areal --endpoint ws://127.0.0.1:4500 --auth-file /absolute/core-dat
 
 共享模式默认在 `~/.areal/instances/` 下按工作区保存数据；显式数据目录配置保持优先级。旧 `~/.areal-harness/state` 历史须使用 `--data-dir`，或停止旧 Core 后绑定。模型 TOML 配置自动热更新；其他 TOML 变化等待后台工作结算后重启，权限/部署参数变化需显式 restart。发现、迁移、日志和 Desktop 接入见[本地服务契约](../api/local-service.md)。
 
+TUI 的模型凭据来自 Core 启动时的环境。先在终端导出密钥变量，再通过供应商 TOML 的 `api_key_env = "MY_MODEL_KEY"`、`AREAL_HARNESS_API_KEY_ENV=MY_MODEL_KEY` 或 `--api-key-env MY_MODEL_KEY` 指定变量名；优先级为 CLI、环境覆盖、TOML。GUI 保存的加密密钥不会自动进入独立 TUI 的环境，共享模型目录也不共享这些密钥。缺少或无效的凭据会显示环境变量名，会话创建失败后可退出修正配置。
+
+修改终端环境不会改变已运行 Core 的环境。已有共享服务需要使用相同配置、工作区和部署参数执行 `areal service restart`，再启动 TUI；有后台任务时先等待结算，不要为更新密钥自动取消工作。`Ctrl-R` 只重连，不能注入新密钥。使用 `--endpoint` 时，应在远端 Core 的启动环境中配置凭据。密钥值不要放入命令行参数或 TOML。配置示例见[模型配置](configuration.md#gui-与-cli-共享模型目录)。
+
 ```sh
 target/debug/areal web --workspace /absolute/task
 target/debug/areal service list --json
@@ -75,7 +79,7 @@ TUI 顶部和 Web 显示 YOLO/ASK_PERMISSIONS，以 Core 状态为准。TUI 审�
 | ←/→、Option+←/→、Ctrl-A / Ctrl-E | 输入框内按完整字素移动光标；Option+←/→（Alt+b / Alt+f）按 Codex 词边界跳到上一词开头 / 下一词结尾；Ctrl-A / Ctrl-E 跳到当前行首 / 行尾 |
 | Ctrl-D / Delete、Backspace | 删除光标处 / 光标前的完整字素；空输入或相应边界不操作，不退出 |
 | `/`、Tab、Esc | Slash 候选、补全和关闭候选 |
-| Ctrl-C / Ctrl-Q | 暂停当前 Goal 并取消 Turn（无 Goal 时中断 Turn）/ 退出 |
+| Ctrl-C / Ctrl-Q | Ctrl-C 暂停当前 Goal 或中断活动 Turn，没有活动任务时退出 TUI；Ctrl-Q 从任意界面退出 TUI |
 | Ctrl-R | 重连并恢复快照，不重放请求 |
 | F5、`/sessions`、`/new`、`/open ID` | 选择、创建或打开会话 |
 | F6、`/model` | 空闲时选择模型或恢复默认值 |
@@ -92,6 +96,10 @@ TUI 顶部和 Web 显示 YOLO/ASK_PERMISSIONS，以 Core 状态为准。TUI 审�
 | ↑/↓、Enter/Space、←/→ | 历史焦点下选择、切换、收起/展开；Esc 返回输入框 |
 | Ctrl-O、`/details` | 切换紧凑/详细历史，保留局部展开选择 |
 | `/restore-input` | 恢复提交失败或结果未确认时保留的输入 |
+
+在输入框中输入 `/quit` 并回车退出；在选择器中将完整筛选词输入为 `/quit` 后回车也可退出。在导航或历史区输入 `/` 会聚焦输入框。所有弹窗中均可按 Ctrl-Q 退出。断线、快照尚未恢复或提交尚未确认时，Ctrl-C 提示先核查状态，仍可按 Ctrl-Q 明确退出。共享模式下退出 TUI 保留 Core 和后台任务。
+
+`AREAL_TEST_BIN=/absolute/fixed-slot/areal python3 scripts/tui-recovery-smoke.py` 用隔离 Core/Runtime、真实 PTY 和本地模型验证环境凭据恢复、取消与退出，保留终端画面和报告。测试不调用真实供应商，也不修改用户配置。
 
 子任务列表分页读取；TUI 用 `/more` 加载后续记录。等待或断开客户端不会重放子任务，停止操作由 Core 处理。手工 `/spawn` 默认为只读分析；实际开发任务直接在普通输入区提出，由协调 Agent 声明修改与交付意图。
 

@@ -1439,6 +1439,15 @@ class CoreBackend {
         else if (submitted.turn?.id) context.onBrowserTurnStarted?.(submitted.turn.id);
         return submitted;
       }
+      case 'editMessage': {
+        if (!projectCoreCapabilities(this.binary, project.client.capabilities).features?.editLastMessage) throw new Error('当前 Core 不支持编辑消息，请更新 Core。');
+        await this.ensureBrowserTools(project, threadId);
+        const submitted = await this.submit(project, 'areal/turn/submit', { threadId,
+          expectedConfigRevision: request.expectedConfigRevision,
+          intent: { type: 'edit', expectedTurnId: request.expectedTurnId, itemId: request.itemId, input: messageInput(this, request) } }, { requestId: request.requestId });
+        if (submitted.turn?.id) context.onBrowserTurnStarted?.(submitted.turn.id);
+        return submitted;
+      }
       case 'continue': {
         if (!projectCoreCapabilities(this.binary, project.client.capabilities).features?.ordinaryTurnSubmit) throw new Error('当前 Core 不支持继续执行，请更新 Core。');
         await this.ensureBrowserTools(project, threadId);

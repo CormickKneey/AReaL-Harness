@@ -53,6 +53,7 @@ pub struct ConfiguredModels {
     pub providers: Vec<Provider>,
     pub provider_ids: BTreeSet<String>,
     pub parameters: BTreeMap<(String, String), ModelParameters>,
+    pub credential_environments: BTreeMap<(String, String), String>,
     pub default_model: Option<ModelRef>,
 }
 
@@ -420,13 +421,29 @@ impl Engine {
             .credential_ref
             .as_ref()
             .map(|reference| {
-                self.desktop
+                let credential = self
+                    .desktop
                     .credentials
                     .read()
                     .unwrap()
                     .get(reference)
-                    .cloned()
-                    .ok_or_else(|| invalid("CREDENTIAL_UNAVAILABLE"))
+                    .cloned();
+                credential.ok_or_else(|| {
+                    let configured = self.desktop.configured_models.read().unwrap();
+                    match configured
+                        .credential_environments
+                        .get(&(provider.id.clone(), reference.clone()))
+                    {
+                        Some(name) => invalid(format!(
+                            "CREDENTIAL_UNAVAILABLE: provider '{}' requires environment variable '{}'. Set it to a nonempty valid HTTP header value in the Core launch environment, then restart Core or the shared service.",
+                            provider.id, name
+                        )),
+                        None => invalid(format!(
+                            "CREDENTIAL_UNAVAILABLE: configure credentials for provider '{}' in Core, then restart Core or the shared service.",
+                            provider.id
+                        )),
+                    }
+                })
             })
             .transpose()?;
         let model = model::HttpModel::with_protocol(

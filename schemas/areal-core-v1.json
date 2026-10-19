@@ -18761,6 +18761,193 @@
                 "expectedTurnId"
               ],
               "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "expectedTurnId": {
+                  "type": "string"
+                },
+                "input": {
+                  "items": {
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "mcpContent": {
+                            "description": "Original MCP attachment metadata for user history; excluded from model projection."
+                          },
+                          "text": {
+                            "type": "string"
+                          },
+                          "text_elements": {
+                            "default": [],
+                            "items": true,
+                            "type": "array"
+                          },
+                          "type": {
+                            "const": "text",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "text"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "detail": {
+                            "anyOf": [
+                              {
+                                "enum": [
+                                  "auto",
+                                  "low",
+                                  "high",
+                                  "original"
+                                ],
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "default": null
+                          },
+                          "type": {
+                            "const": "image",
+                            "type": "string"
+                          },
+                          "url": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "url"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "detail": {
+                            "anyOf": [
+                              {
+                                "enum": [
+                                  "auto",
+                                  "low",
+                                  "high",
+                                  "original"
+                                ],
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "default": null
+                          },
+                          "path": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "const": "localImage",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "path"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "type": {
+                            "const": "audio",
+                            "type": "string"
+                          },
+                          "url": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "url"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "type": {
+                            "const": "localAudio",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "path"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "mime_type": {
+                            "default": null,
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "name": {
+                            "default": null,
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "type": {
+                            "const": "file",
+                            "type": "string"
+                          },
+                          "url": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "url"
+                        ],
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "type": "array"
+                },
+                "itemId": {
+                  "type": "string"
+                },
+                "type": {
+                  "const": "edit",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "expectedTurnId",
+                "itemId",
+                "input"
+              ],
+              "type": "object"
             }
           ]
         },

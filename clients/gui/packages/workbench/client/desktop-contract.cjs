@@ -17,7 +17,7 @@
 // 名称、作用域和执行层只维护一份；Main 专属能力不能从后台服务入口调用。
 const commandDefinitions = Object.freeze({
   connect: ['service', 'project'], list: ['service', 'project'], open: ['service', 'thread'],
-  create: ['service', 'project'], prepareCreator: ['service', 'project'], fork: ['service', 'project'], side: ['service', 'project'], send: ['service', 'thread'], continue: ['service', 'thread'], stop: ['service', 'thread'],
+  create: ['service', 'project'], prepareCreator: ['service', 'project'], fork: ['service', 'project'], side: ['service', 'project'], send: ['service', 'thread'], editMessage: ['service', 'thread'], continue: ['service', 'thread'], stop: ['service', 'thread'],
   attachBrowser: ['service', 'thread'],
   respond: ['service', 'thread'], reconcile: ['service', 'project'], configure: ['service', 'thread'],
   queue: ['service', 'thread'], queueEdit: ['service', 'thread'], library: ['service', 'app'],
@@ -56,6 +56,11 @@ function validateCommand(name, params, { serviceOnly = false } = {}) {
   if (name === 'prepareCreator' && (Object.keys(params).some(key => !['projectId', 'profile'].includes(key))
     || params.profile !== undefined && (!record(params.profile) || !resource(params.profile) || Object.keys(params.profile).some(key => !['id', 'revision'].includes(key))))) invalid();
   if (name === 'send' && params.requestId !== undefined && (typeof params.requestId !== 'string' || !/^[0-9a-f-]{36}$/.test(params.requestId))) invalid();
+  if (name === 'editMessage' && (!identifier(params.expectedTurnId) || !identifier(params.itemId)
+    || typeof params.text !== 'string' || !params.text.trim()
+    || !Number.isSafeInteger(params.expectedConfigRevision) || Number(params.expectedConfigRevision) < 0
+    || typeof params.requestId !== 'string' || !/^[0-9a-f-]{36}$/.test(params.requestId)
+    || Object.keys(params).some(key => !['projectId', 'threadId', 'expectedTurnId', 'itemId', 'expectedConfigRevision', 'requestId', 'text', 'attachments', 'mcpContent'].includes(key)))) invalid();
   if (name === 'continue' && (!identifier(params.expectedTurnId)
     || Object.keys(params).some(key => !['projectId', 'threadId', 'expectedTurnId', 'expectedConfigRevision', 'requestId'].includes(key))
     || params.requestId !== undefined && (typeof params.requestId !== 'string' || !/^[0-9a-f-]{36}$/.test(params.requestId))

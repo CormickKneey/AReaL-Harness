@@ -1,0 +1,32 @@
+# Local AI context copied by Codex into new local managed worktrees.
+# Only ignored files are eligible; tracked files keep the selected Git version.
+# AGENTS.override.md is copied automatically by Codex.
+# These are independent copies, not writable links into the primary checkout.
+
+/.agents/
+!/.agents/**/*.png
+!/.agents/**/*.jpg
+!/.agents/**/*.jpeg
+!/.agents/**/*.gif
+!/.agents/**/*.webp
+!/.agents/**/*.svg
+!/.agents/**/*.bmp
+!/.agents/**/*.ico
+/CLAUDE.md
+/CLAUDE.local.md
+/.cursorrules
+/.cursor/rules/
+/.impeccable/**/*.md
+/docs/**/*.md
+/docs/**/*.rst
+/docs/**/*.txt
+
+# Import scratch plans, reports and handoffs without copying runtime state,
+# app homes, cloned source trees, logs, credentials or build artifacts.
+/.scratch/*.md
+/.scratch/*/*.md
+/.scratch/*/issues/**/*.md
+/.scratch/*/reports/**/*.md
+/.scratch/*/handoff/**/*.md
+/.scratch/*/docs/**/*.md
+/.scratch/research/**/*.md

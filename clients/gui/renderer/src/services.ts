@@ -35,6 +35,7 @@ export type NotificationTarget = { projectId: string } & ({ threadId: string; ta
 export interface PlatformServices {
     /** The initial selected view has committed; desktop may reveal its window. */
     presentReady?(): Promise<void>;
+    onQuitRequested?(listener: () => Promise<boolean>): () => void;
     onNotificationOpen?(listener: (target: NotificationTarget) => void): () => void;
     updateState?(): Promise<UpdateState>;
     downloadUpdate?(): Promise<UpdateState>;

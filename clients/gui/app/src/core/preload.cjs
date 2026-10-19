@@ -1,7 +1,33 @@
 'use strict';
 const { contextBridge, ipcRenderer } = require('electron');
+let quitSubscription = null;
+function answerQuitRequest(subscription, allowed) {
+  if (subscription.pending === null) return;
+  const id = subscription.pending;
+  subscription.pending = null;
+  ipcRenderer.send('areal-core:quit-decision', { id, allowed });
+}
+ipcRenderer.on('areal-core:quit-request', (_event, id) => {
+  const subscription = quitSubscription;
+  if (!subscription || subscription.pending !== null) {
+    ipcRenderer.send('areal-core:quit-decision', { id, allowed: false });
+    return;
+  }
+  subscription.pending = id;
+  void Promise.resolve().then(() => subscription === quitSubscription ? subscription.listener() : false)
+    .then(allowed => answerQuitRequest(subscription, allowed === true), () => answerQuitRequest(subscription, false));
+});
 contextBridge.exposeInMainWorld('arealDesktop', {
   presentReady: () => ipcRenderer.invoke('areal-core:present-ready'),
+  onQuitRequested: listener => {
+    if (quitSubscription) answerQuitRequest(quitSubscription, false);
+    const subscription = { listener, pending: null };
+    quitSubscription = subscription;
+    return () => {
+      if (quitSubscription === subscription) quitSubscription = null;
+      answerQuitRequest(subscription, false);
+    };
+  },
   updateState: () => ipcRenderer.invoke('areal-core:update-state'),
   downloadUpdate: () => ipcRenderer.invoke('areal-core:update-download'),
   recoverUpdateResources: () => ipcRenderer.invoke('areal-core:update-recover-resources'),

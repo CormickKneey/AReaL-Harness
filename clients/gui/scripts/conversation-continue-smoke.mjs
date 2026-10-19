@@ -99,7 +99,7 @@ async function launch() {
       globalThis.__continueConnection = this;
       if (method === 'command') globalThis.__continueCommands.push(structuredClone(parameters));
       const result = await original.call(this, method, parameters, mutation);
-      if (method === 'command' && parameters.name === 'send' && globalThis.__continueLoseNext) {
+      if (method === 'command' && parameters.name === 'editMessage' && globalThis.__continueLoseNext) {
         globalThis.__continueLoseNext = false;
         throw Object.assign(new Error('fixture: committed GUI response lost'), { submissionUnknown: true });
       }
@@ -113,6 +113,11 @@ async function command(name, request) {
     try { return { result: await globalThis.__continueConnection.request('command', { name, request }, true) }; }
     catch (error) { return { error: error.message, code: error.code, submissionUnknown: error.submissionUnknown }; }
   }, { name, request: { projectId, threadId, ...request } });
+}
+async function reconnectCore() {
+  // stopService is an explicit stop; reopening alone need not restart it.
+  const result = await page.evaluate(projectId => window.arealDesktop.command('connect', { projectId }), projectId);
+  assert.equal(result.ok, true, JSON.stringify(result));
 }
 async function rpc(method, params) {
   if (!rpcClient) {
@@ -376,6 +381,8 @@ try {
     window.dispatchEvent(new CustomEvent('areal-review-comments-change', { detail: reviewKey }));
   }, { reviewKey, retainedReview });
   await page.getByRole('button', { name: '3 个评论', exact: true }).waitFor();
+  const compacted = await rpc('areal/context/compact', { threadId });
+  assert.ok(compacted.result?.checkpoint, `real compaction precedes editing: ${JSON.stringify(compacted)}`);
   await page.getByRole('button', { name: '编辑消息', exact: true }).click();
   const edit = page.getByRole('region', { name: '编辑用户消息', exact: true });
   await edit.getByRole('textbox').fill(`CANCELLED_${marker}`);
@@ -388,6 +395,7 @@ try {
   assert.equal(await edit.getByRole('button', { name: '发送', exact: true }).innerText(), '发送');
   await edit.getByRole('button', { name: '取消', exact: true }).click();
   const beforeEdit = (await turns()).map(t => t.id);
+  const replaced = (await turns()).at(-1);
   const editRequests = requests.length;
   assert.equal(await input().innerText(), mainDraft);
   assert.equal(requests.length, editRequests);
@@ -458,8 +466,18 @@ try {
   await shot('02-editing-prompt.png');
   await app.evaluate(() => { globalThis.__continueLoseNext = true; });
   await edit.getByRole('button', { name: '发送', exact: true }).click();
-  await until(s => thread(s)?.turns?.at(-1)?.status === 'completed' && thread(s).turns.length > beforeEdit.length, 'revised prompt complete');
-  assert.deepEqual((await turns()).slice(0, -1).map(t => t.id), beforeEdit);
+  await until(s => thread(s)?.turns?.at(-1)?.status === 'completed' && thread(s).turns.at(-1).id !== replaced.id, 'revised prompt complete');
+  assert.equal((await turns()).length, beforeEdit.length, 'edit replaces the last turn');
+  assert.deepEqual((await turns()).slice(0, -1).map(t => t.id), beforeEdit.slice(0, -1));
+  const afterEditContext = await rpc('areal/context/read', { threadId, offset: 0, limit: 32 });
+  assert.equal(afterEditContext.result.checkpoint, null, 'edit clears the summary of replaced history');
+  const revisedRequest = requests.at(-1).body;
+  assert.ok(!JSON.stringify(revisedRequest.messages).includes(`RESOURCE_PROMPT_${marker}`), 'model context excludes the replaced prompt');
+  for (const item of replaced.items.filter(i => i.type === 'agentMessage')) {
+    assert.ok(!JSON.stringify(revisedRequest.messages).includes(item.text), 'model context excludes the replaced response');
+  }
+  const authoritative = await rpc('thread/read', { threadId, includeTurns: true });
+  assert.deepEqual(authoritative.result.thread.turns.map(t => t.id), (await turns()).map(t => t.id), 'Core and live GUI agree on replaced history');
   assert.equal(await input().innerText(), mainDraft);
   assert.equal((await turns()).at(-1).items.find(i => i.type === 'userMessage').content.find(c => c.type === 'text').text, `REVISED_${marker}`);
   const revisedContent = (await turns()).at(-1).items.find(i => i.type === 'userMessage').content;
@@ -468,7 +486,16 @@ try {
   assert.equal(await page.evaluate(key => localStorage.getItem(`${key}:mcpContent`), draftKey), retainedMcp);
   assert.equal(await page.evaluate(key => localStorage.getItem(key), reviewKey), retainedReview, 'editing leaves all attached review drafts unchanged');
   assert.equal(await page.locator('.composer-image-card').count(), 1);
-  await shot('03-edited-as-new-message.png');
+  await shot('03-edited-message.png');
+  const editCommand = (await app.evaluate(() => globalThis.__continueCommands)).findLast(c => c.name === 'editMessage');
+  const editSubmission = { requestId: editCommand.request.requestId, threadId,
+    expectedConfigRevision: editCommand.request.expectedConfigRevision,
+    intent: { type: 'edit', expectedTurnId: editCommand.request.expectedTurnId,
+      itemId: editCommand.request.itemId, input: authoritative.result.thread.turns.at(-1).items.find(i => i.type === 'userMessage').content } };
+  const replay = await rpc('areal/turn/submit', editSubmission);
+  assert.equal(replay.result?.turn.id, authoritative.result.thread.turns.at(-1).id, 'same receipt returns the accepted replacement');
+  assert.ok((await rpc('areal/turn/submit', { ...editSubmission, requestId: randomUUID() })).error, 'stale edit cannot remove a newer turn');
+  assert.equal(requests.length, editRequests + 1, 'lost reply, receipt read and stale edit cause no repeated model call');
   await page.getByRole('button', { name: '3 个评论', exact: true }).click();
   for (const comment of comments) await page.getByText(comment.body, { exact: true }).waitFor();
   await page.keyboard.press('Escape');
@@ -510,18 +537,59 @@ try {
   await page.getByRole('button', { name: '移除评论附件', exact: true }).click();
   assert.deepEqual(await page.evaluate(key => JSON.parse(localStorage.getItem(key)), reviewKey), { comments, attachedIds: [] }, 'detach keeps the saved review drafts');
   await page.evaluate(key => { localStorage.removeItem(`${key}:mcpContent`); window.dispatchEvent(new CustomEvent('areal-draft-change', { detail: key })); }, draftKey);
-  checks.push('edit Cancel preserves history; Send appends a revised prompt with original attachment/MCP references and retains the main draft/resources even when its committed response is lost');
+  checks.push('edit Cancel preserves history; Send atomically replaces the last prompt/reply in GUI, Core and model context; attachments/drafts survive lost replies; receipts deduplicate and stale edits reject; reload preserves replacement');
   checks.push('inline edit has text actions and keyboard focus; actual screenshot, seeded review comments and pasted text align, wrap and render in both themes; expansion and removal preserve exact draft content');
   await checkpoint(checks.at(-1));
+  await page.reload();
+  await until(s => thread(s)?.turns?.at(-1)?.status === 'completed', 'edited history after reload');
+  assert.deepEqual((await turns()).map(t => t.id), authoritative.result.thread.turns.map(t => t.id));
+  assert.equal(await page.getByText(`RESOURCE_PROMPT_${marker}`, { exact: true }).count(), 0, 'replaced prompt stays absent after reload');
   await input().fill('');
 
+  await send(`HOLD_${marker} steer base`);
+  const steerBase = (await turns()).at(-1);
+  const steerText = `HOLD_STEER_${marker}`;
+  assert.ok((await command('steer', { expectedTurnId: steerBase.id, text: steerText })).result !== undefined);
+  await until(s => thread(s).turns.at(-1).items.some(i => i.type === 'userMessage' && i.content.some(c => c.text === steerText)), 'steer accepted');
+  await pause();
+  await page.getByRole('button', { name: '继续执行', exact: true }).click();
+  await until(s => thread(s).turns.at(-1).status === 'completed' && thread(s).turns.at(-1).continuedFromTurnId === steerBase.id, 'steer continuation');
+  const beforeSteerEdit = await turns();
+  const steeredTurn = beforeSteerEdit.find(t => t.id === steerBase.id);
+  const steeredIndex = steeredTurn.items.findIndex(i => i.type === 'userMessage' && i.content.some(c => c.text === steerText));
+  const steeredItem = steeredTurn.items[steeredIndex];
+  const invalidEdit = { requestId: randomUUID(), threadId,
+    expectedConfigRevision: editSubmission.expectedConfigRevision,
+    intent: { type: 'edit', expectedTurnId: beforeSteerEdit.at(-1).id, itemId: steeredItem.id, input: [] } };
+  assert.ok((await rpc('areal/turn/submit', invalidEdit)).error, 'empty revision rejects after validating the target');
+  assert.deepEqual((await rpc('thread/read', { threadId, includeTurns: true })).result.thread.turns, beforeSteerEdit, 'rejected edit leaves all history intact');
+  await page.getByRole('button', { name: '编辑消息', exact: true }).click();
+  await edit.getByRole('textbox').fill(`REVISED_STEER_${marker}`);
+  await edit.getByRole('button', { name: '发送', exact: true }).click();
+  await until(s => thread(s).turns.at(-1).status === 'completed' && thread(s).turns.at(-1).id !== beforeSteerEdit.at(-1).id, 'steered edit complete');
+  const afterSteerEdit = await turns();
+  assert.deepEqual(afterSteerEdit.find(t => t.id === steerBase.id).items, steeredTurn.items.slice(0, steeredIndex), 'items preceding the edited steer remain');
+  assert.ok(!afterSteerEdit.some(t => t.id === beforeSteerEdit.at(-1).id), 'continuation after the edited input is removed');
+  assert.ok(JSON.stringify(requests.at(-1).body.messages).includes(`HOLD_${marker} steer base`), 'earlier user requirement stays in model context');
+  assert.ok(!JSON.stringify(requests.at(-1).body.messages).includes(steerText), 'old steer is absent from model context');
+  checks.push('editing a steered input preserves earlier same-turn items, removes later continuation, and rejects invalid revisions without changing history');
+  await checkpoint(checks.at(-1));
+
   await send(`HOLD_${marker} queue base`);
+  const editAttempt = () => ({ requestId: randomUUID(), threadId,
+    expectedConfigRevision: editSubmission.expectedConfigRevision,
+    intent: { type: 'edit', expectedTurnId: threadId, itemId: 'stale', input: [{ type: 'text', text: 'must reject' }] } });
+  const activeEdit = editAttempt();
+  activeEdit.intent.expectedTurnId = (await turns()).at(-1).id;
+  activeEdit.intent.itemId = (await turns()).at(-1).items.find(i => i.type === 'userMessage').id;
+  assert.ok((await rpc('areal/turn/submit', activeEdit)).error, 'active turn cannot be edited');
   for (const text of [`QUEUE_FIRST_${marker}`, `QUEUE_SECOND_${marker}`]) {
     await input().fill(text); await page.getByTestId('chat-send-button').click();
     await until(s => s.projects[0].state.queues?.[threadId]?.items?.some(i => i.input?.some(c => c.text === text) && i.status === 'pending'), 'pending input');
   }
   await pause();
   const anchor = (await turns()).at(-1).id;
+  assert.ok((await rpc('areal/turn/submit', { ...activeEdit, requestId: randomUUID() })).error, 'retained pending queue blocks editing');
   const queueStart = requests.length;
   const requestId = randomUUID();
   const submit = { requestId, threadId, expectedConfigRevision: (await snapshot()).projects[0].configurations[threadId].revision, intent: { type: 'continue', expectedTurnId: anchor } };
@@ -546,7 +614,7 @@ try {
   recovery.status = 'inProgress'; delete recovery.interruption;
   await writeFile(recordPath, JSON.stringify(record));
   await checkpoint('stopped-Core recovery fixture written');
-  await launch(); await until(s => s.projects[0]?.state?.connected, 'recovery connected');
+  await launch(); await reconnectCore(); await until(s => s.projects[0]?.state?.connected, 'recovery connected');
   await selectConversation(page, threadId);
   await until(s => thread(s)?.turns?.at(-1)?.interruption === 'coreRecovery', 'Core recovery fact');
   const recoveryRequests = requests.length;
@@ -566,10 +634,14 @@ try {
   await saveRun();
   await writeFile(recordPath, JSON.stringify(unknownRecord));
   await checkpoint('stopped-Core legacy UNKNOWN fixture written');
-  await launch(); await until(s => s.projects[0]?.state?.connected, 'unknown fixture connected');
+  await launch(); await reconnectCore(); await until(s => s.projects[0]?.state?.connected, 'unknown fixture connected');
   await selectConversation(page, threadId);
   const blocked = await command('continue', { requestId: randomUUID(), expectedTurnId: interruptedId });
   assert.ok(blocked.error?.includes('UNKNOWN'), JSON.stringify(blocked));
+  const unknownEdit = editAttempt();
+  unknownEdit.intent.expectedTurnId = interruptedId;
+  unknownEdit.intent.itemId = unknownTurn.items.find(i => i.type === 'userMessage').id;
+  assert.ok((await rpc('areal/turn/submit', unknownEdit)).error?.includes('UNKNOWN'), 'editing cannot erase an uninspected UNKNOWN');
   assert.equal(requests.length, recoveryRequests);
   checks.push('Core recovery is manual; legacy Failed recovery without interruption refuses uninspected UNKNOWN continuation without a model request');
   await checkpoint(checks.at(-1));
@@ -643,7 +715,7 @@ try {
   await writeFile(join(scratch, 'manifest.json'), JSON.stringify({ passed, failure, checks, requests, commands, pageErrors, stderr, run, cleanup: cleanupResult,
     sourceCommit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
     binary, binarySha256: createHash('sha256').update(await readFile(binary)).digest('hex'),
-    sourceDiffSha256: createHash('sha256').update(execFileSync('git', ['diff'], { cwd: root })).digest('hex'),
+    sourceDiffSha256: createHash('sha256').update(execFileSync('git', ['diff', 'HEAD'], { cwd: root })).digest('hex'),
     evidenceBoundary: 'real source Electron/Core and local SSE model; recovery/UNKNOWN records injected after isolated service stop; no physical reboot, provider or installed-package claim',
   }, null, 2));
   console.log(JSON.stringify({ passed, scratch, checks, failure }));

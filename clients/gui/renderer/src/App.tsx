@@ -206,6 +206,7 @@ export function App({ services }: { services: PlatformServices }) {
 }
 function AppContent({ services }: { services: PlatformServices }) {
   const requestNavigation = useGuardedNavigation();
+  useEffect(() => services.onQuitRequested?.(() => requestNavigation(() => {})), [services, requestNavigation]);
   const { terminalLocation } = useApplicationPreferences();
   const [snapshot, updateSnapshot] = useState<Snapshot>({ projects: [], connection: { state: "connecting" } });
   const backendActionInFlight = React.useRef(false);

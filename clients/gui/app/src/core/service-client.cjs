@@ -10,7 +10,7 @@ const { serviceIdentity } = require('./service-config.cjs');
 const { inspectCoreCapabilities } = require('./core-capabilities.cjs');
 const { desktopExecutables } = require('./desktop-executables.cjs');
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-const currentCommands = new Set(['send', 'continue', 'prepareCreator', 'feedback']);
+const currentCommands = new Set(['send', 'editMessage', 'continue', 'prepareCreator', 'feedback']);
 const currentManagePrefixes = ['plugin', 'marketplace', 'mcpApp', 'mcpForm'];
 const currentManageOperations = new Set(['mcpExtensionCall', 'mcpToolResult', 'connectorConfigure', 'connectorCredential', 'hookAcknowledge']);
 const uuid = value => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value);
@@ -419,7 +419,7 @@ class SharedCoreBackend {
     const ownedRecovery = name === 'manage' && request.operation === 'processSubmission' && request.guiOwned === true;
     const { guiOwned, ...params } = request;
     // 队列业务键跨 GUI/共享服务连接保留，外层丢失响应后也能只读核对。
-    if (['queueEdit', 'send', 'continue'].includes(name)) params.requestId ??= randomUUID();
+    if (['queueEdit', 'send', 'editMessage', 'continue'].includes(name)) params.requestId ??= randomUUID();
     const pending = this.connection.request('command', { name, request: name === 'media' ? encodeMedia(params) : params }, true).then(value => {
       if (ownedRecovery && value.confirmed) {
         this.guiTerminals.set(value.result.id, { projectId: request.projectId, threadId: request.threadId, id: value.result.id });
@@ -430,7 +430,7 @@ class SharedCoreBackend {
     });
     if (ownedStart || ownedRecovery) this.guiTerminalStarts.add(pending);
     try { return await pending; }
-    catch (error) { if (['queueEdit', 'send', 'continue'].includes(name) && error.submissionUnknown) error.requestId ??= params.requestId; throw error; }
+    catch (error) { if (['queueEdit', 'send', 'editMessage', 'continue'].includes(name) && error.submissionUnknown) error.requestId ??= params.requestId; throw error; }
     finally { this.guiTerminalStarts.delete(pending); }
   }
   async resources(request) {

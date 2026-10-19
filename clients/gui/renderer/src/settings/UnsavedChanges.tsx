@@ -4,13 +4,14 @@ import { Feedback, SettingsDialog } from "./common.js";
 
 type DraftBlocker = { label: string; dirty: boolean; busy: boolean; save: () => Promise<void>; discard: () => void };
 type Navigation = () => void;
-type Guard = { busy: boolean; register: (blocker: DraftBlocker) => () => void; request: (navigation: Navigation) => void };
+type PendingNavigation = { navigate: Navigation; resolve: (allowed: boolean) => void };
+type Guard = { busy: boolean; register: (blocker: DraftBlocker) => () => void; request: (navigation: Navigation) => Promise<boolean> };
 const Context = createContext<Guard | null>(null);
 
 /** Guards in-app navigation; draft values and credentials stay with the editor. */
 export function UnsavedChangesProvider({ children }: { children: ReactNode }) {
   const blocker = useRef<DraftBlocker | null>(null);
-  const pending = useRef<Navigation | null>(null);
+  const pending = useRef<PendingNavigation | null>(null);
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -21,14 +22,15 @@ export function UnsavedChangesProvider({ children }: { children: ReactNode }) {
     setBusy(next.busy);
     return () => { if (blocker.current === next) { blocker.current = null; setBusy(false); } };
   }, []);
-  const request = useCallback((navigation: Navigation) => {
-    if (blocker.current?.busy || savingRef.current || pending.current) return;
-    if (!blocker.current?.dirty) { navigation(); return; }
-    pending.current = navigation;
+  useEffect(() => () => { pending.current?.resolve(false); pending.current = null; }, []);
+  const request = useCallback(async (navigation: Navigation) => {
+    if (blocker.current?.busy || savingRef.current || pending.current) return false;
+    if (!blocker.current?.dirty) { navigation(); return true; }
     setError("");
     setOpen(true);
+    return new Promise<boolean>(resolve => { pending.current = { navigate: navigation, resolve }; });
   }, []);
-  const cancel = () => { if (!savingRef.current) { pending.current = null; setOpen(false); setError(""); } };
+  const cancel = () => { if (!savingRef.current) { pending.current?.resolve(false); pending.current = null; setOpen(false); setError(""); } };
   const proceed = async (save: boolean) => {
     if (savingRef.current) return;
     savingRef.current = true; setSaving(true); setError("");
@@ -37,7 +39,7 @@ export function UnsavedChangesProvider({ children }: { children: ReactNode }) {
       else blocker.current?.discard();
       const navigation = pending.current;
       pending.current = null; setOpen(false);
-      navigation?.();
+      if (navigation) { navigation.navigate(); navigation.resolve(true); }
     } catch (cause) { setError(cause instanceof Error ? cause.message : "保存失败，请重试。"); }
     finally { savingRef.current = false; setSaving(false); }
   };

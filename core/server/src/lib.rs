@@ -733,10 +733,13 @@ fn configured_models(
                 .unwrap_or(name)
                 .to_owned()
         });
-        if let (Some(name), Some(reference)) = (&key_env, &reference)
-            && let Some(value) = areal_config::credential_value(env, name)
-        {
-            engine.register_credential(reference.clone(), value.into())?;
+        if let (Some(name), Some(reference)) = (&key_env, &reference) {
+            result
+                .credential_environments
+                .insert((item.id.clone(), reference.clone()), name.clone());
+            if let Some(value) = areal_config::credential_value(env, name) {
+                engine.register_credential(reference.clone(), value.into())?;
+            }
         }
         let protocol = if selected {
             config.model.protocol

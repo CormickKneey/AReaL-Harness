@@ -38,7 +38,7 @@ let window, backend, preview, mcpApps, updates, quitting = false, exitReady = fa
 let browserWindowClosed = false;
 const previewSubscriptions = new Map();
 let startupPending = true, startupPainted = false, startupReady = false;
-let focusRequested = false, stopQuitPending = null;
+let focusRequested = false, quitAttempt = null, quitRequestSequence = 0;
 let startupShowTrace, startupPaintTrace, startupPresentTrace;
 // The renderer owns first-screen readiness; Main alone owns native visibility.
 // Consume this gate once so late data cannot reopen a window the user hid.
@@ -54,24 +54,73 @@ function revealWindow() {
   if (window.isMinimized()) window.restore();
   window.show(); window.focus();
 }
-async function requestStopAndQuit() {
-  if (stopQuitPending) return stopQuitPending;
-  stopQuitPending = (async () => {
-    if (!backend || quitting) throw new Error('界面仍在准备或退出，请稍后重试');
-    await backend.checkLifecycle();
-    if (!backend.serviceExited) {
-      const result = await recoverConnectedService({ backend,
-        notify: options => dialog.showMessageBox(window, options), purpose: 'stop' });
-      if (result.stopped !== true) {
-        if (!result.canceled) backend.reportLifecycleError(new Error('后台停止尚未完成，界面保持打开。请检查原请求与阻塞事项。'));
-        return result;
+function confirmRendererQuit(attempt) {
+  if (!window || window.isDestroyed()) return Promise.resolve(false);
+  const owner = window.webContents, frame = owner.mainFrame;
+  if (owner.isDestroyed() || !frame.url.startsWith('areal-ui://app/')) return Promise.resolve(false);
+  attempt.owner = owner; attempt.frame = frame;
+  return new Promise(resolveDecision => {
+    const cancel = () => finish(false);
+    const navigate = (_event, _url, _inPlace, mainFrame) => { if (mainFrame) cancel(); };
+    const finish = allowed => {
+      if (attempt.decide !== finish) return;
+      attempt.decide = null;
+      owner.removeListener('destroyed', cancel);
+      owner.removeListener('render-process-gone', cancel);
+      owner.removeListener('did-start-navigation', navigate);
+      resolveDecision(allowed);
+    };
+    attempt.decide = finish;
+    owner.once('destroyed', cancel);
+    owner.once('render-process-gone', cancel);
+    owner.on('did-start-navigation', navigate);
+    revealWindow();
+    owner.send('areal-core:quit-request', attempt.id);
+  });
+}
+function requestQuit(intent = 'interface') {
+  if (quitAttempt) return quitAttempt.promise;
+  if (quitting) return Promise.resolve({ canceled: true });
+  const attempt = { id: ++quitRequestSequence, intent, owner: null, frame: null, decide: null, approved: false, promise: null };
+  quitAttempt = attempt;
+  attempt.promise = (async () => {
+    if (intent === 'stop' && !backend) throw new Error('界面仍在准备或退出，请稍后重试');
+    if (!await confirmRendererQuit(attempt)) return { canceled: true };
+    if (quitting) return { canceled: true };
+    attempt.approved = true;
+    quitting = true;
+    if (intent === 'stop') {
+      await backend.checkLifecycle();
+      if (!backend.serviceExited) {
+        const result = await recoverConnectedService({ backend,
+          notify: options => dialog.showMessageBox(window, options), purpose: 'stop' });
+        if (result.stopped !== true) {
+          if (!result.canceled) backend.reportLifecycleError(new Error('后台停止尚未完成，界面保持打开。请检查原请求与阻塞事项。'));
+          return result;
+        }
       }
     }
+    try { await backend?.prepareQuit(); }
+    catch (error) {
+      revealWindow();
+      await dialog.showMessageBox(window, { type: 'warning', message: '界面终端尚未完成清理', detail: error.message, buttons: ['返回应用'] });
+      return { canceled: true };
+    }
+    try { await backend?.shutdown(); }
+    catch (error) { await dialog.showMessageBox(window, { type: 'warning', message: '退出清理未完全确认', detail: error.message }); }
+    preview?.dispose();
+    exitReady = true;
     setImmediate(() => app.quit());
-    return { stopped: true };
-  })().finally(() => { stopQuitPending = null; });
-  return stopQuitPending;
+    return intent === 'stop' ? { stopped: true } : { quitting: true };
+  })().finally(() => {
+    if (!exitReady && quitAttempt === attempt) {
+      if (attempt.approved) quitting = false;
+      quitAttempt = null;
+    }
+  });
+  return attempt.promise;
 }
+const requestStopAndQuit = () => requestQuit('stop');
 const stopAndQuitFromMenu = () => { void requestStopAndQuit().catch(error => { backend?.reportLifecycleError(error); revealWindow(); }); };
 const menuBar = new MenuBar(() => quitting || startupPending ? null : window, stopAndQuitFromMenu);
 app.on('will-quit', () => menuBar?.close());
@@ -120,6 +169,13 @@ function trusted(event) {
   if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame
     || !event.senderFrame.url.startsWith('areal-ui://app/')) throw new Error('拒绝非主视图请求');
 }
+ipcMain.on('areal-core:quit-decision', (event, decision) => {
+  const attempt = quitAttempt;
+  if (!attempt?.decide || !decision || decision.id !== attempt.id || typeof decision.allowed !== 'boolean'
+    || event.sender !== attempt.owner || event.senderFrame !== attempt.frame
+    || event.senderFrame !== event.sender.mainFrame || !event.senderFrame.url.startsWith('areal-ui://app/')) return;
+  attempt.decide(decision.allowed);
+});
 
 async function createWindow() {
   const trace = startupTrace('gui.window');
@@ -166,6 +222,10 @@ async function createWindow() {
     window.webContents.on('render-process-gone', () => mcpApps?.dispose());
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     window.webContents.on('will-navigate', event => event.preventDefault());
+    window.webContents.on('will-prevent-unload', event => {
+      if (exitReady && quitAttempt?.approved && quitAttempt.owner === window.webContents
+        && quitAttempt.frame === window.webContents.mainFrame) event.preventDefault();
+    });
     window.on('show', () => { browserWindowClosed = false; });
     window.on('close', event => {
       if (exitReady) return;
@@ -240,7 +300,7 @@ app.whenReady().then(async () => {
         : /not_sent|target_unavailable/.test(error.message) ? 'not_sent'
         : /budget exceeded|Sensitive field|viewport changed|content changed during capture|capture guard unavailable/.test(error.message) ? 'evidence_unavailable' : 'page_unavailable' }; }
   };
-  app.on('before-quit', () => mcpApps?.dispose());
+  app.on('will-quit', () => mcpApps?.dispose());
   mcpApps = new McpAppsHost({ backend, ownerId: () => window?.webContents.id,
     notify: value => { if (window && !window.isDestroyed()) window.webContents.send('areal-core:mcp-app-event', value); },
     openFile: (request, current) => fileOpen({ backend, shell, home: app.getPath('home'), authorize: current,
@@ -253,7 +313,7 @@ app.whenReady().then(async () => {
   const mcpFormResources = new McpFormResources({ backend,
     choose: options => dialog.showOpenDialog(window, options),
     confirm: options => dialog.showMessageBox(window, options) });
-  app.on('before-quit', () => mcpFormResources.dispose());
+  app.on('will-quit', () => mcpFormResources.dispose());
   ipcMain.handle('areal-core:mcp-form-resource', async (event, operation, request) => {
     trusted(event);
     const ownerWindow = window;
@@ -495,22 +555,5 @@ app.on('before-quit', event => {
   if (exitReady) return;
   event.preventDefault();
   if (quitting) return;
-  quitting = true;
-  void (async () => {
-    // 窗口只拥有连接和交互终端；退出不是停止共享 Core 的授权。
-    try { await backend?.prepareQuit(); }
-    catch (error) {
-      window?.show(); window?.focus();
-      await dialog.showMessageBox(window, { type: 'warning', message: '界面终端尚未完成清理', detail: error.message, buttons: ['返回应用'] });
-      quitting = false;
-      return;
-    }
-    // 先断开宿主连接，让已派发且未返回的 Browser 请求保留 UNKNOWN；
-    // 再释放原生页，避免退出撤销回执把它误记成未派发。
-    try { await backend?.shutdown(); }
-    catch (error) { await dialog.showMessageBox(window, { type: 'warning', message: '退出清理未完全确认', detail: error.message }); }
-    preview?.dispose();
-    exitReady = true;
-    app.quit();
-  })();
+  void requestQuit().catch(error => { backend?.reportLifecycleError(error); revealWindow(); });
 });

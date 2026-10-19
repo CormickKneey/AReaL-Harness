@@ -535,6 +535,13 @@ pub enum TurnSubmitIntent {
         #[serde(rename = "expectedTurnId")]
         expected_turn_id: String,
     },
+    Edit {
+        #[serde(rename = "expectedTurnId")]
+        expected_turn_id: String,
+        #[serde(rename = "itemId")]
+        item_id: String,
+        input: Vec<Input>,
+    },
 }
 #[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

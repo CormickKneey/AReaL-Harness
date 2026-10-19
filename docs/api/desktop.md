@@ -62,7 +62,9 @@ Cookie 名为 `areal_session_<origin摘要>`，不指定 Domain，使用 `HttpOn
 
 requestId 是持久业务键，RPC id 只关联响应。相同身份、方法、键和规范参数返回原结果；参数不同冲突。Thread 最多 1024 收据，管理日志 4096；容量满拒绝而不遗忘旧键。重启后 accepted 但无结果的管理记录为 UNKNOWN，不重新执行。
 
-`areal/turn/submit` 是普通会话的原子提交入口，使用 `{requestId,threadId,expectedConfigRevision,intent}`。`intent` 互斥取 `{type:"message",input}` 或 `{type:"continue",expectedTurnId}`，继续分支不接受文本。能力由 `features.ordinaryTurnSubmit=true` 和方法声明共同确认。Core 在 lifecycle、Thread、普通所有权锁内先查收据，再核验配置、归属、归档、压缩、取消结算及 UNKNOWN。Task、Goal、Side 和任务管理会话沿用其既有入口。
+`areal/turn/submit` 是普通会话的原子提交入口，使用 `{requestId,threadId,expectedConfigRevision,intent}`。`intent` 互斥取 `{type:"message",input}`、`{type:"continue",expectedTurnId}` 或 `{type:"edit",expectedTurnId,itemId,input}`，继续分支不接受文本。能力由 `features.ordinaryTurnSubmit=true` 和方法声明共同确认。Core 在 lifecycle、Thread、普通所有权锁内先查收据，再核验配置、归属、归档、压缩、取消结算及 UNKNOWN。Task、Goal、Side 和任务管理会话沿用其既有入口。
+
+Edit 要求 `features.editLastMessage=true`，仅允许编辑空闲普通会话的最后一条用户消息，且队列无 pending/running 项。`expectedTurnId` 必须匹配最新轮次（包括继续轮次），`itemId` 必须匹配最后一条非继续用户消息。Core 展开归档历史，移除该消息及之后的条目/轮次，废弃上下文 checkpoint，并准备替代 Turn；校验、历史和收据一次持久化后才激活，拒绝时原历史保留。同轮追加指令之前的条目保留，已发生的文件和外部操作不回滚。提交后先发送 `areal/thread/edited {threadId,thread}`，明确替换客户端历史基线，再发送 `turn/started`；普通部分 Turn 事件仍按条目合并。掉响应核对原请求收据，不拆成撤回/发送两步，也不自动重发。
 
 Message 保留输入原文。正常活动轮次存在时追加队尾；空闲且没有 pending 时直接创建 Turn。有 pending 时，Message 追加队尾并恢复队列，Continue 只恢复现有队列，均先处理当前权威 FIFO 顺序。没有 pending 的 Continue 在原 Thread 创建新 Turn，写 `continuedFromTurnId`，以可见继续意图承接历史和当前工作区。继续锚点必须是最后一个 `interrupted` Turn，或有明确中断事实、Core recovery UNKNOWN 证据的 `failed` Turn；普通模型失败与已完成轮次不符合条件。未经核查的工具、Hook、插件 UNKNOWN 或资源清理仍阻止执行。
 
