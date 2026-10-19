@@ -99,6 +99,23 @@ thread/configure 使用 expectedRevision，仅空闲且不压缩时生效。rese
 options.readOnly 收窄 Scope 写根和网络；toolAllowlist 收窄 Profile；preapprovedTools 不能取消部署强制审批，且只匹配当前工具名；预批准读取工具不会豁免它触发的 hook。maxModelRounds 为 1–1024，最后一轮仅交接，不等于团队请求预算。Profile/Workflow 定义使用不可变 id/revision；Skill 引用不冻结资源内容，见下文。
 
 <a id="skills"></a>
+## 模型配置热应用
+
+共享服务提供两个窄方法，能力以当前连接的 `areal/capabilities.methods` 为准。仅经过认证、具有 `manage` 和 `tools`、不受 Thread 范围限制的 `desktop-owner` 可以调用；观察者、普通模型客户端和独立无配置控制器的 Engine 不具有此能力。请求不能指定文件路径、Provider 元数据或任意进程环境。
+
+| 方法 | 请求 | 作用 |
+| --- | --- | --- |
+| `areal/server/modelConfiguration/read` | `{requestId?,expectedGeneration?}` | 读取实际应用版本，或核查原请求。 |
+| `areal/server/modelConfiguration/apply` | `{requestId,expectedGeneration,expectedApplied:{revision,sequence},targetRevision,credentials}` | 读取权威配置并在 Core 准入门内热应用。 |
+
+`credentials` 是目标文件所引用的 `AREAL_CREDENTIAL_` 名称到秘密值的有界映射。只允许追加不可变引用，同引用异值拒绝；旧引用继续供已有任务使用。秘密只在可信请求与执行内存中存在，不写入配置、历史、摘要、日志或回执。普通启动环境变量不能通过此入口更新。
+
+响应包含 `{serviceId,generation,applied:{revision,sequence},modelRevision,credentialStates,operation?}`。`applied.revision` 是实际提交的整个配置文件版本，`sequence` 在本代际成功应用后递增；它们不同于默认模型的 `modelRevision`。首次装配从序号 0 开始。Core 复用同一次受控文件快照进行版本与配置校验，拒绝过期目标、已变化的非模型部署、活动工作和凭据冲突，不调用 drain、不重启 Core 或 Runtime。现有 Thread、Turn 和队列保留原配置与凭据引用。
+
+`operation` 使用原 `requestId`，状态为 `running`、`applied`、`rejected` 或 `unknown`，终态可带脱敏的 `result` 或 `error`。受理后的操作由 Core 持有，断线不取消提交。重复请求返回原结果，不重复发布配置；响应丢失先读取原请求。进程内回执有容量边界，代际改变或记录不可用不证明原请求失败，不能自动重发。客户端可核对新实例的当前就绪状态，但不能将其当成旧请求的回执。
+
+多个 Core 各自应用并确认。已知部分失败可按文件 CAS 补偿，再应用恢复产生的实际版本；未知请求未查清前不得回滚。外部写入或新任务可能阻止补偿，此时必须保留实际应用版本与待应用状态。只有所有项目确认、且权威文件仍为目标版本时，GUI 才报告保存完成。文件监听与显式应用共享已应用基线，非模型配置继续遵循安全重启边界。
+
 ## Skill 元信息与资源
 
 可信部署清单的 skills 接受 `{id,revision,root,metadata?:{name,description}}`；root 相对清单目录。省略 metadata 时只解析 SKILL.md 的有界文件头，不扫描附件；显式部署和自动发现使用同一种按需读取行为。
@@ -139,7 +156,7 @@ features.goals=true 表示服务支持 Goal，无需单独配置开关；Goal �
 
 `reasons` 为 `{code,count}` 数组，code 包括 `activeTurn`、`resource`、`compaction`、`workgroup`、`activeGoal`、`queuedMessage`、`activeTask`。Core 共用观察和准入锁内的操作判定；观察不是停止授权。`ifIdle` 要求没有工作且执行已结算，`settled` 仅描述 cancel 的执行/资源结算后置条件。cancel 保留暂停 Queue 中的输入，不重新套用 pending 必须为零的前提。未检查的历史结果仍保留在 journal 中，并继续阻止原 Thread 续轮，但不阻止服务退出。Hook task scope 不确定、Runtime 观察不可用、活跃 Runtime 进程及未确认清理仍是资源阻塞。超时可能返回 draining，RPC 成功不证明进程已退出。未知版本、原因或缺失许可字段不能推断为允许。
 
-共享服务的 `server/status.configuration` 返回 `{modelRevision,restartRequired,error}`，其他部署为 null。模型热更新缺失环境凭据时可同时返回 `restartRequired=true` 和 `error`，表示需要由持有有效凭据的本地客户端安全重启；其他加载错误不触发自动重启。`areal/server/configurationChanged` 向已订阅会话发布 `{threadId,configuration}`。`server/drain` 增加 `strategy="ifIdle"`：在同一准入锁内检查空闲并关闭准入，忙碌拒绝时保留任务运行。见[配置热更新](../guides/configuration.md)。
+共享服务的 `server/status.configuration` 返回 `{modelRevision,applied,appliedRevision,applySequence,currentFileRevision,credentialStates,pendingApply,restartRequired,error}`，其他部署为 null。`applied={revision,sequence}` 是 Core 已确认的文件版本。GUI 模型配置使用上面的显式热应用接口；普通 CLI 模型热更新缺失环境凭据时可同时返回 `restartRequired=true` 和 `error`，表示需要由持有有效凭据的本地客户端安全重启；其他加载错误不触发自动重启。`areal/server/configurationChanged` 向已订阅会话发布 `{threadId,configuration}`。`server/drain` 增加 `strategy="ifIdle"`：在同一准入锁内检查空闲并关闭准入，忙碌拒绝时保留任务运行。见[配置热更新](../guides/configuration.md)。
 
 ### Desktop 适配器生命周期
 

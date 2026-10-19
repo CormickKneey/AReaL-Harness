@@ -40,6 +40,22 @@ def check(binary, explicit_scratch, sandbox_profile):
             def do_POST(self):
                 try:
                     request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                    if any(
+                        message.get("role") == "system"
+                        and isinstance(message.get("content"), str)
+                        and message["content"].startswith(
+                            "Generate a concise semantic session title"
+                        )
+                        for message in request["messages"]
+                    ):
+                        assert not request.get("tools"), "session naming must not receive tools"
+                        self.send_response(200)
+                        self.send_header("Content-Type", "text/event-stream")
+                        self.end_headers()
+                        self.wfile.write(
+                            b'data: {"choices":[{"index":0,"delta":{"content":"Native fixture"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'
+                        )
+                        return
                     names = {tool["function"]["name"] for tool in request["tools"]}
                     assert "verify_command" in names, names
                     responses = [m for m in request["messages"] if m["role"] == "tool"]

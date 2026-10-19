@@ -73,8 +73,8 @@ export function ServiceStatusSettings({ connected, runningState, recovery, actio
         <SettingsRow label="后台服务" description={connected ? status ? `已连接 · ${status.clients} 个窗口 · ${status.activeCommands} 个处理中请求` : "已连接" : "未连接"}
           control={<SettingsSwitch aria-label="后台服务" checked={connected} disabled={busy || (connected && !!readError)} onCheckedChange={enabled => void run(enabled ? "connect" : "stopService")} />} />
         <SettingsRow control={null} label="关闭窗口" description="仅隐藏界面，后台继续运行；再次启动可回到已有窗口。" />
-        <SettingsRow label="退出方式" description="退出界面保留后台任务；停止后台须确认受影响任务并等待清理完成。"
-          control={<div className="flex flex-wrap gap-2"><ActionButton disabled={busy} onClick={() => void run("quitInterface")}>退出界面，后台继续</ActionButton><ActionButton disabled={busy} onClick={() => void run("stopAndQuit")}>停止后台并退出…</ActionButton></div>} />
+        <SettingsRow label="退出应用" description="停止本应用的所有后台服务。有活动任务时先确认，清理完成后退出。"
+          control={<ActionButton disabled={busy} onClick={() => void run("quitInterface")}>退出 AReaL Harness</ActionButton>} />
         <SettingsRow control={null} label="退出条件" description={!connected ? runningState === "stopped" ? "后台已确认停止。" : "当前未连接，后台是否仍在运行需要检查。" : status?.clients && status.clients > 1 ? "请先退出其他连接同一后台的界面。" : status?.canStop ? "当前检查允许安全停止。" : "阻塞事项列在下方；打开对应对话、任务或进程处理后再检查。"} />
         <SettingsRow label="资源检查与恢复"
           control={<ActionButton disabled={busy} onClick={() => void run("recoverResources")}>检查与恢复</ActionButton>} />

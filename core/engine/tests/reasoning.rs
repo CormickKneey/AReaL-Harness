@@ -302,14 +302,19 @@ async fn responses_summary_is_opt_in_and_provider_context_replays_once() {
             let requests = requests.clone();
             let returned = returned.clone();
             async move {
-                requests.send(request).unwrap();
-                let events = [
+                let naming = request["input"].as_array().is_some_and(|messages| messages.iter().any(|message|
+                    message["role"] == "system" && message["content"].to_string().contains("Generate a concise semantic session title")));
+                if naming { assert!(request.get("tools").and_then(Value::as_array).is_none_or(Vec::is_empty)); }
+                else { requests.send(request).unwrap(); }
+                let events = if naming {
+                    vec![json!({"type":"response.output_text.delta","delta":"Reasoning fixture"}),json!({"type":"response.completed","response":{"status":"completed","output":[]}})]
+                } else { vec![
                     json!({"type":"response.reasoning_summary_text.delta","item_id":"r1","summary_index":0,"delta":"public "}),
                     json!({"type":"response.reasoning_summary_text.done","item_id":"r1","summary_index":0,"text":"public summary"}),
                     json!({"type":"response.output_text.delta","delta":"answer"}),
                     json!({"type":"response.output_item.done","item":returned}),
                     json!({"type":"response.completed","response":{"status":"completed","output":[returned],"usage":{"input_tokens":2,"output_tokens":3}}}),
-                ].into_iter().map(|v| Ok::<_, Infallible>(Event::default().data(v.to_string())));
+                ] }.into_iter().map(|v| Ok::<_, Infallible>(Event::default().data(v.to_string())));
                 Sse::new(futures_util::stream::iter(events))
             }
         }));

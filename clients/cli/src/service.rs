@@ -1,6 +1,9 @@
 //! 可信桌面 Main 可直接 exec 此 JSON 入口；浏览器只访问 Core HTTP/WS。
 use anyhow::{Result, ensure};
-use areal_local_service::{LaunchSpec, LocalArgs};
+use areal_local_service::{
+    LaunchSpec, LocalArgs,
+    gui_owner::{self, GuiLifetime},
+};
 use clap::Subcommand;
 use std::path::PathBuf;
 
@@ -102,6 +105,12 @@ pub enum ServiceCommand {
 }
 
 pub async fn execute(command: ServiceCommand) -> Result<()> {
+    let lifetime = GuiLifetime::from_env()?;
+    let owner = gui_owner::from_env()?;
+    ensure!(
+        lifetime.is_none() || owner.is_some(),
+        "GUI lifetime requires an application owner"
+    );
     let root = areal_local_service::home()?;
     let value = match command {
         ServiceCommand::Ensure {
@@ -109,8 +118,18 @@ pub async fn execute(command: ServiceCommand) -> Result<()> {
             no_auto_restart,
             ..
         } => {
-            let spec = LaunchSpec::resolve(&local)?;
-            serde_json::to_value(if no_auto_restart {
+            let mut spec = LaunchSpec::resolve(&local)?;
+            spec.owner = owner.clone();
+            serde_json::to_value(if owner.is_some() {
+                areal_local_service::ensure_with_lifetime(
+                    &spec,
+                    lifetime.as_ref().ok_or_else(|| {
+                        anyhow::anyhow!("GUI ensure requires an inherited lifetime descriptor")
+                    })?,
+                    no_auto_restart,
+                )
+                .await?
+            } else if no_auto_restart {
                 areal_local_service::ensure_without_restart(&spec).await?
             } else {
                 areal_local_service::ensure(&spec).await?
@@ -119,9 +138,13 @@ pub async fn execute(command: ServiceCommand) -> Result<()> {
         ServiceCommand::List { .. } => {
             serde_json::to_value(areal_local_service::list(&root).await?)?
         }
-        ServiceCommand::Status { target, .. } => serde_json::to_value(
-            areal_local_service::status(&root, &target.resolve(&root).await?).await?,
-        )?,
+        ServiceCommand::Status { target, .. } => {
+            let service = areal_local_service::status(&root, &target.resolve(&root).await?).await?;
+            if let Some(owner) = &owner {
+                gui_owner::check(Some(owner), service.owner.as_ref())?;
+            }
+            serde_json::to_value(service)?
+        }
         ServiceCommand::Capabilities {
             target,
             expected_generation,

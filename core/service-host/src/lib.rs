@@ -1,7 +1,11 @@
-//! 每个部署实例一个宿主；UI 进程退出不影响服务，停止须先完成 Core 结算。
+//! 每个部署实例一个宿主；GUI 宿主受应用生命期约束，公开停止须先完成 Core 结算。
 use anyhow::{Context, Result, bail, ensure};
 use areal_local_service::native_process::{TrustedChild as Child, TrustedCommand};
-use areal_local_service::{LaunchSpec, probe, rpc, storage};
+use areal_local_service::{
+    LaunchSpec,
+    gui_owner::{self, GuiLifetime},
+    probe, rpc, storage,
+};
 use areal_protocol::service::{
     Capabilities, Identity, Request, Response, Service, State, StopOperation, StopOperationState,
     VERSION,
@@ -25,13 +29,49 @@ struct StopState {
 }
 
 pub async fn run() -> Result<()> {
+    let lifetime = GuiLifetime::from_env()?;
+    if let Some(lifetime) = &lifetime {
+        lifetime.check_open()?;
+    }
+    let owner = gui_owner::from_env()?;
+    ensure!(
+        owner.is_some() == lifetime.is_some(),
+        "GUI host requires matching owner and lifetime descriptor"
+    );
+    let shutdown = CancellationToken::new();
+    let owner_task = lifetime.map(|lifetime| {
+        let shutdown = shutdown.clone();
+        tokio::spawn(async move {
+            if let Err(error) = lifetime.closed().await {
+                eprintln!("GUI lifetime stream failed: {error}");
+            }
+            shutdown.cancel();
+        })
+    });
+    let result = run_host(owner, shutdown).await;
+    if let Some(task) = owner_task {
+        task.abort();
+        let _ = task.await;
+    }
+    result
+}
+
+async fn run_host(
+    owner: Option<areal_protocol::service::Owner>,
+    shutdown: CancellationToken,
+) -> Result<()> {
     let mut bytes = Vec::new();
-    timeout(
-        Duration::from_secs(10),
-        tokio::io::stdin().take(256 * 1024).read_to_end(&mut bytes),
-    )
-    .await??;
+    let mut input = tokio::io::stdin().take(256 * 1024);
+    tokio::select! {
+        _ = shutdown.cancelled() => bail!("GUI application ended before host startup"),
+        result = timeout(Duration::from_secs(10), input.read_to_end(&mut bytes)) => { result??; },
+    }
     let spec: LaunchSpec = serde_json::from_slice(&bytes)?;
+    gui_owner::check(owner.as_ref(), spec.owner.as_ref())?;
+    ensure!(
+        !shutdown.is_cancelled(),
+        "GUI application ended before host startup"
+    );
     let directory = spec.directory()?;
     storage::private_dir(&directory)?;
     let data = spec
@@ -63,8 +103,14 @@ pub async fn run() -> Result<()> {
     storage::write(&info, &identity)?;
     let ready = run.join("ready.json");
     let lease_fd = ownership.as_raw_fd();
+    ensure!(
+        !shutdown.is_cancelled(),
+        "GUI application ended before launcher startup"
+    );
     let mut command = TrustedCommand::supervised(&spec.bin_dir.join("areal"), &[lease_fd])?;
     command
+        .env_remove(gui_owner::OWNER_ENV)
+        .env_remove(gui_owner::LIFETIME_FD_ENV)
         .arg("launcher")
         .arg("--lease-fd")
         .arg(ownership.as_raw_fd().to_string())
@@ -89,7 +135,6 @@ pub async fn run() -> Result<()> {
         .await
         .context("start trusted Core/Runtime launcher")?;
     drop(command);
-    let shutdown = CancellationToken::new();
     let signal_stop = shutdown.clone();
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
@@ -178,6 +223,7 @@ async fn serve(
                 .context("missing endpoint")?
                 .to_owned();
             let service = Service {
+                owner: spec.owner.clone(),
                 identity: identity.clone(),
                 web_url: format!("{}/ui", endpoint.replacen("ws://", "http://", 1)),
                 endpoint,

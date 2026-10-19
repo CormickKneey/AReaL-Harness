@@ -47,6 +47,30 @@ pub const METHODS: &[&str] = &[
     "areal/tool/acknowledge",
 ];
 
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AppliedModelConfiguration {
+    pub revision: String,
+    pub sequence: u64,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ModelConfigurationRead {
+    pub request_id: Option<String>,
+    pub expected_generation: Option<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ModelConfigurationApply {
+    pub request_id: String,
+    pub expected_generation: String,
+    pub expected_applied: AppliedModelConfiguration,
+    pub target_revision: String,
+    pub credentials: std::collections::BTreeMap<String, String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AttachBrowserTools {
@@ -168,6 +192,7 @@ pub const NOTIFICATIONS: &[&str] = &[
     "areal/model/watchdogRetry",
     "areal/tool/cancelled",
     "areal/thread/configured",
+    "areal/thread/edited",
     "areal/thread/archived",
     "areal/thread/unarchived",
     "areal/plan/updated",

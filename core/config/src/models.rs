@@ -347,25 +347,28 @@ fn revision(path: &Path, layer: &file::FileLayer) -> String {
     hash.update(layer.text.as_bytes());
     format!("{:x}", hash.finalize())
 }
-fn snapshot(
+fn snapshot_resolved(
     inputs: &ConfigInputs,
     path: PathBuf,
     layer: file::FileLayer,
     stored_credential_envs: &[String],
-) -> Result<ModelConfiguration> {
-    // 共享编辑不能静默丢掉尚未补齐的旧供应商，也不能把临时覆盖当作文件值。
-    if layer.catalog.len() != layer.providers.len() {
-        return Err(invalid(
-            &file::source(&path, &layer.text, 0),
-            "shared model providers require endpoint in the configuration file",
-        ));
-    }
-    for provider in &layer.catalog {
-        if url::Url::parse(&provider.endpoint).is_ok_and(|url| url.query().is_some()) {
+    shared_edit: bool,
+) -> Result<(ModelConfiguration, crate::ResolvedCoreConfig)> {
+    if shared_edit {
+        // 共享编辑不能静默丢掉尚未补齐的旧供应商，也不能把临时覆盖当作文件值。
+        if layer.catalog.len() != layer.providers.len() {
             return Err(invalid(
                 &file::source(&path, &layer.text, 0),
-                "shared model endpoints cannot contain query parameters; use api_key_env for credentials",
+                "shared model providers require endpoint in the configuration file",
             ));
+        }
+        for provider in &layer.catalog {
+            if url::Url::parse(&provider.endpoint).is_ok_and(|url| url.query().is_some()) {
+                return Err(invalid(
+                    &file::source(&path, &layer.text, 0),
+                    "shared model endpoints cannot contain query parameters; use api_key_env for credentials",
+                ));
+            }
         }
     }
     let config = resolve::load_mode(inputs, true, Some(layer.clone()))?;
@@ -398,7 +401,7 @@ fn snapshot(
             ((provider.id.clone(), state), (provider.id.clone(), source))
         })
         .unzip();
-    Ok(ModelConfiguration {
+    let document = ModelConfiguration {
         revision: revision(&path, &layer),
         path,
         default_model: default_model(&layer),
@@ -406,8 +409,34 @@ fn snapshot(
         credential_states,
         credential_sources,
         effective: config.diagnostic(true),
-    })
+    };
+    Ok((document, config))
 }
+fn snapshot(
+    inputs: &ConfigInputs,
+    path: PathBuf,
+    layer: file::FileLayer,
+    stored_credential_envs: &[String],
+) -> Result<ModelConfiguration> {
+    snapshot_resolved(inputs, path, layer, stored_credential_envs, true)
+        .map(|(document, _)| document)
+}
+
+pub fn read_resolved(
+    inputs: &ConfigInputs,
+    stored_credential_envs: &[String],
+) -> Result<(ModelConfiguration, crate::ResolvedCoreConfig)> {
+    let location = resolve::location(inputs)?;
+    let layer = file::read(&location.selected, location.explicit)?;
+    snapshot_resolved(
+        inputs,
+        location.selected,
+        layer,
+        stored_credential_envs,
+        false,
+    )
+}
+
 pub fn read(
     inputs: &ConfigInputs,
     stored_credential_envs: &[String],

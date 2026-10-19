@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, readdir } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { applicationFixture } from './application-fixture.mjs';
 
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const root = resolve(gui, '../..');
@@ -16,6 +17,7 @@ assert.ok(binary?.startsWith(join(root, '.local/dev-bin/')), 'Use an existing pr
 const scratch = await mkdtemp('/private/tmp/areal-quit-draft-');
 const config = join(scratch, 'config.toml');
 const endpoint = 'http://127.0.0.1:9/v1/chat/completions';
+const application = await applicationFixture(gui, join(scratch, 'app'));
 await mkdir(join(scratch, 'user/.areal'), { recursive: true });
 await writeFile(config, `schema_version=1\n[model]\ncatalog_version=1\nprovider="fixture"\nname="fixture"\n[model.providers.fixture]\nname="Fixture"\nprotocol="chat-completions"\nendpoint="${endpoint}"\nmodels=[{id="fixture",enabled=true}]\n`);
 const env = { ...process.env };
@@ -58,13 +60,13 @@ const idle = async () => {
     await until(() => settled(observer), 'initial backend work settles');
   } finally { observer.close(); }
 };
-const quit = (label = '退出界面，后台继续') => app.evaluate(({ Menu }, label) => {
+const quit = (label = '退出 AReaL Harness') => app.evaluate(({ Menu }, label) => {
   const item = Menu.getApplicationMenu().items[0].submenu.items.find(item => item.label === label);
   if (!item) throw new Error(`Missing menu ${label}`);
   item.click();
 }, label);
 const launch = async () => {
-  app = await electron.launch({ executablePath: require('electron'), args: [join(gui, 'app')], env, timeout: 60000 });
+  app = await electron.launch({ executablePath: require('electron'), args: [application.path], env, timeout: 60000 });
   guiProcess = app.process();
   processes.push(guiProcess);
   page = await app.firstWindow();
@@ -108,7 +110,7 @@ try {
   checks.push('cancel quit preserves the draft, IPC, connection, editing and a real Core save');
 
   await name.fill('Fixture save and quit');
-  await quit('停止后台并退出…');
+  await quit();
   await guard().waitFor();
   await guard().getByRole('button', { name: '继续编辑', exact: true }).click();
   assert.equal((await page.evaluate(() => window.arealDesktop.snapshot())).connection.state, 'ready');
@@ -132,13 +134,14 @@ try {
   await guard().getByRole('button', { name: '保存并继续', exact: true }).click();
   await exited();
   assert.match(await readFile(config, 'utf8'), /Fixture save and quit/);
-  process.kill(initialPid, 0);
+  await waitForServiceProcessExit(env.AREAL_CORE_HOME, { pid: initialPid, token: metadata.token, desktopGeneration: metadata.desktopGeneration });
   checks.push('save failure keeps the GUI usable; successful save-and-quit persists configuration and exits the GUI');
 
   await launch();
-  assert.equal(metadata.pid, initialPid);
+  assert.notEqual(metadata.pid, initialPid);
   const savedConfig = await readFile(config, 'utf8');
   await page.getByRole('textbox', { name: '供应商名称', exact: true }).fill('Discard this quit draft');
+  await until(() => button('保存').isEnabled(), 'reopened provider draft is ready for navigation');
   await quit();
   await guard().waitFor();
   await guard().getByRole('button', { name: '放弃修改并继续', exact: true }).click();
@@ -155,22 +158,23 @@ try {
     await writeFile(join(scratch, 'failure.txt'), await page.locator('body').innerText().catch(() => ''));
   }
 } finally {
+  await application.close();
   if (app && guiProcess?.exitCode === null) await app.evaluate(({ BrowserWindow, app }) => {
     for (const window of BrowserWindow.getAllWindows()) window.destroy();
     app.exit(0);
   }).catch(error => errors.push(`GUI cleanup: ${error.message}`));
-  let connection;
   try {
-    metadata ??= JSON.parse(await readFile(join(scratch, 'core/service.json'), 'utf8'));
-    connection = new ServiceConnection();
-    await connection.connect(metadata);
-    await connection.request('hello', { protocol: metadata.protocol, identity: metadata.identity });
-    await until(() => settled(connection), 'cleanup waits for owned startup work');
-    await connection.request('stopService', { protocol: metadata.protocol }, true);
-    await waitForServiceProcessExit(env.AREAL_CORE_HOME, metadata);
+    await until(() => processes.every(child => child.exitCode !== null || child.signalCode !== null), 'owned GUI processes exit');
+    if (metadata) await waitForServiceProcessExit(env.AREAL_CORE_HOME, metadata);
+    const names = await readdir(join(env.AREAL_HARNESS_SERVICE_HOME, 'services'));
+    for (const name of names) {
+      const record = JSON.parse(await readFile(join(env.AREAL_HARNESS_SERVICE_HOME, 'services', name, 'service.json'), 'utf8'));
+      for (const pid of [record.hostPid, record.corePid]) await until(() => {
+        try { process.kill(pid, 0); return false; } catch (error) { if (error.code === 'ESRCH') return true; throw error; }
+      }, 'owned Host and Core exit');
+    }
     cleanup = { backendExited: true };
   } catch (error) { cleanup = { error: error.message }; passed = false; }
-  finally { connection?.close(); }
   for (const [file, hash] of Object.entries(sourceHashes)) assert.equal(sha(await readFile(join(gui, file))), hash, `Source changed during test: ${file}`);
   for (const [name, hash] of Object.entries(coreHashes)) assert.equal(sha(await readFile(join(dirname(binary), name))), hash, `Core changed during test: ${name}`);
   await writeFile(join(scratch, 'manifest.json'), JSON.stringify({ passed, checks, errors, dialogs, cleanup,

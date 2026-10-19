@@ -6,6 +6,7 @@ mod interactions;
 mod mcp;
 pub(crate) mod mcp_apps;
 mod media;
+mod model_configuration;
 mod model_selection;
 mod plugin_mcp;
 mod plugins;
@@ -22,6 +23,7 @@ mod workflows;
 use super::*;
 use areal_protocol::desktop::*;
 pub use catalog::{ConfiguredModels, Deployment};
+pub use model_configuration::PreparedModelConfiguration;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 pub use skills::{SkillLocation, SkillMetadata};
@@ -32,6 +34,7 @@ pub(crate) struct Desktop {
     plugins: std::sync::RwLock<plugins::Manager>,
     plugin_refresh: Mutex<()>,
     configured_models: std::sync::RwLock<ConfiguredModels>,
+    model_configuration: std::sync::RwLock<()>,
     pub(crate) default_profile: std::sync::RwLock<Option<VersionRef>>,
     worker_model: std::sync::atomic::AtomicBool,
     submissions: submissions::Submissions,
@@ -50,6 +53,7 @@ impl Desktop {
             plugins: Default::default(),
             plugin_refresh: Mutex::new(()),
             configured_models: Default::default(),
+            model_configuration: Default::default(),
             default_profile: Default::default(),
             worker_model: std::sync::atomic::AtomicBool::new(false),
             submissions: submissions::Submissions::open(root)?,

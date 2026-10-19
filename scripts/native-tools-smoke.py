@@ -29,6 +29,7 @@ def main():
     root = Path(__file__).resolve().parents[1]
     errors = []
     requests = []
+    naming_requests = []
     recovered = {}
     stdin_checks = []
     stdin_process = [None]
@@ -69,6 +70,23 @@ def main():
             def do_POST(self):
                 try:
                     request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                    if any(
+                        message.get("role") == "system"
+                        and isinstance(message.get("content"), str)
+                        and message["content"].startswith(
+                            "Generate a concise semantic session title"
+                        )
+                        for message in request["messages"]
+                    ):
+                        assert not request.get("tools"), "session naming must not receive tools"
+                        naming_requests.append(request)
+                        self.send_response(200)
+                        self.send_header("Content-Type", "text/event-stream")
+                        self.end_headers()
+                        self.wfile.write(
+                            b'data: {"choices":[{"index":0,"delta":{"content":"Native fixture"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'
+                        )
+                        return
                     requests.append(request)
                     names = {tool["function"]["name"] for tool in request["tools"]}
                     assert "fs_apply_patch" not in names
@@ -373,7 +391,13 @@ max_tool_calls = 32
             assert len(receipts) == 1, receipts
             assert json.loads(receipts[0].read_text())["exitCode"] == 0
             audits = [json.loads(p.read_text()) for p in (data / "model-requests").glob("*.json")]
-            assert len(audits) == len(requests) and all(a["outcome"] == "completed" for a in audits)
+            assert len(audits) == len(requests) + len(naming_requests), audits
+            ordinary = [audit for audit in audits if audit["purpose"] == "Solve"]
+            summaries = [audit for audit in audits if audit["purpose"] == "Summary"]
+            assert len(ordinary) == len(requests), ordinary
+            assert len(summaries) == len(naming_requests), summaries
+            assert all(a["outcome"] == "completed" for a in audits), audits
+            assert all(a["toolCount"] == 0 for a in summaries), summaries
             print(
                 json.dumps(
                     {

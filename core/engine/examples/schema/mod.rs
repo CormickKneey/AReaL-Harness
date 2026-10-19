@@ -295,6 +295,24 @@ pub fn projections() -> (Value, Value) {
     );
     insert(&["mcp/read"], mcp);
     insert(&["server/status", "server/drain"], status);
+    let model_configuration_proof = object(json!({
+        "serviceId":string,"generation":string,"applied":schema::<AppliedModelConfiguration>(),
+        "modelRevision":string,"credentialStates":{"type":"object","additionalProperties":{"enum":["notRequired","available","unavailable"]}}
+    }));
+    let mut model_configuration = model_configuration_proof.clone();
+    model_configuration["properties"]["operation"] = object(json!({
+        "requestId":string,"state":{"enum":["running","applied","rejected","unknown"]}
+    }));
+    model_configuration["properties"]["operation"]["properties"]["result"] =
+        model_configuration_proof;
+    model_configuration["properties"]["operation"]["properties"]["error"] = schema::<RpcError>();
+    insert(
+        &[
+            "server/modelConfiguration/read",
+            "server/modelConfiguration/apply",
+        ],
+        model_configuration,
+    );
     insert(
         &["server/gc"],
         object(json!({"deletedBlobs":number,"reclaimedBytes":number,"retainedBytes":number})),
@@ -476,6 +494,10 @@ pub fn projections() -> (Value, Value) {
     notifications.insert("areal/goal/updated".into(), goal_view);
     notifications.insert("areal/goal/cleared".into(),object(json!({"threadId":string,"revision":number,"eventSequence":number,"goal":nullable(schema::<areal_protocol::goals::Goal>()),"goalId":string})));
     notifications.insert("thread/started".into(), object(json!({"thread":thread})));
+    notifications.insert(
+        "areal/thread/edited".into(),
+        object(json!({"threadId":string,"thread":thread})),
+    );
     for name in ["turn/started", "turn/completed"] {
         notifications.insert(name.into(), object(json!({"threadId":string,"turn":turn})));
     }

@@ -6,6 +6,7 @@ startupTraceMain.advance('imports');
 const { app, BrowserWindow, Menu, dialog, ipcMain, protocol, nativeTheme, WebContentsView, shell, powerMonitor, Notification } = require('electron');
 const { readFile, realpath, stat, writeFile } = require('node:fs/promises');
 const { join, resolve, extname, sep } = require('node:path');
+const { createOwner } = require('./application-owner.cjs');
 const { setupUpdater } = require('../update/electron.cjs');
 const { showCoreNotification } = require('./notifications.cjs');
 const { MenuBar } = require('./menu-bar.cjs');
@@ -24,6 +25,8 @@ const { loadThemes, engineCss, panelCss } = require('../themes');
 startupTraceMain.advance('app_ready');
 app.setName('AReaL Harness GUI');
 configureUserData(app);
+const applicationOwner = createOwner(app.getPath('userData'));
+app.setPath('userData', applicationOwner.profile);
 // Acquire before loading resources or registering shutdown hooks. The userData
 // directory scopes the lock, so explicitly isolated development/test homes coexist.
 if (!app.requestSingleInstanceLock()) {
@@ -78,40 +81,37 @@ function confirmRendererQuit(attempt) {
     owner.send('areal-core:quit-request', attempt.id);
   });
 }
-function requestQuit(intent = 'interface') {
+function requestQuit(intent = 'application') {
   if (quitAttempt) return quitAttempt.promise;
   if (quitting) return Promise.resolve({ canceled: true });
   const attempt = { id: ++quitRequestSequence, intent, owner: null, frame: null, decide: null, approved: false, promise: null };
   quitAttempt = attempt;
   attempt.promise = (async () => {
-    if (intent === 'stop' && !backend) throw new Error('界面仍在准备或退出，请稍后重试');
+    if (!backend) throw new Error('界面仍在准备，请稍后退出');
     if (!await confirmRendererQuit(attempt)) return { canceled: true };
     if (quitting) return { canceled: true };
     attempt.approved = true;
     quitting = true;
-    if (intent === 'stop') {
-      await backend.checkLifecycle();
-      if (!backend.serviceExited) {
-        const result = await recoverConnectedService({ backend,
-          notify: options => dialog.showMessageBox(window, options), purpose: 'stop' });
-        if (result.stopped !== true) {
-          if (!result.canceled) backend.reportLifecycleError(new Error('后台停止尚未完成，界面保持打开。请检查原请求与阻塞事项。'));
-          return result;
-        }
+    await backend.waitForApplicationReady();
+    await backend.checkLifecycle();
+    if (backend.foreignOwner && (intent === 'install' || backend.desktopLifetimes.size))
+      throw Object.assign(new Error('原后台属于其他应用会话，请先从其原入口安全退出，再重试安装'), { code: 'APPLICATION_OWNER_MISMATCH' });
+    if (!backend.foreignOwner && !backend.serviceExited && (backend.status.connected || backend.metadata || backend.desktopLifetimes.size)) {
+      const result = await recoverConnectedService({ backend,
+        notify: options => dialog.showMessageBox(window, options), purpose: intent === 'install' ? 'update' : 'quit', forUpdate: intent === 'install' });
+      if (result.stopped !== true) {
+        if (!result.canceled) backend.reportLifecycleError(new Error('应用后台停止尚未完成，请检查原请求与阻塞事项。'));
+        return result;
       }
     }
-    try { await backend?.prepareQuit(); }
-    catch (error) {
-      revealWindow();
-      await dialog.showMessageBox(window, { type: 'warning', message: '界面终端尚未完成清理', detail: error.message, buttons: ['返回应用'] });
-      return { canceled: true };
-    }
-    try { await backend?.shutdown(); }
-    catch (error) { await dialog.showMessageBox(window, { type: 'warning', message: '退出清理未完全确认', detail: error.message }); }
+    await backend.prepareQuit();
+    if (intent === 'install') await require('../update/package-users.cjs').assertPackageUsersReleased({ packaged: app.isPackaged });
+    if (!backend.foreignOwner) await backend.completeApplicationQuit();
+    await backend.shutdown();
     preview?.dispose();
     exitReady = true;
-    setImmediate(() => app.quit());
-    return intent === 'stop' ? { stopped: true } : { quitting: true };
+    if (intent !== 'install') setImmediate(() => app.quit());
+    return { stopped: true, quitting: true };
   })().finally(() => {
     if (!exitReady && quitAttempt === attempt) {
       if (attempt.approved) quitting = false;
@@ -255,7 +255,7 @@ app.whenReady().then(async () => {
     try { return new Response(await readFile(path), { headers: { 'Content-Type': mime[extname(path)] ?? 'application/octet-stream', 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; frame-src areal-mcp:" } }); }
     catch { return new Response('GUI 未构建，请先执行 make gui-build', { status: 404 }); }
   });
-  backend = new SharedCoreBackend({ app, ...serviceOptions(app), onChange: publish,
+  backend = new SharedCoreBackend({ app, ...serviceOptions(app), applicationOwner, onChange: publish,
     onNotification: notice => showCoreNotification(Notification, window, notice, openNotificationTarget),
     onNotificationOpen: openNotificationTarget,
     onRecoveryAttention: attention => dialog.showMessageBox(window, { type: 'warning', message: '定时安排需要核对',
@@ -431,7 +431,7 @@ app.whenReady().then(async () => {
         return { ok: true, value: await pluginArchives.command(params, () => trusted(event)) };
       if (name === 'remoteControl') return { ok: true, value: await backend.remoteControl(params) };
       if (name === 'serviceLifecycle') {
-        if (params.operation === 'quitInterface') { setImmediate(() => app.quit()); return { ok: true, value: { quitting: true } }; }
+        if (params.operation === 'quitInterface') return { ok: true, value: await requestQuit() };
         if (params.operation === 'stopAndQuit') return { ok: true, value: await requestStopAndQuit() };
         const value = params.operation === 'update' ? await backend.applyUpdate({ notify: options => dialog.showMessageBox(window, options) })
           : params.operation === 'stop' ? await requestStopService()
@@ -497,15 +497,8 @@ app.whenReady().then(async () => {
     onState: state => { if (window && !window.isDestroyed()) window.webContents.send('areal-core:update-changed', state); },
     prepareInstall: async () => {
     if (quitting || await hasUpdateWork()) throw Object.assign(new Error('仍有活动任务或操作，请检查后台状态'), { code: 'LIFECYCLE_BLOCKED' });
-    quitting = true;
-    try {
-      if (!backend.serviceExited) {
-        const result = await backend.stopService(true, { kind: 'updateDesktop' });
-        if (result.stopped !== true) throw Object.assign(new Error('后台更新尚未完成，请检查原请求'), { code: 'LIFECYCLE_INCOMPLETE' });
-      }
-      preview?.dispose(); await backend.shutdown(); exitReady = true;
-    }
-    catch (error) { quitting = false; throw error; }
+    const result = await requestQuit('install');
+    if (result.stopped !== true) throw Object.assign(new Error('应用退出已取消，更新尚未安装'), { code: 'LIFECYCLE_BLOCKED' });
   } });
   ipcMain.handle('areal-core:update-state', event => { trusted(event); return updates.state(); });
   ipcMain.handle('areal-core:update-download', event => { trusted(event); void updates.download(); return updates.state(); });
@@ -517,8 +510,7 @@ app.whenReady().then(async () => {
     { label: 'AReaL Harness', submenu: [{ role: 'about' }, { label: '检查更新…', click: () => { void updates.check(true); } }, { label: '检查后台资源…', click: () => { void backend.checkLifecycle().catch(error => backend.reportLifecycleError(error)); } }, { label: '停止后台 Core 服务…', click: async () => {
       try { await requestStopService(); } catch (error) { backend.reportLifecycleError(error); }
     } }, { type: 'separator' },
-    { label: '退出界面，后台继续', accelerator: 'CmdOrCtrl+Q', click: () => app.quit() },
-    { label: '停止后台并退出…', click: stopAndQuitFromMenu }] },
+    { label: '退出 AReaL Harness', accelerator: 'CmdOrCtrl+Q', click: () => app.quit() }] },
     { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' },
   ]));
   // 后台连接与隐藏首屏并行；状态由快照展示，启动不触发维护弹窗。

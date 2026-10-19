@@ -1,6 +1,6 @@
 {
   "name": "areal-gui-workspace",
-  "version": "0.1.12-beta.1",
+  "version": "0.1.12-beta.2",
   "private": true,
   "license": "Apache-2.0",
   "packageManager": "pnpm@11.7.0",
@@ -24,6 +24,7 @@
     "test:queue": "node scripts/queue-smoke.mjs",
     "test:interactions": "node scripts/interaction-smoke.mjs",
     "test:composer": "node scripts/composer-smoke.mjs",
+    "test:provider-hot-apply": "node scripts/provider-hot-apply-smoke.mjs",
     "test:model-selection": "node scripts/model-selection-smoke.mjs",
     "test:history-compat": "node scripts/history-copy-smoke.mjs",
     "test:connection": "node scripts/connection-smoke.mjs",

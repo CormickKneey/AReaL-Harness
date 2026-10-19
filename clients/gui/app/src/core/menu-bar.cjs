@@ -27,8 +27,7 @@ class MenuBar {
               window.show(); window.focus();
             } },
             { type: 'separator' },
-            { label: '退出界面，后台继续', click: () => app.quit() },
-            { label: '停止后台并退出…', click: () => this.stopAndQuit() },
+            { label: '退出 AReaL Harness', click: () => app.quit() },
           ]));
           this.tray = tray;
         } catch (error) { tray.destroy(); throw error; }

@@ -242,6 +242,24 @@ async function until(predicate, label) {
   }
   throw Error("Timeout: " + label);
 }
+const services = () => JSON.parse(execFileSync(binary, ["service", "list", "--json"], { env, encoding: "utf8", timeout: 20000 }));
+async function waitForApplicationStop(records) {
+  const end = Date.now() + 30000;
+  while (Date.now() < end) {
+    const current = services();
+    const settled = records.every(original => {
+      const record = current.find(value => value.serviceId === original.serviceId);
+      return record?.generation === original.generation && record.state === "stopped"
+        && [original.hostPid, original.corePid].filter(pid => Number.isSafeInteger(pid) && pid > 1).every(pid => {
+          try { process.kill(pid, 0); return false; }
+          catch (error) { if (error.code === "ESRCH") return true; throw error; }
+        });
+    });
+    if (settled) return;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  throw new Error("Application exit did not stop its original service generations and processes");
+}
 async function waitForPopupMotion(selector) {
   // Base UI 先移除起始样式，之后才创建过渡；此前 getAnimations() 可能为空。
   await page.locator(`${selector}:not([data-starting-style]):not([data-ending-style])`).waitFor();
@@ -290,6 +308,14 @@ async function quit() {
   });
   await app.close();
   app = null;
+}
+async function hideWindow() {
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+  assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()), false);
+}
+async function revealWindow() {
+  await app.evaluate(({ app }) => app.emit("activate"));
+  assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()), true);
 }
 console.log("GUI evidence:", scratch);
 console.log("Core binary SHA-256 at start:", binarySha256AtStart);
@@ -658,13 +684,15 @@ try {
   const turnCount = current(await state()).turns.length;
   const requestCount = received.length;
   const adapter = JSON.parse(await readFile(join(scratch, "core/service.json"), "utf8"));
-  await quit();
+  const applicationPid = app.process().pid;
+  await hideWindow();
+  process.kill(applicationPid, 0);
   process.kill(adapter.pid, 0);
   finishBackground();
-  await launch();
+  await revealWindow();
   await until(
     (s) => project(s)?.state?.connected && current(s)?.turns.at(-1)?.status === "completed",
-    "recover after GUI exit",
+    "recover after window close",
   );
   assert.equal(current(await state()).turns.length, turnCount);
   assert.equal(received.length, requestCount);
@@ -678,12 +706,14 @@ try {
   assert.equal(received.length, requestCount);
   await shot("07a-agent-restored");
   await button("关闭面板").click();
-  checks.push("child messages/tools and local avatar identity restore after GUI restart without provider replay");
+  checks.push("child messages/tools and local avatar identity restore after window reopen without provider replay");
   checks.push(
-    "running Core turn completes after GUI quit; reopen restores history/draft without replay",
+    "window close preserves the application and running Core turn; reopen restores history/draft without replay",
   );
-  await quit();
-  process.kill(adapter.pid, "SIGTERM");
+  const transport = JSON.parse(
+    await readFile(join(scratch, "core/subscription-transport.json"), "utf8"),
+  );
+  process.kill(adapter.pid, "SIGKILL");
   for (let i = 0; i < 100; i++) {
     try {
       process.kill(adapter.pid, 0);
@@ -692,11 +722,13 @@ try {
     }
     await new Promise((r) => setTimeout(r, 100));
   }
-  const transport = JSON.parse(
-    await readFile(join(scratch, "core/subscription-transport.json"), "utf8"),
-  );
-  await launch();
-  await until((s) => project(s)?.state?.connected, "recover after adapter exit");
+  assert.throws(() => process.kill(adapter.pid, 0), error => error.code === "ESRCH", "the fault-injected adapter has exited");
+  await until(s => s.connection?.state !== "ready", "observe adapter disconnection");
+  await call("connectService", {});
+  await until(async (s) => {
+    const next = JSON.parse(await readFile(join(scratch, "core/service.json"), "utf8"));
+    return next.pid !== adapter.pid && project(s)?.state?.connected;
+  }, "recover after adapter exit");
   const restored = JSON.parse(
     await readFile(join(scratch, "core/subscription-transport.json"), "utf8"),
   );
@@ -713,6 +745,17 @@ try {
   checks.push(
     "adapter restart reuses Core history and local capability; no tokens exposed in renderer snapshot",
   );
+  const beforeQuit = services().filter(record => record.workspace === workspace && record.state !== "stopped");
+  assert.ok(beforeQuit.length > 0, "cold reopen starts from a real live GUI service");
+  const requestsBeforeQuit = received.length;
+  await input().fill("冷启动保留草稿");
+  await quit();
+  await waitForApplicationStop(beforeQuit);
+  await launch();
+  await until(s => project(s)?.state?.connected && current(s)?.turns.length === turnCount + 1, "cold application reopen restores history");
+  assert.equal(received.length, requestsBeforeQuit, "cold application reopen never replays model requests");
+  assert.equal(await input().textContent(), "冷启动保留草稿");
+  checks.push("application exit stops its original service generations and processes; cold reopen restores history and draft without replay");
   const scheduled = await call("manage", {
     projectId: pid,
     operation: "taskCreate",
@@ -724,9 +767,9 @@ try {
     maxActiveSeconds: 60,
   });
   assert.ok(scheduled.id);
-  await quit();
+  await hideWindow();
   await new Promise((r) => setTimeout(r, 4500));
-  await launch();
+  await revealWindow();
   await until((s) => project(s)?.state?.connected, "scheduled task reconnect");
   let task;
   for (let i = 0; i < 100; i++) {
@@ -745,7 +788,7 @@ try {
   await button("定时任务").click();
   await shot("08-tasks");
   checks.push(
-    "Desktop Host recovery coalesces one missed schedule and preserves run history",
+    "window close preserves one scheduled execution and its run history",
   );
   }
   assert.deepEqual(errors, []);
@@ -753,6 +796,8 @@ try {
   console.log(JSON.stringify({ passed, scratch, checks }));
 } catch (error) {
   failure = error.stack || error.message;
+  await writeFile(join(scratch, "failure.txt"), failure);
+  console.error("GUI failure:", failure);
   console.error("renderer errors", errors);
   console.error(await page?.locator("body").innerText());
   await shot("failure").catch(() => {});
@@ -761,17 +806,10 @@ try {
 } finally {
   await quit();
   try {
-    const { ServiceConnection } = require(join(desktop, "src/core/service-client.cjs"));
-    const connection = new ServiceConnection();
-    try {
-      await connection.connect(
-        JSON.parse(await readFile(join(scratch, "core/service.json"), "utf8")),
-      );
-      await connection.request("stopService", { protocol: "areal.desktop-service.v1" }, true);
-      checks.push("explicit safe service stop completes");
-    } finally {
-      connection.close();
-    }
+    await waitForApplicationStop(services().filter(record => record.workspace === workspace));
+    const metadata = await readFile(join(scratch, "core/service.json"), "utf8").then(JSON.parse).catch(error => { if (error.code === "ENOENT") return null; throw error; });
+    if (metadata) assert.throws(() => process.kill(metadata.pid, 0), error => error.code === "ESRCH", "the GUI adapter exits with its application");
+    checks.push("application lifecycle cleanup leaves no live adapter or original Core service");
   } catch (error) {
     console.error("Adapter fixture cleanup:", error.message);
     if (passed) {

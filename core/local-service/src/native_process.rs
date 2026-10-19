@@ -62,6 +62,11 @@ impl TrustedCommand {
         Self::new(binary, &[], true)
     }
 
+    /// GUI 宿主脱离 ensure 调用者，但只依赖应用独占的生命期写端。
+    pub fn gui_host(binary: &Path, lifetime_fd: RawFd) -> io::Result<Self> {
+        Self::new(binary, &[lifetime_fd], true)
+    }
+
     /// 受监督进程仅继承调用方明确指定的租约或生命周期描述符。
     pub fn supervised(binary: &Path, inherited: &[RawFd]) -> io::Result<Self> {
         Self::new(binary, inherited, false)

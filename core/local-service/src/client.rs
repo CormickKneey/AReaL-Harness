@@ -1,4 +1,8 @@
-use crate::{LaunchSpec, storage};
+use crate::{
+    LaunchSpec,
+    gui_owner::{self, GuiLifetime},
+    storage,
+};
 use anyhow::{Context, Result, bail, ensure};
 use areal_protocol::service::{
     Capabilities, Identity, Request, Response, Service, State, StopOperation, StopOperationState,
@@ -32,15 +36,27 @@ impl std::error::Error for ControlTransportError {
 }
 
 pub async fn ensure(spec: &LaunchSpec) -> Result<Service> {
-    ensure_inner(spec, None, false, true).await
+    ensure_inner(spec, None, false, true, None).await
 }
 
 pub async fn ensure_without_restart(spec: &LaunchSpec) -> Result<Service> {
-    ensure_inner(spec, None, false, false).await
+    ensure_inner(spec, None, false, false, None).await
 }
 
 pub async fn restart(spec: &LaunchSpec, cancel: bool) -> Result<Service> {
-    ensure_inner(spec, Some(cancel), false, true).await
+    ensure_inner(spec, Some(cancel), false, true, None).await
+}
+
+pub async fn ensure_with_lifetime(
+    spec: &LaunchSpec,
+    lifetime: &GuiLifetime,
+    no_auto_restart: bool,
+) -> Result<Service> {
+    ensure!(
+        spec.owner.is_some(),
+        "GUI lifetime requires an application owner"
+    );
+    ensure_inner(spec, None, false, !no_auto_restart, Some(lifetime)).await
 }
 
 async fn ensure_inner(
@@ -48,11 +64,22 @@ async fn ensure_inner(
     restart: Option<bool>,
     reconnect: bool,
     allow_automatic_restart: bool,
+    lifetime: Option<&GuiLifetime>,
 ) -> Result<Service> {
+    ensure!(
+        spec.owner.is_some() == lifetime.is_some(),
+        "GUI application services require an inherited lifetime descriptor"
+    );
+    if let Some(lifetime) = lifetime {
+        lifetime.check_open()?;
+    }
     let directory = spec.directory()?;
     storage::private_dir(&spec.home.join("services"))?;
     storage::private_dir(&directory)?;
     let _startup = startup_lock(&directory).await?;
+    if let Some(lifetime) = lifetime {
+        lifetime.check_open()?;
+    }
     if reconnect {
         let record: Service = storage::read(&directory.join("service.json"))?;
         ensure!(
@@ -75,6 +102,7 @@ async fn ensure_inner(
             Some(&service.identity.workspace) == spec.args.workspace.as_ref(),
             "data directory is bound to a different workspace"
         );
+        gui_owner::check(spec.owner.as_ref(), service.owner.as_ref())?;
         if restart.is_none() && check_compatible(spec, &service, &directory).is_ok() {
             // 优先等待热更新；超时后只为有效配置走既有的空闲重启流程。
             let deadline = Instant::now() + Duration::from_secs(3);
@@ -152,8 +180,24 @@ async fn ensure_inner(
             "could not configure service log append mode"
         );
     }
-    let mut command =
-        crate::native_process::TrustedCommand::persistent(&spec.bin_dir.join("areal"))?;
+    if let Some(lifetime) = lifetime {
+        lifetime.check_open()?;
+    }
+    let binary = spec.bin_dir.join("areal");
+    let mut command = match lifetime {
+        Some(lifetime) => {
+            let mut command =
+                crate::native_process::TrustedCommand::gui_host(&binary, lifetime.as_raw_fd())?;
+            command
+                .env(gui_owner::LIFETIME_FD_ENV, lifetime.as_raw_fd().to_string())
+                .env(
+                    gui_owner::OWNER_ENV,
+                    serde_json::to_string(spec.owner.as_ref().unwrap())?,
+                );
+            command
+        }
+        None => crate::native_process::TrustedCommand::persistent(&binary)?,
+    };
     command.arg("service-host");
     command
         .current_dir(&spec.launch_cwd)
@@ -168,6 +212,9 @@ async fn ensure_inner(
     input.shutdown().await?;
     drop(input);
     loop {
+        if let Some(lifetime) = lifetime {
+            lifetime.check_open()?;
+        }
         if let Some(exit) = child.try_wait()? {
             let diagnostic =
                 std::fs::read_to_string(directory.join("host.log")).unwrap_or_default();
@@ -230,10 +277,11 @@ async fn startup_lock(directory: &Path) -> Result<std::fs::File> {
 }
 
 pub async fn reconnect(spec: &LaunchSpec) -> Result<Service> {
-    ensure_inner(spec, None, true, true).await
+    ensure_inner(spec, None, true, true, None).await
 }
 
 fn check_compatible(spec: &LaunchSpec, service: &Service, directory: &Path) -> Result<()> {
+    gui_owner::check(spec.owner.as_ref(), service.owner.as_ref())?;
     ensure!(
         service.state == State::Ready,
         "service is not accepting connections: {:?}",
@@ -537,6 +585,7 @@ async fn status_unlocked(root: &Path, id: &str) -> Result<Service> {
         live.identity == record.identity,
         "service generation changed; retry discovery"
     );
+    gui_owner::check(record.owner.as_ref(), live.owner.as_ref())?;
     if live.state == State::Ready {
         probe(&live).await?;
     }
@@ -813,6 +862,7 @@ mod tests {
         let data = root.path().join("data");
         storage::private_dir(&data).unwrap();
         let service = Service {
+            owner: None,
             identity: Identity {
                 protocol_version: VERSION,
                 service_id: id.clone(),
@@ -876,6 +926,7 @@ mod tests {
         let data = root.path().join("data");
         storage::private_dir(&data).unwrap();
         let service = Service {
+            owner: None,
             identity: Identity {
                 protocol_version: VERSION,
                 service_id: id.clone(),

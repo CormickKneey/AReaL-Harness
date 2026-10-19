@@ -1,3 +1,4 @@
+import { respondToSessionName } from "./model-fixture.mjs";
 import WebSocket from "ws";
 // Real binaries and native sandbox, with a deterministic model HTTP fixture.
 import assert from "node:assert/strict";
@@ -145,6 +146,7 @@ const model = createServer(async (req, res) => {
     let body = "";
     for await (const chunk of req) body += chunk;
     const request = JSON.parse(body);
+    if (respondToSessionName(request, res)) return;
     modelCalls++;
     assert(request.messages[0].role === "system");
     assert(request.tools.some((tool) => tool.function.name === "read_process"));

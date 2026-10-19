@@ -76,6 +76,13 @@ export function TurnFileSummary({ turn, readTurnReview, onFile, onReview }: {
     </div>
     <div id={filesId} className="turn-file-summary-files" role="region" aria-label="本轮文件" data-expanded={expanded}>
       {(expanded ? entries : entries.slice(0, 5)).map(file => {
+        const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+        let size = file.size;
+        let unit = 0;
+        while (size >= 1024 && unit < units.length - 1) {
+          size /= 1024;
+          unit += 1;
+        }
         // A verified comparison omits unchanged paths. Only that successful
         // result permits zero; pending or rejected reads never do.
         const totals = current?.totals ? current.totals.get(file.path) ?? { additions: 0, deletions: 0 } : undefined;
@@ -84,7 +91,7 @@ export function TurnFileSummary({ turn, readTurnReview, onFile, onReview }: {
         <span className="turn-file-summary-title">{file.path}</span>
           {totals ? <span className="turn-file-summary-stats" aria-label={`新增 ${totals.additions} 行，删除 ${totals.deletions} 行`}>
             <span className="added">+{totals.additions}</span><span className="deleted">-{totals.deletions}</span>
-          </span> : <span className="turn-file-summary-meta" title={current?.error}>{file.size} B · {current?.error ? "行数不可验证" : "读取行数…"}</span>}
+          </span> : <span className="turn-file-summary-meta">{Number(size.toFixed(1))} {units[unit]}</span>}
       </Button>; })}
     </div>
     {entries.length > 5 && <button type="button" className="turn-file-summary-disclosure" aria-expanded={expanded} aria-controls={filesId} onClick={() => setExpanded(value => !value)}>{expanded ? "收起文件" : `展开剩余 ${entries.length - 5} 个文件`}</button>}

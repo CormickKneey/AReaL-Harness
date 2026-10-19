@@ -13,6 +13,7 @@ use axum::{
 };
 use futures_util::{StreamExt, stream};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     convert::Infallible,
     sync::{Arc, Mutex},
@@ -143,6 +144,7 @@ fn broken() -> String {
 struct Fixture {
     endpoint: String,
     requests: Arc<Mutex<Vec<Value>>>,
+    naming_hashes: Arc<Mutex<Vec<String>>>,
     count: tokio::sync::watch::Receiver<usize>,
     server: tokio::task::JoinHandle<()>,
 }
@@ -155,17 +157,32 @@ impl Fixture {
     async fn start(bodies: Vec<String>, hold: Option<usize>) -> Self {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let recorded = requests.clone();
+        let naming_hashes = Arc::new(Mutex::new(Vec::new()));
+        let names = naming_hashes.clone();
         let (tx, count) = tokio::sync::watch::channel(0);
         let app = Router::new().route(
             "/",
             post(move |Json(request): Json<Value>| {
-                let n = {
+                let naming = request.get("messages").or_else(|| request.get("input"))
+                    .and_then(Value::as_array).is_some_and(|messages| messages.iter().any(|message|
+                        message["role"] == "system" && message["content"].to_string().contains("Generate a concise semantic session title")));
+                let n = if naming {
+                    assert!(request.get("tools").and_then(Value::as_array).is_none_or(Vec::is_empty));
+                    names.lock().unwrap().push(format!("{:x}", Sha256::digest(serde_json::to_vec(&request).unwrap())));
+                    usize::MAX
+                } else {
                     let mut requests = recorded.lock().unwrap();
-                    requests.push(request);
-                    requests.len() - 1
+                    requests.push(request.clone());
+                    let n = requests.len() - 1;
+                    tx.send_replace(n + 1);
+                    n
                 };
-                tx.send_replace(n + 1);
-                let body = bodies[n.min(bodies.len() - 1)].clone();
+                let body = if naming {
+                    if request.get("input").is_some() {
+                        frame(json!({"type":"response.output_text.delta","delta":"Tool fixture"}))
+                            + &frame(json!({"type":"response.completed","response":{"status":"completed","output":[]}}))
+                    } else { frame(json!({"choices":[{"index":0,"delta":{"content":"Tool fixture"},"finish_reason":"stop"}]})) }
+                } else { bodies[n.min(bodies.len() - 1)].clone() };
                 async move {
                     let body = if hold == Some(n) {
                         Body::from_stream(
@@ -185,6 +202,7 @@ impl Fixture {
         Self {
             endpoint,
             requests,
+            naming_hashes,
             count,
             server,
         }
@@ -261,12 +279,38 @@ async fn settled(engine: &Arc<Engine>, id: &str) -> areal_protocol::Thread {
         .unwrap()
         .unwrap()
 }
-fn audits(path: &std::path::Path) -> Vec<Value> {
-    std::fs::read_to_string(path.join("requests.jsonl"))
-        .unwrap()
-        .lines()
-        .map(|s| serde_json::from_str(s).unwrap())
-        .collect()
+async fn assert_pool_idle(pool: &SharedModel) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::task::yield_now().await;
+        while pool.load().unwrap().in_flight != 0 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .expect("ordinary and auxiliary requests release shared capacity");
+}
+
+impl Fixture {
+    fn audits(&self, path: &std::path::Path) -> Vec<Value> {
+        std::fs::read_to_string(path.join("requests.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|s| serde_json::from_str::<Value>(s).unwrap())
+            .filter(|record| {
+                let naming = self
+                    .naming_hashes
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|hash| record["bodySha256"] == *hash);
+                if naming {
+                    assert_eq!(record["purpose"], "Summary");
+                    assert_eq!(record["toolCount"], 0);
+                }
+                !naming
+            })
+            .collect()
+    }
 }
 
 #[tokio::test]
@@ -298,7 +342,7 @@ async fn pending_protocol_error_is_delivered_without_waiting_for_more_network_da
                 .iter()
                 .all(|e| !matches!(e, Ok(ModelEvent::ToolCall(_))))
         );
-        let audit = &audits(data.path())[0];
+        let audit = &fixture.audits(data.path())[0];
         assert_eq!(audit["outcome"], "failed");
         assert_eq!(audit["usageObserved"], true);
         assert_eq!(audit["usage"]["inputTokens"], 7);
@@ -352,7 +396,7 @@ async fn finite_recovery_keeps_confirmed_operations_and_usage_without_network_re
             result.turns[0].usage.as_ref().unwrap().input_tokens,
             (7 * expected) as u64
         );
-        assert_eq!(pool.load().unwrap().in_flight, 0);
+        assert_pool_idle(&pool).await;
         assert_eq!(
             result.turns[0]
                 .items
@@ -374,7 +418,7 @@ async fn finite_recovery_keeps_confirmed_operations_and_usage_without_network_re
                 1
             );
         }
-        let audits = audits(&audit);
+        let audits = fixture.audits(&audit);
         assert_eq!(audits.len(), expected);
         for record in audits.iter().filter(|r| r["outcome"] == "failed") {
             assert_eq!(record["errorCode"], "invalid_tool_call_index");
@@ -530,9 +574,9 @@ async fn both_protocols_honor_request_budgets_through_the_shared_pool_before_exe
                 fixture.requests.lock().unwrap().len(),
                 if expected.is_none() { 2 } else { 1 }
             );
-            assert_eq!(pool.load().unwrap().in_flight, 0);
+            assert_pool_idle(&pool).await;
             if let Some(kind) = expected {
-                let audit = &audits(&audit)[0];
+                let audit = &fixture.audits(&audit)[0];
                 assert_eq!(audit["errorCode"], "tool_call_budget_exceeded");
                 assert_eq!(audit["toolCallError"]["budget"], kind);
             }
@@ -593,7 +637,7 @@ async fn cancellation_timeout_and_steer_remain_effective_after_protocol_recovery
             }
         );
         assert!(writes.ids.lock().unwrap().is_empty());
-        assert_eq!(pool.load().unwrap().in_flight, 0);
+        assert_pool_idle(&pool).await;
         {
             let requests = fixture.requests.lock().unwrap();
             assert_eq!(requests.len(), if action == "steer" { 3 } else { 2 });
@@ -662,9 +706,9 @@ async fn summary_requests_and_configured_models_preserve_buffer_limits() {
             .collect::<Vec<_>>()
             .await;
         assert!(events.iter().any(Result::is_err));
-        assert_eq!(pool.load().unwrap().in_flight, 0);
+        assert_pool_idle(&pool).await;
     }
-    let records = audits(data.path());
+    let records = fixture.audits(data.path());
     assert_eq!(records[0]["toolCallError"]["budget"], "buffer_bytes");
     assert_eq!(records[1]["toolCallError"]["budget"], "calls");
 }
@@ -814,7 +858,7 @@ async fn goal_requests_keep_output_caps_and_tool_budgets_through_shared_pools() 
             assert_eq!(goal["goal"]["reason"], "usageUnknown");
             assert_eq!(goal["goal"]["usage"]["unknownRequests"], 1);
             assert!(writes.ids.lock().unwrap().is_empty());
-            assert_eq!(pool.load().unwrap().in_flight, 0);
+            assert_pool_idle(&pool).await;
             {
                 let requests = fixture.requests.lock().unwrap();
                 assert_eq!(requests.len(), 1);
@@ -829,7 +873,7 @@ async fn goal_requests_keep_output_caps_and_tool_budgets_through_shared_pools() 
                         .is_some_and(|cap| cap > 0 && cap < 16000)
                 );
             }
-            let records = audits(&audit);
+            let records = fixture.audits(&audit);
             assert_eq!(records[0]["errorCode"], "tool_call_budget_exceeded");
             assert_eq!(records[0]["toolCallError"]["budget"], expected);
             assert_eq!(records[0]["toolCallError"]["limit"], limit);
@@ -921,7 +965,7 @@ async fn final_round_only_classifies_http_call_budget_errors_as_round_exhaustion
                 .iter()
                 .any(|item| matches!(item, Item::DynamicToolCall { .. }))
         );
-        assert_eq!(pool.load().unwrap().in_flight, 0);
+        assert_pool_idle(&pool).await;
         {
             let requests = fixture.requests.lock().unwrap();
             assert_eq!(requests.len(), 1);
@@ -932,7 +976,7 @@ async fn final_round_only_classifies_http_call_budget_errors_as_round_exhaustion
             );
             assert_eq!(requests[0]["tool_choice"], "none");
         }
-        let records = audits(&audit);
+        let records = fixture.audits(&audit);
         assert_eq!(records[0]["errorCode"], error_code);
         if error_code == "tool_call_budget_exceeded" {
             assert_eq!(records[0]["toolCallError"]["budget"], "calls");
@@ -971,7 +1015,7 @@ async fn remaining_turn_allowance_reaches_http_decoder_after_a_confirmed_call() 
     assert!(!message.contains("MAX_MODEL_ROUNDS"));
     assert_eq!(writes.ids.lock().unwrap().len(), 1);
     assert_eq!(fixture.requests.lock().unwrap().len(), 2);
-    let records = audits(&audit);
+    let records = fixture.audits(&audit);
     assert_eq!(records[1]["outcome"], "failed");
     assert_eq!(records[1]["toolCallError"]["budget"], "calls");
     assert_eq!(records[1]["toolCallError"]["limit"], 0);
@@ -1002,7 +1046,7 @@ async fn protocol_error_distinguishes_unobserved_usage_from_observed_zero() {
                 .count(),
             usize::from(observed)
         );
-        let audit = &audits(data.path())[0];
+        let audit = &fixture.audits(data.path())[0];
         assert_eq!(audit["errorCode"], "invalid_tool_call_index");
         assert_eq!(audit["usageObserved"], observed);
         assert_eq!(audit["usage"]["inputTokens"], 0);

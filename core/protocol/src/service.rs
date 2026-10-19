@@ -1,4 +1,4 @@
-//! 本地服务发现契约；凭据只交给可信客户端，窗口不拥有服务进程。
+//! 本地服务发现契约；GUI 应用持有其服务生命周期，凭据只交给可信客户端。
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -30,11 +30,23 @@ pub struct Identity {
     pub config_fingerprint: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub enum Owner {
+    Gui {
+        #[serde(rename = "appRunId")]
+        app_run_id: String,
+        profile: PathBuf,
+    },
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Service {
     #[serde(flatten)]
     pub identity: Identity,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<Owner>,
     pub endpoint: String,
     pub web_url: String,
     pub auth_file: PathBuf,
@@ -134,6 +146,7 @@ mod tests {
         };
         let service = Service {
             identity: identity.clone(),
+            owner: None,
             endpoint: "ws://127.0.0.1:1".into(),
             web_url: "http://127.0.0.1:1/ui".into(),
             auth_file: "/auth".into(),

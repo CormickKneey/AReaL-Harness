@@ -12,6 +12,20 @@ use std::sync::{
 };
 use std::time::Duration;
 
+fn session_name_reply(messages: &[Message], tools: &[Value]) -> Option<ModelStream> {
+    if !messages.iter().any(|message| {
+        message
+            .text_content()
+            .starts_with("Generate a concise semantic session title")
+    }) {
+        return None;
+    }
+    assert!(tools.is_empty(), "session naming must not receive tools");
+    Some(Box::pin(stream::iter([Ok(ModelEvent::TextDelta(
+        "Goal fixture".into(),
+    ))])))
+}
+
 struct Fixture {
     calls: AtomicUsize,
     report: bool,
@@ -37,6 +51,9 @@ impl Model for Fixture {
         self.chat(m, t).await
     }
     async fn chat(&self, messages: Vec<Message>, tools: Vec<Value>) -> anyhow::Result<ModelStream> {
+        if let Some(reply) = session_name_reply(&messages, &tools) {
+            return Ok(reply);
+        }
         let call = self.calls.fetch_add(1, Ordering::SeqCst);
         let has = |name: &str| tools.iter().any(|t| t["function"]["name"] == name);
         let view: Option<Value> = messages
@@ -145,15 +162,21 @@ impl Model for OversizedSummary {
     }
 
     async fn chat(&self, messages: Vec<Message>, tools: Vec<Value>) -> anyhow::Result<ModelStream> {
+        if let Some(reply) = session_name_reply(&messages, &tools) {
+            return Ok(reply);
+        }
         self.chat_for(messages, tools, RequestPurpose::Solve).await
     }
 
     async fn chat_for(
         &self,
-        _: Vec<Message>,
-        _: Vec<Value>,
+        messages: Vec<Message>,
+        tools: Vec<Value>,
         purpose: RequestPurpose,
     ) -> anyhow::Result<ModelStream> {
+        if let Some(reply) = session_name_reply(&messages, &tools) {
+            return Ok(reply);
+        }
         let mut events = if purpose == RequestPurpose::Summary {
             let attempt = self.summaries.fetch_add(1, Ordering::SeqCst);
             if self.always_oversized || attempt == 0 {
@@ -376,6 +399,9 @@ impl Model for Controlled {
         self.chat(m, vec![]).await
     }
     async fn chat(&self, messages: Vec<Message>, tools: Vec<Value>) -> anyhow::Result<ModelStream> {
+        if let Some(reply) = session_name_reply(&messages, &tools) {
+            return Ok(reply);
+        }
         let (reply, rx) = tokio::sync::oneshot::channel();
         self.0
             .send(Call {
@@ -1134,6 +1160,9 @@ impl Model for StreamingControlled {
         self.chat(messages, vec![]).await
     }
     async fn chat(&self, messages: Vec<Message>, tools: Vec<Value>) -> anyhow::Result<ModelStream> {
+        if let Some(reply) = session_name_reply(&messages, &tools) {
+            return Ok(reply);
+        }
         use futures_util::StreamExt;
         let (reply, rx) = tokio::sync::oneshot::channel();
         self.0

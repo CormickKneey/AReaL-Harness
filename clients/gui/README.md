@@ -16,7 +16,7 @@ make gui-install
 make gui
 ```
 
-`make gui-build` 只构建 renderer。`pnpm --dir clients/gui typecheck` 检查界面类型及共享桌面契约的 JSDoc 类型（尚未覆盖整个 Electron CJS 实现），`pnpm --dir clients/gui run verify` 检查公开文件边界。此模块单独锁定 pnpm 依赖，不改变仓库 SDK 的 npm 工具链。依赖来自公开 npm registry；Electron 和 Core 工具首次安装需网络。
+`make gui-build` 构建 renderer 前先执行 `pnpm install --frozen-lockfile`；`make gui` 和 `make gui-package` 复用这一步，自动同步切换分支或版本更新后的依赖与安装记录。锁文件不匹配时停止，不自动更新锁文件。`pnpm --dir clients/gui typecheck` 检查界面类型及共享桌面契约的 JSDoc 类型（尚未覆盖整个 Electron CJS 实现），`pnpm --dir clients/gui run verify` 检查公开文件边界。此模块单独锁定 pnpm 依赖，不改变仓库 SDK 的 npm 工具链。依赖来自公开 npm registry；Electron 和 Core 工具首次安装需网络。
 
 `make gui-install` 按锁文件安装依赖后，显式运行 Electron 官方安装器下载固定版本的原生运行时。
 
@@ -74,7 +74,9 @@ Browser 工具在每次新用户请求中先 `describe`，再重新观察，拒�
 
 ## 对话资源
 
-对话按 Core 的消息阶段区分过程与最终回答。耗时显示在过程顶部，可展开或折叠整段过程；已完成过程默认折叠，最终回答和交付内容始终可见。工具分组默认折叠，展开后在固定高度内上下滚动；长过程文字在约六行高度内滚动，单条命令和文件比较仍可查看详情。执行中活动文字从左向右亮色扫过，完成后停止；减少动态效果时保持静态。成功返回的图片有独立预览入口；子智能体显示已读取的真实名称与状态，未读取时明确显示状态待确认。本轮文件变更默认展示前五条文件及 Core 验证的增删行，更多文件可以展开与收起；点击文件或审查入口沿用现有路径。回复中受会话授权的 Core 图片引用直接展示缩略图，普通链接可直接打开，独立的本地网页链接展示网页预览卡片。没有阶段的旧历史继续保留原有过程折叠。右上角不再显示终端快捷按钮，终端仍可从面板和快捷键打开。
+“任务操作 → 查看调用轨迹”面板顶部的“复制轨迹”将当前已加载会话的全部轮次复制为格式化 JSON，包含会话和轮次标识、状态、模型、用量、消息、工具调用与结果及错误。搜索和折叠不影响复制内容；复制成功或失败会显示反馈。内容来自已保存的执行记录，不包含逐次模型请求的完整 I/O，也不会自动上传；分享前请检查消息和工具输出中的敏感信息。
+
+对话按 Core 的消息阶段区分过程与最终回答。耗时显示在过程顶部，可展开或折叠整段过程；已完成过程默认折叠，最终回答和交付内容始终可见。工具分组默认折叠，展开后在固定高度内上下滚动；手动展开的分组和工具详情在过程消息更新时保持展开。过程正文完整显示，随对话一起滚动；单条命令和文件比较仍可查看详情。执行状态独立显示在本轮内容尾部，不作为工具分组的折叠按钮。展开或收起过程与工具详情时保留阅读位置；点击“滚动到底部”可恢复跟随新内容。执行中活动文字从左向右亮色扫过，完成后停止；减少动态效果时保持静态。成功返回的图片有独立预览入口；子智能体显示已读取的真实名称与状态，未读取时明确显示状态待确认。本轮文件变更默认展示前五条文件及 Core 验证的增删行，更多文件可以展开与收起；点击文件或审查入口沿用现有路径。回复中受会话授权的 Core 图片引用直接展示缩略图，普通链接可直接打开，独立的本地网页链接展示网页预览卡片。没有阶段的旧历史继续保留原有过程折叠。右上角不再显示终端快捷按钮，终端仍可从面板和快捷键打开。
 
 对话顶部的“任务资源”在顶部图标下方的紧凑浮层展示当前工作区变更、Core 直接子智能体、受管后台进程及用户附件和已验证的文件读取来源；Git 工作区保留变更数量为 0 的审查入口；其他没有资源的分组不显示。变更和进程入口复用现有审查、进程面板。
 
@@ -84,11 +86,13 @@ Browser 工具在每次新用户请求中先 `describe`，再重新观察，拒�
 
 ## 生命周期
 
-强退恢复可用现有 runner 验证：`AREAL_REOPEN_FORCE_GUI=1` 配合 `test:service-reopen` 只强制结束测试 GUI，核对原后台、Core generation、历史和流式轮次不变。加 `AREAL_REOPEN_REPLACEMENT_BIN=/absolute/verified/areal` 时，只替换测试私有槽位的真实 Mach-O 字节，验证连接原部署并显示更新待应用；finally 恢复原产物。`AREAL_LIFECYCLE_CRASH_UPDATE=1 node clients/gui/scripts/lifecycle-smoke.mjs` 在真实更新受理后的响应边界只结束测试 GUI，重开读取原 request ID/代际回执，旧实例退出已确认后通过“更新后台…”完成连接，不重发停止或再次确认。已确认停止则提供重新连接；仍未知或未结算只提供检查。本次强退代表用例覆盖模型执行与生命周期回执；浏览器／动态 ToolHost 的真实强退 UNKNOWN 需专项验收，既有宿主丢失与 generation 失效契约保持不变。
+`AREAL_REOPEN_FORCE_GUI=1` 配合 `test:service-reopen` 强制结束隔离 Main，验证 owner 管道回收原引擎，随后新应用会话从原历史恢复。新代际不重放中断输入。`test:desktop-exit` 分别验证 Main、Desktop 强退和测试 runner 失败、SIGTERM、SIGKILL 的清理。浏览器与动态 ToolHost 的真实强退 UNKNOWN 仍需专项验收，既有宿主丢失与 generation 失效契约保持不变。
 
-关闭窗口只隐藏界面，GUI 仍持有单实例锁；再次启动会唤回原窗口，并在启动控制台说明已复用界面。应用菜单、菜单栏入口和“后台服务”设置提供两种退出方式：“退出界面，后台继续”（⌘Q / Ctrl+Q）仅退出 GUI，已有后台执行继续；“停止后台并退出…”先检查所管理工作空间，有活动任务时列出影响并请求确认，只有原 Core/Runtime 清理和 Desktop 退出已确认后才退出 GUI。拒绝确认、部分停止、结果未知或清理未完成时保持界面打开并显示下一步，不自动重复停止。后台正常连接时不在聊天顶部显示状态栏；连接中、断连、更新或恢复待处理时保留提示与操作入口。通过设置中的“后台服务”（或提示栏的“后台详情”）查看周期刷新的任务、目标、排队输入和未清理资源，并打开所属对话处理。
+关闭窗口只隐藏界面，GUI 仍持有单实例锁；再次启动或从 Dock 激活会唤回原窗口。应用菜单、菜单栏和后台设置的“退出 AReaL Harness”（⌘Q / Ctrl+Q）共用安全退出。应用拥有 Desktop、每项目 Host、Core、Runtime 和监督桥，窗口不拥有引擎。有活动任务时列出影响，允许取消退出或停止任务并退出。只有原引擎物理清理和 Desktop 退出已确认后才退出 Main。部分停止、结果未知或清理未完成保留恢复入口，不自动重复停止。退出后安排不再触发，手机入口断开；安排定义、历史与草稿保留。CLI 与其他 GUI profile 保持独立。
 
-`AREAL_CORE_BIN=/absolute/fixed-slot/areal pnpm --dir clients/gui run test:desktop-exit` 使用隔离真实 Electron/Core/Runtime 验证隐藏、重复启动唤回、两种退出、文本草稿与活动轮次保留、取消确认以及独占 CLI／其他 GUI profile 不受影响；目录选择和原生确认由夹具应答，不代表安装包或物理键鼠验收。
+`AREAL_CORE_BIN=/absolute/fixed-slot/areal pnpm --dir clients/gui run test:desktop-exit` 在隔离 Electron/Core/Runtime 中核对窗口重开、普通退出的取消与确认、隐藏项目引擎清理、独立 CLI 和其他 GUI profile、Main/Desktop 强退及 runner 清理。目录选择和原生确认由 fixture 应答。指定 `AREAL_GUI_EXECUTABLE` 可使用私有安装包，runner 强退夹具仍限源码入口；这不替代物理快捷键或 Finder 安装验收。
+
+`AREAL_CORE_BIN=/absolute/path/to/private/.local/dev-bin/<slot>/areal node clients/gui/scripts/application-owner-smoke.mjs` 从仓库根验证真实 Host 尚未发布描述时丢失启动响应、原代际恢复、项目投影移除、同/异 profile 旧 owner 的只读边界及原回执清理。测试专用 CLI guard 仅管理隔离 registry 的原实例，runner 结束后通过公共 CLI 回收独立持久服务。
 
 设置存在未保存修改时，退出先复用“保存并继续／放弃修改并继续／继续编辑”确认。取消退出保留草稿、后台连接和正常操作；保存失败保留确认框与错误，成功保存或放弃修改后才清理资源并退出。`AREAL_CORE_BIN=/absolute/fixed-slot/areal pnpm --dir clients/gui run test:quit-draft` 使用隔离 Electron/Core 验证取消后编辑与保存、停止并退出的取消、保存失败恢复，以及保存或放弃后的配置内容和 GUI 进程退出；通过应用菜单回调触发退出，不代表物理快捷键或安装包验收。
 
@@ -116,17 +120,17 @@ macOS 桌面适配器通过系统 `/usr/bin/python3` 保留可信 Core 命令的
 
 `AREAL_CORE_BIN=/absolute/path/to/areal pnpm --dir clients/gui run test:startup` 使用隔离的真实 Electron、Core 和 Runtime，默认执行五次保留合成历史的进程冷启动，验证模型可用性、历史恢复、无重复提交和退出清理。设置 `AREAL_STARTUP_BASELINE_BIN` 可交替比较两个独立构建；`AREAL_STARTUP_ROUNDS` 控制轮数。脚本保留逐轮日志、截图和 manifest，不清除系统缓存，不使用真实供应商或用户凭据。
 
-Renderer 仅通过窄 preload IPC 访问桌面适配器。独立适配器使用 `areal service ensure/restart/stop --json` 连接 Core，不直接管理持久 Core 服务的 PID。退出 GUI 断开界面并结算 GUI 拥有的终端，Core Turn/Goal 和已配置的定时任务继续执行；重新打开按权威快照恢复，不自动重放提交。
+Renderer 仅通过窄 preload IPC 访问桌面适配器。独立适配器使用 `areal service ensure/restart/stop --json` 连接 Core，不直接管理持久 Core 服务的 PID。关闭窗口保留应用与任务；退出应用先结算所有 GUI 引擎和终端，安排停止触发、手机入口断开。再次启动读取 Core 权威历史，不重放提交。
 
 用户可显式停止后台服务。空闲停止不取消工作；有活动轮次、目标、任务或待发输入时，只显示一次取消确认，确认范围绑定原 Desktop 和各 Core 代际。取消保留待发输入、安排、历史与草稿，暂停当前执行并等待资源结算。历史 UNKNOWN 保留原会话核查要求，但不代替活资源结算。结果分为已完成、已拒绝、仍在结算、部分完成或受理未确认；检查只读取原请求，既不重发停止，也不确认工具 UNKNOWN。旧后台未声明持久生命周期能力时保留兼容观察，不通过另一层 Core 连接代为取消。若已知旧 Desktop 留下部分停止记录，可在顶部或设置的“检查与恢复”入口检查原工作空间，再显式选择“恢复后台…”。检查读取原 Host 身份、准入与资源结算；已退出目标还需 Host 清理标记和实例／历史锁释放，不能仅凭 PID 或 socket 消失判断完成。仍未知、正在清理、忙碌或已换代时显示原因并保留记录。确认后只对核对为空闲的原代际发起新的安全停止；本次停止响应未知时只检查，不重发。全部原 Host 确认清理后才退出旧界面后台并启动当前版本；旧界面后台未响应退出时另行确认是否结束该管理进程，不向 Core/Runtime 发信号。模型配置、工作空间、历史与工具 UNKNOWN 保留，旧停止记录存档；恢复中断可重新检查并继续。`pnpm --dir clients/gui run test:legacy-recovery` 使用隔离历史 Desktop、当前 GUI/Core 与本地模型验证恢复；设置 `AREAL_RECOVERY_SCENARIO=exited` 覆盖停止已完成但响应未知的路径。
 
-macOS 安装包将后台放在独立应用身份的 `AReaL Harness Service.app` 中，前台退出后 Finder 重开先启动前台，再复用后台并通过显式更新入口应用部署变化；后台通知使用主应用入口打开界面。前后台共享同一安装包资源、配置、凭据名称和数据目录。`verify` 包含身份与路径回归；指定 `AREAL_GUI_EXECUTABLE` 运行 `node --test clients/gui/scripts/macos-service.test.mjs` 可额外检查包内后台入口的真实启动与安全停止，Finder 重开仍需原生安装验收。
+macOS 安装包将 Desktop 放在独立应用身份的 `AReaL Harness Service.app` 中，与前台共享包资源、配置、凭据名称和数据目录。Main 独占 Desktop 生命期管道写端，Desktop 独占每个 GUI Host 的写端；关闭窗口不关闭这些管道。Main 或 Desktop 消失会使下游收到 EOF 并清理引擎。`AREAL_GUI_EXECUTABLE` 配合 `node --test clients/gui/scripts/macos-service.test.mjs` 核对包内入口、owner 和管道关闭后的退出。
 
-普通重开 GUI 先认证当前数据目录登记的后台。相同部署静默复用；部署或启动配置变化时也保持连接，显示非阻塞的“更新后台”入口，不自动停止、取消或换代。身份包含 Desktop 源码、Core/Runtime/文件助手内容摘要与配置选择。显式更新统一执行能力检查、范围观察、必要的一次取消确认、逐项目结算、原 Desktop 退出核验和新部署连接。部分完成保留逐项目回执，完成目标不重复停止；受理未确认仅核对原 requestId。新部署启动失败保留操作引用，后续显式更新只在原实例退出已确认后重试启动。底层 GUI ensure 使用 --no-auto-restart，项目配置维护先通过同一 owner 安全停止原代际，再启动；不绕过回执执行隐式重启。工作区从权威快照恢复，不重放输入。
+同一应用会话重开窗口或恢复连接时，只复用相同 owner 的后台。新应用发现旧版独立后台或其他应用会话时只提供观察与显式安全迁移，不自动认领、取消或替换。GUI 管理始终使用已选安装的绝对 CLI 路径，`ensure --no-auto-restart` 校验 owner，显式更新继续绑定原 Desktop、Core 代际及 requestId。完整 owned registry 包含已隐藏、断连项目和启动中实例。已完成目标不重复停止；受理未知只核查原请求。工作区从 Core 权威快照恢复，不重放输入。
 
 运行中的 Desktop 后台通过 `service.commandContract` 声明当前桌面命令契约。未声明的旧后台仍可观察原任务、读取历史和管理兼容队列；生命周期写入另需 version 2 能力，但新版消息提交、评价、插件 Apps/表单、新增默认模型操作及轨迹开关会在 Main 发送前拒绝。输入和评价草稿保持原样，界面提供更新后台入口，停止确认成功后重新连接；不会探测性写入或自动重发。Core 的能力声明不能替代 Desktop 转发层的声明。
 
-`AREAL_CORE_BIN=/absolute/path/to/private/.local/dev-bin/<slot>/areal pnpm --dir clients/gui run test:service-reopen` 使用私有固定产物验证隔离 Electron 连续两次关闭与重开，要求零恢复弹窗，同 Desktop PID、Core generation 和活动 Turn，原模型流继续且无重复请求。`AREAL_REOPEN_REPLACEMENT_BIN` 指定另一份真实 Core 构建以验证原路径内容替换；`AREAL_REOPEN_LEGACY=1` 从修复前的真实 adapter 源码启动后台，验证旧实例也能自动接回。脚本清理自有服务并恢复私有二进制，原生目录选择由 fixture 应答，不代表安装包或真实供应商验收。
+`AREAL_CORE_BIN=/absolute/path/to/private/.local/dev-bin/<slot>/areal pnpm --dir clients/gui run test:service-reopen` 验证两次窗口关闭与重开保留同 owner、Desktop、Core generation、活动 Turn 和模型流。应用退出后这些引擎退出，再次启动创建新 owner 与代际，保留已完成历史、中断轮次和未发送草稿，不重复请求模型。`AREAL_REOPEN_FORCE_GUI=1` 将应用退出替换为 Main SIGKILL。源码 runner 的生命期连接在测试被杀后结束 Main，再由产品 owner 管道回收服务。 可选 `AREAL_REOPEN_REPLACEMENT_BIN=/absolute/verified/areal` 用另一份真实 Mach-O 替换私有路径，验证同次应用窗口重开不隐式换代，随后恢复原字节和时间。未指定时验证文件时间变化不触发换代。
 
 Core 观察连接意外关闭时，项目连接所有者以 500ms 起步、最长 30s 的退避重试，通过 `service status --instance` 发现兼容的运行中实例，并用原子 `areal/thread/observe` 恢复 Thread/Task 快照、订阅和通知基线。观察恢复不重绑工具宿主；用户显式认领原生页时，才读取权威状态并在 Thread 空闲时尝试 `thread/resume` 绑定，仍受 Core 宿主冲突检查约束。恢复不重新提交任务、不同步 Provider/MCP 配置，也不执行配置 revision 屏障。旧连接的消息与异步结果失去投影写入资格。显式停止、适配器关闭、停止中的 Core 或部署指纹不兼容会阻止自动恢复；重新连接需显式操作。
 

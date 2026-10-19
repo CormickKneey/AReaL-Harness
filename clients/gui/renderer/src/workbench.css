@@ -1919,8 +1919,7 @@ body { font-family: var(--font-sans); }
 .execution-row > .assistant-message[data-message-phase="commentary"] { margin: 7px 0; line-height: 1.5; }
 .assistant-message[data-message-phase="commentary"] .conversation-markdown { line-height: 1.5; }
 .assistant-message[data-message-phase="commentary"] { margin: 12px 0; }
-.commentary-scroll { max-block-size: 6lh; overflow-y: auto; scrollbar-width: thin; line-height: 1.5; }
-.commentary-scroll:focus-visible, .execution-details[tabindex]:focus-visible { outline: var(--focus-width, 2px) solid var(--color-ring); outline-offset: 3px; border-radius: 4px; }
+.execution-details[tabindex]:focus-visible { outline: var(--focus-width, 2px) solid var(--color-ring); outline-offset: 3px; border-radius: 4px; }
 .conversation-web-preview { display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); }
 .conversation-web-preview > svg { flex: none; color: var(--color-foreground-subtle); }
 .conversation-web-preview-info { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 3px; }

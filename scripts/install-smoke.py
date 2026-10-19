@@ -22,7 +22,22 @@ class HeldModel(http.server.BaseHTTPRequestHandler):
         pass
 
     def do_POST(self):
-        self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        request = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
+        if any(
+            message.get("role") == "system"
+            and isinstance(message.get("content"), str)
+            and message["content"].startswith("Generate a concise semantic session title")
+            for message in request["messages"]
+        ):
+            assert not request.get("tools"), "session naming must not receive tools"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.end_headers()
+            self.wfile.write(
+                b'data: {"choices":[{"index":0,"delta":{"content":"Installed session"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}\n\ndata: [DONE]\n\n'
+            )
+            self.wfile.flush()
+            return
         self.server.requests += 1
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")

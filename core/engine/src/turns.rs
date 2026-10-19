@@ -995,6 +995,13 @@ impl Engine {
             });
         }
         let active = state.active.take().unwrap();
+        let name_model = active.model.clone();
+        let name_turn = state
+            .thread
+            .turns
+            .last()
+            .filter(|turn| turn.status == TurnStatus::Completed && !state.poisoned)
+            .cloned();
         if state.poisoned {
             state.quarantined_admission = Some(active._admission);
         } else {
@@ -1017,5 +1024,8 @@ impl Engine {
         self.goals.request(&cell.id);
         self.goals.wake();
         self.wake_tasks();
+        if let Some(turn) = name_turn {
+            self.schedule_session_name(cell.clone(), turn, name_model);
+        }
     }
 }

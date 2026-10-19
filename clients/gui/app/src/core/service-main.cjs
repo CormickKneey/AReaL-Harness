@@ -22,6 +22,9 @@ app.setName('AReaL Harness GUI');
 const guiUserData = configureUserData(app);
 let backend, service, descriptor, home, power;
 let exiting = false;
+let applicationLifetime;
+const { parseOwner, watchApplicationLifetime, scrubOwnerEnvironment } = require('./application-owner.cjs');
+
 async function finish() {
   if (exiting) return; exiting = true;
   power?.close();
@@ -32,6 +35,7 @@ async function finish() {
       if (JSON.parse(await readFile(path, 'utf8')).token === descriptor.token) await rm(path);
     } catch (e) { if (e.code !== 'ENOENT') console.error('后台连接元数据清理失败'); }
   }
+  applicationLifetime?.destroy();
   app.exit(0);
 }
 async function start() {
@@ -62,6 +66,11 @@ async function start() {
     startupTraceService.finish('skipped');
     app.exit(0); return;
   }
+  parseOwner(process.env.AREAL_GUI_OWNER);
+  applicationLifetime = watchApplicationLifetime(() => {
+    for (const entry of backend?.ownedEngines?.values() ?? []) for (const lifetime of entry.lifetimes ?? []) lifetime.destroy();
+    app.exit(1);
+  });
   startupTraceService.advance('prepare_home');
   const options = serviceOptions(app);
   await mkdir(options.home, { recursive: true, mode: 0o700 });
@@ -89,7 +98,7 @@ async function start() {
   await backend.init();
   startupTraceService.advance('service_identity');
   const notifications = new BackgroundNotifications(Notification, () => {
-    const env = { ...process.env, AREAL_BACKEND: 'areal', AREAL_CORE_HOME: home, AREAL_GUI_USER_DATA: guiUserData };
+    const env = { ...scrubOwnerEnvironment(), AREAL_BACKEND: 'areal', AREAL_CORE_HOME: home, AREAL_GUI_USER_DATA: guiUserData };
     delete env.ELECTRON_RUN_AS_NODE;
     const child = childProcess.spawn(desktopExecutables({ packaged: app.isPackaged }).gui, app.isPackaged ? [] : [app.getAppPath()], {
       detached: true, stdio: 'ignore', env, windowsHide: false,

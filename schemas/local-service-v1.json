@@ -221,6 +221,31 @@
         ],
         "type": "object"
       },
+      "Owner": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "appRunId": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "gui",
+                "type": "string"
+              },
+              "profile": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "appRunId",
+              "profile"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "Service": {
         "additionalProperties": false,
         "properties": {
@@ -251,6 +276,16 @@
           },
           "logFile": {
             "type": "string"
+          },
+          "owner": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/Owner"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "protocolVersion": {
             "format": "uint32",
@@ -423,6 +458,31 @@
   },
   "service": {
     "$defs": {
+      "Owner": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "appRunId": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "gui",
+                "type": "string"
+              },
+              "profile": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "appRunId",
+              "profile"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "State": {
         "enum": [
           "ready",
@@ -463,6 +523,16 @@
       },
       "logFile": {
         "type": "string"
+      },
+      "owner": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/Owner"
+          },
+          {
+            "type": "null"
+          }
+        ]
       },
       "protocolVersion": {
         "format": "uint32",

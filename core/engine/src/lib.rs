@@ -13,6 +13,7 @@ mod observations;
 mod outcome;
 mod permissions;
 mod plugin_hooks;
+mod session_name;
 mod sessions;
 mod store;
 mod task_mode;

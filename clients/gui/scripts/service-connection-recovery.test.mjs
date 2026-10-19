@@ -14,6 +14,58 @@ const { serviceIdentity } = require('../app/src/core/service-config.cjs');
 const { WebSocketServer } = require('../app/node_modules/ws');
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+test('application shutdown preserves registered historical project identity and rejects crossed bindings', async () => {
+  const local = require('../app/src/core/local-service.cjs');
+  const original = local.serviceRequest;
+  const owner = { kind: 'gui', appRunId: '5c450fa8-b0af-492c-9c7b-2233736efbed', profile: '/fixture/profile' };
+  const home = '/fixture/core', id = '111111111111111111111111', root = '/fixture/restored-workspace';
+  const project = { id, root };
+  const descriptor = { owner, serviceId: 'instance', generation: 'generation', workspace: root,
+    dataDir: join(home, id, 'state'), state: 'running' };
+  let descriptors = [descriptor];
+  local.serviceRequest = async () => descriptors;
+  const backend = Object.assign(Object.create(CoreBackend.prototype), { home, applicationOwner: owner,
+    saved: [project], projects: new Map([[id, project]]), ownedEngines: new Map(), starting: new Map() });
+  try {
+    await backend.refreshOwnedEngines();
+    assert.equal(backend.ownedEngines.get(id).service, descriptor, 'the registered ID owns its original data');
+    assert.equal(backend.ownedEngines.size, 1);
+    for (const changed of [{ dataDir: join(home, 'another-project', 'state') }, { workspace: '/fixture/other-workspace' }]) {
+      descriptors = [{ ...descriptor, ...changed }];
+      await assert.rejects(backend.refreshOwnedEngines(), /数据目录与登记不匹配/);
+      assert.equal(backend.ownedEngines.get(id).service, descriptor, 'invalid binding cannot replace the original generation');
+    }
+    descriptors = [{ ...descriptor, generation: 'replacement' }];
+    await assert.rejects(backend.refreshOwnedEngines(), { code: 'CONFIRMATION_STALE' });
+    assert.equal(backend.ownedEngines.get(id).service, descriptor);
+    descriptors = [{ ...descriptor, owner: { ...owner, appRunId: 'another-app' }, dataDir: '/another-profile/state' }];
+    await backend.refreshOwnedEngines();
+    assert.equal(backend.ownedEngines.size, 1, 'another application remains outside this owner');
+  } finally { local.serviceRequest = original; }
+});
+
+test('completed original shutdown clears GUI terminals after the transport disconnects', async t => {
+  const f = await fixture(t);
+  await f.publish(); await f.backend.attach();
+  f.backend.guiTerminals.set('terminal', { projectId: 'p', threadId: 'thread', id: 'terminal' });
+  f.backend.reconnectBlocked = true;
+  f.drop(); await until(() => !f.backend.status.connected);
+  const reference = { requestId: '41b2ce45-08df-4b60-a2f7-cbbfdb6c12cb', kind: 'stopDesktop', mode: 'ifIdle',
+    desktopGeneration: f.metadata.desktopGeneration, desktop: f.metadata, targets: [] };
+  const receipt = { version: 1, ...reference, desktopExit: 'notRequested', phase: 'admissionUnconfirmed' };
+  try {
+    await f.backend.acceptLifecycleReceipt(reference, receipt);
+    assert.equal(f.backend.guiTerminals.size, 1, 'unknown shutdown never clears a terminal handle');
+    const completed = await f.backend.acceptLifecycleReceipt(reference, { ...receipt, phase: 'acceptedPending', desktopExit: 'requested' });
+    assert.equal(completed.phase, 'completed');
+    assert.equal(f.backend.guiTerminals.size, 0, 'the matching exited generation has already cleaned its terminals');
+    await f.backend.prepareQuit();
+    assert.equal(f.calls.some(call => call.method === 'lifecycleRequest'), false, 'receipt reconciliation never sends another stop');
+  } finally {
+    f.backend.guiTerminals.clear();
+  }
+});
+
 async function until(predicate) {
   const deadline = Date.now() + 2500;
   while (!predicate()) {

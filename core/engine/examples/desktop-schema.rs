@@ -19,6 +19,14 @@ fn main() {
     }
     add!("areal/capabilities", CapabilitiesRequest);
     add!(
+        "areal/server/modelConfiguration/read",
+        ModelConfigurationRead
+    );
+    add!(
+        "areal/server/modelConfiguration/apply",
+        ModelConfigurationApply
+    );
+    add!(
         "areal/plugin/hooks/list",
         areal_protocol::plugin_runtime::Empty
     );

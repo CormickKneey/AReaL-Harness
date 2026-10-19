@@ -1,3 +1,4 @@
+import { assertApplicationStopped } from "./application-cleanup.mjs";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { mkdtemp, mkdir, readFile, writeFile, cp, readdir, lstat } from "node:fs/promises";
@@ -13,7 +14,6 @@ import { withSmokeDeadline } from "./smoke-deadline.mjs";
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(join(gui, "app/package.json"));
 const { _electron: electron } = require("playwright-core");
-const { ServiceConnection } = require(join(gui, "app/src/core/service-client.cjs"));
 const { values } = parseArgs({
   options: { source: { type: "string" }, executable: { type: "string" } },
 });
@@ -31,6 +31,7 @@ const hashes = new Map(),
   stateDirectories = new Map(),
   checks = [];
 let app,
+  env,
   page,
   failure,
   copyUnchangedWhileOpen = false,
@@ -213,7 +214,7 @@ try {
     `schema_version=1\n[model]\ncatalog_version=1\nprovider="history-fixture"\nname="fixture"\n[model.providers.history-fixture]\nname="History fixture"\nendpoint="http://127.0.0.1:${server.address().port}/v1/chat/completions"\nprotocol="chat-completions"\napi_key_env="AREAL_HISTORY_FIXTURE_KEY"\nmodels=[{id="fixture",enabled=true}]\n`,
     { mode: 0o600 },
   );
-  const env = Object.fromEntries(
+  env = Object.fromEntries(
     Object.entries(process.env).filter(
       ([key]) => !key.startsWith("AREAL_") && key !== "ELECTRON_RUN_AS_NODE",
     ),
@@ -269,22 +270,16 @@ try {
   failure = { message: error.message, stack: error.stack };
   if (page) await captureSmokeFailure(page, scratch, error);
 } finally {
-  if (app)
-    await app.close().catch((error) => {
-      failure ??= { cleanup: error.message };
-    });
   try {
-    const meta = JSON.parse(await readFile(join(scratch, "core/service.json"), "utf8"));
-    const connection = new ServiceConnection();
-    try {
-      await connection.connect(meta);
-      await connection.request("hello", { protocol: meta.protocol, identity: meta.identity });
-      await connection.request("stopService", { protocol: meta.protocol, forUpdate: true }, true);
-    } finally {
-      connection.close();
+    const meta = await readFile(join(scratch, "core/service.json"), "utf8").then(JSON.parse)
+      .catch(error => { if (error.code === "ENOENT") return null; throw error; });
+    if (app) {
+      await app.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 1 }); });
+      await withSmokeDeadline("history application quit", () => app.close(), 120000);
     }
+    if (env) await assertApplicationStopped(binary, env, meta);
   } catch (error) {
-    if (error.code !== "ENOENT") failure ??= { cleanup: error.message };
+    failure ??= { cleanup: error.message };
   }
   await new Promise((resolve) => server.close(resolve));
   try {
@@ -311,7 +306,7 @@ try {
     sourceUnchanged,
     modelRequests,
     cleanupNote:
-      "Only copied services stopped; drain may update copied queue revisions after observation",
+      "Application quit confirmed the isolated adapter and all copied Core generations stopped; drain may update copied queue revisions after observation",
     failure,
   };
   const evidence = join(scratch, "manifest.json");

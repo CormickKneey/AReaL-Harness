@@ -33,7 +33,7 @@ function modelParameters(raw = {}) {
 
 /** Core-owned metadata, with desktop-only encrypted credentials and OAuth. */
 class AppProviders {
-  constructor(backend, encryption) { this.backend = backend; this.encryption = encryption; this.config = new ModelConfiguration(backend, encryption); this.openaiToken = null; }
+  constructor(backend, encryption) { this.backend = backend; this.encryption = encryption; this.config = new ModelConfiguration(backend, encryption); this.openaiToken = null; this.pendingApplications = new Map(); this.projectApplications = new Map(); }
   async init() {
     await this.config.init();
     try { this.lastAcceptedModel = JSON.parse(await readFile(join(this.backend.home, 'model-selection.json'), 'utf8')); }
@@ -274,7 +274,7 @@ class AppProviders {
   }
   async command(request) {
     if (this.saving || this.backend.providerUpdating) throw new Error('模型配置正在保存，请稍后重试');
-    if (request.operation === 'list') { await this.config.current(); return this.public(); }
+    if (request.operation === 'list') { await this.config.current(); for (const project of this.backend.projects.values()) if (project.client?.ready && this.pendingApplications.has(project.id)) await this.reconcilePending(this.target(project)); return this.public(); }
     if (request.operation === 'probe' || request.operation === 'discover') { await this.config.current(); return this.test(request); }
     if (['saveAndApply', 'removeAndApply', 'defaultAndApply'].includes(request.operation)) return this.saveAndApply(request);
     if (request.operation === 'apply') return this.apply(request);
@@ -326,48 +326,209 @@ class AppProviders {
       return this.public();
     } finally { this.saving = false; }
   }
+  target(project) {
+    return { project, client: project.client, serviceId: project.service?.serviceId, generation: project.service?.generation };
+  }
+  async inProject(project, action) {
+    const task = (this.projectApplications.get(project.id) ?? Promise.resolve()).catch(() => {}).then(action);
+    this.projectApplications.set(project.id, task);
+    try { return await task; }
+    finally { if (this.projectApplications.get(project.id) === task) this.projectApplications.delete(project.id); }
+  }
+  currentTarget({ project, client, serviceId, generation }) {
+    return client?.ready && project.client === client && project.service?.serviceId === serviceId && project.service?.generation === generation;
+  }
+  requireTarget(target) {
+    if (!this.currentTarget(target)) throw new Error('Core 连接已变化，模型配置应用尚未确认，请等待重新连接。');
+  }
+  validateProof(target, proof) {
+    this.requireTarget(target);
+    if (proof?.serviceId !== target.serviceId || proof?.generation !== target.generation || typeof proof.applied?.revision !== 'string' || !Number.isSafeInteger(proof.applied.sequence) || proof.applied.sequence < 0 || typeof proof.modelRevision !== 'string' || !proof.credentialStates || typeof proof.credentialStates !== 'object') throw new Error('Core 模型配置应用证明无效，请刷新核对。');
+    return proof;
+  }
+  async readProof(target, requestId) {
+    const proof = await target.client.request('areal/server/modelConfiguration/read', { expectedGeneration: target.generation, ...(requestId ? { requestId } : {}) });
+    return this.validateProof(target, proof);
+  }
+  rememberProof(target, proof, snapshot) {
+    this.validateProof(target, proof);
+    const project = target.project;
+    project.providerRevision = proof.applied.revision;
+    project.providerProof = proof;
+    if (snapshot?.revision === proof.applied.revision) project.providerSnapshot = snapshot;
+    else if (project.providerSnapshot?.revision !== proof.applied.revision) delete project.providerSnapshot;
+  }
+  async confirmProof(target, proof, snapshot) {
+    this.validateProof(target, proof);
+    if (proof.applied.revision !== snapshot.revision) throw new Error('Core 尚未确认目标模型配置，请刷新核对。');
+    this.rememberProof(target, proof, snapshot);
+    if (snapshot.data.some(item => item.enabled !== false && Object.hasOwn(this.config.vault.keys, item.apiKeyEnv) && proof.credentialStates[item.id] !== 'available')) throw Object.assign(new Error('Core 尚未确认模型凭据可用，请检查凭据后重试。'), { configurationSettled: true });
+    const models = await target.client.request('areal/model/list');
+    this.requireTarget(target);
+    this.rememberProof(target, proof, snapshot);
+    target.project.models = models.data ?? models.models ?? [];
+    target.project.providerError = null;
+  }
+  reconcilePending(target) { return this.inProject(target.project, () => this.inspectPending(target)); }
+  async inspectPending(target, notAccepted) {
+    const pending = this.pendingApplications.get(target.project.id);
+    if (!pending) return;
+    try {
+      const sameService = pending.serviceId === target.serviceId && pending.generation === target.generation;
+      const observed = await this.readProof(target, sameService ? pending.requestId : undefined);
+      if (!sameService) {
+        this.rememberProof(target, observed, this.value);
+        if (observed.applied.revision === pending.snapshot.revision) await this.confirmProof(target, observed, pending.snapshot);
+        else target.project.providerError = 'Core 已换代，当前模型配置与原应用目标不同，请刷新后重新应用。';
+        this.pendingApplications.delete(target.project.id);
+        return { generationChanged: true };
+      }
+      const operation = observed.operation;
+      if (operation?.requestId !== pending.requestId) throw new Error('原模型配置操作尚未确认，请等待后刷新。');
+      if (operation.state === 'applied') {
+        const result = this.validateProof(target, operation.result);
+        if (result.applied.revision !== pending.targetRevision || result.applied.sequence <= pending.expectedApplied.sequence) throw new Error('Core 返回了不匹配的模型配置回执，请刷新核对。');
+        if (observed.applied.revision !== result.applied.revision || observed.applied.sequence !== result.applied.sequence) throw new Error('Core 模型配置已再次变化，请刷新核对。');
+        await this.confirmProof(target, result, pending.snapshot);
+        this.pendingApplications.delete(target.project.id);
+      } else if (operation.state === 'rejected' || operation.state === 'unknown' && !operation.error && notAccepted) {
+        this.rememberProof(target, observed, this.value);
+        this.pendingApplications.delete(target.project.id);
+        const error = operation.error ?? notAccepted;
+        target.project.providerError = this.redact(error?.message ?? 'Core 已拒绝模型配置应用。');
+        return { rejected: true, error };
+      } else throw new Error('模型配置应用仍待确认，请等待后刷新；不会重复提交或回滚。');
+    } catch (error) {
+      if (this.currentTarget(target)) target.project.providerError = this.redact(error.message);
+      if (error.configurationSettled) {
+        this.pendingApplications.delete(target.project.id);
+        return { rejected: true, error };
+      }
+      return { pending: true, error };
+    }
+  }
+  async prepareProjects(projects = this.backend.projects.values()) {
+    const targets = [];
+    for (const project of projects) {
+      if (project.service && !project.client?.ready) throw new Error('项目尚未连接，重新连接后再保存。');
+      if (!project.client?.ready) continue;
+      const target = this.target(project);
+      await this.inProject(project, async () => {
+        this.requireTarget(target);
+        if (!['areal/server/modelConfiguration/read', 'areal/server/modelConfiguration/apply'].every(method => target.client.capabilities?.methods?.includes(method))) {
+          project.providerError = '请更新 Core 后再应用模型配置。';
+          throw new Error(project.providerError);
+        }
+        const reconciled = await this.inspectPending(target);
+        if (reconciled?.pending) throw reconciled.error;
+        target.proof = await this.readProof(target);
+        this.rememberProof(target, target.proof, this.value);
+        const status = await target.client.request('areal/server/status');
+        this.requireTarget(target);
+        if (!status.restartSafe) throw new Error('任务或终端正在运行，完成后再保存；修改仍保留。');
+      });
+      targets.push(target);
+    }
+    return targets;
+  }
+  async applyProjects(snapshot, targets) {
+    const outcomes = [];
+    for (const target of targets ?? await this.prepareProjects()) outcomes.push(await this.inProject(target.project, () => this.applyProject(snapshot, target)));
+    return outcomes;
+  }
+  async applyProject(snapshot, target) {
+    try {
+      this.requireTarget(target);
+      if (target.proof.applied.revision === snapshot.revision) {
+        await this.confirmProof(target, target.proof, snapshot);
+        return { target, applied: true };
+      }
+      const credentials = this.config.credentialsFor(snapshot);
+      const pending = { requestId: randomUUID(), serviceId: target.serviceId, generation: target.generation, expectedApplied: target.proof.applied, targetRevision: snapshot.revision, snapshot };
+      this.pendingApplications.set(target.project.id, pending);
+      try {
+        const receipt = this.validateProof(target, await target.client.request('areal/server/modelConfiguration/apply', {
+          requestId: pending.requestId, expectedGeneration: pending.generation, expectedApplied: pending.expectedApplied,
+          targetRevision: snapshot.revision, credentials,
+        }));
+        if (receipt.operation?.requestId !== pending.requestId || receipt.operation.state !== 'applied') throw new Error('模型配置应用尚未确认，请刷新核对。');
+        const result = this.validateProof(target, receipt.operation.result);
+        if (result.applied.revision !== snapshot.revision || result.applied.sequence <= pending.expectedApplied.sequence || !isDeepStrictEqual(result.applied, receipt.applied)) throw new Error('Core 返回了不匹配的模型配置回执，请刷新核对。');
+        await this.confirmProof(target, result, snapshot);
+        this.pendingApplications.delete(target.project.id);
+        return { target, applied: true };
+      } catch (error) {
+        const notAccepted = error.name === 'CoreRpcError' && error.submissionUnknown !== true && ([-32602, -32601, -32003].includes(error.code)
+          || error.code === -32010 && error.data?.reason === 'MODEL_CONFIGURATION_CAPACITY');
+        const reconciled = await this.inspectPending(target, notAccepted ? error : undefined);
+        return { target, applied: !this.pendingApplications.has(target.project.id) && !reconciled?.rejected && this.currentTarget(target), pending: reconciled?.pending === true, error: reconciled?.error ?? error };
+      }
+    } catch (error) {
+      if (this.currentTarget(target)) target.project.providerError = this.redact(error.message);
+      return { target, pending: this.pendingApplications.has(target.project.id) || !this.currentTarget(target), error };
+    }
+  }
+  reconcileProject(project) {
+    const target = this.target(project);
+    return this.inProject(project, async () => {
+      try {
+        this.requireTarget(target);
+        if (!['areal/server/modelConfiguration/read', 'areal/server/modelConfiguration/apply'].every(method => target.client.capabilities?.methods?.includes(method))) throw new Error('请更新 Core 后再应用模型配置。');
+        const reconciled = await this.inspectPending(target);
+        if (reconciled?.pending) return;
+        const snapshot = await this.config.current();
+        this.requireTarget(target);
+        target.proof = await this.readProof(target);
+        this.rememberProof(target, target.proof, snapshot);
+        if (target.proof.applied.revision === snapshot.revision) {
+          await this.confirmProof(target, target.proof, snapshot);
+          return;
+        }
+        if (this.backend.providerUpdating || this.backend.resourcesUpdating || this.backend.activeCommands || this.backend.hasWork()) throw new Error('模型配置尚未应用，请等待任务结束后在模型设置中应用。');
+        const status = await target.client.request('areal/server/status');
+        this.requireTarget(target);
+        if (!status.restartSafe) throw new Error('模型配置尚未应用，请等待任务结束后在模型设置中应用。');
+        const outcome = await this.applyProject(snapshot, target);
+        if (!outcome.applied) throw outcome.error;
+      } catch (error) {
+        this.requireTarget(target);
+        project.providerError = this.redact(error.message);
+      }
+    });
+  }
   async saveAndApply(request) {
     if (this.backend.providerUpdating || this.backend.resourcesUpdating || this.backend.activeCommands || this.backend.starting.size || this.backend.hasWork()) throw new Error('任务或操作正在进行，完成后再保存；修改仍保留。');
     this.backend.providerUpdating = true;
-    const drained = [];
-    let previous, written, candidate;
+    let previous, written, candidate, targets = [], outcomes = [];
     try {
       previous = await this.config.current();
       if (request.expectedRevision !== previous.revision) throw new Error('配置已变化，请刷新后重试。');
-      // 写文件前由每个 Core 在准入锁下确认空闲；不会取消已有任务或终端。
-      for (const project of this.backend.projects.values()) {
-        if (project.service && !project.client?.ready) throw new Error('项目尚未连接，重新连接后再保存。');
-        if (project.client?.ready && !(await project.client.request('areal/server/status')).restartSafe) throw new Error('任务或终端正在运行，完成后再保存；修改仍保留。');
-      }
-      for (const project of this.backend.projects.values()) if (project.client?.ready) {
-        const status = await project.client.request('areal/server/drain', { strategy: 'ifIdle', timeoutMs: 30_000 }, { timeoutMs: 35_000 });
-        if (!status.restartSafe) throw new Error('任务尚未结算，完成后再保存；修改仍保留。');
-        drained.push(project);
-      }
+      targets = await this.prepareProjects();
       written = await this.write({ ...request, operation: request.operation === 'removeAndApply' ? 'remove' : request.operation === 'defaultAndApply' ? 'default' : 'save', discoverModels: true }, next => { candidate = structuredClone(next); });
-      const failures = await this.restart(drained);
-      if (failures.length) throw new Error('项目配置同步失败。');
-      await this.config.current();
+      outcomes = await this.applyProjects(this.value, targets);
+      if (outcomes.some(outcome => !outcome.applied)) throw new Error('项目模型配置应用未全部确认。');
+      if ((await this.config.current()).revision !== written.revision) throw new Error('模型配置已被外部修改，请刷新核对。');
       const result = this.public();
       if (result.pendingApply) throw new Error('Core 尚未确认配置。');
       return result;
     } catch (error) {
-      let rollbackError = null;
+      let rollbackError = null, restored = false;
       if (!written && candidate) {
         try {
-          // CLI 可能已落盘但回执丢失；只对本次精确候选的已确认版本回滚，不能覆盖外部编辑。
           const observed = await this.config.current();
-          if (observed.revision !== previous.revision && isDeepStrictEqual(observed.data, candidate.data) && isDeepStrictEqual(observed.defaultModel, candidate.defaultModel)) written = { revision: observed.revision };
+          if (observed.revision !== previous.revision && isDeepStrictEqual(observed.data, candidate.data) && isDeepStrictEqual(observed.defaultModel, candidate.defaultModel)) written = observed;
         } catch (failure) { rollbackError = failure; }
       }
-      if (written) {
+      if (written && !outcomes.some(outcome => outcome.pending) && !targets.some(target => this.pendingApplications.has(target.project.id))) {
         try {
-          this.config.value = await this.config.execute('write', { expectedRevision: written.revision, data: previous.data, defaultModel: previous.defaultModel });
+          const rollback = await this.config.execute('write', { expectedRevision: written.revision, data: previous.data, defaultModel: previous.defaultModel });
+          this.config.value = rollback;
+          const compensation = await this.applyProjects(rollback);
+          if (compensation.some(outcome => !outcome.applied) || (await this.config.current()).revision !== rollback.revision) throw new Error('原模型配置应用未全部确认');
+          restored = true;
         } catch (failure) { rollbackError = failure; }
       }
-      // 已排空的实例恢复准入；已保存但未同步成功时先 CAS 回滚，绝不宣告保存成功。
-      const failures = await this.restart(drained);
-      throw new Error(`${this.redact(error.message)}${rollbackError ? ' 回滚未确认，请刷新核对配置。' : written ? ' 已恢复原配置，修改仍保留。' : ''}${failures.length ? ' 部分项目需重新连接。' : ''}`);
+      throw new Error(`${this.redact(error.message)}${rollbackError ? ' 回滚未确认，请刷新核对配置。' : restored ? ' 已恢复原配置，修改仍保留。' : written ? ' 配置应用仍待确认，请刷新核对；修改仍保留。' : ''}`);
     } finally { this.backend.providerUpdating = false; this.backend.onChange(); }
   }
   async apply(request) {
@@ -376,38 +537,12 @@ class AppProviders {
     try {
       const current = await this.config.current();
       if (request.expectedRevision !== current.revision) throw new Error('供应商配置已变化，请刷新后重新应用');
-      for (const project of this.backend.projects.values()) {
-        if (project.service && !project.client?.ready) throw new Error('请先重新连接项目，再应用模型配置');
-        if (project.client?.ready && !(await project.client.request('areal/server/status')).restartSafe) throw new Error('请先停止正在运行的任务或终端，再应用模型配置');
-      }
-      const drained = [];
-      try {
-        // Core 在同一准入锁下检查空闲并关闭受理，阻止预检后的新任务竞态。
-        // 全部通过后才重启；失败时只恢复已确认排空的实例，忙碌实例不受影响。
-        for (const project of this.backend.projects.values()) if (project.client?.ready) {
-          const status = await project.client.request('areal/server/drain', { strategy: 'ifIdle', timeoutMs: 30_000 }, { timeoutMs: 35_000 });
-          if (!status.restartSafe) throw new Error('Core 尚有未结算任务或终端，请等待后重试');
-          drained.push(project);
-        }
-      } catch (error) {
-        const failures = await this.restart(drained);
-        this.backend.onChange();
-        throw new Error(`模型配置未完全应用：${this.redact(error.message)}${failures.length ? `；以下项目需重新连接：${failures.join('、')}` : ''}`);
-      }
-      const failures = await this.restart(this.backend.projects.values());
-      await this.config.current();
+      const outcomes = await this.applyProjects(current);
+      if (outcomes.some(outcome => !outcome.applied)) throw new Error('模型配置应用未全部确认，请等待后刷新核对。');
+      if ((await this.config.current()).revision !== current.revision) throw new Error('模型配置已被外部修改，请刷新核对。');
       this.backend.onChange();
-      return { ...this.public(), warning: failures.length ? `以下项目需重新连接：${failures.join('、')}` : null };
+      return this.public();
     } finally { this.backend.providerUpdating = false; }
-  }
-  async restart(projects) {
-    const failures = [];
-    for (const project of projects) {
-      try {
-        await this.backend.restartProject(project);
-      } catch (error) { project.error = this.redact(error.message); failures.push(project.root); }
-    }
-    return failures;
   }
   async test({ id, model, operation }) {
     const provider = this.value.data.find(p => p.id === id);

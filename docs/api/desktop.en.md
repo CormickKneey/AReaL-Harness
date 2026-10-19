@@ -101,6 +101,23 @@ options.readOnly narrows Scope write roots and networking. toolAllowlist narrows
 `areal/model/list.reasoningEffortOptions` reports the existing HTTP adapter's accepted values (`none/minimal/low/medium/high/xhigh`; empty for other adapters). This does not guarantee support by every remote model. Composer reads these options from the catalog and submits parameters through the existing thread configuration path.
 
 <a id="skills"></a>
+## Model configuration hot apply
+
+Shared services provide two narrow methods. Discover support from the current connection's `areal/capabilities.methods`. Only an authenticated `desktop-owner` with `manage`, `tools` and no Thread scope may call them. Observers, ordinary model clients and standalone Engines without a configuration controller do not have this capability. Requests cannot select a file path, supply Provider metadata or change arbitrary process environment variables.
+
+| Method | Request | Purpose |
+| --- | --- | --- |
+| `areal/server/modelConfiguration/read` | `{requestId?,expectedGeneration?}` | Read the actual applied version or inspect the original request. |
+| `areal/server/modelConfiguration/apply` | `{requestId,expectedGeneration,expectedApplied:{revision,sequence},targetRevision,credentials}` | Read authoritative configuration and apply it under Core's admission gate. |
+
+`credentials` is a bounded mapping from `AREAL_CREDENTIAL_` names referenced by the target file to secret values. References are immutable additions; a different value for an existing reference is rejected. Old references remain available to existing tasks. Secrets exist only in trusted requests and execution memory, never in configuration, history, digests, logs or receipts. This endpoint cannot update ordinary startup environment variables.
+
+The response contains `{serviceId,generation,applied:{revision,sequence},modelRevision,credentialStates,operation?}`. `applied.revision` identifies the committed whole configuration file; `sequence` increments after successful application within that generation. These differ from the default model's `modelRevision`. Startup assembly begins at sequence 0. Core checks the revision and configuration from one controlled file snapshot. It rejects stale targets, non-model deployment changes, active work and credential conflicts, without draining or restarting Core or Runtime. Existing Thread, Turn and queue configurations retain their original credential references.
+
+`operation` identifies the original `requestId` and has state `running`, `applied`, `rejected` or `unknown`, with an optional redacted terminal `result` or `error`. Core owns accepted operations; disconnecting does not cancel a commit. Duplicate requests return their original result without publishing again. Inspect the original request after losing a response. In-memory receipts are bounded; a generation change or unavailable record does not prove failure and cannot authorize automatic replay. Clients may verify a new instance's current readiness without treating it as the old request's receipt.
+
+Each Core applies and confirms independently. Known partial failures may trigger a file CAS compensation followed by application of the actual restored revision. Do not roll back while an earlier request remains unknown. External writes or newly admitted work may prevent compensation; retain actual applied versions and pending state. The GUI reports save completion only when every project confirms and the authoritative file still matches the target. File watching and explicit application share the applied baseline. Non-model settings retain the safe-restart boundary.
+
 ## Skill metadata and resources
 
 Trusted deployment manifests accept skills as `{id,revision,root,metadata?:{name,description}}`, with root relative to the manifest directory. When metadata is omitted, registration parses only the bounded SKILL.md header without scanning attachments. Explicit deployments and discovery share the same on-demand read behavior.
@@ -137,7 +154,7 @@ features.goals=true advertises Goal support without a separate configuration tog
 
 Local service discovery, window-independent lifecycle and Desktop Main integration use the [local service contract](local-service.en.md). `server/status` and `server/drain` additionally return `activeGoals` (Thread IDs) and `pendingQueueItems` (pending/running queue count). These are additive response fields; restartSafe still describes execution cleanup rather than absence of scheduled work.
 
-Shared services expose `server/status.configuration` as `{modelRevision,restartRequired,error}`; other deployments return null. Missing environment credentials during model reload may report both `restartRequired=true` and `error`, indicating that a local client with valid credentials must perform a safe restart; other reload errors do not trigger automatic restart. `areal/server/configurationChanged` publishes `{threadId,configuration}` to subscribed threads. `server/drain` also accepts `strategy="ifIdle"`: check idle state and close admission under one gate; busy rejection keeps work running. See [configuration reload](../guides/configuration.en.md).
+Shared services expose `server/status.configuration` as `{modelRevision,applied,appliedRevision,applySequence,currentFileRevision,credentialStates,pendingApply,restartRequired,error}`; other deployments return null. `applied={revision,sequence}` identifies the file revision confirmed by Core. GUI model settings use the explicit hot apply interface above. Missing environment credentials during ordinary CLI model reload may report both `restartRequired=true` and `error`, indicating that a local client with valid credentials must perform a safe restart; other reload errors do not trigger automatic restart. `areal/server/configurationChanged` publishes `{threadId,configuration}` to subscribed threads. `server/drain` also accepts `strategy="ifIdle"`: check idle state and close admission under one gate; busy rejection keeps work running. See [configuration reload](../guides/configuration.en.md).
 
 `server/status` and `server/drain` also return `lifecycle={version:1,admission:"open"|"draining"|"closed",ifIdle:{allowed,reasons},settled:{allowed,reasons},executionOutcomes:{uninspectedUnknown}}`. The outcome summary is an additive version 1 field. Its count covers historical tool calls or hook invocations requiring inspection, independently of physical resource settlement. `unresolvedTools` retains the original inspection entries. `restartSafe` equals `settled.allowed`.
 

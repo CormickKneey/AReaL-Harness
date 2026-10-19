@@ -1,122 +1,251 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtemp, mkdir, readFile, writeFile, readdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, readdir, realpath } from 'node:fs/promises';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync, spawn } from 'node:child_process';
 import { createServer } from 'node:http';
+import { applicationFixture } from './application-fixture.mjs';
+import { persistentServiceFixture } from './persistent-service-fixture.mjs';
 import { createHash } from 'node:crypto';
-const gui=resolve(dirname(fileURLToPath(import.meta.url)),'..'),root=resolve(gui,'../..');
-const require=createRequire(join(gui,'app/package.json'));
-const {_electron:electron}=require('playwright-core');
-const {ServiceConnection,waitForServiceProcessExit}=require('../app/src/core/service-client.cjs');
-const {DesktopLifecycle}=require('../app/src/core/lifecycle.cjs');
-const {executeCore,spawnCore}=require('../app/src/core/core-process.cjs');
-const binary=process.env.AREAL_CORE_BIN;assert.ok(binary?.startsWith(join(root,'.local/dev-bin/')));
-const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
-const sourcePaths=['app/src/core/main.cjs','app/src/core/menu-bar.cjs','app/src/core/service-client.cjs','app/src/core/startup-recovery.cjs',
-  'renderer/src/App.tsx','renderer/src/BackendStatusNotice.tsx','renderer/src/settings/ServiceStatusSettings.tsx','renderer/src/services.ts',
-  'packages/workbench/client/desktop-contract.cjs','scripts/desktop-exit-smoke.mjs','renderer/dist/index.html'];
-const sourceHashes=Object.fromEntries(await Promise.all(sourcePaths.map(async path=>[path,sha(await readFile(join(gui,path)))])));
-const binaryHashes=Object.fromEntries(await Promise.all(['areal','areal-runtime','areal-runtime-fs'].map(async name=>[name,sha(await readFile(join(dirname(binary),name)))])));
-const scratch=await mkdtemp('/private/tmp/ae-'),workspace=join(scratch,'workspace'),config=join(scratch,'config.toml');
-await mkdir(workspace);execFileSync('git',['init','-b','main'],{cwd:workspace,stdio:'ignore'});
-const checks=[],errors=[],requests=[],held=new Map();
-const model=createServer(async(req,res)=>{try{let raw='';for await(const c of req)raw+=c;const body=JSON.parse(raw);requests.push(body);
-  const text=JSON.stringify(body.messages);const owner=text.includes('CLI_HOLD')?'cli':'gui';
-  res.writeHead(200,{'Content-Type':'text/event-stream'});res.write(`data: ${JSON.stringify({choices:[{index:0,delta:{content:owner+'_RUNNING'},finish_reason:null}]})}\n\n`);
-  held.set(owner,res);res.on('close',()=>held.delete(owner));
-}catch(e){errors.push(e.message);res.destroy(e);}});
-await new Promise(r=>model.listen(0,'127.0.0.1',r));
-const configText=`schema_version=1\n[model]\nprovider="fixture"\nname="fixture"\n[model.providers.fixture]\nprotocol="chat-completions"\nendpoint="http://127.0.0.1:${model.address().port}/v1/chat/completions"\n`;
-await writeFile(config,configText);
-const appPath=join(scratch,'app');await mkdir(appPath);
-await writeFile(join(appPath,'package.json'),JSON.stringify({name:'desktop-exit-fixture',main:'bootstrap.cjs'}));
-await writeFile(join(appPath,'bootstrap.cjs'),`const {dialog}=require('electron');globalThis.__exitConfirm=false;globalThis.__exitDialogs=[];dialog.showMessageBox=async(...args)=>{const o=args.at(-1);globalThis.__exitDialogs.push(o);return {response:globalThis.__exitConfirm && o.message==='确认取消后台任务？'?1:0};};require(${JSON.stringify(join(gui,'app/src/main.cjs'))});`);
-const envFor=async name=>{const base=join(scratch,name);await mkdir(join(base,'user/.areal'),{recursive:true});const env={...process.env,AREAL_CORE_BIN:binary,AREAL_CORE_CONFIG:config,AREAL_GUI_USER_DATA:join(base,'electron'),AREAL_CORE_HOME:join(base,'core'),AREAL_CORE_USER_HOME:join(base,'user'),AREAL_HARNESS_SERVICE_HOME:join(base,'registry')};for(const k of ['ELECTRON_RUN_AS_NODE','AREAL_CORE_WORKSPACE','AREAL_HARNESS_HOME','AREAL_HARNESS_CONFIG','AREAL_CORE_DESKTOP_CONFIG'])delete env[k];return env;};
-const env=await envFor('main'),otherEnv=await envFor('other');
-const cliHome=join(scratch,'cli-home'),cliRegistry=join(scratch,'cli-registry');await mkdir(cliHome);
-const cliEnv={...env,AREAL_HARNESS_HOME:cliHome,AREAL_HARNESS_SERVICE_HOME:cliRegistry};
-const cli=async(args,environment=cliEnv)=>JSON.parse((await executeCore(binary,['service',...args,'--json'],{env:environment,timeout:120000})).stdout);
-const until=async(fn,label,ms=60000)=>{const end=Date.now()+ms;while(Date.now()<end){const v=await fn();if(v)return v;await new Promise(r=>setTimeout(r,100));}throw new Error('Timeout: '+label);};
-const state=()=>page.evaluate(()=>window.arealDesktop.snapshot());
-const metadata=e=>readFile(join(e.AREAL_CORE_HOME,'service.json'),'utf8').then(JSON.parse);
-const connect=async e=>{const m=await metadata(e),c=new ServiceConnection();await c.connect(m);const p=await c.request('hello',{protocol:m.protocol,identity:m.identity});return {m,c,p};};
-let app,page,guiProcess,otherApp,cliChild,cliExit,shared,projectId,threadId,passed=false;
-const closeGui=async()=>{if(app){await app.close();app=null;}};
-const launch=async()=>{app=await electron.launch({executablePath:require('electron'),args:[appPath],env,timeout:120000});guiProcess=app.process();page=await app.firstWindow();page.setDefaultTimeout(20000);page.on('pageerror',e=>errors.push(e.message));await page.getByTestId('areal-workbench').waitFor({timeout:120000});await until(async()=>(await state()).connection?.state==='ready','GUI ready');};
-const menu=label=>app.evaluate(({Menu},label)=>{const item=Menu.getApplicationMenu().items[0].submenu.items.find(i=>i.label===label);if(!item)throw new Error('missing menu '+label);item.click();},label);
-console.log('Desktop exit evidence:',scratch);
-try{
-  cliChild=spawnCore(binary,['exec','--config',config,'--workspace',workspace,'--output-format','json','CLI_HOLD'],{env:cliEnv});
-  cliChild.stdin.end();
-  let cliOutput='';cliChild.stdout.on('data',c=>cliOutput+=c);cliChild.stderr.on('data',c=>cliOutput+=c);cliChild.on('exit',(code,signal)=>{cliExit={code,signal};});
-  await until(()=>held.has('cli'),'exclusive CLI is running');
-  const runIds=await readdir(join(cliHome,'cli/runs'));assert.equal(runIds.length,1);
-  const exclusiveState=join(cliHome,'cli/runs',runIds[0],'state');
-  await assert.rejects(cli(['ensure','--workspace',workspace,'--data-dir',exclusiveState,'--config',config]),e=>/owns|lock|already.*open/.test(e.message+e.stderr));
-  assert.equal(cliExit,undefined);checks.push('exclusive CLI owns its run-scoped Store; another owner cannot reuse it');
-  shared=await cli(['ensure','--workspace',workspace,'--config',config]);
-  assert.notEqual(shared.dataDir,exclusiveState);
-  otherApp=await electron.launch({executablePath:require('electron'),args:[appPath],env:otherEnv,timeout:120000});
-  const otherPage=await otherApp.firstWindow();await otherPage.getByTestId('areal-workbench').waitFor({timeout:120000});
-  await otherApp.evaluate(({dialog},workspace)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[workspace]});},workspace);
-  await otherPage.evaluate(()=>window.arealDesktop.chooseProject());
-  await until(()=>otherPage.evaluate(async workspace=>(await window.arealDesktop.snapshot()).projects.some(p=>p.root===workspace&&p.state?.connected),workspace),'other profile Core ready');
-  const otherBefore=await connect(otherEnv);const otherPid=otherBefore.m.pid;otherBefore.c.close();
-  await launch();
-  await app.evaluate(({dialog},workspace)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[workspace]});},workspace);
-  await page.evaluate(()=>window.arealDesktop.chooseProject());
-  projectId=(await until(async()=>(await state()).projects.find(p=>p.root===workspace&&p.state?.connected),'main project')).id;
-  await page.locator('#backend-status').waitFor({state:'hidden'});
-  await page.getByTestId('chat-input').fill('GUI_HOLD');await page.getByRole('button',{name:'发送',exact:true}).click();
-  threadId=await until(()=>page.getByTestId('areal-workbench').getAttribute('data-thread-id'),'main Thread');
-  await until(()=>held.has('gui'),'GUI turn is running');
-  const draft='UNSENT_EXIT_DRAFT';await page.getByTestId('chat-input').fill(draft);
-  await until(()=>page.evaluate(({projectId,threadId,draft})=>localStorage.getItem(`areal-gui:draft:${projectId}:${threadId}`)===draft,{projectId,threadId,draft}),'draft persisted');
-  const original=await metadata(env);
-  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].close());
-  assert.equal(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isVisible()),false);
-  const duplicate=spawn(require('electron'),[appPath],{env,stdio:['ignore','pipe','pipe']});let duplicateOutput='';duplicate.stdout.on('data',c=>duplicateOutput+=c);duplicate.stderr.on('data',c=>duplicateOutput+=c);
-  await until(()=>duplicate.exitCode!==null,'duplicate launch exits');
-  assert.equal(duplicate.exitCode,0);assert.match(duplicateOutput,/已有窗口|已在运行/);
-  await until(()=>app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isVisible()),'existing GUI restored');
-  assert.equal((await metadata(env)).pid,original.pid);assert.equal(await page.getByTestId('chat-input').innerText(),draft);
-  checks.push('close hides only the window; second launch restores the existing window and explains reuse');
-  await menu('退出界面，后台继续');await until(()=>guiProcess.exitCode!==null,'interface quit');app=null;
-  const retained=await connect(env);assert.equal(retained.m.pid,original.pid);assert.equal(retained.p.snapshot.projects.find(p=>p.id===projectId).state.threads[threadId].turns.at(-1).status,'inProgress');retained.c.close();
-  assert.equal(held.has('gui'),true);assert.equal(cliExit,undefined);checks.push('interface quit preserves the same background and active Turn');
-  await launch();await until(async()=>(await state()).projects.find(p=>p.id===projectId)?.state?.connected,'reopened project');
-  assert.equal(await page.getByTestId('chat-input').innerText(),draft);assert.equal(requests.length,2,'GUI reopen replays no prompt');
-  await page.locator('#backend-status').waitFor({state:'hidden'});
-  await page.getByRole('button',{name:'设置',exact:true}).click();
-  await page.getByRole('button',{name:'后台服务',exact:true}).click();
-  await page.getByLabel('后台服务管理').waitFor();await page.getByText('正在执行',{exact:true}).waitFor();
-  await page.screenshot({path:join(scratch,'01-blockers.png')});
-  await menu('停止后台并退出…');await until(()=>app.evaluate(()=>globalThis.__exitDialogs.length>0),'stop quit confirmation');
-  const declined=await app.evaluate(()=>globalThis.__exitDialogs);assert.equal(declined[0].message,'确认取消后台任务？');assert.match(declined[0].detail,new RegExp(threadId));
-  assert.equal((await metadata(env)).pid,original.pid);assert.equal(guiProcess.exitCode,null);assert.equal(held.has('gui'),true);
-  checks.push('stop-and-quit lists the original active Thread and cancellation can be declined');
-  await app.evaluate(()=>{globalThis.__exitConfirm=true;});
-  await menu('停止后台并退出…');await until(()=>guiProcess.exitCode!==null,'stop and GUI exit',120000);app=null;
-  await waitForServiceProcessExit(env.AREAL_CORE_HOME,original);
-  const own=await cli(['list'],env);assert.ok(own.length);assert.ok(own.every(s=>s.state==='stopped'));
-  const sharedAfter=await cli(['status','--instance',shared.serviceId]);assert.equal(sharedAfter.state,'ready');assert.equal(sharedAfter.generation,shared.generation);
-  const otherAfter=await connect(otherEnv);assert.equal(otherAfter.m.pid,otherPid);assert.equal(otherAfter.p.snapshot.projects.find(p=>p.root===workspace).state.connected,true);otherAfter.c.close();
-  for(const target of otherBefore.p.service.targets.filter(t=>t.serviceId)){const descriptor=await cli(['status','--instance',target.serviceId],otherEnv);assert.equal(descriptor.state,'ready');assert.equal(descriptor.generation,target.generation,'other profile Host generation remains unchanged');}
-  assert.equal(cliExit,undefined);assert.equal(held.has('cli'),true);assert.equal(await readFile(config,'utf8'),configText);
-  checks.push('stop-and-quit waits for original Host/Runtime/Desktop exit; independent CLI and another GUI profile remain running');
-  assert.deepEqual(errors,[]);passed=true;
-}catch(e){errors.push(e.stack);if(page){await page.screenshot({path:join(scratch,'failure.png')}).catch(()=>{});await writeFile(join(scratch,'failure.txt'),await page.locator('body').innerText().catch(()=>''));}}
-finally{
-  await closeGui().catch(e=>errors.push(e.message));if(otherApp)await otherApp.close().catch(e=>errors.push(e.message));
-  for(const environment of [env,otherEnv]){let c;try{const connected=await connect(environment);c=connected.c;const lifecycle=new DesktopLifecycle({connection:c,metadata:connected.m,home:environment.AREAL_CORE_HOME});await until(async()=>!(await lifecycle.observe()).blockers.length,'cleanup admission');await lifecycle.stop({mode:'cancel'});await waitForServiceProcessExit(environment.AREAL_CORE_HOME,connected.m);}catch(e){if(e.code!=='ENOENT'){errors.push('cleanup: '+e.message);passed=false;}}finally{c?.close();}}
-  for(const service of await cli(['list']))if(service.state!=='stopped')await cli(['stop','--instance',service.serviceId,'--expected-generation',service.generation,'--cancel']).catch(e=>{errors.push(e.message);passed=false;});
-  for(const res of held.values())res.end(`data: ${JSON.stringify({choices:[{index:0,delta:{},finish_reason:'stop'}]})}\n\ndata: [DONE]\n\n`);
-  if(cliChild)await until(()=>cliExit,'exclusive CLI exit',30000).catch(()=>{cliChild.kill('SIGTERM');passed=false;});
-  model.closeAllConnections();await new Promise(r=>model.close(r));
-  for(const [path,hash] of Object.entries(sourceHashes))if(sha(await readFile(join(gui,path)))!==hash){errors.push('source changed: '+path);passed=false;}
-  for(const [name,hash] of Object.entries(binaryHashes))if(sha(await readFile(join(dirname(binary),name)))!==hash){errors.push('binary changed: '+name);passed=false;}
-  await writeFile(join(scratch,'manifest.json'),JSON.stringify({passed,checks,errors,cliExit,sourceHashes,binaryHashes,commit:execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(),diffSha256:createHash('sha256').update(execFileSync('git',['diff','HEAD'],{cwd:root})).digest('hex'),binary,scope:'isolated real Electron/Core/Runtime; directory picker and native confirmations use fixtures'},null,2));
+
+const script = fileURLToPath(import.meta.url);
+const gui = resolve(dirname(script), '..'), root = resolve(gui, '../..');
+const require = createRequire(join(gui, 'app/package.json'));
+const { _electron: electron } = require('playwright-core');
+const { executeCore } = require('../app/src/core/core-process.cjs');
+const binary = process.env.AREAL_CORE_BIN;
+assert.ok(binary?.startsWith(join(root, '.local/dev-bin/')), 'Use a private fixed Core slot in this checkout');
+const executable = process.env.AREAL_GUI_EXECUTABLE || require('electron');
+const packaged = !!process.env.AREAL_GUI_EXECUTABLE;
+const bundledRoot = packaged ? join(dirname(dirname(executable)), 'Resources/areal-core') : null;
+const productBinary = packaged ? join(bundledRoot, 'bin/areal') : binary;
+const sha = value => createHash('sha256').update(value).digest('hex');
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const until = async (read, label, ms = 90000) => {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) { const result = await read(); if (result) return result; await sleep(100); }
+  throw new Error(`Timeout: ${label}`);
+};
+const alive = pid => { try { process.kill(pid, 0); return true; } catch (error) { if (error.code === 'ESRCH') return false; throw error; } };
+const descendants = seeds => {
+  const rows = execFileSync('ps', ['-axo', 'pid=,ppid='], { encoding: 'utf8' }).trim().split('\n').map(line => line.trim().split(/\s+/).map(Number));
+  const pids = new Set(seeds.filter(Boolean));
+  for (let changed = true; changed;) { changed = false; for (const [pid, parent] of rows) if (pids.has(parent) && !pids.has(pid)) { pids.add(pid); changed = true; } }
+  return [...pids];
+};
+const records = async env => {
+  let names;
+  try { names = await readdir(join(env.AREAL_HARNESS_SERVICE_HOME, 'services')); }
+  catch (error) { if (error.code === 'ENOENT') return []; throw error; }
+  return (await Promise.all(names.map(name => readFile(join(env.AREAL_HARNESS_SERVICE_HOME, 'services', name, 'service.json'), 'utf8').then(JSON.parse).catch(error => { if (error.code === 'ENOENT') return null; throw error; })))).filter(Boolean);
+};
+const metadata = env => readFile(join(env.AREAL_CORE_HOME, 'service.json'), 'utf8').then(JSON.parse);
+const cli = async (env, args) => JSON.parse((await executeCore(binary, ['service', ...args, '--json'], { env, timeout: 120000 })).stdout);
+const fixture = async (scratch, config, name) => {
+  const base = join(scratch, name); await mkdir(join(base, 'user/.areal'), { recursive: true });
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) if (/^(AREAL_|OPENAI_|ANTHROPIC_)/.test(key) || key === 'ELECTRON_RUN_AS_NODE') delete env[key];
+  Object.assign(env, { ...(!packaged ? { AREAL_CORE_BIN: binary } : {}), AREAL_CORE_CONFIG: config, AREAL_GUI_USER_DATA: join(base, 'electron'), AREAL_CORE_HOME: join(base, 'core'), AREAL_CORE_USER_HOME: join(base, 'user'), AREAL_HARNESS_SERVICE_HOME: join(base, 'registry') });
+  const application = await applicationFixture(gui, join(base, 'app'));
+  return { env, appPath: application.path, pids: [], closeOwner: application.close };
+};
+const launch = async entry => {
+  entry.app = await electron.launch({ executablePath: executable, args: packaged ? [] : [entry.appPath], env: entry.env, timeout: 120000 });
+  entry.process = entry.app.process();
+  entry.log = ''; entry.process.stderr?.on('data', bytes => { entry.log += bytes; });
+  entry.page = await entry.app.firstWindow();
+  entry.page.setDefaultTimeout(20000);
+  await entry.page.getByTestId('areal-workbench').waitFor({ timeout: 120000 });
+  await until(async () => (await entry.page.evaluate(() => window.arealDesktop.snapshot())).connection?.state === 'ready', 'GUI connected');
+  await entry.app.evaluate(({ dialog }) => {
+    globalThis.__quitConfirm = false; globalThis.__quitDialogs = [];
+    dialog.showMessageBox = async (...args) => { const options = args.at(-1); globalThis.__quitDialogs.push(options); return { response: globalThis.__quitConfirm && ['确认取消后台任务？', '停止任务并退出应用？', '退出应用并暂停服务？'].includes(options.message) ? 1 : options.cancelId ?? 0 }; };
+  });
+  entry.metadata = await metadata(entry.env);
+  entry.pids = descendants([entry.process.pid, entry.metadata.pid]);
+};
+const choose = async (entry, workspace) => {
+  await entry.app.evaluate(({ dialog }, workspace) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [workspace] }); }, workspace);
+  await entry.page.evaluate(() => window.arealDesktop.chooseProject());
+  const project = await until(async () => (await entry.page.evaluate(() => window.arealDesktop.snapshot())).projects.find(project => project.root === workspace && project.state?.connected), 'project Core ready');
+  assert.equal(await realpath(project.core.binary), await realpath(productBinary), 'GUI chooses its expected bundled or source Core');
+  entry.coreBinary = project.core.binary;
+  entry.pids = [...new Set([...entry.pids, ...descendants([entry.process.pid, entry.metadata.pid])])];
+  return project;
+};
+const quit = entry => entry.app.evaluate(({ Menu }) => {
+  const menu = Menu.getApplicationMenu().items[0].submenu.items;
+  const assertMenu = menu.find(item => item.label === '退出 AReaL Harness');
+  if (!assertMenu) throw new Error('Safe application quit menu is missing');
+  assertMenu.click();
+});
+const gone = async entry => {
+  try { await until(async () => {
+    const services = await records(entry.env);
+    const pids = [...new Set([...entry.pids, ...services.flatMap(service => [service.hostPid, service.corePid])])];
+    return pids.every(pid => !alive(pid));
+  }, 'all owned Main/Desktop/Host/Core/Runtime/helpers/bridges exit'); }
+  catch (error) {
+    const services = await records(entry.env);
+    const pids = [...new Set([...entry.pids, ...services.flatMap(service => [service.hostPid, service.corePid])])];
+    const snapshot = await entry.page.evaluate(() => window.arealDesktop.snapshot()).catch(e => ({ error: e.message }));
+    const processes = execFileSync('ps', ['-ww', '-axo', 'pid=,ppid=,state=,comm='], { encoding: 'utf8' }).split('\n').filter(line => pids.includes(Number(line.trim().split(/\s+/)[0])));
+    await writeFile(join(dirname(entry.env.AREAL_CORE_HOME), 'exit-failure.json'), JSON.stringify({ pids, processes, services, snapshot, mainLog: entry.log }, null, 2));
+    throw error;
+  }
+};
+const cleanupEntry = async entry => {
+  if (entry.process && alive(entry.process.pid)) await entry.app.evaluate(({ app }) => app.exit(1)).catch(() => entry.process.kill('SIGKILL'));
+  await entry.closeOwner();
+  if (entry.process) await gone(entry);
+};
+const runnerPath = process.argv.find(arg => arg.startsWith('--runner-child='))?.slice('--runner-child='.length);
+if (runnerPath) {
+  const config = join(runnerPath, 'config.toml'), workspace = join(runnerPath, 'workspace');
+  const entry = await fixture(runnerPath, config, 'child');
+  const cliOwner = await persistentServiceFixture({ binary, env: { AREAL_HARNESS_SERVICE_HOME: join(runnerPath, 'cli-registry') }, args: ['--workspace', workspace, '--config', config], evidence: join(runnerPath, 'cli-cleanup.json') });
+  await launch(entry); await choose(entry, workspace);
+  entry.pids.push(...descendants([cliOwner.pid, cliOwner.descriptor.hostPid, cliOwner.descriptor.corePid]));
+  await writeFile(join(runnerPath, 'owned.json'), JSON.stringify({ pids: entry.pids, desktop: { pid: entry.metadata.pid, desktopGeneration: entry.metadata.desktopGeneration } }));
+  if (process.argv.includes('--injected-failure')) { try { throw new Error('injected assertion failure'); } finally { await cliOwner.close(); await cleanupEntry(entry); } }
+  await new Promise(() => {});
 }
-assert.ok(passed,errors.join('\n'));console.log('PASS',checks);
+
+const interruption = process.argv.find(arg => arg.startsWith('--await-interruption='))?.slice('--await-interruption='.length);
+const scratch = interruption || await mkdtemp('/private/tmp/ae-');
+console.log('Application lifecycle evidence:', scratch);
+const workspace = join(scratch, 'workspace'); await mkdir(workspace);
+execFileSync('git', ['init', '-b', 'main'], { cwd: workspace, stdio: 'ignore' });
+const requests = [], held = new Set(), checks = [], errors = [], entries = [];
+checks.push = (...items) => { console.log('CHECK', ...items); return Array.prototype.push.apply(checks, items); };
+const model = createServer(async (request, response) => {
+  try {
+    let raw = ''; for await (const chunk of request) raw += chunk; requests.push(JSON.parse(raw));
+    response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    response.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: 'APPLICATION_RUNNING' }, finish_reason: null }] })}\n\n`);
+    held.add(response); response.on('close', () => held.delete(response));
+  } catch (error) { errors.push(error.stack); response.destroy(); }
+});
+await new Promise(resolve => model.listen(0, '127.0.0.1', resolve));
+const config = join(scratch, 'config.toml');
+await writeFile(config, `schema_version=1\n[model]\nprovider="fixture"\nname="fixture"\n[model.providers.fixture]\nprotocol="chat-completions"\nendpoint="http://127.0.0.1:${model.address().port}/v1/chat/completions"\n`);
+const sourceHashes = Object.fromEntries(await Promise.all(['app/src/core/main.cjs', 'app/src/core/service-main.cjs', 'app/src/core/service-client.cjs', 'app/src/core/backend.cjs', 'app/src/core/core-process.cjs', 'scripts/desktop-exit-smoke.mjs', 'renderer/dist/index.html'].map(async path => [path, sha(await readFile(join(gui, path)))])));
+const binaryHashes = Object.fromEntries(await Promise.all(['areal', 'areal-runtime', 'areal-runtime-fs'].map(async name => [name, sha(await readFile(join(dirname(binary), name)))])));
+const productHashes = packaged ? Object.fromEntries(await Promise.all(['bin/areal', 'libexec/areal/areal-runtime', 'libexec/areal/areal-runtime-fs'].map(async path => [path, sha(await readFile(join(bundledRoot, path)))]))) : binaryHashes;
+const cliEnv = { ...process.env, AREAL_HARNESS_HOME: join(scratch, 'cli-home'), AREAL_HARNESS_SERVICE_HOME: join(scratch, 'cli-registry') };
+for (const key of ['AREAL_GUI_OWNER', 'AREAL_GUI_LIFETIME_FD', 'AREAL_GUI_DESKTOP_LIFETIME_FD']) delete cliEnv[key];
+let independent, cliOwner, passed = false;
+try {
+  cliOwner = await persistentServiceFixture({ binary, env: cliEnv, args: ['--workspace', workspace, '--config', config], evidence: join(scratch, 'cli-cleanup.json') });
+  independent = cliOwner.descriptor;
+  assert.equal(independent.owner, undefined, 'independent persistent CLI has no GUI owner');
+  const peer = await fixture(scratch, config, 'peer'); entries.push(peer); await launch(peer); await choose(peer, workspace);
+  const peerBefore = await records(peer.env);
+  const main = await fixture(scratch, config, 'normal'); entries.push(main); await launch(main);
+  const hiddenWorkspace = join(scratch, 'hidden-workspace'); await mkdir(hiddenWorkspace);
+  const hiddenProject = await choose(main, hiddenWorkspace);
+  const hidden = await main.page.evaluate(projectId => window.arealDesktop.command('library', { operation: 'hideProject', projectId, hidden: true }), hiddenProject.id);
+  assert.equal(hidden.ok, true, JSON.stringify(hidden));
+  const project = await choose(main, workspace);
+  const services = await records(main.env); assert.ok(services.length > 0);
+  assert.ok(services.every(service => service.owner?.kind === 'gui' && service.owner.appRunId === main.metadata.applicationOwner.appRunId));
+  await main.page.getByTestId('chat-input').fill('hold application lifecycle'); await main.page.getByRole('button', { name: '发送', exact: true }).click();
+  await until(() => held.size === 1, 'active model request');
+  if (interruption) {
+    const pids = descendants([cliOwner.pid, independent.hostPid, independent.corePid, ...entries.flatMap(entry => [entry.process.pid, entry.metadata.pid])]);
+    await writeFile(join(scratch, 'owned.json'), JSON.stringify({ pids, modelRequestActive: held.size === 1 }));
+    await new Promise(() => {});
+  }
+  const draft = 'UNSENT_APPLICATION_DRAFT'; await main.page.getByTestId('chat-input').fill(draft);
+  await sleep(300);
+  const before = await records(main.env);
+  await main.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+  assert.equal(await main.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()), false);
+  await main.app.evaluate(({ app }) => app.emit('activate'));
+  await until(() => main.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()), 'Dock activation restores window');
+  assert.equal((await metadata(main.env)).pid, main.metadata.pid); assert.equal(await main.page.getByTestId('chat-input').innerText(), draft);
+  assert.deepEqual((await records(main.env)).map(service => service.generation), before.map(service => service.generation));
+  assert.equal(requests.length, 1); checks.push('window close and Dock reopen retain application owner, engine generations, model request and draft');
+  await quit(main);
+  await until(() => main.app.evaluate(() => globalThis.__quitDialogs.length > 0), 'active quit confirmation');
+  assert.equal(main.process.exitCode, null); assert.equal(held.size, 1);
+  const dialogs = await main.app.evaluate(() => globalThis.__quitDialogs); assert.equal(dialogs[0].message, '停止任务并退出应用？');
+  checks.push('ordinary application quit asks before cancelling active work; cancel preserves the running request');
+  await main.app.evaluate(() => { globalThis.__quitConfirm = true; });
+  main.pids = [...new Set([...main.pids, ...descendants([main.process.pid, main.metadata.pid])])];
+  await quit(main); await gone(main);
+  assert.equal((await cli(cliEnv, ['status', '--instance', independent.serviceId])).generation, independent.generation);
+  assert.equal((await cli(cliEnv, ['status', '--instance', independent.serviceId])).state, 'ready');
+  assert.ok((await records(main.env)).every(service => service.state === 'stopped'));
+  assert.equal(alive(peer.process.pid), true); assert.equal(alive(peer.metadata.pid), true);
+  assert.deepEqual((await records(peer.env)).map(service => service.generation), peerBefore.map(service => service.generation));
+  assert.ok(peerBefore.every(service => alive(service.hostPid) && alive(service.corePid)));
+  checks.push('normal quit preserves another GUI profile using the same executable');
+  await quit(peer); await gone(peer);
+  checks.push('confirmed quit cleans hidden-project engines and the whole owned process chain; persistent CLI remains ready');
+
+  const restarted = await fixture(scratch, config, 'idle'); entries.push(restarted); await launch(restarted); await choose(restarted, workspace);
+  await quit(restarted); await gone(restarted); checks.push('idle application quit completes physical cleanup without a cancellation dialog');
+  const scheduled = await fixture(scratch, config, 'scheduled'); entries.push(scheduled); await launch(scheduled);
+  const scheduledProject = await choose(scheduled, workspace);
+  const task = await scheduled.page.evaluate(projectId => window.arealDesktop.command('manage', { projectId, operation: 'taskCreate', mode: 'scheduled', objective: 'FUTURE_APPLICATION_SCHEDULE', interactionMode: 'interactive', schedule: { at: Math.floor(Date.now() / 1000) + 3600, timeZone: 'UTC' } }), scheduledProject.id);
+  assert.equal(task.ok, true, JSON.stringify(task));
+  await quit(scheduled);
+  await until(() => scheduled.app.evaluate(() => globalThis.__quitDialogs.length > 0), 'scheduled service quit impact');
+  const scheduleDialog = await scheduled.app.evaluate(() => globalThis.__quitDialogs.at(-1));
+  assert.match(scheduleDialog.detail, /FUTURE_APPLICATION_SCHEDULE/); assert.equal(scheduled.process.exitCode, null);
+  await scheduled.app.evaluate(() => { globalThis.__quitConfirm = true; });
+  await quit(scheduled); await gone(scheduled);
+  checks.push('idle enabled schedules display quit impact and permit cancel; confirmation stops triggering without deleting definitions');
+
+  for (const target of ['Main', 'Desktop']) {
+    const entry = await fixture(scratch, config, `crash-${target}`); entries.push(entry); await launch(entry); await choose(entry, workspace);
+    const old = await records(entry.env);
+    process.kill(target === 'Main' ? entry.process.pid : entry.metadata.pid, 'SIGKILL');
+    if (target === 'Main') await gone(entry);
+    else {
+      const enginePids = descendants(old.flatMap(service => [service.hostPid, service.corePid]));
+      await until(() => enginePids.every(pid => !alive(pid)), 'Desktop crash releases owned Host/Core/Runtime');
+      await cleanupEntry(entry); entry.cleaned = true;
+    }
+    assert.ok(old.every(service => !alive(service.hostPid) && !alive(service.corePid)));
+    checks.push(`${target} SIGKILL closes owner lifetime and reclaims the owned engines`);
+  }
+
+  if (!packaged) for (const ending of ['failure', 'SIGTERM', 'SIGKILL']) {
+    const base = join(scratch, `runner-${ending}`); await mkdir(base);
+    if (ending === 'failure') { await mkdir(join(base, 'workspace')); await writeFile(join(base, 'config.toml'), await readFile(config)); }
+    const args = ending === 'failure' ? [`--runner-child=${base}`, '--injected-failure'] : [`--await-interruption=${base}`];
+    const child = spawn(process.execPath, [script, ...args], { env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = ''; child.stdout.on('data', bytes => output += bytes); child.stderr.on('data', bytes => output += bytes);
+    let owned;
+    try {
+      owned = await until(async () => { try { return JSON.parse(await readFile(join(base, 'owned.json'), 'utf8')); } catch (error) { if (child.exitCode !== null) throw new Error(output); if (error.code === 'ENOENT') return null; throw error; } }, 'runner owns ready engine');
+      if (ending !== 'failure') { assert.equal(owned.modelRequestActive, true); child.kill(ending); }
+      await until(() => child.exitCode !== null || child.signalCode !== null, 'runner exits');
+      await until(() => owned.pids.every(pid => !alive(pid)), 'runner-owned process chain exits');
+      assert.equal(JSON.parse(await readFile(join(base, 'cli-cleanup.json'), 'utf8')).passed, true);
+      checks.push(`test runner ${ending} releases its Electron, GUI engines and independently persistent CLI chain`);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      await writeFile(join(base, 'runner.log'), output);
+      if (owned) await until(() => owned.pids.every(pid => !alive(pid)), 'runner teardown verifies its processes');
+    }
+  }
+  passed = true;
+} catch (error) { errors.push(error.stack); }
+finally {
+  for (const entry of entries) {
+    if (entry.cleaned) continue;
+    await cleanupEntry(entry).catch(error => { errors.push(`cleanup: ${error.stack}`); passed = false; });
+  }
+  if (cliOwner) await cliOwner.close().catch(error => { errors.push(error.stack); passed = false; });
+  for (const response of held) response.destroy(); model.closeAllConnections(); await new Promise(resolve => model.close(resolve));
+  for (const [path, hash] of Object.entries(sourceHashes)) if (sha(await readFile(join(gui, path))) !== hash) { errors.push(`source changed: ${path}`); passed = false; }
+  for (const [name, hash] of Object.entries(binaryHashes)) if (sha(await readFile(join(dirname(binary), name))) !== hash) { errors.push(`binary changed: ${name}`); passed = false; }
+  if (packaged) for (const [path, hash] of Object.entries(productHashes)) if (sha(await readFile(join(bundledRoot, path))) !== hash) { errors.push(`bundled binary changed: ${path}`); passed = false; }
+  passed = passed && errors.length === 0;
+  await writeFile(join(scratch, 'manifest.json'), JSON.stringify({ passed, checks, errors, sourceHashes, binaryHashes, binary, productHashes, productBinary, loadedCorePaths: entries.map(entry => entry.coreBinary).filter(Boolean), executable, packaged, commit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(), diffSha256: sha(execFileSync('git', ['diff', 'HEAD'], { cwd: root, maxBuffer: 16 * 1024 * 1024 })), scope: 'isolated real Electron/Core/Runtime; local held model; directory picker and cancellation response injected; process liveness verified; package runner-kill mode requires source fixture' }, null, 2));
+}
+assert.ok(passed, errors.join('\n')); console.log('PASS', checks);

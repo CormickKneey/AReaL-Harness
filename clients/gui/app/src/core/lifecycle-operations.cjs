@@ -171,7 +171,10 @@ class LifecycleOperations {
   }
 
   targets() {
-    return identities([...this.backend.projects].filter(([, project]) => project.service)
+    const engines = this.backend.applicationOwner
+      ? [...this.backend.ownedEngines].filter(([, entry]) => entry.service).map(([projectId, entry]) => [projectId, entry.project])
+      : [...this.backend.projects];
+    return identities(engines.filter(([, project]) => project.service)
       .map(([projectId, project]) => ({ projectId, serviceId: project.service.serviceId, generation: project.service.generation })));
   }
 
@@ -321,7 +324,7 @@ class LifecycleOperations {
   }
 
   currentTarget(target) {
-    const project = this.backend.projects.get(target.projectId);
+    const project = this.backend.projects.get(target.projectId) ?? this.backend.ownedEngines?.get(target.projectId)?.project;
     if (project?.service?.serviceId !== target.serviceId || project.service.generation !== target.generation)
       throw failure('原 Core 实例或代际已变化', 'CONFIRMATION_STALE');
     return project;
@@ -384,7 +387,7 @@ class LifecycleOperations {
   }
 
   async inspectInterrupt(record, target) {
-    const project = this.backend.projects.get(target.projectId);
+    const project = this.backend.projects.get(target.projectId) ?? this.backend.ownedEngines?.get(target.projectId)?.project;
     let turn;
     if (project?.client?.ready && project.service?.serviceId === target.serviceId && project.service.generation === target.generation) {
       const { thread } = await project.client.request('thread/read', { threadId: record.threadId, includeTurns: true });

@@ -1,3 +1,4 @@
+import { assertApplicationStopped } from "./application-cleanup.mjs";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -22,15 +23,18 @@ let releaseHeldReply;
 const server = createServer(async (request, response) => {
   let body = ""; for await (const chunk of request) body += chunk;
   const payload = JSON.parse(body);
-  requests.push({ model: payload.model, authenticated: request.headers.authorization === "Bearer fixture-key", authorizationPresent: request.headers.authorization !== undefined });
-  modelRequests.push({ model: payload.model, effort: payload.reasoning_effort ?? null, hasEffort: Object.hasOwn(payload, "reasoning_effort") });
-  const lastMessage = JSON.stringify(payload.messages?.at(-1));
-  if (lastMessage?.includes("LAST_MODEL_ACCEPTED_FAILURE")) {
-    response.writeHead(400, { "Content-Type": "application/json" });
-    response.end(JSON.stringify({ error: { message: "Deterministic failure after admission" } }));
-    return;
+  const naming = payload.messages?.some(message => message.role === "system" && JSON.stringify(message.content).includes("Generate a concise semantic session title"));
+  if (!naming) {
+    requests.push({ model: payload.model, authenticated: request.headers.authorization === "Bearer fixture-key", authorizationPresent: request.headers.authorization !== undefined });
+    modelRequests.push({ model: payload.model, effort: payload.reasoning_effort ?? null, hasEffort: Object.hasOwn(payload, "reasoning_effort") });
+    const lastMessage = JSON.stringify(payload.messages?.at(-1));
+    if (lastMessage?.includes("LAST_MODEL_ACCEPTED_FAILURE")) {
+      response.writeHead(400, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ error: { message: "Deterministic failure after admission" } }));
+      return;
+    }
+    if (lastMessage?.includes("LAST_MODEL_HOLD_REPLY")) await new Promise(resolve => { releaseHeldReply = resolve; });
   }
-  if (lastMessage?.includes("LAST_MODEL_HOLD_REPLY")) await new Promise(resolve => { releaseHeldReply = resolve; });
   response.writeHead(200, { "Content-Type": "text/event-stream" });
   response.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: "MODEL_SELECTION_OK" }, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`);
 });
@@ -54,7 +58,7 @@ const coreBinary = process.env.AREAL_GUI_EXECUTABLE
   ? join(process.env.AREAL_GUI_EXECUTABLE, "../../Resources/areal-core/bin/areal")
   : env.AREAL_CORE_BIN;
 const coreSha256 = createHash("sha256").update(await readFile(coreBinary)).digest("hex");
-let app, page, failure = null, passed = false;
+let app, page, stoppingAdapter, failure = null, passed = false;
 const checks = [], errors = [];
 const stoppedServices = [];
 const button = name => page.getByRole("button", { name, exact: true });
@@ -90,6 +94,12 @@ async function until(predicate, label) {
   throw new Error(`Timeout: ${label}`);
 }
 async function stopService() {
+  if (stoppingAdapter?.applicationOwner) {
+    await assertApplicationStopped(coreBinary, env, stoppingAdapter);
+    stoppedServices.push({ pid: stoppingAdapter.pid, exited: true });
+    stoppingAdapter = undefined;
+    return;
+  }
   const { ServiceConnection } = require("../app/src/core/service-client.cjs");
   const connection = new ServiceConnection();
   const metadata = JSON.parse(await readFile(join(scratch, "core/service.json"), "utf8"));
@@ -128,6 +138,25 @@ async function launch() {
     dialog.showMessageBox = async () => ({ response: 1 });
     BrowserWindow.getAllWindows()[0].setSize(1440, 960);
   }, workspace);
+}
+async function closeGui() {
+  const current = app;
+  if (!current) return;
+  const child = current.process();
+  stoppingAdapter = await readFile(join(scratch, "core/service.json"), "utf8").then(JSON.parse).catch(error => { if (error.code === "ENOENT") return null; throw error; });
+  if (failure) {
+    await current.evaluate(({ app }) => app.exit(1)).catch(error => { if (child.exitCode === null) throw error; });
+  } else {
+    await current.evaluate(({ Menu }) => {
+      const quit = Menu.getApplicationMenu().items[0].submenu.items.find(item => item.label === "退出 AReaL Harness");
+      if (!quit) throw new Error("Safe application quit menu is missing");
+      quit.click();
+    }).catch(error => { if (child.exitCode === null) throw error; });
+  }
+  const deadline = Date.now() + 15000;
+  while (child.exitCode === null && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
+  assert.notEqual(child.exitCode, null, "owned Electron process exits");
+  app = undefined;
 }
 async function verifyModelDefaults(projectId) {
   const previous = await call("providers", { operation: "list" });
@@ -256,7 +285,7 @@ async function verifyModelDefaults(projectId) {
   await selectConversation(page, switched); await expectModel("Beta", "无");
   const beforeRestart = modelRequests.length;
   await writeFile(join(scratch, "model-defaults-before.json"), JSON.stringify(await state(), null, 2));
-  await app.close(); app = undefined; await stopService(); await launch();
+  await closeGui(); app = undefined; await stopService(); await launch();
   await until(snapshot => snapshotProject(snapshot)?.state?.connected, "model-defaults cold reopen");
   await selectConversation(page, alpha); await expectModel("Alpha", "高");
   await selectConversation(page, switched); await expectModel("Beta", "无");
@@ -290,7 +319,7 @@ async function verifyModelDefaults(projectId) {
   await writeFile(join(scratch, "model-defaults-after.json"), JSON.stringify(await state(), null, 2));
   checks.push("New conversations inherit last admitted main model/effort; fallback settings, unsent changes and history navigation cannot override it; existing configurations and preference survive cold GUI/Core restart without replay");
   checks.push("resolved high, explicit none, and supplier default labels match actual model requests; resetting effort restores model defaults");
-  await app.close(); app = undefined; await stopService();
+  await closeGui(); app = undefined; await stopService();
   await writeFile(config, `schema_version=1\n[model]\nprovider="legacy"\nname="legacy-alpha"\nreasoning_effort="high"\n[model.providers.legacy]\nname="Legacy"\nendpoint="http://127.0.0.1:${server.address().port}/v1/chat/completions"\nprotocol="chat-completions"\nmodels=[{id="legacy-alpha",display_name="Legacy Alpha"},{id="legacy-beta",display_name="Legacy Beta"}]\n`);
   await launch();
   await until(snapshot => snapshotProject(snapshot)?.state?.connected && snapshotProject(snapshot)?.models.some(model => model.modelId === "legacy-alpha"), "legacy service default ready");
@@ -308,7 +337,7 @@ async function verifyModelDefaults(projectId) {
   await button("模型").click(); await button("使用模型默认").click(); await page.keyboard.press("Escape");
   await expectModel("legacy-alpha", "高");
   await send("Implicit reset uses archived model defaults", { model: "legacy-alpha", effort: "high", hasEffort: true });
-  await app.close(); app = undefined; await stopService(); await launch();
+  await closeGui(); app = undefined; await stopService(); await launch();
   await until(snapshot => snapshotProject(snapshot)?.state?.connected, "implicit history cold reopen");
   await selectConversation(page, implicit); await expectModel("legacy-alpha", "高");
   assert.equal(snapshotProject(await state()).configurations[implicit].defaultModelRevision, implicitConfig.defaultModelRevision);
@@ -433,7 +462,7 @@ try {
   assert.deepEqual(requests, [{ model: "theta-model", authenticated: true, authorizationPresent: true }]);
   assert.equal(fixtureProject(await state()).configurations[Object.keys(fixtureProject(await state()).state.threads)[0]]?.model?.providerId, "theta", "the newly created Core task uses the chosen model");
   // 重启本次隔离后台，证明凭据从安全存储恢复，而非沿用旧进程的内存。
-  await app.close(); app = undefined;
+  await closeGui(); app = undefined;
   await stopService();
   await launch();
   providerStatus = page.getByRole("status", { name: "供应商状态", exact: true });
@@ -604,7 +633,7 @@ try {
       for (const window of BrowserWindow.getAllWindows()) window.destroy();
     }).catch(error => cleanupFailure("destroy failed window", error));
     // 先断开 GUI，避免设置页的刷新请求与安全停止竞争。
-    await app.close().catch(error => cleanupFailure("close GUI", error));
+    await closeGui().catch(error => cleanupFailure("close GUI", error));
     try {
       await stopService();
     } catch (error) { cleanupFailure("stop service", error); }

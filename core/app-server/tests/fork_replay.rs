@@ -406,11 +406,23 @@ async fn fork_replays_actual_adapter_tool_batches_without_reexecuting_source() {
         let returned_calls = calls.clone();
         let returned_context = context.clone();
         let app = Router::new().route("/", post(move |Json(request): Json<Value>| {
-            let round = { let mut captured = captured.lock().unwrap(); let round = captured.len(); captured.push(request); round };
+            let naming = request.get("messages").or_else(|| request.get("input"))
+                .and_then(Value::as_array).is_some_and(|messages| messages.iter().any(|message|
+                    message["role"] == "system" && message["content"].to_string().contains("Generate a concise semantic session title")));
+            let round = if naming {
+                assert!(request.get("tools").and_then(Value::as_array).is_none_or(Vec::is_empty));
+                usize::MAX
+            } else { let mut captured = captured.lock().unwrap(); let round = captured.len(); captured.push(request); round };
             let mut output = vec![returned_context.clone()];
             output.extend(returned_calls.clone());
             async move {
-                let events = if responses {
+                let events = if naming {
+                    if responses {
+                        vec![json!({"type":"response.output_text.delta","delta":"Replay fixture"}),json!({"type":"response.completed","response":{"id":"name","status":"completed","output":[]}})]
+                    } else {
+                        vec![json!({"choices":[{"index":0,"delta":{"content":"Replay fixture"},"finish_reason":"stop"}]})]
+                    }
+                } else if responses {
                     if round == 0 {
                         vec![json!({"type":"response.completed","response":{"id":"resp_anchor","status":"completed","output":output,"usage":{"input_tokens":11,"output_tokens":7}}})]
                     } else {

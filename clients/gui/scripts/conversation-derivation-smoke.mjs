@@ -1,3 +1,4 @@
+import { respondToSessionName } from "./model-fixture.mjs";
 // M1/M2 公开路径：集成且 GUI、Core 构建完成后运行一次。
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -327,6 +328,7 @@ try {
       let raw = "";
       for await (const chunk of req) raw += chunk;
       const body = JSON.parse(raw);
+      if (respondToSessionName(body, res)) return;
       requests.push({ sequence: requests.length + 1, method: req.method, path: req.url, body });
       const lastUser = body.messages?.findLast(message => message.role === "user"
         && !(typeof message.content === "string" && message.content.startsWith("AReaL runtime context (not a user request):")));

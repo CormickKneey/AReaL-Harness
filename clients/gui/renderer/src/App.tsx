@@ -828,12 +828,13 @@ function AppContent({ services }: { services: PlatformServices }) {
   }, [project?.id, settingsOpen, threadId, terminalLocation, openBrowser]);
   const title = (owner: Data, summary: Data) =>
     library.threads?.[`${owner.id}:${summary.id}`]?.title ||
+    owner.state?.threads[summary.id]?.name ||
+    summary.name ||
     browserAnnotationTitle(owner.state?.threads[summary.id]?.turns
       ?.flatMap((t: Data) => t.items ?? [])
       .find((i: Data) => i.type === "userMessage")
       ?.content?.find((p: Data) => p.type === "text")?.text ||
     summary.preview ||
-    summary.name ||
     "新对话");
   const summaries = projects.flatMap((owner) => {
     const scheduledThreads = new Set((Object.values(owner.state?.tasks ?? {}) as Data[]).filter(task => task.mode === "scheduled")

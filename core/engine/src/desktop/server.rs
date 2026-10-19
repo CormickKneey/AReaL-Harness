@@ -324,6 +324,7 @@ impl Engine {
     }
     pub async fn model_catalog(&self) -> Value {
         let last_accepted_model = self.last_accepted_model().await;
+        let _configuration = self.desktop.model_configuration.read().unwrap();
         let mut data = Vec::new();
         // 这是现有 HTTP 适配器的允许值，不代表远端供应商已验证这些选项。
         let efforts = ["none", "minimal", "low", "medium", "high", "xhigh"];

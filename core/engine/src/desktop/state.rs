@@ -254,6 +254,8 @@ impl Engine {
                 session_id: thread_id.clone(),
                 parent_thread_id: None,
                 preview: format!("分支 · {}", source.preview),
+                name: None,
+                name_attempt_turn_id: None,
                 model_provider: engine.model_provider(),
                 created_at: now(),
                 updated_at: now(),

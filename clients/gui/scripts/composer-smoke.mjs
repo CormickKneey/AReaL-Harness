@@ -1,3 +1,5 @@
+import { assertApplicationStopped } from "./application-cleanup.mjs";
+import { respondToSessionName } from "./model-fixture.mjs";
 import { captureSmokeFailure, resizeConversation, selectConversation } from "./smoke-navigation.mjs";
 import assert from "node:assert/strict";
 
@@ -79,6 +81,7 @@ const server = createServer(async (req, res) => {
   let raw = "";
   for await (const chunk of req) raw += chunk;
   const body = JSON.parse(raw);
+  if (respondToSessionName(body, res)) return;
   received.push(body);
   res.writeHead(200, { "Content-Type": "text/event-stream" });
   res.end(
@@ -813,19 +816,11 @@ try {
   );
   throw error;
 } finally {
+  const stoppingAdapter = await readFile(join(scratch, "core/service.json"), "utf8").then(JSON.parse).catch(error => { if (error.code === "ENOENT") return null; throw error; });
   await quit();
   try {
-    const { ServiceConnection } = require(join(desktop, "src/core/service-client.cjs"));
-    const connection = new ServiceConnection();
-    try {
-      await connection.connect(
-        JSON.parse(await readFile(join(scratch, "core/service.json"), "utf8")),
-      );
-      await connection.request("stopService", { protocol: "areal.desktop-service.v1" }, true);
-      checks.push("explicit safe service stop completes");
-    } finally {
-      connection.close();
-    }
+    await assertApplicationStopped(binary, env, stoppingAdapter);
+    checks.push("application quit stops the isolated adapter and all Core generations, including projectless");
   } catch (error) {
     console.error("Adapter fixture cleanup:", error.message);
     if (passed) {

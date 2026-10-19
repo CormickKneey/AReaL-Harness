@@ -14,7 +14,7 @@ import { UserFeedback } from "./UserFeedback.js";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./components/ui/dropdown-menu.js";
 import { TurnHookStats } from "./TurnHookStats.js";
 import { ToolEvent } from "./ToolEvent.js";
-import { TurnExecution } from "./TurnExecution.js";
+import { TurnActivity, TurnExecution } from "./TurnExecution.js";
 import { Fragment, useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { TimelineBottomButton } from "./TimelineBottomButton.js";
 import { MessageResponse } from "./components/ai-elements/message.js";
@@ -158,6 +158,10 @@ export function Messages({
     reservation.current = undefined;
     if (responseSpace.current) responseSpace.current.style.height = "0px";
   };
+  const readHere = () => {
+    follow.current = false;
+    rememberReading();
+  };
   const updateReading = () => {
     const element = container.current;
     if (!element) return;
@@ -196,11 +200,7 @@ export function Messages({
   const renderImage = useCallback((uri: string, name: string) => /^areal:\/\/blob\/[A-Za-z0-9_-]+$/.test(uri)
     ? <SentAttachment part={{ type: "image", uri, name: name || "回复图片" }} projectId={project.id} threadId={thread.id} action={action} /> : null, [project.id, thread.id, action]);
   const renderAgentMessage = (entry: Data, turn: Data, deferActions = false) => !entry.text?.trim() ? null : <div className={`assistant-message${deferActions ? " assistant-message-final" : ""}`} data-message-phase={entry.phase ?? "legacy"} data-side-item-id={entry.id} key={entry.id}>
-    {entry.phase === "commentary" && (turn.status !== "inProgress" || entry.id !== turn.items?.findLast((item: Data) => ["agentMessage", "dynamicToolCall", "userMessage", "agentMedia"].includes(item.type))?.id)
-      ? <div className="commentary-scroll" role="region" aria-label="过程消息" tabIndex={0}>
-        <MessageResponse className="conversation-markdown" preserveLineBreaks theme={dark ? "dark" : "light"} onOpenExternalUrl={onLink} onOpenFileLink={onFile} onRenderImage={renderImage} webPreviews>{entry.text}</MessageResponse>
-      </div>
-      : <MessageResponse className="conversation-markdown" preserveLineBreaks streaming={turn.status === "inProgress"} theme={dark ? "dark" : "light"} onOpenExternalUrl={onLink} onOpenFileLink={onFile} onRenderImage={renderImage} webPreviews>{entry.text}</MessageResponse>}
+    <MessageResponse className="conversation-markdown" preserveLineBreaks streaming={turn.status === "inProgress" && (entry.phase !== "commentary" || entry.id === turn.items?.findLast((item: Data) => ["agentMessage", "dynamicToolCall", "userMessage", "agentMedia"].includes(item.type))?.id)} theme={dark ? "dark" : "light"} onOpenExternalUrl={onLink} onOpenFileLink={onFile} onRenderImage={renderImage} webPreviews>{entry.text}</MessageResponse>
     {!deferActions && entry.phase !== "commentary" && turn.status !== "inProgress" && <MessageActions text={entry.text} />}
   </div>;
   useLayoutEffect(() => {
@@ -302,7 +302,10 @@ export function Messages({
       ref={container}
       onScroll={updateReading}
       onMouseUp={captureSideSelection}
-
+      onClickCapture={event => {
+        const control = event.target instanceof Element ? event.target.closest("button[aria-expanded], summary") : null;
+        if (control && event.currentTarget.contains(control) && control.closest(".turn-progress, .turn-execution")) readHere();
+      }}
     >
       <div className="message-column">
         {beforeTurns}
@@ -360,7 +363,10 @@ export function Messages({
             const progress = item.type !== "questionAnswer" && item.type !== "userMessage" && item.type !== "agentMedia" && (item.type !== "agentMessage" || item.phase === "commentary" || (!!legacyReply && item.id !== legacyReply.id));
             const previous = groups.at(-1);
             if (progress && previous?.progress) previous.entries.push({ item, index });
-            else groups.push({ id: item.id, progress, entries: [{ item, index }] });
+            // An earlier empty commentary can become visible after the reader
+            // opens tools. Anchor its group to the preceding reading boundary
+            // so that insertion retains both disclosure levels.
+            else groups.push({ id: progress ? `progress:${previous?.id ?? turn.id}` : item.id, progress, entries: [{ item, index }] });
           });
           // Stop is a Core terminal state, not a completed response. Keep its
           // process text inspectable and put the state before that content.
@@ -431,7 +437,7 @@ export function Messages({
                   name: item.modality === "image" ? "生成的图片" : item.modality === "audio" ? "生成的音频" : "生成的文件" }}
                   projectId={project.id} threadId={thread.id} action={action} />
               </div>;
-              return <TurnExecution key={item.id} active={index === segments.length - 1} items={item.items} turn={turn} project={project} threadId={thread.id}
+              return <TurnExecution key={item.id} items={item.items} turn={turn} project={project} threadId={thread.id}
                 hasTurnSummary={group.progress && turn.status === "completed" && hasReadingSummary}
                 renderItem={(entry: Data, disclosure) => {
                   if (entry.type === "dynamicToolCall") return <div data-side-item-id={entry.id} key={entry.id}><ToolEvent item={entry} {...disclosure} onFile={onFile} onAgent={isInherited ? undefined : onAgent} agents={isInherited ? undefined : project.state?.threads} turnId={turn.id} action={action} projectId={project.id} threadId={thread.id} readTurnReview={turn.status === "completed" ? readTurnReview : undefined} /></div>;
@@ -456,9 +462,6 @@ export function Messages({
             <TurnFileSummary turn={turn} readTurnReview={readTurnReview} onFile={onFile} onReview={onReview} />
             {responseMessage && turn.status !== "inProgress" && <MessageActions text={responseMessage.text}><TurnHookStats turn={turn} />{forkControls}{responseActions?.(responseMessage)}{!isInherited && <UserFeedback project={project} thread={localThread} turn={turn} item={responseMessage} action={action} dark={dark} />}</MessageActions>}
             {canFork && forkError?.turnId === turn.id && <p role="alert" className="notice">{forkError?.message}</p>}
-            {turn.status === "inProgress" && (!segments.length || ["userMessage", "agentMessage", "agentMedia"].includes(segments.at(-1)?.type)) && (
-              <TurnExecution items={[]} turn={turn} project={project} threadId={thread.id} renderItem={() => null} />
-            )}
             {turn.status === "interrupted" && stopHeaderIndex < 0 && stopHeading}
             {turn.status !== "inProgress" && turn.status !== "interrupted" && !(turn.status === "completed" && hasReadingSummary) && (
               <div className="turn-status">
@@ -472,6 +475,7 @@ export function Messages({
             )}
             {!finalMessage && turn.status !== "inProgress" && turn.items?.some((item: Data) => item.type === "dynamicToolCall" && item.execution?.hooks?.length) &&
               <div className="message-actions"><TurnHookStats turn={turn} /></div>}
+            <TurnActivity turn={turn} project={project} threadId={thread.id} />
           </section>;
         })}
         <div ref={responseSpace} className="message-response-space" aria-hidden="true" />

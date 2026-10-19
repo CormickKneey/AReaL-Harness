@@ -49,9 +49,11 @@ const isRemoteControl = entry => entry.method === 'turn/interrupt' && entry.remo
 
 /** 每个项目连接公开的共享 Core 服务；这里只保留可重建投影与客户端受理回执。 */
 class CoreBackend {
-  constructor({ binary, home, harnessHome = join(home, 'harness'), config, desktopConfig, userHome, toolExtensions, workgroupPolicy, workgroupToolchain, sandboxProfile, desktopProcesses = false, defaultProfile, encryption, proxyEnvironment = {}, onChange = () => {} }) {
+  constructor({ binary, home, applicationOwner, harnessHome = join(home, 'harness'), config, desktopConfig, userHome, toolExtensions, workgroupPolicy, workgroupToolchain, sandboxProfile, desktopProcesses = false, defaultProfile, encryption, proxyEnvironment = {}, onChange = () => {} }) {
     if (!binary || !isAbsolute(binary)) throw new Error('请设置 AREAL_CORE_BIN 为 areal 可执行文件的绝对路径');
     this.binary = binary;
+    this.applicationOwner = applicationOwner;
+    this.ownedEngines = new Map();
     this.home = home;
     this.harnessHome = harnessHome;
     this.config = config;
@@ -274,25 +276,75 @@ class CoreBackend {
       trace.advance('provider_prepare');
       await this.providers.prepare();
       trace.advance('provider_config');
-      const providerSnapshot = await this.providers.config.current();
-      project.providerSnapshot = providerSnapshot;
+      await this.providers.config.current();
       project.providerRevision = null;
+      delete project.providerSnapshot;
       trace.advance('hooks');
       const hookDeployment = await this.hooks.launch();
       project.hookRevision = null;
       const environment = { ...this.hooks.environment(), AREAL_HARNESS_TOOL_EXTENSIONS: hookDeployment.path, ...this.providers.environment() };
       trace.advance('service_ensure');
+      const owned = this.ownedEngines.get(project.id) ?? { project, dataDir, pending: true };
+      owned.project = project; owned.pending = true;
+      this.ownedEngines.set(project.id, owned);
       const { descriptor, token } = await connectService(this, 'ensure', args, environment, project, dataDir);
       project.service = descriptor;
+      owned.service = descriptor; owned.pending = false;
       project.endpoint = descriptor.endpoint;
       project.token = token;
       trace.advance('configuration_recheck');
-      if ((await this.providers.config.current()).revision === providerSnapshot.revision) project.providerRevision = providerSnapshot.revision;
       if ((await this.hooks.current()).revision === hookDeployment.revision) project.hookRevision = hookDeployment.revision;
       trace.finish('ok');
       const attached = startupTrace('core.service_ready', { projectId: project.id, coreGeneration: descriptor.generation });
       attached.finish('ok');
     } catch (error) { trace.finish('error', error); throw error; }
+  }
+
+  async refreshOwnedEngines() {
+    if (!this.applicationOwner) return;
+    const { serviceRequest } = require('./local-service.cjs');
+    const { sameOwner } = require('./application-owner.cjs');
+    const descriptors = await serviceRequest(this, ['list']);
+    if (!Array.isArray(descriptors)) throw new Error('Core 返回了无效的服务登记列表');
+    for (const descriptor of descriptors) {
+      if (!sameOwner(descriptor.owner, this.applicationOwner)) continue;
+      // 历史索引沿用原项目 ID；路径散列只用于尚未登记的启动恢复，不能替换已登记身份。
+      const registered = this.saved.find(project => /^[a-f0-9]{24}$/.test(project.id)
+        && project.root === descriptor.workspace && descriptor.dataDir === join(this.home, project.id, 'state'));
+      const projectId = registered?.id ?? createHash('sha256').update(descriptor.workspace).digest('hex').slice(0, 24);
+      if (descriptor.dataDir !== join(this.home, projectId, 'state')) throw new Error('所属 Core 的数据目录与登记不匹配');
+      if (descriptor.state === 'stopped') {
+        const target = { projectId, serviceId: descriptor.serviceId, generation: descriptor.generation, root: descriptor.workspace };
+        const original = await require('./local-service.cjs').inspectOriginalService(this, target);
+        if (!original.cleanupConfirmed) throw new Error('所属 Core 已失联，但原代际清理尚未确认');
+        const owned = this.ownedEngines.get(projectId);
+        if (owned && (!owned.service || owned.service.generation === descriptor.generation)) {
+          owned.service ??= descriptor;
+          require('./local-service.cjs').detachStoppedProject(this, target);
+        }
+        continue;
+      }
+      let owned = this.ownedEngines.get(projectId);
+      if (owned?.service && (owned.service.serviceId !== descriptor.serviceId || owned.service.generation !== descriptor.generation))
+        throw Object.assign(new Error('所属 Core 代际发生变化，请检查原请求'), { code: 'CONFIRMATION_STALE' });
+      if (!owned) {
+        const { CoreTaskModel } = await import('@areal/workbench/core-model');
+        const project = this.projects.get(projectId) ?? { id: projectId, root: descriptor.workspace,
+          model: new CoreTaskModel(), pending: [], outcomes: {}, configurations: {}, summaries: [] };
+        owned = { project, dataDir: descriptor.dataDir };
+        this.ownedEngines.set(projectId, owned);
+      }
+      owned.service ??= descriptor; owned.pending = false;
+      owned.project.service ??= owned.service;
+    }
+    for (const [projectId, owned] of this.ownedEngines) {
+      if (!owned.pending || this.starting.has(projectId)) continue;
+      if (!descriptors.some(descriptor => sameOwner(descriptor.owner, this.applicationOwner)
+        && descriptor.dataDir === owned.dataDir && descriptor.state !== 'stopped')) {
+        throw Object.assign(new Error(`项目 ${owned.project.root} 的启动结果尚未确认。请检查原服务启动日志并重新连接核对，不能将缺少登记视为已清理。`),
+          { code: 'LIFECYCLE_INCOMPLETE' });
+      }
+    }
   }
 
   async restartProject(project) {
@@ -351,7 +403,7 @@ class CoreBackend {
     const { descriptor, token } = await connectService(this, 'status', ['--instance', previous.serviceId],
       this.hooks.environment(), project, previous.dataDir);
     if (this.closing || project.service !== previous) throw Object.assign(new Error('服务归属已变化'), { code: 'STALE_CONNECTION' });
-    if (descriptor.serviceId !== previous.serviceId || descriptor.configFingerprint !== previous.configFingerprint) {
+    if (descriptor.serviceId !== previous.serviceId || descriptor.generation !== previous.generation || descriptor.configFingerprint !== previous.configFingerprint) {
       throw Object.assign(new Error('Core 部署配置已变化，请显式重新连接'), { code: 'CORE_INCOMPATIBLE' });
     }
     project.service = descriptor; project.endpoint = descriptor.endpoint; project.token = token;
@@ -436,6 +488,9 @@ class CoreBackend {
       project.error = null;
       project.configurations ??= {};
       project.configurationChanges ??= new Map();
+      trace.advance('provider_configuration');
+      await this.providers.reconcileProject(project);
+      this.requireConnection(project, client);
       if (!observeOnly) {
         trace.advance('providers');
         await this.providers.sync(project, correlation);
@@ -1504,7 +1559,7 @@ class CoreBackend {
 
   async disconnect() {
     this.closing = true;
-    for (const project of this.projects.values()) {
+    for (const project of new Set([...this.projects.values(), ...[...this.ownedEngines.values()].map(entry => entry.project)])) {
       clearTimeout(project.reconnectTimer); project.reconnectTimer = null;
       project.taskNotificationMonitor?.stop();
       project.client?.close();

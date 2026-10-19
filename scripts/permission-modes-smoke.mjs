@@ -1,3 +1,4 @@
+import { respondToSessionName } from "./model-fixture.mjs";
 // 真实 Core/Runtime：默认全开放、交互授权记忆、取消和只读边界。
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -26,7 +27,9 @@ const model = createServer(async (req, res) => {
   if (req.method === "GET") return res.end("NETWORK_OK");
   let body = "";
   for await (const part of req) body += part;
-  const messages = JSON.parse(body).messages;
+  const request = JSON.parse(body);
+  if (respondToSessionName(request, res)) return;
+  const messages = request.messages;
   const index = messages.findLastIndex((m) => m.role === "user");
   let content = messages[index].content;
   if (Array.isArray(content))

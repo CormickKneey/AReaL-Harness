@@ -842,6 +842,8 @@ async fn legacy_text_sessions_load_and_upgrade_on_next_write() {
             session_id: thread_id.clone(),
             parent_thread_id: None,
             preview: "old".into(),
+            name: None,
+            name_attempt_turn_id: None,
             model_provider: "configured".into(),
             created_at: 1,
             updated_at: 1,

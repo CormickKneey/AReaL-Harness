@@ -9,6 +9,7 @@ const { PROTOCOL, COMMAND_CONTRACT, encodeMedia, decodeMedia } = require('./serv
 const { serviceIdentity } = require('./service-config.cjs');
 const { inspectCoreCapabilities } = require('./core-capabilities.cjs');
 const { desktopExecutables } = require('./desktop-executables.cjs');
+const { sameOwner, scrubOwnerEnvironment } = require('./application-owner.cjs');
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const currentCommands = new Set(['send', 'editMessage', 'continue', 'prepareCreator', 'feedback']);
 const currentManagePrefixes = ['plugin', 'marketplace', 'mcpApp', 'mcpForm'];
@@ -46,7 +47,9 @@ function validateServicePacket(packet, metadata) {
     || !record(service) || service.connected !== true || typeof service.busy !== 'boolean'
     || typeof service.providerUpdating !== 'boolean' || !count(service.clients)
     || !count(service.activeCommands) || !count(service.starting)
-    || !Number.isSafeInteger(service.pid) || service.pid <= 1 || service.pid !== metadata.pid) {
+    || !Number.isSafeInteger(service.pid) || service.pid <= 1 || service.pid !== metadata.pid
+    || (metadata.applicationOwner !== undefined || service.applicationOwner !== undefined)
+      && !sameOwner(metadata.applicationOwner, service.applicationOwner)) {
     throw Object.assign(new Error('后台服务快照不受支持，原后台保持运行。请安全重启后使用本次配置。'), { code: 'SERVICE_SNAPSHOT_INVALID' });
   }
 }
@@ -149,7 +152,7 @@ class SharedCoreBackend {
   constructor({ app, onChange = () => {}, onNotification, onNotificationOpen, onRecoveryAttention, ...options }) {
     this.onNotification = onNotification;
     this.onNotificationOpen = onNotificationOpen;
-    this.onRecoveryAttention = onRecoveryAttention; this.app = app; this.options = options; this.home = options.home; this.onChange = onChange;
+    this.onRecoveryAttention = onRecoveryAttention; this.app = app; this.options = options; this.applicationOwner = options.applicationOwner; this.desktopLifetimes = new Set(); this.home = options.home; this.onChange = onChange;
     this.value = { library: { projects: {}, threads: {}, projectOrder: [], settings: {} }, projects: [] };
     this.status = { connected: false }; this.sequence = -1;
     this.connectionState = { state: 'connecting' }; this.revision = 0; this.initializing = false;
@@ -183,7 +186,9 @@ class SharedCoreBackend {
     if (packet.sequence <= this.sequence) return;
     this.clearReconnect(); this.reconnectAttempts = 0;
     this.sequence = packet.sequence; this.value = packet.snapshot; this.status = packet.service;
-    this.connectionState = { state: 'ready' };
+    this.connectionState = this.foreignOwner
+      ? { state: 'unavailable', recovery: 'check', message: '原后台属于旧应用会话，仅供检查。请安全迁移后继续。' }
+      : { state: 'ready' };
     this.onChange();
   }
   disconnected() {
@@ -230,6 +235,8 @@ class SharedCoreBackend {
     let metadata;
     try { metadata = JSON.parse(await readFile(join(this.home, 'service.json'), 'utf8')); }
     catch (e) { if (e.code === 'ENOENT') return false; throw e; }
+    this.foreignOwner = this.applicationOwner && !sameOwner(metadata.applicationOwner, this.applicationOwner)
+      ? metadata : null;
     const identity = expectedIdentity ?? (passive ? this.metadata?.identity ?? this.identity : metadata.identity);
     const connection = new ServiceConnection(packet => {
       if (this.connection !== connection) return;
@@ -279,6 +286,11 @@ class SharedCoreBackend {
     helloTrace.finish('ok');
     if (this.lastActivity) void connection.request('activity', this.lastActivity).catch(() => {});
     this.metadata = metadata; this.exitConfirmation = null;
+    if (this.foreignOwner) {
+      this.backendUpdate = { state: 'pending', message: '原后台属于旧应用会话，请检查并安全停止后迁移。' };
+      this.connectionState = { state: 'unavailable', recovery: 'check', message: '原后台仅供检查。请使用“检查后台资源”安全停止旧应用会话，再重新连接。' };
+      this.onChange();
+    }
     return true;
   }
   get controlPath() { return join(this.app.getPath('userData'), 'service-control.json'); }
@@ -346,7 +358,7 @@ class SharedCoreBackend {
       }
       if (this.disposed) throw new Error('GUI 连接已关闭');
       if (retained) {
-        this.backendUpdate = this.identity === this.metadata.identity ? undefined : { state: 'pending' };
+        if (!this.foreignOwner) this.backendUpdate = this.identity === this.metadata.identity ? undefined : { state: 'pending' };
         this.onChange();
         return;
       }
@@ -355,7 +367,8 @@ class SharedCoreBackend {
       trace.advance('capabilities');
       if (!retained) await inspectCoreCapabilities(this.options.binary);
       trace.advance('spawn_wait');
-      const env = { ...process.env, AREAL_BACKEND: 'areal', AREAL_CORE_HOME: this.home };
+      const env = { ...scrubOwnerEnvironment(), AREAL_BACKEND: 'areal', AREAL_CORE_HOME: this.home,
+        ...(this.applicationOwner ? { AREAL_GUI_OWNER: JSON.stringify(this.applicationOwner), AREAL_GUI_DESKTOP_LIFETIME_FD: '3' } : {}) };
       delete env.ELECTRON_RUN_AS_NODE;
       const args = this.app.isPackaged ? ['--areal-core-service'] : [this.app.getAppPath(), '--areal-core-service'];
       const executable = desktopExecutables({ packaged: this.app.isPackaged }).service;
@@ -365,7 +378,14 @@ class SharedCoreBackend {
         const launch = () => {
           if (this.disposed) throw new Error('GUI 连接已关闭');
           retryLaunch = false;
-          const child = spawn(executable, args, { detached: true, stdio: ['ignore', log.fd, log.fd], env, windowsHide: true });
+          const child = spawn(executable, args, { detached: true,
+            stdio: ['ignore', log.fd, log.fd, ...(this.applicationOwner ? ['pipe'] : [])], env, windowsHide: true });
+          if (this.applicationOwner) {
+            const lifetime = child.stdio[3];
+            this.desktopLifetimes.add(lifetime);
+            lifetime.on('error', () => {});
+            child.once('exit', () => { lifetime.destroy(); this.desktopLifetimes.delete(lifetime); });
+          }
           child.once('error', e => { launchError = e; });
           child.once('exit', code => { retryLaunch = code === 0; }); child.unref();
         };
@@ -385,13 +405,16 @@ class SharedCoreBackend {
   }
   async addProject(path) {
     await this.init();
+    this.assertLifecycleScope('addProject');
     return this.connection.request('addProject', { path }, true);
   }
   async browserClaim(identity) {
+    this.assertLifecycleScope('browserClaim');
     if (!this.status.connected || !this.connection) throw new Error('后台尚未连接');
     return this.connection.request('browserClaim', identity, true);
   }
   async browserRevoke(identity) {
+    if (this.foreignOwner) return;
     if (!this.status.connected || !this.connection) return;
     return this.connection.request('browserRevoke', identity, true);
   }
@@ -403,6 +426,7 @@ class SharedCoreBackend {
     if (name === 'connect' && !this.status.connected) await this.init();
     if (this.disposed) throw new Error('GUI 连接已关闭');
     if (!this.status.connected) throw new Error('后台尚未连接，请先处理后台连接提示');
+    if (this.foreignOwner) this.assertLifecycleScope(name, request);
     if (name === 'stop') {
       if (!uuid(request.requestId) || typeof request.turnId !== 'string' || !request.turnId)
         throw Object.assign(new Error('暂停需要原轮次和操作身份，请刷新任务后重试'), { code: 'LIFECYCLE_INVALID_REQUEST' });
@@ -434,10 +458,12 @@ class SharedCoreBackend {
     finally { this.guiTerminalStarts.delete(pending); }
   }
   async resources(request) {
+    if (request.operation !== 'inspect') this.assertApplicationWrite();
     if (!this.status.connected) throw new Error('后台尚未连接，请点击“重新连接后台”检查并恢复旧服务');
     return this.connection.request('resources', request, request.operation !== 'inspect');
   }
   async remoteControl(request) {
+    if (request.operation !== 'status') this.assertApplicationWrite();
     if (!this.status.connected) throw new Error('后台尚未连接');
     return this.connection.request('remoteControl', request, request.operation !== 'status');
   }
@@ -482,6 +508,7 @@ class SharedCoreBackend {
     const latest = operations.at(-1);
     const legacy = this.legacyControl || this.status.stopReport && this.status.lifecycle?.version !== 2;
     return { supported: this.status.lifecycle?.version === 2, operations,
+      ...(this.foreignOwner ? { recovery: { canRecover: true, projects: [], message: '原后台属于旧应用会话。请检查并安全迁移。' } } : {}),
       ...(legacy ? { recovery: this.legacyRecoveryView ?? { canRecover: false, projects: [], message: '请检查原后台状态，再恢复工作。' } } : {}),
       ...(latest ?? legacy ? latest ?? { phase: 'admissionUnconfirmed', targets: [],
         message: '旧停止记录缺少操作身份，已恢复观察连接。请检查原后台状态；不会重发旧操作。' } : {}),
@@ -575,10 +602,13 @@ class SharedCoreBackend {
         if (this.metadata?.desktopGeneration === reference.desktopGeneration || !this.status.connected) {
           this.reconnectBlocked = true; this.clearReconnect();
         }
-        if (this.metadata?.desktopGeneration === reference.desktopGeneration && this.status.connected) {
+        // 完整停止回执和进程退出共同证明旧终端已清理，不能依赖连接是否先断开。
+        if (this.metadata?.desktopGeneration === reference.desktopGeneration) {
           this.guiTerminals.clear();
-          const connection = this.connection;
-          this.stoppedConnection = connection; this.disconnected(); this.connection = null; connection.close();
+          if (this.status.connected) {
+            const connection = this.connection;
+            this.stoppedConnection = connection; this.disconnected(); this.connection = null; connection.close();
+          }
         }
       }
     }
@@ -589,10 +619,38 @@ class SharedCoreBackend {
     this.lifecycleError = null; this.onChange();
     return operation;
   }
+  assertMigrationProfile(source = this.foreignOwner) {
+    if (source?.applicationOwner?.profile && source.applicationOwner.profile !== this.applicationOwner.profile)
+      throw Object.assign(new Error(`原后台属于另一配置目录，请从 ${source.applicationOwner.profile} 退出原应用。`), { code: 'APPLICATION_OWNER_MISMATCH' });
+  }
+  assertApplicationWrite(migration) {
+    if (!this.foreignOwner) return;
+    this.assertMigrationProfile();
+    if (migration !== this.foreignOwner || migration !== this.metadata)
+      throw Object.assign(new Error('原后台仅供观察，请通过安全迁移入口处理原应用会话'), { code: 'APPLICATION_OWNER_MISMATCH' });
+  }
+  async recoverForeignOwner(notify) {
+    const source = this.foreignOwner;
+    this.assertMigrationProfile(source);
+    const answer = await notify({ type: 'warning', message: '安全停止旧应用会话并迁移？',
+      detail: '原后台没有被本次应用接管。将核对原代际、任务和清理回执，停止成功后才启动本次应用的后台。未知操作不会重发。',
+      buttons: ['返回应用', '检查并迁移'], defaultId: 0, cancelId: 0, noLink: true });
+    if (answer.response !== 1) return { canceled: true };
+    const result = await require('./startup-recovery.cjs').recoverConnectedService({ backend: this, notify, purpose: 'stop', migration: source });
+    if (!result.stopped) return result;
+    this.foreignOwner = null;
+    this.lifecycleReferences.clear(); this.lifecycleReceipts.clear(); await this.persistReferences();
+    this.connection?.close(); this.connection = null;
+    await this.initialize(false);
+    this.controlState = null; this.reconnectBlocked = false;
+    return { recovered: true };
+  }
   async recoverBackend({ notify }) {
+    this.assertMigrationProfile();
     if (this.recoveryInFlight) return this.recoveryInFlight;
     this.recoveryInFlight = (async () => {
       await this.checkLifecycle();
+      if (this.foreignOwner && this.status.lifecycle?.version === 2) return this.recoverForeignOwner(notify);
       if (this.legacyControl || this.status.stopReport && this.status.lifecycle?.version !== 2)
         return require('./legacy-desktop-recovery.cjs').recover(this, notify);
       const pending = [...this.lifecycleReferences.values()];
@@ -620,6 +678,8 @@ class SharedCoreBackend {
     return this.lifecycleProjection();
   }
   assertLifecycleScope(name, request) {
+    if (this.foreignOwner)
+      throw Object.assign(new Error('原后台属于旧应用会话，请先检查并安全迁移'), { code: 'APPLICATION_OWNER_MISMATCH' });
     if (['list', 'open', 'reconcile', 'queue'].includes(name) || require('./lifecycle.cjs').isRecoveryCommand(name, request)) return;
     if ((this.legacyControl?.legacyRecovery || this.status.stopReport) && this.status.lifecycle?.version !== 2)
       throw Object.assign(new Error('请先检查并恢复原后台，再继续工作。输入和历史已保留。'), { code: 'LIFECYCLE_INCOMPLETE' });
@@ -632,7 +692,8 @@ class SharedCoreBackend {
         new Error('此任务的原后台操作尚未结算，请检查原请求'), { code: 'LIFECYCLE_INCOMPLETE', requestId: reference.requestId });
     }
   }
-  async requestLifecycle({ kind, mode = 'ifIdle', observed, projectId, threadId, turnId, requestId = randomUUID() }) {
+  async requestLifecycle({ kind, mode = 'ifIdle', observed, projectId, threadId, turnId, requestId = randomUUID(), migration }) {
+    this.assertApplicationWrite(migration);
     if (!this.status.connected) throw new Error('后台尚未连接，请先重新连接后台');
     const previous = this.lifecycleReferences.get(requestId) ?? this.lifecycleReceipts.get(requestId);
     if (previous) {
@@ -676,9 +737,10 @@ class SharedCoreBackend {
   }
   async stopService(forUpdate = false, options = {}) {
     return this.requestLifecycle({ kind: options.kind ?? (forUpdate ? 'updateDesktop' : 'stopDesktop'),
-      mode: options.cancel ? 'cancel' : 'ifIdle', observed: options.observed });
+      mode: options.cancel ? 'cancel' : 'ifIdle', observed: options.observed, migration: options.migration });
   }
   async applyUpdate({ notify } = {}) {
+    if (this.foreignOwner) return this.recoverForeignOwner(notify);
     try {
       const pending = [...this.lifecycleReferences.values()].find(reference => reference.kind === 'updateDesktop'
         && this.lifecycleReceipts.get(reference.requestId)?.phase !== 'blocked');
@@ -736,6 +798,25 @@ class SharedCoreBackend {
     }
     const failed = [...starts, ...results].find(result => result.status === 'rejected');
     if (failed) throw failed.reason;
+  }
+  async completeApplicationQuit() {
+    for (const reference of this.lifecycleReferences.values()) {
+      if (this.lifecycleReceipts.get(reference.requestId)?.phase !== 'completed')
+        throw Object.assign(new Error('原生命周期请求尚未完成，不能结束应用会话'), { code: 'LIFECYCLE_INCOMPLETE' });
+    }
+    this.lifecycleReferences.clear();
+    await this.persistReferences();
+    this.controlState = null;
+  }
+  async waitForApplicationReady() {
+    if (this.connecting) await this.connecting.catch(() => {});
+    const deadline = Date.now() + 20000;
+    while (this.status.connected) {
+      const { service } = await this.connection.request('snapshot');
+      if (!service.starting && !service.activeCommands) return;
+      if (Date.now() >= deadline) throw Object.assign(new Error('项目启动或已受理操作仍在完成，请稍后退出'), { code: 'LIFECYCLE_BLOCKED' });
+      await sleep(100);
+    }
   }
   async prepareQuit() {
     await this.settleGuiTerminals();

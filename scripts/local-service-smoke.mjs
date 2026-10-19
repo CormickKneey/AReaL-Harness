@@ -1,3 +1,4 @@
+import { respondToSessionName } from "./model-fixture.mjs";
 // 真实 Core/Runtime 验证跨进程复用、客户端独立生命周期和故障恢复。
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -48,6 +49,7 @@ const model = createServer(async (req, res) => {
   let body = "";
   for await (const part of req) body += part;
   const request = JSON.parse(body);
+  if (respondToSessionName(request, res)) return;
   const text = request.messages.findLast(
     (message) =>
       message.role === "user" &&

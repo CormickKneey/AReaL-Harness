@@ -6,12 +6,20 @@ const { isAbsolute, resolve, join } = require('node:path');
 const WebSocket = require('ws');
 
 // 服务管理只走公共 CLI；轮次核查只读原代际的认证 app-server，不持有或终止 Core/Runtime 子进程。
-async function request(backend, args, environment = backend.hooks.environment()) {
+async function request(backend, args, environment = backend.hooks.environment(), project) {
   let stdout;
   try {
-    ({ stdout } = await executeCore(backend.binary, ['service', ...args, '--json'], {
+    const execution = executeCore(backend.binary, ['service', ...args, '--json'], {
+      ...(args[0] === 'ensure' && backend.applicationOwner ? { applicationOwner: backend.applicationOwner } : {}),
       env: environment, timeout: ['status', 'capabilities', 'operation'].includes(args[0]) ? 10_000 : 120_000, maxBuffer: 2 * 1024 * 1024, windowsHide: true,
-    }));
+    });
+    if (project && execution.child.ownerLifetime) {
+      const entry = backend.ownedEngines.get(project.id);
+      entry.lifetimes ??= new Set();
+      entry.lifetimes.add(execution.child.ownerLifetime);
+      execution.child.ownerLifetime.on('error', () => {});
+    }
+    ({ stdout } = await execution);
   } catch (error) {
     let failure;
     try { failure = JSON.parse(error.stderr).error; } catch { /* CLI/launcher diagnostics can be plain text. */ }
@@ -27,7 +35,7 @@ async function request(backend, args, environment = backend.hooks.environment())
 }
 
 async function connectService(backend, operation, args, environment, project, dataDir) {
-  const descriptor = await request(backend, [operation, ...args, ...(operation === 'ensure' ? ['--no-auto-restart'] : [])], environment);
+  const descriptor = await request(backend, [operation, ...args, ...(operation === 'ensure' ? ['--no-auto-restart'] : [])], environment, project);
   if (operation === 'status' && ['stopped', 'unavailable', 'stopping'].includes(descriptor?.state)) {
     throw Object.assign(new Error('Core 服务已停止或正在停止，请显式重新连接'), { code: 'CORE_STOPPED' });
   }
@@ -43,6 +51,8 @@ async function connectService(backend, operation, args, environment, project, da
     || endpoint.username || endpoint.password || typeof descriptor.authFile !== 'string' || !isAbsolute(descriptor.authFile)) {
     throw Object.assign(new Error('Core 服务描述与当前工作区不匹配'), { code: 'CORE_INCOMPATIBLE' });
   }
+  if (backend.applicationOwner && !require('./application-owner.cjs').sameOwner(descriptor.owner, backend.applicationOwner))
+    throw Object.assign(new Error('原 Core 不属于本次 GUI 应用，请先从原 owner 的安全管理入口停止后再连接'), { code: 'APPLICATION_OWNER_MISMATCH' });
   const auth = JSON.parse(await readFile(resolve(descriptor.authFile), 'utf8'));
   const principal = auth.principals?.find(item => ['observe', 'interact', 'manage']
     .every(permission => item.permissions?.includes(permission)));
@@ -75,7 +85,12 @@ async function readStop(backend, target) {
 }
 
 function detachStoppedProject(backend, target) {
-  const project = backend.projects.get(target.projectId);
+  const owned = backend.ownedEngines?.get(target.projectId);
+  if (owned?.service?.serviceId === target.serviceId && owned.service.generation === target.generation) {
+    for (const lifetime of owned.lifetimes ?? []) lifetime.destroy();
+    backend.ownedEngines.delete(target.projectId);
+  }
+  const project = backend.projects.get(target.projectId) ?? owned?.project;
   if (project?.service?.serviceId !== target.serviceId || project.service.generation !== target.generation) return;
   project.service = null;
   project.endpoint = null;
@@ -88,7 +103,7 @@ function detachStoppedProject(backend, target) {
 }
 
 async function readOriginalTurn(backend, target, threadId, turnId) {
-  const project = backend.saved.find(project => project.id === target.projectId);
+  const project = backend.saved.find(project => project.id === target.projectId) ?? backend.ownedEngines?.get(target.projectId)?.project;
   if (!project) throw Object.assign(new Error('原工作区登记不可用，无法核对轮次'), { code: 'LIFECYCLE_INCOMPLETE' });
   const { descriptor, token } = await connectService(backend, 'status', ['--instance', target.serviceId],
     backend.hooks.environment(), project, join(backend.home, target.projectId, 'state'));

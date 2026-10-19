@@ -63,10 +63,12 @@ class DesktopService {
   }
   packet() {
     return { sequence: ++this.sequence, snapshot: this.backend.snapshot(), service: {
+      ...(this.backend.applicationOwner ? { applicationOwner: this.backend.applicationOwner } : {}),
       connected: true, commandContract: COMMAND_CONTRACT, clients: this.clients.size, busy: this.backend.hasWork({ includePausedQueues: false }),
       activeCommands: this.inflight, providerUpdating: !!this.backend.providerUpdating,
       starting: this.backend.starting.size, pid: process.pid, ...(this.lifecycle ? { lifecycle: this.lifecycle.snapshot() } : {}),
       targets: this.lifecycle?.targets() ?? [],
+      remote: { enabled: this.remote?.config?.enabled === true || this.remote?.config?.directEnabled === true, connections: this.remote?.channels?.size ?? 0 },
       browserCore: Object.fromEntries([...this.backend.projects].map(([id, project]) =>
         [id, project.service?.serviceId ?? null])),
       // Authenticated desktop Main uses actual active Core listeners to deny
@@ -145,7 +147,7 @@ class DesktopService {
     await new Promise((resolve, reject) => { this.server.once('listening', resolve); this.server.once('error', reject); });
     this.activityTimer = setInterval(() => { this.sampleActivity(); }, 5000);
     this.flushTimer = setInterval(() => { void this.backend.analytics.flush(); }, 30000);
-    return { protocol: PROTOCOL, endpoint: `ws://127.0.0.1:${this.server.address().port}`, token: this.token, identity: this.identity,
+    return { ...(this.backend.applicationOwner ? { applicationOwner: this.backend.applicationOwner } : {}), protocol: PROTOCOL, endpoint: `ws://127.0.0.1:${this.server.address().port}`, token: this.token, identity: this.identity,
       ...(this.lifecycle ? { desktopGeneration: this.lifecycle.generation } : {}), pid: process.pid };
   }
   sampleActivity() {

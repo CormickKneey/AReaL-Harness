@@ -36,6 +36,14 @@ input 为有序 text/image/audio/file 等内容，UTF-8 文本合计最多 1 MiB
 
 上下文压缩可能将活动 Turn 的前缀移入冷历史，因此 `turn/started` / `turn/completed` 的 `turn.items` 不能视为完整历史替换。客户端按稳定 Item ID 合并已观察条目，更新同 ID 内容与阶段，追加新条目，并保留事件中省略的旧条目及其顺序；已有 Turn 的重复开始回执不能覆盖已显示消息或把终态回退为运行中。`areal/model/completionDiscarded` 才显式移除指定的未提交模型响应。`thread/read(includeTurns:true)`、`thread/resume` 和 `areal/thread/observe` 还原冷历史，作为可替换本地投影的权威完整基线。压缩、正常完成、停止和失败均不应隐藏已保留的用户输入、steer 或 Agent 回复。
 
+### 会话名称
+
+`Thread` 增加可选只读字段 `name`（自动总结的名称）和 `nameAttemptTurnId`（已领取命名请求的来源 Turn）。旧记录缺失时保持兼容；`preview` 仍保留原始首条输入的预览。普通、非临时的 `appServer` 根会话在首个成功用户 Turn 后异步尝试一次，排除子会话、Side、TaskRun 和 Goal 流程。名称通过 `thread/list`、`thread/read` 和 `areal/thread/edited` 返回。不会在启动时批量为已有会话补名。Workgroup 内部 worker 不参与命名，避免占用父 Goal 或 Workgroup 的模型预算。
+
+Core 使用该 Turn 的模型和共享模型容量，仅发送有界文本，不提供工具。用户与 Agent 文本各最多 2048 字符，输出预算为 96 tokens，总时限为 20 秒。有效名称为单行、最多 60 字符；空白、控制字符、多行、超长、工具和二进制结果不提交。命名请求会产生额外模型用量，但不改写已完成 Turn 的历史、状态或 usage。沿用模型传输层的现有重试策略，不新增命名重试。
+
+Core 在请求前持久化领取标记。失败、取消、UNKNOWN 或重启均不再次自动提交，继续使用原有预览。提交只合并当前 Thread 的名称，并拒绝已删除、已归档或来源被修改的结果。GUI 显示优先级为手动名称、Core 自动名称、原有输入预览；自动总结不覆盖手动改名。
+
 ### 结构化终止原因
 
 `Turn.error` 保留 `message`，增加可选 `outcome:{code,class,source,details?}`。Core 在错误产生处保留类型，在 Turn 结算时生成 outcome；`turn/completed`、`thread/read`、持久化及重启恢复使用同一对象。旧记录没有 outcome 时按原样读取；消费者不能通过 message 猜测分类。Rust 构造旧 `TurnError` 时需填写 `outcome: None`。

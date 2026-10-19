@@ -1,6 +1,7 @@
 pub mod auth;
 mod browser_auth;
 mod codex_plugins;
+pub mod configuration;
 mod delegations;
 mod desktop;
 mod dynamic_tools;
@@ -40,13 +41,14 @@ use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{Instrument, info_span};
 
 pub fn router(engine: Arc<Engine>) -> Router {
-    configured_router(engine, None, None, None)
+    configured_router(engine, None, None, None, None)
 }
 fn configured_router(
     engine: Arc<Engine>,
     browser_origin: Option<String>,
     authentication: Option<auth::Authentication>,
     service: Option<areal_protocol::service::Identity>,
+    configuration: Option<Arc<dyn configuration::ModelConfigurationControl>>,
 ) -> Router {
     engine.start_task_scheduler();
     let authentication = authentication.map(|auth| {
@@ -79,6 +81,7 @@ fn configured_router(
         .layer(Extension(authentication))
         .layer(Extension(browser_origin))
         .layer(Extension(service))
+        .layer(Extension(configuration))
         .with_state(engine)
 }
 
@@ -232,6 +235,17 @@ pub async fn serve_service(
     authentication: Option<auth::Authentication>,
     identity: Option<areal_protocol::service::Identity>,
 ) -> anyhow::Result<()> {
+    serve_service_with_configuration(listener, engine, stop, authentication, identity, None).await
+}
+
+pub async fn serve_service_with_configuration(
+    listener: TcpListener,
+    engine: Arc<Engine>,
+    stop: CancellationToken,
+    authentication: Option<auth::Authentication>,
+    identity: Option<areal_protocol::service::Identity>,
+    configuration: Option<Arc<dyn configuration::ModelConfigurationControl>>,
+) -> anyhow::Result<()> {
     anyhow::ensure!(
         listener.local_addr()?.ip().is_loopback(),
         "Core listener must bind to loopback"
@@ -239,7 +253,13 @@ pub async fn serve_service(
     let origin = format!("http://{}", listener.local_addr()?);
     axum::serve(
         listener,
-        configured_router(engine, Some(origin), authentication, identity),
+        configured_router(
+            engine,
+            Some(origin),
+            authentication,
+            identity,
+            configuration,
+        ),
     )
     .with_graceful_shutdown(stop.cancelled_owned())
     .await?;
@@ -248,6 +268,7 @@ pub async fn serve_service(
 
 async fn upgrade(
     State(engine): State<Arc<Engine>>,
+    Extension(configuration): Extension<Option<Arc<dyn configuration::ModelConfigurationControl>>>,
     Extension(browser_origin): Extension<Option<String>>,
     Extension(authentication): Extension<Option<browser_auth::BrowserAuth>>,
     headers: HeaderMap,
@@ -267,11 +288,12 @@ async fn upgrade(
     };
     ws.max_message_size(MAX_FRAME_BYTES)
         .max_frame_size(MAX_FRAME_BYTES)
-        .on_upgrade(move |socket| connection(socket, engine, principal, expires))
+        .on_upgrade(move |socket| connection(socket, engine, principal, expires, configuration))
         .into_response()
 }
 
 struct Connection {
+    configuration: Option<Arc<dyn configuration::ModelConfigurationControl>>,
     principal: Arc<auth::Principal>,
     tool_host: Arc<dynamic_tools::ToolHost>,
     initialized: bool,
@@ -291,6 +313,7 @@ async fn connection(
     engine: Arc<Engine>,
     principal: Arc<auth::Principal>,
     expires: Option<tokio::time::Instant>,
+    configuration: Option<Arc<dyn configuration::ModelConfigurationControl>>,
 ) {
     let expired = async move {
         match expires {
@@ -325,6 +348,7 @@ async fn connection(
         let _ = tokio::time::timeout(Duration::from_secs(1), sink.close()).await;
     });
     let mut conn = Connection {
+        configuration,
         tool_host: dynamic_tools::ToolHost::authenticated(
             tx.clone(),
             stop.clone(),
@@ -545,6 +569,7 @@ async fn connection(
                     | "areal/process/get"
                     | "areal/process/list"
                     | "areal/server/status"
+                    | "areal/server/modelConfiguration/read"
                     | "areal/mcp/list"
                     | "areal/mcp/read"
                     | "areal/mcp/disconnect"
@@ -574,6 +599,8 @@ async fn connection(
             };
             let method = method.to_owned();
             let identity = conn.principal.id.clone();
+            let principal = conn.principal.clone();
+            let configuration = conn.configuration.clone();
             let engine = engine.clone();
             let tx = conn.tx.clone();
             let stop = conn.stop.clone();
@@ -584,7 +611,9 @@ async fn connection(
                     matches!(method.as_str(), "areal/thread/fork" | "areal/side/start");
                 let dispatch = async {
                     check_side_policy(&engine, &method, &params).await?;
-                    if method == "turn/interrupt" {
+                    if configuration::METHODS.contains(&method.as_str()) {
+                        configuration::dispatch(configuration, &principal, &method, params).await
+                    } else if method == "turn/interrupt" {
                         interrupt(&engine, params).await
                     } else if method == "turn/steer" {
                         steer_request(&engine, &identity, params).await
@@ -936,6 +965,15 @@ impl Connection {
             }
             return task_mode::dispatch(engine, &self.principal, method, params).await;
         }
+        if configuration::METHODS.contains(&method) {
+            return configuration::dispatch(
+                self.configuration.clone(),
+                &self.principal,
+                method,
+                params,
+            )
+            .await;
+        }
         if method == "areal/conversation/list" {
             return self.conversation_list(engine, params).await;
         }
@@ -1037,6 +1075,9 @@ impl Connection {
                     && self.principal.thread_ids.is_none();
                 if !can_attach_browser {
                     methods.retain(|method| *method != "areal/thread/tools/attach");
+                }
+                if self.configuration.is_some() && configuration::authorized(&self.principal) {
+                    methods.extend_from_slice(configuration::METHODS);
                 }
                 methods.extend_from_slice(desktop::METHODS);
                 methods.extend_from_slice(codex_plugins::METHODS);
@@ -1357,6 +1398,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel(1);
         let stop = CancellationToken::new();
         let mut conn = Connection {
+            configuration: None,
             principal: auth::Principal::embedded(),
             tool_host: dynamic_tools::ToolHost::new(tx.clone(), stop.clone()),
             initialized: true,
@@ -1393,6 +1435,7 @@ mod tests {
         let (tx, _unread) = mpsc::channel(1);
         let stop = CancellationToken::new();
         let mut conn = Connection {
+            configuration: None,
             principal: auth::Principal::embedded(),
             tool_host: dynamic_tools::ToolHost::new(tx.clone(), stop.clone()),
             initialized: true,
@@ -1432,6 +1475,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel(1);
         let stop = CancellationToken::new();
         let mut conn = Connection {
+            configuration: None,
             principal: auth::Principal::embedded(),
             tool_host: dynamic_tools::ToolHost::new(tx.clone(), stop.clone()),
             initialized: true,

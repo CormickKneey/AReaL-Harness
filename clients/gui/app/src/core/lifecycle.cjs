@@ -39,7 +39,9 @@ const blockerMessage = blockers => blockers.map(code => ({ peerGui: '请先退�
 function recoveryView(service, projects, forUpdate = true) {
   const blockers = desktopBlockers(service, forUpdate);
   const unsafe = projects.some(p => p.lifecycle ? !p.lifecycle.ifIdle.allowed
-    : !p.restartSafe || p.activeTasks || p.goalThreads?.length || p.waitingMessages);
+    : !p.restartSafe || p.activeTasks || p.goalThreads?.length || p.waitingMessages)
+    || projects.some(p => p.tasks?.some(task => !task.paused))
+    || service.remote?.enabled === true || service.remote?.connections > 0;
   const legacyBusy = service.lifecycle?.version !== 2 && (service.busy || !!service.stopReport);
   return { blockers, ifIdle: !blockers.length && !unsafe && !legacyBusy,
     cancel: !blockers.length && (unsafe || legacyBusy), projects, service };
@@ -95,6 +97,15 @@ class DesktopLifecycle {
       || !require('node:util').isDeepStrictEqual(before.targets, current.targets))
       throw Object.assign(new Error('后台实例或项目范围已变化，请重新确认'), { code: 'CONFIRMATION_STALE' });
     if (current.blockers.length) throw Object.assign(new Error(blockerMessage(current.blockers)), { code: 'LIFECYCLE_BLOCKED' });
+    if (mode === 'cancel' || before.confirmedImpact) {
+      const impact = value => ({ remote: value.service.remote, projects: value.projects.map(project => ({
+        projectId: project.projectId, lifecycle: project.lifecycle, activeThreads: project.activeThreads,
+        goals: project.goals, tasks: project.tasks, resources: project.resources, queues: project.queues,
+        pendingRequests: project.pendingRequests,
+      })).sort((left, right) => left.projectId.localeCompare(right.projectId)) });
+      if (!require('node:util').isDeepStrictEqual(impact(before), impact(current)))
+        throw Object.assign(new Error('退出影响已变化，请重新确认当前任务'), { code: 'CONFIRMATION_STALE' });
+    }
     const expectedTargets = projectId ? current.targets.filter(target => target.projectId === projectId) : current.targets;
     if (projectId && expectedTargets.length !== 1) throw Object.assign(new Error('原项目后台身份不完整，请重新核查'), { code: 'CONFIRMATION_STALE' });
     return { kind, mode, expectedDesktopGeneration: latest.desktopGeneration, expectedTargets };
