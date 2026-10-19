@@ -829,7 +829,7 @@ async fn rejected_child_input_does_not_consume_a_thread_slot_or_leave_history() 
 
 #[tokio::test]
 async fn legacy_text_sessions_load_and_upgrade_on_next_write() {
-    for version in [1, 7] {
+    for version in [1, 7, 14] {
         let dir = tempfile::tempdir().unwrap();
         let thread_id = uuid::Uuid::new_v4().to_string();
         let thread = Thread {
@@ -902,6 +902,6 @@ async fn legacy_text_sessions_load_and_upgrade_on_next_write() {
             &std::fs::read(dir.path().join(format!("{thread_id}.json"))).unwrap(),
         )
         .unwrap();
-        assert_eq!(record["version"], 14);
+        assert_eq!(record["version"], 15);
     }
 }

@@ -164,6 +164,7 @@ class CoreBackend {
         instanceId: live?.service?.serviceId ?? null, connectionGeneration: live?.connectionGeneration ?? 0 },
         state: state && live.resourceInitializing ? {...state, connected:false} : state,
         pending: (live?.pending ?? []).filter(entry => !isRemoteControl(entry)).map(entry => ({ ...entry, awaitingResponse: this.awaitingResponses.has(entry) })), outcomes: live?.outcomes ?? {}, models: this.providers.catalog(live?.models ?? [], live), profiles: live?.profiles ?? [],
+        lastAcceptedModel: this.providers.lastAcceptedModel ?? null,
         defaultProfile: live?.resourceProfile ?? this.defaultProfile ?? null, configurations: live?.configurations ?? {},
         summaries: live?.summaries ?? [], summariesLoaded: live?.summariesLoaded === true, error: live?.error ?? null };
     }) };
@@ -453,6 +454,7 @@ class CoreBackend {
         client.request('areal/profile/list').then(value => { profilesTrace.finish('ok'); return value; }, error => { profilesTrace.finish('error', error); throw error; }),
       ]);
       this.requireConnection(project, client);
+      await this.providers.acceptModelSelection(models.lastAcceptedModel);
       project.models = models.data ?? models.models ?? [];
       project.profiles = profiles.data ?? profiles.profiles ?? [];
       trace.advance('history');
@@ -996,6 +998,7 @@ class CoreBackend {
         throw error;
       }
       try {
+        await this.providers.acceptModelSelection(result?.lastAcceptedModel);
         if (workgroupMutationMethods.has(method)) await this.rememberWorkgroupOutcome(project, entry, result);
         if (method === 'areal/turn/submit' || (requestId !== undefined && ['areal/turn/start', 'areal/turn/enqueue'].includes(method))) await this.changeOutcomes(project, outcomes => ({ ...outcomes, [params.requestId]: {
           accepted: true, method, threadId: params.threadId,
@@ -1158,6 +1161,7 @@ class CoreBackend {
       if (['areal/thread/start', 'areal/turn/start', 'areal/turn/submit', 'turn/start', 'areal/turn/enqueue'].includes(entry.method)) {
         await this.changeOutcomes(project, outcomes => ({ ...outcomes, [entry.params.requestId]: { accepted: true, threadId: entry.params.threadId ?? receipt.threadId ?? receipt.result?.thread?.id } }));
       }
+      await this.providers.acceptModelSelection(receipt.result?.lastAcceptedModel);
       if (entry.method.startsWith('areal/queue/')) {
         await this.changeOutcomes(project, outcomes => ({ ...outcomes, [entry.params.requestId]: {
           accepted: !receipt.response?.error, threadId: entry.params.threadId, method: entry.method,

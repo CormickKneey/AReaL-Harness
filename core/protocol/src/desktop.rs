@@ -419,9 +419,21 @@ pub struct PermissionGrant {
     pub arguments: Value,
 }
 
+/// Model preference captured in the same snapshot as a user submission receipt.
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AcceptedModelSelection {
+    pub accepted_at: u64,
+    pub model: Option<ModelRef>,
+    pub model_id: String,
+    pub reasoning_effort: Option<String>,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DesktopState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_accepted_model: Option<AcceptedModelSelection>,
     /// 只在读取活跃 Side 时由 Core 投影；历史快照不承载模型等待状态。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub side_capacity_status: Option<String>,

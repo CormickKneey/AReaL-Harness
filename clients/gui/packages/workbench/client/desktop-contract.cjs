@@ -29,7 +29,7 @@ const commandDefinitions = Object.freeze({
   connectService: ['main', 'app'], export: ['main', 'thread'], remoteControl: ['main', 'app'],
 });
 /** @typedef {keyof typeof commandDefinitions} CommandName */
-/** @template {CommandName} N @typedef {N extends 'serviceLifecycle' ? {operation:'update'|'stop'|'check'} : N extends 'stop' ? {projectId:string,threadId:string,turnId:string,requestId:string} : N extends 'continue' ? ContinueRequest : N extends 'prepareCreator' ? PrepareCreatorRequest : N extends 'fork' ? ForkRequest : N extends 'configure' ? ConfigureRequest : N extends 'side' ? SideRequest : N extends 'trajectory' ? TrajectoryRequest : Record<string,unknown>} CommandParams */
+/** @template {CommandName} N @typedef {N extends 'serviceLifecycle' ? {operation:'update'|'stop'|'check'|'recover'|'quitInterface'|'stopAndQuit'} : N extends 'stop' ? {projectId:string,threadId:string,turnId:string,requestId:string} : N extends 'continue' ? ContinueRequest : N extends 'prepareCreator' ? PrepareCreatorRequest : N extends 'fork' ? ForkRequest : N extends 'configure' ? ConfigureRequest : N extends 'side' ? SideRequest : N extends 'trajectory' ? TrajectoryRequest : Record<string,unknown>} CommandParams */
 /** @typedef {'show'|'navigate'|'back'|'forward'|'reload'|'stop'|'state'|'external'|'devtools'|'openLink'|'release'|'claim'|'takeover'|'captureRegion'|'captureElement'|'selectElement'|'cancelElementSelection'|'checkElement'|'endRegion'|'beginStyleTrial'|'applyStyleTrial'|'undoStyleTrial'|'redoStyleTrial'|'styleTrialState'|'captureStyleTrialAfter'|'clearStyleTrial'|'newPage'|'selectPage'|'subscribe'|'unsubscribe'|'allowNextDownload'|'cancelFileHandoff'|'cancelDownload'|'authorizeFrameOrigin'|'reloadFrameOrigin'|'revokeFrameOrigin'} OwnedPreviewOperation */
 /** @typedef {{operation:'hide',projectId?:string,threadId?:string,pageId?:string,captureId?:string}|{operation:OwnedPreviewOperation,projectId:string,threadId:string,pageId?:string,captureId?:string,x?:number,y?:number,elementId?:string,trialId?:string,property?:string,value?:string,downloadId?:string,url?:string,userIntent?:boolean,visible?:boolean,bounds?:{x:number,y:number,width:number,height:number}}} PreviewRequest */
 /** @param {unknown} value @returns {value is Record<string,unknown>} */
@@ -48,7 +48,7 @@ function validateCommand(name, params, { serviceOnly = false } = {}) {
   if (serviceOnly && layer !== 'service') invalid();
   if (scope !== 'app' && !identifier(params.projectId)) invalid();
   if (scope === 'thread' && !identifier(params.threadId)) invalid();
-  if (name === 'serviceLifecycle' && (!['update', 'stop', 'check'].includes(String(params.operation))
+  if (name === 'serviceLifecycle' && (!['update', 'stop', 'check', 'recover', 'quitInterface', 'stopAndQuit'].includes(String(params.operation))
     || Object.keys(params).some(key => key !== 'operation'))) invalid();
   if (name === 'stop' && (!identifier(params.turnId) || typeof params.requestId !== 'string'
     || !/^[0-9a-f-]{36}$/.test(params.requestId)

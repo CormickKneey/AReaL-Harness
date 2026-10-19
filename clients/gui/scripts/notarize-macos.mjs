@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import { preserveSignedPaths } from "./macos-signing-paths.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
@@ -330,13 +331,18 @@ async function main() {
       gatekeeperAssess: false,
       preAutoEntitlements: false,
       preEmbedProvisioningProfile: false,
-      ignore: (path) => ignored.includes(path),
+      ignore: preserveSignedPaths(ignored),
       optionsForFile: () => ({
         hardenedRuntime: true,
         entitlements: join(desktop, "scripts/entitlements.mac.plist"),
       }),
     });
     assertApp();
+    // 外层签名不得改变已签 Core 的字节；在任何 Apple 上传前检查，失败保留现场。
+    require(join(desktop, "app/src/core/bundle.cjs")).verifyCoreBundle(
+      join(app, "Contents/Resources"),
+      { hashes: true },
+    );
     run("/usr/bin/ditto", ["-c", "-k", "--keepParent", app, join(output, "app-submission.zip")]);
     state.phase = "signed";
     save();

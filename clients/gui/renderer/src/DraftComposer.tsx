@@ -84,13 +84,24 @@ export function DraftComposer({
   const setPlanMode = (enabled: boolean) => { setPlan(enabled); localStorage.setItem(`${key}:plan`, String(enabled)); };
   const [model, setModel] = useState<string | null>(() => localStorage.getItem(`${key}:model`));
   const modelValue = (item: Data) => `${item.providerId ?? ""}/${item.modelId}`;
+  const previousSelection = project.lastAcceptedModel;
+  const rememberedModel = previousSelection && project.models.find((item: Data) =>
+    (item.providerId ?? null) === (previousSelection.model?.providerId ?? null)
+    && item.modelId === previousSelection.modelId);
+  const useRemembered = !chosenProfile?.model && rememberedModel?.available !== false && !!rememberedModel;
   const initialModel = chosenProfile?.model
     ? project.models.find((item: Data) => item.providerId === chosenProfile.model.providerId && item.modelId === chosenProfile.model.modelId)
-    : project.models.find((item: Data) => item.isDefault);
+    : useRemembered ? rememberedModel : project.models.find((item: Data) => item.isDefault);
   const effectiveModel = model ?? (chosenProfile?.model
     ? `${chosenProfile.model.providerId}/${chosenProfile.model.modelId}` : initialModel ? modelValue(initialModel) : "");
   const currentModel = project.models.find((item: Data) => modelValue(item) === effectiveModel);
-  const effort = efforts[effectiveModel] ?? currentModel?.parameters?.reasoningEffort ?? "";
+  const rememberedEffort = useRemembered && model === null ? previousSelection.reasoningEffort : undefined;
+  const unsupportedEffort = rememberedEffort != null && !currentModel?.reasoningEffortOptions?.includes(rememberedEffort);
+  const effort = efforts[effectiveModel] ?? (unsupportedEffort ? undefined : rememberedEffort) ?? currentModel?.parameters?.reasoningEffort ?? "";
+  const preferenceNotice = model === null && !chosenProfile?.model && previousSelection
+    ? !useRemembered ? "上次使用的模型当前不可用，已显示备用默认模型，请确认后发送。"
+      : unsupportedEffort ? "上次使用的思考强度当前不受支持，已使用模型默认值。" : ""
+    : "";
   const [unknown, setUnknown] = useState(() => localStorage.getItem(`${key}:pending-create`));
   const busy = useSyncExternalStore(subscribeSending, () => sending.has(key));
   const modelSelectionDisabled =
@@ -253,6 +264,7 @@ export function DraftComposer({
         <button onClick={() => { setProfileSelection(""); localStorage.removeItem(`${key}:profile`); }}>恢复默认配置</button>
       </div>}
       {project.root && !project.state?.connected && (project.error || project.state?.error) && <p role="alert" className="notice">连接不可用，输入已保留。{project.error || project.state?.error}</p>}
+      {preferenceNotice && <p className="composer-error" role="status">{preferenceNotice}</p>}
       {draftError && <p role="alert" className="px-3 py-2 text-ui-sm text-destructive">{draftError}</p>}
       {reviewDraft.error && <p role="alert" className="px-3 py-2 text-ui-sm text-destructive">{reviewDraft.error}</p>}
       <div className="composer-input-stack">

@@ -11,7 +11,7 @@ use tokio::sync::Semaphore;
 mod archive;
 
 // 持久化版本与服务状态必须一致，避免客户端误判可恢复的数据格式。
-pub(crate) const STATE_VERSION: u32 = 14;
+pub(crate) const STATE_VERSION: u32 = 15;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Record {
@@ -51,7 +51,23 @@ impl Store {
             .read(true)
             .write(true)
             .open(root.join("owner.lock"))?;
-        fs2::FileExt::try_lock_exclusive(&lock).context("another Core owns the data directory")?;
+        // fork 到 exec 的短窗口可继承旧 owner 的文件描述符。仅等待独占锁交接，
+        // 不提前读写会话，也不取消或接管仍存活的 Core；其他错误立即返回。
+        let handoff = std::time::Instant::now() + std::time::Duration::from_millis(100);
+        loop {
+            match fs2::FileExt::try_lock_exclusive(&lock) {
+                Ok(()) => break,
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::WouldBlock
+                        && std::time::Instant::now() < handoff =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+                Err(error) => {
+                    return Err(error).context("another Core owns the data directory");
+                }
+            }
+        }
         // 独占 Store 后才移除崩溃遗留的原子写临时文件，不能与旧 Core 的写入竞争。
         cleanup_temps(&root)?;
         Ok(Self {
@@ -677,6 +693,69 @@ fn atomic_metadata(root: &Path, name: &str, bytes: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn owner_handoff_waits_for_inherited_pre_exec_descriptor() {
+        use std::io::{Read, Write};
+        use std::os::fd::FromRawFd;
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store::open(directory.path()).unwrap();
+        let mut ready = [0; 2];
+        let mut release = [0; 2];
+        // 子进程只调用 async-signal-safe 系统调用，不运行 Rust 析构或分配器。
+        let child = unsafe {
+            assert_eq!(libc::pipe(ready.as_mut_ptr()), 0);
+            assert_eq!(libc::pipe(release.as_mut_ptr()), 0);
+            let child = libc::fork();
+            if child == 0 {
+                libc::close(ready[0]);
+                libc::close(release[1]);
+                let byte = 1u8;
+                if libc::write(ready[1], (&byte as *const u8).cast(), 1) != 1 {
+                    libc::_exit(91);
+                }
+                let mut byte = 0u8;
+                if libc::read(release[0], (&mut byte as *mut u8).cast(), 1) != 1 {
+                    libc::_exit(92);
+                }
+                libc::_exit(0);
+            }
+            child
+        };
+        assert!(child > 0);
+        unsafe {
+            libc::close(ready[1]);
+            libc::close(release[0]);
+        }
+        let mut entered = unsafe { File::from_raw_fd(ready[0]) };
+        entered.read_exact(&mut [0]).unwrap();
+        drop(entered);
+        drop(store);
+        let released = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            let mut release = unsafe { File::from_raw_fd(release[1]) };
+            release.write_all(&[1]).unwrap();
+            let mut status = 0;
+            assert_eq!(unsafe { libc::waitpid(child, &mut status, 0) }, child);
+            assert_eq!(status, 0);
+        });
+        let replacement = Store::open(directory.path());
+        released.join().unwrap();
+        assert!(replacement.is_ok(), "{:#?}", replacement.err());
+    }
+
+    #[test]
+    fn owner_handoff_never_cleans_an_active_owners_pending_write() {
+        let directory = tempfile::tempdir().unwrap();
+        let owner = Store::open(directory.path()).unwrap();
+        let pending = directory.path().join(".tmp-owned-write");
+        std::fs::write(&pending, b"pending").unwrap();
+        assert!(Store::open(directory.path()).is_err());
+        assert_eq!(std::fs::read(&pending).unwrap(), b"pending");
+        drop(owner);
+        let _replacement = Store::open(directory.path()).unwrap();
+        assert!(!pending.exists());
+    }
 
     #[test]
     fn recovered_plugin_operations_preserve_facts_and_block_replay() {

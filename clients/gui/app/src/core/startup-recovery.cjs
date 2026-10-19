@@ -23,7 +23,13 @@ async function recoverConnectedService({ backend, notify, purpose = 'stop', forU
     if (!notify) throw Object.assign(new Error('取消后台任务需要原生确认'), { code: 'LIFECYCLE_CONFIRMATION_REQUIRED' });
     const answer = await notify({ type: 'warning', message: '确认取消后台任务？',
       detail: '将取消所列工作区后台的活动执行，并暂停目标。待发送输入、安排和历史保留。未完成的资源清理仍可能阻止退出。\n\n'
-        + (describe(observed.projects) || observed.projects.map(project => project.root ?? project.projectId).join('\n')),
+        + observed.projects.map(project => [project.root ?? project.projectId,
+          describe([project]),
+          ...(project.activeThreads ?? []).map(turn => `正在执行的会话：${turn.threadId}`),
+          ...(project.goals ?? []).map(goal => `持续目标：${goal.objective ?? goal.threadId}`),
+          ...(project.tasks ?? []).map(task => `任务：${task.objective ?? task.id}`),
+          ...(project.resources ?? []).map(resource => `未清理资源：${resource.executable || resource.id}`),
+        ].filter(Boolean).join('\n')).join('\n\n'),
       buttons: ['返回', purpose === 'update' ? '取消任务并更新' : '取消任务并停止'], defaultId: 0, cancelId: 0, noLink: true });
     if (answer.response !== 1) return { kind: 'dismissed', canceled: true };
   }

@@ -18,6 +18,19 @@ use tokio::{
     time::{Instant, timeout},
 };
 
+#[derive(Debug)]
+struct ControlTransportError(std::io::Error);
+impl std::fmt::Display for ControlTransportError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, formatter)
+    }
+}
+impl std::error::Error for ControlTransportError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
+
 pub async fn ensure(spec: &LaunchSpec) -> Result<Service> {
     ensure_inner(spec, None, false, true).await
 }
@@ -54,6 +67,10 @@ async fn ensure_inner(
     if !storage::available(&host_lock)? {
         let service = status_unlocked(&spec.home, &spec.service_id).await
             .context("service has an active owner but cannot be reached; inspect its log, do not start a second Core")?;
+        ensure!(
+            service.state == State::Ready,
+            "service has an active owner but cannot be reached; inspect its log, do not start a second Core"
+        );
         ensure!(
             Some(&service.identity.workspace) == spec.args.workspace.as_ref(),
             "data directory is bound to a different workspace"
@@ -295,16 +312,27 @@ async fn control_request(root: &Path, id: &str, request: Request) -> Result<Resp
         Duration::from_secs(2),
         UnixStream::connect(directory.join("control.sock")),
     )
-    .await??;
+    .await?
+    .map_err(ControlTransportError)?;
     let (read, mut write) = connection.into_split();
     let mut bytes = serde_json::to_vec(&request)?;
     bytes.push(b'\n');
-    write.write_all(&bytes).await?;
+    write
+        .write_all(&bytes)
+        .await
+        .map_err(ControlTransportError)?;
     let mut reader = BufReader::new(read.take(256 * 1024));
     let mut line = String::new();
     // 服务仅在私有 socket 上返回有界的一行响应。
     use tokio::io::AsyncReadExt;
-    timeout(Duration::from_secs(65), reader.read_line(&mut line)).await??;
+    let count = timeout(Duration::from_secs(65), reader.read_line(&mut line))
+        .await?
+        .map_err(ControlTransportError)?;
+    if count == 0 {
+        return Err(
+            ControlTransportError(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)).into(),
+        );
+    }
     match serde_json::from_str(&line)? {
         Response::Error { message } => bail!("{message}"),
         response => Ok(response),
@@ -455,7 +483,29 @@ async fn status_unlocked(root: &Path, id: &str) -> Result<Service> {
         };
         return Ok(record);
     }
-    let live = request(root, id, Request::Status { version: VERSION }).await?;
+    let live = match request(root, id, Request::Status { version: VERSION }).await {
+        Ok(live) => live,
+        Err(error)
+            if error
+                .downcast_ref::<ControlTransportError>()
+                .is_some_and(|error| {
+                    matches!(
+                        error.0.kind(),
+                        std::io::ErrorKind::NotFound
+                            | std::io::ErrorKind::ConnectionRefused
+                            | std::io::ErrorKind::ConnectionReset
+                            | std::io::ErrorKind::BrokenPipe
+                            | std::io::ErrorKind::UnexpectedEof
+                    )
+                }) =>
+        {
+            // Host 可先关闭控制端点再释放租约。只报告不可用，不伪造停止或清理回执；
+            // 正常发现仍须核对代际，下一次查询只有两把锁都释放后才可观察 stopped。
+            record.state = State::Unavailable;
+            return Ok(record);
+        }
+        Err(error) => return Err(error),
+    };
     ensure!(
         live.identity == record.identity,
         "service generation changed; retry discovery"
@@ -782,6 +832,96 @@ mod tests {
         assert_eq!(observed.state, State::Stopping);
         assert!(!storage::available(&data.join("service.lock")).unwrap());
         host.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn disconnected_control_is_unavailable_until_both_ownership_locks_release() {
+        let root = tempfile::tempdir_in("/tmp").unwrap();
+        let id = "b".repeat(24);
+        let directory = storage::registry(root.path(), &id).unwrap();
+        storage::private_dir(&directory).unwrap();
+        let data = root.path().join("data");
+        storage::private_dir(&data).unwrap();
+        let service = Service {
+            identity: Identity {
+                protocol_version: VERSION,
+                service_id: id.clone(),
+                generation: "original".into(),
+                workspace: root.path().join("workspace"),
+                data_dir: data.clone(),
+                config_fingerprint: "fixture".into(),
+            },
+            endpoint: "ws://127.0.0.1:1".into(),
+            web_url: "http://127.0.0.1:1/ui".into(),
+            auth_file: data.join("auth.json"),
+            log_file: directory.join("host.log"),
+            core_pid: 1,
+            host_pid: 2,
+            state: State::Ready,
+        };
+        storage::write(&directory.join("service.json"), &service).unwrap();
+        let lease = storage::open_private(&data.join("service.lock"), true).unwrap();
+        lease.try_lock_exclusive().unwrap();
+        let store = storage::open_private(&data.join("owner.lock"), true).unwrap();
+        store.try_lock_exclusive().unwrap();
+        assert_eq!(
+            status(root.path(), &id).await.unwrap().state,
+            State::Unavailable
+        );
+        let socket = directory.join("control.sock");
+        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+        drop(listener);
+        assert_eq!(
+            status(root.path(), &id).await.unwrap().state,
+            State::Unavailable
+        );
+        std::fs::remove_file(&socket).unwrap();
+        for response in [
+            "",
+            "not-json",
+            "{\"result\":\"error\",\"message\":\"disk failure\"}",
+        ] {
+            let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+            let response = response.to_owned();
+            let disconnected = response.is_empty();
+            let host = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut line = String::new();
+                BufReader::new(&mut stream)
+                    .read_line(&mut line)
+                    .await
+                    .unwrap();
+                if !response.is_empty() {
+                    stream.write_all(response.as_bytes()).await.unwrap();
+                }
+            });
+            let observed = status(root.path(), &id).await;
+            if disconnected {
+                assert_eq!(observed.unwrap().state, State::Unavailable);
+            } else {
+                assert!(observed.is_err());
+            }
+            host.await.unwrap();
+            std::fs::remove_file(&socket).unwrap();
+        }
+        drop(lease);
+        assert_eq!(
+            status(root.path(), &id).await.unwrap().state,
+            State::Unavailable
+        );
+        drop(store);
+        let observed = status(root.path(), &id).await.unwrap();
+        assert_eq!(observed.state, State::Stopped);
+        assert_eq!(observed.identity, service.identity);
+        // 状态观察不补写 Host 的权威清理标记，恢复仍须另行核对它。
+        assert_eq!(
+            storage::read::<Service>(&directory.join("service.json"))
+                .unwrap()
+                .state,
+            State::Ready
+        );
+        std::fs::remove_file(directory.join("service.json")).unwrap();
+        assert!(status(root.path(), &id).await.is_err());
     }
 
     #[test]

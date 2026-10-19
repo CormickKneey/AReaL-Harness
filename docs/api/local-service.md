@@ -53,6 +53,8 @@ target/debug/areal web --workspace /absolute/workspace --json
 
 ## 可核查的停止操作
 
+`status` 在原实例仍持锁但控制端点已关闭或断开时报告 `unavailable`，不将 socket 消失或响应丢失当作停止；协议、权限和超时错误仍显式失败。`ensure` 不接管这类仍有 owner 的实例。Store 启动仅为派生进程继承描述符的短暂交接等待约 100 ms，未取得独占锁前不清理临时写入，仍拒绝持续持锁的 owner。
+
 可信 GUI 使用 `service ensure --no-auto-restart`：兼容实例可以复用，不存在时可以在原有锁下启动；需要替换运行实例时返回冲突，不能在 ensure 内隐式停止。普通 CLI ensure 的既有空闲更新行为保留。
 
 ```sh
@@ -66,6 +68,15 @@ areal service operation --instance INSTANCE --expected-generation GENERATION --r
 Host 在 drain 前原子保存并 fsync 回执，目录位于私有 registry 的 `operations/`，不随 generation 清理。状态为 `acceptedPending`、`blocked`、`admissionUnknown`、`settlementIncomplete` 或 `completed`。已知忙碌拒绝与已受理但未结算分开；查询不重新 drain 或 cancel，null 不证明原请求未受理。显式新意图可以在已知拒绝或结算不完整后重新观察并使用新 ID；受理未知必须先核对。
 
 `completed` 来自公共 operation 查询：Host 已确认 launcher/Runtime 清理且原实例的服务锁和 Store 锁释放，或锁保护的新代际已接管。Core PID 消失、socket 断开或清理登记缺失都不够。Host 在确认清理前崩溃保留未知状态。私有 socket 的重复请求返回原持久快照，物理退出状态由公共 operation 投影核验。
+
+
+## CLI 与 GUI 的默认隔离边界
+
+模型配置默认共用 `~/.areal/config.toml`，共享文件不代表共享执行实例、历史或全部认证状态。不带 `--endpoint` 的 `areal exec` 为每个 run 使用 `<home>/cli/runs/<runId>/state`，会话映射位于 `<home>/cli/sessions/`，`--resume` 复用原 run；其中 home 为 `AREAL_HARNESS_HOME` 或 `~/.areal`。直接使用独占 `serve`／launcher 时，通用配置的数据默认值才是配置 home 的 `state/`。公共 `areal service` 默认 registry 为 `~/.areal`（可由 `AREAL_HARNESS_SERVICE_HOME` 选择），默认 dataDir 为 `<registry>/instances/<workspace-hash>/state`，已有 bind 映射及显式配置优先。
+
+GUI 的 registry 默认是 `~/.areal/gui/<GUI Core home 摘要>`，每项目 dataDir 是 `<GUI Core home>/<projectId>/state`。GUI Core home 默认为 GUI userData 下的 `areal-core`；开发 userData 按源码工作树隔离，安装版、显式 profile/worktree 可有不同数据目录。GUI 退出／停止只处理这个 owner 已登记并核实身份的实例，不枚举或停止默认 CLI registry 或其他 profile。
+
+显式连接同一服务（例如 CLI 的 `--endpoint` 和 `--auth-file`）才共享该实例的执行与历史；仅使用相同模型配置、同一源码目录，甚至仅指定相同 registry 都不等价。同一 dataDir 的 Store 单写锁始终有效，不能以另一个进程或入口绕过。不同 dataDir 也不会隔离同一源码工作区的文件修改：多个入口仍可读到彼此修改，写入需要协调，或选择不同 Git worktree。
 
 ## 实例、兼容性与历史
 
@@ -96,7 +107,7 @@ target/debug/areal service bind --workspace /absolute/workspace \
 
 实验插件构建写入的 `hookRuns`、`allowPluginSkills` 和 `pluginSkills` 仅作为不执行的历史字段保留。读取空闲会话不会为兼容处理改写文件；后续正常保存保留这些字段的值，不恢复 Hook、加载插件 Skill 或授予插件权限。其他未知字段继续严格校验。
 
-Store 当前写入版本、`areal/server/status.stateVersion` 与发行 `manifest.json.stateVersion` 均为 14；API 仍为 `areal.core.v1`，服务发现协议仍为 1。无派生元数据的旧记录可读取并在下一次写入升级；Fork/Side 记录必须具有受支持的会话版本和版本 14 的权限语义，不能仅降低记录版本来交给旧二进制。服务重启不重放创建或首问，结果不确定时先查 `areal/request/read`。能力声明不替代各平台原生权限验证、安装包或真实供应商的独立验收。
+Store 当前写入版本、`areal/server/status.stateVersion` 与发行 `manifest.json.stateVersion` 均为 15；API 仍为 `areal.core.v1`，服务发现协议仍为 1。版本 15 增加主会话最后受理的模型偏好，继续读取版本 1–14 的旧记录；旧 Core 不保证读取新记录，回退应恢复升级前备份。无派生元数据的旧记录可读取并在下一次写入升级；Fork/Side 记录必须具有受支持的会话版本和版本 14 的权限语义，不能仅降低记录版本来交给旧二进制。服务重启不重放创建或首问，结果不确定时先查 `areal/request/read`。能力声明不替代各平台原生权限验证、安装包或真实供应商的独立验收。
 
 ## 生命周期与恢复
 

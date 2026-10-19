@@ -1082,7 +1082,7 @@ impl Connection {
             }
             "model/list" => {
                 let _: ModelList = parse(params)?;
-                let catalog = engine.model_catalog();
+                let catalog = engine.model_catalog().await;
                 let data:Vec<_>=catalog["data"].as_array().unwrap().iter().map(|model|{
                     let name=model["modelId"].as_str().unwrap();let default=model["providerId"].is_null();
                     let mut value=json!({"id":if default{name.into()}else{format!("{}:{name}",model["providerId"].as_str().unwrap())},"model":name,"displayName":name,"description":"Configured API model","hidden":false,"isDefault":default,"defaultReasoningEffort":"none","supportedReasoningEfforts":[],"inputModalities":model["input"].as_array().unwrap().iter().filter(|v|**v!="file").collect::<Vec<_>>(),"arealCapabilities":{"providerId":model["providerId"],"providerRevision":model["providerRevision"],"inputModalities":model["input"],"outputModalities":model["output"]}});

@@ -53,6 +53,8 @@ Descriptor fields are defined in [local-service-v1.json](../../schemas/local-ser
 
 ## Inspectable stop operations
 
+When the original instance still holds its lease but its control endpoint has closed or disconnected, `status` reports `unavailable`, not a completed stop. Protocol, permission and timeout errors remain failures. `ensure` does not take over that active owner. Store startup allows about 100 ms for inherited-descriptor handoff, never cleans pending writes before acquiring the exclusive lock, and still refuses a persistent owner.
+
 GUI uses `service ensure --no-auto-restart`: compatible services may be reused and absent instances started under the existing locks. Replacement of a running instance requires an explicit lifecycle operation. Ordinary CLI ensure retains its existing idle-update behavior.
 
 ```sh
@@ -66,6 +68,15 @@ Capabilities returns `{version:1,stopOperations:1}`. Unsupported hosts reject ne
 Before drain, Host atomically stores and fsyncs a receipt in private registry `operations/`, outside generation cleanup. States are `acceptedPending`, `blocked`, `admissionUnknown`, `settlementIncomplete`, and `completed`. Known refusal is distinct from admitted but incomplete settlement. Reads never repeat drain or cancel; null does not prove non-admission. A new explicit intent may observe again and use a new ID after known refusal or incomplete settlement. Uncertain admission requires inspection first.
 
 Public operation reads derive `completed` only after confirmed launcher/Runtime cleanup and release of the original service and Store locks, or lock-protected replacement ownership. A vanished Core PID, disconnected socket or missing registration is insufficient. Host crashes before cleanup confirmation retain uncertainty. Duplicate private-socket requests return durable snapshots; public operation reads verify physical exit.
+
+
+## Default CLI and GUI isolation
+
+Model configuration defaults to the shared `~/.areal/config.toml`. Sharing that file does not share execution instances, history or every authentication state. `areal exec` without `--endpoint` uses `<home>/cli/runs/<runId>/state` per run, with session mappings under `<home>/cli/sessions/`; `--resume` reuses the original run. Here home is `AREAL_HARNESS_HOME` or `~/.areal`. Direct exclusive `serve`/launcher entry points use the general configuration default `<configuration home>/state/`. Public `areal service` uses `~/.areal` as its default registry (overridden by `AREAL_HARNESS_SERVICE_HOME`) and `<registry>/instances/<workspace-hash>/state` as its default dataDir; existing bind mappings and explicit configuration take precedence.
+
+The GUI defaults to `~/.areal/gui/<GUI Core home digest>` for its registry and `<GUI Core home>/<projectId>/state` for each project. GUI Core home defaults to `areal-core` under GUI userData. Development userData is scoped to the source checkout; installed builds and explicit profiles/worktrees can use separate directories. GUI stop/exit controls only the instances registered to that owner after verifying their identities. It does not enumerate or stop the default CLI registry or other profiles.
+
+Execution and history are shared only by explicitly connecting to the same service, for example using CLI `--endpoint` and `--auth-file`. The same model configuration, source workspace or even registry alone is insufficient. The Store single-writer lock still protects each dataDir across processes and clients. Separate dataDirs do not isolate changes to files in the same source workspace: coordinate writes or use separate Git worktrees.
 
 ## Identity, compatibility and history
 
@@ -96,7 +107,7 @@ The feature's `historyBytes` is Engine's derived-snapshot cap: the smaller of co
 
 The experimental plugin build’s `hookRuns`, `allowPluginSkills`, and `pluginSkills` are retained as inert historical data. Reading an idle session does not rewrite its file for compatibility; ordinary subsequent saves retain these values without scheduling hooks, loading plugin skills, or granting plugin permissions. Other unknown fields remain strictly validated.
 
-Store writes, `areal/server/status.stateVersion` and release `manifest.json.stateVersion` are currently 14. The API remains `areal.core.v1` and service discovery stays at version 1. Old records without derivation metadata load and upgrade on their next write. Fork/Side records require a supported conversation version and version-14 permission semantics; lowering a record's version is not a safe way to hand it to an older binary. Restart does not replay creation or the first question; query `areal/request/read` when the outcome is uncertain. Capability declarations do not replace independent acceptance of platform-native permissions, packaged apps or real providers.
+Store writes, `areal/server/status.stateVersion` and release `manifest.json.stateVersion` are currently 15. The API remains `areal.core.v1` and service discovery stays at version 1. Version 15 adds the last admitted main-conversation model preference and continues reading version 1–14 records; older Core binaries may not read new records, so rollback requires a pre-upgrade backup. Old records without derivation metadata load and upgrade on their next write. Fork/Side records require a supported conversation version and version-14 permission semantics; lowering a record's version is not a safe way to hand it to an older binary. Restart does not replay creation or the first question; query `areal/request/read` when the outcome is uncertain. Capability declarations do not replace independent acceptance of platform-native permissions, packaged apps or real providers.
 
 ## Lifecycle and recovery
 

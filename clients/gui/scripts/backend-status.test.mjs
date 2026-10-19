@@ -7,11 +7,45 @@ const require = createRequire(new URL('../renderer/package.json', import.meta.ur
 const React = require('react');
 const { renderToStaticMarkup } = require('react-dom/server');
 
-test('backend notice keeps inspection read-only and exposes a new explicit update only after target uncertainty settles', async () => {
-  const vite = await createServer({ root: fileURLToPath(new URL('../renderer/', import.meta.url)), configFile: false,
+const createTestServer = () => createServer({ root: fileURLToPath(new URL('../renderer/', import.meta.url)), configFile: false,
     resolve: { alias: { '@': fileURLToPath(new URL('../renderer/src/', import.meta.url)) } },
     optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true, watch: null },
     appType: 'custom', esbuild: { jsx: 'automatic' } });
+
+test('backend notice hides normal connected status but keeps actionable states', async () => {
+  const vite = await createTestServer();
+  try {
+    const { BackendStatusNotice } = await vite.ssrLoadModule('/src/BackendStatusNotice.tsx');
+    const render = props => renderToStaticMarkup(React.createElement(BackendStatusNotice, {
+      connection: { state: 'ready' }, currentCommands: true,
+      pending: false, error: '', onAction() {}, ...props,
+    }));
+    for (const busy of [false, true]) {
+      assert.equal(render({ summary: { state: 'running', busy } }), '', 'normal status occupies no header space');
+    }
+    for (const [props, message, action] of [
+      [{ connection: { state: 'connecting' } }, '正在连接后台…'],
+      [{ connection: { state: 'unavailable' } }, '后台尚未连接', '重新连接后台'],
+      [{ update: { state: 'pending' } }, '当前部署更新尚未应用', '更新后台…'],
+      [{ update: { state: 'applying' } }, '正在更新后台…'],
+      [{ update: { state: 'failed' } }, '后台更新失败', '更新后台…'],
+      [{ currentCommands: false }, '原后台不支持新版提交', '更新后台…'],
+      [{ lifecycle: { error: '生命周期操作失败' } }, '生命周期操作失败', '检查后台'],
+      [{ lifecycle: { recovery: { message: '需要恢复原后台' } } }, '需要恢复原后台', '恢复后台…'],
+      [{ connection: undefined, summary: { state: 'stopped', busy: false } }, '后台已停止', '后台详情'],
+      [{ connection: { state: 'ready', recovery: 'check' } }, '后台状态尚未确认', '检查后台'],
+    ]) {
+      const html = render(props);
+      assert.ok(html.includes(message), message);
+      assert.match(html, /role="status"/);
+      assert.match(html, /后台详情/);
+      if (action) assert.ok(html.includes(action), action);
+    }
+  } finally { await vite.close(); }
+});
+
+test('backend notice keeps inspection read-only and exposes a new explicit update only after target uncertainty settles', async () => {
+  const vite = await createTestServer();
   try {
     const { BackendStatusNotice } = await vite.ssrLoadModule('/src/BackendStatusNotice.tsx');
     const render = (phase, phases, desktopExit = 'notRequested', kind = 'updateDesktop') => renderToStaticMarkup(

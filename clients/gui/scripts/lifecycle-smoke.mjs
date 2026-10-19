@@ -12,7 +12,7 @@ const { _electron: electron } = require('playwright-core');
 const { ServiceConnection, waitForServiceProcessExit } = require('../app/src/core/service-client.cjs');
 const { DesktopLifecycle } = require('../app/src/core/lifecycle.cjs');
 const binary = process.env.AREAL_CORE_BIN || resolve(gui, '../../target/debug/areal');
-const scratch = await mkdtemp('/private/tmp/areal-lifecycle-electron-');
+const scratch = await mkdtemp('/private/tmp/al-');
 const workspace = join(scratch, 'workspace'), home = join(scratch, 'core');
 await mkdir(workspace); await mkdir(join(scratch, 'user/.areal'), { recursive: true });
 execFileSync('git', ['init', '-b', 'main'], { cwd: workspace, stdio: 'ignore' });
@@ -47,6 +47,8 @@ const env = { ...process.env, AREAL_CORE_BIN: binary, AREAL_CORE_CONFIG: config,
   AREAL_GUI_USER_DATA: join(scratch, 'electron'), AREAL_CORE_USER_HOME: join(scratch, 'user'),
   AREAL_HARNESS_SERVICE_HOME: join(scratch, 'registry') };
 for (const key of ['AREAL_CORE_WORKSPACE', 'AREAL_HARNESS_HOME', 'AREAL_HARNESS_CONFIG', 'AREAL_CORE_DESKTOP_CONFIG']) delete env[key];
+const crashUpdate = process.env.AREAL_LIFECYCLE_CRASH_UPDATE === '1';
+let crashDialogs = [];
 const testApp = join(scratch, 'app'); await mkdir(testApp);
 await writeFile(join(testApp, 'package.json'), JSON.stringify({ name: 'areal-lifecycle-fixture', main: 'bootstrap.cjs' }));
 await writeFile(join(testApp, 'bootstrap.cjs'), `
@@ -57,6 +59,19 @@ if (process.env.AREAL_LIFECYCLE_AUTO_RECOVERY === '1') {
     const options = args.at(-1); globalThis.__lifecycleDialogs.push(options);
     if (options.message === '确认取消后台任务？') return {response:1};
     return {response:options.buttons.indexOf('取消任务并重启')};
+  };
+}
+if (process.env.AREAL_LIFECYCLE_CRASH_UPDATE === '1' && !process.argv.includes('--areal-core-service')) {
+  const {ServiceConnection}=require(${JSON.stringify(join(gui,'app/src/core/service-client.cjs'))});
+  const original=ServiceConnection.prototype.request;
+  ServiceConnection.prototype.request=async function(method,params,mutation){
+    const receipt=await original.call(this,method,params,mutation);
+    if(method==='lifecycleRequest' && params.kind==='updateDesktop'){
+      require('node:fs').writeFileSync(${JSON.stringify(join(scratch,'update-accepted-before-gui-crash.json'))},JSON.stringify({requestId:params.requestId,desktopGeneration:params.expectedDesktopGeneration,receipt,dialogs:globalThis.__updateRecoveryDialogs}));
+      process.kill(process.pid,'SIGKILL');
+      await new Promise(()=>{});
+    }
+    return receipt;
   };
 }
 require(${JSON.stringify(join(gui, 'app/src/main.cjs'))});
@@ -196,7 +211,29 @@ try {
     };
 
   });
-  await page.getByRole('button', { name: '更新后台…', exact: true }).click();
+  const updatingGui = app.process();
+  await page.getByRole('button', { name: '更新后台…', exact: true }).click().catch(error => { if (!crashUpdate || !/closed|disconnected/i.test(error.message)) throw error; });
+  if (crashUpdate) {
+    await until(() => updatingGui.exitCode !== null || updatingGui.signalCode !== null, 'only GUI crashes after accepted update');
+    app = null;
+    const crashed = JSON.parse(await readFile(join(scratch,'update-accepted-before-gui-crash.json'),'utf8'));
+    assert.equal(crashed.receipt.desktopExit,'requested');
+    const control = JSON.parse(await readFile(join(env.AREAL_GUI_USER_DATA,'service-control.json'),'utf8'));
+    assert.equal(control.references.at(-1).requestId,crashed.requestId);
+    crashDialogs = crashed.dialogs;
+    await waitForServiceProcessExit(home, updateMetadata);
+    await launch({ recovery: true });
+    await page.getByRole('button', { name: '更新后台…', exact: true }).waitFor();
+    assert.equal((await state()).lifecycle.requestId,crashed.requestId,'reopen reads the original request');
+    assert.equal((await state()).lifecycle.phase,'completed','replacement requires confirmed original exit');
+    assert.equal(requests.length,modelRequestsBeforeReopen);
+    const operationsBefore = (await import('node:fs/promises')).readdir;
+    const journalNames = await operationsBefore(join(home,'lifecycle-operations'));
+    await page.getByRole('button', { name: '更新后台…', exact: true }).click();
+    await until(async () => (await state()).connection?.state === 'ready' && !(await state()).backendUpdate,'finish original update after GUI crash');
+    assert.deepEqual(await operationsBefore(join(home,'lifecycle-operations')),journalNames,'finishing the original update never submits another stop');
+    checks.push('forced GUI exit after accepted update retains the original request/generation and finishes replacement without a repeated stop or confirmation');
+  }
   await waitForServiceProcessExit(home, updateMetadata);
   await until(async () => (await state()).connection?.state === 'ready' && !(await state()).backendUpdate, 'updated replacement connected');
   const replacement = JSON.parse(await readFile(join(home, 'service.json'), 'utf8'));
@@ -213,7 +250,7 @@ try {
   assert.equal(updatedTask.runs.at(-1).status, 'paused');
   assert.equal(requests.length, modelRequestsBeforeReopen, 'update must not replay queued input or waiting scheduled Run');
   await page.screenshot({ path: join(scratch, '04-updated-preserved.png') });
-  const updateDialogs = await app.evaluate(() => globalThis.__updateRecoveryDialogs);
+  const updateDialogs = crashUpdate ? crashDialogs : await app.evaluate(() => globalThis.__updateRecoveryDialogs);
   dialogs.push(...updateDialogs);
   assert.equal(updateDialogs.length, 1);
   assert.equal(updateDialogs[0].message, '确认取消后台任务？');
@@ -240,7 +277,7 @@ try {
   await writeFile(join(scratch, 'model-requests.json'), JSON.stringify(requests, null, 2));
   if (!passed) process.exitCode = 1;
   await writeFile(join(scratch, 'manifest.json'), JSON.stringify({ passed, checks, errors, dialogs,
-    source: execFileSync('git', ['rev-parse', 'HEAD']).toString().trim(), binary,
+    crashUpdate, source: execFileSync('git', ['rev-parse', 'HEAD']).toString().trim(), binary,
     binarySha256: createHash('sha256').update(await readFile(binary)).digest('hex'),
     boundary: 'real Electron menu/startup + Desktop/Core/Runtime; local model; native dialogs injected; no update download/install' }, null, 2));
   console.log(JSON.stringify({ passed, evidence: scratch, checks, errors }));

@@ -58,7 +58,8 @@ impl Engine {
                 }
             };
             let queued = pending || state.active.is_some();
-            let result;
+            let mut result;
+            let mut accepted_configuration = None;
             let mut candidate;
             let mut activation = None;
             if queued {
@@ -69,6 +70,7 @@ impl Engine {
                     engine.select_plugin_attachments(&mut configuration, &input, true)?;
                     let configuration = engine.freeze_configuration(configuration);
                     validate_input(&input, &engine.configured_model(&configuration)?.capabilities())?;
+                    accepted_configuration = Some(configuration.clone());
                     let item = QueueItem { id: id(), input, configuration, submitted_by: identity.clone(), status: "pending".into(), turn_id: None };
                     let item_id = item.id.clone();
                     data.queue.items.push(item);
@@ -92,9 +94,14 @@ impl Engine {
                     queue.revision += 1;
                 }
                 let permit = engine.reserve_active_turn()?;
+                accepted_configuration = turn.configuration.clone();
                 result = json!({"turn": turn});
                 candidate = prepared;
                 activation = Some((turn, permit));
+            }
+            if let Some(configuration) = accepted_configuration {
+                engine.remember_accepted_model(&mut candidate, &configuration)?;
+                result["lastAcceptedModel"] = json!(candidate.desktop.as_ref().unwrap().last_accepted_model);
             }
             remember(candidate.desktop.as_mut().unwrap(), &identity, &request.request_id, method, hash, result.clone());
             engine.persist(&candidate).await?;
@@ -184,14 +191,19 @@ impl Engine {
             let mut configuration = engine.freeze_configuration(configuration);
             if let Some(mode) = request.interaction_mode { configuration.options.interaction_mode = mode; }
             validate_input(&request.input,&engine.configured_model(&configuration)?.capabilities())?;
+            let accepted_configuration = configuration.clone();
             if enqueue {
                 if data.queue.items.len()>=128 { return Err(Error::Exhausted("queue history capacity reached".into())); }
                 let item = QueueItem {id:id(),input:request.input,configuration,submitted_by:identity.clone(),status:"pending".into(),turn_id:None};
                 data.queue.revision+=1;
-                let result = json!({"queueItemId":item.id,"queueRevision":data.queue.revision,"configRevision":item.configuration.revision});
+                let mut result = json!({"queueItemId":item.id,"queueRevision":data.queue.revision,"configRevision":item.configuration.revision});
                 data.queue.items.push(item);
-                remember(&mut data,&identity,&request.request_id,method,hash,result.clone());
                 let mut candidate=state.thread.clone();candidate.desktop=Some(data);
+                if skill.is_none() {
+                    engine.remember_accepted_model(&mut candidate, &accepted_configuration)?;
+                    result["lastAcceptedModel"] = json!(candidate.desktop.as_ref().unwrap().last_accepted_model);
+                }
+                remember(candidate.desktop.as_mut().unwrap(),&identity,&request.request_id,method,hash,result.clone());
                 if let Some(goal) = &mut candidate.goals.goal
                     && goal.status == areal_protocol::goals::GoalStatus::Active
                 {
@@ -220,7 +232,11 @@ impl Engine {
                 candidate.desktop.as_mut().unwrap().configuration.options.interaction_mode = previous_mode;
                 if skill.is_some() { candidate.desktop.as_mut().unwrap().configuration = original_configuration; }
                 let permit=engine.reserve_active_turn()?;
-                let result=json!({"turn":turn});
+                let mut result=json!({"turn":turn});
+                if skill.is_none() {
+                    engine.remember_accepted_model(&mut candidate, &accepted_configuration)?;
+                    result["lastAcceptedModel"] = json!(candidate.desktop.as_ref().unwrap().last_accepted_model);
+                }
                 remember(candidate.desktop.as_mut().unwrap(),&identity,&request.request_id,method,hash,result.clone());
                 engine.persist(&candidate).await?;state.thread=candidate;
                 engine.activate(&cell,&mut state,&turn,engine.shutdown.child_token(),permit);

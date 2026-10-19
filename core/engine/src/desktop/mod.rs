@@ -6,6 +6,7 @@ mod interactions;
 mod mcp;
 pub(crate) mod mcp_apps;
 mod media;
+mod model_selection;
 mod plugin_mcp;
 mod plugins;
 mod processes;

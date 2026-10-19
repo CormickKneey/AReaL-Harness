@@ -26,7 +26,10 @@ app.setName('AReaL Harness GUI');
 configureUserData(app);
 // Acquire before loading resources or registering shutdown hooks. The userData
 // directory scopes the lock, so explicitly isolated development/test homes coexist.
-if (!app.requestSingleInstanceLock()) { startupTraceMain.finish('skipped'); app.exit(0); return; }
+if (!app.requestSingleInstanceLock()) {
+  console.info('AReaL Harness 界面已在运行，已请求显示已有窗口。');
+  startupTraceMain.finish('skipped'); app.exit(0); return;
+}
 protocol.registerSchemesAsPrivileged([{ scheme: 'areal-mcp', privileges: { standard: true, secure: true, supportFetchAPI: true } }, { scheme: 'areal-ui', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 
 const guiRoot = app.isPackaged ? join(process.resourcesPath, 'areal-gui') : resolve(__dirname, '../../../renderer/dist');
@@ -35,6 +38,7 @@ let window, backend, preview, mcpApps, updates, quitting = false, exitReady = fa
 let browserWindowClosed = false;
 const previewSubscriptions = new Map();
 let startupPending = true, startupPainted = false, startupReady = false;
+let focusRequested = false, stopQuitPending = null;
 let startupShowTrace, startupPaintTrace, startupPresentTrace;
 // The renderer owns first-screen readiness; Main alone owns native visibility.
 // Consume this gate once so late data cannot reopen a window the user hid.
@@ -43,8 +47,33 @@ function presentStartup() {
     || !startupPainted || !startupReady) return;
   startupPending = false;
   window.show();
+  if (focusRequested) { focusRequested = false; window.focus(); }
 }
-const menuBar = new MenuBar(() => quitting || startupPending ? null : window);
+function revealWindow() {
+  if (startupPending || !window || window.isDestroyed()) { focusRequested = true; return; }
+  if (window.isMinimized()) window.restore();
+  window.show(); window.focus();
+}
+async function requestStopAndQuit() {
+  if (stopQuitPending) return stopQuitPending;
+  stopQuitPending = (async () => {
+    if (!backend || quitting) throw new Error('界面仍在准备或退出，请稍后重试');
+    await backend.checkLifecycle();
+    if (!backend.serviceExited) {
+      const result = await recoverConnectedService({ backend,
+        notify: options => dialog.showMessageBox(window, options), purpose: 'stop' });
+      if (result.stopped !== true) {
+        if (!result.canceled) backend.reportLifecycleError(new Error('后台停止尚未完成，界面保持打开。请检查原请求与阻塞事项。'));
+        return result;
+      }
+    }
+    setImmediate(() => app.quit());
+    return { stopped: true };
+  })().finally(() => { stopQuitPending = null; });
+  return stopQuitPending;
+}
+const stopAndQuitFromMenu = () => { void requestStopAndQuit().catch(error => { backend?.reportLifecycleError(error); revealWindow(); }); };
+const menuBar = new MenuBar(() => quitting || startupPending ? null : window, stopAndQuitFromMenu);
 app.on('will-quit', () => menuBar?.close());
 let notificationTarget = null, notificationSequence = 0;
 function openNotificationTarget(target) {
@@ -65,12 +94,7 @@ app.on('open-url', (event, url) => { if (receiveMcpAppDeepLink(url)) event.preve
 app.on('second-instance', (_event, argv) => { for (const arg of argv) if (/^(areal|codex):\/\/plugins\//.test(arg)) receiveMcpAppDeepLink(arg); });
 for (const arg of process.argv) if (/^(areal|codex):\/\/plugins\//.test(arg)) receiveMcpAppDeepLink(arg);
 const themes = loadThemes();
-app.on('second-instance', () => {
-  if (startupPending || !window || window.isDestroyed()) return;
-  if (window.isMinimized()) window.restore();
-  window.show();
-  window.focus();
-});
+app.on('second-instance', revealWindow);
 
 function theme() {
   const id = themeId === 'system' ? (nativeTheme.shouldUseDarkColors ? 'data-dense' : 'soft-glass') : themeId;
@@ -347,13 +371,16 @@ app.whenReady().then(async () => {
         return { ok: true, value: await pluginArchives.command(params, () => trusted(event)) };
       if (name === 'remoteControl') return { ok: true, value: await backend.remoteControl(params) };
       if (name === 'serviceLifecycle') {
+        if (params.operation === 'quitInterface') { setImmediate(() => app.quit()); return { ok: true, value: { quitting: true } }; }
+        if (params.operation === 'stopAndQuit') return { ok: true, value: await requestStopAndQuit() };
         const value = params.operation === 'update' ? await backend.applyUpdate({ notify: options => dialog.showMessageBox(window, options) })
-          : params.operation === 'stop' ? await requestStopService() : await backend.checkLifecycle();
+          : params.operation === 'stop' ? await requestStopService()
+          : params.operation === 'recover' ? await backend.recoverBackend({ notify: options => dialog.showMessageBox(window, options) }) : await backend.checkLifecycle();
         return { ok: true, value };
       }
       if (name === 'serviceStatus') return { ok: true, value: await backend.serviceStatus() };
       if (name === 'stopService') return { ok: true, value: await requestStopService() };
-      if (name === 'recoverResources') { await backend.checkLifecycle(); return { ok: true, value: null }; }
+      if (name === 'recoverResources') return { ok: true, value: await backend.recoverBackend({ notify: options => dialog.showMessageBox(window, options) }) };
       if (name === 'connectService') { await backend.init(); return { ok: true, value: null }; }
       if (name === 'manage' && params.operation === 'archive') {
         const answer = await dialog.showMessageBox(window, { type: 'question', message: '归档此会话？', detail: '历史仍可查看。当前 Core 不支持取消归档，归档后无法继续发送消息；该会话的临时浏览页面和登录状态也会关闭。', buttons: ['取消', '归档会话'], defaultId: 0, cancelId: 0 });
@@ -371,6 +398,11 @@ app.whenReady().then(async () => {
       }
       trusted(event);
       const value = await backend.command(name, params);
+      // Renderer records the selected conversation before requesting its
+      // authoritative snapshot. Checkpoint that existing DOMStorage after the
+      // open succeeds so a forced GUI exit can retain the accepted navigation.
+      if (name === 'open' && window && !window.isDestroyed() && event.sender === window.webContents)
+        event.sender.session.flushStorageData();
       if (name === 'manage') mcpMetadataImages.remember(params, value);
       if (name === 'manage' && params.operation === 'pluginAuth' && params.authOperation === 'start' && value?.status === 'pending') {
         const authUrl=new URL(value.authorizationUrl);
@@ -424,7 +456,9 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: 'AReaL Harness', submenu: [{ role: 'about' }, { label: '检查更新…', click: () => { void updates.check(true); } }, { label: '检查后台资源…', click: () => { void backend.checkLifecycle().catch(error => backend.reportLifecycleError(error)); } }, { label: '停止后台 Core 服务…', click: async () => {
       try { await requestStopService(); } catch (error) { backend.reportLifecycleError(error); }
-    } }, { type: 'separator' }, { role: 'quit' }] },
+    } }, { type: 'separator' },
+    { label: '退出界面，后台继续', accelerator: 'CmdOrCtrl+Q', click: () => app.quit() },
+    { label: '停止后台并退出…', click: stopAndQuitFromMenu }] },
     { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' },
   ]));
   // 后台连接与隐藏首屏并行；状态由快照展示，启动不触发维护弹窗。
@@ -455,7 +489,7 @@ app.whenReady().then(async () => {
   sampleActivity();
 }).catch(error => { startupTraceMain.finish('error', error); if (error.code !== 'STARTUP_CANCELLED') { console.error(error); dialog.showErrorBox('AReaL 启动失败', error.message); } app.exit(error.code === 'STARTUP_CANCELLED' ? 0 : 1); });
 
-app.on('activate', () => { if (!startupPending && window && !window.isDestroyed()) window.show(); });
+app.on('activate', revealWindow);
 app.on('window-all-closed', () => {});
 app.on('before-quit', event => {
   if (exitReady) return;

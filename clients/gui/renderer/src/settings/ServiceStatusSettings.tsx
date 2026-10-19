@@ -3,7 +3,7 @@ import { ActionButton } from "../components/ui/action-button.js";
 import { Button } from "../components/ui/button.js";
 import { SettingsGroupCard, SettingsRow, SettingsSection, SettingsSwitch } from "./SettingsPageParts.js";
 import { SpaceReclamation } from "./SpaceReclamation.js";
-import type { Action } from "../services.js";
+import type { Action, Snapshot } from "../services.js";
 
 type Resource = { id: string; threadId: string; executable: string; state: string; stale: boolean };
 type Project = { projectId: string; root: string; started: boolean; restartSafe?: boolean; resources?: Resource[];
@@ -15,8 +15,9 @@ type Project = { projectId: string; root: string; started: boolean; restartSafe?
   pendingRequests?: { threadId?: string; awaitingResponse: boolean }[] };
 type Status = { canStop?: boolean; connected: boolean; clients: number; busy: boolean; activeCommands: number; starting: number; providerUpdating: boolean; projects: Project[] };
 
-export function ServiceStatusSettings({ connected, action, onConnect, onOpen, onTask }: {
-  connected: boolean; action: Action; onConnect: () => Promise<void>;
+export function ServiceStatusSettings({ connected, runningState, recovery, action, onConnect, onOpen, onTask }: {
+  connected: boolean; runningState?: "running" | "stopped" | "unknown"; action: Action; onConnect: () => Promise<void>;
+  recovery?: NonNullable<Snapshot["lifecycle"]>["recovery"];
   onTask: (projectId: string, taskId: string) => void;
   onOpen: (projectId: string, threadId: string, panel?: string) => void;
 }) {
@@ -44,7 +45,7 @@ export function ServiceStatusSettings({ connected, action, onConnect, onOpen, on
     void poll();
     return () => { live = false; generation.current++; clearTimeout(timer); };
   }, [read]);
-  const run = async (operation: "stopService" | "recoverResources" | "connect") => {
+  const run = async (operation: "stopService" | "recoverResources" | "connect" | "quitInterface" | "stopAndQuit") => {
     if (locked.current) return;
     locked.current = true; setBusy(true); setActionError(""); setNotice("");
     let stopped = false;
@@ -52,8 +53,11 @@ export function ServiceStatusSettings({ connected, action, onConnect, onOpen, on
       await inflight.current; // Finish this page's read before the native stop fence.
       if (operation === "connect") await onConnect();
       else {
-        const result = await action(operation);
+        const result = operation === "quitInterface" || operation === "stopAndQuit"
+          ? await action("serviceLifecycle", { operation }) : await action(operation);
+        if (operation === "quitInterface" || operation === "stopAndQuit") stopped = !!result.quitting || !!result.stopped;
         if (operation === "stopService") { stopped = result.stopped === true; setNotice(stopped ? "后台已关闭" : result.canceled ? "已取消关闭" : "关闭结果待确认"); }
+        if (operation === "recoverResources" && result.recovered) { await onConnect(); setNotice("后台已恢复，配置和历史已保留。"); }
       }
     } catch (cause) { setActionError((cause as Error).message); }
     finally {
@@ -68,8 +72,12 @@ export function ServiceStatusSettings({ connected, action, onConnect, onOpen, on
       <SettingsGroupCard>
         <SettingsRow label="后台服务" description={connected ? status ? `已连接 · ${status.clients} 个窗口 · ${status.activeCommands} 个处理中请求` : "已连接" : "未连接"}
           control={<SettingsSwitch aria-label="后台服务" checked={connected} disabled={busy || (connected && !!readError)} onCheckedChange={enabled => void run(enabled ? "connect" : "stopService")} />} />
+        <SettingsRow control={null} label="关闭窗口" description="仅隐藏界面，后台继续运行；再次启动可回到已有窗口。" />
+        <SettingsRow label="退出方式" description="退出界面保留后台任务；停止后台须确认受影响任务并等待清理完成。"
+          control={<div className="flex flex-wrap gap-2"><ActionButton disabled={busy} onClick={() => void run("quitInterface")}>退出界面，后台继续</ActionButton><ActionButton disabled={busy} onClick={() => void run("stopAndQuit")}>停止后台并退出…</ActionButton></div>} />
+        <SettingsRow control={null} label="退出条件" description={!connected ? runningState === "stopped" ? "后台已确认停止。" : "当前未连接，后台是否仍在运行需要检查。" : status?.clients && status.clients > 1 ? "请先退出其他连接同一后台的界面。" : status?.canStop ? "当前检查允许安全停止。" : "阻塞事项列在下方；打开对应对话、任务或进程处理后再检查。"} />
         <SettingsRow label="资源检查与恢复"
-          control={<ActionButton disabled={busy || !connected || !!readError || !status} onClick={() => void run("recoverResources")}>检查与恢复</ActionButton>} />
+          control={<ActionButton disabled={busy} onClick={() => void run("recoverResources")}>检查与恢复</ActionButton>} />
       </SettingsGroupCard>
       {(busy || (reading && refreshing)) && <p role="status" className="settings-section-desc">正在处理…</p>}
       {notice && <p role="status">{notice}</p>}
@@ -78,10 +86,14 @@ export function ServiceStatusSettings({ connected, action, onConnect, onOpen, on
       {status?.providerUpdating && <p role="status">模型配置正在更新。</p>}
       {!!status?.starting && <p role="status">{status.starting} 个工作区正在启动。</p>}
     </SettingsSection>
-    {status?.projects.map(project => <SettingsSection key={project.projectId} title={project.root.split(/[\\/]/).filter(Boolean).at(-1)}>
+    {recovery?.projects.map(project => <SettingsSection key={`recovery-${project.projectId}`} title={project.root.split(/[\\/]/).filter(Boolean).at(-1)}>
+      <SettingsGroupCard><SettingsRow label="原后台核查结果" description={project.message}
+        control={<span className="text-foreground-subtle">{project.state === "clean" ? "清理已确认" : project.state === "idle" ? "可安全停止" : "待核查"}</span>} /></SettingsGroupCard>
+    </SettingsSection>)}
+    {status?.projects.slice().sort((a, b) => Number(b.started && !b.restartSafe) - Number(a.started && !a.restartSafe)).map(project => <SettingsSection key={project.projectId} title={project.root.split(/[\\/]/).filter(Boolean).at(-1)}>
       <div data-testid={`service-project-${project.projectId}`}>
         <SettingsGroupCard>
-          <SettingsRow label={!project.started ? "工作区尚未启动" : project.restartSafe ? "Core 资源检查通过" : "Core 仍有待处理事项"}
+          <SettingsRow label={!project.started ? "工作区尚未启动" : project.restartSafe ? "工作区资源检查通过" : "有事项阻止后台退出"}
             description={!project.started ? "本页不会为读取状态而启动工作区。" : `活动轮次 ${project.activeThreads?.length ?? 0} · 持续目标 ${project.goalThreads?.length ?? 0} · 任务 ${project.activeTasks ?? 0}`}
             control={<span className="text-foreground-subtle">{project.resources?.length ?? 0} 个未清理资源</span>} />
           {project.activeThreads?.map(turn => <div key={turn.turnId} data-testid={`service-active-${turn.threadId}`}><SettingsRow label="正在执行" description={`会话 ${turn.threadId}`} control={<Button size="sm" variant="outline" disabled={busy || !connected} onClick={() => onOpen(project.projectId, turn.threadId)}>打开对话</Button>} /></div>)}

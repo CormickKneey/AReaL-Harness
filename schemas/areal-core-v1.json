@@ -6691,6 +6691,61 @@
                       },
                       "type": "array"
                     },
+                    "lastAcceptedModel": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "description": "Model preference captured in the same snapshot as a user submission receipt.",
+                          "properties": {
+                            "acceptedAt": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "model": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "modelId": {
+                                      "type": "string"
+                                    },
+                                    "providerId": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "providerId",
+                                    "modelId"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "modelId": {
+                              "type": "string"
+                            },
+                            "reasoningEffort": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "acceptedAt",
+                            "modelId"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "loadedSkills": {
                       "additionalProperties": {
                         "type": "string"
@@ -21847,6 +21902,61 @@
                         },
                         "type": "array"
                       },
+                      "lastAcceptedModel": {
+                        "anyOf": [
+                          {
+                            "additionalProperties": false,
+                            "description": "Model preference captured in the same snapshot as a user submission receipt.",
+                            "properties": {
+                              "acceptedAt": {
+                                "format": "uint64",
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "model": {
+                                "anyOf": [
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "modelId": {
+                                        "type": "string"
+                                      },
+                                      "providerId": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "providerId",
+                                      "modelId"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "modelId": {
+                                "type": "string"
+                              },
+                              "reasoningEffort": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "acceptedAt",
+                              "modelId"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
                       "loadedSkills": {
                         "additionalProperties": {
                           "type": "string"
@@ -25836,6 +25946,61 @@
                             "type": "object"
                           },
                           "type": "array"
+                        },
+                        "lastAcceptedModel": {
+                          "anyOf": [
+                            {
+                              "additionalProperties": false,
+                              "description": "Model preference captured in the same snapshot as a user submission receipt.",
+                              "properties": {
+                                "acceptedAt": {
+                                  "format": "uint64",
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
+                                "model": {
+                                  "anyOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "modelId": {
+                                          "type": "string"
+                                        },
+                                        "providerId": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "providerId",
+                                        "modelId"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "modelId": {
+                                  "type": "string"
+                                },
+                                "reasoningEffort": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "acceptedAt",
+                                "modelId"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "loadedSkills": {
                           "additionalProperties": {
@@ -33074,6 +33239,61 @@
                           "type": "object"
                         },
                         "type": "array"
+                      },
+                      "lastAcceptedModel": {
+                        "anyOf": [
+                          {
+                            "additionalProperties": false,
+                            "description": "Model preference captured in the same snapshot as a user submission receipt.",
+                            "properties": {
+                              "acceptedAt": {
+                                "format": "uint64",
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "model": {
+                                "anyOf": [
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "modelId": {
+                                        "type": "string"
+                                      },
+                                      "providerId": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "providerId",
+                                      "modelId"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "modelId": {
+                                "type": "string"
+                              },
+                              "reasoningEffort": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "acceptedAt",
+                              "modelId"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       },
                       "loadedSkills": {
                         "additionalProperties": {
@@ -45539,6 +45759,61 @@
                       },
                       "type": "array"
                     },
+                    "lastAcceptedModel": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "description": "Model preference captured in the same snapshot as a user submission receipt.",
+                          "properties": {
+                            "acceptedAt": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "model": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "modelId": {
+                                      "type": "string"
+                                    },
+                                    "providerId": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "providerId",
+                                    "modelId"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "modelId": {
+                              "type": "string"
+                            },
+                            "reasoningEffort": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "acceptedAt",
+                            "modelId"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "loadedSkills": {
                       "additionalProperties": {
                         "type": "string"
@@ -57428,6 +57703,61 @@
                       },
                       "type": "array"
                     },
+                    "lastAcceptedModel": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "description": "Model preference captured in the same snapshot as a user submission receipt.",
+                          "properties": {
+                            "acceptedAt": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "model": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "modelId": {
+                                      "type": "string"
+                                    },
+                                    "providerId": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "providerId",
+                                    "modelId"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "modelId": {
+                              "type": "string"
+                            },
+                            "reasoningEffort": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "acceptedAt",
+                            "modelId"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "loadedSkills": {
                       "additionalProperties": {
                         "type": "string"
@@ -66979,6 +67309,61 @@
                       },
                       "type": "array"
                     },
+                    "lastAcceptedModel": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "description": "Model preference captured in the same snapshot as a user submission receipt.",
+                          "properties": {
+                            "acceptedAt": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "model": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "modelId": {
+                                      "type": "string"
+                                    },
+                                    "providerId": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "providerId",
+                                    "modelId"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "modelId": {
+                              "type": "string"
+                            },
+                            "reasoningEffort": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "acceptedAt",
+                            "modelId"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "loadedSkills": {
                       "additionalProperties": {
                         "type": "string"
@@ -71822,6 +72207,61 @@
                       },
                       "type": "array"
                     },
+                    "lastAcceptedModel": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "description": "Model preference captured in the same snapshot as a user submission receipt.",
+                          "properties": {
+                            "acceptedAt": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "model": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "modelId": {
+                                      "type": "string"
+                                    },
+                                    "providerId": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "providerId",
+                                    "modelId"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "modelId": {
+                              "type": "string"
+                            },
+                            "reasoningEffort": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "acceptedAt",
+                            "modelId"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
                     "loadedSkills": {
                       "additionalProperties": {
                         "type": "string"
@@ -75794,6 +76234,61 @@
                         "type": "object"
                       },
                       "type": "array"
+                    },
+                    "lastAcceptedModel": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "description": "Model preference captured in the same snapshot as a user submission receipt.",
+                          "properties": {
+                            "acceptedAt": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "model": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "modelId": {
+                                      "type": "string"
+                                    },
+                                    "providerId": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "providerId",
+                                    "modelId"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "modelId": {
+                              "type": "string"
+                            },
+                            "reasoningEffort": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "acceptedAt",
+                            "modelId"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     "loadedSkills": {
                       "additionalProperties": {
@@ -90574,6 +91069,61 @@
                         },
                         "type": "array"
                       },
+                      "lastAcceptedModel": {
+                        "anyOf": [
+                          {
+                            "additionalProperties": false,
+                            "description": "Model preference captured in the same snapshot as a user submission receipt.",
+                            "properties": {
+                              "acceptedAt": {
+                                "format": "uint64",
+                                "minimum": 0,
+                                "type": "integer"
+                              },
+                              "model": {
+                                "anyOf": [
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "modelId": {
+                                        "type": "string"
+                                      },
+                                      "providerId": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "providerId",
+                                      "modelId"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "modelId": {
+                                "type": "string"
+                              },
+                              "reasoningEffort": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              }
+                            },
+                            "required": [
+                              "acceptedAt",
+                              "modelId"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
                       "loadedSkills": {
                         "additionalProperties": {
                           "type": "string"
@@ -94551,6 +95101,61 @@
                         "type": "object"
                       },
                       "type": "array"
+                    },
+                    "lastAcceptedModel": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "description": "Model preference captured in the same snapshot as a user submission receipt.",
+                          "properties": {
+                            "acceptedAt": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "model": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "modelId": {
+                                      "type": "string"
+                                    },
+                                    "providerId": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "providerId",
+                                    "modelId"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "modelId": {
+                              "type": "string"
+                            },
+                            "reasoningEffort": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "acceptedAt",
+                            "modelId"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     "loadedSkills": {
                       "additionalProperties": {
@@ -98550,6 +99155,61 @@
                         "type": "object"
                       },
                       "type": "array"
+                    },
+                    "lastAcceptedModel": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "description": "Model preference captured in the same snapshot as a user submission receipt.",
+                          "properties": {
+                            "acceptedAt": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "model": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "modelId": {
+                                      "type": "string"
+                                    },
+                                    "providerId": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "providerId",
+                                    "modelId"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "modelId": {
+                              "type": "string"
+                            },
+                            "reasoningEffort": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "acceptedAt",
+                            "modelId"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     "loadedSkills": {
                       "additionalProperties": {
@@ -102557,6 +103217,61 @@
                         "type": "object"
                       },
                       "type": "array"
+                    },
+                    "lastAcceptedModel": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "description": "Model preference captured in the same snapshot as a user submission receipt.",
+                          "properties": {
+                            "acceptedAt": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "model": {
+                              "anyOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "modelId": {
+                                      "type": "string"
+                                    },
+                                    "providerId": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "providerId",
+                                    "modelId"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "modelId": {
+                              "type": "string"
+                            },
+                            "reasoningEffort": {
+                              "type": [
+                                "string",
+                                "null"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "acceptedAt",
+                            "modelId"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     "loadedSkills": {
                       "additionalProperties": {
@@ -107958,6 +108673,61 @@
                   "type": "object"
                 },
                 "type": "array"
+              },
+              "lastAcceptedModel": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "description": "Model preference captured in the same snapshot as a user submission receipt.",
+                    "properties": {
+                      "acceptedAt": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "model": {
+                        "anyOf": [
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "modelId": {
+                                "type": "string"
+                              },
+                              "providerId": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "providerId",
+                              "modelId"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "modelId": {
+                        "type": "string"
+                      },
+                      "reasoningEffort": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "acceptedAt",
+                      "modelId"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "loadedSkills": {
                 "additionalProperties": {

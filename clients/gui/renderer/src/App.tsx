@@ -506,8 +506,13 @@ function AppContent({ services }: { services: PlatformServices }) {
     setBackendActionPending(true);
     setBackendActionError("");
     try {
-      if (kind === "update") {
+      if (kind === "status") {
+        setSettingsTab("后台服务"); setSettingsOpen(true);
+      } else if (kind === "update") {
         await resourceAction("serviceLifecycle", { operation: "update" });
+      } else if (kind === "recover") {
+        const result = await resourceAction("serviceLifecycle", { operation: "recover" });
+        if (result?.recovered) { await reconnectService(); setError(""); }
       } else if (kind === "check") {
         await resourceAction("serviceLifecycle", { operation: "check" });
       } else {
@@ -1478,7 +1483,7 @@ function AppContent({ services }: { services: PlatformServices }) {
               )}
             </div>
           </WorkspaceHeader>}
-          <BackendStatusNotice connection={snapshot.connection} update={snapshot.backendUpdate} lifecycle={snapshot.lifecycle}
+          <BackendStatusNotice summary={snapshot.serviceSummary} connection={snapshot.connection} update={snapshot.backendUpdate} lifecycle={snapshot.lifecycle}
             currentCommands={snapshot.desktopCapabilities?.currentCommands ?? project?.desktopCapabilities?.currentCommands}
             pending={backendActionPending} error={backendActionError} onAction={kind => void runBackendAction(kind)} />
           {(error || project?.error || project?.state?.error) && (
@@ -1554,7 +1559,7 @@ function AppContent({ services }: { services: PlatformServices }) {
               ) : settingsTab === "数据飞轮" ? (
                 <TrajectorySettings action={resourceAction} connected={snapshot.connection?.state === "ready"} onStatus={onTrajectoryStatus} />
               ) : settingsTab === "后台服务" ? (
-                <><ServiceStatusSettings connected={snapshot.connection?.state === "ready"} action={resourceAction}
+                <><ServiceStatusSettings recovery={snapshot.lifecycle?.recovery} runningState={snapshot.serviceSummary?.state} connected={snapshot.connection?.state === "ready"} action={resourceAction}
                   onConnect={reconnectService}
                   onTask={(pid, taskId) => { updateSettingsOpen(false); setTaskScope(undefined); setTaskNotification({ projectId: pid, taskId }); setTaskCenterOpen(true); }}
                   onOpen={(pid, tid, panelName) => { updateSettingsOpen(false); void open(pid, tid).then(() => { if (panelName) setPanel(panelName); }); }} />

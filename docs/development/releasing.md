@@ -66,7 +66,7 @@ pnpm --dir clients/gui run sign:mac --app "/absolute/new-package/package/mac-arm
 node clients/gui/scripts/release-assets.mjs /absolute/new-signed-directory /absolute/new-assets
 ```
 
-签名脚本先签 Core 可执行文件并更新完整性摘要，再签 Electron 应用；Apple Accepted 回执、stapler、Gatekeeper、签名后隔离 GUI/Core/Runtime smoke、模型配置与 Composer 专项以及只读 DMG 内签名验证均通过才完成。`notarization.json` 与脱敏 `release.json` 记录 `packagedModelSelection: "passed"`；导出脚本拒绝没有该项验收的旧候选，需要使用当前签名脚本生成新候选。Apple 仍在处理时退出 2，使用同脚本的 `--resume --output` 恢复；不可修改已签名应用。
+签名脚本先签 Core 可执行文件并更新完整性摘要，再签 Electron 应用；后台服务的共享资源链接按物理文件身份识别，外层签名不得重复签 Core；外层签名完成后、Apple 上传前再次校验 Core 摘要。Apple Accepted 回执、stapler、Gatekeeper、签名后隔离 GUI/Core/Runtime smoke、模型配置与 Composer 专项以及只读 DMG 内签名验证均通过才完成。`notarization.json` 与脱敏 `release.json` 记录 `packagedModelSelection: "passed"`；导出脚本拒绝没有该项验收的旧候选，需要使用当前签名脚本生成新候选。Apple 仍在处理时退出 2，使用同脚本的 `--resume --output` 恢复；不可修改已签名应用。
 
 签名前先执行 `history-copy-smoke.mjs`：默认只读安装版的 `~/Library/Application Support/AReaL Harness GUI/areal-core`，`--history-source /absolute/areal-core` 可指定另一份历史。脚本将项目索引、会话、历史归档和附件复制到权限受限的隔离目录，受控样本的占位工作区在副本中填充；私有副本保留原始会话字节和工作区路径，以满足 Core 的归属校验，只观察、不执行任务。不复制凭据、锁或部署配置，不写原始历史。仅接受空闲、没有待执行队列或未结算执行状态的历史；其他输入会阻断签名。 已完成的子会话执行引用仅在同项目副本中存在对应终态轮次时接受；未结算引用、工作组及受管进程/工作流状态仍阻断签名。候选包必须能连接 Core、打开每个会话，且打开期间副本字节不变、全过程来源字节不变、没有模型请求。停止测试后台导致的副本队列版本变化单独处理。失败发生在签名身份检查及 Apple 请求之前；成功证据绑定候选 Core 哈希并写入 `notarization.json.historyPreflight`。没有该预检记录的旧签名运行不能通过 `--resume` 绕过，需启动新运行。
 

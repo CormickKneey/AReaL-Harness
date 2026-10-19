@@ -157,8 +157,8 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
                 <div className="subscription-model-list provider-model-scroll" aria-label="ChatGPT 模型">
                   {subscriptionModels.map(model => <div key={model.id} className="provider-model-row">
                     <div className="provider-model-label"><strong>{model.displayName || model.name || model.id}</strong></div>
-                    {isDefault("areal_openai", model.id) && <span className="provider-model-default">新会话默认</span>}
-                    <DropdownMenu><DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label={`模型 ${model.displayName || model.name || model.id} 更多操作`} disabled={busy} />}><MoreHorizontal size={16} /></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem disabled={busy || !accountReady || isDefault("areal_openai", model.id)} onClick={() => void changeDefault("areal_openai", model.id)}>设为新会话默认</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
+                    {isDefault("areal_openai", model.id) && <span className="provider-model-default">备用默认</span>}
+                    <DropdownMenu><DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label={`模型 ${model.displayName || model.name || model.id} 更多操作`} disabled={busy} />}><MoreHorizontal size={16} /></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem disabled={busy || !accountReady || isDefault("areal_openai", model.id)} onClick={() => void changeDefault("areal_openai", model.id)}>设为备用默认</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
                   </div>)}
                   {!subscriptionModels.length && <p className="settings-muted provider-list-empty">{modelQuery ? "没有匹配的模型" : accountReady ? "当前账号没有可用模型。" : "前往连接配置登录或刷新账号，以读取模型。"}</p>}
                 </div>
@@ -176,12 +176,12 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
             {provider.models.length ? <div className="provider-model-scroll overflow-hidden rounded-lg border border-input-border bg-input">
               {visibleModels.map(({ model, index }: { model: Data; index: number }) => <div key={`${model.id}:${index}`} className="provider-model-row flex items-center gap-2 px-3 py-2 border-b border-input-border last:border-b-0">
                 <div className="min-w-0 flex-1 provider-model-label"><strong>{model.displayName || model.id}</strong>{model.displayName && model.displayName !== model.id && <small>{model.id}</small>}</div>
-                {isDefault(provider.id, model.id) && <span className="provider-model-default">新会话默认</span>}
+                {isDefault(provider.id, model.id) && <span className="provider-model-default">备用默认</span>}
                 {probe[model.id] && <small>{probe[model.id]}</small>}
                 <Switch disabled={busy} size="sm" aria-label={`启用模型 ${model.id}`} checked={model.enabled} onCheckedChange={enabled => edit({ models: provider.models.map((m: Data, i: number) => i === index ? { ...m, enabled } : m) })} />
                 <DropdownMenu><DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label={`模型 ${model.displayName || model.id} 更多操作`} disabled={busy} />}><MoreHorizontal size={16} /></DropdownMenuTrigger><DropdownMenuContent align="end">
                 <DropdownMenuItem aria-label={`测试模型 ${model.id}`} disabled={busy || !provider.enabled || !model.enabled} onClick={() => void saveThen(async saved => { await api("probe", { id: saved.id, model: model.id }); setProbe(p => ({ ...p, [model.id]: "连接成功" })); setMessage(`模型 ${model.id} 连接成功`); })}><Unplug size={14} />测试连接</DropdownMenuItem>
-                <DropdownMenuItem disabled={busy || dirty || !provider.enabled || !model.enabled || isDefault(provider.id, model.id)} onClick={() => void changeDefault(provider.id, model.id)}>设为新会话默认</DropdownMenuItem>
+                <DropdownMenuItem disabled={busy || dirty || !provider.enabled || !model.enabled || isDefault(provider.id, model.id)} onClick={() => void changeDefault(provider.id, model.id)}>设为备用默认</DropdownMenuItem>
                 <DropdownMenuItem aria-label={`编辑模型 ${model.id}`} disabled={busy} onClick={() => setModelDraft({ model, index })}><Pencil size={14} />编辑模型</DropdownMenuItem>
                 <DropdownMenuItem aria-label={`上移模型 ${model.id}`} disabled={busy || index === 0} onClick={() => { const models = [...provider.models]; [models[index - 1], models[index]] = [models[index], models[index - 1]]; edit({ models }); }}><ArrowUp size={14} />上移</DropdownMenuItem>
                 <DropdownMenuItem aria-label={`下移模型 ${model.id}`} disabled={busy || index === provider.models.length - 1} onClick={() => { const models = [...provider.models]; [models[index + 1], models[index]] = [models[index], models[index + 1]]; edit({ models }); }}><ArrowDown size={14} />下移</DropdownMenuItem>
@@ -225,7 +225,7 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
           {current !== CHATGPT && provider && <div className="provider-save-actions"><span role="status" className="settings-muted">{dirty ? "有未保存的修改" : ""}</span><Button variant="outline" disabled={busy || !dirty} onClick={() => provider.id ? navigate(discard) : choose(items[0]?.id ?? CHATGPT)}>取消修改</Button><Button disabled={busy || (!dirty && !state.value?.pendingApply)} onClick={() => void run(async () => { await save(); })}>{busy ? "保存中…" : "保存"}</Button></div>}
         </div>
         {!picker && current !== CHATGPT && !provider && <EmptySettings>{state.loading ? "正在加载供应商…" : "选择左侧供应商，或添加一个新的供应商。"}</EmptySettings>}
-        <footer className="provider-default-link"><span>新会话默认模型</span><Button variant="link" disabled={busy} onClick={onOpenSessionSettings}>前往会话配置</Button></footer>
+        <footer className="provider-default-link"><span>备用默认模型</span><Button variant="link" disabled={busy} onClick={onOpenSessionSettings}>前往会话配置</Button></footer>
       </div>
     </div>
     {modelDraft && provider && <ModelEditor model={modelDraft.model} editing={modelDraft.index >= 0} ids={provider.models.filter((_: Data, i: number) => i !== modelDraft.index).map((m: Data) => m.id)} onClose={() => setModelDraft(null)} onSave={model => { const models = [...provider.models]; if (modelDraft.index < 0) models.push(model); else models[modelDraft.index] = model; edit({ models }); setModelDraft(null); }} />}

@@ -5,8 +5,9 @@ const { join } = require('node:path');
 // One GUI owns one native menu-bar item. Core execution and safe quit continue
 // through their existing owners; restoring the window never creates a task.
 class MenuBar {
-  constructor(getWindow) {
+  constructor(getWindow, stopAndQuit = () => {}) {
     this.getWindow = getWindow; this.tray = null; this.error = null;
+    this.stopAndQuit = stopAndQuit;
     this.supported = process.platform === 'darwin'; this.closed = false;
   }
   sync(enabled) {
@@ -26,7 +27,8 @@ class MenuBar {
               window.show(); window.focus();
             } },
             { type: 'separator' },
-            { label: '退出 AReaL Harness', click: () => app.quit() },
+            { label: '退出界面，后台继续', click: () => app.quit() },
+            { label: '停止后台并退出…', click: () => this.stopAndQuit() },
           ]));
           this.tray = tray;
         } catch (error) { tray.destroy(); throw error; }

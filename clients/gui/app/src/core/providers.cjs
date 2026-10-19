@@ -36,6 +36,8 @@ class AppProviders {
   constructor(backend, encryption) { this.backend = backend; this.encryption = encryption; this.config = new ModelConfiguration(backend, encryption); this.openaiToken = null; }
   async init() {
     await this.config.init();
+    try { this.lastAcceptedModel = JSON.parse(await readFile(join(this.backend.home, 'model-selection.json'), 'utf8')); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
     // 与 Core 的本机连接令牌一样，权限为 0600 的能力文件仅由后台读取。
     // 保留端口与令牌，避免后台重启后失效仍在运行的 Core 中冻结的传输配置。
     try { this.transport = JSON.parse(await readFile(join(this.backend.home, 'subscription-transport.json'), 'utf8')); }
@@ -237,6 +239,19 @@ class AppProviders {
   }
   public() { const value = this.config.public(); return { ...value, definitions, data: value.data.map(item => ({ ...item, connection: connectionMetadata(item, value.credentialSources) })) }; }
   model(ref, project) { return (project?.providerSnapshot ?? this.value).data.find(p => p.id === ref?.providerId)?.models.find(m => m.id === ref.modelId); }
+  acceptModelSelection(selection) {
+    if (!selection || !Number.isSafeInteger(selection.acceptedAt)) return Promise.resolve();
+    // Core receipts/catalogs are authoritative. Serialize cross-project updates
+    // and compare after the preceding save; late responses cannot regress it.
+    const update = (this.modelSelectionUpdate ?? Promise.resolve()).catch(() => {}).then(async () => {
+      if (selection.acceptedAt <= (this.lastAcceptedModel?.acceptedAt ?? 0)) return;
+      await this.backend.save('model-selection.json', selection);
+      this.lastAcceptedModel = selection;
+      this.backend.onChange();
+    });
+    this.modelSelectionUpdate = update;
+    return update;
+  }
   catalog(models, project) { return models.map(m => ({ ...m, displayName: this.model(m, project)?.displayName || m.displayName || m.modelId })); }
   key(item) { return this.config.key(item); }
   environment() { return { ...this.config.environment(), AREAL_CREDENTIAL_areal_openai: this.openaiToken }; }

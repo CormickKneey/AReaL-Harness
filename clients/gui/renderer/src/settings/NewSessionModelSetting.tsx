@@ -25,11 +25,11 @@ export function NewSessionModelSetting({ action, disabled, onBusyChange }: {
   const overrides = Object.entries(catalog.value?.effective?.sources ?? {}).filter(([field, source]) => field.startsWith("model.") && ["env", "cli"].includes((source as Data).kind));
   const current = catalog.value?.defaultModel;
   const value = current ? `${current.providerId}/${current.modelId}` : "";
-  return <SettingsSection title="新会话" description="设置之后新建会话使用的模型，已有会话保持不变。">
+  return <SettingsSection title="新会话" description="新会话沿用主会话最后一次受理的模型与思考强度；已有会话保持不变。没有使用记录或模型不可用时使用备用默认模型。">
     <Feedback error={catalog.error || subscription.error || error} />
     {overrides.length > 0 && <p role="status" className="settings-muted">命令行或环境配置覆盖了文件值；保存不会修改这些覆盖。</p>}
-    <SettingsGroupCard><SettingsRow label="新会话默认模型" control={
-      <SettingsSelect aria-label="新会话默认模型" value={value} disabled={disabled || busy || catalog.loading || subscription.loading || !options.length} onValueChange={next => {
+    <SettingsGroupCard><SettingsRow label="备用默认模型" control={
+      <SettingsSelect aria-label="备用默认模型" value={value} disabled={disabled || busy || catalog.loading || subscription.loading || !options.length} onValueChange={next => {
         const choice = options.find(option => `${option.providerId}/${option.modelId}` === next);
         if (!choice || next === value) return;
         void run(async () => {

@@ -171,6 +171,8 @@ class SharedCoreBackend {
     const desktopCapabilities = { currentCommands: this.status.commandContract === COMMAND_CONTRACT };
     const connection = this.initializing && this.connectionState.state === 'ready' ? { state: 'connecting' } : this.connectionState;
     return { ...this.value, desktopCapabilities,
+      serviceSummary: { state: this.status.connected ? 'running' : this.serviceExited ? 'stopped' : 'unknown',
+        busy: this.status.busy === true },
       projects: this.value.projects.map(project => ({ ...project, desktopCapabilities })),
       backendUpdate: this.backendUpdate, lifecycle: this.lifecycleProjection(),
       revision: ++this.revision, connection };
@@ -478,8 +480,10 @@ class SharedCoreBackend {
         message: receipt?.message ?? receipt?.desktopError?.message ?? lifecycleMessage(receipt?.phase ?? 'admissionUnconfirmed') };
     });
     const latest = operations.at(-1);
+    const legacy = this.legacyControl || this.status.stopReport && this.status.lifecycle?.version !== 2;
     return { supported: this.status.lifecycle?.version === 2, operations,
-      ...(latest ?? this.legacyControl ? latest ?? { phase: 'admissionUnconfirmed', targets: [],
+      ...(legacy ? { recovery: this.legacyRecoveryView ?? { canRecover: false, projects: [], message: '请检查原后台状态，再恢复工作。' } } : {}),
+      ...(latest ?? legacy ? latest ?? { phase: 'admissionUnconfirmed', targets: [],
         message: '旧停止记录缺少操作身份，已恢复观察连接。请检查原后台状态；不会重发旧操作。' } : {}),
       ...(this.lifecycleError ? { error: this.lifecycleError, message: this.lifecycleError } : {}) };
   }
@@ -585,16 +589,40 @@ class SharedCoreBackend {
     this.lifecycleError = null; this.onChange();
     return operation;
   }
+  async recoverBackend({ notify }) {
+    if (this.recoveryInFlight) return this.recoveryInFlight;
+    this.recoveryInFlight = (async () => {
+      await this.checkLifecycle();
+      if (this.legacyControl || this.status.stopReport && this.status.lifecycle?.version !== 2)
+        return require('./legacy-desktop-recovery.cjs').recover(this, notify);
+      const pending = [...this.lifecycleReferences.values()];
+      if (!pending.length) return { recovered: false };
+      if (pending.some(reference => needsOriginalCheck(this.lifecycleReceipts.get(reference.requestId) ?? { phase: 'admissionUnconfirmed', targets: [] })))
+        throw new Error('原后台操作仍待确认，请继续检查原请求；不会重发');
+      const completedStop = pending.length && pending.every(reference => reference.kind === 'stopDesktop' && this.lifecycleReceipts.get(reference.requestId)?.phase === 'completed');
+      if (completedStop) { await this.init(); return { recovered: true }; }
+      // Other current-protocol operations retain their explicit stop/update
+      // actions. A resource inspection must not introduce a new update intent.
+      return { recovered: false, lifecycle: this.lifecycleProjection() };
+    })().finally(() => { this.recoveryInFlight = null; });
+    return this.recoveryInFlight;
+  }
   async checkLifecycle() {
     this.loadReferences(await this.readControl());
     this.clearReconnect();
     if (!this.status.connected) await this.attach();
     for (const reference of [...this.lifecycleReferences.values()]) await this.readLifecycle(reference);
+    if (this.legacyControl || this.status.stopReport && this.status.lifecycle?.version !== 2) {
+      try { await require('./legacy-desktop-recovery.cjs').inspect(this); }
+      catch (error) { this.legacyRecoveryView = { canRecover: false, projects: [], message: error.message }; }
+    }
     this.lifecycleError = null; this.onChange();
     return this.lifecycleProjection();
   }
   assertLifecycleScope(name, request) {
     if (['list', 'open', 'reconcile', 'queue'].includes(name) || require('./lifecycle.cjs').isRecoveryCommand(name, request)) return;
+    if ((this.legacyControl?.legacyRecovery || this.status.stopReport) && this.status.lifecycle?.version !== 2)
+      throw Object.assign(new Error('请先检查并恢复原后台，再继续工作。输入和历史已保留。'), { code: 'LIFECYCLE_INCOMPLETE' });
     for (const reference of this.lifecycleReferences.values()) {
       const operation = this.lifecycleReceipts.get(reference.requestId);
       if (['blocked', 'completed'].includes(operation?.phase)) continue;
@@ -724,4 +752,4 @@ class SharedCoreBackend {
     })();
   }
 }
-module.exports = { SharedCoreBackend, ServiceConnection, waitForServiceExit, waitForServiceProcessExit };
+module.exports = { SharedCoreBackend, ServiceConnection, waitForServiceExit, waitForServiceProcessExit, waitForProcessExit };

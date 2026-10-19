@@ -322,7 +322,8 @@ impl Engine {
         .await
         .map_err(|_| invalid("drain task failed"))?
     }
-    pub fn model_catalog(&self) -> Value {
+    pub async fn model_catalog(&self) -> Value {
+        let last_accepted_model = self.last_accepted_model().await;
         let mut data = Vec::new();
         // 这是现有 HTTP 适配器的允许值，不代表远端供应商已验证这些选项。
         let efforts = ["none", "minimal", "low", "medium", "high", "xhigh"];
@@ -356,6 +357,6 @@ impl Engine {
                 data.push(json!({"providerId":p.id,"providerRevision":p.revision,"modelId":name,"parameters":parameters,"isDefault":default_model.as_ref() == Some(&reference),"transport":p.protocol,"input":capabilities.input,"output":capabilities.output,"available":result.is_ok(),"credentialState":self.provider_view(p)["credentialState"],"contextWindowTokens":parameters.context_window_tokens,"effectiveContextWindowTokens":parameters.context_window_tokens.unwrap_or(self.limits.context_window_tokens),"parameterCapabilities":if p.protocol == "responses" {vec!["temperature","maxOutputTokens","contextWindowTokens","reasoningEffort","reasoningSummary"]} else {vec!["temperature","maxOutputTokens","contextWindowTokens","reasoningEffort"]},"reasoningEffortOptions":efforts,"connectionState":"unchecked"}));
             }
         }
-        json!({"data":data})
+        json!({"data":data,"lastAcceptedModel":last_accepted_model})
     }
 }

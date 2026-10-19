@@ -27,6 +27,7 @@ const originalStat = await lstat(binary);
 assert.ok(originalStat.isFile() && originalStat.nlink === 1, 'Core must be a regular private copy, not a hard link');
 const binarySha256 = sha(await readFile(binary));
 const legacy = process.env.AREAL_REOPEN_LEGACY === '1';
+const forceGui = process.env.AREAL_REOPEN_FORCE_GUI === '1';
 const compatibilityAudit = process.env.AREAL_REOPEN_COMPAT_AUDIT === '1';
 const legacyRef = process.env.AREAL_REOPEN_LEGACY_REF || 'ed43b272';
 assert.ok(['ed43b272', '653c8156'].includes(legacyRef), 'use an audited historical Desktop revision');
@@ -170,10 +171,11 @@ async function launch(label) {
   checkDialogs(await dialogs());
   await page.getByTestId('areal-workbench').waitFor();
 }
-async function closeGui() {
+async function closeGui({ force = forceGui } = {}) {
   if (!app) return;
   const pid = app.process().pid;
-  await app.close();
+  if (force) app.process().kill('SIGKILL');
+  else await app.close();
   app = null;
   await until(() => !alive(pid), 'owned GUI process exit', 15000);
 }
@@ -429,7 +431,7 @@ try {
   if (app) observations.failureDialogs = await dialogs().catch(() => []);
   observations.failureService = await inspectService().catch(error => ({ error: error.message }));
 } finally {
-  await closeGui().then(() => { cleanup.guiClosed = true; }).catch(error => errors.push(`GUI cleanup: ${error.stack}`));
+  await closeGui({ force: false }).then(() => { cleanup.guiClosed = true; }).catch(error => errors.push(`GUI cleanup: ${error.stack}`));
   const connection = new ServiceConnection();
   try {
     const metadata = JSON.parse(await readFile(join(home, 'service.json'), 'utf8'));
@@ -470,7 +472,7 @@ try {
   if (!passed) process.exitCode = 1;
   await writeFile(join(scratch, 'model-requests.json'), JSON.stringify(requests, null, 2));
   await writeFile(join(scratch, 'manifest.json'), JSON.stringify({ passed, scenario, checks, errors, cleanup, observations,
-    source, binary, binarySha256, components, replacement: replacement ? { path: replacement, sha256: replacementSha256, format: replacementFormat, backup: binaryBackup } : null,
+    source, forceGui, binary, binarySha256, components, replacement: replacement ? { path: replacement, sha256: replacementSha256, format: replacementFormat, backup: binaryBackup } : null,
     paths: { home, workspace, registry, userData: env.AREAL_GUI_USER_DATA, initialMain, currentMain },
     identities: { projectId, threadId, turnId }, modelRequestCount: requests.length,
     boundary: 'real isolated Electron/Main/preload/Desktop/Core; local held SSE model; native picker and messageBox responses injected; no real provider or installed package' }, null, 2));

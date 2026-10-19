@@ -105,3 +105,31 @@ async function readOriginalTurn(backend, target, threadId, turnId) {
 }
 
 module.exports = { connectService, lifecycleCapabilities, requestStop, readStop, detachStoppedProject, readOriginalTurn };
+
+// Status alone normalizes a vanished Host to stopped. Recovery also requires
+// the original Host's clean-shutdown marker; PID/socket disappearance is not proof.
+async function inspectOriginalService(backend, target) {
+  const descriptor = await request(backend, ['status', '--instance', target.serviceId]);
+  const dataDir = await realpath(join(backend.home, target.projectId, 'state'));
+  const workspace = await realpath(target.root);
+  const matches = value => value?.protocolVersion === 1 && value.serviceId === target.serviceId
+    && value.generation === target.generation && value.dataDir === dataDir && value.workspace === workspace;
+  if (!matches(descriptor)) throw Object.assign(new Error('原 Core 身份或代际已变化，不能用新实例代替核查'), { code: 'CONFIRMATION_STALE' });
+  if (descriptor.state === 'stopped') {
+    const record = JSON.parse(await readFile(join(backend.hooks.environment().AREAL_HARNESS_SERVICE_HOME,
+      'services', target.serviceId, 'service.json'), 'utf8'));
+    return { descriptor, cleanupConfirmed: matches(record) && record.state === 'stopped' };
+  }
+  if (descriptor.state !== 'ready') return { descriptor, cleanupConfirmed: false };
+  const { token, descriptor: connected } = await connectService(backend, 'status', ['--instance', target.serviceId], backend.hooks.environment(), target, dataDir);
+  if (!matches(connected)) throw Object.assign(new Error('原 Core 代际已变化'), { code: 'CONFIRMATION_STALE' });
+  const { CoreClient } = await import('@areal/runtime-client/core');
+  const client = new CoreClient({ createSocket: () => new WebSocket(connected.endpoint,
+    { headers: { Authorization: `Bearer ${token}` }, followRedirects: false, maxPayload: 4 * 1024 * 1024 }) });
+  try {
+    await client.connect();
+    return { descriptor, cleanupConfirmed: false, status: await client.request('areal/server/status') };
+  } finally { client.close(); }
+}
+module.exports.inspectOriginalService = inspectOriginalService;
+module.exports.serviceRequest = request;
