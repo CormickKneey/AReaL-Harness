@@ -221,11 +221,21 @@ success/contentItems 必填；结构化成功结果按 outputSchema 校验，产
 
 prompt 必须非空，委派输入文本合计最多 32000 字节。inspect 仅交付 report，不可请求写入或可信源码验收；modify 交付 changes 或 patch。writes 为至多 256 个不同的工作区相对文件路径，隔离执行必须提供。maxModelRounds 为 1–1024，不能扩大父上限；最后一轮仅交接。wait 超时 0–60000 ms 不取消子任务；wait_any 接受 1–16 个不同执行。report 仍仅限子 Agent，字段边界不变。
 
+统一模型工具的结果只提供 `executionId` 作为控制身份，不再同时提供 owner、parentThreadId、threadId、turnId；客户端 read/list 和持久执行记录保留完整身份。旧 threadId 模型工具调用保持兼容。`agent_spawn` 返回 failed 时工具 success=false；读取失败子任务的报告仍是成功的读取操作，不能把其中失败状态当作任务成功。创建锁按父会话隔离，探针后的额度预留再次校验累计上限。
+
+`task_state.executions` 列出当前 Turn 或匹配 TaskRun Goal 的持久执行句柄，含 executionId、strategy、title、creationError，executionCount 为完整数量。最多 64 项并受总结果预算限制，截断明确标记；共享子任务的 agents 行同样使用 executionId，旧直接 spawn 行继续返回 threadId。该投影不探测执行器，实际控制仍校验所有权；压缩后可据此恢复正确的控制身份。
+
 Core 先检查父权限、Profile、写入授权、执行环境和源码快照能力。独立修改优先隔离；当前宿主环境依赖、紧耦合修改或可选隔离不可用时，选择共享独占作者。patch 或 requireTrustedChecks 不能因能力缺失变成共享写入。共享作者持有工作区独占租约，其他普通工具等待；它不能再次递归委派。隔离执行继承父工具和必须审批边界，采用 Headless，无法获得批准时拒绝执行。隔离源码快照、共享作者启动和交付都检查尚未结算的 Runtime 进程，不能把已返回句柄视作进程结束。
 
 `agent_send_input` 可纠正共享子任务；隔离任务契约已经冻结，需要先取消并确认结算，再提交新任务。取消会封闭共享子树准入并传播至后代；force 缩短收尾等待，不保证已发生的副作用回滚。统一执行历史记录中的 `cancelRequested` 持久化后不可撤销（查询投影字段为 `stopRequested`）：已完成但尚未交付的候选返回 `status=cancelled`、`delivery.status=cancelled`，等待、Turn 收尾及重启恢复均不再应用该候选。取消与交付并发时，已经开始的 Runtime 操作等待真实回执，之后不再启动下一项；`partial`、`unknown` 和已完成的 `applied` 回执保留，不伪装成未写入。取消候选仍可读取制品；需要修改或重新交付时提交新的执行。
 
+分析默认 `sharedReadOnly`；可信部署显式配置 `delegation.inspection_permissions="inherit"` 后为 `sharedInherited`。后者仍要求只交付报告，但不承诺源码不可写，不能取消父/Profile 的只读约束。可写继承子任务持久 `desktop.executionPolicy.deferredWrite=true`，首次潜在副作用取得工作区写租约直到该 Turn 资源与持久化结算；纯原生读取可并行，跨 Turn 服务和递归委派拒绝。`exclusiveWrite` 保留旧含义；旧快照缺失 deferredWrite 时按 false 读取。新快照和响应包含新增策略字段，客户端须使用同步 schema；不认识该字段的旧二进制不可降级打开，更不能删除字段以绕过执行策略。旧 sharedReadOnly 与研究 Agent 保持强制只读。TaskRun worker 同样在空 Thread 注册及首个模型请求前执行 scope.check。详见[权限配置](../guides/configuration.md#分析子任务的权限策略)。
+
 ### 统一客户端接口
+
+握手明确报告 `restrictedScopes.available=false` 时，可信原生 `agent_spawn` 的模型 schema 只宣告可执行的意图：默认只读分析不可用时保留 `modify`；父任务也不可写则隐藏创建。显式 inherit 不扩大父/Profile 权限。研究入口 `delegate_tasks` 隐藏，但任务历史和控制入口保留；同名外部工具不按名称套用该规则。显式调用仍由最终 Scope 预检裁决，模型 schema 不构成授权。
+
+模型身份精简只发生在新回执的模型历史投影中；持久工具原文、GUI 与 SDK 继续保留线程关联。首次结算记录 `execution.outputProjection.executionIdentityVersion=1`，只对可信 coordination 后端启用；没有该标记的旧历史按原字节回放，避免升级改写已经交给 provider 的上下文。
 
 `areal/agent/delegate` 接受 `{requestId,parentThreadId,input,intent?,delivery?,writes?,independent?,requiresCurrentEnvironment?,requireTrustedChecks?,maxModelRounds?,agentProfile?,instructions?,skills?,model?,toolAllowlist?}`，默认 inspect/report。必须有活跃父 Turn。父 Thread 内相同 requestId 和相同参数返回同一 executionId，参数不同拒绝；创建意图先持久化，未知结果不自动重派。历史最多 10000 个执行记录。
 

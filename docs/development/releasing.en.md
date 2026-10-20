@@ -20,6 +20,10 @@ macOS packaging preserves the build artifacts' signatures and original bytes and
 
 `release-artifacts.py` rejects dirty-tree or non-release-profile manifests. Candidate outputs include platform archives, manifests and SHA256 sidecars. The draft assembly generates a dual-platform formula using final download URLs and actual archive checksums. Never use placeholder SHA256 values or describe unapproved candidates as released versions.
 
+Complete macOS bundles also contain a separate Bash executable under `libexec/areal/shells`; its version and source hashes are pinned in `runtime/host-tools/bash.lock.json`. `scripts/prepare-runtime-shell.py` builds it. Packaging verifies the lock, builder, binary and source archive hashes and rejects missing or inconsistent assets. The same distribution includes `COPYING`, full `corresponding-source.tar.gz` (original archive, every patch, lock and builder) and `build.json`, recorded in manifest `thirdPartyComponents`. Never distribute only its binary or replace this standalone GPL-3.0-or-later component’s license with the project Apache license. The source archive supports offline rebuilding. Linux gains no such component.
+
+The lock file pins private shell `minimumMacOSVersion` to 15.0, passed explicitly as `MACOSX_DEPLOYMENT_TARGET`; packaging checks the build metadata against that lock. Native qualification also checks Mach-O `LC_BUILD_VERSION` with `otool -l` so a newer local SDK cannot silently raise this component above the supported product minimum.
+
 ## Publication steps
 
 1. Merge preparation changes. Confirm Verify and Release bundles pass for the selected commit; inspect version, licenses and migration notes.

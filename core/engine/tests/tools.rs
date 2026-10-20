@@ -180,6 +180,14 @@ async fn runtime(data: PathBuf, hold: bool) -> RuntimeFixture {
     runtime_with_delay(data, hold, Duration::ZERO).await
 }
 async fn runtime_with_delay(data: PathBuf, hold: bool, delay: Duration) -> RuntimeFixture {
+    runtime_with_scope_error(data, hold, delay, None).await
+}
+async fn runtime_with_scope_error(
+    data: PathBuf,
+    hold: bool,
+    delay: Duration,
+    scope_error: Option<&'static str>,
+) -> RuntimeFixture {
     let (client_pipe, peer) = tokio::io::duplex(128 * 1024);
     let (read, write) = tokio::io::split(client_pipe);
     let (peer_read, mut peer_write) = tokio::io::split(peer);
@@ -197,10 +205,17 @@ async fn runtime_with_delay(data: PathBuf, hold: bool, delay: Duration) -> Runti
             let request: Value = serde_json::from_str(&line).unwrap();
             let method = request["method"].as_str().unwrap();
             recorded.lock().unwrap().push(method.into());
+            if method == "scope.create"
+                && let Some(code) = scope_error
+            {
+                peer_write.write_all(format!("{}\n", json!({"id":request["id"],"error":{"code":code,"message":"fixture: scope rejected before execution"}})).as_bytes()).await.unwrap();
+                continue;
+            }
             let result = match method {
                 "connection.open" => {
-                    json!({"protocolVersion":"areal.runtime.v0","runtimeEpoch":epoch,"connectionId":"fixture","rootScopeId":root,"capabilities":{"methods":["fs.execute"]}})
+                    json!({"protocolVersion":"areal.runtime.v0","runtimeEpoch":epoch,"connectionId":"fixture","rootScopeId":root,"capabilities":{"methods":["scope.check","fs.execute"]}})
                 }
+                "scope.check" => json!({"available":true}),
                 "scope.create" | "scope.revoke" => scope.clone(),
                 "scope.waitClosed" => {
                     // A completed Turn must not be visible before this acknowledgement.
@@ -258,6 +273,131 @@ async fn runtime_with_delay(data: PathBuf, hold: bool, delay: Duration) -> Runti
         release,
         methods,
         task,
+    }
+}
+
+struct ScopeRejectionModel {
+    code: &'static str,
+    workspace: PathBuf,
+}
+#[async_trait]
+impl Model for ScopeRejectionModel {
+    fn name(&self) -> &str {
+        "scope-rejection-fixture"
+    }
+    async fn stream(&self, _: Vec<Message>) -> anyhow::Result<ModelStream> {
+        unreachable!()
+    }
+    async fn chat(&self, messages: Vec<Message>, _: Vec<Value>) -> anyhow::Result<ModelStream> {
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| message
+                    .text_content()
+                    .contains("Execution environment facts: "))
+                .count(),
+            1,
+            "相同工作区事实不得逐轮累积"
+        );
+        let tools: Vec<_> = messages
+            .iter()
+            .filter(|message| message.role == "tool")
+            .collect();
+        let event = match tools.len() {
+            0 => ModelEvent::ToolCall(ToolCall {
+                id: "unavailable-read".into(),
+                name: "fs_list".into(),
+                arguments: json!({"path":"."}).to_string(),
+            }),
+            1 => {
+                let result: Value = serde_json::from_str(&tools[0].text_content())?;
+                assert_eq!(result["error"]["code"], self.code);
+                ModelEvent::ToolCall(ToolCall {
+                    id: "inspect-current-state".into(),
+                    name: "task_state".into(),
+                    arguments: "{}".into(),
+                })
+            }
+            2 => {
+                let result: Value = serde_json::from_str(&tools[1].text_content())?;
+                assert_eq!(
+                    result["workspacePath"],
+                    self.workspace
+                        .canonicalize()
+                        .unwrap()
+                        .to_string_lossy()
+                        .as_ref()
+                );
+                assert_eq!(result["commandCwd"], result["workspacePath"]);
+                assert_eq!(result["workspaceUri"], "workspace://repo");
+                ModelEvent::text(
+                    "The requested read is blocked by the unavailable scope; no file was read.",
+                )
+            }
+            _ => panic!("unexpected repeated scope operation"),
+        };
+        Ok(Box::pin(futures_util::stream::iter([Ok(event)])))
+    }
+}
+
+#[tokio::test]
+async fn known_scope_rejection_is_a_failed_tool_and_current_workspace_remains_observable() {
+    for code in ["UNSUPPORTED", "PERMISSION_DENIED"] {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        std::fs::create_dir(&workspace).unwrap();
+        let fixture =
+            runtime_with_scope_error(root.path().join("data"), false, Duration::ZERO, Some(code))
+                .await;
+        let engine = Engine::open_with_runtime(
+            &root.path().join("data"),
+            Arc::new(ScopeRejectionModel {
+                code,
+                workspace: workspace.clone(),
+            }),
+            Limits::default(),
+            RuntimeConfig {
+                client: fixture.client.clone(),
+                workspace: workspace.clone(),
+                writable: true,
+                command_scope: None,
+                command_scratch: None,
+            },
+        )
+        .unwrap();
+        let thread = engine
+            .create(workspace.to_string_lossy().into_owned())
+            .await
+            .unwrap();
+        engine
+            .start(&thread.id, vec![Input::text("Read the workspace")])
+            .await
+            .unwrap();
+        let finished = bounded(engine.wait(&thread.id)).await.unwrap();
+        assert_eq!(finished.turns[0].status, TurnStatus::Completed);
+        let calls: Vec<_> = finished.turns[0]
+            .items
+            .iter()
+            .filter_map(|item| {
+                if let Item::DynamicToolCall { execution, .. } = item {
+                    Some(execution.outcome.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(calls, [ToolOutcome::Failed, ToolOutcome::Succeeded]);
+        assert!(
+            !fixture
+                .methods
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|method| method == "fs.execute")
+        );
+        engine.shutdown().await;
+        fixture.client.shutdown().await.unwrap();
+        fixture.task.await.unwrap();
     }
 }
 async fn bounded<T>(future: impl std::future::Future<Output = T>) -> T {

@@ -20,6 +20,10 @@ macOS 打包保留构建产物的签名与原始字节，并执行 `codesign --v
 
 `release-artifacts.py` 拒绝 dirty working tree 或非 release-profile 的 manifest。候选输出包括平台 tar.gz、manifest、SHA256 sidecar；draft 汇总双平台归档后，生成带最终下载 URL 和真实归档 SHA256 的对应渠道 formula。不要手工编写占位 SHA256，也不要将 CI 候选发布为已验收正式版本。
 
+macOS 完整包还包含独立执行的 Bash（版本与全部源文件校验和见 `runtime/host-tools/bash.lock.json`），位于 `libexec/areal/shells`。构建入口为 `scripts/prepare-runtime-shell.py`；打包核对锁文件、构建脚本、二进制与源码归档摘要，缺失或不一致即拒绝。`COPYING`、完整 `corresponding-source.tar.gz`（原始归档、全部补丁、锁文件和构建脚本）及 `build.json` 随相同二进制分发，并记录在 manifest 的 `thirdPartyComponents`。不能仅分发二进制或用项目 Apache 许可证覆盖这一 GPL-3.0-or-later 独立组件；源码可由归档离线重建。Linux 不新增该组件。
+
+私有 shell 的最低系统版本由锁文件 `minimumMacOSVersion` 固定为 15.0，构建显式传入 `MACOSX_DEPLOYMENT_TARGET`，打包核对构建信息与锁文件一致。原生验收还需用 `otool -l` 核对 Mach-O 的 `LC_BUILD_VERSION`，避免本机新 SDK 使独立组件高于项目支持范围。
+
 ## 发布步骤
 
 1. 合并发布准备变更；确认选定提交的 Verify 与 Release bundles 验收通过，并检查当前版本、许可证和迁移说明。

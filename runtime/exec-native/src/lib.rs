@@ -8,7 +8,7 @@ mod sandbox;
 pub use sandbox::Profile as SandboxProfile;
 
 use areal_runtime_protocol::{Error, ErrorCode, OutputStream, Result};
-use areal_runtime_supervisor::backend::{Backend, Event, Execution};
+use areal_runtime_supervisor::backend::{Backend, Event, Execution, ScopeAccess};
 use async_trait::async_trait;
 use std::{
     collections::HashMap,
@@ -58,13 +58,106 @@ fn prepare_system_python(execution: &mut Execution) {
     let _ = execution;
 }
 
+#[cfg(target_os = "macos")]
+fn prepare_system_git(execution: &mut Execution) {
+    if let Ok(git) = areal_runtime_host_tools::system_git() {
+        // 受限任务不隐式导入宿主 Git 配置或属性；仓库内配置仍由原权限校验。
+        // 这些变量不是安全边界，任务显式覆盖后仍受同一 OS 沙箱限制。
+        for (name, value) in [
+            ("GIT_CONFIG_NOSYSTEM", "1"),
+            ("GIT_CONFIG_GLOBAL", "/dev/null"),
+            ("GIT_ATTR_NOSYSTEM", "1"),
+        ] {
+            execution
+                .env
+                .entry(name.into())
+                .or_insert_with(|| value.into());
+        }
+        if execution
+            .argv
+            .first()
+            .is_some_and(|arg| arg == "/usr/bin/git")
+        {
+            execution.argv[0] = git.to_string_lossy().into_owned();
+        }
+        if let (Some(parent), Some(path)) = (git.parent(), execution.env.get_mut("PATH")) {
+            // 保留调用方 PATH 顺序；只替换系统入口所在位置，不继承宿主 PATH。
+            *path = path
+                .split(':')
+                .map(|entry| {
+                    if entry == "/usr/bin" {
+                        format!("{}:/usr/bin", parent.display())
+                    } else {
+                        entry.to_owned()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(":");
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn prepare_runtime_shell(execution: &mut Execution) -> Result<()> {
+    let requested = execution.argv.first().and_then(|arg| match arg.as_str() {
+        "/bin/bash" | "bash" => Some("bash"),
+        "/bin/sh" | "sh" => Some("sh"),
+        _ => None,
+    });
+    let directory = match areal_runtime_host_tools::runtime_shell_directory() {
+        Ok(directory) => directory,
+        Err(_) if requested.is_none() => return Ok(()),
+        Err(error) => {
+            return Err(Error::new(
+                ErrorCode::Unsupported,
+                format!(
+                    "private Runtime shell unavailable: {error}; build with make build or install the complete Runtime bundle; the system Bash 3.2 cannot use private scratch for here-documents"
+                ),
+            ));
+        }
+    };
+    if let Some(name) = requested {
+        execution.argv[0] = directory.join(name).to_string_lossy().into_owned();
+    }
+    // 同一沙箱和权限继续生效；只增加固定程序读取，不授予共享 /tmp 或源码写权限。
+    execution
+        .builtin_executables
+        .extend([directory.join("bash"), directory.join("sh")]);
+    if let Some(path) = execution.env.get_mut("PATH") {
+        *path = format!("{}:{path}", directory.display());
+    }
+    Ok(())
+}
+
 const IO_TIMEOUT: Duration = Duration::from_secs(1);
+#[derive(Clone)]
+struct MonitorFailure {
+    error: Error,
+    cleanup_confirmed: bool,
+}
+impl From<Error> for MonitorFailure {
+    fn from(error: Error) -> Self {
+        Self {
+            error,
+            cleanup_confirmed: false,
+        }
+    }
+}
+impl MonitorFailure {
+    fn cleaned(error: Error) -> Self {
+        Self {
+            error,
+            cleanup_confirmed: true,
+        }
+    }
+}
+type MonitorResult = std::result::Result<(), MonitorFailure>;
 type Input = Box<dyn AsyncWrite + Unpin + Send>;
 struct Process {
     stop: CancellationToken,
     input: tokio::sync::Mutex<Option<Input>>,
     terminal: Option<pty::Master>,
-    done: watch::Sender<Option<Result<()>>>,
+    done: watch::Sender<Option<MonitorResult>>,
 }
 #[derive(Default)]
 struct State {
@@ -151,21 +244,37 @@ impl Backend for NativeBackend {
             SandboxProfile::Native | SandboxProfile::FullAccess
         ) && sandbox::supported(SandboxProfile::Native).is_ok()
     }
+    fn check_scope(&self, access: ScopeAccess, has_read_only_paths: bool) -> Result<()> {
+        let effective = sandbox::effective_profile(self.profile, access, has_read_only_paths);
+        sandbox::supported(effective)?;
+        sandbox::preflight(if effective == SandboxProfile::OuterContainerPerf {
+            SandboxProfile::Native
+        } else {
+            effective
+        })
+    }
     fn supports_input(&self) -> bool {
         true
     }
     async fn start(&self, mut execution: Execution) -> Result<mpsc::Receiver<Event>> {
-        prepare_system_python(&mut execution);
-        let mut argv = sandbox::command(&execution, self.profile)?;
-        let filter = sandbox::seccomp(
-            &mut argv,
-            if execution.read_only_paths.is_empty() {
-                self.profile
-            } else {
-                SandboxProfile::Native
-            },
-            execution.network,
+        self.check_scope(
+            execution.scope_access,
+            !execution.read_only_paths.is_empty(),
         )?;
+        prepare_system_python(&mut execution);
+        // 准入、路径沙箱与 syscall 策略必须使用同一个有效 Scope，不能只看父部署模式。
+        let effective = sandbox::effective_profile(
+            self.profile,
+            execution.scope_access,
+            !execution.read_only_paths.is_empty(),
+        );
+        #[cfg(target_os = "macos")]
+        if effective != SandboxProfile::FullAccess {
+            prepare_system_git(&mut execution);
+            prepare_runtime_shell(&mut execution)?;
+        }
+        let mut argv = sandbox::command(&execution, effective)?;
+        let filter = sandbox::seccomp(&mut argv, effective, execution.network)?;
         // Locally linked Mach-O helpers can be killed by AMFI when their
         // spawning parent is a Rust development binary. A signed system parent
         // launches the unchanged sandbox command. It shares our process group
@@ -268,21 +377,36 @@ impl Backend for NativeBackend {
                 child,
                 &process,
                 outputs,
-                tx,
+                tx.clone(),
                 #[cfg(target_os = "linux")]
                 reaper,
                 #[cfg(target_os = "linux")]
                 started_tx,
             )
             .await;
-            let mut state = state.lock().unwrap();
-            if let Err(error) = &result {
-                state.closed = true;
-                stop.cancel();
-                state.failure.get_or_insert_with(|| error.clone());
+            {
+                let mut state = state.lock().unwrap();
+                if let Err(failure) = &result
+                    && !failure.cleanup_confirmed
+                {
+                    state.closed = true;
+                    stop.cancel();
+                    state.failure.get_or_insert_with(|| failure.error.clone());
+                }
+                process.done.send_replace(Some(result.clone()));
+                state.processes.remove(&execution.process_id);
             }
-            process.done.send_replace(Some(result));
-            state.processes.remove(&execution.process_id);
+            if let Err(failure) = result {
+                // 失败原因先于 EOF 交给 Supervisor，避免只剩下笼统的流丢失错误。
+                let _ = send(
+                    &tx,
+                    Event::Failed {
+                        error: failure.error,
+                        cleanup_confirmed: failure.cleanup_confirmed,
+                    },
+                )
+                .await;
+            }
         });
         // 先登记并移交 monitor 所有权，再等待真实命令的启动回执。
         // 调用方丢弃 start future 时，rx 关闭仍会触发已登记执行的回收。
@@ -384,8 +508,10 @@ impl Backend for NativeBackend {
                 let mut done = process.done.subscribe();
                 loop {
                     if let Some(result) = done.borrow_and_update().clone() {
-                        if let Err(error) = result {
-                            failure.get_or_insert(error);
+                        if let Err(error) = result
+                            && !error.cleanup_confirmed
+                        {
+                            failure.get_or_insert(error.error);
                         }
                         break;
                     }
@@ -448,7 +574,7 @@ async fn monitor(
     tx: mpsc::Sender<Event>,
     #[cfg(target_os = "linux")] mut reaper: linux_reaper::Reaper,
     #[cfg(target_os = "linux")] started: tokio::sync::oneshot::Sender<Result<()>>,
-) -> Result<()> {
+) -> MonitorResult {
     #[cfg(target_os = "linux")]
     {
         let result = tokio::select! {
@@ -473,7 +599,7 @@ async fn monitor(
             reaper.terminate();
             // 异常 helper 可能继续收养 D 态后代；保留明确 waiter，不先杀回收者。
             tokio::spawn(async move { child.wait().await });
-            return Err(error);
+            return Err(error.into());
         }
     }
     #[cfg(not(target_os = "linux"))]
@@ -528,7 +654,7 @@ async fn monitor(
             Err(message) => {
                 reaper.terminate();
                 tokio::spawn(async move { child.wait().await });
-                return Err(cleanup_error(&message));
+                return Err(cleanup_error(&message).into());
             }
         }
     };
@@ -565,7 +691,7 @@ async fn monitor(
                     status
                 }
                 Err(error) => {
-                    return Err(cleanup_error(&format!("group termination failed: {error}")));
+                    return Err(cleanup_error(&format!("group termination failed: {error}")).into());
                 }
             },
         }
@@ -577,7 +703,7 @@ async fn monitor(
             if exited_group_error(&error) {
                 group.signalled = true;
             } else {
-                return Err(cleanup_error(&format!("group cleanup failed: {error}")));
+                return Err(cleanup_error(&format!("group cleanup failed: {error}")).into());
             }
         }
         status
@@ -596,7 +722,8 @@ async fn monitor(
         Ok::<_, Error>(())
     })
     .await
-    .map_err(|_| cleanup_error("output did not close after process exit"))??;
+    .map_err(|_| MonitorFailure::cleaned(cleanup_error("output did not close after process exit")))?
+    .map_err(MonitorFailure::cleaned)?;
     send(
         &tx,
         Event::Exited {
@@ -605,8 +732,11 @@ async fn monitor(
             sandbox_denied: false,
         },
     )
-    .await?;
-    send(&tx, Event::Closed).await
+    .await
+    .map_err(MonitorFailure::cleaned)?;
+    send(&tx, Event::Closed)
+        .await
+        .map_err(MonitorFailure::cleaned)
 }
 #[cfg(not(target_os = "linux"))]
 fn exited_group_error(error: &io::Error) -> bool {

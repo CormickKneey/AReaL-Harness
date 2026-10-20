@@ -22,24 +22,27 @@ impl Engine {
         let parent_id = parent.id.clone();
         let requested_rounds = args["maxModelRounds"].as_u64();
         let exclusive_write = args["intent"] == "modify";
-        let configured_request =
-            if let Some(intent) = args["intent"].as_str() {
-                if !matches!(intent, "inspect" | "modify") {
-                    return Err(invalid("unsupported task worker intent"));
-                }
-                Some(serde_json::from_value::<areal_protocol::desktop::AgentSpawn>(json!({
-                "parentThreadId": parent_id,
-                "input": input,
-                "workspaceMode": if exclusive_write { "sharedWrite" } else { "sharedReadOnly" },
-                "agentProfile": args["agentProfile"],
-                "model": args["model"],
-                "instructions": args["instructions"],
-                "skills": args["skills"],
-                "toolAllowlist": args["toolAllowlist"],
-            })).map_err(invalid)?)
-            } else {
-                None
-            };
+        let inspection = args["intent"] == "inspect";
+        let configured_request = if let Some(intent) = args["intent"].as_str() {
+            if !matches!(intent, "inspect" | "modify") {
+                return Err(invalid("unsupported task worker intent"));
+            }
+            Some(
+                serde_json::from_value::<areal_protocol::desktop::AgentSpawn>(json!({
+                    "parentThreadId": parent_id,
+                    "input": input,
+                    "workspaceMode": self.shared_delegation_mode(exclusive_write),
+                    "agentProfile": args["agentProfile"],
+                    "model": args["model"],
+                    "instructions": args["instructions"],
+                    "skills": args["skills"],
+                    "toolAllowlist": args["toolAllowlist"],
+                }))
+                .map_err(invalid)?,
+            )
+        } else {
+            None
+        };
         self.mutate(move |engine| async move {
             let _gate=engine.desktop.lifecycle.gate.lock().await;
             let parent=engine.cell(&parent_id).await?;
@@ -50,6 +53,7 @@ impl Engine {
             }
             let goal=state.thread.goals.goal.as_ref().filter(|g|g.status==GoalStatus::Active).ok_or(Error::Conflict)?;
             let mut configuration=engine.child_configuration(&state.thread,configured_request.as_ref())?.unwrap_or_default();
+            let deferred_write=inspection && engine.inspection_inherits_permissions() && !configuration.read_only;
             validate_input(&input,&engine.configured_model(&configuration)?.capabilities())?;
             if exclusive_write && configuration.read_only {return Err(invalid("parent/profile does not authorize a shared writer"));}
             let rounds=requested_rounds.map(|n|n as usize).or(configuration.options.max_model_rounds);
@@ -72,7 +76,7 @@ impl Engine {
                 .map(str::to_owned).collect());
             configuration.instructions.push_str("\nYou are a TaskRun worker. Perform only the assigned work and return evidence. Your lifetime is owned by the TaskRun, independent of its coordinator's current Turn. Do not delegate, change the root goal, or suspend the coordinator. Task channel replies are available for inspection.");
             let permit=engine.reserve_active_turn()?;
-            let (thread,_)=engine.create_inner(state.thread.cwd.clone(),None,None,vec![],None,Some(areal_protocol::desktop::DesktopState{configuration,execution_policy:areal_protocol::delegation::ChildExecutionPolicy{exclusive_write},..Default::default()})).await?;
+            let (thread,_)=engine.create_inner(state.thread.cwd.clone(),None,None,vec![],None,Some(areal_protocol::desktop::DesktopState{configuration,execution_policy:areal_protocol::delegation::ChildExecutionPolicy{exclusive_write,deferred_write},..Default::default()}),true).await?;
             let worker=engine.raw_cell(&thread.id).await?;
             let mut worker_state=worker.state.lock().await;
             let mut source=worker_state.thread.clone();
@@ -139,12 +143,15 @@ impl Engine {
     }
 
     pub(super) async fn settle_task_workers(self: &Arc<Self>, task: &Task) -> Result<()> {
-        // 创建意图与后端回执之间不能被调度器误判为丢失执行。
-        let creation = self.delegation_creation.lock().await;
-        drop(creation);
         let Some(run) = task.runs.last() else {
             return Ok(());
         };
+        // 只等待该 TaskRun 所属会话的创建回执，不阻塞其他任务的委派。
+        if let Some(thread_id) = &run.thread_id {
+            let parent = self.cell(thread_id).await?;
+            let creation = parent.delegation_creation.lock().await;
+            drop(creation);
+        }
         if run.workers.is_empty() {
             return Ok(());
         }

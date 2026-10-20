@@ -5,7 +5,9 @@ use super::*;
 // 已完整交给本次请求的结算回执，不应仅因自动汇总重复出现而使有效最终答复失效。
 // 只忽略等待与调用额度元数据；制品、交付、错误或正文有变化时仍须再次交给模型。
 fn execution_receipts_observed(messages: &[model::Message], reports: &[Value]) -> bool {
-    let normalize = |mut value: Value| -> Option<Value> {
+    let normalize = |value: Value| -> Option<Value> {
+        // 工具交给模型的是公共 executionId 视图；底层所有者和线程身份不属于回执版本。
+        let mut value = agents::model_execution_view(value);
         if value["timedOut"] == true {
             return None;
         }
@@ -148,7 +150,13 @@ impl Engine {
         let mut child_results = Value::Null;
         let mut observed_children = HashSet::new();
         let mut child_observations = agents::ChildResultObservations::default();
-        let instructions = self.project_instructions(cell).await?;
+        let mut instructions = self.project_instructions(cell).await?;
+        if let Some(workspace) = self.workspace_context(cell) {
+            // 工作区和部署能力在本轮冻结，放入已有指令快照，避免逐轮累积或挡住用户输入。
+            let text = instructions.get_or_insert_with(String::new);
+            text.push_str("\n\n");
+            text.push_str(&workspace.text_content());
+        }
         if instructions.is_some() {
             let mut state = cell.state.lock().await;
             let mut candidate = state.thread.clone();
@@ -379,6 +387,9 @@ impl Engine {
                         Some("Current authoritative goal: ")
                     } else if text.starts_with("Built-in Browser guidance: ") {
                         Some("Built-in Browser guidance: ")
+                    } else if text.starts_with("Choose checks that can falsify the implementation")
+                    {
+                        Some("Choose checks that can falsify the implementation")
                     } else if text.starts_with("This execution is headless.") {
                         Some("This execution is headless.")
                     } else if text.starts_with("Settled child Agent results ") {

@@ -171,6 +171,20 @@ pub enum ScopeParticipation {
 
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CheckScope {
+    pub parent_scope_id: String,
+    #[serde(default)]
+    pub permissions: PermissionRequest,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ScopeCheck {
+    pub available: bool,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RevokeOwner {
     pub plugin_instance_id: String,
 }
@@ -258,6 +272,11 @@ pub struct ProcessInfo {
     pub sandbox_denied: bool,
     pub stop_reason: Option<String>,
     pub cleanup_error: Option<String>,
+    /// 执行结果 UNKNOWN 与资源清理确认分开；旧 Runtime 缺失此字段时保守视为未确认。
+    #[serde(default)]
+    pub cleanup_confirmed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]

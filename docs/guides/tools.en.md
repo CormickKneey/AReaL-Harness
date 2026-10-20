@@ -2,6 +2,8 @@
 
 # Tools and hooks
 
+Model requests include actual workspacePath, workspaceUri, commandCwd, scratchPath and probed restrictedScopes facts. `workspace://repo` maps to the actual workspace root, not a repo subdirectory under private state; scratch is temporary work, not the delivery directory. Reopen generated artifacts at the user's final location and check calculated results against independent expectations or small examples. Schemas, exit codes and internally matching totals each establish only their own constraints. Explicit UNSUPPORTED/permission rejection before Scope creation returns as a tool failure without dispatch; UNKNOWN still stops execution.
+
 Core's registry binds names and JSON Schemas to built-in, command, client, MCP or plugin backends. Core validates inputs and outputs; Runtime handles local execution. Full built-in argument contracts are in [tools.rs](../../core/engine/src/tools.rs); model projections are in the [registry](../../core/engine/src/tools/registry.rs).
 
 The Local launch defaults to YOLO. File tools and command cwd accept outside-workspace absolute paths normalized to `workspace://host`, requiring Runtime full-access. Relative paths remain workspace-relative; argv uses ordinary filesystem paths. ASK_PERMISSIONS gates effective arguments before execution; see [permissions](configuration.en.md#permissions). The launcher supplies per-Thread scratch; isolated Workgroups use private `.scratch/agent-<threadId>` within their workspace and retain their Scope boundaries.
@@ -22,7 +24,7 @@ The built-in `run_command` advertises a plain object schema with a description r
 | `read_process/write_process/terminate_process` | Current-Turn process handles for continued reads, input and termination |
 | `read_history` | `itemId?,before?,limit?=8,after?,maxBytes?=8192`; newest-first pages (1–16) use nextBefore; itemId retrieves original JSON via nextCursor |
 | `read_tool_result` | `resultId,after?=null,maxBytes?=8192`; page through original JSON from a historical call in this Thread using nextCursor, without rerunning the tool |
-| `task_state` | `{pendingAfter?}`; bounded observations of files/processes/children/scratch and summaryThroughItemId, without live probes |
+| `task_state` | `{pendingAfter?}`; observed files/processes/children, workspacePath/workspaceUri/commandCwd/scratchPath and summaryThroughItemId; oversized paths are explicitly omitted, without live probes |
 
 Files are limited to 8 MiB and individual writes/patches to 64 KiB, also constrained by the 64 KiB argument budget per call. Explicit fileVersion and expectedSha256 are mutually exclusive; null SHA means create-only. Successful edits return a new version and normalized path. Shell/external edits do not refresh observations; reread after CAS conflicts. Use fs_read for long lines or non-UTF-8 binary data, and image_read for PNG/JPEG/WebP images. read uses Python and search uses the embedded Rust search helper in the same Scope with a 15-second deadline. Linux resolves executable Python 3 from the trusted host PATH; macOS uses supported system Python. Without one, only read_file is unavailable, not service startup. Restricted Scopes still need an interpreter under a Runtime-allowed system path; permissions are not widened automatically. The embedded search helper uses a Runtime-provided absolute path and ignores host rg configuration and ignore files above the workspace.
 
@@ -33,6 +35,8 @@ Native file sources remain limited to 8 MiB. Stream and filter larger text throu
 Calls in a complete response execute in order. The per-response resource cap defaults to 128 and intersects any explicit remaining Turn budget. Both protocols enforce a 4 MiB tool buffer; invalid indices or buffer overflow prevent all calls in that response from executing. Text result pages remain bounded at 16 KiB. `remainingToolCalls` is null without a cumulative budget, otherwise an integer that does not reset at compaction; a finite remaining allowance ≤32 adds handoff guidance. `max_output_bytes` defaults to unlimited; an explicit finite budget preserves confirmed results and requests an incomplete handoff when too little output remains for the next tool. `max_response_bytes` independently limits a single response to 4 MiB, including reasoning/provider context/media. Known parameter/tool failures return to the model; UNKNOWN stops execution.
 
 `verify_command` writes complete output (up to 64 MiB) and a receipt under scratch/verification, including exit status, logs and before/after source fingerprints. Fingerprints cover Git tracked/unignored files, or a fallback walk excluding dependencies/build/cache. Source changes invalidate verification. Task-writable receipts do not authenticate hostile tasks. Pending verification processes receive bounded finalization feedback requiring a terminal read or explicit termination. Ordinary background run_command processes are exempt; this does not wake completed Turns.
+
+Restricted macOS commands entering through `bash`/`sh` use the private Bash distributed with Runtime, with here-documents in private scratch. System Git is resolved to its trusted toolchain executable before sandboxing and does not load ambient system/user Git configuration by default. The existing Scope still controls source writes, network and external temporary files. Nested hard-coded `/bin/bash` paths or shebangs still invoke the old system Bash; see the [Runtime contract](../api/runtime.en.md#system-tools-in-restricted-macos-commands).
 
 ## Design choices
 
@@ -74,6 +78,8 @@ Sent views are persisted with history and are not rewritten after configuration 
 
 ## Extension configuration
 
+`task_state` is a Core diagnostic query: it creates no Runtime Scope, runs no execution hooks and holds no ordinary tool-execution slot. Known handles and workspace facts remain readable after explicit execution-admission rejection. Permission rules and session ownership still apply. Model guidance for independent calculation and final-deliverable checks uses the explicit `limits.execution_tracking` candidate, disabled by default; task benefits require separate validation.
+
 Set `[tools] extensions_file="tools.json"` in user TOML. JSON may contain policy, tools, hooks, mcpServers, plugins and agents. It is limited to 1 MiB, validated at startup and never implicitly loaded from the workspace. See runnable plugin [tools.json](../../core/sdk-typescript/examples/tools.json) and the [MCP guide](mcp.en.md).
 
 Command definitions are `{definition:{name,description,inputSchema,outputSchema?},argv,timeoutMs}`. The registry allows 128 tools total, with unique 1–64-character ASCII letter/digit/underscore/hyphen names. Schemas use Draft 2020-12 without external `$ref`; input roots are objects and schema defaults are not injected.
@@ -93,6 +99,8 @@ At most 64 unique names, configured as `{name,event,matcher,argv,timeoutMs}`. ma
 Input is one `{event,threadId,turnId,callId,tool,arguments,result}` line. Output may contain decision (default allow), reason and updatedArguments. Initial rejection, pre-hook blocking and UNKNOWN skip post hooks. Tools and hooks have separate journals, so a crashing post hook does not erase a confirmed tool outcome. Inspect UNKNOWN before recording acknowledgement.
 
 Client tool hosts own their side effects; TUI/Web do not execute arbitrary callbacks. See [plugins](../design/plugins.en.md) and [MCP](mcp.en.md) for trusted-host boundaries.
+
+Ordinary `agent_spawn` with `intent="inspect"` declares responsibility. Source read-only access is enforced by default; only explicit trusted `delegation.inspection_permissions="inherit"` inherits parent authority. Workspace facts expose policy as `inspectionPermissions` and environmental capability as `restrictedScopes`. Unavailable restrictedScopes blocks only children whose effective policy requires it; existing parent/Profile read-only limits remain. In inherited mode native reads may overlap, while commands or ambient side effects take a Turn-long writer lease; source immutability cannot be promised. Enforced read-only mode, explicit legacy sharedReadOnly and the research Agents below still require OS isolation. See [permission policy](configuration.en.md#inspection-child-permissions).
 
 <a id="research-agents"></a>
 ## Optional research agents

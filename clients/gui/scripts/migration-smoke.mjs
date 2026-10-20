@@ -12,6 +12,7 @@ const gui = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const desktop = join(gui, "app");
 const require = createRequire(join(desktop, "package.json"));
 const { _electron: electron } = require("playwright-core");
+const { executeCore } = require(join(desktop, "src/core/core-process.cjs"));
 const root = resolve(gui, "../..");
 const binary = process.env.AREAL_GUI_EXECUTABLE
   ? resolve(dirname(process.env.AREAL_GUI_EXECUTABLE), "../Resources/areal-core/bin/areal")
@@ -242,11 +243,12 @@ async function until(predicate, label) {
   }
   throw Error("Timeout: " + label);
 }
-const services = () => JSON.parse(execFileSync(binary, ["service", "list", "--json"], { env, encoding: "utf8", timeout: 20000 }));
+// 服务检查与清理使用产品原生启动入口，避免 Node 直接执行本地 Mach-O 被系统拒绝。
+const services = async () => JSON.parse((await executeCore(binary, ["service", "list", "--json"], { env, timeout: 20000 })).stdout);
 async function waitForApplicationStop(records) {
   const end = Date.now() + 30000;
   while (Date.now() < end) {
-    const current = services();
+    const current = await services();
     const settled = records.every(original => {
       const record = current.find(value => value.serviceId === original.serviceId);
       return record?.generation === original.generation && record.state === "stopped"
@@ -745,7 +747,7 @@ try {
   checks.push(
     "adapter restart reuses Core history and local capability; no tokens exposed in renderer snapshot",
   );
-  const beforeQuit = services().filter(record => record.workspace === workspace && record.state !== "stopped");
+  const beforeQuit = (await services()).filter(record => record.workspace === workspace && record.state !== "stopped");
   assert.ok(beforeQuit.length > 0, "cold reopen starts from a real live GUI service");
   const requestsBeforeQuit = received.length;
   await input().fill("冷启动保留草稿");
@@ -806,7 +808,7 @@ try {
 } finally {
   await quit();
   try {
-    await waitForApplicationStop(services().filter(record => record.workspace === workspace));
+    await waitForApplicationStop((await services()).filter(record => record.workspace === workspace));
     const metadata = await readFile(join(scratch, "core/service.json"), "utf8").then(JSON.parse).catch(error => { if (error.code === "ENOENT") return null; throw error; });
     if (metadata) assert.throws(() => process.kill(metadata.pid, 0), error => error.code === "ESRCH", "the GUI adapter exits with its application");
     checks.push("application lifecycle cleanup leaves no live adapter or original Core service");
@@ -819,15 +821,13 @@ try {
     }
     // 仅清理本次隔离 home 中的服务；失败不遗留模型任务或后台进程。
     try {
-      const instances = JSON.parse(
-        execFileSync(binary, ["service", "list", "--json"], { env, encoding: "utf8" }),
-      );
+      const instances = await services();
       for (const instance of instances)
         if (instance.workspace === workspace && instance.state !== "stopped") {
-          execFileSync(
+          await executeCore(
             binary,
             ["service", "stop", "--instance", instance.serviceId, "--cancel", "--json"],
-            { env, timeout: 120000, stdio: "pipe" },
+            { env, timeout: 120000 },
           );
         }
     } catch (failure) {

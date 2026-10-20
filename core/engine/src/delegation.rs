@@ -23,6 +23,18 @@ fn parent_id(owner: &ExecutionOwner) -> &str {
 }
 
 impl Engine {
+    pub(crate) fn inspection_inherits_permissions(&self) -> bool {
+        self.limits.inspection_permissions == areal_config::InspectionPermissions::Inherit
+    }
+
+    pub(crate) fn shared_delegation_mode(&self, modifying: bool) -> &'static str {
+        if modifying || self.inspection_inherits_permissions() {
+            "sharedWrite"
+        } else {
+            "sharedReadOnly"
+        }
+    }
+
     pub fn attach_automatic_workgroups(
         &self,
         service: Arc<workgroup::service::Service>,
@@ -201,8 +213,6 @@ impl Engine {
     }
 
     async fn delegate_inner(self: &Arc<Self>, request: DelegationRequest) -> Result<Value> {
-        // 序列化创建与重复请求；不跨执行、等待或模型请求持锁。
-        let serial = self.delegation_creation.lock().await;
         if request.request_id.is_empty()
             || request.request_id.len() > 128
             || request.input.is_empty()
@@ -220,6 +230,8 @@ impl Engine {
             Sha256::digest(serde_json::to_vec(&request).map_err(invalid)?)
         );
         let parent = self.cell(&request.parent_thread_id).await?;
+        // 幂等和累计子任务上限只属于同一父会话；一个慢探针不能阻塞其他会话。
+        let serial = parent.delegation_creation.lock().await;
         if parent.exclusive_writer {
             return Err(invalid(
                 "an exclusive writer cannot recursively delegate; return a handoff to its coordinator",
@@ -317,8 +329,10 @@ impl Engine {
         let required = request.delivery == Delivery::Patch || request.require_trusted_checks;
         let wants_isolated = request.intent == Intent::Modify && (required || request.independent);
         let automatic = !request.require_trusted_checks && self.workgroups.get().is_none();
-        let mut reason = if request.intent == Intent::Inspect {
-            "inspection uses narrowed shared read-only tools"
+        let mut reason = if request.intent == Intent::Inspect && self.inspection_inherits_permissions() {
+            "inspection inherits parent permissions; source changes remain outside its assigned task; potential writes acquire an exclusive lease"
+        } else if request.intent == Intent::Inspect {
+            "inspection requires shared read-only execution"
         } else {
             "coupled or environment-dependent work uses one shared writer"
         }
@@ -412,6 +426,8 @@ impl Engine {
             delivery: request.delivery,
             strategy: if isolated {
                 "isolated"
+            } else if request.intent == Intent::Inspect && self.inspection_inherits_permissions() {
+                "sharedInherited"
             } else if request.intent == Intent::Inspect {
                 "sharedReadOnly"
             } else {
@@ -509,6 +525,13 @@ impl Engine {
                         .as_mut()
                         .filter(|a| a.id == turn_id && !a.sealed && !a.cancel.is_cancelled())
                         .ok_or(Error::Conflict)?;
+                    if active.children.len() + active.isolated_children
+                        >= self.limits.max_children_per_turn
+                    {
+                        return Err(Error::Exhausted(
+                            "child admission exhausted during capability check".into(),
+                        ));
+                    }
                     active.isolated_children += 1;
                     if matches!(owner, ExecutionOwner::TaskRun { .. }) {
                         self.shutdown.child_token()
@@ -575,12 +598,8 @@ impl Engine {
                     input: request.input.clone(),
                     writes: Some(request.writes.clone()),
                     workspace_mode: Some(
-                        if request.intent == Intent::Inspect {
-                            "sharedReadOnly"
-                        } else {
-                            "sharedWrite"
-                        }
-                        .into(),
+                        self.shared_delegation_mode(request.intent == Intent::Modify)
+                            .into(),
                     ),
                     agent_profile: request.agent_profile.clone(),
                     instructions: request.instructions.clone(),

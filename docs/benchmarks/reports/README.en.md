@@ -6,6 +6,8 @@ Historical records do not define current capabilities. Use the [run guide](../RE
 
 | Report | Evidence scope |
 |---|---|
+| [Inspection permissions and local tools](inspection-permissions-v2.en.md) | Default read-only, explicit inheritance, writer leases and macOS Git/Bash repairs; failures and UNKNOWN retained |
+| [Delegation admission and concurrency](delegation-admission-repair.en.md) | Effective Scope admission, creation locks and quota-race mechanism regressions |
 | [Child-result consumption and completion](child-result-consumption.en.md) | Fixed-version Codex/DSH references, observed terminal-result deduplication, late results and compaction; deterministic request counts, no overall speedup claim |
 | [Context continuity and persistence](context-continuity.en.md) | Live revisions, repeated compaction, restart and Goal delivery; Chat/Responses and persistence-stage comparison |
 | [Bundled search and historical result retrieval](native-result-views.en.md) | 146 attempts, with 18 final ordinary pairs and three MCP retrieval pairs; includes cost/latency regressions, no MM480 rerun |

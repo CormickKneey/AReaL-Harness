@@ -859,7 +859,7 @@ impl Executor for NativeExecutor {
                     let mut configuration = areal_protocol::desktop::EffectiveConfig::default();
                     configuration.options.interaction_mode = areal_protocol::tasks::InteractionMode::Headless;
                     engine.create_inner(workspace.to_string_lossy().into_owned(), None, None, vec![], None,
-                        Some(areal_protocol::desktop::DesktopState { configuration, ..Default::default() })).await?.0
+                        Some(areal_protocol::desktop::DesktopState { configuration, ..Default::default() }), false).await?.0
                 };
                 // 隔离 worker 不是用户会话，不能为自动命名发出额外请求，
                 // 否则会意外消耗父 Goal 的模型预算。

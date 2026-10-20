@@ -335,7 +335,7 @@ fn definitions_with_policy(policy: &ToolPolicy) -> Vec<Value> {
     let mut definitions = vec![
         tool(
             "task_state",
-            "Inspect this Turn's authoritative process/file handles and owned agents after compaction or a stale-handle error. Reports bounded observations, not model-written notes; no workflow decisions or file mutations.",
+            "Inspect this Turn's authoritative process/file handles, owned agents and executionId handles after compaction or a stale-handle error. Reports bounded observations and actual workspace/scratch paths, not model-written notes; no workflow decisions or file mutations.",
             json!({"pendingAfter":{"type":"string","maxLength":128,"description":"Continue the independent pendingVerifications page after its nextAfter alias; omit for the first page."}}),
             &[],
         ),
@@ -908,6 +908,78 @@ impl Engine {
                 "CHILD_EXECUTION_DISABLED: exclusive writers and bounded isolated workers must return a handoff instead of recursively creating child executions",
             ));
         }
+        let deferred = cell
+            .state
+            .lock()
+            .await
+            .thread
+            .desktop
+            .as_ref()
+            .is_some_and(|d| d.execution_policy.deferred_write);
+        if deferred
+            && call.name == "development_service_start"
+            && entry
+                .as_ref()
+                .is_ok_and(|tool| matches!(tool.backend, Backend::Core))
+        {
+            rejection = Some(rt::Error::new(
+                rt::ErrorCode::PermissionDenied,
+                "inspection workers cannot start Thread-lifetime services; ask the parent to own the service",
+            ));
+        }
+        let pure_read = self.extensions.hooks.is_empty()
+            && entry.as_ref().is_ok_and(|tool| {
+                // 包括使用固定 Python 助手的行读取；不能因实现为命令就误占整轮写租约。
+                matches!(tool.backend, Backend::Builtin)
+                    && matches!(
+                        call.name.as_str(),
+                        "read_file"
+                            | "image_read"
+                            | "fs_read"
+                            | "fs_list"
+                            | "fs_stat"
+                            | "search_files"
+                    )
+            });
+        if deferred && !exclusive && !coordination && rejection.is_none() && !pure_read {
+            // 租约由 Turn 持有，覆盖 yield 后仍运行的进程及清理；不能凭 inspect 标签判断无副作用。
+            let _resources = tokio::select! {biased;
+                _=cancel.cancelled()=>anyhow::bail!("cancelled before inherited writer admission"),
+                guard=cell.resource_gate.lock()=>guard,
+            };
+            if !cell
+                .state
+                .lock()
+                .await
+                .active
+                .as_ref()
+                .unwrap()
+                .workspace_exclusive
+            {
+                let guard = tokio::select! {biased;
+                    _=cancel.cancelled()=>anyhow::bail!("cancelled before inherited writer admission"),
+                    guard=self.workspace_gate.clone().write_owned()=>guard,
+                };
+                self.ensure_workspace_processes_settled().await?;
+                anyhow::ensure!(
+                    !cancel.is_cancelled(),
+                    "cancelled before inherited writer execution"
+                );
+                let mut state = cell.state.lock().await;
+                let active = state.active.as_mut().unwrap();
+                active.workspace_exclusive = true;
+                active.deferred_workspace_guard = Some(guard);
+            }
+        }
+        let exclusive = exclusive
+            || cell
+                .state
+                .lock()
+                .await
+                .active
+                .as_ref()
+                .unwrap()
+                .workspace_exclusive;
         // 旧研究 Agent 的等待也不能持读租约，否则排队作者会阻止其子任务继续读取。
         // 它仍保留原 Runtime scope 与 hooks；每个 hook 单独取得执行租约。
         let _workspace_guard = if coordination || agent_control || exclusive || rejection.is_some()
@@ -928,7 +1000,7 @@ impl Engine {
                 permit = self.tool_permits.acquire() => permit?,
             })
         };
-        let runtime = if coordination || rejection.is_some() {
+        let mut runtime = if coordination || rejection.is_some() {
             None
         } else {
             self.runtime.as_ref()
@@ -950,9 +1022,9 @@ impl Engine {
         };
         let scope = match (runtime, if coordination { None } else { existing_scope }) {
             (_, Some(scope)) => scope,
-            (Some(runtime), None) => {
-                let client = &runtime.client;
-                let scope = client
+            (Some(config), None) => {
+                let client = &config.client;
+                let created = client
                     .create_scope(rt::CreateScope {
                         operation_id: client.operation_id(),
                         parent_scope_id: self.runtime_task_parent(cell).await?,
@@ -963,10 +1035,29 @@ impl Engine {
                         permissions: self.active_permissions(cell).await?,
                         limits: rt::LimitRequest::default(),
                     })
-                    .await?
-                    .scope_id;
-                cell.state.lock().await.active.as_mut().unwrap().scope = Some(scope.clone());
-                scope
+                    .await;
+                match created {
+                    Ok(scope) => {
+                        cell.state.lock().await.active.as_mut().unwrap().scope =
+                            Some(scope.scope_id.clone());
+                        scope.scope_id
+                    }
+                    Err(error)
+                        if matches!(
+                            error.code,
+                            rt::ErrorCode::Unsupported
+                                | rt::ErrorCode::PermissionDenied
+                                | rt::ErrorCode::InvalidArgument
+                                | rt::ErrorCode::ResourceExhausted
+                        ) =>
+                    {
+                        // Scope 尚未创建，任务动作确定未派发；记录普通工具失败供模型调整。
+                        rejection = Some(error);
+                        runtime = None;
+                        String::new()
+                    }
+                    Err(error) => return Err(error.into()),
+                }
             }
             (None, None) => String::new(),
         };
@@ -1283,6 +1374,13 @@ impl Engine {
             execution.outcome = outcome;
             execution.result_snapshot = prepared.snapshot;
             execution.output_projection = Some(prepared.metrics);
+            // 首次结算固定模型身份投影版本，升级后不能改写已提交给 provider 的旧回执。
+            if execution.backend.as_deref() == Some("coordination")
+                && call.name.starts_with("agent_")
+            {
+                execution.output_projection.as_mut().unwrap()["executionIdentityVersion"] =
+                    json!(1);
+            }
             execution.duration_ms = Some(started.elapsed().as_millis() as u64);
         }
         let bytes = serde_json::to_vec(item)?.len();

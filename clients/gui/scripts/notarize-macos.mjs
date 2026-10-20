@@ -30,6 +30,9 @@ async function signCoreTools({ directory, manifest, identity, run }) {
     "bin/areal",
     "libexec/areal/areal-runtime",
     "libexec/areal/areal-runtime-fs",
+    ...["libexec/areal/shells/bash", "libexec/areal/shells/sh"].filter(
+      (relative) => relative in manifest.files,
+    ),
   ]) {
     const binary = join(directory, relative);
     assert.equal(hash(binary), manifest.files[relative], "Input Core digest differs: " + relative);

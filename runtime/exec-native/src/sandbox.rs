@@ -3,7 +3,7 @@
 //! they must never be canonicalized by the executor.
 use areal_runtime_protocol::{Error, ErrorCode, Result};
 use areal_runtime_supervisor::backend::{Execution, ScopeAccess};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::sync::OnceLock;
 use std::{collections::BTreeSet, path::Path};
 
@@ -40,6 +40,19 @@ impl Profile {
     }
 }
 
+pub fn effective_profile(
+    profile: Profile,
+    access: ScopeAccess,
+    has_read_only_paths: bool,
+) -> Profile {
+    if profile == Profile::FullAccess && (access == ScopeAccess::Restricted || has_read_only_paths)
+    {
+        Profile::Native
+    } else {
+        profile
+    }
+}
+
 // Keep system allowances explicit. In particular, /System includes the writable
 // Data volume. Shared temporary directories must not become writable either.
 // Neither is an appropriate read/write boundary for an ExecutionScope.
@@ -65,6 +78,12 @@ const BASE: &str = r#"
   (literal "/Library/Developer/CommandLineTools/Library/Frameworks"))
 (allow process-exec file-read* file-map-executable
   (regex #"^/(Applications/Xcode(_[0-9]+([.][0-9]+)*)?[.]app/Contents/Developer|Library/Developer/CommandLineTools)/Library/Frameworks/Python3[.]framework(/|$)"))
+(allow file-read-metadata
+  (regex #"^/(Applications/Xcode(_[0-9]+([.][0-9]+)*)?[.]app/Contents/Developer|Library/Developer/CommandLineTools)/usr(/(bin|libexec|share))?$"))
+(allow process-exec file-read* file-map-executable
+  (regex #"^/(Applications/Xcode(_[0-9]+([.][0-9]+)*)?[.]app/Contents/Developer|Library/Developer/CommandLineTools)/usr/(bin/git$|libexec/git-core(/|$))"))
+(allow file-read*
+  (regex #"^/(Applications/Xcode(_[0-9]+([.][0-9]+)*)?[.]app/Contents/Developer|Library/Developer/CommandLineTools)/usr/share/git-core/templates(/|$)"))
 (allow file-read*
   (regex #"^/private/(etc/(passwd|group|localtime)|var/select/sh)$")
   (regex #"^/private/var/db/timezone(/|$)")
@@ -156,9 +175,43 @@ fn run_linux_preflight() -> Result<()> {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
-pub fn preflight(_: Profile) -> Result<()> {
-    Ok(())
+#[cfg(target_os = "macos")]
+pub fn preflight(profile: Profile) -> Result<()> {
+    if profile == Profile::FullAccess {
+        return Ok(());
+    }
+    static PREFLIGHT: OnceLock<Result<()>> = OnceLock::new();
+    PREFLIGHT
+        .get_or_init(|| {
+            let output = std::process::Command::new("/usr/bin/sandbox-exec")
+                .args(["-p", BASE, "/usr/bin/true"])
+                .stdout(std::process::Stdio::null())
+                .output()
+                .map_err(|error| {
+                    Error::new(
+                        ErrorCode::Unsupported,
+                        format!("cannot run macOS Seatbelt preflight: {error}"),
+                    )
+                })?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(Error::new(
+                    ErrorCode::Unsupported,
+                    format!(
+                        "macOS Seatbelt preflight failed ({}): {}",
+                        output.status,
+                        String::from_utf8_lossy(&output.stderr).trim()
+                    ),
+                ))
+            }
+        })
+        .clone()
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub fn preflight(profile: Profile) -> Result<()> {
+    supported(profile)
 }
 
 pub fn command(execution: &Execution, profile: Profile) -> Result<Vec<String>> {
@@ -595,6 +648,33 @@ mod policy_tests {
             .collect();
         // 固定可写范围内的中间父目录，不能顺便暴露工作区外的祖先或兄弟目录。
         assert_eq!(bound, BTreeSet::from([root, parent]));
+    }
+
+    #[test]
+    fn narrowed_full_access_selects_native_command_and_syscall_policy() {
+        assert_eq!(
+            effective_profile(Profile::FullAccess, ScopeAccess::Unrestricted, false),
+            Profile::FullAccess
+        );
+        for (access, protected) in [
+            (ScopeAccess::Restricted, false),
+            (ScopeAccess::Unrestricted, true),
+        ] {
+            let profile = effective_profile(Profile::FullAccess, access, protected);
+            assert_eq!(profile, Profile::Native);
+            #[cfg(target_os = "linux")]
+            {
+                let mut argv = vec!["/usr/bin/bwrap".into()];
+                let filter = seccomp(
+                    &mut argv,
+                    profile,
+                    areal_runtime_protocol::NetworkRequest::Deny,
+                )
+                .unwrap();
+                assert!(filter.is_some());
+                assert!(argv.iter().any(|arg| arg == "--seccomp"));
+            }
+        }
     }
 
     #[test]

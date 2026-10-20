@@ -109,6 +109,8 @@ target/debug/areal service bind --workspace /absolute/workspace \
 
 Store 当前写入版本、`areal/server/status.stateVersion` 与发行 `manifest.json.stateVersion` 均为 15；API 仍为 `areal.core.v1`，服务发现协议仍为 1。版本 15 增加主会话最后受理的模型偏好，继续读取版本 1–14 的旧记录；旧 Core 不保证读取新记录，回退应恢复升级前备份。无派生元数据的旧记录可读取并在下一次写入升级；Fork/Side 记录必须具有受支持的会话版本和版本 14 的权限语义，不能仅降低记录版本来交给旧二进制。服务重启不重放创建或首问，结果不确定时先查 `areal/request/read`。能力声明不替代各平台原生权限验证、安装包或真实供应商的独立验收。
 
+macOS 的 owned TUI 与 Core/Runtime 一样通过可信系统父进程启动，交接真实 PID、退出状态和清理回执。交互启动在 TUI 读取前将控制终端交给其独立进程组，结算后恢复原前台组与终端属性；无终端输入不执行交接，Linux 保留原生直启。该适配只处理可信客户端生命周期，不执行模型命令、不改变 Runtime 权限或沙箱。
+
 ## 生命周期与恢复
 
 关闭窗口不结束 GUI 应用会话，活动 Turn/Goal 可继续，多个窗口可订阅同一 Thread。退出应用或 ⌘Q 则停止本应用全部 Desktop、Host、Core 和 Runtime；活动任务需要确认停止或取消退出，结算未完成时 Main 保持恢复入口。相同 Thread 的并发写入仍遵循 Core 的准入、CAS、队列及 requestId 规则。显式取消与关闭窗口是不同操作。

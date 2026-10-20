@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Readable, Writable } from "node:stream";
 import type {
   ConnectionInfo,
+  CheckScope,
   CreateScope,
   FileCommand,
   FileRequest,
@@ -17,6 +18,7 @@ import type {
   ReadOutput,
   RuntimeErrorData,
   ScopeInfo,
+  ScopeCheck,
   StartProcess,
 } from "./types.js";
 export type * from "./types.js";
@@ -31,6 +33,7 @@ const CONTROL = new Set([
   "connection.open",
   "connection.close",
   "scope.get",
+  "scope.check",
   "scope.revoke",
   "owner.revoke",
   "process.terminate",
@@ -251,6 +254,8 @@ export class RuntimeClient {
     });
   }
   readonly scopes = {
+    check: (request: CheckScope, options?: WaitOptions) =>
+      this.#rpc<ScopeCheck>("scope.check", request, options),
     create: (request: CreateScope, options?: WaitOptions) =>
       this.#rpc<ScopeInfo>("scope.create", request, options),
     get: (scopeId: string, options?: WaitOptions) =>

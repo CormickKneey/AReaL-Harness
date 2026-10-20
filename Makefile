@@ -18,7 +18,7 @@ endif
 	test-protocol test-concurrency verify smoke server tui schemas docs clean \
 	capacity capacity-primitives capacity-core perf runtime test-runtime runtime-smoke verify-runtime \
 	cordis-pin update-cordis sdk-test harness harness-smoke verify-harness \
-	setup setup-node sdk-build script-test launcher-test workgroup-smoke unified-execution-smoke capacity-workgroup local-service-smoke upgrade-smoke tui-upgrade-smoke \
+	setup setup-node sdk-build script-test launcher-test workgroup-smoke unified-execution-smoke delegation-permissions-smoke capacity-workgroup local-service-smoke upgrade-smoke tui-upgrade-smoke \
 	verify-native integration-boundaries
 
 help: ## 显示常用操作（默认目标）
@@ -38,9 +38,11 @@ fetch: ## 下载 Cargo.lock 中的依赖
 	cargo fetch --locked
 
 build: ## 构建整个 workspace（debug）
+	python3 scripts/prepare-runtime-shell.py --profile debug
 	cargo build --locked --workspace
 
 release: ## 构建整个 workspace（release）
+	python3 scripts/prepare-runtime-shell.py --profile release
 	cargo build --locked --workspace --release
 
 check: ## 类型检查整个 workspace 和测试目标
@@ -62,6 +64,7 @@ lint: ## Rust / Python 静态检查和 Web 语法检查
 	node --check clients/web/app.js
 
 test: ## 运行 workspace 测试（不含显式容量测试）
+	python3 scripts/prepare-runtime-shell.py --profile debug
 	cargo test --locked --workspace $(CARGO_TEST_ARGS)
 
 test-core: ## 运行 Core 模型、会话和并发测试
@@ -81,13 +84,16 @@ update-cordis: ## 更新 Cordis main 并同步 pin；随后运行 verify 与 ver
 	python3 scripts/cordis-pin.py --write
 
 test-runtime: cordis-pin ## Runtime 组件、权限、去重、撤销竞态与私有传输测试
+	python3 scripts/prepare-runtime-shell.py --profile debug
 	cargo test --locked -p areal-runtime-protocol -p areal-runtime-client -p areal-runtime-fs -p areal-runtime-supervisor -p areal-runtime-exec-native -p areal-runtime
 
 runtime: ## 启动私有 stdio Runtime；ARGS 指定 --workspace
+	python3 scripts/prepare-runtime-shell.py --profile debug
 	cargo build --locked -p areal-runtime-exec-native --bin areal-runtime-reaper
 	cargo run --locked -p areal-runtime -- $(ARGS)
 
 runtime-smoke: cordis-pin ## 构建 Runtime 并验证原生执行后端
+	python3 scripts/prepare-runtime-shell.py --profile debug
 	cargo build --locked -p areal-runtime -p areal-runtime-fs -p areal-runtime-exec-native
 	python3 scripts/runtime-smoke.py $(ARGS)
 	python3 scripts/runtime-fs-smoke.py $(ARGS)
@@ -136,6 +142,7 @@ harness-smoke: build sdk-build ## 原生 SDK 与完整读改测试/强杀恢复
 	node scripts/harness-smoke.mjs
 	node scripts/workgroup-smoke.mjs
 	node scripts/unified-execution-smoke.mjs
+	node scripts/delegation-permissions-smoke.mjs
 	node scripts/plugin-smoke.mjs
 	node scripts/permissions-smoke.mjs
 	node scripts/permission-modes-smoke.mjs
@@ -144,6 +151,9 @@ harness-smoke: build sdk-build ## 原生 SDK 与完整读改测试/强杀恢复
 
 unified-execution-smoke: build ## 真实 Runtime 的统一委派、组合交付、取消和恢复回归
 	node scripts/unified-execution-smoke.mjs
+
+delegation-permissions-smoke: build ## 验证只读强约束、不可用准入与继承权限的读取协作
+	node scripts/delegation-permissions-smoke.mjs
 
 local-service-smoke: build ## 验证共享服务、多个窗口与宿主故障恢复
 	node scripts/local-service-smoke.mjs
@@ -178,6 +188,7 @@ server: ## 构建并启动 Core；读取用户 TOML、环境变量和显式 ARGS
 	cargo run --locked -p areal-cli -- app-server $(ARGS)
 
 tui: ## 启动本地 Core + Runtime + TUI；--endpoint/--remote 连接已有服务
+	python3 scripts/prepare-runtime-shell.py --profile debug
 	cargo build --locked -p areal-runtime -p areal-runtime-fs -p areal-runtime-exec-native -p areal-cli
 	cargo run --locked -p areal-cli -- $(ARGS)
 

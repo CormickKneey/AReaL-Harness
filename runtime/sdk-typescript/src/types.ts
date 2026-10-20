@@ -20,6 +20,13 @@ export interface CreateScope {
   permissions?: Permissions;
   limits?: Partial<Limits>;
 }
+export interface CheckScope {
+  parentScopeId: string;
+  permissions?: Permissions;
+}
+export interface ScopeCheck {
+  available: boolean;
+}
 export interface ScopeInfo {
   scopeId: string;
   parentScopeId: string | null;
@@ -54,6 +61,8 @@ export interface ProcessInfo extends ProcessRef {
   sandboxDenied: boolean;
   stopReason: string | null;
   cleanupError: string | null;
+  cleanupConfirmed?: boolean;
+  failureReason?: string;
 }
 export interface ProcessInput {
   operationId: string;

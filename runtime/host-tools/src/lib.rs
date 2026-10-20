@@ -54,6 +54,123 @@ pub fn system_python() -> io::Result<PathBuf> {
     }
 }
 
+/// 在可信宿主解析 Apple Git 入口，任务不需要读取开发工具链选择状态。
+#[cfg(target_os = "macos")]
+pub fn system_git() -> io::Result<PathBuf> {
+    static GIT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    if let Some(git) = GIT.get() {
+        return Ok(git.clone());
+    }
+    let git = discover_macos_git(
+        || {
+            let output = std::process::Command::new("/usr/bin/xcrun")
+                .args(["--find", "git"])
+                .env_clear()
+                .env("PATH", "/usr/bin:/bin")
+                .stdin(std::process::Stdio::null())
+                .output()?;
+            if !output.status.success() {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "xcrun could not locate Git",
+                ));
+            }
+            String::from_utf8(output.stdout)
+                .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "non-UTF-8 Git path"))
+        },
+        |path| std::fs::canonicalize(path),
+    )?;
+    use std::os::unix::fs::PermissionsExt;
+    let metadata = std::fs::metadata(&git)?;
+    if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "system Git is not executable",
+        ));
+    }
+    let _ = GIT.set(git.clone());
+    Ok(git)
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn discover_macos_git(
+    run: impl FnOnce() -> io::Result<String>,
+    canonicalize: impl FnOnce(&Path) -> io::Result<PathBuf>,
+) -> io::Result<PathBuf> {
+    let selected = run()?;
+    let path = Path::new(selected.trim());
+    if !path.is_absolute() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "non-absolute Git path",
+        ));
+    }
+    let git = canonicalize(path)?;
+    let clt = Path::new("/Library/Developer/CommandLineTools/usr/bin/git");
+    let xcode = git.strip_prefix("/Applications").ok().is_some_and(|path| {
+        let mut components = path.components();
+        let Some(app) = components.next().and_then(|part| part.as_os_str().to_str()) else {
+            return false;
+        };
+        let valid = app == "Xcode.app"
+            || app
+                .strip_prefix("Xcode_")
+                .and_then(|name| name.strip_suffix(".app"))
+                .is_some_and(|version| {
+                    version
+                        .split('.')
+                        .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+                });
+        valid && components.as_path() == Path::new("Contents/Developer/usr/bin/git")
+    });
+    if git != clt && !xcode {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "selected Git is outside supported system toolchains",
+        ));
+    }
+    Ok(git)
+}
+
+/// 完整 Runtime 附带的非交互 shell；不寻找或安装用户的 Homebrew 程序。
+#[cfg(target_os = "macos")]
+pub fn runtime_shell_directory() -> io::Result<PathBuf> {
+    let mut directory = std::env::current_exe()?;
+    directory.pop();
+    // 本 crate 作为其他 crate 的测试依赖时没有 cfg(test)，仍需识别 Cargo 测试布局。
+    if directory.ends_with("deps") {
+        directory.pop();
+    }
+    checked_shell_directory(&directory)
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn checked_shell_directory(directory: &Path) -> io::Result<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    let expected = directory.canonicalize()?.join("shells");
+    let actual = expected.canonicalize()?;
+    if actual != expected {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "Runtime shells directory must not redirect outside the bundle",
+        ));
+    }
+    for name in ["bash", "sh"] {
+        let file = actual.join(name);
+        let metadata = std::fs::metadata(&file)?;
+        if !file.canonicalize()?.starts_with(&actual)
+            || !metadata.is_file()
+            || metadata.permissions().mode() & 0o111 == 0
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "Runtime shell is not a bundle executable",
+            ));
+        }
+    }
+    Ok(actual)
+}
+
 #[cfg(target_os = "linux")]
 fn discover_linux_python(path: &std::ffi::OsStr) -> io::Result<PathBuf> {
     use std::os::unix::fs::PermissionsExt;
@@ -132,6 +249,57 @@ pub fn is_macos_system_python(python: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn git_discovery_rejects_shims_other_programs_and_resolved_escape_paths() {
+        for (resolved, allowed) in [
+            ("/Library/Developer/CommandLineTools/usr/bin/git", true),
+            (
+                "/Applications/Xcode_16.4.app/Contents/Developer/usr/bin/git",
+                true,
+            ),
+            (
+                "/Applications/Xcode_fake.app/Contents/Developer/usr/bin/git",
+                false,
+            ),
+            (
+                "/Library/Developer/CommandLineTools/usr/bin/git-extra",
+                false,
+            ),
+            ("/Library/Developer/CommandLineTools/usr/bin/clang", false),
+            ("/opt/homebrew/bin/git", false),
+            ("/usr/bin/git", false),
+        ] {
+            let result = discover_macos_git(
+                || Ok("/Library/Developer/CommandLineTools/usr/bin/git\n".into()),
+                |_| Ok(PathBuf::from(resolved)),
+            );
+            assert_eq!(result.is_ok(), allowed, "{resolved}: {result:?}");
+        }
+        assert!(discover_macos_git(|| Ok("git".into()), |_| panic!("relative path")).is_err());
+    }
+
+    #[test]
+    fn private_shell_discovery_never_follows_a_bundle_escape() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let shells = root.path().join("shells");
+        std::fs::create_dir(&shells).unwrap();
+        for name in ["bash", "sh"] {
+            let path = shells.join(name);
+            std::fs::write(&path, "fixture").unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        assert_eq!(
+            checked_shell_directory(root.path()).unwrap(),
+            shells.canonicalize().unwrap()
+        );
+        std::fs::remove_file(shells.join("bash")).unwrap();
+        std::fs::write(outside.path().join("bash"), "outside").unwrap();
+        symlink(outside.path().join("bash"), shells.join("bash")).unwrap();
+        assert!(checked_shell_directory(root.path()).is_err());
+    }
 
     #[cfg(target_os = "linux")]
     #[test]

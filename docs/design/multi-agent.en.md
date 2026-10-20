@@ -10,11 +10,13 @@ Ordinary tasks use one family of `agent_*` model tools and the `areal/agent/dele
 
 ## Selecting execution
 
+Delegation is optional, not a fixed stage of every task. The model delegates a concrete separable question or change with useful stopping evidence when coordination is worthwhile. Small, tightly coupled work and results immediately needed by the parent stay local. Core admits structured intent against actual capabilities; it does not plan from case IDs or text length or impose a delegation quota target.
+
 Shared and isolated execution preserve different capabilities without another model loop. Core admits structured requirements against existing authorization, the workspace, and execution environment. The selected strategy and reason are diagnostic records; users do not select a backend.
 
 | Task conditions | Execution strategy |
 |---|---|
-| Read-only analysis, search, or review | Shared read-only child with independent context |
+| Analysis, search, or review | Independent context; shared read-only by default, or inherited parent authority when explicitly configured |
 | Coupled changes, current-environment requirements, or no independent change boundary | Exclusive writer in the shared workspace |
 | Declared independent changes and exact write paths, with a snapshot-compatible workspace and available isolation | Isolated execution followed by candidate integration and delivery |
 | Candidate-only patch or trusted verification required | The relevant isolation and verification guarantees are mandatory; unavailable guarantees return an explicit error |
@@ -23,9 +25,21 @@ An ordinary independent modification can select a shared exclusive writer before
 
 Before admitting isolated work, the native executor starts a read-only Runtime in a separate empty directory and confirms shutdown to check the actual native sandbox prerequisites. Each service caches confirmed availability or unavailability. Ordinary modifications may choose shared execution only after the probe explicitly confirms startup rollback without retained resources. UNKNOWN probe cleanup rejects delegation rather than falling back; cancelling a waiter does not abandon the probe’s own cleanup.
 
+Shared children also call Runtime `scope.check` with their frozen effective permissions before persisting history or sending their first model request. A shared read-only child of a full-access parent still requires a restricted OS sandbox. Missing capability rejects admission without widening permissions or repeatedly starting failing children. Handshake `restrictedScopes` is included in model environment facts. Older Runtimes without the query require an upgrade; admitted parents retain their existing permissions. See the [Runtime contract](../api/runtime.en.md#permissions-and-deduplication).
+
+When Runtime explicitly reports restricted scopes unavailable, model tool declarations narrow accordingly: ordinary delegation retains modification intent only within existing authority, and hides creation if the parent cannot write either. Research read-only creation is hidden; existing-task reads, waits and cancellation remain available. Explicit inherit remains subject to parent authority. Tool visibility is not authorization: explicit, legacy and RPC requests still preflight the final Scope, and relabeling inspection as modification cannot bypass a read-only requirement.
+
 Execution, verification, and delivery are separate projections. Automatic isolation without deployment checks can produce a candidate but must report checks as not run; model summaries and empty checks cannot claim trusted verification. `changes` delivers into the original workspace within authorization, while `patch` retains a candidate. Core preflights every target baseline and journals application; conflicts, partial application, and unknown outcomes are not successful delivery. See [Core API](../api/core.en.md#agent-tools).
 
+`intent` declares responsibility; authority is separate trusted configuration. Default `delegation.inspection_permissions="read-only"` preserves OS-enforced read-only access. Explicit `inherit` selects `sharedInherited`, inheriting effective parent authority without adding inspection-only file/network restrictions. Existing parent/Profile read-only limits and explicit legacy sharedReadOnly still apply. TaskRun workers also preflight their final Scope before registration or model requests. See [configuration and compatibility](../guides/configuration.en.md#inspection-child-permissions).
+
+A writable inherited inspector does not take a whole-Turn writer lease eagerly. Model work and trusted native file reads without hooks can overlap. The first potentially writing operation, including commands and ambient tools, takes the existing exclusive workspace lease through Turn cleanup and durable settlement, including yielded command descendants. Remote effects remain the tool host's responsibility; the lease is not a remote transaction. Admission waits are cancellable and coordination queries take no lease. Recursive delegation and cross-Turn development services are rejected to preserve lease lifetime. This conservative rule serializes even search-only shell commands; it does not promise parallel execution for every inspection. OS-enforced read-only command collaboration still requires a working sandbox.
+
+An inherited inspector with frozen plugin lifecycle hooks takes the whole-Turn writer lease before sampling because hooks can run before its first tool; read collaboration without those hooks keeps deferred admission.
+
 ## Ownership and settlement
+
+Creation serialization belongs to each parent session and protects request idempotency and cumulative child admission. A slow probe for one parent does not queue unrelated parents. Isolated admission rechecks the cumulative limit after the probe and before reserving capacity, including races with the legacy spawn API. Model requests, active Turns and tool execution retain their separate global limits.
 
 Model-spawned children progress asynchronously. The parent receives results in completion order and joins all children before normal completion. Waiting holds no model or ordinary tool permit. Manually spawned RPC children retain cancellation when the parent Turn ends. Cancellation, timeout and failure propagate downward; terminal state follows resource closure and persistence.
 

@@ -9,7 +9,7 @@ use std::{
     process::Stdio,
     sync::{
         Arc, Mutex, OnceLock,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -40,6 +40,7 @@ pub struct Client {
     transport: Arc<Transport>,
     info: ConnectionInfo,
     shutdown: OnceLock<watch::Receiver<Option<Result<()>>>>,
+    admission_open: AtomicBool,
 }
 
 impl Client {
@@ -200,6 +201,7 @@ impl Client {
                     transport,
                     info,
                     shutdown: OnceLock::new(),
+                    admission_open: AtomicBool::new(true),
                 }))
             }
             result => {
@@ -222,6 +224,9 @@ impl Client {
     }
     pub fn is_closed(&self) -> bool {
         self.transport.stop.is_cancelled()
+    }
+    pub fn admission_open(&self) -> bool {
+        !self.is_closed() && self.admission_open.load(Ordering::Acquire)
     }
     pub fn operation_id(&self) -> String {
         format!("{}:op:{}", self.info.runtime_epoch, uuid::Uuid::new_v4())
@@ -252,6 +257,19 @@ impl Client {
         request: CreateParticipantScope,
     ) -> Result<ScopeInfo> {
         self.call("scope.createParticipant", request).await
+    }
+
+    pub async fn check_scope(&self, request: CheckScope) -> Result<ScopeCheck> {
+        if !self.info.capabilities["methods"]
+            .as_array()
+            .is_some_and(|methods| methods.iter().any(|method| method == "scope.check"))
+        {
+            return Err(Error::new(
+                ErrorCode::Unsupported,
+                "attached Runtime does not advertise scope.check; upgrade the complete Runtime bundle before starting children",
+            ));
+        }
+        self.call("scope.check", request).await
     }
     pub async fn create_scope(&self, request: CreateScope) -> Result<ScopeInfo> {
         self.call("scope.create", request).await
@@ -299,7 +317,17 @@ impl Client {
         self.call("process.write", request).await
     }
     pub async fn status(&self) -> Result<Value> {
-        self.call("runtime.status", json!({})).await
+        // 健康读取超时只放弃本次观察；保留原请求关联，迟到响应不应封闭其他执行。
+        let status = tokio::time::timeout(
+            Duration::from_secs(3),
+            self.call::<_, Value>("runtime.status", json!({})),
+        )
+        .await
+        .map_err(|_| unavailable("Runtime health query timed out; cleanup is not confirmed"))??;
+        if let Some(open) = status["admissionOpen"].as_bool() {
+            self.admission_open.store(open, Ordering::Release);
+        }
+        Ok(status)
     }
     pub async fn resize(&self, request: ResizeProcess) -> Result<Value> {
         self.call("process.resize", request).await
@@ -414,6 +442,8 @@ async fn rpc_timed(
             method,
             "connection.open"
                 | "connection.close"
+                | "runtime.status"
+                | "scope.check"
                 | "scope.get"
                 | "scope.revoke"
                 | "owner.revoke"
