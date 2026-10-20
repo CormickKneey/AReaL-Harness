@@ -1,0 +1,151 @@
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { createServer } from 'node:http';
+import { createRequire } from 'node:module';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { applicationFixture } from './application-fixture.mjs';
+import { assertApplicationStopped } from './application-cleanup.mjs';
+import { respondToSessionName } from './model-fixture.mjs';
+import { captureSmokeFailure } from './smoke-navigation.mjs';
+
+const gui = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const root = resolve(gui, '../..');
+const require = createRequire(join(gui, 'app/package.json'));
+const { _electron: electron } = require('playwright-core');
+const binary = process.env.AREAL_CORE_BIN;
+assert.ok(binary && isAbsolute(binary), 'Set AREAL_CORE_BIN to an absolute fixed Core binary');
+const scratch = await mkdtemp('/private/tmp/stop-turn-');
+const workspace = join(scratch, 'workspace');
+await mkdir(workspace);
+execFileSync('git', ['init', '-b', 'main'], { cwd: workspace, stdio: 'ignore' });
+const env = { ...process.env };
+for (const key of Object.keys(env)) if (/^(AREAL_|OPENAI_|ANTHROPIC_)/.test(key) || key === 'ELECTRON_RUN_AS_NODE') delete env[key];
+Object.assign(env, {
+  AREAL_CORE_BIN: binary, AREAL_CORE_CONFIG: join(scratch, 'config.toml'),
+  AREAL_CORE_HOME: join(scratch, 'core'), AREAL_CORE_USER_HOME: join(scratch, 'user'),
+  AREAL_HARNESS_HOME: join(scratch, 'harness'), AREAL_HARNESS_SERVICE_HOME: join(scratch, 'registry'),
+  AREAL_GUI_USER_DATA: join(scratch, 'electron'),
+  NO_PROXY: [env.NO_PROXY, '127.0.0.1,localhost,::1'].filter(Boolean).join(','),
+  no_proxy: [env.no_proxy, '127.0.0.1,localhost,::1'].filter(Boolean).join(','),
+});
+const requests = [], held = new Set(), errors = [], checks = [];
+const server = createServer(async (request, response) => {
+  try {
+    let raw = ''; for await (const chunk of request) raw += chunk;
+    const body = JSON.parse(raw);
+    if (respondToSessionName(body, response)) return;
+    requests.push(body);
+    response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    response.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: 'STOP_TURN_STREAMING' }, finish_reason: null }] })}\n\n`);
+    held.add(response); response.on('close', () => held.delete(response));
+  } catch (error) { errors.push(error.stack); response.destroy(); }
+});
+const commandLog = join(scratch, 'commands.jsonl');
+const receiptGate = join(scratch, 'receipt.gate');
+const bootstrap = `
+const { SharedCoreBackend } = require(${JSON.stringify(join(gui, 'app/src/core/service-client.cjs'))});
+const { appendFileSync, existsSync } = require('node:fs');
+const command = SharedCoreBackend.prototype.command;
+const accept = SharedCoreBackend.prototype.acceptLifecycleReceipt;
+SharedCoreBackend.prototype.command = async function(name, request) {
+  try {
+    const value = await command.call(this, name, request);
+    appendFileSync(${JSON.stringify(commandLog)}, JSON.stringify({ name, request, ok: true }) + '\\n');
+    return value;
+  } catch (error) {
+    appendFileSync(${JSON.stringify(commandLog)}, JSON.stringify({ name, request, error: error.message }) + '\\n');
+    throw error;
+  }
+};
+SharedCoreBackend.prototype.acceptLifecycleReceipt = async function(reference, receipt) {
+  if (reference.kind === 'interruptTurn' && receipt.phase === 'completed') {
+    appendFileSync(${JSON.stringify(commandLog)}, JSON.stringify({ receiptHeld: reference.requestId }) + '\\n');
+    const deadline = Date.now() + 45000;
+    while (existsSync(${JSON.stringify(receiptGate)})) {
+      if (Date.now() > deadline) throw new Error('Fixture receipt gate was not released');
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  }
+  return accept.call(this, reference, receipt);
+};
+`;
+const hash = async () => createHash('sha256').update(await readFile(binary)).digest('hex');
+const coreHash = await hash();
+const source = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+let application, app, page, metadata, passed = false, failure, cleanup;
+const snapshot = () => page.evaluate(() => window.arealDesktop.snapshot());
+const project = value => value.projects.find(item => item.root === workspace);
+const current = value => {
+  const id = value.activeThreadId ?? Object.keys(project(value)?.state?.threads ?? {})[0];
+  return project(value)?.state?.threads[id];
+};
+const until = async (read, label) => {
+  const deadline = Date.now() + 45000;
+  while (Date.now() < deadline) { const value = await read(); if (value) return value; await new Promise(resolve => setTimeout(resolve, 50)); }
+  throw Error(`Timeout: ${label}`);
+};
+console.log('Stop turn evidence:', scratch);
+try {
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  await writeFile(env.AREAL_CORE_CONFIG, `schema_version=1\n[model]\nprovider="fixture"\nname="fixture"\n[model.providers.fixture]\nprotocol="chat-completions"\nendpoint="http://127.0.0.1:${server.address().port}/v1/chat/completions"\n`);
+  await writeFile(receiptGate, 'held');
+  application = await applicationFixture(gui, join(scratch, 'app'), bootstrap);
+  app = await electron.launch({ executablePath: require('electron'), args: [application.path], env, timeout: 120000 });
+  app.process().stderr.on('data', chunk => { void writeFile(join(scratch, 'electron.log'), chunk, { flag: 'a' }); });
+  page = await app.firstWindow(); page.setDefaultTimeout(20000);
+  page.on('pageerror', error => errors.push(error.stack));
+  await page.getByTestId('areal-workbench').waitFor({ timeout: 120000 });
+  await until(async () => (await snapshot()).connection?.state === 'ready', 'Desktop ready');
+  metadata = JSON.parse(await readFile(join(env.AREAL_CORE_HOME, 'service.json'), 'utf8'));
+  await app.evaluate(({ dialog }, path) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] }); }, workspace);
+  await page.getByRole('button', { name: '不在项目中工作', exact: true }).click();
+  await page.getByRole('menuitem', { name: '新建项目', exact: true }).click();
+  await until(async () => project(await snapshot())?.state?.connected, 'Project ready');
+  await page.getByTestId('chat-input').fill('Keep streaming until I pause.');
+  await page.getByTestId('chat-send-button').click();
+  await until(async () => current(await snapshot())?.turns.at(-1)?.items.some(item => item.type === 'agentMessage' && item.text?.includes('STOP_TURN_STREAMING')), 'Streaming reply');
+  await page.bringToFront();
+  await page.getByRole('button', { name: '暂停执行', exact: true }).click();
+  await until(async () => current(await snapshot())?.turns.at(-1)?.status === 'interrupted', 'Core interrupted');
+  await until(() => held.size === 0, 'Provider stream closed');
+  await until(async () => (await readFile(commandLog, 'utf8')).includes('receiptHeld'), 'Completed receipt held');
+  await page.getByText('执行已暂停', { exact: true }).waitFor();
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await page.screenshot({ path: join(scratch, 'after-stop.png') });
+  await writeFile(join(scratch, 'after-stop.json'), JSON.stringify(await snapshot(), null, 2));
+  const stoppedBody = await page.locator('body').innerText();
+  console.log(/此任务的原后台操作尚未结算/.test(stoppedBody) ? 'FAIL: pause shows 此任务的原后台操作尚未结算，请检查原请求' : 'PASS: pause shows no lifecycle error');
+  assert.doesNotMatch(stoppedBody, /此任务的原后台操作尚未结算/, 'Stopping a turn must not show a stale lifecycle error');
+  await rm(receiptGate);
+  await until(async () => (await readFile(commandLog, 'utf8')).split('\n').filter(Boolean).map(JSON.parse).some(item => item.name === 'library' && item.request.operation === 'readThread' && item.request.completionId && item.ok), 'Automatic read after settlement');
+  await page.getByTestId('chat-input').fill('Continue with a new message after pause.');
+  await page.getByTestId('chat-send-button').click();
+  await until(async () => requests.length === 2 || (await page.locator('body').innerText()).includes('此任务的原后台操作尚未结算'), 'Next send or lifecycle error');
+  assert.doesNotMatch(await page.locator('body').innerText(), /此任务的原后台操作尚未结算/, 'Stopping a turn must not show a stale lifecycle error');
+  assert.equal(requests.length, 2, 'A settled pause permits the next user message');
+  checks.push('UI pause interrupts Core, closes the model stream, and permits the next message without a lifecycle error');
+  console.log('PASS: pause permits the next message without a lifecycle error');
+  passed = true;
+} catch (error) {
+  failure = error.stack; console.error(error.message);
+  if (page) await captureSmokeFailure(page, scratch, error);
+} finally {
+  await rm(receiptGate, { force: true });
+  if (app) {
+    await app.evaluate(({ dialog }) => { dialog.showMessageBox = async (...args) => ({ response: ['确认取消后台任务？', '退出 AReaL Harness？'].includes(args.at(-1).message) ? 1 : args.at(-1).cancelId ?? 0 }); }).catch(() => {});
+    await app.evaluate(({ app }) => app.quit()).catch(() => {});
+  }
+  await application?.close();
+  try { await assertApplicationStopped(binary, env, metadata); cleanup = 'passed'; }
+  catch (error) { cleanup = error.stack; passed = false; }
+  for (const response of held) response.destroy();
+  if (server.listening) await new Promise(resolve => server.close(resolve));
+  assert.equal(await hash(), coreHash, 'Core binary stays unchanged');
+  await writeFile(join(scratch, 'manifest.json'), JSON.stringify({ passed, source, binary, coreHash, checks, failure, cleanup, errors,
+    boundaries: 'Source Electron and real Core. Deterministic loopback model. A file barrier holds the completed stop receipt through the paused UI render, then explicitly releases it. Native folder picker stubbed. No packaged app or physical input.' }, null, 2));
+  console.log('Stop turn result:', passed ? 'PASS' : 'FAIL');
+  if (!passed) process.exitCode = 1;
+}

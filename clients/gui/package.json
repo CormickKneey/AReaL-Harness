@@ -16,6 +16,7 @@
     "test:state-projection": "node scripts/state-projection-smoke.mjs",
     "test:service-connection": "node --test scripts/service-connection-recovery.test.mjs",
     "test:task-conversation": "node scripts/task-conversation-smoke.mjs",
+    "test:stop-turn": "node scripts/stop-turn-smoke.mjs",
     "test:service-reopen": "node scripts/service-reopen-smoke.mjs",
     "test:lifecycle": "node scripts/startup-recovery-smoke.mjs && node scripts/lifecycle-smoke.mjs",
     "test:desktop-exit": "node scripts/desktop-exit-smoke.mjs",
