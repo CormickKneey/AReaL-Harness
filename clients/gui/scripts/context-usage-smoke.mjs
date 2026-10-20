@@ -97,6 +97,10 @@ async function choose(label) {
   const picker = page.getByRole('button', { name: '选择模型', exact: true });
   if (await picker.isVisible()) await picker.click();
   await page.getByRole('radio', { name: label, exact: true }).click(); await page.keyboard.press('Escape');
+  await page.waitForFunction(label => {
+    const model = document.querySelector('button[aria-label="模型"]');
+    return model && !model.disabled && model.textContent.includes(label);
+  }, label);
 }
 async function send(prompt, expectedStatus = 'completed') {
   const before = (thread(await state(), await currentId())?.turns ?? []).length;
