@@ -157,6 +157,8 @@ impl Engine {
             duration_ms: None,
             goal: None,
             instruction_snapshot: None,
+            instruction_attribution: None,
+            generation: None,
             configuration: (thread.desktop.is_some()
                 || configuration.default_model_revision.is_some())
             .then_some(configuration),
@@ -257,6 +259,9 @@ impl Engine {
         }
         cell.cancel_grace_ms.store(1000, Ordering::Release);
         state.active = Some(Active {
+            context_usage: None,
+            context_sequence: 0,
+            generation: Default::default(),
             registry: cell.inherited_registry.clone().map(Ok).unwrap_or_else(|| {
                 self.managed_registry(&state.thread, cell.research)
                     .map_err(|e| e.to_string())
@@ -863,7 +868,18 @@ impl Engine {
             .elapsed()
             .as_millis()
             .min(u64::MAX as u128) as u64;
+        let generation = state
+            .active
+            .as_ref()
+            .unwrap()
+            .generation
+            .lock()
+            .unwrap()
+            .clone();
         let turn = state.thread.turns.last_mut().unwrap();
+        if generation.measured_requests + generation.unmeasured_requests > 0 {
+            turn.generation = Some(generation);
+        }
         turn.completed_at = Some(now());
         turn.duration_ms = Some(elapsed_ms);
         for item in &mut turn.items {

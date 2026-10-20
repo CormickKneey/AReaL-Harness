@@ -1,6 +1,7 @@
 mod agents;
 pub mod concurrency;
 mod context;
+mod context_usage;
 mod default_model;
 pub mod delegation;
 pub mod desktop;
@@ -13,6 +14,7 @@ mod observations;
 mod outcome;
 mod permissions;
 mod plugin_hooks;
+mod request_meter;
 mod session_name;
 mod sessions;
 mod store;
@@ -170,6 +172,9 @@ struct TrustedPlugin {
 }
 
 struct Active {
+    context_usage: Option<areal_protocol::context::ContextUsage>,
+    context_sequence: u64,
+    generation: request_meter::Generation,
     registry: std::result::Result<tools::Registry, String>,
     hooks: Vec<plugin_hooks::BoundHook>,
     hook_user_input: bool,

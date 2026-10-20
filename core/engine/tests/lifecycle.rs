@@ -863,6 +863,8 @@ async fn legacy_text_sessions_load_and_upgrade_on_next_write() {
                 duration_ms: None,
                 goal: None,
                 instruction_snapshot: None,
+                instruction_attribution: None,
+                generation: None,
                 configuration: None,
                 id: uuid::Uuid::new_v4().to_string(),
                 items: vec![

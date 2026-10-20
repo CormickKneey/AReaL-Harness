@@ -393,7 +393,7 @@ impl Engine {
         for (position, (turn, source_thread_id, item)) in entries.enumerate().skip(index) {
             let presentation = json!({"id":turn.id,"status":turn.status,"error":turn.error,
                 "startedAt":turn.started_at,"completedAt":turn.completed_at,
-                "durationMs":turn.duration_ms,"goal":turn.goal});
+                "durationMs":turn.duration_ms,"goal":turn.goal,"usage":turn.usage,"generation":turn.generation});
             let entry = json!({"sourceThreadId":source_thread_id,
                 "sourceTurnId":turn.id,"sourceItemId":item.id(),"sourceTurnStatus":turn.status,"turn":presentation,"item":item});
             let serialized = serde_json::to_string(&entry).map_err(invalid)?;
@@ -796,6 +796,11 @@ impl Engine {
             if request.reset_model && request.model.is_some() {
                 return Err(invalid("model and resetModel cannot be used together"));
             }
+            let reset_parameters = request.reset_model
+                || request
+                    .model
+                    .as_ref()
+                    .is_some_and(|model| Some(model) != previous.model.as_ref());
             let inherited_plugin_scope = request.agent_profile.is_none();
             let preserve_model =
                 request.model.is_none() && !request.reset_model && request.agent_profile.is_none();
@@ -834,7 +839,13 @@ impl Engine {
                     } else {
                         request.model.or(previous.model.clone())
                     },
-                    request.parameters.unwrap_or(previous.parameters.clone()),
+                    request.parameters.unwrap_or_else(|| {
+                        if reset_parameters {
+                            Default::default()
+                        } else {
+                            previous.parameters.clone()
+                        }
+                    }),
                     previous.revision + 1,
                 )?;
                 engine.pin_desktop_default(&mut configuration);
