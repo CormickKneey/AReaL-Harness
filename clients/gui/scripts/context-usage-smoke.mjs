@@ -192,6 +192,7 @@ try {
   assert.ok(await usageRow.getByRole('button', { name: /分支/ }).count(), 'branch is beside usage');
   await page.getByTestId('turn-usage').last().click();
   assert.match(await page.getByTestId('turn-usage').last().innerText(), /^150 Token · [\d.]+ tok\/s$/);
+  await page.getByTestId('turn-usage-popover').locator('dd').first().getByText('150', { exact: true }).waitFor();
   await page.getByRole('button', { name: '本轮', exact: true }).click();
   await page.screenshot({ path: join(scratch, '02-turn-usage.png') }); await page.keyboard.press('Escape');
   await choose('Alpha'); const changed = await showContext(source);
@@ -258,6 +259,8 @@ try {
   const own = thread(await state(), source).turns;
   assert.equal(subtotal.usage.inputTokens, own.reduce((n, t) => n + (t.usage?.inputTokens ?? 0), 0));
   checks.push('accepted new-session preference, actual Skills and Runtime results, CLI registry classification, single/missing/zero/error/cancel coverage, compact updates saved usage and matched rate');
+  await showContext(source);
+  await page.screenshot({ path: join(scratch, '07-final-context.png') }); await page.keyboard.press('Escape');
   await resizeConversation(app, page, 780, 900); await showContext(source);
   const bounds = await page.getByTestId('context-popover').boundingBox(); assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 780);
   await page.screenshot({ path: join(scratch, '04-narrow-context.png') }); await page.keyboard.press('Escape');

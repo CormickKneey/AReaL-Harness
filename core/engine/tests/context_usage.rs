@@ -249,3 +249,46 @@ async fn reused_call_id_cannot_classify_an_ordinary_result_as_skill_text() {
     );
     engine.shutdown().await;
 }
+
+#[tokio::test]
+async fn account_model_capacity_overrides_public_default_and_survives_reopen() {
+    let data = tempfile::tempdir().unwrap();
+    let engine = Engine::open(data.path(), Arc::new(UsageModel), Limits::default()).unwrap();
+    let provider = json!({"id":"account","revision":0,"endpoint":"http://127.0.0.1:9/v1","protocol":"responses","models":["gpt-6.1-sol","gpt-6-sol"],"parameters":{},"modelParameters":{"gpt-6.1-sol":{"contextWindowTokens":500000},"gpt-6-sol":{"contextWindowTokens":272000}}});
+    engine
+        .upsert_provider(
+            serde_json::from_value::<Provider>(provider.clone()).unwrap(),
+            0,
+        )
+        .await
+        .unwrap();
+    let thread = engine.create("/workspace".into()).await.unwrap();
+    for (revision, model, capacity) in [(1, "gpt-6.1-sol", 500000), (2, "gpt-6-sol", 272000)] {
+        engine.configure_thread(serde_json::from_value(json!({"threadId":thread.id,"expectedRevision":revision,"model":{"providerId":"account","modelId":model}})).unwrap()).await.unwrap();
+        assert_eq!(
+            engine.context_read(&thread.id, 0, 16).await.unwrap()["budget"]["windowTokens"],
+            capacity
+        );
+    }
+    engine.configure_thread(serde_json::from_value(json!({"threadId":thread.id,"expectedRevision":3,"model":{"providerId":"account","modelId":"gpt-6.1-sol"},"parameters":{"contextWindowTokens":64000}})).unwrap()).await.unwrap();
+    assert_eq!(
+        engine.context_read(&thread.id, 0, 16).await.unwrap()["budget"]["windowTokens"],
+        64000
+    );
+    let mut invalid = provider;
+    invalid["modelParameters"]["unknown"] = json!({"contextWindowTokens":500000});
+    assert!(
+        engine
+            .upsert_provider(serde_json::from_value(invalid).unwrap(), 1)
+            .await
+            .is_err()
+    );
+    engine.shutdown().await;
+    drop(engine);
+    let engine = Engine::open(data.path(), Arc::new(UsageModel), Limits::default()).unwrap();
+    assert_eq!(
+        engine.context_read(&thread.id, 0, 16).await.unwrap()["budget"]["windowTokens"],
+        64000
+    );
+    engine.shutdown().await;
+}

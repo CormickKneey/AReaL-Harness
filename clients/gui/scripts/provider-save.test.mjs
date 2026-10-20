@@ -160,7 +160,7 @@ test("repeated save cannot overlap persistence and explicit retry succeeds after
 
 test("new connection discovers models before persistence and leaves default choice unchanged", async () => {
   const f = fixture();
-  f.request.provider = { ...f.request.provider, id: undefined, models: [] };
+  f.request.provider = { ...f.request.provider, id: undefined, models: [], parameters: {} };
   f.service.testConnection = async (provider, request) => {
     assert.equal(request.operation, "discover");
     assert.equal(provider.endpoint, "http://fixture.invalid/v1/chat/completions");
@@ -174,6 +174,12 @@ test("new connection discovers models before persistence and leaves default choi
   assert.equal(result.defaultModel, null);
   assert.equal(result.pendingApply, false);
   assert.ok(f.project.models.some(m => m.id === "remote-second"));
+  const explicit = fixture();
+  explicit.request.provider = { ...explicit.request.provider, id: undefined, models: [] };
+  explicit.service.testConnection = async () => ({ models: ["remote-first"], modelParameters: { "remote-first": { contextWindowTokens: 500000 } } });
+  const configured = await explicit.service.command(explicit.request);
+  assert.equal(configured.data.at(-1).parameters.contextWindowTokens, 64000);
+  assert.deepEqual(configured.data.at(-1).models[0].parameters, {});
 });
 
 test("discovery failure does not persist a new provider", async () => {
