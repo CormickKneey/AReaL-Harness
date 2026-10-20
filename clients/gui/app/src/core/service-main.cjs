@@ -2,7 +2,8 @@
 const { startupTrace } = require('./startup-timing.cjs');
 const startupTraceService = startupTrace('service.startup', { servicePid: process.pid });
 startupTraceService.advance('imports');
-const { app, safeStorage, dialog, Notification, powerSaveBlocker } = require('electron');
+const { app, safeStorage, dialog, Notification, powerSaveBlocker, crashReporter } = require('electron');
+const diagnostics = require('./diagnostics.cjs');
 const childProcess = require('node:child_process');
 const { randomUUID } = require('node:crypto');
 const { mkdir, realpath, writeFile, rename, readFile, rm } = require('node:fs/promises');
@@ -36,6 +37,7 @@ async function finish() {
     } catch (e) { if (e.code !== 'ENOENT') console.error('后台连接元数据清理失败'); }
   }
   applicationLifetime?.destroy();
+  diagnostics.record({ type: 'exit-requested', exitCode: 0 });
   app.exit(0);
 }
 async function start() {
@@ -68,7 +70,9 @@ async function start() {
   }
   parseOwner(process.env.AREAL_GUI_OWNER);
   applicationLifetime = watchApplicationLifetime(() => {
+    diagnostics.record({ type: 'application-owner-lost' });
     for (const entry of backend?.ownedEngines?.values() ?? []) for (const lifetime of entry.lifetimes ?? []) lifetime.destroy();
+    diagnostics.record({ type: 'exit-requested', exitCode: 1 });
     app.exit(1);
   });
   startupTraceService.advance('prepare_home');
@@ -80,6 +84,9 @@ async function start() {
   app.setPath('userData', join(home, '.service-user-data'));
   await mkdir(app.getPath('userData'), { recursive: true, mode: 0o700 });
   if (!app.requestSingleInstanceLock()) { startupTraceService.finish('skipped'); app.exit(0); return; }
+  diagnostics.start({ role: 'desktop', root: join(home, 'diagnostics', 'desktop'), appRunId: parseOwner(process.env.AREAL_GUI_OWNER)?.appRunId, version: app.getVersion() });
+  diagnostics.startCrashReporter({ app, crashReporter });
+  app.on('child-process-gone', (_event, details) => diagnostics.record({ type: 'child-process-gone', processType: details.type, reason: details.reason, exitCode: details.exitCode }));
   // This process owns background work and notifications, never windows. Dock
   // hiding alone leaves a duplicate entry in macOS Force Quit Applications.
   // The separate recovery entry above remains able to show native dialogs.
@@ -125,4 +132,4 @@ app.on('before-quit', event => { event.preventDefault(); });
 for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => {
   void (async () => { try { await backend?.disconnect(); } finally { await finish(); } })();
 });
-void start().catch(async error => { startupTraceService.finish('error', error); console.error(backend?.providers.redact(error.message) ?? error.message); service?.close(); await backend?.proxyRelay?.close(); app.exit(1); });
+void start().catch(async error => { startupTraceService.finish('error', error); console.error(backend?.providers.redact(error.message) ?? error.message); service?.close(); await backend?.proxyRelay?.close(); diagnostics.record({ type: 'exit-requested', exitCode: 1 }); app.exit(1); });

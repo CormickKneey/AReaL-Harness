@@ -25,6 +25,7 @@ export function ServiceStatusSettings({ connected, runningState, recovery, actio
   const [reading, setReading] = useState(false), [busy, setBusy] = useState(false);
   const [readError, setReadError] = useState(""), [actionError, setActionError] = useState(""), [notice, setNotice] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [exporting, setExporting] = useState(false), [exportNotice, setExportNotice] = useState(""), [exportError, setExportError] = useState("");
   const generation = useRef(0), locked = useRef(false), inflight = useRef<Promise<void> | null>(null);
   const read = useCallback(() => {
     if (!connected) return Promise.resolve();
@@ -66,11 +67,20 @@ export function ServiceStatusSettings({ connected, runningState, recovery, actio
       if (!stopped) await read();
     }
   };
+  const exportDiagnostics = async () => {
+    if (exporting) return;
+    setExporting(true); setExportNotice(""); setExportError("");
+    try {
+      const result = await action("exportDiagnostics", {});
+      setExportNotice(result.canceled ? "已取消导出" : `诊断包已保存至 ${result.path}`);
+    } catch { setExportError("诊断包保存失败，请选择其他位置后重试。"); }
+    finally { setExporting(false); }
+  };
   return <div className="settings-sections" aria-label="后台服务管理">
     <SettingsSection title="共享后台"
       action={<ActionButton pending={refreshing} disabled={busy || !connected} onClick={async () => { setRefreshing(true); try { await read(); } finally { setRefreshing(false); } }}>刷新后台状态</ActionButton>}>
       <SettingsGroupCard>
-        <SettingsRow label="后台服务" description={connected ? status ? `已连接 · ${status.clients} 个窗口 · ${status.activeCommands} 个处理中请求` : "已连接" : "未连接"}
+        <SettingsRow label="后台服务" description={connected ? readError ? "界面已连接，工作区状态待确认" : status ? `已连接 · ${status.clients} 个窗口 · ${status.activeCommands} 个处理中请求` : "已连接" : "未连接"}
           control={<SettingsSwitch aria-label="后台服务" checked={connected} disabled={busy || (connected && !!readError)} onCheckedChange={enabled => void run(enabled ? "connect" : "stopService")} />} />
         <SettingsRow control={null} label="关闭窗口" description="仅隐藏界面，后台继续运行；再次启动可回到已有窗口。" />
         <SettingsRow label="退出应用" description="停止本应用的所有后台服务。有活动任务时先确认，清理完成后退出。"
@@ -85,6 +95,12 @@ export function ServiceStatusSettings({ connected, runningState, recovery, actio
       {actionError && <p role="alert" className="text-destructive">{actionError}</p>}
       {status?.providerUpdating && <p role="status">模型配置正在更新。</p>}
       {!!status?.starting && <p role="status">{status.starting} 个工作区正在启动。</p>}
+    </SettingsSection>
+    <SettingsSection title="本地诊断">
+      <SettingsGroupCard><SettingsRow label="诊断包" description="保存本机连接与进程故障记录，后台离线时也可导出。不包含对话、凭据或崩溃转储内容。"
+        control={<ActionButton pending={exporting} disabled={exporting} onClick={() => void exportDiagnostics()}>导出诊断包…</ActionButton>} /></SettingsGroupCard>
+      {exportNotice && <p role="status">{exportNotice}</p>}
+      {exportError && <p role="alert" className="text-destructive">{exportError}</p>}
     </SettingsSection>
     {recovery?.projects.map(project => <SettingsSection key={`recovery-${project.projectId}`} title={project.root.split(/[\\/]/).filter(Boolean).at(-1)}>
       <SettingsGroupCard><SettingsRow label="原后台核查结果" description={project.message}

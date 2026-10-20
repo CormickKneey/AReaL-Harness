@@ -122,6 +122,12 @@ Composer 的圆环打开上下文分类、组成占比与压缩操作；容量�
 
 macOS 桌面适配器通过系统 `/usr/bin/python3` 保留可信 Core 命令的父进程，与 Runtime 的原生启动方式一致。命令参数、环境和标准输入输出保持原样；超时、取消和强杀作用于真实 Core 子进程，适配器或桥退出时清理其仍运行的直接子进程。该路径不重放写入，也不终止 Core 已建立的持久服务。`pnpm --dir clients/gui run test:core-process` 验证信号退出、超时升级、取消、输出上限及进程清理。
 
+遇到 `Core disconnected` 时，在设置的“后台服务”页或应用菜单点击“导出诊断包…”，选择保存位置。后台离线或主界面渲染进程退出后，应用菜单仍可导出。界面到 Desktop 的连接和 Desktop 到工作区 Core 的连接分别记录；前者已连接不代表后者可用。
+
+诊断包只包含固定结构的进程身份、连接错误码与关闭码、Electron 进程退出原因、未捕获异常类别，以及启动时和每 60 秒一次的内存与定时器延迟样本。项目与 Core 代际使用本次运行内的别名。不会包含对话、凭据、环境变量、命令参数、原始日志、异常消息或堆栈。记录分别保存在 GUI profile 的 `diagnostics/main` 和 GUI Core home 的 `diagnostics/desktop`；每个角色保留最多 8 次运行，每次最多 4 个 256 KiB 事件文件。导出最多读取 16 MiB，报告记录器健康、合并重复事件和文件缺失等遗漏。旧运行缺少退出记录只标为 `termination-unconfirmed`，不推断崩溃原因；观察到的 Core PID 也不证明进程仍存活。写入失败不会改变任务执行或未知提交状态。
+
+Electron Crashpad 在两个主进程中只保存本地转储，禁用上传。默认诊断包仅列转储是否可用和有界计数，不附内存内容；它不捕获 Rust Core 或 Runtime 的原生崩溃。转储目录为各诊断角色目录旁的 `main-crashes` 或 `desktop-crashes`，其磁盘占用不受事件文件上限约束。macOS 源码验收使用仓库 `.local/dev-bin/` 下已部署的固定 Core，运行 `AREAL_CORE_BIN="$PWD/.local/dev-bin/areal" pnpm --dir clients/gui run test:diagnostics` 验证有界存储、隐私筛选、WebSocket 超限以及隔离 Electron 的离线导出与强制退出恢复。
+
 启动日志中的 `[startup]` JSON 记录窗口展示、后台连接、项目 Core 启动、供应商同步、模型目录和历史恢复的阶段耗时。GUI Main 输出到开发控制台，后台输出到 Core home 下原有的 `service.log`。每条记录包含进程、尝试和项目关联信息，使用单调时钟计算耗时，不包含凭据、请求内容或配置正文。阶段开始后没有完成记录表示该阶段尚未结束，不能视为启动成功。并行阶段的耗时不能直接相加。
 
 Renderer 的 `[composer-skills]` JSON 将 Skills 读取分为 `core` 与可选来源 `labels` 两个阶段。同一请求使用 `requestId` 关联项目、Core 实例与连接代际、Profile 或 Thread 配置，并记录阶段耗时 `elapsedMs` 和结果 `outcome`。`core` 就绪表示权威目录已提交界面状态更新；`labels` 完成表示来源标签读取已结束，失败或过期不影响 Core 目录。记录不包含凭据或消息正文；这些耗时不代表实际绘制完成或整个 Composer 启动耗时。

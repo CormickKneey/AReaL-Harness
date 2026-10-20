@@ -1,4 +1,5 @@
 'use strict';
+const diagnostics = require('./diagnostics.cjs');
 const { startupTrace } = require('./startup-timing.cjs');
 
 const { connectService } = require('./local-service.cjs');
@@ -421,9 +422,15 @@ class CoreBackend {
     project.client = null;
     previous?.close();
     project.summariesLoaded = false;
-    const client = new CoreClient({ createSocket: () => new WebSocket(project.endpoint, {
-      headers: { Authorization: `Bearer ${project.token}` }, followRedirects: false, maxPayload: 4 * 1024 * 1024,
-    }), onServerRequest: async (method, params, context) => {
+    const client = new CoreClient({ createSocket: () => {
+      const target = Object.freeze({ boundary: 'desktop-core', projectId: project.id, coreGeneration: project.service?.generation,
+        connectionGeneration: project.connectionGeneration, hostPid: project.service?.hostPid, corePid: project.service?.corePid, serviceId: project.service?.serviceId });
+      const socket = new WebSocket(project.endpoint, { headers: { Authorization: `Bearer ${project.token}` }, followRedirects: false, maxPayload: 4 * 1024 * 1024 });
+      socket.on('open', () => diagnostics.record({ type: 'socket-open', ...target }));
+      socket.on('error', error => diagnostics.record({ type: 'socket-error', ...target, code: error.code }));
+      socket.on('close', closeCode => diagnostics.record({ type: 'socket-close', ...target, closeCode }));
+      return socket;
+    }, onServerRequest: async (method, params, context) => {
       if (method === 'areal/task/prepare') {
         this.requireConnection(project, client);
         if (params.intent === 'resume') return {};

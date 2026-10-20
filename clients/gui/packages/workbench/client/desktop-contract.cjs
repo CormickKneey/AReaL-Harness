@@ -26,7 +26,7 @@ const commandDefinitions = Object.freeze({
   chatgpt: ['service', 'app'], analytics: ['service', 'app'], resources: ['service', 'app'],
   projectless: ['service', 'app'], tasks: ['service', 'app'], trajectory: ['service', 'app'], feedback: ['service', 'app'],
   serviceLifecycle: ['main', 'app'], serviceStatus: ['main', 'app'], stopService: ['main', 'app'], recoverResources: ['main', 'app'],
-  connectService: ['main', 'app'], export: ['main', 'thread'], remoteControl: ['main', 'app'],
+  exportDiagnostics: ['main', 'app'], connectService: ['main', 'app'], export: ['main', 'thread'], remoteControl: ['main', 'app'],
 });
 /** @typedef {keyof typeof commandDefinitions} CommandName */
 /** @template {CommandName} N @typedef {N extends 'serviceLifecycle' ? {operation:'update'|'stop'|'check'|'recover'|'quitInterface'|'stopAndQuit'} : N extends 'stop' ? {projectId:string,threadId:string,turnId:string,requestId:string} : N extends 'continue' ? ContinueRequest : N extends 'prepareCreator' ? PrepareCreatorRequest : N extends 'fork' ? ForkRequest : N extends 'configure' ? ConfigureRequest : N extends 'side' ? SideRequest : N extends 'trajectory' ? TrajectoryRequest : Record<string,unknown>} CommandParams */
@@ -48,6 +48,7 @@ function validateCommand(name, params, { serviceOnly = false } = {}) {
   if (serviceOnly && layer !== 'service') invalid();
   if (scope !== 'app' && !identifier(params.projectId)) invalid();
   if (scope === 'thread' && !identifier(params.threadId)) invalid();
+  if (name === 'exportDiagnostics' && Object.keys(params).length !== 0) invalid();
   if (name === 'serviceLifecycle' && (!['update', 'stop', 'check', 'recover', 'quitInterface', 'stopAndQuit'].includes(String(params.operation))
     || Object.keys(params).some(key => key !== 'operation'))) invalid();
   if (name === 'stop' && (!identifier(params.turnId) || typeof params.requestId !== 'string'
