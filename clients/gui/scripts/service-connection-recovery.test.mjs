@@ -241,6 +241,62 @@ for (const method of ['areal/turn/start', 'areal/turn/enqueue']) {
   });
 }
 
+test('subscription refresh unknown retains only its dispatched provider request across journal reload', async t => {
+  const f = await journalFixture(t);
+  const requestId = '11111111-1111-1111-1111-111111111111';
+  const parameters = { threadId: 't', expectedConfigRevision: 1,
+    intent: { type: 'message', input: [{ type: 'text', text: 'keep my draft' }] } };
+  const models = [{ id: 'gpt', parameters: { contextWindowTokens: 500000 } }];
+  const service = { id: 'areal_openai', endpoint: 'http://fixture.invalid/responses', models,
+    ready: async () => {}, account: { revision: 1, lifetime: new AbortController(),
+      status: async () => ({ authenticated: true, state: 'ready', models }), track: promise => promise } };
+  f.backend.providers.openaiPromise = Promise.resolve(service);
+  f.project.configurations.t = { revision: 1, model: { providerId: service.id, modelId: 'gpt' } };
+  let recovered = false, providerRequest;
+  const transport = async (method, params) => {
+    f.calls.push({ method, params });
+    if (method === 'areal/provider/list') return { data: [{ id: service.id, revision: 1,
+      protocol: 'responses', endpoint: service.endpoint, models: ['gpt'], parameters: {},
+      modelParameters: { gpt: { contextWindowTokens: 1000000 } } }] };
+    if (method === 'areal/provider/upsert') {
+      providerRequest = { method, params };
+      throw Object.assign(new Error('provider receipt unavailable after write'), { code: -32603 });
+    }
+    if (method === 'areal/request/read') {
+      if (!recovered) throw new Error('Core connection lost during receipt lookup');
+      return { data: params.requestId === providerRequest.params.requestId
+        ? [{ method: 'areal/provider/upsert', state: 'completed', response: { result: { applied: true } } }] : [] };
+    }
+    if (['areal/model/list', 'thread/list'].includes(method)) return { data: [] };
+    if (method === 'areal/turn/submit') return { turn: { id: 'accepted-turn' } };
+    assert.fail(`unexpected Core request ${method}`);
+  };
+  f.project.client.request = transport;
+  let failure;
+  await assert.rejects(f.backend.submit(f.project, 'areal/turn/submit', parameters, { requestId }), error => {
+    failure = error;
+    return true;
+  });
+  assert.equal(f.calls.some(call => call.method === 'areal/turn/submit'), false, 'preflight failure never dispatches the turn');
+  assert.deepEqual(f.project.pending, [providerRequest], 'the known-unsent turn must not become an unrecoverable unknown request');
+  assert.equal(failure.submissionUnknown, true);
+  assert.equal(failure.requestId, providerRequest.params.requestId, 'unknown state belongs to the actual provider mutation');
+  assert.deepEqual(JSON.parse(await readFile(join(f.home, 'p-pending.json'), 'utf8')), [providerRequest]);
+  assert.deepEqual(f.project.outcomes, {}, 'a failed preflight cannot fabricate turn acceptance');
+
+  recovered = true;
+  const restored = await f.reload();
+  restored.project.client.request = transport;
+  await restored.backend.reconcile(restored.project);
+  assert.deepEqual(restored.project.pending, []);
+  assert.deepEqual(JSON.parse(await readFile(join(f.home, 'p-pending.json'), 'utf8')), []);
+  assert.equal(f.calls.filter(call => call.method === 'areal/provider/upsert').length, 1, 'recovery reads the original receipt without resubmission');
+  assert.equal(f.calls.some(call => call.method === 'areal/turn/submit'), false, 'recovery never sends the preserved draft');
+  await restored.backend.submit(restored.project, 'areal/turn/submit', parameters,
+    { requestId: '22222222-2222-2222-2222-222222222222' });
+  assert.equal(f.calls.filter(call => call.method === 'areal/turn/submit').length, 1, 'the user can explicitly send after provider recovery');
+});
+
 test('public command availability comes only from the current service contract', async t => {
   const f = await fixture(t, { commandContract: null }); await f.publish(); await f.backend.attach();
   const capabilities = () => {

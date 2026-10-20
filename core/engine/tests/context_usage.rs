@@ -292,3 +292,135 @@ async fn account_model_capacity_overrides_public_default_and_survives_reopen() {
     );
     engine.shutdown().await;
 }
+
+#[tokio::test]
+async fn existing_session_uses_current_report_without_rewriting_accepted_context() {
+    let data = tempfile::tempdir().unwrap();
+    let engine = Engine::open(
+        data.path(),
+        Arc::new(UsageModel),
+        Limits {
+            watchdog_disable: true,
+            ..Limits::default()
+        },
+    )
+    .unwrap();
+    let provider = json!({"id":"account","revision":0,"endpoint":"http://127.0.0.1:9/v1","protocol":"responses","models":["gpt-6.1-sol"],"parameters":{}});
+    engine
+        .upsert_provider(serde_json::from_value(provider.clone()).unwrap(), 0)
+        .await
+        .unwrap();
+    let thread = engine.create("/workspace".into()).await.unwrap();
+    engine.configure_thread(serde_json::from_value(json!({"threadId":thread.id,"expectedRevision":1,"model":{"providerId":"account","modelId":"gpt-6.1-sol"}})).unwrap()).await.unwrap();
+    engine
+        .edit_queue(thread.id.clone(), 0, "pause".into(), json!({}))
+        .await
+        .unwrap();
+    engine.start_durable("fixture".into(), serde_json::from_value(json!({"threadId":thread.id,"requestId":"accepted-before-report","input":[{"type":"text","text":"queued"}]})).unwrap(), true).await.unwrap();
+    let accepted = serde_json::to_value(engine.queue(&thread.id).await.unwrap()).unwrap()["items"]
+        [0]["configuration"]
+        .clone();
+    let mut current = provider;
+    current["modelParameters"] = json!({"gpt-6.1-sol":{"contextWindowTokens":500000}});
+    engine
+        .upsert_provider(serde_json::from_value(current).unwrap(), 1)
+        .await
+        .unwrap();
+    let context = engine.context_read(&thread.id, 0, 16).await.unwrap();
+    assert_eq!(context["budget"]["windowTokens"], 500000);
+    assert_eq!(context["budget"]["reportedWindowTokens"], 500000);
+    assert_eq!(context["budget"]["windowSource"], "provider");
+    assert_eq!(
+        serde_json::to_value(engine.queue(&thread.id).await.unwrap()).unwrap()["items"][0]["configuration"],
+        accepted
+    );
+    engine
+        .edit_queue(thread.id.clone(), 2, "resume".into(), json!({}))
+        .await
+        .unwrap();
+    for _ in 0..200 {
+        if !engine
+            .read(&thread.id, true)
+            .await
+            .unwrap()
+            .turns
+            .is_empty()
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    engine.wait(&thread.id).await.unwrap();
+    let saved = engine.read(&thread.id, true).await.unwrap();
+    assert_eq!(
+        serde_json::to_value(saved.turns[0].configuration.as_ref().unwrap()).unwrap(),
+        accepted
+    );
+    let old_turn = serde_json::to_value(&saved.turns[0]).unwrap();
+    let next = engine
+        .start(&thread.id, vec![Input::text("next request")])
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(next.configuration).unwrap()["contextWindow"]["reportedWindowTokens"],
+        500000
+    );
+    engine.wait(&thread.id).await.unwrap();
+    assert_eq!(
+        serde_json::to_value(&engine.read(&thread.id, true).await.unwrap().turns[0]).unwrap(),
+        old_turn
+    );
+    engine.shutdown().await;
+}
+
+#[tokio::test]
+async fn account_report_caps_user_budget_and_missing_report_uses_fallback() {
+    let data = tempfile::tempdir().unwrap();
+    let engine = Engine::open(
+        data.path(),
+        Arc::new(UsageModel),
+        Limits {
+            watchdog_disable: true,
+            ..Limits::default()
+        },
+    )
+    .unwrap();
+    let provider = json!({"id":"account","revision":0,"endpoint":"http://127.0.0.1:9/v1","protocol":"responses","models":["gpt-6.1-sol","gpt-6-sol"],"contextSource":"account","parameters":{},"modelParameters":{"gpt-6.1-sol":{"contextWindowTokens":500000}}});
+    engine
+        .upsert_provider(serde_json::from_value(provider).unwrap(), 0)
+        .await
+        .unwrap();
+    let thread = engine.create("/workspace".into()).await.unwrap();
+    for (revision, model, budget, expected, source) in [
+        (1, "gpt-6.1-sol", 64000, 64000, "user"),
+        (2, "gpt-6.1-sol", 900000, 500000, "account"),
+        (3, "gpt-6-sol", 0, 131072, "fallback"),
+    ] {
+        let parameters = if budget == 0 {
+            json!({})
+        } else {
+            json!({"contextWindowTokens":budget})
+        };
+        engine.configure_thread(serde_json::from_value(json!({"threadId":thread.id,"expectedRevision":revision,"model":{"providerId":"account","modelId":model},"parameters":parameters})).unwrap()).await.unwrap();
+        let context = engine.context_read(&thread.id, 0, 16).await.unwrap();
+        assert_eq!(context["budget"]["windowTokens"], expected);
+        assert_eq!(context["budget"]["windowSource"], source);
+        assert_eq!(
+            context["budget"]["userBudgetTokens"],
+            if budget == 0 {
+                Value::Null
+            } else {
+                json!(budget)
+            }
+        );
+        assert_eq!(
+            context["budget"]["reportedWindowSource"],
+            if budget == 0 {
+                Value::Null
+            } else {
+                json!("account")
+            }
+        );
+    }
+    engine.shutdown().await;
+}

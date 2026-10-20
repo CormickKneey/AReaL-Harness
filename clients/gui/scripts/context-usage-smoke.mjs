@@ -11,10 +11,12 @@ import { applicationFixture } from './application-fixture.mjs';
 import { assertApplicationStopped } from './application-cleanup.mjs';
 import { respondToSessionName } from './model-fixture.mjs';
 import { captureSmokeFailure, createProjectConversation, resizeConversation, selectConversation } from './smoke-navigation.mjs';
+import { CoreClient } from '../packages/runtime-client/core.js';
 
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), '..'), root = resolve(gui, '../..');
 const require = createRequire(join(gui, 'app/package.json'));
 const { _electron: electron } = require('playwright-core');
+const WebSocket = require('ws');
 const binary = process.env.AREAL_CORE_BIN;
 assert.ok(binary, 'Set AREAL_CORE_BIN to the isolated built Core binary');
 const scratch = await mkdtemp('/private/tmp/acu-');
@@ -165,6 +167,71 @@ async function close() {
   assert.notEqual(child.exitCode, null, 'Electron exits');
   await assertApplicationStopped(binary, env, metadata); app = null;
 }
+async function verifyAccountCapacity() {
+  const descriptor = JSON.parse(execFileSync(binary, ['service', 'status', '--instance', project(await state()).core.instanceId, '--json'], { env, encoding: 'utf8', timeout: 20000 }));
+  assert.equal(descriptor.workspace, workspace); assert.equal(descriptor.dataDir, join(env.AREAL_CORE_HOME, projectId, 'state'));
+  const auth = JSON.parse(await readFile(descriptor.authFile, 'utf8'));
+  const principal = auth.principals.find(item => ['observe', 'interact', 'manage'].every(permission => item.permissions?.includes(permission)));
+  assert.equal(typeof principal?.token, 'string');
+  const client = new CoreClient({ createSocket: () => new WebSocket(descriptor.endpoint, { headers: { Authorization: `Bearer ${principal.token}` }, followRedirects: false, maxPayload: 4 * 1024 * 1024 }) });
+  try {
+    await client.connect();
+    let account = await client.request('areal/provider/upsert', { expectedRevision: 0, provider: {
+      id: 'fixture_account', revision: 0, endpoint: `http://127.0.0.1:${server.address().port}/v1/chat/completions`, protocol: 'chatCompletions', contextSource: 'account',
+      models: ['gpt-6.1-sol', 'gpt-6-sol'], parameters: {}, modelParameters: { 'gpt-6.1-sol': { contextWindowTokens: 1050000 } },
+    } });
+    const refreshCatalog = async () => {
+      await page.waitForFunction(async () => {
+        const reply = await window.arealDesktop.command('serviceStatus', {});
+        return reply.ok && !reply.value.busy && !reply.value.activeCommands && !reply.value.starting && !reply.value.providerUpdating;
+      });
+      const current = await call('providers', { operation: 'list' });
+      await call('providers', { operation: 'apply', expectedRevision: current.revision });
+    };
+    await refreshCatalog();
+    const created = await call('create', { projectId, profile: { id: 'standard', revision: 'v1' }, model: { providerId: account.id, modelId: 'gpt-6.1-sol' } });
+    const id = created.threadId; await selectConversation(page, id);
+    const originalBudget = (await showContext(id)).contextUsage.budget;
+    assert.equal(originalBudget.windowTokens, 1050000); assert.equal(originalBudget.reportedWindowTokens, 1050000); assert.equal(originalBudget.windowSource, 'account');
+    await page.getByTestId('context-popover').getByText(/账号报告/).waitFor(); await dismissPopovers();
+    await send('USAGE_ACCOUNT_BEFORE');
+    const before = (await client.request('thread/read', { threadId: id, includeTurns: true })).thread;
+    assert.equal(before.turns[0].configuration.contextWindow.reportedWindowTokens, 1050000);
+    await writeFile(join(scratch, 'account-history-before.json'), JSON.stringify(before, null, 2));
+    account = await client.request('areal/provider/upsert', { expectedRevision: account.revision, provider: { ...account, modelParameters: { 'gpt-6.1-sol': { contextWindowTokens: 500000 } } } });
+    await refreshCatalog();
+    const updatedBudget = (await showContext(id)).contextUsage.budget;
+    assert.equal(updatedBudget.windowTokens, 500000); assert.equal(updatedBudget.reportedWindowTokens, 500000); assert.equal(updatedBudget.windowSource, 'account');
+    await page.getByTestId('context-popover').getByText(/账号报告/).waitFor();
+    await page.screenshot({ path: join(scratch, '10-account-capacity-updated.png') }); await dismissPopovers();
+    assert.deepEqual((await client.request('thread/read', { threadId: id, includeTurns: true })).thread.turns, before.turns, 'account refresh cannot rewrite historical turns');
+    await send('USAGE_ACCOUNT_AFTER');
+    const after = (await client.request('thread/read', { threadId: id, includeTurns: true })).thread;
+    assert.equal(after.turns.length, 2); assert.deepEqual(after.turns[0], before.turns[0], 'the next admission preserves the complete earlier turn');
+    assert.equal(after.turns[1].configuration.contextWindow.reportedWindowTokens, 500000);
+    assert.equal(requests.at(-1).model, 'gpt-6.1-sol');
+    assert.ok(requests.at(-1).request.messages.some(message => message.role === 'user' && JSON.stringify(message.content).includes('USAGE_ACCOUNT_BEFORE')), 'the old session retains its conversation prefix');
+    await writeFile(join(scratch, 'account-history-after.json'), JSON.stringify(after, null, 2));
+    await call('configure', { projectId, threadId: id, parameters: { contextWindowTokens: 900000 } });
+    const cappedBudget = (await showContext(id)).contextUsage.budget;
+    assert.equal(cappedBudget.windowTokens, 500000); assert.equal(cappedBudget.reportedWindowTokens, 500000); assert.equal(cappedBudget.userBudgetTokens, 900000); assert.equal(cappedBudget.windowSource, 'account');
+    const popover = page.getByTestId('context-popover');
+    await popover.getByText(/账号报告/).waitFor(); await popover.getByText(/用户预算/).waitFor();
+    await page.screenshot({ path: join(scratch, '11-account-caps-user-budget.png') }); await dismissPopovers();
+    await call('configure', { projectId, threadId: id, parameters: { contextWindowTokens: 64000 } });
+    const userBudget = (await showContext(id)).contextUsage.budget;
+    assert.equal(userBudget.windowTokens, 64000); assert.equal(userBudget.reportedWindowTokens, 500000); assert.equal(userBudget.userBudgetTokens, 64000); assert.equal(userBudget.windowSource, 'user');
+    await popover.getByText(/用户预算/).waitFor(); await page.screenshot({ path: join(scratch, '12-user-budget.png') }); await dismissPopovers();
+    const missing = await call('create', { projectId, profile: { id: 'standard', revision: 'v1' }, model: { providerId: account.id, modelId: 'gpt-6-sol' } });
+    await selectConversation(page, missing.threadId);
+    const fallbackBudget = (await showContext(missing.threadId)).contextUsage.budget;
+    assert.equal(fallbackBudget.windowTokens, 131072); assert.equal(fallbackBudget.windowSource, 'fallback');
+    assert.equal(fallbackBudget.reportedWindowTokens ?? null, null); assert.equal(fallbackBudget.userBudgetTokens ?? null, null);
+    await popover.getByText(/后备配置/).waitFor(); await page.screenshot({ path: join(scratch, '13-account-no-report-fallback.png') }); await dismissPopovers();
+    await writeFile(join(scratch, 'account-budgets.json'), JSON.stringify({ originalBudget, updatedBudget, cappedBudget, userBudget, fallbackBudget, fixtureBoundary: 'Authenticated Core provider catalog simulates account reports; user budgets use the public configure command. No subscription account UI or real upstream account is exercised.' }, null, 2));
+    checks.push('authenticated account-report fixture updates an old session from 1050K to 500K before next admission without rewriting history; ContextMeter reports account provenance, separate user budgets and missing-report fallback');
+  } finally { client.close(); }
+}
 try {
   await launch();
   await app.evaluate(({ dialog }, path) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] }); }, workspace);
@@ -185,6 +252,9 @@ try {
   await dismissPopovers();
   await choose('Gamma'); assert.equal((await showContext(source)).contextUsage.budget.windowTokens, 32000); await dismissPopovers();
   await choose('Beta'); assert.equal((await showContext(source)).contextUsage.budget.windowTokens, 128000);
+  assert.equal((await context(source)).contextUsage.budget.windowSource, 'user');
+  assert.equal((await context(source)).contextUsage.budget.userBudgetTokens, 128000);
+  await page.getByTestId('context-popover').getByText(/用户预算/).waitFor();
   assert.equal(requests.length, 0, 'A -> provider fallback -> B capacity updates before sending');
   assert.equal(await page.getByTestId('context-meter').innerText(), '', 'Composer control is only a ring');
   await page.screenshot({ path: join(scratch, '01-selected-capacity.png') }); await dismissPopovers();
@@ -301,6 +371,7 @@ try {
   assert.equal(requests.length, before, 'reopen never resubmits model requests');
   await page.getByTestId('turn-usage').last().click(); await page.getByText('部分用量未确认', { exact: true }).waitFor();
   await page.screenshot({ path: join(scratch, '05-reopened-usage.png') });
+  await dismissPopovers(); await verifyAccountCapacity();
   assert.deepEqual(errors, []); checks.push('narrow popover, Escape, persistence and reopen without resubmission');
   passed = true;
 } catch (error) {

@@ -39,7 +39,7 @@ function fixture() {
 
 function applied(projectId, model = 'model-v1') {
   return { projectId, method: 'areal/provider/upsert', params: { provider: {
-    id: 'areal_openai', protocol: 'responses', endpoint: 'http://127.0.0.1:9/responses',
+    id: 'areal_openai', contextSource: 'account', protocol: 'responses', endpoint: 'http://127.0.0.1:9/responses',
     credentialRef: 'areal_openai', models: [model], parameters: {}, revision: 0,
   }, expectedRevision: 0 } };
 }

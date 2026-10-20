@@ -307,3 +307,29 @@ test("discovery preserves endpoint context without using maximum opt-in capacity
   assert.deepEqual(result.models, ["openai/gpt-6.1-sol", "bad", "negative", "maximum-only"]);
   assert.deepEqual(result.modelParameters, { "openai/gpt-6.1-sol": { contextWindowTokens: 500000 } });
 });
+
+
+test("custom model capability declarations survive the desktop save boundary", async () => {
+  const f = fixture();
+  const capabilities = { tools: true, vision: false, reasoning: true, reasoningEffortOptions: ["low", "high", "max"] };
+  f.request.provider.models[0].capabilities = capabilities;
+  f.request.provider.models[0].parameters = { reasoningEffort: "max" };
+  const result = await f.service.command(f.request);
+  assert.deepEqual(result.data[0].models[0].capabilities, capabilities);
+  assert.equal(result.data[0].models[0].parameters.reasoningEffort, "max");
+  assert.deepEqual(f.calls.find(([method]) => method === "write")[1].data[0].models[0].capabilities, capabilities);
+});
+
+test("invalid custom capability declarations are rejected before persistence", async () => {
+  for (const capabilities of [
+    { tools: "yes", vision: false, reasoning: false },
+    { tools: true, vision: false, reasoning: true, reasoningEffortOptions: ["invented"] },
+    { tools: true, vision: false, reasoning: true, reasoningEffortOptions: ["low", "low"] },
+    { tools: true, vision: false, reasoning: false, media: true },
+  ]) {
+    const f = fixture();
+    f.request.provider.models[0].capabilities = capabilities;
+    await assert.rejects(f.service.command(f.request), /模型能力/);
+    assert.equal(f.calls.some(([method]) => method === "write"), false);
+  }
+});

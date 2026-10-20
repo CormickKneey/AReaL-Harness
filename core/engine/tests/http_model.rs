@@ -901,3 +901,90 @@ fn known_context_capacities_preserve_explicit_overrides_and_unknown_models() {
         }
     }
 }
+
+#[tokio::test]
+async fn explicit_model_capabilities_control_catalog_admission_and_wire() {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let app=Router::new().route("/",post(move |Json(request):Json<Value>| { let tx=tx.clone(); async move {let tool_disabled=request.get("tools").is_none();tx.send(request).unwrap(); ([("content-type","text/event-stream")],if tool_disabled {"data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"forbidden\",\"type\":\"function\",\"function\":{\"name\":\"shell\",\"arguments\":\"{}\"}}]},\"finish_reason\":null}]}\n\ndata: [DONE]\n\n"} else {"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"})}}));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let data = tempfile::tempdir().unwrap();
+    let engine = Engine::open(
+        data.path(),
+        Arc::new(HttpModel::new(format!("http://{address}/"), "default".into(), None).unwrap()),
+        Limits {
+            watchdog_disable: true,
+            ..Limits::default()
+        },
+    )
+    .unwrap();
+    let mut provider = json!({"id":"custom","revision":0,"endpoint":format!("http://{address}/"),"protocol":"chatCompletions","models":["opaque"],"parameters":{"reasoningEffort":"max"},"modelCapabilities":{"opaque":{"tools":false,"vision":false,"reasoning":false}}});
+    engine
+        .upsert_provider(serde_json::from_value(provider.clone()).unwrap(), 0)
+        .await
+        .unwrap();
+    let catalog = engine.model_catalog().await;
+    let item = catalog["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["providerId"] == "custom")
+        .unwrap();
+    assert_eq!(item["input"], json!(["text", "audio"]));
+    assert_eq!(item["reasoningEffortOptions"], json!([]));
+    assert_eq!(item["capabilities"]["tools"], false);
+    let thread = engine.create("/workspace".into()).await.unwrap();
+    engine.configure_thread(serde_json::from_value(json!({"threadId":thread.id,"expectedRevision":1,"model":{"providerId":"custom","modelId":"opaque"}})).unwrap()).await.unwrap();
+    let image: Vec<Input> =
+        serde_json::from_value(json!([{"type":"image","url":"https://example.invalid/image.png"}]))
+            .unwrap();
+    assert!(engine.start(&thread.id, image).await.is_err());
+    engine
+        .start(&thread.id, vec![Input::text("plain")])
+        .await
+        .unwrap();
+    engine.wait(&thread.id).await.unwrap();
+    let failed = engine.read(&thread.id, true).await.unwrap();
+    assert_eq!(failed.turns[0].status, TurnStatus::Failed);
+    assert!(
+        !failed.turns[0]
+            .items
+            .iter()
+            .any(|item| matches!(item, Item::DynamicToolCall { .. }))
+    );
+    let body = rx.recv().await.unwrap();
+    assert_eq!(body["model"], "opaque");
+    assert!(body.get("tools").is_none());
+    assert!(body.get("reasoning_effort").is_none());
+    assert!(body.get("reasoning").is_none());
+    provider["modelCapabilities"]["opaque"] =
+        json!({"tools":true,"vision":true,"reasoning":true,"reasoningEffortOptions":["low","max"]});
+    engine
+        .upsert_provider(serde_json::from_value(provider).unwrap(), 1)
+        .await
+        .unwrap();
+    engine
+        .start(&thread.id, vec![Input::text("reason")])
+        .await
+        .unwrap();
+    engine.wait(&thread.id).await.unwrap();
+    let body = rx.recv().await.unwrap();
+    assert_eq!(body["reasoning_effort"], "max");
+    assert!(
+        body["tools"]
+            .as_array()
+            .is_some_and(|tools| !tools.is_empty())
+    );
+    let catalog = engine.model_catalog().await;
+    let item = catalog["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["providerId"] == "custom")
+        .unwrap();
+    assert_eq!(item["reasoningEffortOptions"], json!(["low", "max"]));
+    assert!(item["input"].as_array().unwrap().contains(&json!("image")));
+    engine.shutdown().await;
+    server.abort();
+}
