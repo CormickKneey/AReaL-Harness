@@ -486,7 +486,7 @@ impl Invocation<'_> {
                         .map(|value| {
                             let success =
                                 self.call.name != "agent_spawn" || value["status"] != "failed";
-                            (success, crate::agents::model_execution_view(value))
+                            (success, value)
                         })
                         .map_err(|error| {
                             if matches!(error.downcast_ref::<Error>(), Some(Error::Storage(_))) {

@@ -927,6 +927,23 @@ async fn model_uses_one_execution_identity_and_rejected_spawn_is_not_reported_as
                 records["data"][0]["threadId"].is_string(),
                 "客户端仍保留完整身份"
             );
+            let spawn = finished.turns[0]
+                .items
+                .iter()
+                .find_map(|item| match item {
+                    Item::DynamicToolCall {
+                        tool,
+                        content_items: Some(parts),
+                        ..
+                    } if tool == "agent_spawn" => Some(parts),
+                    _ => None,
+                })
+                .unwrap();
+            let receipt: Value = serde_json::from_str(spawn[0]["text"].as_str().unwrap()).unwrap();
+            assert!(
+                receipt["threadId"].is_string(),
+                "持久工具原文须保留 GUI 子任务卡片关联；只有模型投影精简身份"
+            );
         }
         engine.shutdown().await;
         runtime.shutdown().await.unwrap();

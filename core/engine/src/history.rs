@@ -693,6 +693,21 @@ pub(super) fn history(thread: &Thread, store: &store::Store) -> anyhow::Result<V
                             serde_json::from_value(item.clone())?;
                         match part {
                             areal_protocol::ToolContent::InputText { text } => {
+                                // 仅收窄可信协调回执的模型视图；持久原文与 GUI/SDK 的线程关联必须保留。
+                                let text = if execution.backend.as_deref() == Some("coordination")
+                                    && tool.starts_with("agent_")
+                                    && execution
+                                        .output_projection
+                                        .as_ref()
+                                        .is_some_and(|view| view["executionIdentityVersion"] == 1)
+                                {
+                                    serde_json::from_str::<Value>(&text)
+                                        .map(crate::agents::model_execution_view)
+                                        .and_then(|value| serde_json::to_string(&value))
+                                        .unwrap_or(text)
+                                } else {
+                                    text
+                                };
                                 content.push(ContentPart::Text(text))
                             }
                             areal_protocol::ToolContent::ArealMedia { modality, media } => {
@@ -962,6 +977,54 @@ mod file_view_tests {
 #[cfg(test)]
 mod checkpoint_input_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn execution_identity_projection_preserves_legacy_history_and_external_tool_data() {
+        let data = tempfile::tempdir().unwrap();
+        let engine = Engine::open(
+            data.path(),
+            Arc::new(model::UnconfiguredModel),
+            Limits::default(),
+        )
+        .unwrap();
+        let thread = engine.create("/workspace".into()).await.unwrap();
+        let raw = json!({"executionId":"execution","threadId":"child","turnId":"turn","parentThreadId":"parent","owner":{"type":"turn"},"status":"completed"}).to_string();
+        for (backend, version, projected) in [
+            ("coordination", None, false),
+            ("coordination", Some(1), true),
+            ("client", Some(1), false),
+        ] {
+            let mut sample = thread.clone();
+            sample.turns.push(serde_json::from_value(json!({"id":"turn","status":"completed","items":[{
+                "type":"dynamicToolCall","id":"item","callId":"call","tool":"agent_spawn","arguments":{},"status":"completed","success":true,
+                "contentItems":[{"type":"inputText","text":raw}],
+                "execution":{"runtimeEpoch":"epoch","scopeId":"scope","operationId":"operation","outcome":"succeeded","backend":backend,"outputProjection":{"executionIdentityVersion":version}}
+            }]})).unwrap());
+            let before = serde_json::to_value(&sample).unwrap();
+            let messages = history(&sample, &engine.store).unwrap();
+            let message = messages.iter().find(|m| m.role == "tool").unwrap();
+            let value: Value = serde_json::from_str(&message.text_content()).unwrap();
+            assert_eq!(
+                value.get("threadId").is_none(),
+                projected,
+                "backend={backend}, version={version:?}"
+            );
+            assert_eq!(value["executionId"], "execution");
+            if !projected {
+                assert_eq!(
+                    message.text_content(),
+                    raw,
+                    "旧历史和外部数据的原始字节不能因升级改变"
+                );
+            }
+            assert_eq!(
+                serde_json::to_value(&sample).unwrap(),
+                before,
+                "模型投影不得改写持久线程"
+            );
+        }
+        engine.shutdown().await;
+    }
 
     #[tokio::test]
     async fn hydrated_originals_restore_order_and_media_after_a_sparse_checkpoint() {

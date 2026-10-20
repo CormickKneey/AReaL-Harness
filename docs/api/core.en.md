@@ -235,6 +235,8 @@ Inspection selects `sharedReadOnly` by default, or `sharedInherited` when a trus
 
 When the handshake explicitly reports `restrictedScopes.available=false`, trusted native `agent_spawn` advertises only feasible intent: `modify` remains when default read-only inspection is unavailable, and creation is hidden if the parent cannot write either. Explicit inherit cannot widen parent/Profile authority. Research `delegate_tasks` is hidden while history and control tools remain; identically named external tools are not filtered by name. Explicit calls still preflight their final Scope; a model schema never grants authority.
 
+Identity slimming applies only to the model-history projection of newly settled receipts. Durable tool originals, GUI and SDK retain thread associations. First settlement records `execution.outputProjection.executionIdentityVersion=1` for trusted coordination backends only; legacy history without that marker replays its original bytes so upgrades do not rewrite context already submitted to a provider.
+
 `areal/agent/delegate` accepts `{requestId,parentThreadId,input,intent?,delivery?,writes?,independent?,requiresCurrentEnvironment?,requireTrustedChecks?,maxModelRounds?,agentProfile?,instructions?,skills?,model?,toolAllowlist?}` with inspect/report defaults. An active parent Turn is required. Identical requestId and arguments within a parent return the same executionId; changed arguments fail. Creation intent is durable before dispatch; unknown creation is not replayed. History retains at most 10000 execution records.
 
 | Method | Parameters and behavior |

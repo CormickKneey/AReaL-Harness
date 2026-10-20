@@ -1374,6 +1374,13 @@ impl Engine {
             execution.outcome = outcome;
             execution.result_snapshot = prepared.snapshot;
             execution.output_projection = Some(prepared.metrics);
+            // 首次结算固定模型身份投影版本，升级后不能改写已提交给 provider 的旧回执。
+            if execution.backend.as_deref() == Some("coordination")
+                && call.name.starts_with("agent_")
+            {
+                execution.output_projection.as_mut().unwrap()["executionIdentityVersion"] =
+                    json!(1);
+            }
             execution.duration_ms = Some(started.elapsed().as_millis() as u64);
         }
         let bytes = serde_json::to_vec(item)?.len();

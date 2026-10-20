@@ -235,6 +235,8 @@ Core 先检查父权限、Profile、写入授权、执行环境和源码快照�
 
 握手明确报告 `restrictedScopes.available=false` 时，可信原生 `agent_spawn` 的模型 schema 只宣告可执行的意图：默认只读分析不可用时保留 `modify`；父任务也不可写则隐藏创建。显式 inherit 不扩大父/Profile 权限。研究入口 `delegate_tasks` 隐藏，但任务历史和控制入口保留；同名外部工具不按名称套用该规则。显式调用仍由最终 Scope 预检裁决，模型 schema 不构成授权。
 
+模型身份精简只发生在新回执的模型历史投影中；持久工具原文、GUI 与 SDK 继续保留线程关联。首次结算记录 `execution.outputProjection.executionIdentityVersion=1`，只对可信 coordination 后端启用；没有该标记的旧历史按原字节回放，避免升级改写已经交给 provider 的上下文。
+
 `areal/agent/delegate` 接受 `{requestId,parentThreadId,input,intent?,delivery?,writes?,independent?,requiresCurrentEnvironment?,requireTrustedChecks?,maxModelRounds?,agentProfile?,instructions?,skills?,model?,toolAllowlist?}`，默认 inspect/report。必须有活跃父 Turn。父 Thread 内相同 requestId 和相同参数返回同一 executionId，参数不同拒绝；创建意图先持久化，未知结果不自动重派。历史最多 10000 个执行记录。
 
 | 方法 | 参数与行为 |
