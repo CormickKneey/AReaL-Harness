@@ -83,7 +83,14 @@ struct Process {
     cancel: CancellationToken,
     limits: Limits,
     output: Output,
+    charge_output: bool,
     accepts_stdin: bool,
+}
+struct FileHelper {
+    executable: PathBuf,
+    path: PathBuf,
+    writes: bool,
+    read_for_history: bool,
 }
 type Completion = watch::Sender<Option<Result<Value>>>;
 type CompletionReceiver = watch::Receiver<Option<Result<Value>>>;
@@ -493,7 +500,7 @@ impl Supervisor {
     async fn start_inner(
         self: &Arc<Self>,
         request: StartProcess,
-        helper: Option<(PathBuf, bool, PathBuf)>,
+        helper: Option<FileHelper>,
     ) -> Result<ProcessRef> {
         self.validate_operation(&request.operation_id)?;
         self.check_handle(&request.scope_id, "scope")?;
@@ -524,9 +531,15 @@ impl Supervisor {
                 if !within(&cwd, &scope.reads) {
                     return Err(denied("cwd is outside scope read roots"));
                 }
-                // Scope累计额度可高于单个命令，但不能顺带放大一次进程输出上限。
+                let charge_output = !helper
+                    .as_ref()
+                    .is_some_and(|helper| helper.read_for_history);
                 let mut ceiling = scope.info.limits.clone();
-                ceiling.output_bytes = ceiling.output_bytes.min(self.config.limits.output_bytes);
+                ceiling.output_bytes = if charge_output {
+                    ceiling.output_bytes.min(self.config.limits.output_bytes)
+                } else {
+                    filesystem::MAX_HELPER_RESPONSE_BYTES as u64
+                };
                 let limits = narrow(&ceiling, &request.limits)?;
                 let task_program = (helper.is_none()
                     && !self.config.task_credential_commands.is_empty()
@@ -537,7 +550,7 @@ impl Supervisor {
                 // 凭据接收方由可信部署固定；只开放该可执行文件，不放宽所在目录。
                 let trusted_executable = helper
                     .as_ref()
-                    .map(|(path, _, _)| path.clone())
+                    .map(|helper| helper.executable.clone())
                     .or_else(|| task_program.clone());
                 let scope_access = if self.config.full_access
                     && scope.reads.iter().any(|p| p == std::path::Path::new("/"))
@@ -574,7 +587,7 @@ impl Supervisor {
                         execution.env.extend(self.config.task_environment.clone());
                     }
                 }
-                if helper.as_ref().is_some_and(|(_, writes, _)| !writes) {
+                if helper.as_ref().is_some_and(|helper| !helper.writes) {
                     execution.write_roots.clear();
                 }
                 if self.config.full_access
@@ -601,8 +614,8 @@ impl Supervisor {
                         && scope.participant.is_none())
                 {
                     Vec::new()
-                } else if let Some((_, _, path)) = &helper {
-                    vec![path.clone()]
+                } else if let Some(helper) = &helper {
+                    vec![helper.path.clone()]
                 } else {
                     execution.write_roots.clone()
                 };
@@ -612,7 +625,8 @@ impl Supervisor {
                     let scope = &state.scopes[ancestor];
                     ensure_active(scope)?;
                     if scope.info.active_processes >= scope.info.limits.max_processes
-                        || scope.info.output_bytes >= scope.info.limits.output_bytes
+                        || (charge_output
+                            && scope.info.output_bytes >= scope.info.limits.output_bytes)
                     {
                         return Err(exhausted(
                             "ancestor process or cumulative output budget exhausted",
@@ -656,6 +670,7 @@ impl Supervisor {
                         } else {
                             self.config.output_window_bytes
                         }),
+                        charge_output,
                         accepts_stdin: request.tty || request.pipe_stdin,
                     },
                 );
@@ -842,13 +857,17 @@ impl Supervisor {
             .limits
             .output_bytes
             .saturating_sub(process.output.end);
-        for owner in &owners {
-            let scope = &state.scopes[owner].info;
-            allowed = allowed.min(scope.limits.output_bytes.saturating_sub(scope.output_bytes));
+        if process.charge_output {
+            for owner in &owners {
+                let scope = &state.scopes[owner].info;
+                allowed = allowed.min(scope.limits.output_bytes.saturating_sub(scope.output_bytes));
+            }
         }
         let accepted = (bytes.len() as u64).min(allowed) as usize;
-        for owner in &owners {
-            state.scopes.get_mut(owner).unwrap().info.output_bytes += accepted as u64;
+        if process.charge_output {
+            for owner in &owners {
+                state.scopes.get_mut(owner).unwrap().info.output_bytes += accepted as u64;
+            }
         }
         let process = state.processes.get_mut(process_id).unwrap();
         process.output.append(stream, &bytes[..accepted]);

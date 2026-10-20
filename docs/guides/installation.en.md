@@ -8,8 +8,8 @@ Use these commands after the packages are published to GitHub Releases. Before p
 
 | Platform     | Distribution                                                                                             | Prerequisites                                                                                                                  |
 | ------------ | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| macOS arm64  | Complete GitHub Release bundle and Python installer; optional Homebrew formula once the tap is published | macOS 15+, Xcode Command Line Tools; standalone install/upgrade requires Python 3.9+ on PATH                                   |
-| Linux x86_64 | Complete GitHub Release bundle and Python installer; Homebrew once the tap is published                  | Ubuntu 22.04 or newer compatible glibc 2.35+ system; standalone install/upgrade requires Python 3.9+ on PATH; musl unsupported |
+| macOS arm64  | Complete GitHub Release bundle and Python installer; public Homebrew stable and beta formulas | macOS 15+, Xcode Command Line Tools; standalone install/upgrade requires Python 3.9+ on PATH                                   |
+| Linux x86_64 | Complete GitHub Release bundle and Python installer; public Homebrew stable and beta formulas                  | Ubuntu 22.04 or newer compatible glibc 2.35+ system; standalone install/upgrade requires Python 3.9+ on PATH; musl unsupported |
 
 Only these architectures are validated. No Windows, Intel macOS or Linux arm64 packages are provided. **npm and `cargo install` do not provide complete bundles yet**, so neither is an installation channel. Choose Homebrew or standalone installation, not both for the same PATH entry. Bundles contain `bin/areal`, `libexec/areal/{areal-runtime,areal-runtime-fs}`, LICENSE and a file SHA256 manifest; Linux bundles also include `areal-runtime-reaper` in the same directory. Do not copy only `areal`. Startup does not require Rust/Cargo. macOS still requires an executable `/usr/bin/python3` from Command Line Tools; configured Node/Python tools need their interpreters.
 
@@ -17,17 +17,18 @@ macOS bundles are ad-hoc signed, without Developer ID signing or notarization. L
 
 ## Homebrew (macOS / Linux)
 
-Public installation requires the [tap](https://github.com/areal-project/homebrew-tap), formula and archives to be publicly downloadable. A `.rb` release attachment or temporary CI tap does not establish that channel. Use the standalone installer below until it is ready.
+The public [tap](https://github.com/areal-project/homebrew-tap) provides stable `areal` and optional `areal-beta` for macOS arm64 and Linux x86_64, using complete public Release archives and their SHA256 checksums. A Beta release updates only `areal-beta`; the default `areal` formula continues to track stable releases.
 
-Both platforms use the same commands once the channel is available. Stable tracks `areal`; explicitly opt into beta through the separate, keg-only `areal-beta`, which leaves the stable PATH entry intact:
+Both platforms use the same commands. The keg-only `areal-beta` leaves the stable PATH entry intact:
 
 ```sh
 brew tap areal-project/tap
 brew install areal-project/tap/areal
 brew test areal-project/tap/areal
 areal --version
-# Optional beta: invoke its absolute entry without forcing a link
+# Optional Beta: invoke its absolute entry without forcing a link
 brew install areal-project/tap/areal-beta
+brew test areal-project/tap/areal-beta
 "$(brew --prefix areal-project/tap/areal-beta)/bin/areal" --version
 ```
 

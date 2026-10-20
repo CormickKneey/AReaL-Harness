@@ -1,6 +1,40 @@
 'use strict';
 const files = require('../workspace-files');
 const git = require('@areal/workspace-git');
+const { createHash } = require('node:crypto');
+const MAX_FILE_BEFORE_BYTES = 8 * 1024 * 1024;
+
+async function readFileBefore(project, threadId, reference) {
+  const digest = typeof reference?.uri === 'string' && /^areal:\/\/blob\/([a-f0-9]{64})$/.exec(reference.uri)?.[1];
+  if (!digest || reference.mimeType !== 'application/octet-stream' || !Number.isSafeInteger(reference.sizeBytes)
+    || reference.sizeBytes < 0 || reference.sizeBytes > MAX_FILE_BEFORE_BYTES) throw new Error('历史文件前像引用无效');
+  const url = new URL(project.endpoint);
+  url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:';
+  url.pathname = `/areal/blobs/${digest}`;
+  url.search = '';
+  url.searchParams.set('threadId', threadId);
+  const response = await fetch(url, { headers: { Authorization: `Bearer ${project.token}` }, redirect: 'error', signal: AbortSignal.timeout(30000) });
+  if (!response.ok) throw new Error(`历史文件前像读取失败 (${response.status})`);
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error('历史文件前像响应不完整');
+  const chunks = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > reference.sizeBytes || size > MAX_FILE_BEFORE_BYTES) throw new Error('历史文件前像超过记录大小');
+      chunks.push(value);
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => {});
+    throw error;
+  } finally { reader.releaseLock(); }
+  const bytes = Buffer.concat(chunks, size);
+  if (size !== reference.sizeBytes || createHash('sha256').update(bytes).digest('hex') !== digest) throw new Error('历史文件前像与记录的大小或哈希不一致');
+  return bytes;
+}
 
 /** 用户直接操作的桌面文件／Git 功能，复用原有路径与 revision 校验。 */
 async function workspaceCommand(backend, request) {
@@ -62,7 +96,15 @@ async function workspaceCommand(backend, request) {
         } while (cursor);
       }
       if (!turn) throw new Error('轮次不属于当前任务');
-      return git.reviewTurnFiles(project.root, turn, { itemId: request.itemId });
+      const fileBefores = new Map();
+      for (const item of turn.items ?? []) {
+        if (request.itemId !== undefined && item.id !== request.itemId) continue;
+        if (item.type !== 'dynamicToolCall' || !['fs_write', 'fs_create', 'fs_apply_patch', 'fs_apply_patches'].includes(item.tool)
+          || item.status !== 'completed' || item.success !== true || item.execution?.backend !== 'runtime'
+          || item.execution?.outcome !== 'succeeded' || item.execution.fileBefore === undefined) continue;
+        fileBefores.set(item.id, await readFileBefore(live, request.threadId, item.execution.fileBefore));
+      }
+      return git.reviewTurnFiles(project.root, turn, { itemId: request.itemId, fileBefores });
     }
     case 'status': return git.fileStatus(project.root);
     case 'info': return git.workspaceInfo(project.root, backend.home);

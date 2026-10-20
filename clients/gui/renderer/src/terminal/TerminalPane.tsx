@@ -81,9 +81,9 @@ export function TerminalPane({ project, thread, action, onError, onLink, termina
       <button className="icon-button" aria-label="新建终端" onClick={() => addTerminal(owner, nextLifetime)}><Plus size={15} /></button>
       <button className="icon-button" aria-label="关闭当前终端" disabled={!id || closing || restarting} onClick={() => void close()}><X size={15} /></button>
     </div>}
-    {status && <div className="flex shrink-0 flex-wrap gap-x-3 gap-y-1 border-b border-border px-3 py-1 text-xs" aria-label="终端运行状态">
+    {status && (status.runtime?.state !== "running" || status.partialOutput || status.error) && <div className="flex shrink-0 flex-wrap gap-x-3 gap-y-1 border-b border-border px-3 py-1 text-xs" aria-label="终端运行状态">
       <span role="status">{status.runtime ? `${status.runtime.state === "exited" ? "终端已退出" : status.runtime.state === "running" ? "终端运行中" : "终端状态未知"}${status.runtime.exitCode !== null ? ` · 退出码 ${status.runtime.exitCode}` : ""}${status.runtime.signal ? ` · 信号 ${status.runtime.signal}` : ""}` : "终端运行状态暂不可用"}</span>
-      <span>{status.cleanupConfirmed ? "终端资源已清理" : "终端资源尚未确认清理"}</span>
+      {status.runtime?.state !== "running" && <span>{status.cleanupConfirmed ? "终端资源已清理" : "终端资源尚未确认清理"}</span>}
       {status.partialOutput && <span role="status">终端输出存在缺口或截断</span>}
       {status.error && <span role="alert">{status.error}</span>}
     </div>}

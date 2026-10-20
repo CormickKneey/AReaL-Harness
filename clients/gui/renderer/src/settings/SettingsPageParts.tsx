@@ -1,8 +1,7 @@
 import { Children, isValidElement, Fragment, type ReactNode, type ReactElement } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select.js";
 import { SettingsSegmentedTabs } from "./SettingsSegmentedTabs.js";
-import "./SettingsWorkspace.css";
-import { Card, CardContent } from "@/components/ui/card.js";
+import "./SettingsPageParts.css";
 import { Switch } from "@/components/ui/switch.js";
 import { Button } from "@/components/ui/button.js";
 import { cn } from "@/components/lib/utils.js";
@@ -25,7 +24,7 @@ export function SettingsSection({
       {(title || action || description) && (
         <div className="settings-section-heading">
           <div className="min-w-0">
-            {title && <h2>{title}</h2>}
+            {title && <h2 className="settings-section-title">{title}</h2>}
             {description && <p className="settings-section-desc">{description}</p>}
           </div>
           {action && <div className="settings-section-action">{action}</div>}
@@ -87,15 +86,9 @@ export function SettingsGroupCard({
   density?: "compact";
 }) {
   return (
-    <Card
-      data-density={density}
-      className={cn(
-        "settings-group-card overflow-hidden border border-border bg-card py-0 shadow-none",
-        className,
-      )}
-    >
-      <CardContent className="space-y-0 px-0">{children}</CardContent>
-    </Card>
+    <div data-density={density} className={cn("settings-group-card", className)}>
+      <div data-slot="card-content" className="settings-group-content">{children}</div>
+    </div>
   );
 }
 

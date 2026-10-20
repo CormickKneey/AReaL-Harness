@@ -3,6 +3,11 @@ import { useEffect, useId, useState } from "react";
 import { Button } from "./components/ui/button.js";
 import type { Data } from "./services.js";
 
+type ReviewState =
+  | { kind: "loading"; identity: string }
+  | { kind: "ready"; identity: string; totals: Map<string, { additions: number; deletions: number }> }
+  | { kind: "unavailable"; identity: string; error: string };
+
 /** Successful filesystem receipts identify navigable workspace files. A read
  * receipt can open the current file; it does not identify a write or a Diff.
  * Tool arguments alone and Shell output cannot prove a file result.
@@ -43,10 +48,11 @@ export function TurnFileSummary({ turn, readTurnReview, onFile, onReview }: {
   const [expanded, setExpanded] = useState(false);
   const filesId = useId();
   useEffect(() => setExpanded(false), [turn.id]);
-  const [review, setReview] = useState<{ identity: string; totals?: Map<string, { additions: number; deletions: number }>; error?: string }>();
+  const [review, setReview] = useState<ReviewState>();
   useEffect(() => {
     if (turn.status !== "completed" || !files.size) return;
     let active = true;
+    setReview({ kind: "loading", identity });
     void readTurnReview(turn.id).then(result => {
       if (result.turnId !== turn.id || !Array.isArray(result.files)) throw Error("本轮文件比较结果不完整");
       const totals = new Map<string, { additions: number; deletions: number }>();
@@ -55,15 +61,16 @@ export function TurnFileSummary({ turn, readTurnReview, onFile, onReview }: {
           || !Number.isSafeInteger(file.deletions) || file.deletions < 0) throw Error("本轮文件行数无法验证");
         totals.set(file.path, { additions: file.additions, deletions: file.deletions });
       }
-      if (active) setReview({ identity, totals });
-    }).catch(cause => { if (active) setReview({ identity, error: cause.message }); });
+      if (active) setReview({ kind: "ready", identity, totals });
+    }).catch(cause => { if (active) setReview({ kind: "unavailable", identity, error: cause instanceof Error ? cause.message : String(cause) }); });
     return () => { active = false; };
   }, [identity, readTurnReview]);
   if (turn.status !== "completed" || !files.size) return null;
-  const current = review?.identity === identity ? review : undefined;
+  const current: ReviewState = review?.identity === identity ? review : { kind: "loading", identity };
   const entries = [...files.values()];
-  const totals = current?.totals && entries.reduce((sum, file) => {
-    const count = current.totals!.get(file.path);
+  const counts = current.kind === "ready" ? current.totals : undefined;
+  const totals = counts && entries.reduce((sum, file) => {
+    const count = counts.get(file.path);
     return { additions: sum.additions + (count?.additions ?? 0), deletions: sum.deletions + (count?.deletions ?? 0) };
   }, { additions: 0, deletions: 0 });
   return <div className="turn-file-summary" data-testid="turn-file-summary">
@@ -72,26 +79,20 @@ export function TurnFileSummary({ turn, readTurnReview, onFile, onReview }: {
         {totals && <span className="turn-file-summary-totals" aria-label={`合计新增 ${totals.additions} 行，删除 ${totals.deletions} 行`}>
           <span className="added">+{totals.additions}</span><span className="deleted">-{totals.deletions}</span>
         </span>}
+        {current.kind !== "ready" && <span className="turn-file-summary-meta" role="status" title={current.kind === "unavailable" ? current.error : undefined}>{current.kind === "loading" ? "统计中" : "行数不可用"}</span>}
       <Button size="sm" variant="ghost" className="turn-file-summary-review-action" onClick={() => onReview(turn.id)}>查看变更</Button>
     </div>
     <div id={filesId} className="turn-file-summary-files" role="region" aria-label="本轮文件" data-expanded={expanded}>
       {(expanded ? entries : entries.slice(0, 5)).map(file => {
-        const units = ["B", "KB", "MB", "GB", "TB", "PB"];
-        let size = file.size;
-        let unit = 0;
-        while (size >= 1024 && unit < units.length - 1) {
-          size /= 1024;
-          unit += 1;
-        }
         // A verified comparison omits unchanged paths. Only that successful
         // result permits zero; pending or rejected reads never do.
-        const totals = current?.totals ? current.totals.get(file.path) ?? { additions: 0, deletions: 0 } : undefined;
+        const totals = counts ? counts.get(file.path) ?? { additions: 0, deletions: 0 } : undefined;
         return <Button key={file.path} variant="ghost" aria-label={`打开 ${file.path}`} onClick={() => onFile(file.path)} title={file.path}>
         <FileChanges className="turn-file-summary-icon" aria-hidden="true" />
         <span className="turn-file-summary-title">{file.path}</span>
           {totals ? <span className="turn-file-summary-stats" aria-label={`新增 ${totals.additions} 行，删除 ${totals.deletions} 行`}>
             <span className="added">+{totals.additions}</span><span className="deleted">-{totals.deletions}</span>
-          </span> : <span className="turn-file-summary-meta">{Number(size.toFixed(1))} {units[unit]}</span>}
+          </span> : <span className="turn-file-summary-meta" title={current.kind === "unavailable" ? current.error : undefined}>{current.kind === "loading" ? "统计中" : "行数不可用"}</span>}
       </Button>; })}
     </div>
     {entries.length > 5 && <button type="button" className="turn-file-summary-disclosure" aria-expanded={expanded} aria-controls={filesId} onClick={() => setExpanded(value => !value)}>{expanded ? "收起文件" : `展开剩余 ${entries.length - 5} 个文件`}</button>}

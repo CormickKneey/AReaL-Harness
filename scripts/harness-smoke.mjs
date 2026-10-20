@@ -479,6 +479,9 @@ async function start() {
     "python3",
     [
       "scripts/launch.py",
+      ...(process.env.AREAL_TEST_BIN_DIR
+        ? ["--bin-dir", resolve(process.env.AREAL_TEST_BIN_DIR)]
+        : []),
       "--sandbox-profile",
       "native",
       "--config",

@@ -2,6 +2,8 @@
 """无模型验证累计输出、单进程额度与文件助手重复请求计量。"""
 
 import argparse
+import base64
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -75,6 +77,106 @@ def main():
                 "cumulativeCap": 4096,
                 "used": 4096,
                 "repeatedOutputReadCharged": False,
+            }
+        finally:
+            runtime.close()
+        source = b"history evidence\n" * (8 * 1024 * 1024 // 17)
+        source = source.ljust(8 * 1024 * 1024, b"x")
+        (Path(directory) / "history.bin").write_bytes(source)
+        runtime = smoke.Runtime(
+            binary,
+            Path(directory),
+            [
+                "--sandbox-profile",
+                args.sandbox_profile,
+                "--output-bytes",
+                "1024",
+                "--cumulative-output-bytes",
+                "4096",
+            ],
+        )
+        try:
+            runtime.info = runtime.call("connection.open", {"protocolVersion": "areal.runtime.v0"})
+            root = runtime.info["rootScopeId"]
+            scope = runtime.scope()
+            digest = hashlib.sha256(source).hexdigest()
+            restored = bytearray()
+            pages = 0
+            while len(restored) < len(source):
+                value = runtime.call(
+                    "fs.execute",
+                    {
+                        "operationId": runtime.op(),
+                        "scopeId": scope,
+                        "command": {
+                            "kind": "readForHistory",
+                            "path": "workspace://repo/history.bin",
+                            "offset": len(restored),
+                            "maxBytes": 65536,
+                        },
+                    },
+                )
+                assert value["sha256"] == digest and value["size"] == len(source), value
+                chunk = base64.b64decode(value["dataBase64"], validate=True)
+                assert chunk and len(chunk) <= 65536
+                restored.extend(chunk)
+                assert value["nextOffset"] == len(restored)
+                pages += 1
+            assert bytes(restored) == source
+            assert value["eof"] is True
+            assert runtime.call("scope.get", {"scopeId": root})["outputBytes"] == 0
+            assert runtime.call("scope.get", {"scopeId": scope})["outputBytes"] == 0
+            runtime.expect_error(
+                "INVALID_ARGUMENT",
+                "fs.execute",
+                {
+                    "operationId": runtime.op(),
+                    "scopeId": scope,
+                    "command": {
+                        "kind": "readForHistory",
+                        "path": "workspace://repo/../outside",
+                        "offset": 0,
+                        "maxBytes": 16,
+                    },
+                },
+            )
+            direct = runtime.call(
+                "process.start",
+                {
+                    "operationId": runtime.op(),
+                    "scopeId": scope,
+                    "argv": [
+                        str(args.bin_dir.resolve() / "areal-runtime-fs"),
+                        json.dumps(
+                            {
+                                "root": str(Path(directory).resolve()),
+                                "command": {
+                                    "kind": "readForHistory",
+                                    "path": "history.bin",
+                                    "offset": 0,
+                                    "maxBytes": 65536,
+                                },
+                            }
+                        ),
+                    ],
+                    "cwd": "workspace://repo",
+                },
+            )["processId"]
+            done = runtime.call("process.wait", {"processId": direct})
+            assert done["stopReason"] == "outputBytes exceeded", done
+            assert runtime.call("scope.get", {"scopeId": root})["outputBytes"] == 1024
+            process = runtime.start(scope, "head -c 1536 /dev/zero")
+            done = runtime.call("process.wait", {"processId": process})
+            assert done["stopReason"] == "outputBytes exceeded", done
+            assert runtime.call("scope.get", {"scopeId": root})["outputBytes"] == 2048
+            results["historyEvidence"] = {
+                "sourceBytes": len(source),
+                "pages": pages,
+                "exactBytesRestored": True,
+                "commandBudgetCharged": False,
+                "ordinaryCommandLimitPreserved": True,
+                "traversalRejected": True,
+                "helperArgvCannotBypassQuota": True,
             }
         finally:
             runtime.close()

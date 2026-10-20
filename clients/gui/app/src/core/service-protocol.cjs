@@ -5,6 +5,7 @@ const { WebSocketServer } = require('ws');
 const { validateCommand: validateDesktopCommand, desktopError } = require('@areal/workbench/desktop-contract');
 const { inspectResources, recoverResource, blocked } = require('./resource-recovery.cjs');
 const { validToolInput, failure: browserFailure, success: browserSuccess } = require('./browser-tool.cjs');
+const { ProjectionEncoder } = require('@areal/workbench/state-projection');
 const PROTOCOL = 'areal.desktop-service.v1';
 const COMMAND_CONTRACT = 'areal.desktop-commands.v1';
 const browserKey = (projectId, threadId) => JSON.stringify([projectId, threadId]);
@@ -76,9 +77,15 @@ class DesktopService {
       browserControlEndpoints: [...this.backend.projects.values()].map(project => project.endpoint).filter(Boolean),
     } };
   }
-  send(socket, value) {
+  send(socket, value, full = false) {
     if (socket.readyState !== 1) return;
     if (socket.bufferedAmount > 32 * 1024 * 1024) { socket.terminate(); return; }
+    if (socket.projection) {
+      const key = value.method === 'state' ? 'params' : 'result';
+      const packet = value[key];
+      if (packet?.snapshot && packet.service && Number.isSafeInteger(packet.sequence))
+        value = { ...value, [key]: { ...packet, snapshot: socket.projection.encode(packet.snapshot, full) } };
+    }
     socket.send(JSON.stringify(value));
   }
   schedule() {
@@ -174,10 +181,11 @@ class DesktopService {
     try {
       if (method === 'hello') {
         if (params?.protocol !== PROTOCOL || params?.identity !== this.identity) throw Object.assign(new Error('后台服务版本或启动配置不兼容。请先安全停止旧后台服务。'), { code: 'SERVICE_INCOMPATIBLE' });
+        socket.projection = params.capabilities?.projection === 1 ? socket.projection ?? new ProjectionEncoder(randomUUID()) : null;
         socket.notifications = params.notifications === true;
         this.clients.add(socket);
         this.idleSince = null;
-        this.send(socket, { id, result: this.packet() });
+        this.send(socket, { id, result: this.packet() }, true);
         if (socket.notifications && this.pendingNotificationTarget) {
           this.send(socket, { method: 'notificationOpen', params: this.pendingNotificationTarget });
           this.pendingNotificationTarget = null;
@@ -303,7 +311,7 @@ class DesktopService {
         finally { this.inflight--; this.recovering = false; this.schedule(); }
         return;
       }
-      if (method === 'snapshot') { this.send(socket, { id, result: this.packet() }); return; }
+      if (method === 'snapshot') { this.send(socket, { id, result: this.packet() }, true); return; }
       if (method === 'activity') {
         this.sampleActivity();
         const windowFocused = params?.focused === true && params?.suspended !== true;

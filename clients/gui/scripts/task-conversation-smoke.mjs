@@ -7,6 +7,7 @@ import {fileURLToPath} from 'node:url';
 import {createServer} from 'node:http';
 import {execFileSync} from 'node:child_process';
 import {createHash,randomUUID} from 'node:crypto';
+import {CoreClient} from '../packages/runtime-client/core.js';
 const gui=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const require=createRequire(join(gui,'app/package.json'));
 const {_electron:electron}=require('playwright-core');
@@ -14,6 +15,14 @@ const binary=process.env.AREAL_CORE_BIN || resolve(gui,'../../target/debug/areal
 const binarySha256=createHash('sha256').update(await readFile(binary)).digest('hex');
 const scratch=await mkdtemp('/private/tmp/areal-schedule-desktop-');
 const loadingRegression=process.env.AREAL_TASK_LOADING_REGRESSION==='1';
+const creationRegression=process.env.AREAL_TASK_CREATION_REGRESSION;
+const creationGate=join(scratch,'hold-task-prepare');
+const dailyStartRegression=process.env.AREAL_TASK_DAILY_START_REGRESSION==='1';
+const inlineRegression=process.env.AREAL_TASK_INLINE_REGRESSION==='1';
+assert.ok(!inlineRegression||(!loadingRegression&&!dailyStartRegression&&process.env.AREAL_TASK_SCHEDULE_REGRESSION!=='1'),'run inline regression separately from other task scenarios');
+const inlineObjective='定时执行内联验收 INLINE_CONVERSATION';
+const inlineRuns=new Map();
+const dailyClock=join(scratch,'daily-clock');
 const loadingGate=join(scratch,'hold-project'), loadingTrace=join(scratch,'loading-trace.log'), prepareFailureGate=join(scratch,'fail-projectless-prepare');
 const watchGates=[];
 let launchApp=process.env.AREAL_GUI_TEST_APP_DIR || join(gui,'app');
@@ -39,10 +48,23 @@ const model=createServer(async(request,response)=>{
   const end=()=>{response.write(`data: ${JSON.stringify({choices:[],usage:{prompt_tokens:20,completion_tokens:10,total_tokens:30}})}\n\n`);response.end('data: [DONE]\n\n');};
   const finish=content=>{send({content});send({},'stop');end();};
   const tool=(name,args)=>{send({tool_calls:[{index:0,id:randomUUID(),type:'function',function:{name,arguments:JSON.stringify(args)}}]});send({},'tool_calls');end();};
+  if(messages.some(m=>m.role==='user'&&text(m).includes('ORDINARY_TASK_MODEL'))){finish('普通会话模型已受理。');return;}
+  if(messages.some(m=>m.role==='system'&&text(m).includes('Generate a concise semantic session title'))){finish('每日问候');return;}
   if(messages.some(m=>text(m).includes('AREAL_TASK_DRAFT'))) {
    const last=messages.filter(m=>m.role==='user'&&!text(m).startsWith('AReaL runtime context')).at(-1);
    const requestText=text(last??{});
-   if(requestText.includes('过去的每日时间')){finish(JSON.stringify({kind:'proposal',message:'已保存每日任务。',objective:'过去的每日时间 SCHEDULE_FIXTURE_COMPLETE',interactionMode:'interactive',schedule:{at:pastDailyAnchor,intervalSeconds:86400}}));return;}
+   if(requestText.includes('创建体验验收')){finish(JSON.stringify({kind:'proposal',message:'将保存安排。',objective:requestText,interactionMode:'interactive',schedule:{at:changedAnchor}}));return;}
+   if(inlineRegression&&requestText.includes('定时执行内联验收')){
+    finish(JSON.stringify({kind:'proposal',message:'将创建内联执行验收任务。',objective:inlineObjective,interactionMode:'interactive',schedule:{at:new Date(Date.now()+6000).toISOString().replace(/\.\d{3}Z$/,'Z'),intervalSeconds:12}}));return;
+   }
+   if(requestText.includes('每日起点验收')||requestText.includes('沿用刚才日期')){
+    if(requestText.includes('先确认开始日期')){finish(JSON.stringify({kind:'question',message:'每天几点问好？'}));return;}
+    const explicit=messages.some(m=>m.role==='user'&&text(m).includes('从明天开始'));
+    const at=requestText.includes('春季跳时')?'2027-03-15T02:30:00':requestText.includes('秋季重复')?'2027-11-08T01:30:00':'2040-04-02T10:10:00';
+    const dailyStart=requestText.includes('意图缺失')?undefined:requestText.includes('来源伪造')?{kind:'explicit',source:'用户从未提供的开始日'}:explicit?{kind:'explicit',source:'从明天开始'}:{kind:'nearest'};
+    finish(JSON.stringify({kind:'proposal',message:'将保存每日问候。',objective:requestText,interactionMode:'interactive',dailyStart,schedule:{at,intervalSeconds:86400}}));return;
+   }
+   if(requestText.includes('过去的每日时间')){finish(JSON.stringify({kind:'proposal',message:'已保存每日任务。',objective:'过去的每日时间 SCHEDULE_FIXTURE_COMPLETE',interactionMode:'interactive',dailyStart:{kind:'nearest'},schedule:{at:pastDailyAnchor,intervalSeconds:86400}}));return;}
    if(requestText.includes('明确改为一次')){finish(JSON.stringify({kind:'proposal',message:'已保存一次性任务。',schedule:{at:changedAnchor,intervalSeconds:null}}));return;}
    if(requestText.includes('过去的一次性时间')){finish(JSON.stringify({kind:'proposal',message:'已保存过期的一次性任务。',schedule:{at:pastDailyAnchor,intervalSeconds:null}}));return;}
    if(requestText.includes('旧项目目录验收')){finish(JSON.stringify({kind:'proposal',message:'已保存旧项目任务。',objective:'旧项目目录验收 SCHEDULE_FIXTURE_COMPLETE',interactionMode:'interactive',schedule:{at:changedAnchor}}));return;}
@@ -62,6 +84,20 @@ const model=createServer(async(request,response)=>{
   const goalView=JSON.parse(contexts.at(-1).split('Current authoritative goal: ').at(-1));
   const goal=goalView.goal;
   if(goal.limitsPending){tool('goal_set_limits',{expectedRevision:goalView.revision,sources:{}});return;}
+  if(inlineRegression&&goal.objective===inlineObjective){
+   let run=inlineRuns.get(goal.id);
+   if(!run){
+    const index=inlineRuns.size+1;
+    run={index,progress:`第 ${index} 次执行中：INLINE_PROGRESS_${index}。`,final:`第 ${index} 次执行完成：INLINE_FINAL_${index}。`,release:null};
+    inlineRuns.set(goal.id,run);
+    send({content:run.progress});held.add(response);response.on('close',()=>held.delete(response));
+    // 由断言释放流，避免固定延迟让慢机器只能看到完成后的结果。
+    run.release=()=>{assert.ok(!response.destroyed,'inline fixture stream remains connected');held.delete(response);tool('goal_update',{expectedRevision:goalView.revision,status:'complete',summary:`INLINE_REPORT_${index}`,evidence:['内联执行中间响应已由界面验收。'],remaining:[]});};
+    return;
+   }
+   assert.equal(goal.report?.status,'complete','released inline run reaches its real goal completion');
+   finish(run.final);return;
+  }
   if(goal.objective.includes('READ_RESUME')&&!blockedOnce.has(goal.id)) {
    blockedOnce.add(goal.id);await new Promise(resolve=>setTimeout(resolve,1500));
    tool('goal_update',{expectedRevision:goalView.revision,status:'blocked',summary:'Earlier Turn finished; waiting for explicit resume.',evidence:['Fixture reached its decision boundary.'],remaining:['Resume explicitly'],blocker:'Explicit user decision'});return;
@@ -77,6 +113,10 @@ const model=createServer(async(request,response)=>{
 await new Promise(resolve=>model.listen(0,'127.0.0.1',resolve));
 await writeFile(join(userHome,'.areal/config.toml'),`schema_version=1\n[model]\nprovider="fixture"\nname="fixture"\n[model.providers.fixture]\nprotocol="chat-completions"\napi_key_env="AREAL_CREDENTIAL_task_fixture"\nendpoint="http://127.0.0.1:${model.address().port}/v1/chat/completions"\n[permissions]\nmode="YOLO"\nask=["fs_create"]\n`);
 const deployment=join(scratch,'desktop.json');
+if(creationRegression){
+ const file=join(userHome,'.areal/config.toml');
+ await writeFile(file,(await readFile(file,'utf8')).replace('[permissions]','models=[{id="fixture",enabled=true},{id="gpt-6.1-sol",enabled=true},{id="gpt-6-sol",enabled=true}]\n[permissions]'));
+}
 await writeFile(deployment,JSON.stringify({profiles:[{id:'standard',revision:'v1',displayName:'Fixture',instructions:'Complete the requested fixture.',approvalTools:['fs_create']}]}));
 const env={...process.env,AREAL_GUI_USER_DATA:join(scratch,'electron'),AREAL_CORE_HOME:join(scratch,'core'),AREAL_CORE_USER_HOME:userHome,AREAL_HARNESS_SERVICE_HOME:join(scratch,'registry'),AREAL_CORE_DESKTOP_CONFIG:deployment,AREAL_CORE_BIN:binary,AREAL_CREDENTIAL_task_fixture:'task-fixture-key'};
 for(const key of ['AREAL_CORE_WORKSPACE','AREAL_CORE_CONFIG','AREAL_HARNESS_HOME','AREAL_HARNESS_CONFIG'])delete env[key];
@@ -93,8 +133,12 @@ async function assertGlobalCreation(){
  assert.equal(await main.getByLabel('工作目录',{exact:true}).count(),0,'new task has no working directory field');
  assert.equal(await main.getByRole('button',{name:'开始配置',exact:true}).count(),0,'new task requires no start-configuration gate');
  assert.equal(await main.locator('.task-plan-summary').count(),0);
- const chat=page.getByTestId('chat-input');await chat.waitFor();await until(()=>chat.isEditable(),'automatic independent configuration Composer ready');
- const saved=await page.evaluate(key=>JSON.parse(localStorage.getItem(key)),`areal-gui:task-draft:${workspacePid}`);
+ const chat=page.getByTestId('chat-input');await chat.waitFor();
+ const saved=await until(async()=>{
+  const draft=await page.evaluate(key=>JSON.parse(localStorage.getItem(key)),`areal-gui:task-draft:${workspacePid}`);
+  return draft?.threadId&&draft.ownerId&&draft;
+ },'authoritative independent management admission ready');
+ await until(()=>chat.isEditable(),'automatic independent configuration Composer ready');
  const owner=(await snapshot()).projects.find(project=>project.id===saved.ownerId);
  assert.equal(owner.projectless,true);
  assert.notEqual(owner.id,workspacePid);
@@ -105,7 +149,7 @@ async function assertGlobalCreation(){
  return {saved,owner,draft};
 }
 async function launch(){app=await electron.launch({executablePath:process.env.AREAL_ELECTRON_EXECUTABLE||require('electron'),args:[launchApp],env,timeout:120000});page=await app.firstWindow();await app.evaluate(({BrowserWindow})=>{const window=BrowserWindow.getAllWindows()[0];window.show();window.focus();});await page.bringToFront();page.setDefaultTimeout(15000);page.on('pageerror',error=>errors.push(error.message));await page.getByTestId('areal-workbench').waitFor({timeout:120000});await until(async()=>(await snapshot()).connection?.state==='ready','adapter ready');}
-if(loadingRegression){
+if(loadingRegression||creationRegression){
  launchApp=join(scratch,'app');await mkdir(launchApp);
  await writeFile(join(launchApp,'package.json'),JSON.stringify({name:'task-loading-fixture',main:'bootstrap.cjs'}));
  await writeFile(join(launchApp,'bootstrap.cjs'),`
@@ -124,6 +168,10 @@ CoreBackend.prototype.start=async function(id){
 CoreBackend.prototype.executeCommand=async function(name,request,context){
  if(name==='projectless'&&request.operation==='prepare'){
   appendFileSync(${JSON.stringify(loadingTrace)},'projectless prepare '+request.requestId+'\\n');
+  if(existsSync(${JSON.stringify(creationGate)})){
+   appendFileSync(${JSON.stringify(loadingTrace)},'creation prepare pending\\n');
+   while(existsSync(${JSON.stringify(creationGate)}))await new Promise(resolve=>setTimeout(resolve,25));
+  }
   if(existsSync(${JSON.stringify(prepareFailureGate)})){
    unlinkSync(${JSON.stringify(prepareFailureGate)});
    throw new Error('独立任务初始化验收失败，请重试。');
@@ -131,6 +179,7 @@ CoreBackend.prototype.executeCommand=async function(name,request,context){
  }
  if(name==='manage'&&request.operation==='taskDraftStart')appendFileSync(${JSON.stringify(loadingTrace)},'draft start '+request.projectId+' '+request.draftId+'\\n');
  const result=await execute.call(this,name,request,context);
+ if(name==='manage'&&request.operation==='taskDraftRead'&&result.thread)appendFileSync(${JSON.stringify(loadingTrace)},'creation thread ready\\n');
  if(name==='manage'&&request.operation==='taskWatch'){
   const gate=join(${JSON.stringify(scratch)},'watch-'+request.taskId);
   if(existsSync(gate)){
@@ -143,6 +192,180 @@ CoreBackend.prototype.executeCommand=async function(name,request,context){
 };
 require(${JSON.stringify(join(gui,'app/src/main.cjs'))});
 `);
+}
+if(dailyStartRegression){
+ await writeFile(dailyClock,String(Date.parse('2040-04-01T10:08:00+08:00')));
+ launchApp=join(scratch,'daily-app');await mkdir(launchApp);
+ await writeFile(join(launchApp,'package.json'),JSON.stringify({name:'daily-start-fixture',main:'bootstrap.cjs'}));
+ await writeFile(join(launchApp,'bootstrap.cjs'),`
+const Module=require('node:module'),fs=require('node:fs');
+const target=${JSON.stringify(join(gui,'app/src/core/task-draft.cjs'))};
+const compile=Module._extensions['.cjs']??Module._extensions['.js'];
+Module._extensions['.cjs']=function(module,file){
+ if(file!==target)return compile(module,file);
+ const source=fs.readFileSync(file,'utf8');
+ const clock=${JSON.stringify(dailyClock)};
+ module._compile('const Date=class extends globalThis.Date { constructor(...args){super(...(args.length?args:[Number(require("node:fs").readFileSync('+JSON.stringify(clock)+',"utf8"))]));} static now(){return Number(require("node:fs").readFileSync('+JSON.stringify(clock)+',"utf8"));} };\\n'+source,file);
+};
+const {CoreBackend}=require(${JSON.stringify(join(gui,'app/src/core/backend.cjs'))});
+const execute=CoreBackend.prototype.executeCommand;
+CoreBackend.prototype.executeCommand=async function(name,request,context){
+ const measured=name==='projectless'&&request.operation==='prepare'||name==='manage'&&['taskDraftStart','taskDraftConfirm'].includes(request.operation);
+ const start=performance.now();let ok=false;
+ try{const result=await execute.call(this,name,request,context);ok=true;return result;}
+ finally{if(measured)fs.appendFileSync(${JSON.stringify(join(scratch,'command-timings.jsonl'))},JSON.stringify({name,operation:request.operation,elapsedMs:performance.now()-start,ok})+'\\n');}
+};
+require(${JSON.stringify(join(gui,'app/src/main.cjs'))});
+`);
+}
+async function checkDailyStartRegression(){
+ const timezone=await page.context().newCDPSession(page);
+ await page.getByRole('button',{name:'定时任务',exact:true}).click();
+ const cases=[
+  {name:'今天时间未到',clock:'2040-04-01T10:08:00+08:00',message:'每日起点验收，每天早上10:10给我问好。',expected:'2040-04-01T10:10:00+08:00'},
+  {name:'今天时间已过',clock:'2040-04-01T10:12:00+08:00',message:'每日起点验收，每天早上10:10给我问好。',expected:'2040-04-02T10:10:00+08:00'},
+  {name:'今天恰好到点',clock:'2040-04-01T10:10:00+08:00',message:'每日起点验收，每天早上10:10给我问好。',expected:'2040-04-02T10:10:00+08:00'},
+  {name:'明确明天开始',clock:'2040-04-01T10:08:00+08:00',message:'每日起点验收，从明天开始，每天早上10:10给我问好。',expected:'2040-04-02T10:10:00+08:00'},
+  {name:'明确明天后补时刻',clock:'2040-04-01T10:08:00+08:00',question:'每日起点验收，从明天开始每天给我问好，先确认开始日期。',message:'10:10，沿用刚才日期。',expected:'2040-04-02T10:10:00+08:00'},
+  {name:'任务内容中的明天',clock:'2040-04-01T10:08:00+08:00',message:'每日起点验收，每天早上10:10总结明天的计划。',expected:'2040-04-01T10:10:00+08:00'},
+  {name:'春季跳时后',zone:'America/New_York',clock:'2027-03-14T04:00:00-04:00',message:'每日起点验收，春季跳时，每天02:30问好。',expected:'2027-03-15T02:30:00-04:00'},
+  {name:'秋季重复时刻',zone:'America/New_York',clock:'2027-11-07T01:45:00-04:00',message:'每日起点验收，秋季重复，每天01:30问好。',expected:'2027-11-07T01:30:00-05:00'},
+  {name:'旧提案意图缺失',clock:'2040-04-01T10:08:00+08:00',message:'每日起点验收，意图缺失，每天10:10问好。',reject:'每日任务缺少有效的首次日期说明'},
+  {name:'开始日期来源伪造',clock:'2040-04-01T10:08:00+08:00',message:'每日起点验收，来源伪造，每天10:10问好。',reject:'每日任务的首次日期缺少你的原文说明'},
+ ];
+ const results=[];
+ for(const entry of cases){
+  await timezone.send('Emulation.setTimezoneOverride',{timezoneId:entry.zone??'Asia/Shanghai'});
+  await writeFile(dailyClock,String(Date.parse(entry.clock)));
+  const openStarted=performance.now();
+  await page.getByRole('button',{name:'新建自动化',exact:true}).click();
+  const creation=await assertGlobalCreation();pid=creation.owner.id;
+  const openElapsedMs=performance.now()-openStarted;
+  if(entry.question){await page.getByTestId('chat-input').fill(entry.question);await page.getByTestId('chat-send-button').click();await page.getByText('每天几点问好？',{exact:true}).waitFor();}
+  await page.getByTestId('chat-input').fill(entry.message);await page.getByTestId('chat-send-button').click();
+  if(entry.reject){
+   await page.getByRole('alert').filter({hasText:entry.reject}).first().waitFor();
+   assert.equal((await call('tasks',{operation:'list'})).data.some(t=>t.projectId===pid),false,entry.name+' must not create a task');
+   checks.push('daily start rejects '+entry.name);
+   await page.getByRole('button',{name:'关闭创建对话',exact:true}).click();
+   continue;
+  }
+  const created=await until(async()=>(await call('tasks',{operation:'list'})).data.find(t=>t.projectId===pid),'daily task persists');
+  results.push({...entry,openElapsedMs,saved:created});
+  await writeFile(join(scratch,'daily-start-results.json'),JSON.stringify(results,null,2));
+  assert.equal(created.schedule.at,Date.parse(entry.expected)/1000,entry.name);
+  assert.equal(created.nextRunAt,Date.parse(entry.expected)/1000,entry.name+' authoritative nextRunAt');
+  assert.equal(created.schedule.intervalSeconds,86400);
+  assert.equal(created.schedule.timeZone,entry.zone??'Asia/Shanghai');
+  await page.getByText(/^已创建任务。/).last().waitFor();
+  await page.screenshot({path:join(scratch,'daily-'+results.length+'.png')});
+  checks.push('daily start '+entry.name+' saves '+entry.expected);
+  await page.getByRole('button',{name:'关闭任务详情',exact:true}).click();
+ }
+ assert.deepEqual(errors,[]);
+}
+async function checkCreationRegression(){
+ const admitted=await call('create',{projectId:workspacePid,model:{providerId:'fixture',modelId:'gpt-6.1-sol'},parameters:{reasoningEffort:'none'}});
+ await call('send',{projectId:workspacePid,threadId:admitted.threadId,text:'ORDINARY_TASK_MODEL 第一模型'});
+ await until(async()=>(await snapshot()).projects.find(p=>p.id===workspacePid).state.threads[admitted.threadId].turns.at(-1)?.status==='completed','ordinary model selection admitted');
+ const remembered=(await snapshot()).projects.find(p=>p.id===workspacePid).lastAcceptedModel;
+ assert.equal(remembered.modelId,'gpt-6.1-sol');assert.equal(remembered.reasoningEffort,'none');
+ await page.getByRole('button',{name:'定时任务',exact:true}).click();
+ if(creationRegression!=='model')await writeFile(creationGate,'hold');
+ const openStart=performance.now();
+ await page.getByRole('button',{name:'新建自动化',exact:true}).click();
+ const chat=page.getByTestId('chat-input');
+ let draftText='创建体验验收，明天早上问好，保留中文草稿。';
+ let inputReadyMs;
+ if(creationRegression!=='model'){
+  await until(async()=>(await readFile(loadingTrace,'utf8')).includes('creation prepare pending'),'independent preparation held');
+  assert.equal(await chat.count(),1,'new task input must render before independent Core preparation completes');
+  assert.equal(await chat.isEditable(),true,'new task input is editable while Core prepares');
+  inputReadyMs=performance.now()-openStart;
+  await chat.fill(draftText);
+  await page.screenshot({path:join(scratch,'creation-preparing.png')});
+  assert.equal(await page.getByTestId('chat-send-button').isDisabled(),true,'no submission before real management Thread exists');
+  assert.equal((await call('tasks',{operation:'list'})).data.length,0);
+  const savedBefore=await page.evaluate(key=>JSON.parse(localStorage.getItem(key)),`areal-gui:task-draft:${workspacePid}`);
+  await page.getByRole('button',{name:'关闭创建对话',exact:true}).click();
+  await page.getByRole('button',{name:'新建自动化',exact:true}).click();
+  await until(async()=>(await chat.textContent()).trim()===draftText,'closing and reopening retains preparing text');
+  assert.equal(await page.evaluate(key=>JSON.parse(localStorage.getItem(key)).draftId,`areal-gui:task-draft:${workspacePid}`),savedBefore.draftId);
+  await chat.focus();await chat.press('End');
+  await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].webContents.debugger.attach('1.3'));
+  const ime=(method,params)=>app.evaluate(async({BrowserWindow},{method,params})=>BrowserWindow.getAllWindows()[0].webContents.debugger.sendCommand(method,params),{method,params});
+  const preparingInput=await chat.elementHandle();
+  try{
+   await ime('Input.imeSetComposition',{text:'你好',selectionStart:2,selectionEnd:2});
+   await until(async()=>(await chat.textContent()).includes('你好'),'Chromium composition candidate visible');
+   await rm(creationGate);
+   await until(async()=>(await readFile(loadingTrace,'utf8')).includes('creation thread ready'),'real management read returns during composition');
+   assert.equal(await preparingInput.evaluate(el=>el.isConnected),true,'active composition editor is retained until candidate commit');
+   await ime('Input.insertText',{text:'你好'});
+   draftText+='你好';
+  }finally{await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].webContents.debugger.detach());}
+  checks.push('preparing draft survives close/reopen and Chromium composition commit across authoritative Thread readiness');
+ }
+ const creation=await assertGlobalCreation();pid=creation.owner.id;
+ await until(async()=>!(await page.getByTestId('chat-send-button').isDisabled()),'real management Composer handoff enables send');
+ const configuration=creation.draft.thread.desktop.configuration;
+ await writeFile(join(scratch,'creation-result.json'),JSON.stringify({inputReadyMs,preparedMs:performance.now()-openStart,remembered,configuration},null,2));
+ assert.deepEqual(configuration.model,{providerId:'fixture',modelId:'gpt-6.1-sol'},'new management inherits the last admitted ordinary model');
+ assert.equal(configuration.parameters.reasoningEffort,'none','new management inherits explicit none effort');
+ if(creationRegression!=='model')assert.equal((await chat.textContent()).trim(),draftText,'typed text survives preparation and editor handoff');
+ else await chat.fill(draftText);
+ await page.getByTestId('chat-send-button').click();
+ const created=await until(async()=>(await call('tasks',{operation:'list'})).data.find(t=>t.projectId===pid),'task saved through inherited model');
+ const request=modelRequests.find(body=>(body.messages??[]).some(m=>text(m).includes('AREAL_TASK_DRAFT')));
+ assert.equal(request.model,'gpt-6.1-sol');assert.equal(request.reasoning_effort,'none');
+ assert.deepEqual((await snapshot()).projects.find(p=>p.id===workspacePid).lastAcceptedModel,remembered,'management submission does not overwrite ordinary model preference');
+ checks.push('new scheduled management inherits last admitted model and explicit none; actual model request matches');
+ if(inputReadyMs!==undefined)checks.push('editable local draft survives held independent preparation and real Composer handoff');
+ const history=await call('manage',{projectId:pid,operation:'taskDraftHistory',taskId:created.id});
+ const newer=await call('create',{projectId:workspacePid,model:{providerId:'fixture',modelId:'gpt-6-sol'},parameters:{reasoningEffort:'high'}});
+ await call('send',{projectId:workspacePid,threadId:newer.threadId,text:'ORDINARY_TASK_MODEL 第二模型'});
+ await until(async()=>(await snapshot()).projects.find(p=>p.id===workspacePid).lastAcceptedModel?.modelId==='gpt-6-sol','newer ordinary preference admitted');
+ await page.getByRole('button',{name:'关闭任务详情',exact:true}).click();
+ await page.getByRole('button',{name:`打开自动化 ${created.objective}`,exact:true}).click();await chat.waitFor();
+ const reopened=await call('manage',{projectId:pid,operation:'taskDraftRead',threadId:history.threadId});
+ assert.equal(reopened.thread.desktop.configuration.model.modelId,'gpt-6.1-sol','reopening does not overwrite existing management selection');
+ assert.equal(reopened.thread.desktop.configuration.parameters.reasoningEffort,'none');
+ checks.push('reopened management keeps its model and effort after a newer ordinary model admission');
+ await page.getByRole('button',{name:'关闭任务详情',exact:true}).click();
+ await page.getByRole('button',{name:'新建自动化',exact:true}).click();
+ const next=await assertGlobalCreation();
+ assert.equal(next.draft.thread.desktop.configuration.model.modelId,'gpt-6-sol');
+ assert.equal(next.draft.thread.desktop.configuration.parameters.reasoningEffort,'high');
+ checks.push('another new scheduled management follows newer admitted model and effort');
+ const recoveryText='创建体验验收，快速恢复时保留的草稿。';
+ const targetKey=`areal-gui:draft:${next.owner.id}:${next.saved.threadId}`;
+ await page.getByRole('button',{name:'关闭创建对话',exact:true}).click();
+ await page.evaluate(({sourceKey,targetKey,recoveryText})=>{
+  const source=JSON.parse(localStorage.getItem(sourceKey));
+  localStorage.setItem(sourceKey,JSON.stringify({...source,text:recoveryText}));localStorage.removeItem(targetKey);
+  const original=window.requestAnimationFrame,frames=[];
+  window.requestAnimationFrame=callback=>{frames.push(callback);return -frames.length;};
+  window.releaseTaskFrames=()=>{window.requestAnimationFrame=original;frames.forEach(callback=>original(callback));};
+  document.querySelector('button[aria-label="新建自动化"]').click();
+ },{sourceKey:`areal-gui:task-draft:${workspacePid}`,targetKey,recoveryText});
+ try{
+  await until(async()=>await page.evaluate(key=>localStorage.getItem(key),targetKey)===recoveryText,'fast authoritative read retains draft before initial editor hydration');
+ }finally{await page.evaluate(()=>{window.releaseTaskFrames();delete window.releaseTaskFrames;});}
+ await until(async()=>(await chat.textContent()).trim()===recoveryText,'recovered Composer displays retained text');
+ checks.push('fast recovered Thread preserves persisted text before preparing editor hydration');
+ await page.getByRole('button',{name:'关闭创建对话',exact:true}).click();
+ await page.evaluate(key=>localStorage.removeItem(key),`areal-gui:task-draft:${workspacePid}`);
+ const catalog=await call('providers',{operation:'list'});
+ await call('providers',{operation:'saveAndApply',expectedRevision:catalog.revision,provider:{id:'fixture',name:'Fixture',baseUrl:`http://127.0.0.1:${model.address().port}/v1`,protocol:'chatCompletions',enabled:true,parameters:{},models:[{id:'fixture',enabled:true,parameters:{}},{id:'gpt-6.1-sol',enabled:true,parameters:{}},{id:'gpt-6-sol',enabled:false,parameters:{}}]}});
+ await page.getByRole('button',{name:'新建自动化',exact:true}).click();
+ const fallback=await assertGlobalCreation();pid=fallback.owner.id;
+ await page.getByText('上次使用的模型当前不可用，已显示备用默认模型，请确认后发送。',{exact:true}).waitFor();
+ await chat.fill('创建体验验收，模型不可用回退。');await page.getByTestId('chat-send-button').click();
+ await until(async()=>(await call('tasks',{operation:'list'})).data.some(t=>t.projectId===pid),'fallback model saves task');
+ const fallbackRequest=modelRequests.findLast(body=>(body.messages??[]).some(m=>text(m).includes('AREAL_TASK_DRAFT')));
+ assert.equal(fallbackRequest.model,'fixture','unavailable remembered model falls back to current Core default');
+ checks.push('unavailable remembered model uses current fallback with visible notice and actual request');
+ await page.screenshot({path:join(scratch,'creation-model.png')});assert.deepEqual(errors,[]);
 }
 async function checkLoadingRegression(){
  const slow=join(scratch,'slow-workspace');await mkdir(slow);
@@ -197,7 +420,8 @@ async function checkLoadingRegression(){
  await page.getByRole('button',{name:'新建自动化',exact:true}).click();
  await page.getByRole('alert').filter({hasText:'独立任务初始化验收失败，请重试。'}).waitFor();
  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
- assert.equal(await page.getByTestId('chat-input').count(),0);
+ assert.equal(await page.getByTestId('chat-input').isEditable(),true);
+ assert.equal(await page.getByTestId('chat-send-button').isDisabled(),true,'failed preparation retains local editing without admission');
  const failed=await page.evaluate(key=>JSON.parse(localStorage.getItem(key)),`areal-gui:task-draft:${workspacePid}`);
  assert.equal(failed.draftId,retainedId);assert.equal(failed.text,retainedText);assert.equal(failed.location.kind,'independent');
  assert.equal((await readFile(loadingTrace,'utf8')).split('projectless prepare '+retainedId).length-1,1,'failed prepare waits for explicit retry');
@@ -234,13 +458,131 @@ async function checkLoadingRegression(){
  checks.push('admitted pending draft keeps its owner and request identity without automatic replay');
  assert.deepEqual(errors,[]);
 }
+async function checkInlineRegression(){
+ await page.getByRole('button',{name:'定时任务',exact:true}).click();
+ await page.getByRole('button',{name:'新建自动化',exact:true}).click();
+ const creation=await assertGlobalCreation();pid=creation.owner.id;taskCwd=creation.owner.root;
+ const send=async message=>{await page.getByTestId('chat-input').fill(message);await page.getByTestId('chat-send-button').click();};
+ const question='检查执行结果，没有时间。',request='定时执行内联验收，请定期汇报执行结果。';
+ await send(question);await page.getByText('你希望什么时候执行？',{exact:true}).waitFor();
+ await send(request);await page.getByText(/^已创建任务。/).last().waitFor();
+ const created=await until(async()=>(await call('tasks',{operation:'list'})).data.find(t=>t.objective===inlineObjective),'UI creates inline task');
+ assert.equal(created.projectId,pid);assert.equal(created.scope,'independent');
+ const history=await call('manage',{projectId:pid,operation:'taskDraftHistory',taskId:created.id});
+ const managementThread=history.threadId;
+ assert.equal(managementThread,creation.saved.threadId);
+ const readManagement=()=>call('manage',{projectId:pid,operation:'taskDraftRead',threadId:managementThread});
+ const readCore=async threadId=>{
+  // CoreBackend lives in the shared service, not Electron Main. Observe the
+  // original Core directly without hydrating the GUI's execution projection.
+  const owner=(await snapshot()).projects.find(project=>project.id===pid);
+  const descriptor=JSON.parse(execFileSync(binary,['service','status','--instance',owner.core.instanceId,'--json'],{env,encoding:'utf8'}));
+  assert.equal(descriptor.state,'ready');assert.equal(descriptor.serviceId,owner.core.instanceId);
+  const auth=JSON.parse(await readFile(descriptor.authFile,'utf8'));
+  const principal=auth.principals.find(value=>value.permissions.includes('observe'));
+  assert.ok(principal?.token);
+  const WebSocket=require('ws');
+  const client=new CoreClient({createSocket:()=>new WebSocket(descriptor.endpoint,{headers:{Authorization:`Bearer ${principal.token}`},followRedirects:false})});
+  try{await client.connect();return (await client.request('thread/read',{threadId,includeTurns:true})).thread;}
+  finally{client.close();}
+ };
+ const originalCore=await readCore(managementThread);
+ const original=await readManagement();
+ assert.equal(original.thread.turns.length,2,'clarification and creation turns are retained');
+ assert.equal(original.running,false);
+ const completed=[];
+ const main=()=>page.getByRole('main',{name:'定时任务会话',exact:true});
+ const inline=()=>main().getByLabel('定时任务执行记录',{exact:true});
+ const row=id=>inline().locator(`[data-task-run-id="${id}"]`);
+ // 只约定可访问区域、Run 标识及标准消息项，不约束内联组件的布局或订阅实现。
+ const message=(scope,value)=>scope.locator('[data-turn-id] .assistant-message .conversation-markdown').getByText(value,{exact:true});
+ async function assertManagement(){
+  assert.equal(await main().count(),1);
+  assert.equal(await page.getByLabel('任务资源面板',{exact:true}).count(),0,'resources stay closed');
+  assert.equal(await page.getByTestId('chat-input').count(),1,'only the management input exists');
+  assert.equal(await main().getByTestId('chat-input').count(),1);
+  assert.equal(await page.locator('[data-v4-composer-dock]').count(),1,'run histories do not mount extra composers');
+  assert.equal(await inline().getByTestId('chat-input').count(),0);
+  const current=await readManagement();
+  assert.equal(current.threadId,managementThread);
+  assert.deepEqual((await readCore(managementThread)).turns,originalCore.turns,'authoritative management Turns remain unchanged');
+  assert.deepEqual(current.thread.turns,original.thread.turns,'run output must not be copied into management Turns');
+  assert.deepEqual(current.messages,original.messages,'creation messages remain unchanged');
+  for(const value of [question,'你希望什么时候执行？',request]){
+   const item=main().getByText(value,{exact:true});await item.waitFor();
+   assert.equal(await item.count(),1,'creation message renders once');
+  }
+  for(const turn of original.thread.turns){
+   const item=main().locator(`[data-turn-id="${turn.id}"]`);await item.waitFor();
+   assert.equal(await item.count(),1,'original creation Turn renders once');
+  }
+ }
+ for(const index of [1,2]){
+  const fixture=await until(()=>[...inlineRuns.values()].find(run=>run.index===index),`scheduled run ${index} reaches live response`);
+  // 在读取 Task（会更新桌面投影）之前等待界面自行显示，不能靠测试轮询补齐订阅。
+  await message(inline(),fixture.progress).waitFor();
+  assert.equal(await inline().count(),1);
+  const running=await task(created.id);
+  const run=running.runs.find(entry=>!completed.some(previous=>previous.id===entry.id));
+  assert.ok(run?.threadId,'real Core run owns an execution Thread');
+  assert.notEqual(run.threadId,managementThread);assert.notEqual(run.threadId,created.threadId);
+  assert.equal(await row(run.id).count(),1);
+  const live=message(row(run.id),fixture.progress);await live.waitFor();
+  assert.equal(await live.count(),1);
+  assert.equal(await row(run.id).locator('[data-turn-status="inProgress"]').count(),1);
+  assert.equal(await message(row(run.id),fixture.final).count(),0);
+  await assertManagement();
+  await new Promise(resolve=>setTimeout(resolve,1800));
+  assert.equal(await live.isVisible(),true,'intermediate reply remains visible before fixture release');
+  assert.equal((await task(created.id)).runs.find(entry=>entry.id===run.id).status,'running');
+  if(index===2)await control(created.id,'taskPause');
+  await page.screenshot({path:join(scratch,`task-inline-live-${index}.png`)});
+  fixture.release();fixture.release=null;
+  await message(row(run.id),fixture.final).waitFor();
+  await until(async()=>(await task(created.id)).runs.find(entry=>entry.id===run.id)?.status==='completed',`run ${index} completes`);
+  completed.push(run);
+  checks.push(`inline run ${index}: live standard message before completion, exact final reply with resources closed`);
+ }
+ assert.notEqual(completed[0].id,completed[1].id);
+ assert.notEqual(completed[0].threadId,completed[1].threadId);
+ async function assertRestored(label){
+  await inline().waitFor();
+  for(const [offset,run] of completed.entries()){
+   const fixture=[...inlineRuns.values()].find(entry=>entry.index===offset+1);
+   await message(row(run.id),fixture.final).waitFor();
+   const source=await readCore(run.threadId);
+   const finalTurns=source.turns.filter(turn=>turn.items.some(item=>item.type==='agentMessage'&&item.phase!=='commentary'&&item.text===fixture.final));
+   assert.equal(finalTurns.length,1,'fixture final is persisted in the actual execution Thread');
+   assert.equal(await row(run.id).locator(`[data-turn-id="${finalTurns[0].id}"] .assistant-message .conversation-markdown`).getByText(fixture.final,{exact:true}).count(),1,'inline final uses the real execution Turn');
+   assert.equal(await row(run.id).count(),1,label+' renders each Run once');
+   assert.equal(await message(row(run.id),fixture.final).count(),1,label+' renders each final once');
+   assert.equal(await message(inline(),fixture.final).count(),1,label+' has no duplicate final in another Run');
+  }
+  assert.equal(await inline().locator('[data-task-run-id]').count(),2,label+' contains exactly two runs');
+  const saved=await task(created.id);
+  assert.equal(saved.runs.length,2);assert.equal(saved.paused,true);
+  assert.equal(inlineRuns.size,2,'no additional execution requests');
+  await assertManagement();
+  assert.deepEqual(errors,[]);
+  await page.screenshot({path:join(scratch,`task-inline-${label}.png`)});
+  checks.push(`inline ${label}: both outputs restored once, original creation Turns unchanged, single management Composer`);
+ }
+ await assertRestored('completed');
+ await page.getByRole('button',{name:'关闭任务详情',exact:true}).click();
+ await page.getByRole('button',{name:`打开自动化 ${inlineObjective}`,exact:true}).click();
+ await assertRestored('navigation');
+ await app.close();await launch();
+ await page.getByRole('button',{name:'定时任务',exact:true}).click();
+ await page.getByRole('button',{name:`打开自动化 ${inlineObjective}`,exact:true}).click();
+ await assertRestored('reopen');
+}
 try{
  await launch();
  await app.evaluate(({dialog,BrowserWindow},path)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[path]});BrowserWindow.getAllWindows()[0].setSize(1488,1056);},workspace);
  await page.evaluate(()=>window.arealDesktop.chooseProject());
  pid=(await until(async()=>(await snapshot()).projects.find(p=>p.root===workspace&&p.state?.connected),'project ready')).id;
  workspacePid=pid;
- if(loadingRegression){await checkLoadingRegression();passed=true;}else{
+ if(creationRegression){await checkCreationRegression();passed=true;}else if(inlineRegression){await checkInlineRegression();passed=true;}else if(dailyStartRegression){await checkDailyStartRegression();passed=true;}else if(loadingRegression){await checkLoadingRegression();passed=true;}else{
  await page.getByRole('button',{name:'设置',exact:true}).click();
  await page.getByRole('button',{name:'外观',exact:true}).click();
  await page.getByRole('combobox',{name:'界面主题',exact:true}).click();
@@ -443,6 +785,7 @@ try{
  if(page){await writeFile(join(scratch,'failure-state.json'),JSON.stringify(await snapshot(),null,2)).catch(()=>{});await writeFile(join(scratch,'failure.aria.txt'),await page.locator('body').ariaSnapshot()).catch(()=>{});await writeFile(join(scratch,'failure-ui.json'),JSON.stringify(await page.evaluate(()=>({focus:{tag:document.activeElement?.tagName,id:document.activeElement?.id,role:document.activeElement?.getAttribute('role'),label:document.activeElement?.getAttribute('aria-label')},hidden:document.hidden,options:[...document.querySelectorAll('[role=option]')].map(el=>({html:el.outerHTML,rect:el.getBoundingClientRect().toJSON(),visibility:getComputedStyle(el).visibility,display:getComputedStyle(el).display,opacity:getComputedStyle(el).opacity}))})),null,2)).catch(()=>{});await page.screenshot({path:join(scratch,'failure.png')}).catch(()=>{});}
  throw error;
 }finally{
+ await rm(creationGate,{force:true});
  await rm(loadingGate,{force:true});
  await rm(prepareFailureGate,{force:true});
  for(const gate of watchGates)await rm(gate,{force:true});

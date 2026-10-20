@@ -1,4 +1,6 @@
+import { imageAnnotationBlocked, useImageAnnotationRevision, type ImageAnnotationTarget } from "./imageAnnotations.js";
 import { resolveDraftProfile } from "./ProfileDetails.js";
+import { resolveNewConversationModel } from "@areal/workbench/model-selection";
 import { useApplicationPreferences } from "./settings/applicationPreferences.js";
 import { ComposerModelMenu, composerModelOption } from "./ComposerModelMenu.js";
 import { ComposerPermissionMenu } from "./ComposerPermissionMenu.js";
@@ -34,6 +36,7 @@ export function DraftComposer({
   onPanel,
   draftKey,
   prepareProject,
+  onAnnotate,
 }: {
   project: Data;
   action: Action;
@@ -42,6 +45,7 @@ export function DraftComposer({
   onPanel: (panel: string) => void;
   draftKey?: string;
   prepareProject?: () => Promise<Data>;
+  onAnnotate?: (target: ImageAnnotationTarget) => void;
 }) {
   const prefs = useApplicationPreferences();
   const key = draftKey ?? `areal-gui:draft:${project.id}:new`;
@@ -64,13 +68,15 @@ export function DraftComposer({
       if ((event as CustomEvent<string>).detail !== key || sending.has(key)) return;
       const draft = localStorage.getItem(key) ?? "";
       setProfileSelection(localStorage.getItem(`${key}:profile`) ?? "");
-      api.current?.setText(draft); setText(draft); api.current?.focus();
+      api.current?.setText(draft); setText(draft); setFiles(attachmentDrafts.get(key) ?? []); api.current?.focus();
     };
     window.addEventListener("areal-draft-change", refreshDraft);
     return () => window.removeEventListener("areal-draft-change", refreshDraft);
   }, [key]);
   const [files, setFiles] = useState<ComposerDraftAttachment[]>(() => attachmentDrafts.get(key) ?? []);
   const input = composerInput(text, files);
+  useImageAnnotationRevision();
+  const annotationBlocked = imageAnnotationBlocked(key, input.files);
   const [permission, setPermission] = useState<PermissionMode>(() => localStorage.getItem(`${key}:permission`) === "ask" ? "ask" : "auto");
   const [plan, setPlan] = useState(() => localStorage.getItem(`${key}:plan`) === "true");
   const [profileSelection, setProfileSelection] = useState(() => localStorage.getItem(`${key}:profile`) ?? "");
@@ -84,23 +90,18 @@ export function DraftComposer({
   const setPlanMode = (enabled: boolean) => { setPlan(enabled); localStorage.setItem(`${key}:plan`, String(enabled)); };
   const [model, setModel] = useState<string | null>(() => localStorage.getItem(`${key}:model`));
   const modelValue = (item: Data) => `${item.providerId ?? ""}/${item.modelId}`;
-  const previousSelection = project.lastAcceptedModel;
-  const rememberedModel = previousSelection && project.models.find((item: Data) =>
-    (item.providerId ?? null) === (previousSelection.model?.providerId ?? null)
-    && item.modelId === previousSelection.modelId);
-  const useRemembered = !chosenProfile?.model && rememberedModel?.available !== false && !!rememberedModel;
+  const initialSelection = resolveNewConversationModel(project.models, project.lastAcceptedModel);
   const initialModel = chosenProfile?.model
     ? project.models.find((item: Data) => item.providerId === chosenProfile.model.providerId && item.modelId === chosenProfile.model.modelId)
-    : useRemembered ? rememberedModel : project.models.find((item: Data) => item.isDefault);
+    : initialSelection.candidate;
   const effectiveModel = model ?? (chosenProfile?.model
     ? `${chosenProfile.model.providerId}/${chosenProfile.model.modelId}` : initialModel ? modelValue(initialModel) : "");
   const currentModel = project.models.find((item: Data) => modelValue(item) === effectiveModel);
-  const rememberedEffort = useRemembered && model === null ? previousSelection.reasoningEffort : undefined;
-  const unsupportedEffort = rememberedEffort != null && !currentModel?.reasoningEffortOptions?.includes(rememberedEffort);
-  const effort = efforts[effectiveModel] ?? (unsupportedEffort ? undefined : rememberedEffort) ?? currentModel?.parameters?.reasoningEffort ?? "";
-  const preferenceNotice = model === null && !chosenProfile?.model && previousSelection
-    ? !useRemembered ? "上次使用的模型当前不可用，已显示备用默认模型，请确认后发送。"
-      : unsupportedEffort ? "上次使用的思考强度当前不受支持，已使用模型默认值。" : ""
+  const rememberedEffort = !chosenProfile?.model && model === null ? initialSelection.rememberedEffort : undefined;
+  const effort = efforts[effectiveModel] ?? rememberedEffort ?? currentModel?.parameters?.reasoningEffort ?? "";
+  const preferenceNotice = model === null && !chosenProfile?.model
+    ? initialSelection.notice === "model-unavailable" ? "上次使用的模型当前不可用，已显示备用默认模型，请确认后发送。"
+      : initialSelection.notice === "effort-unsupported" ? "上次使用的思考强度当前不受支持，已使用模型默认值。" : ""
     : "";
   const [unknown, setUnknown] = useState(() => localStorage.getItem(`${key}:pending-create`));
   const busy = useSyncExternalStore(subscribeSending, () => sending.has(key));
@@ -114,6 +115,7 @@ export function DraftComposer({
   const skills = useComposerSkills({ project, profile: chosenProfile, draftKey: key, action: readAction, disabled });
   useEffect(() => {
     attachmentDrafts.set(key, files);
+    window.dispatchEvent(new CustomEvent("areal-attachments-change", { detail: key }));
   }, [key, files]);
   const clear = () => {
     detachReviewComments(reviewKey);
@@ -155,7 +157,7 @@ export function DraftComposer({
   }, [unknown, project.pending.length, project.outcomes]);
   const submit = async (value: string) => {
     const submittedInput = composerInput(value, files);
-    if ((desktopUnsupported && !goalMode) || disabled || sending.has(key) || (!submittedInput.text.trim() && !submittedInput.files.length && !comments.length && !skills.selected.length) || (goalMode && !submittedInput.text.trim())) return;
+    if ((desktopUnsupported && !goalMode) || disabled || annotationBlocked || sending.has(key) || (!submittedInput.text.trim() && !submittedInput.files.length && !comments.length && !skills.selected.length) || (goalMode && !submittedInput.text.trim())) return;
     markSending(key, true);
     setDraftError("");
     let targetKey: string | undefined;
@@ -280,7 +282,7 @@ export function DraftComposer({
         submitTestId="chat-send-button"
         placeholder={goalMode ? "描述目标，明确可衡量的结果" : plan ? "描述任务，生成计划…" : "随心输入"}
         disabled={disabled}
-        submitDisabled={disabled || (desktopUnsupported && !goalMode) || (goalMode ? !input.text.trim() : !input.text.trim() && !input.files.length && !comments.length && !skills.selected.length)}
+        submitDisabled={disabled || annotationBlocked || (desktopUnsupported && !goalMode) || (goalMode ? !input.text.trim() : !input.text.trim() && !input.files.length && !comments.length && !skills.selected.length)}
         submitting={busy}
         submitLabel={goalMode ? "开始目标" : "发送"}
         enterSubmits={prefs.sendShortcut === "enter"}
@@ -307,6 +309,7 @@ export function DraftComposer({
           {files.length ? (
             <div className="composer-attachments" data-testid="composer-attachments">
               {files.map((file, i) => <ComposerAttachment disabled={disabled} key={isComposerFile(file) ? `${file.name}-${file.lastModified}-${i}` : `pasted-text-${i}`} file={file}
+                onAnnotate={onAnnotate ? file => onAnnotate({ draftKey: key, file, returnFocus: () => api.current?.focus() }) : undefined}
                 onRemove={() => setFiles((current) => current.filter((_, at) => at !== i))}
                 onExpand={content => { api.current?.appendText(`${text.length ? "\n\n" : ""}${content}`); setFiles(current => current.filter(item => item !== file)); }} />)}
             </div>

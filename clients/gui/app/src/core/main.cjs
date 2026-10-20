@@ -6,6 +6,8 @@ startupTraceMain.advance('imports');
 const { app, BrowserWindow, Menu, dialog, ipcMain, protocol, nativeTheme, WebContentsView, shell, powerMonitor, Notification } = require('electron');
 const { readFile, realpath, stat, writeFile } = require('node:fs/promises');
 const { join, resolve, extname, sep } = require('node:path');
+const { randomUUID } = require('node:crypto');
+const { ProjectionEncoder } = require('@areal/workbench/state-projection');
 const { createOwner } = require('./application-owner.cjs');
 const { setupUpdater } = require('../update/electron.cjs');
 const { showCoreNotification } = require('./notifications.cjs');
@@ -40,6 +42,7 @@ const mime = { '.wasm': 'application/wasm', '.js': 'text/javascript', '.css': 't
 let window, backend, preview, mcpApps, updates, quitting = false, exitReady = false, themeId = 'system';
 let browserWindowClosed = false;
 const previewSubscriptions = new Map();
+const projections = new WeakMap();
 let startupPending = true, startupPainted = false, startupReady = false;
 let focusRequested = false, quitAttempt = null, quitRequestSequence = 0;
 let startupShowTrace, startupPaintTrace, startupPresentTrace;
@@ -155,7 +158,10 @@ function theme() {
 function publish() {
   preview?.releaseInvalidOwners();
   mcpApps?.revokeInvalid();
-  if (window && !window.isDestroyed()) window.webContents.send('areal-core:state', desktopSnapshot());
+  if (!window || window.isDestroyed()) return;
+  const owner = window.webContents, projection = projections.get(owner);
+  if (projection?.frame === owner.mainFrame)
+    owner.send('areal-core:projection', { frame: projection.encoder.encode(desktopSnapshot()) });
 }
 function desktopSnapshot() {
   const state = backend.snapshot();
@@ -219,7 +225,12 @@ async function createWindow() {
         return response === 1 && current();
       });
     preview.onRevoke = identity => { void backend.browserRevoke(identity).catch(() => {}); };
-    window.webContents.on('render-process-gone', () => mcpApps?.dispose());
+    const owner = window.webContents;
+    owner.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => {
+      if (mainFrame && !inPlace) projections.delete(owner);
+    });
+    owner.on('destroyed', () => projections.delete(owner));
+    owner.on('render-process-gone', () => { projections.delete(owner); mcpApps?.dispose(); });
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     window.webContents.on('will-navigate', event => event.preventDefault());
     window.webContents.on('will-prevent-unload', event => {
@@ -379,6 +390,16 @@ app.whenReady().then(async () => {
   ipcMain.handle('areal-core:notification-target', event => { trusted(event); return notificationTarget; });
   ipcMain.handle('areal-core:notification-consumed', (event, id) => { trusted(event); if (notificationTarget?.id === id) notificationTarget = null; });
   ipcMain.handle('areal-core:snapshot', event => { trusted(event); return desktopSnapshot(); });
+  ipcMain.on('areal-core:projection-request', (event, requestId) => {
+    try { trusted(event); } catch { return; }
+    if (!Number.isSafeInteger(requestId) || requestId <= 0) return;
+    let projection = projections.get(event.sender);
+    if (!projection || projection.frame !== event.senderFrame) {
+      projection = { frame: event.senderFrame, encoder: new ProjectionEncoder(randomUUID()) };
+      projections.set(event.sender, projection);
+    }
+    event.sender.send('areal-core:projection', { requestId, frame: projection.encoder.encode(desktopSnapshot(), true) });
+  });
   ipcMain.handle('areal-core:present-ready', event => {
     trusted(event);
     startupReady = true;

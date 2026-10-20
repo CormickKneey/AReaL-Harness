@@ -327,6 +327,9 @@ pub struct ToolExecution {
     /// 当前调用准许暴露的原始结果，引用保留在权威历史中以支持恢复与 GC。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_snapshot: Option<MediaRef>,
+    /// Exact file bytes captured before a conditional workspace write.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_before: Option<MediaRef>,
     /// 只记录转换度量，不持有另一份权威历史。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_projection: Option<Value>,

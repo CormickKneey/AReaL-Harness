@@ -56,6 +56,8 @@ macOS 的内置搜索助手与 fs.execute 复用系统 Python 启动桥接，再
 
 Runtime daemon 可用 `--cumulative-output-bytes` 独立设置部署及 Scope 后代累计输出上限；省略时等于 `--output-bytes`，且不得小于单进程上限。进程仍受 `--output-bytes` 限制，输出窗口另由 `--output-window-bytes` 约束。stdout/stderr 的真实接受字节对每个祖先累计一次；重复读取保留输出不再收费。文件助手的 JSON/base64 响应也是进程输出。
 
+Core 使用 `readForHistory` 捕获条件编辑的历史前像。仅这一经过校验的文件助手使用独立的 `MAX_FRAME_BYTES - 4096` 响应上限，不消耗命令或祖先输出额度。读取权限、文件大小、进程容量、时限和操作保留上限继续适用。普通 `read` 与 `process.start` 保留原有输出计量。
+
 ## 有界 hook 写入组
 
 `scope.createParticipant` 仅供连接所有者受理。`authorityScopeId` 必须等于当前 epoch 的不透明 connection root；`scope` 使用既有 `scope.create` 字段。`participation` 为 `{kind:"task",admissionWindowMs}` 或 `{kind:"hook",taskScopeId}`。Task 只能在现有组之外创建；Hook 的 parent 必须已属于指定且验证过的 Task Scope。普通子 Scope 继承参与身份；复制 owner metadata 不构成授权。旧 `scope.create` 与 `ScopeInfo` 不变；不支持的新方法明确拒绝，不使用放宽权限的 fallback。
@@ -91,6 +93,7 @@ fs.execute 仅在配置可信 helper 时可用；command.kind：
 | kind | 其他字段 | 结果字段 |
 |---|---|---|
 | read | `path,offset?=0,maxBytes` | `dataBase64,sha256,size,nextOffset,eof` |
+| readForHistory | `path,offset?=0,maxBytes` | 与 `read` 相同，仅用于内部历史证据 |
 | stat | `path` | `kind,size` |
 | list | `path,after?,limit` | `entries,nextCursor` |
 | search | `path,pattern,glob?,context,limit` | `matches[{path,line,text,kind}],limited,guidance` |

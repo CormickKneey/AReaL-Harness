@@ -81,10 +81,11 @@ contextBridge.exposeInMainWorld('arealDesktop', {
     handler(); // A click while the renderer was loading stays pending in Main.
     return () => { active = false; ipcRenderer.removeListener('areal-core:notification-open', handler); };
   },
-  onState: listener => {
+  requestProjection: requestId => ipcRenderer.send('areal-core:projection-request', requestId),
+  onProjection: listener => {
     const handler = (_event, value) => listener(value);
-    ipcRenderer.on('areal-core:state', handler);
-    return () => ipcRenderer.removeListener('areal-core:state', handler);
+    ipcRenderer.on('areal-core:projection', handler);
+    return () => ipcRenderer.removeListener('areal-core:projection', handler);
   },
   onTheme: listener => {
     const handler = (_event, value) => listener(value);

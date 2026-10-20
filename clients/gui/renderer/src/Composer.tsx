@@ -27,6 +27,7 @@ import { ComposerMcpIcon } from "./ComposerIcons.js";
 import { ComposerMcp } from "./ComposerMcp.js";
 import { AttachmentIcon } from "./interfaceIcons.js";
 import type { ComposerCatalogEntry } from "./prompt-editor/ComposerCatalog.js";
+import { imageAnnotationBlocked, snapshotImageAnnotations, serializeImageAnnotations, useImageAnnotationRevision, type ImageAnnotationTarget } from "./imageAnnotations.js";
 import { BrowserAnnotationAttachments } from "./BrowserAnnotationAttachments.js";
 import { browserAnnotation, browserAnnotationText, useBrowserAnnotationEditing } from "./browserAnnotations.js";
 import { ReviewCommentAttachment } from "./ReviewCommentViews.js";
@@ -60,6 +61,7 @@ export function Composer({
   onOpenTask,
   onSide,
   onMcpMention,
+  onAnnotate,
 }: {
   project: Data;
   thread: Data;
@@ -70,6 +72,7 @@ export function Composer({
   onOpenTask?: (target: { projectId: string; taskId: string; runId: string }) => void;
   onSide?: (draft: string) => void;
   onMcpMention?: () => void;
+  onAnnotate?: (target: ImageAnnotationTarget) => void;
 }) {
   const prefs = useApplicationPreferences();
   const key = `areal-gui:draft:${project.id}:${thread.id}`;
@@ -93,11 +96,14 @@ export function Composer({
   const busy = useSyncExternalStore(subscribeSending, () => sending.has(key));
   const [files, setFiles] = useState<ComposerDraftAttachment[]>(() => attachmentDrafts.get(key) ?? []);
   const input = composerInput(text, files);
-  const annotationEditing = useBrowserAnnotationEditing(key);
+  useImageAnnotationRevision();
+  const imageEditing = imageAnnotationBlocked(key, input.files);
+  const annotationEditing = useBrowserAnnotationEditing(key) || imageEditing;
   const invalidAnnotation = input.files.some(file => browserAnnotation(file)?.comment.trim() === "");
   const [admissionError, setAdmissionError] = useState(() => attachmentErrors.get(key) ?? "");
   useEffect(() => {
     attachmentDrafts.set(key, files);
+    window.dispatchEvent(new CustomEvent("areal-attachments-change", { detail: key }));
   }, [key, files]);
   useEffect(() => {
     if (admissionError) attachmentErrors.set(key, admissionError);
@@ -123,7 +129,7 @@ export function Composer({
   }, [questions.length]);
   const baseDisabled = !project.state?.connected || archived || busy || pending || !!unknown || !!reviewDraft.error;
   const queueEditor = useComposerQueueEdit({ project, threadId: thread.id, draftKey: key, action, readAction, api, draftFiles: attachmentDrafts,
-    setText, setFiles, setGoalMode, inFlight: busy, setInFlight: active => markSending(key, active), uploadFiles: selected => uploadComposerFiles(action, project.id, thread.id, selected) });
+    setText, setFiles, setGoalMode, annotationBlocked: annotationEditing || invalidAnnotation, inFlight: busy, setInFlight: active => markSending(key, active), uploadFiles: selected => uploadComposerFiles(action, project.id, thread.id, selected) });
   const disabled = baseDisabled || queueEditor.busy || queueEditor.locked;
   const desktopUnsupported = project.desktopCapabilities?.currentCommands === false;
   const stop = () => {
@@ -215,6 +221,7 @@ export function Composer({
       clearText();
       return;
     }
+    if (annotationEditing || invalidAnnotation) return;
     if (queueEditor.edit) { await queueEditor.save(); return; }
     if (disabled || annotationEditing || invalidAnnotation || sending.has(key) || (!submittedInput.text.trim() && !submittedInput.files.length && !comments.length && !skills.selected.length && !mcpDraft.length)) return;
     if (approvePlan && (!planReady || input.text.trim() || input.files.length || comments.length)) return;
@@ -421,6 +428,7 @@ export function Composer({
           {files.some(file => !isComposerFile(file) || !browserAnnotation(file)) ? (
             <div className="composer-attachments" data-testid="composer-attachments">
               {files.filter(file => !isComposerFile(file) || !browserAnnotation(file)).map((file, i) => <ComposerAttachment disabled={disabled} key={isComposerFile(file) ? `${file.name}-${file.lastModified}-${i}` : `pasted-text-${i}`} file={file}
+                onAnnotate={onAnnotate ? file => onAnnotate({ draftKey: key, file, returnFocus: () => api.current?.focus() }) : undefined}
                 onRemove={() => setFiles((current) => current.filter(item => item !== file))}
                 onExpand={content => { api.current?.appendText(`${text.length ? "\n\n" : ""}${content}`); setFiles(current => current.filter(item => item !== file)); }} />)}
             </div>
@@ -514,6 +522,7 @@ export async function submitMessage(
     const bytes = Uint8Array.from(atob(block.data), character => character.charCodeAt(0));
     return new File([bytes], typeof block._meta?.["openai/title"] === "string" ? block._meta["openai/title"] : "应用图片", {type:block.mimeType});
   });
+  const imageSnapshot = snapshotImageAnnotations(composerInput(text, files).files);
   const skillContent = options.appMessage ? "" : await composerSkillContent(options.skillAction ?? action, projectId, threadId, readComposerSkills(`areal-gui:draft:${projectId}:${threadId}`));
   const input = composerInput(text, files);
   const attachments: Data[] = await uploadComposerFiles(action, projectId, threadId, [...input.files, ...imageFiles]);
@@ -522,7 +531,7 @@ export async function submitMessage(
     const note = browserAnnotation(file);
     return note ? [browserAnnotationText(note, attachments[index].url)] : [];
   }).join("\n\n");
-  const feedback = [annotationFeedback, comments.map(reviewCommentText).join("\n\n"), skillContent].filter(Boolean).join("\n\n");
+  const feedback = [annotationFeedback, serializeImageAnnotations(imageSnapshot, attachments), comments.map(reviewCommentText).join("\n\n"), skillContent].filter(Boolean).join("\n\n");
   try {
     await action(options.steer ? "steer" : "send", {
         projectId,

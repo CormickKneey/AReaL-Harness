@@ -17,6 +17,12 @@
 .design-preview-tokens dt span { color: var(--color-foreground-subtle); }
 .design-preview-tokens dd { margin: 0; max-width: 440px; overflow-wrap: anywhere; font: var(--text-ui-sm)/1.5 var(--font-mono); }
 
-.design-preview .settings-group-card { background-color: var(--color-settings-card, var(--color-card)) !important; }
 .design-preview[data-view="conversation"] > :not(.design-preview-header):not(#conversation-timeline) { display: none; }
 .design-preview[data-view="conversation"] #conversation-timeline { margin-inline: auto; }
+
+.design-preview[data-view="settings"] > :not(.design-preview-header):not(.design-settings-preview) { display: none; }
+.design-settings-preview { display: flex; flex-direction: column; gap: var(--spacing-section); }
+.design-settings-preview .settings-workspace { padding: 0; overflow: visible; }
+.design-settings-preview [data-settings-host] { min-width: 0; }
+.design-settings-state { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacing-inline); }
+.design-settings-state select { color: var(--color-foreground); background: var(--color-background); border: 1px solid var(--color-border); border-radius: var(--radius-control); padding: var(--spacing-inline); }

@@ -19,7 +19,10 @@ import {
     DropdownMenuSeparator,
 } from "./components/ui/dropdown-menu.js";
 import { queueText } from "./Queue.js";
+import { imageAnnotationTitle } from "./imageAnnotations.js";
 import type { Action, Data } from "./services.js";
+
+const queueLabel = (item: Data) => imageAnnotationTitle(queueText(item));
 
 /** 队列仅展示 Core 投影；排序、删除和引导均等待确认，不先移除本地行。 */
 export function ComposerQueue({
@@ -177,7 +180,7 @@ export function ComposerQueue({
                         <button
                             className="composer-queue-grip"
                             disabled={locked}
-                            aria-label={`调整顺序 ${queueText(item)}`}
+                            aria-label={`调整顺序 ${queueLabel(item)}`}
                             title="拖动调整顺序，或按上下方向键"
                             onKeyDown={(event) => {
                                 if (event.key === "ArrowUp" || event.key === "ArrowDown") {
@@ -219,15 +222,15 @@ export function ComposerQueue({
                             <GripVertical size={13} />
                         </button>
                         <ListEnd size={17} className="composer-queue-glyph" />
-                        <span className="composer-queue-copy" title={queueText(item)}>
-                            {queueText(item)}
+                        <span className="composer-queue-copy" title={queueLabel(item)}>
+                            {queueLabel(item)}
                         </span>
                         {editingId === item.id && <small>编辑中</small>}
                         <div className="composer-queue-actions">
                             <button
                                 className="composer-queue-steer"
                                 disabled={locked || !running}
-                                aria-label={`引导 ${queueText(item)}`}
+                                aria-label={`引导 ${queueLabel(item)}`}
                                 title="现在发送到正在进行的任务"
                                 onClick={() =>
                                     void edit("steer", {
@@ -241,7 +244,7 @@ export function ComposerQueue({
                             </button>
                             <button
                                 disabled={locked}
-                                aria-label={`删除排队消息 ${queueText(item)}`}
+                                aria-label={`删除排队消息 ${queueLabel(item)}`}
                                 title="删除"
                                 onClick={() => void edit("remove", { queueItemId: item.id })}
                             >
@@ -252,7 +255,7 @@ export function ComposerQueue({
                                     render={
                                         <button
                                             disabled={locked}
-                                            aria-label={`更多操作 ${queueText(item)}`}
+                                            aria-label={`更多操作 ${queueLabel(item)}`}
                                         >
                                             <Ellipsis size={18} />
                                         </button>

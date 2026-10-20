@@ -880,7 +880,7 @@ class CoreBackend {
     // Runtime handle; an old/unavailable handle must not become an attached PTY.
     if (!process.cleanupConfirmed) await project.client.request('areal/process/get', { threadId, id: process.id });
     if (entry) await this.changePending(project, pending => pending.filter(item => item !== entry));
-    return { ...receipt.result, closed: process.cleanupConfirmed === true, controls: process.inputs.length };
+    return { ...receipt.result, argv: process.argv, closed: process.cleanupConfirmed === true, controls: process.inputs.length };
   }
 
   async recoverAgentSubmission(project, parentThreadId, requestId) {

@@ -56,6 +56,8 @@ Defaults are 30 seconds per process, 8 MiB cumulative descendant output and 4 co
 
 The Runtime daemon accepts `--cumulative-output-bytes` to set cumulative deployment/descendant-Scope output independently. Omitted values equal `--output-bytes` and explicit values cannot be smaller than the per-process cap. Each process remains bounded by `--output-bytes`; retained windows are separately bounded by `--output-window-bytes`. Accepted stdout/stderr bytes are charged once to each ancestor; rereading retained output does not charge again. File-helper JSON/base64 responses are process output too.
 
+Core uses `readForHistory` to capture a conditional edit's historical preimage. Only this validated filesystem helper uses a private response cap of `MAX_FRAME_BYTES - 4096` and does not consume command or ancestor output quotas. Read permissions, file bounds, process capacity, deadlines and retained-operation limits still apply. Ordinary `read` and `process.start` retain their existing output accounting.
+
 ## Bounded hook write groups
 
 `scope.createParticipant` is connection-owner admission. `authorityScopeId` must equal this epoch's opaque connection root; `scope` has the existing `scope.create` fields. `participation` is `{kind:"task",admissionWindowMs}` or `{kind:"hook",taskScopeId}`. A task can only be created outside an existing group. A hook's parent must already belong to the specified validated task Scope. Ordinary child scopes inherit participation; copying owner metadata does not confer authority. Existing `scope.create` and `ScopeInfo` remain unchanged; unsupported Runtimes reject the new method without a permissive fallback.
@@ -91,6 +93,7 @@ fs.execute is available only with a trusted helper. command.kind selects:
 | kind | Other fields | Result fields |
 |---|---|---|
 | read | `path,offset?=0,maxBytes` | `dataBase64,sha256,size,nextOffset,eof` |
+| readForHistory | `path,offset?=0,maxBytes` | Same as `read`; internal historical evidence |
 | stat | `path` | `kind,size` |
 | list | `path,after?,limit` | `entries,nextCursor` |
 | search | `path,pattern,glob?,context,limit` | `matches[{path,line,text,kind}],limited,guidance` |

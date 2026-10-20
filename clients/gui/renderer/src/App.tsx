@@ -44,7 +44,9 @@ import { Messages } from "./Messages.js";
 import { ForkTargetDialog } from "./ForkTargetDialog.js";
 import { ConversationDraftEmptyState } from "./ConversationDraftEmptyState.js";
 import { NewTaskButtonGroup } from "./NewTaskButtonGroup.js";
-import { Composer, sending, subscribeSending } from "./Composer.js";
+import { ImageAnnotationPane } from "./ImageAnnotationViews.js";
+import { imageAnnotation, imageAnnotationTitle, setImageAnnotationEditing, useImageAnnotationPending, type ImageAnnotationTarget } from "./imageAnnotations.js";
+import { Composer, attachmentDrafts, sending, subscribeSending } from "./Composer.js";
 import { DraftComposer } from "./DraftComposer.js";
 import { ProjectlessDraft } from "./ProjectlessDraft.js";
 import { WorktreeStarter } from "./WorktreeStarter.js";
@@ -230,6 +232,8 @@ function AppContent({ services }: { services: PlatformServices }) {
   const [workspaceHistory, setWorkspaceHistory] = useState<{ entries: { projectId: string; threadId: string }[]; index: number }>({ entries: [], index: -1 });
   const mcpPendingReveal = React.useRef<{tab:string;owner:string}|null>(null);
   const [panel, setPanel] = useState("");
+  const [annotationTarget, setAnnotationTarget] = useState<(ImageAnnotationTarget & { owner: string; previousView: "split" | "panel" | "conversation"; previousPanel: string; sessionId: string }) | null>(null);
+  const annotationPending = useImageAnnotationPending(annotationTarget?.file);
   const [reviewRequest, setReviewRequest] = useState<{ owner: string; threadId?: string } & ({ turnId: string; scope?: never } | { scope: "unstaged"; turnId?: never })>();
   const [panelTabs, setPanelTabs] = useState<string[]>([]);
   const [previewFileTab, setPreviewFileTab] = useState<string | undefined>();
@@ -414,6 +418,36 @@ function AppContent({ services }: { services: PlatformServices }) {
   }), [services]);
   const terminalState = useTerminalWorkspace(terminalOwner(project?.id ?? "", threadId));
   const panelOwner = `${project?.id ?? ""}:${threadId}`;
+  const annotationVisible = annotationTarget?.owner === panelOwner;
+  const openImageAnnotation = (target: ImageAnnotationTarget) => {
+    setAnnotationTarget({ ...target, owner: panelOwner, previousView: workspaceView, previousPanel: panel, sessionId: crypto.randomUUID() });
+    setWorkspaceView("split");
+  };
+  const finishImageAnnotation = () => {
+    if (!annotationTarget) return;
+    const pending = imageAnnotation(annotationTarget.file)?.pending;
+    if (pending && pending.kind !== "idle") return;
+    setAnnotationTarget(null);
+    setWorkspaceView(annotationTarget.previousView);
+    requestAnimationFrame(annotationTarget.returnFocus);
+  };
+  React.useLayoutEffect(() => {
+    if (!annotationTarget) return;
+    if (annotationTarget.owner !== panelOwner || annotationTarget.previousPanel !== panel) { setAnnotationTarget(null); return; }
+    setImageAnnotationEditing(annotationTarget.draftKey, true);
+    return () => setImageAnnotationEditing(annotationTarget.draftKey, false);
+  }, [annotationTarget, panelOwner, panel]);
+  useEffect(() => {
+    if (!annotationTarget) return;
+    const refresh = () => {
+      if (attachmentDrafts.get(annotationTarget.draftKey)?.includes(annotationTarget.file)) return;
+      setAnnotationTarget(null);
+      if (annotationTarget.owner === panelOwner) setWorkspaceView(annotationTarget.previousView);
+    };
+    window.addEventListener("areal-attachments-change", refresh);
+    window.addEventListener("areal-draft-change", refresh);
+    return () => { window.removeEventListener("areal-attachments-change", refresh); window.removeEventListener("areal-draft-change", refresh); };
+  }, [annotationTarget, panelOwner]);
   React.useLayoutEffect(() => {
     if (activePanelOwner.current !== panelOwner) {
       activePanelOwner.current = panelOwner;
@@ -830,12 +864,12 @@ function AppContent({ services }: { services: PlatformServices }) {
     library.threads?.[`${owner.id}:${summary.id}`]?.title ||
     owner.state?.threads[summary.id]?.name ||
     summary.name ||
-    browserAnnotationTitle(owner.state?.threads[summary.id]?.turns
+    imageAnnotationTitle(browserAnnotationTitle(owner.state?.threads[summary.id]?.turns
       ?.flatMap((t: Data) => t.items ?? [])
       .find((i: Data) => i.type === "userMessage")
       ?.content?.find((p: Data) => p.type === "text")?.text ||
     summary.preview ||
-    "新对话");
+    "新对话"));
   const summaries = projects.flatMap((owner) => {
     const scheduledThreads = new Set((Object.values(owner.state?.tasks ?? {}) as Data[]).filter(task => task.mode === "scheduled")
       .flatMap(task => [task.threadId, ...task.runs.map((run: Data) => run.threadId)].filter(Boolean)));
@@ -1452,8 +1486,8 @@ function AppContent({ services }: { services: PlatformServices }) {
           </NavigationSidebar>
       )}
       <main className={`work-area ${settingsOpen ? "settings-open" : ""}`}
-        data-workspace-view={panel && !pluginsOpen && !settingsOpen && !taskCenterOpen && workspaceView !== "split" ? workspaceView : undefined}>
-        <WorkSurface panelOpen={Boolean(panel && project && !pluginsOpen && !settingsOpen && !taskCenterOpen)} split={workspaceView === "split" && !pluginsOpen && !settingsOpen && !taskCenterOpen}>
+        data-workspace-view={!annotationVisible && panel && !pluginsOpen && !settingsOpen && !taskCenterOpen && workspaceView !== "split" ? workspaceView : undefined}>
+        <WorkSurface panelOpen={Boolean((annotationVisible || (panel && project)) && !pluginsOpen && !settingsOpen && !taskCenterOpen)} split={workspaceView === "split" && !pluginsOpen && !settingsOpen && !taskCenterOpen}>
           {!taskCenterOpen && <WorkspaceHeader>
             {!sidebar && !settingsOpen && workspaceNavigation}
             {!pluginsOpen && !settingsOpen && !taskCenterOpen && (!empty || (!thread && !!threadId)) && <div className="header-context">
@@ -1580,11 +1614,11 @@ function AppContent({ services }: { services: PlatformServices }) {
           ) : taskSurface === "inbox" ? (
             <Inbox projects={snapshot.projects} connected={snapshot.connection?.state === "ready"} action={resourceAction} onClose={() => setTaskCenterOpen(false)} />
           ) : taskCenterOpen ? (
-            <TaskCenter target={taskNotification} initialProjectId={taskScope} defaultProjectId={project?.projectless ? undefined : project?.id} projects={snapshot.projects.map(p => ({...p,name:library.projects?.[p.id]?.title || p.root.split(/[\\/]/).pop()}))} connected={snapshot.connection?.state === "ready"} action={resourceAction} onOpenThread={(pid,id) => void open(pid, id)} onOpenModelSettings={() => showPanel("设置")} renderConversation={(owner,managementThread,beforeTurns) => <><Messages beforeTurns={beforeTurns} project={owner} thread={managementThread} action={resourceAction} dark={dark} onLink={onLink}
+            <TaskCenter target={taskNotification} initialProjectId={taskScope} defaultProjectId={project?.projectless ? undefined : project?.id} projects={snapshot.projects.map(p => ({...p,name:library.projects?.[p.id]?.title || p.root.split(/[\\/]/).pop()}))} connected={snapshot.connection?.state === "ready"} action={resourceAction} onOpenThread={(pid,id) => void open(pid, id)} onOpenModelSettings={() => showPanel("设置")} renderConversation={(owner,managementThread,beforeTurns,options) => <><Messages beforeTurns={beforeTurns} afterTurns={options?.afterTurns} embedded={options?.embedded} readOnly={options?.readOnly} reserveResponseSpace={!options?.embedded && !options?.afterTurns} project={owner} thread={managementThread} action={resourceAction} dark={dark} onLink={onLink}
               onFile={path => {void open(owner.id,managementThread.id).then(() => openFile(path));}}
               onReview={turnId => {void open(owner.id,managementThread.id).then(() => {setReviewRequest({owner:`${owner.id}:${managementThread.id}`,turnId});setPanel("改动");});}}
               readTurnReview={(turnId,itemId) => resourceAction("workspace",{projectId:owner.id,threadId:managementThread.id,turnId,itemId,operation:"turnReview"})}/>
-              <Composer key={managementThread.id} project={owner} thread={managementThread} action={resourceAction} readAction={resourceAction} onPanel={name => {if(name === "设置") {showPanel("设置");} else {void open(owner.id,managementThread.id).then(() => showPanel(name));}}} onNew={() => void newTask()}/></>}
+              {!options?.embedded && <Composer key={managementThread.id} project={owner} thread={managementThread} action={resourceAction} readAction={resourceAction} onPanel={name => {if(name === "设置") {showPanel("设置");} else {void open(owner.id,managementThread.id).then(() => showPanel(name));}}} onNew={() => void newTask()}/>}</>}
             renderResources={(owner,managementThread,scheduledTask,runHistory) => <TaskResourcesPopover project={owner} thread={managementThread} scheduledTask={scheduledTask} runHistory={runHistory} action={resourceAction} onPanel={name => {void open(owner.id,managementThread.id).then(() => showPanel(name));}} onAgent={id => void open(owner.id,id)} onFile={path => {void open(owner.id,managementThread.id).then(() => openFile(path));}} />}
 
             navigation={<>
@@ -1636,6 +1670,7 @@ function AppContent({ services }: { services: PlatformServices }) {
                         {mcpWorkspace.formsView}
                         {mcpMentionsOpen && <McpMentionsPicker servers={mcpWorkspace.servers} projectId={project.id} threadId={thread.id} action={resourceAction} onClose={()=>setMcpMentionsOpen(false)}/>}
                         <Composer
+                          onAnnotate={openImageAnnotation}
                           key={`${project.id}:${thread.id}`}
                           onMcpMention={()=>setMcpMentionsOpen(true)}
                           project={project}
@@ -1712,6 +1747,7 @@ function AppContent({ services }: { services: PlatformServices }) {
                       </div>
                       {project ? (
                           <DraftComposer
+                            onAnnotate={openImageAnnotation}
                             key={project.id}
                             project={project}
                             action={action}
@@ -1720,7 +1756,7 @@ function AppContent({ services }: { services: PlatformServices }) {
                             onPanel={showPanel}
                           />
                         ) : (
-                          <ProjectlessDraft snapshot={snapshot} services={services} action={action} readAction={resourceAction} onPanel={showPanel} onOpen={(pid, id) => open(pid, id, "replace")} />
+                          <ProjectlessDraft onAnnotate={openImageAnnotation} snapshot={snapshot} services={services} action={action} readAction={resourceAction} onPanel={showPanel} onOpen={(pid, id) => open(pid, id, "replace")} />
                         )}
                       </div>
                     </>
@@ -1754,7 +1790,12 @@ function AppContent({ services }: { services: PlatformServices }) {
             </div>
           )}
         </WorkSurface>
-        {project && !pluginsOpen && !settingsOpen && !taskCenterOpen && (
+        {annotationVisible && annotationTarget && !pluginsOpen && !settingsOpen && !taskCenterOpen && <SidePane
+          transient hideDisabled={annotationPending} workspaceKey={project?.root ?? "projectless"} ownerTaskId={threadId || null} active="图片标注" names={["图片标注"]}
+          onSelect={() => {}} onChange={() => {}} onHide={finishImageAnnotation} dirtyFiles={{}} canClose={() => false}
+          render={() => <ImageAnnotationPane key={annotationTarget.sessionId} file={annotationTarget.file} onDone={finishImageAnnotation} />}
+        />}
+        {project && !annotationVisible && !pluginsOpen && !settingsOpen && !taskCenterOpen && (
           <SidePane
             key={`${project.id}:${threadId}`}
             workspaceKey={project.root}

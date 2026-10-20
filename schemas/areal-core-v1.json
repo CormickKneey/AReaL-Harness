@@ -1695,6 +1695,36 @@
                       ]
                     },
                     "effectiveArguments": true,
+                    "fileBefore": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "mimeType": {
+                              "type": "string"
+                            },
+                            "sizeBytes": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "uri": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "uri",
+                            "mimeType",
+                            "sizeBytes"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Exact file bytes captured before a conditional workspace write."
+                    },
                     "hooks": {
                       "items": {
                         "properties": {
@@ -7703,6 +7733,36 @@
                                   ]
                                 },
                                 "effectiveArguments": true,
+                                "fileBefore": {
+                                  "anyOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "mimeType": {
+                                          "type": "string"
+                                        },
+                                        "sizeBytes": {
+                                          "format": "uint64",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "uri": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "uri",
+                                        "mimeType",
+                                        "sizeBytes"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ],
+                                  "description": "Exact file bytes captured before a conditional workspace write."
+                                },
                                 "hooks": {
                                   "items": {
                                     "properties": {
@@ -8456,6 +8516,36 @@
                       ]
                     },
                     "effectiveArguments": true,
+                    "fileBefore": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "mimeType": {
+                              "type": "string"
+                            },
+                            "sizeBytes": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "uri": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "uri",
+                            "mimeType",
+                            "sizeBytes"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Exact file bytes captured before a conditional workspace write."
+                    },
                     "hooks": {
                       "items": {
                         "properties": {
@@ -9096,6 +9186,36 @@
                       ]
                     },
                     "effectiveArguments": true,
+                    "fileBefore": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "mimeType": {
+                              "type": "string"
+                            },
+                            "sizeBytes": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "uri": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "uri",
+                            "mimeType",
+                            "sizeBytes"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Exact file bytes captured before a conditional workspace write."
+                    },
                     "hooks": {
                       "items": {
                         "properties": {
@@ -13053,6 +13173,36 @@
                                   ]
                                 },
                                 "effectiveArguments": true,
+                                "fileBefore": {
+                                  "anyOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "mimeType": {
+                                          "type": "string"
+                                        },
+                                        "sizeBytes": {
+                                          "format": "uint64",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "uri": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "uri",
+                                        "mimeType",
+                                        "sizeBytes"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ],
+                                  "description": "Exact file bytes captured before a conditional workspace write."
+                                },
                                 "hooks": {
                                   "items": {
                                     "properties": {
@@ -14292,6 +14442,36 @@
                             ]
                           },
                           "effectiveArguments": true,
+                          "fileBefore": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "mimeType": {
+                                    "type": "string"
+                                  },
+                                  "sizeBytes": {
+                                    "format": "uint64",
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "uri": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "uri",
+                                  "mimeType",
+                                  "sizeBytes"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "Exact file bytes captured before a conditional workspace write."
+                          },
                           "hooks": {
                             "items": {
                               "properties": {
@@ -15509,6 +15689,36 @@
                             ]
                           },
                           "effectiveArguments": true,
+                          "fileBefore": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "mimeType": {
+                                    "type": "string"
+                                  },
+                                  "sizeBytes": {
+                                    "format": "uint64",
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "uri": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "uri",
+                                  "mimeType",
+                                  "sizeBytes"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "Exact file bytes captured before a conditional workspace write."
+                          },
                           "hooks": {
                             "items": {
                               "properties": {
@@ -28529,6 +28739,36 @@
                                     ]
                                   },
                                   "effectiveArguments": true,
+                                  "fileBefore": {
+                                    "anyOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "mimeType": {
+                                            "type": "string"
+                                          },
+                                          "sizeBytes": {
+                                            "format": "uint64",
+                                            "minimum": 0,
+                                            "type": "integer"
+                                          },
+                                          "uri": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "uri",
+                                          "mimeType",
+                                          "sizeBytes"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "description": "Exact file bytes captured before a conditional workspace write."
+                                  },
                                   "hooks": {
                                     "items": {
                                       "properties": {
@@ -32586,6 +32826,36 @@
                                       ]
                                     },
                                     "effectiveArguments": true,
+                                    "fileBefore": {
+                                      "anyOf": [
+                                        {
+                                          "additionalProperties": false,
+                                          "properties": {
+                                            "mimeType": {
+                                              "type": "string"
+                                            },
+                                            "sizeBytes": {
+                                              "format": "uint64",
+                                              "minimum": 0,
+                                              "type": "integer"
+                                            },
+                                            "uri": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "uri",
+                                            "mimeType",
+                                            "sizeBytes"
+                                          ],
+                                          "type": "object"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ],
+                                      "description": "Exact file bytes captured before a conditional workspace write."
+                                    },
                                     "hooks": {
                                       "items": {
                                         "properties": {
@@ -33816,6 +34086,36 @@
                                 ]
                               },
                               "effectiveArguments": true,
+                              "fileBefore": {
+                                "anyOf": [
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "mimeType": {
+                                        "type": "string"
+                                      },
+                                      "sizeBytes": {
+                                        "format": "uint64",
+                                        "minimum": 0,
+                                        "type": "integer"
+                                      },
+                                      "uri": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "uri",
+                                      "mimeType",
+                                      "sizeBytes"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ],
+                                "description": "Exact file bytes captured before a conditional workspace write."
+                              },
                               "hooks": {
                                 "items": {
                                   "properties": {
@@ -35826,6 +36126,36 @@
                                 ]
                               },
                               "effectiveArguments": true,
+                              "fileBefore": {
+                                "anyOf": [
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "mimeType": {
+                                        "type": "string"
+                                      },
+                                      "sizeBytes": {
+                                        "format": "uint64",
+                                        "minimum": 0,
+                                        "type": "integer"
+                                      },
+                                      "uri": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "uri",
+                                      "mimeType",
+                                      "sizeBytes"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ],
+                                "description": "Exact file bytes captured before a conditional workspace write."
+                              },
                               "hooks": {
                                 "items": {
                                   "properties": {
@@ -39891,6 +40221,36 @@
                                     ]
                                   },
                                   "effectiveArguments": true,
+                                  "fileBefore": {
+                                    "anyOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "mimeType": {
+                                            "type": "string"
+                                          },
+                                          "sizeBytes": {
+                                            "format": "uint64",
+                                            "minimum": 0,
+                                            "type": "integer"
+                                          },
+                                          "uri": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "uri",
+                                          "mimeType",
+                                          "sizeBytes"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "description": "Exact file bytes captured before a conditional workspace write."
+                                  },
                                   "hooks": {
                                     "items": {
                                       "properties": {
@@ -52422,6 +52782,36 @@
                                   ]
                                 },
                                 "effectiveArguments": true,
+                                "fileBefore": {
+                                  "anyOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "mimeType": {
+                                          "type": "string"
+                                        },
+                                        "sizeBytes": {
+                                          "format": "uint64",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "uri": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "uri",
+                                        "mimeType",
+                                        "sizeBytes"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ],
+                                  "description": "Exact file bytes captured before a conditional workspace write."
+                                },
                                 "hooks": {
                                   "items": {
                                     "properties": {
@@ -53649,6 +54039,36 @@
                             ]
                           },
                           "effectiveArguments": true,
+                          "fileBefore": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "mimeType": {
+                                    "type": "string"
+                                  },
+                                  "sizeBytes": {
+                                    "format": "uint64",
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "uri": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "uri",
+                                  "mimeType",
+                                  "sizeBytes"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "Exact file bytes captured before a conditional workspace write."
+                          },
                           "hooks": {
                             "items": {
                               "properties": {
@@ -64660,6 +65080,36 @@
                                   ]
                                 },
                                 "effectiveArguments": true,
+                                "fileBefore": {
+                                  "anyOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "mimeType": {
+                                          "type": "string"
+                                        },
+                                        "sizeBytes": {
+                                          "format": "uint64",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "uri": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "uri",
+                                        "mimeType",
+                                        "sizeBytes"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ],
+                                  "description": "Exact file bytes captured before a conditional workspace write."
+                                },
                                 "hooks": {
                                   "items": {
                                     "properties": {
@@ -65887,6 +66337,36 @@
                             ]
                           },
                           "effectiveArguments": true,
+                          "fileBefore": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "mimeType": {
+                                    "type": "string"
+                                  },
+                                  "sizeBytes": {
+                                    "format": "uint64",
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "uri": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "uri",
+                                  "mimeType",
+                                  "sizeBytes"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "Exact file bytes captured before a conditional workspace write."
+                          },
                           "hooks": {
                             "items": {
                               "properties": {
@@ -74278,6 +74758,36 @@
                                   ]
                                 },
                                 "effectiveArguments": true,
+                                "fileBefore": {
+                                  "anyOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "mimeType": {
+                                          "type": "string"
+                                        },
+                                        "sizeBytes": {
+                                          "format": "uint64",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "uri": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "uri",
+                                        "mimeType",
+                                        "sizeBytes"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ],
+                                  "description": "Exact file bytes captured before a conditional workspace write."
+                                },
                                 "hooks": {
                                   "items": {
                                     "properties": {
@@ -79188,6 +79698,36 @@
                                   ]
                                 },
                                 "effectiveArguments": true,
+                                "fileBefore": {
+                                  "anyOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "mimeType": {
+                                          "type": "string"
+                                        },
+                                        "sizeBytes": {
+                                          "format": "uint64",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "uri": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "uri",
+                                        "mimeType",
+                                        "sizeBytes"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ],
+                                  "description": "Exact file bytes captured before a conditional workspace write."
+                                },
                                 "hooks": {
                                   "items": {
                                     "properties": {
@@ -83228,6 +83768,36 @@
                                   ]
                                 },
                                 "effectiveArguments": true,
+                                "fileBefore": {
+                                  "anyOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "mimeType": {
+                                          "type": "string"
+                                        },
+                                        "sizeBytes": {
+                                          "format": "uint64",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "uri": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "uri",
+                                        "mimeType",
+                                        "sizeBytes"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ],
+                                  "description": "Exact file bytes captured before a conditional workspace write."
+                                },
                                 "hooks": {
                                   "items": {
                                     "properties": {
@@ -84513,6 +85083,36 @@
                             ]
                           },
                           "effectiveArguments": true,
+                          "fileBefore": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "mimeType": {
+                                    "type": "string"
+                                  },
+                                  "sizeBytes": {
+                                    "format": "uint64",
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "uri": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "uri",
+                                  "mimeType",
+                                  "sizeBytes"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "Exact file bytes captured before a conditional workspace write."
+                          },
                           "hooks": {
                             "items": {
                               "properties": {
@@ -85728,6 +86328,36 @@
                                 ]
                               },
                               "effectiveArguments": true,
+                              "fileBefore": {
+                                "anyOf": [
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "mimeType": {
+                                        "type": "string"
+                                      },
+                                      "sizeBytes": {
+                                        "format": "uint64",
+                                        "minimum": 0,
+                                        "type": "integer"
+                                      },
+                                      "uri": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "uri",
+                                      "mimeType",
+                                      "sizeBytes"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ],
+                                "description": "Exact file bytes captured before a conditional workspace write."
+                              },
                               "hooks": {
                                 "items": {
                                   "properties": {
@@ -98074,6 +98704,36 @@
                                     ]
                                   },
                                   "effectiveArguments": true,
+                                  "fileBefore": {
+                                    "anyOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "mimeType": {
+                                            "type": "string"
+                                          },
+                                          "sizeBytes": {
+                                            "format": "uint64",
+                                            "minimum": 0,
+                                            "type": "integer"
+                                          },
+                                          "uri": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "uri",
+                                          "mimeType",
+                                          "sizeBytes"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ],
+                                    "description": "Exact file bytes captured before a conditional workspace write."
+                                  },
                                   "hooks": {
                                     "items": {
                                       "properties": {
@@ -102119,6 +102779,36 @@
                                   ]
                                 },
                                 "effectiveArguments": true,
+                                "fileBefore": {
+                                  "anyOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "mimeType": {
+                                          "type": "string"
+                                        },
+                                        "sizeBytes": {
+                                          "format": "uint64",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "uri": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "uri",
+                                        "mimeType",
+                                        "sizeBytes"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ],
+                                  "description": "Exact file bytes captured before a conditional workspace write."
+                                },
                                 "hooks": {
                                   "items": {
                                     "properties": {
@@ -106185,6 +106875,36 @@
                                   ]
                                 },
                                 "effectiveArguments": true,
+                                "fileBefore": {
+                                  "anyOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "mimeType": {
+                                          "type": "string"
+                                        },
+                                        "sizeBytes": {
+                                          "format": "uint64",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "uri": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "uri",
+                                        "mimeType",
+                                        "sizeBytes"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ],
+                                  "description": "Exact file bytes captured before a conditional workspace write."
+                                },
                                 "hooks": {
                                   "items": {
                                     "properties": {
@@ -110259,6 +110979,36 @@
                                   ]
                                 },
                                 "effectiveArguments": true,
+                                "fileBefore": {
+                                  "anyOf": [
+                                    {
+                                      "additionalProperties": false,
+                                      "properties": {
+                                        "mimeType": {
+                                          "type": "string"
+                                        },
+                                        "sizeBytes": {
+                                          "format": "uint64",
+                                          "minimum": 0,
+                                          "type": "integer"
+                                        },
+                                        "uri": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "uri",
+                                        "mimeType",
+                                        "sizeBytes"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ],
+                                  "description": "Exact file bytes captured before a conditional workspace write."
+                                },
                                 "hooks": {
                                   "items": {
                                     "properties": {
@@ -111509,6 +112259,36 @@
                             ]
                           },
                           "effectiveArguments": true,
+                          "fileBefore": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "mimeType": {
+                                    "type": "string"
+                                  },
+                                  "sizeBytes": {
+                                    "format": "uint64",
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "uri": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "uri",
+                                  "mimeType",
+                                  "sizeBytes"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "Exact file bytes captured before a conditional workspace write."
+                          },
                           "hooks": {
                             "items": {
                               "properties": {
@@ -115727,6 +116507,36 @@
                             ]
                           },
                           "effectiveArguments": true,
+                          "fileBefore": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "mimeType": {
+                                    "type": "string"
+                                  },
+                                  "sizeBytes": {
+                                    "format": "uint64",
+                                    "minimum": 0,
+                                    "type": "integer"
+                                  },
+                                  "uri": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "uri",
+                                  "mimeType",
+                                  "sizeBytes"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ],
+                            "description": "Exact file bytes captured before a conditional workspace write."
+                          },
                           "hooks": {
                             "items": {
                               "properties": {
@@ -116954,6 +117764,36 @@
                       ]
                     },
                     "effectiveArguments": true,
+                    "fileBefore": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "mimeType": {
+                              "type": "string"
+                            },
+                            "sizeBytes": {
+                              "format": "uint64",
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "uri": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "uri",
+                            "mimeType",
+                            "sizeBytes"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Exact file bytes captured before a conditional workspace write."
+                    },
                     "hooks": {
                       "items": {
                         "properties": {

@@ -2,7 +2,7 @@ use super::*;
 use base64::{Engine, engine::general_purpose::STANDARD};
 
 // Leave room for RPC IDs and operation.get's retained-result metadata.
-const MAX_HELPER_RESPONSE_BYTES: usize = MAX_FRAME_BYTES - 4096;
+pub(super) const MAX_HELPER_RESPONSE_BYTES: usize = MAX_FRAME_BYTES - 4096;
 
 impl Supervisor {
     pub async fn filesystem(self: &Arc<Self>, request: FileRequest) -> Result<Value> {
@@ -90,9 +90,15 @@ impl Supervisor {
                         .state = OperationState::Running;
                     let result = std::panic::AssertUnwindSafe(runtime.file_run(
                         process,
-                        helper,
-                        request.command.writes(),
-                        path,
+                        FileHelper {
+                            executable: helper,
+                            path,
+                            writes: request.command.writes(),
+                            read_for_history: matches!(
+                                &request.command,
+                                FileCommand::ReadForHistory { .. }
+                            ),
+                        },
                     ))
                     .catch_unwind()
                     .await
@@ -141,13 +147,9 @@ impl Supervisor {
     async fn file_run(
         self: &Arc<Self>,
         process: StartProcess,
-        helper: PathBuf,
-        writes: bool,
-        path: PathBuf,
+        helper: FileHelper,
     ) -> Result<Value> {
-        let process = self
-            .start_inner(process, Some((helper, writes, path)))
-            .await?;
+        let process = self.start_inner(process, Some(helper)).await?;
         let mut cursor = None;
         let mut bytes = Vec::new();
         let mut stderr = Vec::new();

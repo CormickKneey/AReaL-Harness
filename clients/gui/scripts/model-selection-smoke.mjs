@@ -159,6 +159,10 @@ async function closeGui() {
   app = undefined;
 }
 async function verifyModelDefaults(projectId) {
+  await page.waitForFunction(async () => {
+    const reply = await window.arealDesktop.command("serviceStatus", {});
+    return reply.ok && !reply.value.busy && !reply.value.activeCommands && !reply.value.starting && !reply.value.providerUpdating;
+  });
   const previous = await call("providers", { operation: "list" });
   const seeded = await call("providers", { operation: "saveAndApply", expectedRevision: previous.revision, authentication: "none", provider: {
     name: "Defaults", baseUrl: `http://127.0.0.1:${server.address().port}/v1`, protocol: "chatCompletions", enabled: true, parameters: {},
@@ -375,7 +379,8 @@ try {
   await page.evaluate(({ key, text }) => localStorage.setItem(key, JSON.stringify({ draftId: crypto.randomUUID(), location: { kind: "independent" }, text })), { key: taskDraftKey, text: taskDescription });
   await button("新建自动化").click();
   await page.getByRole("alert").filter({ hasText: "模型凭据不可用" }).waitFor();
-  assert.equal(await page.getByTestId("chat-input").count(), 0);
+  assert.equal(await page.getByTestId("chat-input").isEditable(), true);
+  assert.equal(await page.getByTestId("chat-send-button").isDisabled(), true, "credential failure retains editable local text without allowing submission");
   assert.equal(requests.length, 0, "a rejected task configuration cannot issue a model request");
   const rejectedDraft = await page.evaluate(key => JSON.parse(localStorage.getItem(key)), taskDraftKey);
   assert.ok(rejectedDraft.ownerId);
@@ -438,7 +443,8 @@ try {
   await button("定时任务").click();
   await button("新建自动化").click();
   await page.getByTestId("chat-input").waitFor();
-  await page.waitForFunction(() => document.querySelector('[data-testid="chat-input"]')?.getAttribute("contenteditable") === "true");
+  await page.waitForFunction(key => { const draft = JSON.parse(localStorage.getItem(key)); return !!draft?.threadId && draft.text === undefined; }, taskDraftKey);
+  await page.waitForFunction(text => document.querySelector('[data-testid="chat-input"]')?.textContent?.trim() === text, taskDescription);
   const recoveredDraft = await page.evaluate(key => JSON.parse(localStorage.getItem(key)), taskDraftKey);
   assert.equal(recoveredDraft.draftId, rejectedDraft.draftId);
   assert.equal(recoveredDraft.ownerId, rejectedDraft.ownerId);

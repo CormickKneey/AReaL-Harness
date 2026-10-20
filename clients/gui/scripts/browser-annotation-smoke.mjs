@@ -7,6 +7,8 @@ import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { selectConversation, captureSmokeFailure } from "./smoke-navigation.mjs";
+import { assertApplicationStopped } from "./application-cleanup.mjs";
+import { respondToSessionName } from "./model-fixture.mjs";
 
 // 主流程与失败方式：同页截图、多条确认、跨聊天隔离、上传拒绝保留、显式重试及历史回取。
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), ".."),
@@ -32,10 +34,13 @@ const site = createServer((request, response) => {
 await new Promise((resolve) => site.listen(0, "127.0.0.1", resolve));
 const url = `http://127.0.0.1:${site.address().port}/`;
 const requests = [];
+const messageText = content => typeof content === "string" ? content : content.filter(part => part.type === "text").map(part => part.text).join("\n");
+const annotatedUser = body => body.messages.findLast(message => message.role === "user" && messageText(message.content).startsWith("保留我的正文"));
 const model = createServer(async (request, response) => {
   let raw = "";
   for await (const chunk of request) raw += chunk;
   const body = JSON.parse(raw);
+  if (respondToSessionName(body, response)) return;
   requests.push(body);
   response.writeHead(200, { "Content-Type": "text/event-stream" });
   response.end(
@@ -218,7 +223,7 @@ try {
     clipboardData.setData("text/plain", text);
     element.dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
   }, foldedAnnotationText);
-  await page.getByRole("button", { name: "移除附件 粘贴的文本.txt", exact: true }).waitFor();
+  await page.getByRole("button", { name: "移除附件 折叠标注第一行", exact: true }).waitFor();
   await page.getByRole("button", { name: "批注", exact: true }).click();
   const region = page.getByRole("region", { name: "冻结截图区域标注" });
   await region.waitFor();
@@ -356,17 +361,18 @@ try {
     return thread?.turns?.at(-1)?.status === "completed" ? thread : null;
   }, "accepted Core history");
   facts.history = history;
-  const annotationUserText = history.turns.at(-1).items.find(item => item.type === "userMessage")
-    .content.find(part => part.type === "text").text;
+  const annotationUser = history.turns.at(-1).items.find(item => item.type === "userMessage");
+  const annotationUserText = annotationUser.content.find(part => part.type === "text").text;
   assert.ok(annotationUserText.startsWith(`保留我的正文\n\n${foldedAnnotationText}\n\n`), "folded text before image annotations keeps its exact body prefix");
-  const modelBody = await until(() => requests.at(-1), "model request");
-  const serialized = JSON.stringify(modelBody);
+  assert.equal(annotationUser.content.filter(part => part.type !== "text").length, 2, "folded pasted text remains body text without an additional uploaded file");
+  const modelBody = await until(() => requests.findLast(body => annotatedUser(body)), "annotated human model request");
+  const modelUser = annotatedUser(modelBody);
+  assert.ok(Array.isArray(modelUser.content), "Annotated human model message retains structured text and image parts");
+  const serialized = JSON.stringify(modelUser);
   assert.match(serialized, /ANNOTATION_COMMENT_1/);
   assert.match(serialized, /ANNOTATION_COMMENT_2_EDITED/);
   assert.match(serialized, /折叠标注第一行/);
-  const images = modelBody.messages.flatMap((m) =>
-    Array.isArray(m.content) ? m.content.filter((p) => p.type === "image_url") : [],
-  );
+  const images = modelUser.content.filter(part => part.type === "image_url");
   assert.equal(images.length, 2, "model receives both actual PNG crops");
   facts.images = images.map((p) => ({
     sha256: createHash("sha256")
@@ -403,25 +409,35 @@ try {
   // Origin 确认桩不用于退出确认；只关闭本次隔离 GUI，并结算其确切服务。
   const launch=app?await app.evaluate(()=>({executable:process.execPath,resourcesPath:process.resourcesPath})).catch(()=>null):null;
   const executable=launch?desktopExecutables({packaged:!!packagedExecutable,...launch}).service:null;
+  const home=join(scratch,"core");
+  const metadata=await readFile(join(home,"service.json"),"utf8").then(JSON.parse).catch(error=>{if(error.code==='ENOENT')return null;throw error;});
   if(app){await app.evaluate(({dialog})=>{globalThis.__annotationUploadGate?.release?.();dialog.showMessageBox=async()=>({response:1});}).catch(()=>{});await app.close();}
   try{
-    const home=join(scratch,"core"),metadata=JSON.parse(await readFile(join(home,"service.json"),"utf8"));
-    assert.equal(execFileSync('/bin/ps',['-p',String(metadata.pid),'-o','command='],{encoding:'utf8'}).trim(),`${executable}${packagedExecutable?'':' '+join(gui,'app')} --areal-core-service`);
-    const connection=new ServiceConnection();await connection.connect(metadata);
-    try{await connection.request('hello',{protocol:metadata.protocol,identity:metadata.identity});
-      const resources=await connection.request('resources',{operation:'inspect'});
-      assert.ok(resources.every(p=>!p.activeTurns&&!p.unresolvedTools&&!p.resources.length));
-      facts.cleanup={pid:metadata.pid,resources:resources.map(p=>({activeTurns:p.activeTurns,unresolvedTools:p.unresolvedTools,resources:p.resources.length})),stopACK:await until(async()=>{
-        try{return await connection.request('stopService',{protocol:metadata.protocol,forUpdate:false},true);}
-        catch(error){if(error.message==='后台仍有任务、可执行的排队消息或操作，完成或暂停队列后重试')return null;throw error;}
-      },'isolated adapter close operations settle before safe stop')};
-    }finally{connection.close();}
-    await waitForServiceExit(home,metadata);facts.cleanup.serviceExited=true;
-  }catch(e){errors.push('Cleanup: '+e.message);passed=false;}
+    const alive=metadata&&(()=>{try{process.kill(metadata.pid,0);return true;}catch(error){if(error.code==='ESRCH')return false;throw error;}})();
+    if(alive){
+      assert.equal(execFileSync('/bin/ps',['-p',String(metadata.pid),'-o','command='],{encoding:'utf8'}).trim(),`${executable}${packagedExecutable?'':' '+join(gui,'app')} --areal-core-service`);
+      const connection=new ServiceConnection();await connection.connect(metadata);
+      try{await connection.request('hello',{protocol:metadata.protocol,identity:metadata.identity});
+        const resources=await connection.request('resources',{operation:'inspect'});
+        assert.ok(resources.every(p=>!p.activeTurns&&!p.unresolvedTools&&!p.resources.length));
+        facts.cleanup={pid:metadata.pid,resources:resources.map(p=>({activeTurns:p.activeTurns,unresolvedTools:p.unresolvedTools,resources:p.resources.length})),stopACK:await until(async()=>{
+          try{return await connection.request('stopService',{protocol:metadata.protocol,forUpdate:false},true);}
+          catch(error){if(error.message==='后台仍有任务、可执行的排队消息或操作，完成或暂停队列后重试')return null;throw error;}
+        },'isolated adapter close operations settle before safe stop')};
+      }finally{connection.close();}
+      await waitForServiceExit(home,metadata);
+    }
+    await assertApplicationStopped(testedCore,env,metadata);
+    facts.cleanup={...facts.cleanup,pid:metadata?.pid??null,serviceExited:true};
+  }catch(e){
+    try{await assertApplicationStopped(testedCore,env,metadata);facts.cleanup={...facts.cleanup,pid:metadata?.pid??null,serviceExited:true};}
+    catch(stoppedError){errors.push('Cleanup: '+e.message+'; '+stoppedError.message);passed=false;}
+  }
   for (const server of [site, model]) {
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
   }
+  await writeFile(join(scratch,"model-requests.json"),JSON.stringify(requests,null,2));
   const files = [
     "renderer/src/App.tsx",
     "renderer/src/Preview.tsx",

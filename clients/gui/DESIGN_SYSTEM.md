@@ -69,6 +69,7 @@ Tailwind 的 `text-ui-sm`、`rounded-overlay` 等直接消费同一套 Token。�
 | [Button](renderer/src/components/ui/button.tsx) | 复用 default/outline/secondary/ghost/destructive/destructive-subtle/warning/link；选择既有 size | 是否可操作由调用方决定 |
 | [ActionButton](renderer/src/components/ui/action-button.tsx) | 紧凑文字操作；图标可选，pending 保留标签并禁止重复点击 | 只表达状态，不拥有业务请求或结果 |
 | [Switch](renderer/src/components/ui/switch.tsx)、[Select](renderer/src/components/ui/select.tsx)、[SettingsSegmentedTabs](renderer/src/settings/SettingsSegmentedTabs.tsx) | 按上述交互规则选择，不互相替代 | 实际值与提交结果归调用方 |
+| [SettingsSection / SettingsGroupCard / SettingsRow](renderer/src/settings/SettingsPageParts.tsx) | 组合设置组、分组卡片及默认 / wide 行；compact 由卡片声明，共同展示归相邻 [SettingsPageParts.css](renderer/src/settings/SettingsPageParts.css)，独立、页面、弹窗使用同一规则 | props 与实际控件保持原有组合，值、请求和权限归调用方；Mobile 保留直接 card-content 插槽与专用 padding |
 | [SettingsSelect](renderer/src/settings/SettingsPageParts.tsx)、[SettingsDisclosure](renderer/src/settings/SettingsDisclosure.tsx) | 设置值自动按两个候选 / 多个候选选择公共控件；详情使用“展开 / 收起”，不显示三角 | 值、请求、权限和草稿归调用方；详情保留原生展开语义 |
 | Button `variant="composer"` | 主和 Side 发送外观，共用禁用及文本角色；一般配合 `size="icon-md"` | 不决定 send、enqueue、steer 或清理草稿 |
 | [ConversationComposer](renderer/src/ConversationComposer.tsx) | 主与 Side 的编辑器、工具栏及模型目录入口 | 调用方拥有输入、提交、配置和能力 |
@@ -112,7 +113,9 @@ Tailwind 的 `text-ui-sm`、`rounded-overlay` 等直接消费同一套 Token。�
 pnpm --dir clients/gui design:dev
 ```
 
-打开 Vite 地址的 `/design-system.html`。这是独立开发入口，挂载生产 ConversationComposer、ApprovalRequest 与 SideChatPane，可切换明暗、UI 字号、宽窄面板，查看提交中、失败和未知结果。审批状态通过选择状态后点击审批动作呈现；Side 保留实际入口并明确拒绝真实操作。所有动作使用本地 fixture，不读取桌面 bridge，不连接 Core/供应商。状态预览不证明业务恢复或权限执行通过。
+打开 Vite 地址的 `/design-system.html`。这是独立开发入口，挂载生产 ConversationComposer、ApprovalRequest 与 SideChatPane，可切换明暗、UI 字号、宽窄面板，查看提交中、失败和未知结果。审批状态通过选择状态后点击审批动作呈现；Side 保留实际入口并明确拒绝真实操作。设置组合额外挂载真实 `SettingsPage`、portal `SettingsDialog` 和 `GeneralSettings`。`/design-system.html?settings` 聚焦此组合。常规设置使用实际浏览器偏好路径；服务操作不可用。紧凑、宽控件、长中英文及外部禁用、处理中、明确失败、结果待确认属于独立展示 fixture，不表示 `GeneralSettings` 支持未知提交。
+
+预览不读取桌面 bridge，不连接 Core/供应商。业务动作使用本地 fixture；常规设置会读写当前 origin 的 localStorage，验收使用隔离浏览器上下文。状态预览不证明业务恢复或权限执行通过。
 
 `design:build` 输出到 `clients/gui/dist/design-system/`；普通 renderer 构建不包含预览 HTML 或预览模块，安装包继续使用 `renderer/dist/`。
 
@@ -121,12 +124,14 @@ pnpm --dir clients/gui typecheck
 pnpm --dir clients/gui verify:design
 pnpm --dir clients/gui design:build
 pnpm --dir clients/gui test:design
+# 开发期间仅检查设置组合
+pnpm --dir clients/gui test:design --settings-only
 ```
 
-`test:design` 使用隔离 Chrome，保存截图、计算样式与 manifest；可用 `AREAL_GUI_TEST_BROWSER` 指定已有浏览器。检查编辑器草稿保留、模型菜单、实际审批状态、明暗、字号及宽窄布局。字体、平台、缩放不同的截图分别评估，不要求跨平台像素一致。
+`test:design` 使用隔离 Chrome，保存截图、计算样式与 manifest；可用 `AREAL_GUI_TEST_BROWSER` 指定已有浏览器。检查编辑器草稿保留、模型菜单、实际审批状态、明暗、字号及宽窄布局。设置检查比较独立部件、真实页面与弹窗的计算样式，并验证紧凑密度、分隔线、容器窄宽、键盘控件值、常规偏好重挂载与重载保留、Mobile 插槽几何及实际 CSSOM 规则重排。字体、平台、缩放不同的截图分别评估，不要求跨平台像素一致。
 
 ## 增量检查与验证边界
 
-普通 `verify` 已包含 `verify:design` 的检查逻辑。`verify:design` 只检查已经迁移的 DecisionCard、ComposerSurface、SideChat 和 Feedback CSS：阻止局部硬编码字号/颜色，检查引用 Token 存在。合法局部几何不禁止。检查器包含错误示例，确认会拒绝目标写法；它不声称解析所有 Tailwind class 或 TypeScript 间接样式。
+普通 `verify` 已包含 `verify:design` 的检查逻辑。`verify:design` 的单一清单覆盖已迁移的 DecisionCard、ComposerSurface、SideChat、Feedback、SettingsPageParts 完整 CSS，以及 `SettingsPageParts.tsx`。CSS 检查阻止局部硬编码字号和颜色，并检查 Token 存在。TSX 使用现有 TypeScript AST 检查 JSX `className` 的直接字符串、`cn`、条件与模板中的字符串，以及直接对象 `style` 的字面量；拒绝 Tailwind 固定字号和标准色板，允许布局数字。检查器内的正反例验证目标写法。动态间接值、变量传递的 style、其他未迁移文件不在覆盖范围内。
 
 生产样式改变需查看相关组件和原消费者；变体变化看默认、焦点、禁用和提交状态。Composer、审批、Side 的业务兼容继续使用已有 `test:composer`、`test:interactions`、`test:conversation-derivation`，它们与组件预览各自提供不同证据。物理 IME、真实供应商及安装包需单独验收。

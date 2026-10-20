@@ -1,3 +1,4 @@
+import { imageAnnotationText, sentImageAnnotations, serializeImageAnnotations, snapshotImageAnnotations, type SentImageAnnotation } from "./imageAnnotations.js";
 import { useRef, useState, useEffect } from "react";
 import type { RefObject } from "react";
 import type { Action, Data } from "./services.js";
@@ -10,6 +11,7 @@ type QueueEdit = {
   wasPaused: boolean;
   phase: "opening" | "editing" | "saving" | "restoring";
   attachments: Data[];
+  imageNotes?: SentImageAnnotation[];
   original: { text: string; skills: string | null; goal: string | null };
   unknown?: { requestId: string; operation: "pause" | "update" | "resume" };
 };
@@ -29,6 +31,7 @@ export function useComposerQueueEdit({
   uploadFiles,
   inFlight,
   setInFlight,
+  annotationBlocked,
 }: {
   project: Data;
   threadId: string;
@@ -43,6 +46,7 @@ export function useComposerQueueEdit({
   uploadFiles: (files: File[]) => Promise<Data[]>;
   inFlight: boolean;
   setInFlight: (active: boolean) => void;
+  annotationBlocked: boolean;
 }) {
   const storageKey = `${draftKey}:queue-edit`;
   const backupKey = `${storageKey}:original`;
@@ -118,14 +122,9 @@ export function useComposerQueueEdit({
   };
   const enter = (record: QueueEdit, confirmed: Data, input: Data[]) => {
     if (!confirmed.paused) throw new Error("队列未确认暂停，原草稿已保留");
-    saveRecord({ ...record, revision: confirmed.revision, phase: "editing", unknown: undefined });
-    localStorage.setItem(
-      draftKey,
-      input
-        .filter((part) => part.type === "text")
-        .map((part) => part.text)
-        .join("\n"),
-    );
+    const parsed = sentImageAnnotations(input.filter(part => part.type === "text").map(part => part.text).join("\n"), record.attachments);
+    saveRecord({ ...record, imageNotes: parsed.notes, revision: confirmed.revision, phase: "editing", unknown: undefined });
+    localStorage.setItem(draftKey, parsed.text);
     localStorage.removeItem(`${draftKey}:skills`);
     localStorage.removeItem(`${draftKey}:goal`);
     draftFiles.set(draftKey, []);
@@ -162,7 +161,7 @@ export function useComposerQueueEdit({
     if (owner.current) setError(cause.message);
   };
   const begin = async (target: Data) => {
-    if (edit || busy || pending || !connected || target.status !== "pending") return;
+    if (edit || busy || pending || annotationBlocked || !connected || target.status !== "pending") return;
     const record: QueueEdit = {
       id: target.id,
       revision: queue.revision,
@@ -218,6 +217,7 @@ export function useComposerQueueEdit({
   };
   const save = async () => {
     if (
+      annotationBlocked ||
       !edit ||
       edit.phase !== "editing" ||
       edit.unknown ||
@@ -233,10 +233,11 @@ export function useComposerQueueEdit({
     saveRecord(record);
     try {
       const input = composerInput(localStorage.getItem(draftKey) ?? "", draftFiles.get(draftKey) ?? []);
+      const imageSnapshot = snapshotImageAnnotations(input.files);
       const additions = await uploadFiles(input.files);
       const updated = await mutation(record, "update", {
         queueItemId: record.id,
-        text: input.text,
+        text: [input.text, imageAnnotationText(record.imageNotes ?? []), serializeImageAnnotations(imageSnapshot, additions, record.attachments.length)].filter(Boolean).join("\n\n"),
         attachments: additions,
         retainedInput: record.attachments,
       });
@@ -311,10 +312,10 @@ export function useComposerQueueEdit({
     reconcile,
     locked: !!edit && (edit.phase !== "editing" || !!edit.unknown),
     saveDisabled:
-      busy || pending || !connected || conflict || edit?.phase !== "editing" || !!edit?.unknown,
+      annotationBlocked || busy || pending || !connected || conflict || edit?.phase !== "editing" || !!edit?.unknown,
     removeAttachment: (index: number) => {
       if (edit && !busy && !edit.unknown)
-        saveRecord({ ...edit, attachments: edit.attachments.filter((_, at) => at !== index) });
+        saveRecord({ ...edit, attachments: edit.attachments.filter((_, at) => at !== index), imageNotes: (edit.imageNotes ?? []).filter(note => note.attachmentIndex !== index).map(note => ({ ...note, attachmentIndex: note.attachmentIndex > index ? note.attachmentIndex - 1 : note.attachmentIndex })) });
     },
   };
 }

@@ -21,6 +21,8 @@ import { MessageResponse } from "./components/ai-elements/message.js";
 import { SentAttachment } from "./MessageAttachment.js";
 import { sentReviewFeedback } from "./reviewComments.js";
 import { SentBrowserAnnotations } from "./BrowserAnnotationAttachments.js";
+import { sentImageAnnotations } from "./imageAnnotations.js";
+import { ImageAnnotationList } from "./ImageAnnotationViews.js";
 import { sentBrowserAnnotations } from "./browserAnnotations.js";
 import { SentReviewComments } from "./ReviewCommentViews.js";
 import { TurnFileSummary } from "./TurnFileSummary.js";
@@ -53,8 +55,14 @@ export function Messages({
   onFork,
   onSideSelection,
   responseActions,
-  reserveResponseSpace = true,
+  embedded = false,
+  readOnly = false,
+  afterTurns,
+  reserveResponseSpace = !embedded,
 }: {
+  embedded?: boolean;
+  readOnly?: boolean;
+  afterTurns?: ReactNode;
   reserveResponseSpace?: boolean;
   beforeTurns?: ReactNode;
   onAgent?: (id: string) => void;
@@ -74,7 +82,7 @@ export function Messages({
   const thread: Data = { ...localThread, turns: [...inherited.turns, ...(localThread.turns ?? [])] };
   const inheritedIds = new Set(inherited.turns.map(turn => turn.id));
   const ordinary = isOrdinaryConversation(localThread, project.configurations?.[localThread.id]);
-  const editable = ordinary ? (localThread.turns ?? []).flatMap((turn: Data) => turn.continuedFromTurnId || goalContinuationLabel(turn) ? [] : (turn.items ?? []).filter((item: Data) => item.type === "userMessage")).at(-1)?.id : undefined;
+  const editable = ordinary && !readOnly ? (localThread.turns ?? []).flatMap((turn: Data) => turn.continuedFromTurnId || goalContinuationLabel(turn) ? [] : (turn.items ?? []).filter((item: Data) => item.type === "userMessage")).at(-1)?.id : undefined;
   const responseSpace = useRef<HTMLDivElement>(null);
   const container = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
@@ -205,7 +213,7 @@ export function Messages({
   </div>;
   useLayoutEffect(() => {
     const element = container.current, spacer = responseSpace.current;
-    if (!element || !spacer) return;
+    if (embedded || !element || !spacer) return;
     const previous = seenTurn.current;
     const switched = activeOwner.current !== owner;
     const remembered = readingViews.get(owner);
@@ -278,36 +286,33 @@ export function Messages({
     element.addEventListener("wheel", wheel, { passive: false });
     // File summaries, disclosures and Markdown/media resize independently of
     // Core snapshots. Reuse this reading owner; no new store or execution loop.
-    let frame: number | undefined;
-    const resize = new ResizeObserver(() => {
-      frame ??= requestAnimationFrame(() => { frame = undefined; layout(); });
-    });
+    // Resize notifications run before paint; a new frame exposes the old tail.
+    const resize = new ResizeObserver(layout);
     resize.observe(element);
     if (element.firstElementChild) resize.observe(element.firstElementChild);
     return () => {
       resize.disconnect();
-      if (frame !== undefined) cancelAnimationFrame(frame);
       element.removeEventListener("wheel", wheel);
     };
   }, [owner, latestTurnId, reserveResponseSpace]);
   return (
-    <div className="messages-shell">
-    <TurnNavigation turns={thread.turns ?? []} container={container} onNavigate={() => {
+    <div className={embedded ? "messages-embedded" : "messages-shell"}>
+    {!embedded && <TurnNavigation key={owner} turns={thread.turns ?? []} container={container} onNavigate={() => {
       follow.current = false;
       releaseResponseSpace();
       rememberReading();
-    }} />
+    }} />}
     <div
-      className="messages"
+      className={embedded ? "messages-embedded-content" : "messages"}
       ref={container}
-      onScroll={updateReading}
+      onScroll={embedded ? undefined : updateReading}
       onMouseUp={captureSideSelection}
       onClickCapture={event => {
         const control = event.target instanceof Element ? event.target.closest("button[aria-expanded], summary") : null;
         if (control && event.currentTarget.contains(control) && control.closest(".turn-progress, .turn-execution")) readHere();
       }}
     >
-      <div className="message-column">
+      <div className={embedded ? "message-embedded-column" : "message-column"}>
         {beforeTurns}
         {inherited.loading && <p role="status">正在加载继承历史…</p>}
         {inherited.error && <p role="alert">继承历史读取失败：{inherited.error}</p>}
@@ -404,9 +409,10 @@ export function Messages({
                 const appContent = content.filter((part: Data) => part.type === "text" && part.mcpContent);
                 const text = content.filter((part: Data) => part.type === "text" && !part.mcpContent).map((part: Data) => part.text ?? "").join("\n");
                 const feedback = sentReviewFeedback(text);
-                const attachments = content.filter((part: Data) => part.type !== "text");
+                const attachments: Data[] = content.filter((part: Data) => part.type !== "text");
                 const browserFeedback = sentBrowserAnnotations(feedback.text, attachments);
-                const ordinaryAttachments = attachments.filter((part: Data) => !browserFeedback.notes.some(note => note.imageUri === (part.url ?? part.uri)));
+                const imageFeedback = sentImageAnnotations(browserFeedback.text, attachments);
+                const ordinaryAttachments = attachments.map((part: Data, index: number) => ({ part, index })).filter(({ part }) => !browserFeedback.notes.some(note => note.imageUri === (part.url ?? part.uri)));
                 return (
                   <div className="user-message" data-side-item-id={item.id} key={item.id}>
                     <div className="user-message-content">
@@ -414,16 +420,19 @@ export function Messages({
                       {appContent.length>0&&<div className="user-attachments" aria-label="应用内容">{appContent.map((part:Data,index:number)=><McpContentLabel key={index} block={part.mcpContent}/>)}</div>}
                       <SentBrowserAnnotations notes={browserFeedback.notes} attachments={attachments} projectId={project.id} threadId={thread.id} action={action} />
                       {ordinaryAttachments.length > 0 ? <div className="user-attachments" data-testid="user-attachments">
-                        {ordinaryAttachments.map((part: Data, i: number) => <SentAttachment key={part.url ?? part.uri ?? i}
-                          part={part} projectId={project.id} threadId={thread.id} action={action} />)}
+                        {ordinaryAttachments.map(({ part, index }) => {
+                          const note = imageFeedback.notes.find(note => note.attachmentIndex === index);
+                          return <div key={`${index}:${part.url ?? part.uri}`} className="flex flex-col gap-2"><SentAttachment
+                            part={part} annotation={note} projectId={project.id} threadId={thread.id} action={action} />{note && <ImageAnnotationList note={note} />}</div>;
+                        })}
                       </div> : null}
-                      {browserFeedback.text.trim() ? <div className="user-bubble">
+                      {imageFeedback.text.trim() ? <div className="user-bubble">
                         <CollapsibleText key={`${owner}:${item.id}`} onExpandedChange={() => {
                           follow.current = false;
                           releaseResponseSpace();
                           rememberReading();
                         }}>
-                        <MessageResponse className="conversation-markdown user-message-body" preserveLineBreaks theme={dark ? "dark" : "light"} onOpenExternalUrl={onLink} onOpenFileLink={onFile}>{browserFeedback.text}</MessageResponse>
+                        <MessageResponse className="conversation-markdown user-message-body" preserveLineBreaks theme={dark ? "dark" : "light"} onOpenExternalUrl={onLink} onOpenFileLink={onFile}>{imageFeedback.text}</MessageResponse>
                         </CollapsibleText>
                       </div> : null}
                       {(text.trim() || item.id === editable) && <MessageActions text={text}>{item.id === editable && <UserPromptEdit key={`${owner}:${item.id}`} project={project} thread={localThread} item={item} action={action} />}</MessageActions>}
@@ -458,9 +467,9 @@ export function Messages({
             </Fragment>;
             })}
             {!isInherited && (turn.items ?? []).filter((item: Data) => item.type === "dynamicToolCall").map((item: Data) =>
-              <UnknownToolInspection key={`${project.id}:${thread.id}:${item.id}`} item={item} project={project} thread={thread} action={action} />)}
+              <UnknownToolInspection key={`${project.id}:${thread.id}:${item.id}`} item={item} project={readOnly ? { ...project, state: { ...project.state, connected: false } } : project} thread={thread} action={action} />)}
             <TurnFileSummary turn={turn} readTurnReview={readTurnReview} onFile={onFile} onReview={onReview} />
-            {responseMessage && turn.status !== "inProgress" && <MessageActions text={responseMessage.text}><TurnHookStats turn={turn} />{forkControls}{responseActions?.(responseMessage)}{!isInherited && <UserFeedback project={project} thread={localThread} turn={turn} item={responseMessage} action={action} dark={dark} />}</MessageActions>}
+            {responseMessage && turn.status !== "inProgress" && <MessageActions text={responseMessage.text}><TurnHookStats turn={turn} />{forkControls}{responseActions?.(responseMessage)}{!isInherited && !readOnly && <UserFeedback project={project} thread={localThread} turn={turn} item={responseMessage} action={action} dark={dark} />}</MessageActions>}
             {canFork && forkError?.turnId === turn.id && <p role="alert" className="notice">{forkError?.message}</p>}
             {turn.status === "interrupted" && stopHeaderIndex < 0 && stopHeading}
             {turn.status !== "inProgress" && turn.status !== "interrupted" && !(turn.status === "completed" && hasReadingSummary) && (
@@ -478,11 +487,12 @@ export function Messages({
             <TurnActivity turn={turn} project={project} threadId={thread.id} />
           </section>;
         })}
-        <div ref={responseSpace} className="message-response-space" aria-hidden="true" />
+        {afterTurns}
       </div>
+      {!embedded && <div ref={responseSpace} className="message-response-space" aria-hidden="true" />}
     </div>
     {selectedSideText?.owner === selectionOwner && <button type="button" className="side-selection-action" onClick={() => void askAboutSelection()}>在旁路中询问所选内容</button>}
-    {readingHistory && <TimelineBottomButton onClick={returnToBottom} />}
+    {!embedded && readingHistory && <TimelineBottomButton onClick={returnToBottom} />}
     </div>
   );
 }

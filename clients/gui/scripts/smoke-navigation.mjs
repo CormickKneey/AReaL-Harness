@@ -7,7 +7,10 @@ export async function createProjectConversation(page, projectName) {
     .locator(".project-row")
     .filter({ has: page.getByRole("button", { name: projectName, exact: true }) })
     .hover();
-  await page.getByRole("button", { name: `在项目 ${projectName} 中新建对话`, exact: true }).click();
+  const create = page.getByRole("button", { name: `在项目 ${projectName} 中新建对话`, exact: true });
+  // Keep the hover-only action exposed while restored sidebar rows settle.
+  await create.focus();
+  await create.click();
   await page.getByTestId("chat-input").waitFor();
 }
 

@@ -55,6 +55,7 @@ async function serviceIdentity(options) {
   hash.update(CoreClient.toString()).update(CoreRpcError.toString());
   hash.update(readFileSync(require.resolve('@areal/workbench/core-model')));
   hash.update(readFileSync(require.resolve('@areal/workbench/desktop-contract')));
+  hash.update(readFileSync(require.resolve('@areal/workbench/state-projection')));
   hash.update(readFileSync(require.resolve('@areal/remote')));
   hash.update(readFileSync(require.resolve('../workspace-files')));
   hash.update(readFileSync(require.resolve('@areal/workspace-git')));

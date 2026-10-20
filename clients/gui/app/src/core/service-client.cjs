@@ -5,6 +5,7 @@ const { randomUUID } = require('node:crypto');
 const { mkdir, readFile, realpath, open, writeFile, rename, rm } = require('node:fs/promises');
 const { join } = require('node:path');
 const WebSocket = require('ws');
+const { ProjectionReader } = require('@areal/workbench/state-projection');
 const { PROTOCOL, COMMAND_CONTRACT, encodeMedia, decodeMedia } = require('./service-protocol.cjs');
 const { serviceIdentity } = require('./service-config.cjs');
 const { inspectCoreCapabilities } = require('./core-capabilities.cjs');
@@ -95,10 +96,18 @@ class ServiceConnection {
       || typeof metadata.identity !== 'string' || !metadata.identity
       || !Number.isSafeInteger(metadata.pid) || metadata.pid <= 1) throw new Error('本地后台服务连接元数据无效');
     const socket = this.socket = new WebSocket(url, { headers: { Authorization: `Bearer ${metadata.token}` }, followRedirects: false, maxPayload: 256 * 1024 * 1024 });
+    const projection = new ProjectionReader();
     socket.on('error', () => {});
     socket.on('message', bytes => {
+      if (this.socket !== socket) return;
       let message;
-      try { message = JSON.parse(bytes.toString()); } catch { socket.terminate(); return; }
+      try {
+        message = JSON.parse(bytes.toString());
+        const key = message.method === 'state' ? 'params' : 'result';
+        const packet = message[key];
+        if (packet?.snapshot && Object.hasOwn(packet.snapshot, 'projection'))
+          message[key] = { ...packet, snapshot: projection.read(packet.snapshot) };
+      } catch { socket.terminate(); return; }
       if (message.method === 'mcpAppNotification') { if (this.socket === socket) this.onMcpAppNotification?.(message.params); return; }
       if (message.method === 'notification') { this.onNotification(message.params); return; }
       if (message.method === 'notificationOpen') { this.onNotificationOpen(message.params); return; }
@@ -119,6 +128,7 @@ class ServiceConnection {
       else entry.resolve(message.result);
     });
     socket.on('close', () => {
+      if (this.socket !== socket) return;
       for (const entry of this.pending.values()) {
         clearTimeout(entry.timer);
         entry.reject(Object.assign(new Error(entry.mutation ? '后台连接中断，操作结果未确认；请重连后核对任务，不会自动重发。' : '后台服务连接已断开'), { submissionUnknown: entry.mutation, code: 'DISCONNECTED' }));
@@ -133,6 +143,7 @@ class ServiceConnection {
   }
   request(method, params, mutation = false) {
     if (this.socket?.readyState !== WebSocket.OPEN) return Promise.reject(Object.assign(new Error('后台服务已断开，请重新连接'), { code: 'DISCONNECTED' }));
+    if (method === 'hello') params = { ...params, capabilities: { ...params?.capabilities, projection: 1 } };
     const id = ++this.nextId;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
